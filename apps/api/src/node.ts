@@ -180,28 +180,16 @@ if (defaultOrg !== "local") {
   }
 }
 
-// One-time collapse of the pre-3-value visibility vocabulary (see
-// docs/plans/visibility-collapse.md). unlisted → private (the draft intent —
-// owner rows preserve access, nothing widens); link → public (reach was already
-// anyone-with-URL); password → public with the hash KEPT (the password is now a
-// lock on the public link, gating exactly as before). Idempotent: no rows keep
-// a legacy value afterward, so re-runs match nothing.
-{
-  const remap: [string, string][] = [
-    ["unlisted", "private"],
-    ["link", "public"],
-    ["password", "public"],
-  ]
-  if (cfg.databaseUrl) {
-    const pool = authDb as Pool
-    for (const [from, to] of remap)
-      await pool.query(`UPDATE artifact SET visibility = $1 WHERE visibility = $2`, [to, from])
-  } else {
-    const db = authDb as Database.Database
-    for (const [from, to] of remap)
-      db.prepare(`UPDATE artifact SET visibility = ? WHERE visibility = ?`).run(to, from)
-  }
-}
+// One-time backfill of the v2 access model (see docs/plans/access-model.md): maps
+// the pre-v2 `visibility` onto the three single-purpose fields — org/public gain
+// workspace_access=member + their listing, a public row's live link is restored at
+// its legacy general_role. Self-contained: it folds the pre-3-value vocabulary
+// (link/password → public, unlisted → private) into its own CASE, so there's no
+// separate collapse pass to sequence. It CONSUMES visibility (resets it to 'private')
+// so the `WHERE visibility != 'private'` guard makes re-runs a no-op and setAccess
+// (which never writes visibility) is never re-clobbered. The hosted deploy applies
+// the same call after DDL (apply-pg-schema.ts) — migrations run wherever schema does.
+await meta.backfillAccess()
 
 // Blobs: S3/R2 when OBJECT_STORE_URL is set, else local disk (zero-config).
 const blobs: BlobStore = cfg.objectStoreUrl

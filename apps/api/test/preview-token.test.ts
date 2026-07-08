@@ -90,7 +90,9 @@ describe("raw route: preview-access token (?pv=)", () => {
       org_id: "default",
       slug: null,
       title: "Private Art",
-      visibility: "private",
+      workspace_access: "none",
+      link_role: "none",
+      listed: "none",
       kind: "file",
       spa: 0,
     })

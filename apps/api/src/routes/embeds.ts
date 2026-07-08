@@ -89,11 +89,11 @@ export const embedRoutes = (ctx: AppContext) => {
       if (v?.preview_status === "ready" && v.preview_key) {
         const png = await blobs.get(v.preview_key)
         // Unlike the SVG fallback (title-less when gated, so always shareable), this
-        // branch only runs for a reader who passed readable() — which for an org/
-        // private/locked artifact means an authorized member. Their screenshot must
-        // never land in a shared cache; keep it browser-only there (max-age so the
-        // library card <img> stays cached across renders).
-        const gated = artifact.visibility !== "public" || !!artifact.password_hash
+        // branch only runs for a reader who passed readable() — which for an artifact
+        // with no world link (or a locked one) means an authorized member. Their
+        // screenshot must never land in a shared cache; keep it browser-only there
+        // (max-age so the library card <img> stays cached across renders).
+        const gated = artifact.link_role === "none" || !!artifact.password_hash
         if (png)
           return c.body(toBody(png), 200, {
             "Content-Type": "image/png",

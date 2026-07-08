@@ -626,11 +626,20 @@ export function buildContext(deps: AppDeps) {
     return { kind: "user", userId: me.id, artifactRole, orgRole, locked, unlocked }
   }
 
-  /** Authorize an action against a specific artifact. The artifact's general-access role
-   *  is threaded in so an authenticated link-reacher can earn `comment` while an anonymous
-   *  one stays clamped to view (see effectiveRole). */
+  /** Authorize an action against a specific artifact. Access is the max of three
+   *  grants: an explicit share, the workspace seat (when workspace_access=member),
+   *  and the world link (link_role, clamped to view for anonymous holders and gated
+   *  by unlock when the link is password-locked). See effectiveRole. */
   const authorize = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
-    actorFor(c, a).then((actor) => can(actor, action, a.visibility, a.general_role))
+    actorFor(c, a).then((actor) => can(actor, action, a.workspace_access, a.link_role))
+
+  /** Authorize using STANDING only — an explicit share or the workspace seat, NOT
+   *  the world link (link_role forced to `none`). The reach controls (change access,
+   *  toggle the lock) gate on this so the link's own grant can't bootstrap widening
+   *  the link/listing or clearing the password: a random signed-in URL holder with an
+   *  editor link edits content, but only a member or an explicit sharee re-shares. */
+  const authorizeStanding = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
+    actorFor(c, a).then((actor) => can(actor, action, a.workspace_access, "none"))
 
   /**
    * True when the caller is an anonymous visitor — they may view public content
@@ -697,7 +706,16 @@ export function buildContext(deps: AppDeps) {
     const me = await currentUser(c)
     if (!me) return null
     if (col.created_by === me.id) return "owner"
-    return (await meta.getCollectionMember(col.id, me.id))?.role ?? null
+    // A collection lives in a workspace, so its members reach it at their SEAT role —
+    // the team collaborates on the workspace's collections, not just their creator's
+    // (mirrors an artifact's workspace_access=member). An explicit collection share
+    // (which can cross workspaces) folds in alongside, higher wins. This governs who
+    // can view/manage the COLLECTION only; artifact access still propagates purely
+    // from explicit collection membership (collectionRolesForArtifact), so a seat here
+    // never hands out access to the artifacts inside.
+    const explicit = (await meta.getCollectionMember(col.id, me.id))?.role ?? null
+    const seat = (await meta.getMembership(col.org_id, me.id))?.role ?? null
+    return maxRole(explicit, seat)
   }
 
   // ---- Route guard helpers: the return-or-Response idiom (mirrors `limited`), so a
@@ -758,6 +776,7 @@ export function buildContext(deps: AppDeps) {
     anonViewerId,
     actorFor,
     authorize,
+    authorizeStanding,
     anonLocked,
     isPrincipal,
     isSuperAdmin,

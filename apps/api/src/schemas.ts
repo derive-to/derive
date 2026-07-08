@@ -54,8 +54,13 @@ export const Artifact = z
     kind: z.enum(["file", "bundle"]),
     current_content_type: z.string().nullable().optional(),
     locked: z.boolean().optional(),
-    visibility: z.enum(["public", "org", "private"]),
-    /** The public link carries a password lock (never the password itself). */
+    /** The v2 access model — three single-purpose fields (see access-model.md): does the
+     *  workspace reach it at each member's seat role, what the world link confers, and
+     *  where it surfaces for discovery. */
+    workspace_access: z.enum(["none", "member"]).optional(),
+    link_role: z.enum(["none", "viewer", "commenter", "editor"]).optional(),
+    listed: z.enum(["none", "workspace", "public"]).optional(),
+    /** The world link carries a password lock (never the password itself). */
     password_protected: z.boolean().optional(),
     /** The artifact's workspace id — returned on list + detail; drives move-to-workspace. */
     org_id: z.string().optional(),
@@ -63,7 +68,6 @@ export const Artifact = z
     raw_token: z.string().optional(),
     /** Single-page app bundle flag (present on the tombstone branch of the detail view). */
     spa: z.boolean().optional(),
-    general_role: z.enum(["viewer", "commenter"]).optional(),
     current_version: z.number(),
     versions: z.array(
       z.object({

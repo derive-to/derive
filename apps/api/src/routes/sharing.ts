@@ -22,7 +22,7 @@ export const sharingRoutes = (ctx: AppContext) => {
   // confers `manage`) and DELETE the real owner, seizing the artifact.
   const rank = (r: Role | null): number => (r ? ROLES.indexOf(r) : -1)
   const callerRank = async (c: Context, a: ArtifactRecord): Promise<number> =>
-    rank(effectiveRole(await actorFor(c, a), a.visibility))
+    rank(effectiveRole(await actorFor(c, a), a.workspace_access, a.link_role))
 
   app.openapi(
     createRoute({

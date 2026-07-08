@@ -49,7 +49,7 @@ export const rawRoutes = (ctx: AppContext) => {
       artifact.title,
       prefix,
       path,
-      cacheControlFor(artifact.visibility, !!artifact.password_hash),
+      cacheControlFor(artifact.link_role, !!artifact.password_hash),
       // Self-heal: this view just proved the bytes are HTML under a markdown label.
       // Fix the stored type off the hot path (waitUntil on edge, inline in tests) so
       // every view repairs it — the publish-time sniff stops new ones, this drains

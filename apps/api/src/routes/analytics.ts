@@ -51,7 +51,10 @@ export const analyticsRoutes = (ctx: AppContext) => {
       // the same). `manage` requires the owner role, so this is exactly "is owner";
       // editors/commenters/viewers and anonymous openers still count.
       const actor = await actorFor(c, artifact)
-      if (actor.kind !== "anon" && can(actor, "manage", artifact.visibility))
+      if (
+        actor.kind !== "anon" &&
+        can(actor, "manage", artifact.workspace_access, artifact.link_role)
+      )
         return c.body(null, 204)
       const me = await currentUser(c)
       let viewer: string

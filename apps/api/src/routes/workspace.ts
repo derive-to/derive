@@ -59,7 +59,11 @@ export const workspaceRoutes = (ctx: AppContext) => {
       githubMirrorComments: z.boolean(),
       githubPreviewLink: z.boolean(),
       slackPost: z.boolean(),
-      defaultAgentVisibility: z.enum(["public", "org", "private"]),
+      // The access a NEW publish lands with (see access-model.md): the three
+      // single-purpose fields. Factory default is the team draft — member / none / none.
+      defaultWorkspaceAccess: z.enum(["none", "member"]),
+      defaultLinkRole: z.enum(["none", "viewer", "commenter", "editor"]),
+      defaultListed: z.enum(["none", "workspace", "public"]),
     })
     .openapi("OrgSettings")
 
@@ -550,7 +554,9 @@ export const workspaceRoutes = (ctx: AppContext) => {
             githubMirrorComments: z.boolean(),
             githubPreviewLink: z.boolean(),
             slackPost: z.boolean(),
-            defaultAgentVisibility: z.enum(["private", "org"]),
+            defaultWorkspaceAccess: z.enum(["none", "member"]),
+            defaultLinkRole: z.enum(["none", "viewer", "commenter", "editor"]),
+            defaultListed: z.enum(["none", "workspace", "public"]),
           })
           .partial(),
       )
@@ -558,6 +564,14 @@ export const workspaceRoutes = (ctx: AppContext) => {
       const org = await activeWorkspace(c)
       // Merge over current (so a partial PATCH only flips the keys it sends).
       const next = { ...(await meta.getOrgSettings(org)), ...b }
+      // The default access must satisfy the same listing preconditions a publish
+      // would (see access-model.md) — otherwise every new publish that takes the
+      // defaults would 400. Validate the MERGED result, so a partial PATCH can't
+      // leave the pair incoherent.
+      if (next.defaultListed === "workspace" && next.defaultWorkspaceAccess !== "member")
+        return bail(fail(c, 400, "a workspace-listed default needs default workspace access"))
+      if (next.defaultListed === "public" && next.defaultLinkRole === "none")
+        return bail(fail(c, 400, "a publicly-listed default needs a default link role"))
       await meta.setOrgSettings(org, next)
       return c.json(next)
     },

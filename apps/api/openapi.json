@@ -83,12 +83,28 @@
           "locked": {
             "type": "boolean"
           },
-          "visibility": {
+          "workspace_access": {
             "type": "string",
             "enum": [
-              "public",
-              "org",
-              "private"
+              "none",
+              "member"
+            ]
+          },
+          "link_role": {
+            "type": "string",
+            "enum": [
+              "none",
+              "viewer",
+              "commenter",
+              "editor"
+            ]
+          },
+          "listed": {
+            "type": "string",
+            "enum": [
+              "none",
+              "workspace",
+              "public"
             ]
           },
           "password_protected": {
@@ -102,13 +118,6 @@
           },
           "spa": {
             "type": "boolean"
-          },
-          "general_role": {
-            "type": "string",
-            "enum": [
-              "viewer",
-              "commenter"
-            ]
           },
           "current_version": {
             "type": "number"
@@ -328,7 +337,6 @@
           "url",
           "title",
           "kind",
-          "visibility",
           "current_version",
           "versions"
         ]
@@ -589,12 +597,28 @@
           "slackPost": {
             "type": "boolean"
           },
-          "defaultAgentVisibility": {
+          "defaultWorkspaceAccess": {
             "type": "string",
             "enum": [
-              "public",
-              "org",
-              "private"
+              "none",
+              "member"
+            ]
+          },
+          "defaultLinkRole": {
+            "type": "string",
+            "enum": [
+              "none",
+              "viewer",
+              "commenter",
+              "editor"
+            ]
+          },
+          "defaultListed": {
+            "type": "string",
+            "enum": [
+              "none",
+              "workspace",
+              "public"
             ]
           }
         },
@@ -604,7 +628,9 @@
           "githubMirrorComments",
           "githubPreviewLink",
           "slackPost",
-          "defaultAgentVisibility"
+          "defaultWorkspaceAccess",
+          "defaultLinkRole",
+          "defaultListed"
         ]
       },
       "Workspaces": {
@@ -3253,12 +3279,12 @@
         }
       }
     },
-    "/v1/artifacts/{shortId}/visibility": {
+    "/v1/artifacts/{shortId}/access": {
       "patch": {
         "tags": [
           "Artifacts"
         ],
-        "summary": "Change an artifact's general access (visibility + general-access role).",
+        "summary": "Change an artifact's access (workspace access, world link, listing).",
         "parameters": [
           {
             "schema": {
@@ -3271,25 +3297,34 @@
         ],
         "responses": {
           "200": {
-            "description": "The new visibility, general-access role, and lock state.",
+            "description": "The new access triple and lock state.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "visibility": {
+                    "workspace_access": {
                       "type": "string",
                       "enum": [
-                        "public",
-                        "org",
-                        "private"
+                        "none",
+                        "member"
                       ]
                     },
-                    "general_role": {
+                    "link_role": {
                       "type": "string",
                       "enum": [
+                        "none",
                         "viewer",
-                        "commenter"
+                        "commenter",
+                        "editor"
+                      ]
+                    },
+                    "listed": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "workspace",
+                        "public"
                       ]
                     },
                     "locked": {
@@ -3297,8 +3332,9 @@
                     }
                   },
                   "required": [
-                    "visibility",
-                    "general_role",
+                    "workspace_access",
+                    "link_role",
+                    "listed",
                     "locked"
                   ]
                 }

@@ -242,9 +242,9 @@ export function ArtifactCard({
             )}
           </span>
           <span className="ml-auto inline-flex shrink-0 items-center gap-2.5">
-            {/* Private work is invisible to everyone but its members — the chip
+            {/* Invite-only work is invisible to everyone but its members — the chip
                 says so wherever the doc DOES surface (your library, Created by me). */}
-            {a.visibility === "private" && (
+            {a.workspace_access === "none" && (a.link_role ?? "none") === "none" && (
               <Badge shape="pill" variant="outline" title="Only you and people you add">
                 <Icon name="lock" size={12} /> Private
               </Badge>

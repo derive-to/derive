@@ -282,24 +282,62 @@ function SharingDefaults() {
   return (
     <SettingsGroup>
       <SettingRow
-        label="Agent publishes as"
-        description="Where a new artifact published by a connected agent lands. Private keeps its drafts yours until you share them."
+        label="Workspace access"
+        description="Whether a freshly published artifact is open to the whole workspace (at each member's role) or invite-only. Changing this never touches existing artifacts."
       >
         <SelectMenu
-          value={settings.defaultAgentVisibility}
+          value={settings.defaultWorkspaceAccess}
           onValueChange={(v) =>
-            set("defaultAgentVisibility", v as OrgSettings["defaultAgentVisibility"])
+            set("defaultWorkspaceAccess", v as OrgSettings["defaultWorkspaceAccess"])
           }
         >
           <SelectMenuTrigger
-            aria-label="Agent publish visibility"
-            data-testid="default-agent-visibility"
+            aria-label="Default workspace access"
+            data-testid="default-workspace-access"
           >
-            {AGENT_VIS_LABELS[settings.defaultAgentVisibility] ?? settings.defaultAgentVisibility}
+            {WORKSPACE_ACCESS_LABELS[settings.defaultWorkspaceAccess] ??
+              settings.defaultWorkspaceAccess}
           </SelectMenuTrigger>
           <SelectMenuContent>
-            <SelectMenuItem value="private">Private</SelectMenuItem>
-            <SelectMenuItem value="org">Workspace</SelectMenuItem>
+            <SelectMenuItem value="member">Everyone in the workspace</SelectMenuItem>
+            <SelectMenuItem value="none">Invite-only</SelectMenuItem>
+          </SelectMenuContent>
+        </SelectMenu>
+      </SettingRow>
+      <SettingRow
+        label="New artifact links"
+        description="What merely holding a freshly published artifact's URL grants anyone (none = no world link). Changing this never touches existing artifacts."
+      >
+        <SelectMenu
+          value={settings.defaultLinkRole}
+          onValueChange={(v) => set("defaultLinkRole", v as OrgSettings["defaultLinkRole"])}
+        >
+          <SelectMenuTrigger aria-label="Default link grant" data-testid="default-link-role">
+            {LINK_ROLE_LABELS[settings.defaultLinkRole] ?? settings.defaultLinkRole}
+          </SelectMenuTrigger>
+          <SelectMenuContent>
+            <SelectMenuItem value="none">No link</SelectMenuItem>
+            <SelectMenuItem value="viewer">Can view</SelectMenuItem>
+            <SelectMenuItem value="commenter">Can comment</SelectMenuItem>
+            <SelectMenuItem value="editor">Can edit</SelectMenuItem>
+          </SelectMenuContent>
+        </SelectMenu>
+      </SettingRow>
+      <SettingRow
+        label="Listed by default"
+        description="Where a freshly published artifact surfaces for discovery. None keeps it out of every feed until someone promotes it."
+      >
+        <SelectMenu
+          value={settings.defaultListed}
+          onValueChange={(v) => set("defaultListed", v as OrgSettings["defaultListed"])}
+        >
+          <SelectMenuTrigger aria-label="Default listing" data-testid="default-listed">
+            {LISTED_LABELS[settings.defaultListed] ?? settings.defaultListed}
+          </SelectMenuTrigger>
+          <SelectMenuContent>
+            <SelectMenuItem value="none">Nowhere</SelectMenuItem>
+            <SelectMenuItem value="workspace">Workspace library</SelectMenuItem>
+            <SelectMenuItem value="public">Public directory</SelectMenuItem>
           </SelectMenuContent>
         </SelectMenu>
       </SettingRow>
@@ -307,7 +345,20 @@ function SharingDefaults() {
   )
 }
 
-const AGENT_VIS_LABELS: Record<string, string> = {
-  private: "Private",
-  org: "Workspace",
+const LINK_ROLE_LABELS: Record<string, string> = {
+  none: "No link",
+  viewer: "Can view",
+  commenter: "Can comment",
+  editor: "Can edit",
+}
+
+const WORKSPACE_ACCESS_LABELS: Record<string, string> = {
+  member: "Everyone in the workspace",
+  none: "Invite-only",
+}
+
+const LISTED_LABELS: Record<string, string> = {
+  none: "Nowhere",
+  workspace: "Workspace library",
+  public: "Public directory",
 }

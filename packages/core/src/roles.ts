@@ -14,6 +14,27 @@
  */
 export type Role = "viewer" | "commenter" | "editor" | "owner"
 
-/** The roles general access (a shared link) can grant a reacher: view-only or comment.
- *  A strict subset of Role — general access never hands out editor/owner. */
+/** The v2 access model's three single-purpose fields (docs/plans/access-model.md).
+ *  They live in this leaf alongside Role so BOTH ./ports (record shapes) and
+ *  ./permissions (effectiveRole) can name them without an import cycle. */
+
+/** The WORLD link: what anyone merely holding the artifact's URL gets — a
+ *  non-member, the public, an anonymous visitor. `none` = the link is inert
+ *  (invite-/member-only). A teammate with the link is NOT this — that's
+ *  `workspace_access` (they open at their seat role). Anonymous holders are always
+ *  clamped to `viewer` regardless of the grant. */
+export type LinkRole = "none" | "viewer" | "commenter" | "editor"
+/** Whether the artifact's workspace gets access. `member` = every signed-in member
+ *  of the artifact's workspace opens at their OWN seat role (owner → manage …
+ *  commenter → comment); `none` = the workspace has no standing (only explicit
+ *  shares and the world link apply). There is no per-doc workspace role. */
+export type WorkspaceAccess = "none" | "member"
+/** Discovery only — where the artifact surfaces in feeds. Carries NO access: `none`
+ *  (nowhere), `workspace` (the workspace library), `public` (the public directory).
+ *  Listing preconditions live at the write path, not here. */
+export type Listed = "none" | "workspace" | "public"
+
+/** @deprecated retired by the v2 access model; kept only to type the orphaned
+ *  `general_role` DB column (expand/contract — the column stays, backfilled once
+ *  into `link_role`, read by nothing). */
 export type GeneralRole = "viewer" | "commenter"

@@ -23,7 +23,9 @@ describe("workspace scoping: collections + favorites", () => {
       org_id: "wsB",
       slug: null,
       title: "Doc in B",
-      visibility: "org",
+      workspace_access: "member",
+      link_role: "none",
+      listed: "workspace",
       kind: "file",
       spa: 0,
     })

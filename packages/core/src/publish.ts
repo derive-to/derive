@@ -1,6 +1,7 @@
 import { unzipSync } from "fflate"
 import { newId, newShortId, refFor, slugify } from "./ids"
 import { mimeFor } from "./mime"
+import type { LinkRole, Listed, WorkspaceAccess } from "./permissions"
 import {
   type ArtifactKind,
   type ArtifactRecord,
@@ -11,7 +12,6 @@ import {
   type ProposalRecord,
   SKILL_CONTENT_TYPE,
   type VersionRecord,
-  type Visibility,
 } from "./ports"
 import { isSkillBundle, parseFrontmatter } from "./skill"
 
@@ -50,9 +50,17 @@ export interface PublishInput {
   authorId?: string | null
   /** The workspace the new artifact belongs to (multi-workspace). */
   orgId?: string
-  visibility?: Visibility
-  /** Salted unlock-password hash, set by the route for `password` visibility. */
+  /** Salted unlock-password hash, set by the route when the world link is locked. */
   passwordHash?: string | null
+  /** The access triple for a NEW artifact (see access-model.md). Set-on-create —
+   *  ignored on a republish (shortId), which never re-stamps them. The route
+   *  resolves the default chain (explicit request > the org's defaults > the
+   *  factory: workspace_access `member`, link `none`, listed `none`) and the
+   *  listing preconditions before calling publish(); omitted values fall through
+   *  to the store's fail-closed defaults. */
+  workspaceAccess?: WorkspaceAccess
+  linkRole?: LinkRole
+  listed?: Listed
   /** Names this publish a pinned checkpoint (Docs-style). */
   name?: string
 }
@@ -265,11 +273,12 @@ export async function publish(
     org_id: input.orgId ?? "local",
     slug: input.slug ? slugify(input.slug) : slugify(title) || null,
     title,
-    // Private unless the publisher says otherwise — the Google Docs default.
-    // Nothing is visible to anyone but the publisher (the route writes them as
-    // the owner-member) as a side effect of publishing; widening is an explicit
-    // act (the Share dialog, --visibility, or visibility in derive.json).
-    visibility: input.visibility ?? "private",
+    // The route resolves the default chain before calling us; omitted values
+    // fall through to the store's fail-closed defaults (none/none/none). The
+    // orphaned visibility/general_role columns take their DB defaults.
+    workspace_access: input.workspaceAccess,
+    link_role: input.linkRole,
+    listed: input.listed,
     password_hash: input.passwordHash ?? null,
     kind,
     spa: input.spa ? 1 : 0,
@@ -398,9 +407,10 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   title: a.title,
   kind: a.kind,
   current_content_type: a.current_content_type,
-  visibility: a.visibility,
-  general_role: a.general_role,
-  // A password on the public link (never the hash itself). Distinct from
+  workspace_access: a.workspace_access,
+  link_role: a.link_role,
+  listed: a.listed,
+  // A password on the world link (never the hash itself). Distinct from
   // `locked`, which is the publish lock (changes must go through proposals).
   password_protected: !!a.password_hash,
   spa: !!a.spa,

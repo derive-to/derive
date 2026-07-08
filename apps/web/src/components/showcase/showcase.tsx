@@ -1015,18 +1015,18 @@ function GeneralAccessDemo() {
   const steps: { icon: IconName; label: string; blurb: string; current?: boolean }[] = [
     {
       icon: "lock",
-      label: "Private",
-      blurb: "Only people added. Workspace membership grants nothing.",
-      current: true,
+      label: "Invited",
+      blurb: "Only people you add. Even the workspace gets nothing.",
     },
     {
       icon: "workspace",
       label: "Workspace",
-      blurb: "Every workspace member can find it in the shared library.",
+      blurb: "Everyone in the workspace opens it at their role.",
+      current: true,
     },
     {
       icon: "globe",
-      label: "Public",
+      label: "Anyone",
       blurb: "The link works for anyone. Optionally behind a password.",
     },
   ]
@@ -1317,7 +1317,7 @@ export function Showcase() {
           </Row>
           <Row
             title="General access"
-            note="The share dialog's visibility ladder, most private to most open. Each step is a glyph + label + one-line consequence; the Share trigger echoes the glyph (globe = the URL alone reads, lock = invite-only)."
+            note="The share dialog's access ladder, most closed to most open. Each step is a glyph + label + one-line consequence; the Share trigger echoes the glyph (globe = the URL alone reads, lock = invite-only)."
           >
             <GeneralAccessDemo />
           </Row>

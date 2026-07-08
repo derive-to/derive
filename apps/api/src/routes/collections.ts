@@ -238,13 +238,15 @@ export const collectionRoutes = (ctx: AppContext) => {
       if (!col) return bail(fail(c, 404, "not found"))
       if (!(await canManageCollection(c, col, "publish"))) return bail(fail(c, 403, "forbidden"))
       const art = await meta.getByShortId(c.req.param("shortId"))
-      // Same-workspace + owns-the-artifact: adding to a collection re-shares the
-      // artifact (the collection's members inherit a role on it), so it must be a
-      // manage action on the artifact itself, not just on the collection. Without
-      // this, anyone could fold any artifact by short_id into their own collection
-      // and inherit a role on it (cross-workspace privilege escalation).
+      // Adding to a collection re-shares the artifact (the collection's members inherit
+      // a role on it), so the caller must be able to SHARE the artifact — not merely
+      // read it (a viewer can't reshape access) but not necessarily own it either.
+      // Collections are org-wide organizing tools, so a workspace editor can fold in any
+      // workspace-accessible artifact (share via their seat); an invite-only doc still
+      // needs explicit share standing. The same-workspace guard keeps it from folding a
+      // foreign-workspace artifact in by short_id.
       if (!art || art.org_id !== col.org_id) return bail(fail(c, 404, "artifact not found"))
-      if (!(await authorize(c, "manage", art))) return bail(fail(c, 403, "forbidden"))
+      if (!(await authorize(c, "share", art))) return bail(fail(c, 403, "forbidden"))
       await meta.addCollectionItem(col.id, art.id)
       return c.json({ ok: true })
     },
