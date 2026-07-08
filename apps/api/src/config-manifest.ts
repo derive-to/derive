@@ -21,7 +21,7 @@ interface Group {
   note?: string
 }
 
-export const GROUPS: Group[] = [
+const GROUPS: Group[] = [
   { id: "core", title: undefined },
   { id: "limits", title: "Analytics, limits & quotas" },
   { id: "auth", title: "Auth (Better Auth)" },
@@ -46,11 +46,9 @@ export interface ConfigVar {
   example?: string
   /** Shown uncommented with its default (the zero-config baseline); else commented out. */
   active?: boolean
-  /** A credential — never echo a value (docs/doctor). */
-  secret?: boolean
 }
 
-export const CONFIG_VARS: ConfigVar[] = [
+const CONFIG_VARS: ConfigVar[] = [
   // -- core & storage --
   {
     name: "PORT",
@@ -84,14 +82,12 @@ export const CONFIG_VARS: ConfigVar[] = [
     group: "core",
     doc: "Optional S3-compatible object storage for blobs (AWS S3, Cloudflare R2, MinIO, GCS).\nAddressing + region auto-pick from the host; TLS on unless tls=false or localhost.\n  AWS:   s3://<key>:<secret>@s3.<region>.amazonaws.com/derive   (region from host)\n  R2:    s3://<key>:<secret>@<account>.r2.cloudflarestorage.com/derive?region=auto\n  MinIO: s3://minioadmin:minioadmin@localhost:9000/derive?region=us-east-1&tls=false",
     example: "s3://ACCESS_KEY:SECRET_KEY@host/bucket?region=auto",
-    secret: true,
   },
   {
     name: "DATABASE_URL",
     group: "core",
     doc: "Optional Postgres for metadata instead of the default embedded SQLite.",
     example: "postgres://user:pass@host:5432/derive",
-    secret: true,
   },
   {
     name: "DERIVE_ALLOW_REMOTE_DB",
@@ -104,7 +100,6 @@ export const CONFIG_VARS: ConfigVar[] = [
     group: "core",
     doc: "A static bearer token for headless CI/agent writes (and reading gated artifacts).\nSigned-in users can always write; anonymous callers are read-only either way.",
     example: "",
-    secret: true,
   },
 
   // -- analytics, limits & quotas --
@@ -169,7 +164,6 @@ export const CONFIG_VARS: ConfigVar[] = [
     group: "auth",
     doc: "Session-signing secret. Email + password works out of the box; set a real secret in\nproduction (also encrypts stored third-party credentials at rest).",
     example: "change-me-to-a-long-random-string",
-    secret: true,
   },
   {
     name: "DERIVE_SUPERADMIN_EMAILS",
@@ -214,7 +208,6 @@ export const CONFIG_VARS: ConfigVar[] = [
     group: "hosting",
     doc: "Bring-your-own custom domains (Cloudflare for SaaS): let an owner attach their own\ndomain to an artifact; CF issues + renews the TLS cert. All three CF_* are required to\nenable; unset = custom domains off (subdomains unaffected). Scoped token: SSL for SaaS /\ncustom-hostname edit.",
     example: "...",
-    secret: true,
   },
   {
     name: "CF_ZONE_ID",
@@ -235,7 +228,6 @@ export const CONFIG_VARS: ConfigVar[] = [
     group: "email",
     doc: "Transactional email via Resend (over fetch, no SDK). BOTH RESEND_API_KEY and EMAIL_FROM\nmust be set to actually send; with neither, Derive logs the message — including reset\nlinks — instead of sending (the zero-config default), so password reset + email\nverification stay hidden in the UI until configured. (The Cloudflare tier uses its Email\nService binding instead.)",
     example: "re_...",
-    secret: true,
   },
   {
     name: "EMAIL_FROM",
@@ -251,14 +243,14 @@ export const CONFIG_VARS: ConfigVar[] = [
     doc: "Optional Google sign-in. Callback URL: <BASE_URL>/api/auth/callback/google",
     example: "",
   },
-  { name: "GOOGLE_CLIENT_SECRET", group: "providers", doc: "", example: "", secret: true },
+  { name: "GOOGLE_CLIENT_SECRET", group: "providers", doc: "", example: "" },
   {
     name: "GITHUB_LOGIN_CLIENT_ID",
     group: "providers",
     doc: "Optional GitHub sign-in (a standard GitHub OAuth app — distinct from the repo-sync\nGitHub App). Callback URL: <BASE_URL>/api/auth/callback/github",
     example: "",
   },
-  { name: "GITHUB_LOGIN_CLIENT_SECRET", group: "providers", doc: "", example: "", secret: true },
+  { name: "GITHUB_LOGIN_CLIENT_SECRET", group: "providers", doc: "", example: "" },
   {
     name: "OIDC_ISSUER",
     group: "providers",
@@ -266,7 +258,7 @@ export const CONFIG_VARS: ConfigVar[] = [
     example: "https://your-org.okta.com",
   },
   { name: "OIDC_CLIENT_ID", group: "providers", doc: "", example: "" },
-  { name: "OIDC_CLIENT_SECRET", group: "providers", doc: "", example: "", secret: true },
+  { name: "OIDC_CLIENT_SECRET", group: "providers", doc: "", example: "" },
   {
     name: "OIDC_PROVIDER_ID",
     group: "providers",
@@ -287,8 +279,8 @@ export const CONFIG_VARS: ConfigVar[] = [
     doc: "Slack app credentials — all three are required to enable the Slack integration (connect\nflow + Events API reply-back). Unset = Slack off.",
     example: "",
   },
-  { name: "SLACK_CLIENT_SECRET", group: "slack", doc: "", example: "", secret: true },
-  { name: "SLACK_SIGNING_SECRET", group: "slack", doc: "", example: "", secret: true },
+  { name: "SLACK_CLIENT_SECRET", group: "slack", doc: "", example: "" },
+  { name: "SLACK_SIGNING_SECRET", group: "slack", doc: "", example: "" },
 
   // -- advanced --
   {
