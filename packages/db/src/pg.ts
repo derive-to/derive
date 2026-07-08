@@ -285,6 +285,10 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select().from(artifact).where(eq(artifact.id, id))
     return rows[0] ?? null
   }
+  async getArtifactsByIds(ids: string[]): Promise<ArtifactRecord[]> {
+    if (ids.length === 0) return []
+    return this.db.select().from(artifact).where(inArray(artifact.id, ids))
+  }
 
   async siblingsBySourcePaths(
     orgId: string,
@@ -745,6 +749,10 @@ export class PgMetaStore implements MetaStore {
   listMemberships(orgId: string): Promise<MembershipRecord[]> {
     return this.db.select().from(membership).where(eq(membership.org_id, orgId))
   }
+  async listMembershipsForOrgs(orgIds: string[]): Promise<MembershipRecord[]> {
+    if (orgIds.length === 0) return []
+    return this.db.select().from(membership).where(inArray(membership.org_id, orgIds))
+  }
   async countMemberships(orgId: string): Promise<number> {
     const rows = await this.db
       .select({ n: count() })
@@ -1144,6 +1152,10 @@ export class PgMetaStore implements MetaStore {
   async getCollection(id: string): Promise<CollectionRecord | null> {
     const rows = await this.db.select().from(collection).where(eq(collection.id, id))
     return rows[0] ?? null
+  }
+  async getCollections(ids: string[]): Promise<CollectionRecord[]> {
+    if (ids.length === 0) return []
+    return this.db.select().from(collection).where(inArray(collection.id, ids))
   }
   async updateCollection(id: string, fields: { title?: string }): Promise<CollectionRecord | null> {
     if (fields.title === undefined) return this.getCollection(id)
@@ -1621,6 +1633,14 @@ export class PgMetaStore implements MetaStore {
       .where(eq(sessionMessage.session_id, sessionId))
       .orderBy(asc(sessionMessage.created_at))
   }
+  async listSessionMessagesFor(sessionIds: string[]): Promise<SessionMessageRecord[]> {
+    if (sessionIds.length === 0) return []
+    return this.db
+      .select()
+      .from(sessionMessage)
+      .where(inArray(sessionMessage.session_id, sessionIds))
+      .orderBy(asc(sessionMessage.created_at))
+  }
 
   // ---- User directory (Better Auth's "user" table; raw, may be absent) ---
   async findUserByEmail(email: string): Promise<UserDir | null> {
@@ -1791,6 +1811,10 @@ export class PgMetaStore implements MetaStore {
   // ---- Notifications (in-app, one row per recipient) ---------------------
   async createNotification(n: NewNotification): Promise<void> {
     await this.db.insert(notification).values(n)
+  }
+  async createNotifications(rows: NewNotification[]): Promise<void> {
+    if (rows.length === 0) return
+    await this.db.insert(notification).values(rows)
   }
   listNotifications(userId: string, limit: number): Promise<NotificationRecord[]> {
     return this.db

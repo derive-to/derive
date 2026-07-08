@@ -317,6 +317,8 @@ export function makeRepos(db: SqliteDb) {
     (await db.select().from(artifact).where(eq(artifact.short_id, shortId)).get()) ?? null
   const getArtifactById = async (id: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.id, id)).get()) ?? null
+  const getArtifactsByIds = async (ids: string[]): Promise<ArtifactRecord[]> =>
+    ids.length === 0 ? [] : db.select().from(artifact).where(inArray(artifact.id, ids)).all()
 
   const siblingsBySourcePaths = async (
     orgId: string,
@@ -791,6 +793,10 @@ export function makeRepos(db: SqliteDb) {
       .get()) ?? null
   const listMemberships = async (orgId: string): Promise<MembershipRecord[]> =>
     db.select().from(membership).where(eq(membership.org_id, orgId)).all()
+  const listMembershipsForOrgs = async (orgIds: string[]): Promise<MembershipRecord[]> =>
+    orgIds.length === 0
+      ? []
+      : db.select().from(membership).where(inArray(membership.org_id, orgIds)).all()
   const countMemberships = async (orgId: string): Promise<number> =>
     (await db.select({ n: count() }).from(membership).where(eq(membership.org_id, orgId)).get())
       ?.n ?? 0
@@ -1224,6 +1230,8 @@ export function makeRepos(db: SqliteDb) {
     (await db.insert(collection).values(c).returning().get()) as CollectionRecord
   const getCollection = async (id: string): Promise<CollectionRecord | null> =>
     (await db.select().from(collection).where(eq(collection.id, id)).get()) ?? null
+  const getCollections = async (ids: string[]): Promise<CollectionRecord[]> =>
+    ids.length === 0 ? [] : db.select().from(collection).where(inArray(collection.id, ids)).all()
   const updateCollection = async (
     id: string,
     fields: { title?: string },
@@ -1701,10 +1709,23 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(sessionMessage.session_id, sessionId))
       .orderBy(asc(sessionMessage.created_at))
       .all()
+  const listSessionMessagesFor = async (sessionIds: string[]): Promise<SessionMessageRecord[]> =>
+    sessionIds.length === 0
+      ? []
+      : db
+          .select()
+          .from(sessionMessage)
+          .where(inArray(sessionMessage.session_id, sessionIds))
+          .orderBy(asc(sessionMessage.created_at))
+          .all()
 
   // ---- Notifications -----------------------------------------------------
   const createNotification = async (n: NewNotification): Promise<void> => {
     await db.insert(notification).values(n).run()
+  }
+  const createNotifications = async (rows: NewNotification[]): Promise<void> => {
+    if (rows.length === 0) return
+    await db.insert(notification).values(rows).run()
   }
   const listNotifications = async (userId: string, limit: number): Promise<NotificationRecord[]> =>
     db
@@ -2138,6 +2159,7 @@ export function makeRepos(db: SqliteDb) {
     setLocked,
     getByShortId,
     getArtifactById,
+    getArtifactsByIds,
     siblingsBySourcePaths,
     addVersion,
     listVersions,
@@ -2176,6 +2198,7 @@ export function makeRepos(db: SqliteDb) {
     recentDeliveries,
     getMembership,
     listMemberships,
+    listMembershipsForOrgs,
     countMemberships,
     setMembership,
     removeMembership,
@@ -2209,6 +2232,7 @@ export function makeRepos(db: SqliteDb) {
     setArtifactTags,
     createCollection,
     getCollection,
+    getCollections,
     updateCollection,
     deleteCollection,
     listCollections,
@@ -2266,10 +2290,12 @@ export function makeRepos(db: SqliteDb) {
     setSessionState,
     addSessionMessage,
     listSessionMessages,
+    listSessionMessagesFor,
     getProposal,
     listProposals,
     decideProposal,
     createNotification,
+    createNotifications,
     listNotifications,
     unreadNotificationCount,
     markNotificationsRead,

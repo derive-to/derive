@@ -523,21 +523,24 @@ export const artifactRoutes = (ctx: AppContext) => {
           (async () => {
             const [author] = await meta.getUsers([onBehalf])
             if (!author) return
-            for (const follower of await meta.listFollowers(author.id, 200)) {
-              if (follower.id === author.id) continue
-              await meta.createNotification({
-                id: newId("ntf"),
-                user_id: follower.id,
-                actor: author.name ?? author.username ?? "Someone",
-                kind: "publish",
-                artifact_id: artifact.id,
-                artifact_short_id: artifact.short_id,
-                artifact_title: artifact.title,
-                thread_id: "",
-                comment_id: "",
-                preview: artifact.title ?? "published something new",
-              })
-            }
+            const followers = await meta.listFollowers(author.id, 200)
+            // One bulk insert for the whole fan-out, not a createNotification per follower.
+            await meta.createNotifications(
+              followers
+                .filter((follower) => follower.id !== author.id)
+                .map((follower) => ({
+                  id: newId("ntf"),
+                  user_id: follower.id,
+                  actor: author.name ?? author.username ?? "Someone",
+                  kind: "publish",
+                  artifact_id: artifact.id,
+                  artifact_short_id: artifact.short_id,
+                  artifact_title: artifact.title,
+                  thread_id: "",
+                  comment_id: "",
+                  preview: artifact.title ?? "published something new",
+                })),
+            )
           })(),
         )
       }

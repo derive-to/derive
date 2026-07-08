@@ -132,11 +132,11 @@ export const contextRoutes = (ctx: AppContext) => {
     if (!(await managementPrincipal(c))) return fail(c, 401, "unauthenticated")
     if (!(await workspaceCan(c, "read"))) return fail(c, 403, "forbidden")
     const rows = await meta.listContexts(await activeWorkspace(c))
-    const contexts = await Promise.all(
-      rows.map(async (x) =>
-        contextJson(x, (await meta.getArtifactById(x.manifest_artifact_id))?.short_id ?? null),
-      ),
-    )
+    // Resolve every context's manifest artifact in ONE query, then map id → short_id —
+    // not a getArtifactById per row.
+    const manifests = await meta.getArtifactsByIds(rows.map((x) => x.manifest_artifact_id))
+    const shortById = new Map(manifests.map((a) => [a.id, a.short_id]))
+    const contexts = rows.map((x) => contextJson(x, shortById.get(x.manifest_artifact_id) ?? null))
     return c.json({ contexts })
   })
 
@@ -365,12 +365,18 @@ export const contextRoutes = (ctx: AppContext) => {
     if (!x || x.agent_id !== agent.id) return fail(c, 404, "not found")
     const limit = Math.min(20, Math.max(1, Number(c.req.query("limit")) || 10))
     const sessions = await meta.pendingSessions(x.id, limit)
-    const out = await Promise.all(
-      sessions.map(async (s) => ({
-        ...sessionJson(s),
-        messages: (await meta.listSessionMessages(s.id)).map(messageJson),
-      })),
-    )
+    // One query for every pending session's transcript, then group by session_id —
+    // not a listSessionMessages per session.
+    const bySession = new Map<string, ReturnType<typeof messageJson>[]>()
+    for (const m of await meta.listSessionMessagesFor(sessions.map((s) => s.id))) {
+      const arr = bySession.get(m.session_id)
+      if (arr) arr.push(messageJson(m))
+      else bySession.set(m.session_id, [messageJson(m)])
+    }
+    const out = sessions.map((s) => ({
+      ...sessionJson(s),
+      messages: bySession.get(s.id) ?? [],
+    }))
     return c.json({ sessions: out })
   })
 
