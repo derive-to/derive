@@ -227,15 +227,23 @@ export function ShareCollectionDialog({
                           aria-label={`Role for ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
                           className="w-28 shrink-0"
                         />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          data-testid={`collection-share-remove-${m.user_id}`}
-                          onClick={() => remove(m)}
-                          aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
-                        >
-                          <Icon name="close" />
-                        </Button>
+                        {/* The creator's own row is fixed — unlike an artifact's
+                            "last owner" member row, a collection's creator is
+                            permanently owner via created_by regardless of member
+                            rows (collectionRole checks it first), so removing this
+                            row wouldn't revoke access — it would just make them
+                            vanish from their own roster. Nothing to offer. */}
+                        {m.user_id !== collection.created_by && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            data-testid={`collection-share-remove-${m.user_id}`}
+                            onClick={() => remove(m)}
+                            aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
+                          >
+                            <Icon name="close" />
+                          </Button>
+                        )}
                       </>
                     ) : (
                       <span className="shrink-0 text-sm text-muted-foreground">
