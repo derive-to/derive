@@ -1793,6 +1793,16 @@ export function makeRepos(db: SqliteDb) {
       return null
     }
   }
+  const oauthClientExists = async (clientId: string): Promise<boolean> => {
+    try {
+      const r = await db.get(
+        sql`select 1 as one from "oauthClient" where "clientId" = ${clientId} limit 1`,
+      )
+      return !!r
+    } catch {
+      return false
+    }
+  }
   const setOAuthClientWorkspace = async (
     userId: string,
     clientId: string,
@@ -2265,6 +2275,7 @@ export function makeRepos(db: SqliteDb) {
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,
+    oauthClientExists,
     listUserGrants,
     revokeUserGrant,
     setOAuthClientWorkspace,

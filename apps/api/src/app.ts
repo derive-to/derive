@@ -1,6 +1,7 @@
 import { type ArtifactRecord, parseRef } from "@derive/core"
 import { type Context, Hono } from "hono"
 import { compress } from "hono/compress"
+import { OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { type AppDeps, buildContext } from "./context"
 import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
 import { observability } from "./lib/observability"
@@ -249,12 +250,13 @@ export function createApp(deps: AppDeps): Hono {
   }
 
   // After an anonymous registration, opportunistically reap abandoned anonymous
-  // clients (never consented, no tokens, > 1 day old). Best-effort and async so it
-  // never delays the response; runs on both the Node and the (cron-less) edge tier.
+  // clients (never consented, no tokens, > OAUTH_ANON_CLIENT_TTL_MS old). Best-effort
+  // and async so it never delays the response; runs on both the Node and the
+  // (cron-less) edge tier.
   app.use("/api/auth/oauth2/register", async (c, next) => {
     await next()
     if (c.req.method === "POST" && c.res.status < 300) {
-      const cutoff = new Date(Date.now() - 24 * 3_600_000).toISOString()
+      const cutoff = new Date(Date.now() - OAUTH_ANON_CLIENT_TTL_MS).toISOString()
       void ctx.meta.pruneStaleOAuthClients(cutoff).catch(() => 0)
     }
   })
@@ -262,6 +264,50 @@ export function createApp(deps: AppDeps): Hono {
   // Better Auth owns /api/auth/* (sign-up/in/out, OAuth, OIDC/SSO, session).
   if (deps.auth) {
     const auth = deps.auth
+    // Self-heal a stale client_id on /authorize instead of dead-ending the human on
+    // the oauth-provider's bare "invalid_client / client_id is required" error page
+    // (that message fires both when client_id is missing AND when it's present but
+    // unresolvable — see getClient in the plugin). The common cause: an agent
+    // (Claude.ai, another MCP client) self-registered via DCR but its human didn't
+    // finish the browser consent before pruneStaleOAuthClients reaped the row — the
+    // agent has no way to know its client_id died and just keeps sending it, and
+    // nothing the human does in the connector UI fixes it without knowing to
+    // disconnect/reconnect. Any other cause of a missing row (a wiped local DB,
+    // manual cleanup) hits the same recovery path. When the client_id on an
+    // /authorize request doesn't resolve, silently register a fresh public client
+    // for the same redirect_uri/scope and continue the flow under the new id — the
+    // human only ever sees the consent screen, never the error.
+    app.use("/api/auth/oauth2/authorize", async (c, next) => {
+      const url = new URL(c.req.url)
+      const clientId = url.searchParams.get("client_id")
+      const redirectUri = url.searchParams.get("redirect_uri")
+      const responseType = url.searchParams.get("response_type")
+      const needsHealing =
+        clientId &&
+        redirectUri &&
+        responseType === "code" &&
+        !(await ctx.meta.oauthClientExists(clientId))
+      if (needsHealing) {
+        try {
+          const registered = await auth.api.registerOAuthClient({
+            body: {
+              redirect_uris: [redirectUri],
+              scope: url.searchParams.get("scope") ?? undefined,
+              client_name: "recovered-client",
+              token_endpoint_auth_method: "none",
+            },
+          })
+          url.searchParams.set("client_id", registered.client_id)
+          return c.redirect(url.toString(), 302)
+        } catch (err) {
+          log.error("oauth self-heal: re-registration failed", {
+            error: err instanceof Error ? err.message : String(err),
+          })
+          // Fall through: the normal authorize handler errors as before.
+        }
+      }
+      await next()
+    })
     app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw))
   }
 

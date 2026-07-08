@@ -624,6 +624,10 @@ export interface MetaStore {
   getOAuthGrant(tokenHash: string): Promise<OAuthGrant | null>
   /** The display name of a registered OAuth client (for the consent screen). */
   getOAuthClientName(clientId: string): Promise<string | null>
+  /** Does this client_id still have a row? Backs the /authorize self-heal: a client_id an
+   *  agent is holding can go stale (reaped by pruneStaleOAuthClients, or any other loss of
+   *  the row) without the agent knowing, so /authorize checks this before trusting it. */
+  oauthClientExists(clientId: string): Promise<boolean>
   /** The agents a USER has authorized via the browser consent (one per client), so they can
    *  review + revoke what may act on their behalf. Reads Better Auth's oauth-provider tables;
    *  empty when they aren't present. */

@@ -1887,6 +1887,17 @@ export class PgMetaStore implements MetaStore {
       return null
     }
   }
+  async oauthClientExists(clientId: string): Promise<boolean> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT 1 FROM "oauthClient" WHERE "clientId" = $1 LIMIT 1`,
+        [clientId],
+      )
+      return rows.length > 0
+    } catch {
+      return false
+    }
+  }
   async setOAuthClientWorkspace(userId: string, clientId: string, orgId: string): Promise<void> {
     await this.db
       .insert(oauthClientWorkspace)

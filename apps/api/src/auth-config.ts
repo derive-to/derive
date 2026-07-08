@@ -77,6 +77,18 @@ export const OAUTH_SCOPES = [
   "derive:review",
 ] as const
 
+// How long an anonymous DCR-registered client (a headless agent that self-registered
+// but hasn't had its human complete browser consent yet) survives before
+// pruneStaleOAuthClients reaps it. An unconsented client is inert — it can't be used
+// for anything without that consent — so this is pure DB hygiene against abandoned/spam
+// registrations, not a security boundary. It used to be 24h, which was short enough that
+// a real agent connector (Claude.ai, etc.) could register, sit unconsented over a
+// weekend, and come back to a client_id that no longer existed — a dead end the human
+// had no way to diagnose. 30 days matches the existing OAuth refresh-token idle window
+// (see accessTokenExpiresIn below) and makes that failure mode a near-non-issue; the
+// authorize self-heal in app.ts (see `oauthClientExists`) covers what's left.
+export const OAUTH_ANON_CLIENT_TTL_MS = 30 * 24 * 3600_000
+
 const env = (k: string) => process.env[k]
 
 /**
