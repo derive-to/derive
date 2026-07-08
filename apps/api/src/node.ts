@@ -10,6 +10,7 @@ import Database from "better-sqlite3"
 import { Pool } from "pg"
 import { createApp } from "./app"
 import { type AuthDb, makeAuth, migrateAuth } from "./auth-config"
+import { configWarnings } from "./capabilities"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
 import { workspacesBlockingDeletion } from "./lib/account"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
@@ -323,6 +324,11 @@ if (!cfg.sandboxOrigin && (cfg.crossSite || cfg.webOrigins.length)) {
     "DERIVE_SANDBOX_URL is unset on a cross-site deployment. Artifact HTML will be served from the app origin; set DERIVE_SANDBOX_URL to a separate domain to isolate untrusted content from session cookies.",
   )
 }
+
+// Half-configured optional features (an OAuth id without its secret, an email key without
+// a from-address) leave the feature silently OFF. Warn loudly — but never crash: an
+// operator shouldn't lose a running instance to a stray env var on upgrade.
+for (const w of configWarnings(process.env)) log.warn(w)
 
 const server = serve({ fetch: app.fetch, port: cfg.port }, () => {
   log.info("derive api listening", {
