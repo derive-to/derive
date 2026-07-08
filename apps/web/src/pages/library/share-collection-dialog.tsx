@@ -49,28 +49,21 @@ export function ShareCollectionDialog({
     load()
   }, [collection.id])
 
-  const toggleWorkspaceShare = async (on: boolean) => {
+  // One mutator for both the toggle (on/off) and the role select (re-role while
+  // on) — same optimistic-update-then-rollback shape either way, just a
+  // different next value.
+  const setWorkspaceShare = async (next: Role | null) => {
     const prev = workspaceRole
-    setWorkspaceRole(on ? (prev ?? "viewer") : null)
+    setWorkspaceRole(next)
     setWsBusy(true)
     try {
-      if (on) await api.setCollectionWorkspaceShare(collection.id, prev ?? "viewer")
+      if (next) await api.setCollectionWorkspaceShare(collection.id, next)
       else await api.removeCollectionWorkspaceShare(collection.id)
     } catch (x) {
       setWorkspaceRole(prev)
       toast.error(x instanceof Error ? x.message : "Couldn't update the workspace share")
     } finally {
       setWsBusy(false)
-    }
-  }
-  const changeWorkspaceRole = async (next: Role) => {
-    const prev = workspaceRole
-    setWorkspaceRole(next)
-    try {
-      await api.setCollectionWorkspaceShare(collection.id, next)
-    } catch (x) {
-      setWorkspaceRole(prev)
-      toast.error(x instanceof Error ? x.message : "Couldn't update the workspace share")
     }
   }
 
@@ -176,7 +169,7 @@ export function ShareCollectionDialog({
             data-testid="collection-share-workspace-toggle"
             checked={workspaceRole !== null}
             disabled={wsBusy || !workspace}
-            onCheckedChange={toggleWorkspaceShare}
+            onCheckedChange={(on) => setWorkspaceShare(on ? (workspaceRole ?? "viewer") : null)}
           />
           <label htmlFor="collection-share-workspace" className="min-w-0 flex-1">
             <div className="truncate text-sm font-medium text-foreground">
@@ -189,7 +182,7 @@ export function ShareCollectionDialog({
           {workspaceRole !== null && (
             <RoleSelect
               value={workspaceRole}
-              onChange={changeWorkspaceRole}
+              onChange={setWorkspaceShare}
               data-testid="collection-share-workspace-role"
               className="w-26 shrink-0"
             />

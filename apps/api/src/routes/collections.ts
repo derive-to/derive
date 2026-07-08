@@ -30,6 +30,19 @@ export const collectionRoutes = (ctx: AppContext) => {
   const canManageCollection = async (c: Context, col: CollectionRecord, action: Action) =>
     roleAllows((await collectionRole(c, col)) ?? "viewer", action)
 
+  // Look up a collection and require `manage` on it (owner/creator/explicit
+  // manager) — the shared gate for delete, member add/remove, and the
+  // workspace share. Callers do `if (col instanceof Response) return col`.
+  const requireManageable = async (
+    c: Context,
+    id: string,
+  ): Promise<CollectionRecord | Response> => {
+    const col = await meta.getCollection(id)
+    if (!col) return fail(c, 404, "not found")
+    if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
+    return col
+  }
+
   app.get("/v1/collections", async (c) => {
     const me = await currentUser(c)
     if (!me && !isToken(c)) return fail(c, 401, "unauthenticated")
@@ -103,9 +116,8 @@ export const collectionRoutes = (ctx: AppContext) => {
     return c.json(await meta.updateCollection(col.id, { title: body.title?.trim().slice(0, 120) }))
   })
   app.delete("/v1/collections/:id", async (c) => {
-    const col = await meta.getCollection(c.req.param("id"))
-    if (!col) return fail(c, 404, "not found")
-    if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
+    const col = await requireManageable(c, c.req.param("id"))
+    if (col instanceof Response) return col
     await meta.deleteCollection(col.id)
     return c.body(null, 204)
   })
@@ -161,9 +173,8 @@ export const collectionRoutes = (ctx: AppContext) => {
   // Share (or re-role) a collection with every member of its own workspace — a
   // live binding, not a member-list snapshot (see collectionRolesForArtifact).
   app.put("/v1/collections/:id/workspace-share", async (c) => {
-    const col = await meta.getCollection(c.req.param("id"))
-    if (!col) return fail(c, 404, "not found")
-    if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
+    const col = await requireManageable(c, c.req.param("id"))
+    if (col instanceof Response) return col
     const b = await readJson(
       c,
       z.object({ role: z.custom<Role>(isRole, "a valid role is required") }),
@@ -178,16 +189,14 @@ export const collectionRoutes = (ctx: AppContext) => {
     return c.json({ role: share.role }, 201)
   })
   app.delete("/v1/collections/:id/workspace-share", async (c) => {
-    const col = await meta.getCollection(c.req.param("id"))
-    if (!col) return fail(c, 404, "not found")
-    if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
+    const col = await requireManageable(c, c.req.param("id"))
+    if (col instanceof Response) return col
     await meta.removeCollectionWorkspaceShare(col.id, col.org_id)
     return c.body(null, 204)
   })
   app.put("/v1/collections/:id/members", async (c) => {
-    const col = await meta.getCollection(c.req.param("id"))
-    if (!col) return fail(c, 404, "not found")
-    if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
+    const col = await requireManageable(c, c.req.param("id"))
+    if (col instanceof Response) return col
     const b = await readJson(
       c,
       z
@@ -211,9 +220,8 @@ export const collectionRoutes = (ctx: AppContext) => {
     return c.json({ user_id: user.id, handle: user.username, name: user.name, role: b.role }, 201)
   })
   app.delete("/v1/collections/:id/members/:userId", async (c) => {
-    const col = await meta.getCollection(c.req.param("id"))
-    if (!col) return fail(c, 404, "not found")
-    if (!(await canManageCollection(c, col, "manage"))) return fail(c, 403, "forbidden")
+    const col = await requireManageable(c, c.req.param("id"))
+    if (col instanceof Response) return col
     await meta.removeCollectionMember(col.id, c.req.param("userId"))
     return c.body(null, 204)
   })
