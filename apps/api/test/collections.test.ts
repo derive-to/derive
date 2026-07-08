@@ -63,14 +63,16 @@ describe("collections", () => {
     expect(await meta.getByShortId(short_id)).not.toBeNull()
   })
 
-  it("a workspace member can add their artifact to a teammate's collection; an outsider can't", async () => {
-    // A collection lives in the workspace, so any member manages it at their seat role —
-    // not just its creator. (Regression: collectionRole ignored workspace membership, so
-    // a teammate who didn't create the collection got 403 adding to it.)
+  it("a workspace editor can add a teammate's workspace artifact to a teammate's collection; an outsider can't", async () => {
+    // Collections are org-wide organizing tools: any workspace editor manages them at
+    // their seat (not just the creator), and can fold in any workspace-accessible
+    // artifact — not just ones they own. (Regression: collectionRole ignored workspace
+    // membership, and the add-item guard required owning the artifact.)
     const ana: TestUser = { id: "u_col_ana", email: "ana@col.test", name: "Ana", username: "anac" }
     const ben: TestUser = { id: "u_col_ben", email: "ben@col.test", name: "Ben", username: "benc" }
     const { app: teamApp } = makeAuthedApp("col-member", [ana, ben], "editor")
-    // Ana creates the collection; Ben (workspace editor, not the creator) owns an artifact.
+    // Ana creates the collection AND owns the artifact (a default team-draft — the
+    // workspace reaches it at each member's seat). Ben created neither.
     const col = await (
       await teamApp.request("/v1/collections", {
         method: "POST",
@@ -78,11 +80,12 @@ describe("collections", () => {
         body: JSON.stringify({ title: "Team" }),
       })
     ).json()
-    const bens = await (await publishAs(teamApp, "<h1>b</h1>", {}, as(ben.email))).json()
-    // Ben adds HIS artifact to Ana's collection — his workspace seat grants it.
+    const anas = await (await publishAs(teamApp, "<h1>a</h1>", {}, as(ana.email))).json()
+    // Ben (workspace editor, owns neither) can still fold Ana's artifact into her
+    // collection — his seat gives him share on it and manage on the collection.
     expect(
       (
-        await teamApp.request(`/v1/collections/${col.id}/items/${bens.short_id}`, {
+        await teamApp.request(`/v1/collections/${col.id}/items/${anas.short_id}`, {
           method: "PUT",
           headers: { "content-type": "application/json", ...as(ben.email) },
         })
