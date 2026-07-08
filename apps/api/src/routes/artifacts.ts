@@ -74,228 +74,277 @@ export const artifactRoutes = (ctx: AppContext) => {
   // Newest-first, keyset-paginated (?cursor=<created_at>&limit=N), with optional
   // server-side ?query= (title search), ?tag=, and ?favorite=true. Returns
   // { artifacts, next_cursor }. tag/favorite resolve to an id set first.
-  app.get("/v1/artifacts", async (c) => {
-    const me = await currentUser(c)
-    // Registered/OAuth agents list too — their library is how MCP list_artifacts
-    // finds work. Anonymous stays 401: nothing in the product lists tokenless.
-    const agent = me ? null : await agentFor(c)
-    if (!me && !agent && !isToken(c)) return fail(c, 401, "unauthenticated")
-    // Whose member rows count. Listing must mirror can(read): an agent derives
-    // its standing from its registrant's rows (capped at its registered role —
-    // see actorFor), so a linked agent's key is the REGISTRANT; an agent with
-    // no registrant on record falls back to its own legacy rows.
-    const memberKey = me?.id ?? agent?.created_by ?? agent?.id ?? null
-    const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 30))
-    // Opaque compound cursor "<created_at>|<id>" — the id tiebreak keeps paging
-    // correct when many artifacts share a created_at.
-    const rawCursor = c.req.query("cursor")
-    const sep = rawCursor?.indexOf("|") ?? -1
-    const cursor =
-      rawCursor && sep > 0
-        ? { created_at: rawCursor.slice(0, sep), id: rawCursor.slice(sep + 1) }
-        : undefined
-    // Cap the search term: it goes into a SQL LIKE, and an oversized value tripped
-    // an unhandled DB error (a long-q 500). No real title search needs > 200 chars.
-    const q = c.req.query("query")?.trim().slice(0, 200) || undefined
-    const tag = c.req.query("tag")?.trim() || undefined
-    const collectionId = c.req.query("collection")?.trim() || undefined
-    const favOnly = c.req.query("favorite") === "true"
-    // ?author=<github login> narrows to artifacts whose current author is that login.
-    const author = c.req.query("author")?.trim().slice(0, 100) || undefined
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/artifacts",
+      tags: ["Artifacts"],
+      summary:
+        "List artifacts (keyset-paginated; ?query=/tag=/collection=/scope=/author=/favorite=).",
+      responses: {
+        200: {
+          description: "A page of artifacts + next cursor (+ the collection when scoped to one).",
+          content: {
+            "application/json": {
+              schema: z.object({
+                artifacts: z.array(Artifact),
+                next_cursor: z.string().nullable(),
+                collection: z.object({ id: z.string(), title: z.string() }).optional(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await currentUser(c)
+      // Registered/OAuth agents list too — their library is how MCP list_artifacts
+      // finds work. Anonymous stays 401: nothing in the product lists tokenless.
+      const agent = me ? null : await agentFor(c)
+      if (!me && !agent && !isToken(c)) return bail(fail(c, 401, "unauthenticated"))
+      // Whose member rows count. Listing must mirror can(read): an agent derives
+      // its standing from its registrant's rows (capped at its registered role —
+      // see actorFor), so a linked agent's key is the REGISTRANT; an agent with
+      // no registrant on record falls back to its own legacy rows.
+      const memberKey = me?.id ?? agent?.created_by ?? agent?.id ?? null
+      const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 30))
+      // Opaque compound cursor "<created_at>|<id>" — the id tiebreak keeps paging
+      // correct when many artifacts share a created_at.
+      const rawCursor = c.req.query("cursor")
+      const sep = rawCursor?.indexOf("|") ?? -1
+      const cursor =
+        rawCursor && sep > 0
+          ? { created_at: rawCursor.slice(0, sep), id: rawCursor.slice(sep + 1) }
+          : undefined
+      // Cap the search term: it goes into a SQL LIKE, and an oversized value tripped
+      // an unhandled DB error (a long-q 500). No real title search needs > 200 chars.
+      const q = c.req.query("query")?.trim().slice(0, 200) || undefined
+      const tag = c.req.query("tag")?.trim() || undefined
+      const collectionId = c.req.query("collection")?.trim() || undefined
+      const favOnly = c.req.query("favorite") === "true"
+      // ?author=<github login> narrows to artifacts whose current author is that login.
+      const author = c.req.query("author")?.trim().slice(0, 100) || undefined
 
-    const favIds = me ? await meta.listUserFavoriteIds(me.id) : []
-    const favorites = new Set(favIds)
-    // tag / collection / favorite each narrow to an id set; intersect when combined.
-    let ids: string[] | undefined
-    const narrow = (next: string[]) => {
-      ids = ids ? ids.filter((id) => next.includes(id)) : next
-    }
-    // scope=shared → artifacts explicitly shared with me (a per-artifact membership),
-    // which can live in other workspaces. Drives the home's "Shared with you" section.
-    const shared = c.req.query("scope") === "shared"
-    if (shared) {
-      if (!me) return c.json({ artifacts: [], next_cursor: null })
-      narrow(await meta.artifactIdsSharedWith(me.id))
-    }
-    // scope=following → artifacts in the active workspace whose current author or repo
-    // path matches one of my follows (authors + path prefixes). The activity feed.
-    const following = c.req.query("scope") === "following"
-    if (following) {
-      if (!me) return c.json({ artifacts: [], next_cursor: null })
-      narrow(await meta.followedArtifactIds(me.id, await activeWorkspace(c)))
-    }
-    // scope=needs_feedback → artifacts in the active workspace with an open thread you're
-    // tagged in or have commented on. Drives the home's "Needs your feedback" section.
-    const needsFeedback = c.req.query("scope") === "needs_feedback"
-    if (needsFeedback) {
-      if (!me) return c.json({ artifacts: [], next_cursor: null })
-      narrow(await meta.artifactIdsNeedingFeedback(me.id, await activeWorkspace(c)))
-    }
-    // scope=unlisted → the caller's own unlisted drafts in this workspace: the
-    // library's Unlisted filter. Ordinary listings hide unlisted entirely.
-    const unlistedScope = c.req.query("scope") === "unlisted"
-    if (tag) narrow(await meta.artifactIdsByTag(tag))
-    if (favOnly) narrow(favIds)
+      const favIds = me ? await meta.listUserFavoriteIds(me.id) : []
+      const favorites = new Set(favIds)
+      // tag / collection / favorite each narrow to an id set; intersect when combined.
+      let ids: string[] | undefined
+      const narrow = (next: string[]) => {
+        ids = ids ? ids.filter((id) => next.includes(id)) : next
+      }
+      // scope=shared → artifacts explicitly shared with me (a per-artifact membership),
+      // which can live in other workspaces. Drives the home's "Shared with you" section.
+      const shared = c.req.query("scope") === "shared"
+      if (shared) {
+        if (!me) return c.json({ artifacts: [], next_cursor: null })
+        narrow(await meta.artifactIdsSharedWith(me.id))
+      }
+      // scope=following → artifacts in the active workspace whose current author or repo
+      // path matches one of my follows (authors + path prefixes). The activity feed.
+      const following = c.req.query("scope") === "following"
+      if (following) {
+        if (!me) return c.json({ artifacts: [], next_cursor: null })
+        narrow(await meta.followedArtifactIds(me.id, await activeWorkspace(c)))
+      }
+      // scope=needs_feedback → artifacts in the active workspace with an open thread you're
+      // tagged in or have commented on. Drives the home's "Needs your feedback" section.
+      const needsFeedback = c.req.query("scope") === "needs_feedback"
+      if (needsFeedback) {
+        if (!me) return c.json({ artifacts: [], next_cursor: null })
+        narrow(await meta.artifactIdsNeedingFeedback(me.id, await activeWorkspace(c)))
+      }
+      // scope=unlisted → the caller's own unlisted drafts in this workspace: the
+      // library's Unlisted filter. Ordinary listings hide unlisted entirely.
+      const unlistedScope = c.req.query("scope") === "unlisted"
+      if (tag) narrow(await meta.artifactIdsByTag(tag))
+      if (favOnly) narrow(favIds)
 
-    // A collection's artifacts live in the COLLECTION's workspace, not necessarily
-    // your active one — so scope the listing to the collection's org (gated by
-    // access), or a direct/cold link to a collection in another workspace reads as
-    // empty. Unknown collection ⇒ nothing.
-    let listOrg = await activeWorkspace(c)
-    let collectionAccess = false
-    // Carry the collection's title so the client can label the view even when the
-    // collection lives in another workspace (it's absent from the local sidebar list).
-    let collectionInfo: { id: string; title: string } | undefined
-    if (collectionId) {
-      const col = await meta.getCollection(collectionId)
-      if (!col) return c.json({ artifacts: [], next_cursor: null })
-      // Scope to the collection via a JOIN in listArtifacts (below), NOT by expanding
-      // its members into an id IN(): a large collection (hundreds of items) would blow
-      // D1's 100-bound-parameter cap and 500 the whole listing.
-      listOrg = col.org_id
-      collectionInfo = { id: col.id, title: col.title }
-      collectionAccess = (await isMember(c, col.org_id)) || (await collectionRole(c, col)) !== null
-    }
-    // Author filter narrows to artifacts last changed by a GitHub login, scoped to the
-    // listing's workspace (after collection scope has settled listOrg). Mirrors ?tag=.
-    if (author) narrow(await meta.artifactIdsByAuthor(listOrg, author))
-    if (ids && ids.length === 0) return c.json({ artifacts: [], next_cursor: null })
+      // A collection's artifacts live in the COLLECTION's workspace, not necessarily
+      // your active one — so scope the listing to the collection's org (gated by
+      // access), or a direct/cold link to a collection in another workspace reads as
+      // empty. Unknown collection ⇒ nothing.
+      let listOrg = await activeWorkspace(c)
+      let collectionAccess = false
+      // Carry the collection's title so the client can label the view even when the
+      // collection lives in another workspace (it's absent from the local sidebar list).
+      let collectionInfo: { id: string; title: string } | undefined
+      if (collectionId) {
+        const col = await meta.getCollection(collectionId)
+        if (!col) return c.json({ artifacts: [], next_cursor: null })
+        // Scope to the collection via a JOIN in listArtifacts (below), NOT by expanding
+        // its members into an id IN(): a large collection (hundreds of items) would blow
+        // D1's 100-bound-parameter cap and 500 the whole listing.
+        listOrg = col.org_id
+        collectionInfo = { id: col.id, title: col.title }
+        collectionAccess =
+          (await isMember(c, col.org_id)) || (await collectionRole(c, col)) !== null
+      }
+      // Author filter narrows to artifacts last changed by a GitHub login, scoped to the
+      // listing's workspace (after collection scope has settled listOrg). Mirrors ?tag=.
+      if (author) narrow(await meta.artifactIdsByAuthor(listOrg, author))
+      if (ids && ids.length === 0) return c.json({ artifacts: [], next_cursor: null })
 
-    // The caller's baseline standing in the listing's workspace — reused for the
-    // public-only clamp below and the per-row `my_role` (which needs the ROLE, so
-    // the boolean isMember helper doesn't fit). A user's standing is their
-    // membership row; an agent's is its registered role, valid only in its home
-    // workspace (the same scoping actorFor applies).
-    const isOperator = isToken(c)
-    const baselineRole = me
-      ? ((await meta.getMembership(listOrg, me.id))?.role ?? null)
-      : agent && agent.org_id === listOrg
-        ? agent.role
-        : null
-    // A listing only shows non-public artifacts to a MEMBER of that workspace (or the
-    // operator token). Anyone else — a non-member user, a foreign-workspace agent —
-    // sees public artifacts only, so org/link titles never leak via the list or ?query=.
-    // For a collection, collection access (member/creator/share) also unlocks it.
-    const publicOnly = collectionId ? !collectionAccess : !(isOperator || baselineRole !== null)
-    // The Unlisted filter is a members-only view of their OWN drafts — a caller
-    // with no standing here (or no member rows to match) has none by definition.
-    if (unlistedScope && (publicOnly || !memberKey))
-      return c.json({ artifacts: [], next_cursor: null })
-    const rows = await meta.listArtifacts({
-      limit: limit + 1,
-      cursor,
-      q,
-      ids,
-      collectionId,
-      // `shared` and `following` both resolve to an id set that ALREADY encodes the
-      // correct cross-workspace + visibility scope (an explicit share; or a followed
-      // author/path in this workspace + a followed person's public work anywhere). So
-      // drop the workspace + public-only restrictions, which would otherwise re-clip the
-      // feed back to the active workspace and strip a followed person's public work.
-      orgId: shared || following ? undefined : listOrg,
-      publicOnly: shared || following ? false : publicOnly,
-      // Private artifacts appear only for their explicit members; the operator
-      // token sees everything (viewerId omitted).
-      viewerId: isOperator ? undefined : (memberKey ?? undefined),
-      // Agents get their registrant's unlisted drafts folded back in (an agent
-      // must always find the work it published — the stdio shim's list rides
-      // this route). Shared-with-you and needs-feedback are deliberate human
-      // signals (an explicit share, a thread you're in), so a member's unlisted
-      // docs surface there too. Ordinary listings stay clean — the Unlisted
-      // feed is the finder.
-      unlisted: unlistedScope ? "only" : agent || shared || needsFeedback ? "include" : undefined,
-    })
-    const hasMore = rows.length > limit
-    const page = hasMore ? rows.slice(0, limit) : rows
-    const last = page[page.length - 1]
-    const next_cursor = hasMore && last ? `${last.created_at}|${last.id}` : null
+      // The caller's baseline standing in the listing's workspace — reused for the
+      // public-only clamp below and the per-row `my_role` (which needs the ROLE, so
+      // the boolean isMember helper doesn't fit). A user's standing is their
+      // membership row; an agent's is its registered role, valid only in its home
+      // workspace (the same scoping actorFor applies).
+      const isOperator = isToken(c)
+      const baselineRole = me
+        ? ((await meta.getMembership(listOrg, me.id))?.role ?? null)
+        : agent && agent.org_id === listOrg
+          ? agent.role
+          : null
+      // A listing only shows non-public artifacts to a MEMBER of that workspace (or the
+      // operator token). Anyone else — a non-member user, a foreign-workspace agent —
+      // sees public artifacts only, so org/link titles never leak via the list or ?query=.
+      // For a collection, collection access (member/creator/share) also unlocks it.
+      const publicOnly = collectionId ? !collectionAccess : !(isOperator || baselineRole !== null)
+      // The Unlisted filter is a members-only view of their OWN drafts — a caller
+      // with no standing here (or no member rows to match) has none by definition.
+      if (unlistedScope && (publicOnly || !memberKey))
+        return c.json({ artifacts: [], next_cursor: null })
+      const rows = await meta.listArtifacts({
+        limit: limit + 1,
+        cursor,
+        q,
+        ids,
+        collectionId,
+        // `shared` and `following` both resolve to an id set that ALREADY encodes the
+        // correct cross-workspace + visibility scope (an explicit share; or a followed
+        // author/path in this workspace + a followed person's public work anywhere). So
+        // drop the workspace + public-only restrictions, which would otherwise re-clip the
+        // feed back to the active workspace and strip a followed person's public work.
+        orgId: shared || following ? undefined : listOrg,
+        publicOnly: shared || following ? false : publicOnly,
+        // Private artifacts appear only for their explicit members; the operator
+        // token sees everything (viewerId omitted).
+        viewerId: isOperator ? undefined : (memberKey ?? undefined),
+        // Agents get their registrant's unlisted drafts folded back in (an agent
+        // must always find the work it published — the stdio shim's list rides
+        // this route). Shared-with-you and needs-feedback are deliberate human
+        // signals (an explicit share, a thread you're in), so a member's unlisted
+        // docs surface there too. Ordinary listings stay clean — the Unlisted
+        // feed is the finder.
+        unlisted: unlistedScope ? "only" : agent || shared || needsFeedback ? "include" : undefined,
+      })
+      const hasMore = rows.length > limit
+      const page = hasMore ? rows.slice(0, limit) : rows
+      const last = page[page.length - 1]
+      const next_cursor = hasMore && last ? `${last.created_at}|${last.id}` : null
 
-    const pageIds = page.map((a) => a.id)
-    const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
-    const tags = await meta.tagsForArtifacts(pageIds)
-    // Resolve the page's distinct author gh_ids to Derive handles in ONE batched query (no
-    // N+1) so each row can show "who last changed this" with a link to the Derive profile.
-    const handleByGhId = await resolveHandles(meta, [
-      ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
-    ])
-    // Per-artifact comment signals for the viewer (open-thread count + tagged/authored
-    // flags) — drives the inline comment badge and the "needs your feedback" featuring.
-    const feedback = me ? await meta.commentSignals(pageIds, me.id) : {}
-    // The viewer's per-artifact shares across the page, one query — folded into
-    // my_role below so shared and private rows gate their quick actions correctly.
-    // For a linked agent these are the registrant's rows, so the cap applies.
-    const shareRoles = memberKey ? await meta.artifactRolesFor(memberKey, pageIds) : {}
-    return c.json({
-      artifacts: page.map((a) => ({
-        ...toJson(deps.baseUrl, a, []),
-        views: counts[a.id] ?? 0,
-        tags: tags[a.id] ?? [],
-        favorite: favorites.has(a.id),
-        // Which actions the client may surface on the row (the card's quick-actions
-        // menu gates delete/tags on it). Workspace membership + per-artifact shares
-        // + the general-access floor; collection-share roles aren't folded in at
-        // list granularity, so the detail response's my_role stays authoritative.
-        my_role: isOperator
-          ? "owner"
-          : effectiveRole(
-              memberKey
-                ? {
-                    kind: "user",
-                    userId: memberKey,
-                    artifactRole:
-                      agent?.created_by != null
-                        ? capRole(shareRoles[a.id] ?? null, agent.role)
-                        : (shareRoles[a.id] ?? null),
-                    orgRole: a.org_id === listOrg ? baselineRole : null,
-                  }
-                : { kind: "anon" },
-              a.visibility,
-              a.general_role,
-            ),
-        // The current author as a resolved profile (name/login/avatar + Derive handle), so
-        // the list can render the last editor + filter by them.
-        author: authorProfile(a, handleByGhId),
-        // open_threads + mentions_me + i_participated (defaults for anon / no signals).
-        ...(feedback[a.id] ?? { open_threads: 0, mentions_me: false, i_participated: false }),
-      })),
-      next_cursor,
-      ...(collectionInfo ? { collection: collectionInfo } : {}),
-    })
-  })
+      const pageIds = page.map((a) => a.id)
+      const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
+      const tags = await meta.tagsForArtifacts(pageIds)
+      // Resolve the page's distinct author gh_ids to Derive handles in ONE batched query (no
+      // N+1) so each row can show "who last changed this" with a link to the Derive profile.
+      const handleByGhId = await resolveHandles(meta, [
+        ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
+      ])
+      // Per-artifact comment signals for the viewer (open-thread count + tagged/authored
+      // flags) — drives the inline comment badge and the "needs your feedback" featuring.
+      const feedback = me ? await meta.commentSignals(pageIds, me.id) : {}
+      // The viewer's per-artifact shares across the page, one query — folded into
+      // my_role below so shared and private rows gate their quick actions correctly.
+      // For a linked agent these are the registrant's rows, so the cap applies.
+      const shareRoles = memberKey ? await meta.artifactRolesFor(memberKey, pageIds) : {}
+      return c.json({
+        artifacts: page.map((a) => ({
+          ...toJson(deps.baseUrl, a, []),
+          views: counts[a.id] ?? 0,
+          tags: tags[a.id] ?? [],
+          favorite: favorites.has(a.id),
+          // Which actions the client may surface on the row (the card's quick-actions
+          // menu gates delete/tags on it). Workspace membership + per-artifact shares
+          // + the general-access floor; collection-share roles aren't folded in at
+          // list granularity, so the detail response's my_role stays authoritative.
+          my_role: isOperator
+            ? "owner"
+            : effectiveRole(
+                memberKey
+                  ? {
+                      kind: "user",
+                      userId: memberKey,
+                      artifactRole:
+                        agent?.created_by != null
+                          ? capRole(shareRoles[a.id] ?? null, agent.role)
+                          : (shareRoles[a.id] ?? null),
+                      orgRole: a.org_id === listOrg ? baselineRole : null,
+                    }
+                  : { kind: "anon" },
+                a.visibility,
+                a.general_role,
+              ),
+          // The current author as a resolved profile (name/login/avatar + Derive handle), so
+          // the list can render the last editor + filter by them.
+          author: authorProfile(a, handleByGhId),
+          // open_threads + mentions_me + i_participated (defaults for anon / no signals).
+          ...(feedback[a.id] ?? { open_threads: 0, mentions_me: false, i_participated: false }),
+        })),
+        next_cursor,
+        ...(collectionInfo ? { collection: collectionInfo } : {}),
+      })
+    },
+  )
 
   // Browse summary for the sidebar: total artifacts, this user's favorite count,
   // and tag → count (so counts stay accurate independent of the current page).
-  app.get("/v1/tags", async (c) => {
-    const me = await currentUser(c)
-    if (!me && !isToken(c)) return fail(c, 401, "unauthenticated")
-    const org = await activeWorkspace(c)
-    // The sidebar summary (workspace name, total artifact count, tag breakdown) is a
-    // member view. A non-member — including an anonymous caller in open mode — gets an
-    // empty summary with no workspace name, so it can't be used to enumerate a private
-    // workspace's name + size.
-    if (!(await isMember(c, org)))
-      return c.json({ total: 0, favorites: 0, unlisted: 0, tags: [], workspace: null })
-    const [total, tags, favIds, ws, unlisted] = await Promise.all([
-      meta.countArtifacts(org),
-      meta.tagCounts(org),
-      // Scope the favorites count to THIS workspace's live artifacts — the favorites
-      // view is workspace-scoped, so a favorite of an artifact in another workspace
-      // must not inflate the count (otherwise "Favorites · 1" with an empty list).
-      me ? meta.listUserFavoriteIds(me.id, org) : Promise.resolve([]),
-      meta.getWorkspace(org),
-      // The caller's own unlisted drafts — the Unlisted filter's badge. Zero hides
-      // the filter, so it only exists when there's something in it.
-      me ? meta.countUnlistedFor(org, me.id) : Promise.resolve(0),
-    ])
-    tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
-    return c.json({
-      total,
-      favorites: favIds.length,
-      unlisted,
-      tags,
-      workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
-    })
-  })
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/tags",
+      tags: ["Artifacts"],
+      summary: "Browse summary for the sidebar (totals + tag counts).",
+      responses: {
+        200: {
+          description:
+            "Total artifacts, the caller's favorite/unlisted counts, tag→count, and workspace name.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                total: z.number(),
+                favorites: z.number(),
+                unlisted: z.number(),
+                tags: z.array(z.object({ tag: z.string(), count: z.number() })),
+                workspace: z.string().nullable(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await currentUser(c)
+      if (!me && !isToken(c)) return bail(fail(c, 401, "unauthenticated"))
+      const org = await activeWorkspace(c)
+      // The sidebar summary (workspace name, total artifact count, tag breakdown) is a
+      // member view. A non-member — including an anonymous caller in open mode — gets an
+      // empty summary with no workspace name, so it can't be used to enumerate a private
+      // workspace's name + size.
+      if (!(await isMember(c, org)))
+        return c.json({ total: 0, favorites: 0, unlisted: 0, tags: [], workspace: null })
+      const [total, tags, favIds, ws, unlisted] = await Promise.all([
+        meta.countArtifacts(org),
+        meta.tagCounts(org),
+        // Scope the favorites count to THIS workspace's live artifacts — the favorites
+        // view is workspace-scoped, so a favorite of an artifact in another workspace
+        // must not inflate the count (otherwise "Favorites · 1" with an empty list).
+        me ? meta.listUserFavoriteIds(me.id, org) : Promise.resolve([]),
+        meta.getWorkspace(org),
+        // The caller's own unlisted drafts — the Unlisted filter's badge. Zero hides
+        // the filter, so it only exists when there's something in it.
+        me ? meta.countUnlistedFor(org, me.id) : Promise.resolve(0),
+      ])
+      tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+      return c.json({
+        total,
+        favorites: favIds.length,
+        unlisted,
+        tags,
+        workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
+      })
+    },
+  )
 
   // ---- Publish ----------------------------------------------------------
 
@@ -710,133 +759,215 @@ export const artifactRoutes = (ctx: AppContext) => {
   // authenticated reachers may comment; anonymous stays view-only regardless). Enabling
   // `password` needs a password (or keeps the existing one); any other visibility clears
   // the stored hash.
-  app.patch("/v1/artifacts/:shortId/visibility", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return fail(c, 404, "not found")
-    if (!(await authorize(c, "share", artifact))) return fail(c, 403, "forbidden")
-    const b = await readJson(
-      c,
-      z.object({
-        visibility: z.string(),
-        password: z.string().optional(),
-        generalRole: z.enum(["viewer", "commenter"]).optional(),
-      }),
-    )
-    if (b instanceof Response) return b
-    const visibility = visibilityOf(b.visibility)
-    if (!visibility) return fail(c, 400, "invalid visibility")
-    // Turning unlisted without an explicit choice seeds the workspace's default
-    // link permission (view or comment); the dialog's per-doc override still wins.
-    const generalRole =
-      b.generalRole ??
-      (visibility === "unlisted"
-        ? (await meta.getOrgSettings(artifact.org_id)).defaultUnlistedRole
-        : "viewer")
-    let passwordHash: string | null = null
-    if (visibility === "password") {
-      if (b.password) passwordHash = hashPassword(b.password)
-      else if (artifact.visibility === "password" && artifact.password_hash)
-        passwordHash = artifact.password_hash
-      else return fail(c, 400, "a password is required for password visibility")
-    }
-    await meta.setVisibility(artifact.id, visibility, passwordHash, generalRole)
-    return c.json({ visibility, general_role: generalRole })
-  })
+  app.openapi(
+    createRoute({
+      method: "patch",
+      path: "/v1/artifacts/{shortId}/visibility",
+      tags: ["Artifacts"],
+      summary: "Change an artifact's general access (visibility + general-access role).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        200: {
+          description: "The new visibility + general-access role.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                visibility: z.string(),
+                general_role: z.enum(["viewer", "commenter"]),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact) return bail(fail(c, 404, "not found"))
+      if (!(await authorize(c, "share", artifact))) return bail(fail(c, 403, "forbidden"))
+      const b = await readJson(
+        c,
+        z.object({
+          visibility: z.string(),
+          password: z.string().optional(),
+          generalRole: z.enum(["viewer", "commenter"]).optional(),
+        }),
+      )
+      if (b instanceof Response) return bail(b)
+      const visibility = visibilityOf(b.visibility)
+      if (!visibility) return bail(fail(c, 400, "invalid visibility"))
+      // Turning unlisted without an explicit choice seeds the workspace's default
+      // link permission (view or comment); the dialog's per-doc override still wins.
+      const generalRole =
+        b.generalRole ??
+        (visibility === "unlisted"
+          ? (await meta.getOrgSettings(artifact.org_id)).defaultUnlistedRole
+          : "viewer")
+      let passwordHash: string | null = null
+      if (visibility === "password") {
+        if (b.password) passwordHash = hashPassword(b.password)
+        else if (artifact.visibility === "password" && artifact.password_hash)
+          passwordHash = artifact.password_hash
+        else return bail(fail(c, 400, "a password is required for password visibility"))
+      }
+      await meta.setVisibility(artifact.id, visibility, passwordHash, generalRole)
+      return c.json({ visibility, general_role: generalRole })
+    },
+  )
 
   // Lock / unlock an artifact. Any editor (publish rights) can flip it. While
   // locked, direct publishes are rejected (handlePublish) so changes must go through
   // the proposal → approval flow; the web UI routes editors to "propose".
-  app.patch("/v1/artifacts/:shortId/locked", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return fail(c, 404, "not found")
-    if (!(await authorize(c, "publish", artifact))) return fail(c, 403, "forbidden")
-    const b = await readJson(c, z.object({ locked: z.boolean() }))
-    if (b instanceof Response) return b
-    await meta.setLocked(artifact.id, b.locked ? 1 : 0)
-    return c.json({ locked: b.locked })
-  })
+  app.openapi(
+    createRoute({
+      method: "patch",
+      path: "/v1/artifacts/{shortId}/locked",
+      tags: ["Artifacts"],
+      summary: "Lock or unlock an artifact (locked ⇒ changes go through review).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        200: {
+          description: "The new locked state.",
+          content: { "application/json": { schema: z.object({ locked: z.boolean() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact) return bail(fail(c, 404, "not found"))
+      if (!(await authorize(c, "publish", artifact))) return bail(fail(c, 403, "forbidden"))
+      const b = await readJson(c, z.object({ locked: z.boolean() }))
+      if (b instanceof Response) return bail(b)
+      await meta.setLocked(artifact.id, b.locked ? 1 : 0)
+      return c.json({ locked: b.locked })
+    },
+  )
 
   // Permanently delete an artifact and all its dependents (versions, comments,
   // proposals, memberships, etc.). Owner-only: gated by the `manage` action.
-  app.delete("/v1/artifacts/:shortId", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return fail(c, 404, "not found")
-    if (!(await authorize(c, "manage", artifact))) return fail(c, 403, "forbidden")
-    await meta.deleteArtifact(artifact.id, artifact.org_id)
-    return c.body(null, 204)
-  })
+  app.openapi(
+    createRoute({
+      method: "delete",
+      path: "/v1/artifacts/{shortId}",
+      tags: ["Artifacts"],
+      summary: "Permanently delete an artifact and all its dependents (owner only).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: { 204: { description: "The artifact was deleted." } },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact) return bail(fail(c, 404, "not found"))
+      if (!(await authorize(c, "manage", artifact))) return bail(fail(c, 403, "forbidden"))
+      await meta.deleteArtifact(artifact.id, artifact.org_id)
+      return c.body(null, 204)
+    },
+  )
 
   // Unlock a `password` artifact: verify the password and drop a cookie whose
   // value is derived from the server-only hash (so it can't be forged and dies if
   // the password changes). Brute force is bounded by a dedicated tight limiter
   // (10 attempts/min per caller), well below the lenient global /v1 write cap.
   // authz-exempt: the password itself is the gate; any visitor may attempt unlock.
-  app.post("/v1/artifacts/:shortId/unlock", async (c) => {
-    const over = await limited(c, unlockLimiter)
-    if (over) return over
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (artifact?.visibility !== "password" || !artifact.password_hash)
-      return fail(c, 404, "not found")
-    const b = await readJson(c, z.object({ password: z.string().min(1) }))
-    if (b instanceof Response) return b
-    if (!verifyPassword(b.password, artifact.password_hash)) return fail(c, 401, "wrong password")
-    setCookie(
-      c,
-      unlockCookie(artifact.short_id),
-      unlockToken(artifact.id, artifact.password_hash),
-      {
-        path: "/",
-        maxAge: 60 * 60 * 24 * 30,
-        httpOnly: true,
-        sameSite: deps.crossSite ? "None" : "Lax",
-        secure: deps.crossSite || new URL(deps.baseUrl).protocol === "https:",
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/artifacts/{shortId}/unlock",
+      tags: ["Artifacts"],
+      summary: "Unlock a password-protected artifact (drops an unlock cookie).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        200: {
+          description: "Unlocked.",
+          content: { "application/json": { schema: z.object({ ok: z.boolean() }) } },
+        },
       },
-    )
-    return c.json({ ok: true })
-  })
+    }),
+    async (c) => {
+      const over = await limited(c, unlockLimiter)
+      if (over) return bail(over)
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (artifact?.visibility !== "password" || !artifact.password_hash)
+        return bail(fail(c, 404, "not found"))
+      const b = await readJson(c, z.object({ password: z.string().min(1) }))
+      if (b instanceof Response) return bail(b)
+      if (!verifyPassword(b.password, artifact.password_hash))
+        return bail(fail(c, 401, "wrong password"))
+      setCookie(
+        c,
+        unlockCookie(artifact.short_id),
+        unlockToken(artifact.id, artifact.password_hash),
+        {
+          path: "/",
+          maxAge: 60 * 60 * 24 * 30,
+          httpOnly: true,
+          sameSite: deps.crossSite ? "None" : "Lax",
+          secure: deps.crossSite || new URL(deps.baseUrl).protocol === "https:",
+        },
+      )
+      return c.json({ ok: true })
+    },
+  )
 
   // Restore a past version: re-point a new revision at its stored blob (no
   // re-upload, works for files and bundles). History is never rewritten.
-  app.post("/v1/artifacts/:shortId/restore", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact) return fail(c, 404, "not found")
-    if (!(await authorize(c, "publish", artifact))) return fail(c, 403, "forbidden")
-    const body = await readJson(c, z.object({ version: z.number().int("version required") }))
-    if (body instanceof Response) return body
-    const src = await meta.getVersion(artifact.id, body.version)
-    if (!src) return fail(c, 404, `no version ${body.version}`)
-    const me = await currentUser(c)
-    const version = await meta.addVersion(artifact.id, {
-      id: newId("v"),
-      blob_key: src.blob_key,
-      content_type: src.content_type,
-      // Same blob as the restored version — carry its size so the storage meter
-      // stays consistent (and dedup'd, since it reuses the same blob_key).
-      size_bytes: src.size_bytes,
-      author: me ? (me.name ?? me.username ?? me.email) : "anonymous",
-      author_id: me?.id ?? null,
-      message: `Restored v${src.n}`,
-      name: null,
-    })
-    await notify(artifact, "version.published", {
-      version: version.n,
-      message: version.message,
-      author: version.author,
-    })
-    bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
-    // Restoring an old blob is a content change too — re-anchor threads against it.
-    await publishSweepEvents(meta, blobs, bus, artifact.id, version)
-    const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord
-    const versions = await meta.listVersions(artifact.id)
-    return c.json(
-      {
-        ...toJson(deps.baseUrl, fresh, versions),
-        sessions: groupSessions(versions, versionWindowMs),
-        published: version.n,
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/artifacts/{shortId}/restore",
+      tags: ["Artifacts"],
+      summary: "Restore a past version as a new revision (history is never rewritten).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        201: {
+          description: "The artifact after restore, plus the new version number.",
+          content: { "application/json": { schema: Artifact.extend({ published: z.number() }) } },
+        },
       },
-      201,
-    )
-  })
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact) return bail(fail(c, 404, "not found"))
+      if (!(await authorize(c, "publish", artifact))) return bail(fail(c, 403, "forbidden"))
+      const body = await readJson(c, z.object({ version: z.number().int("version required") }))
+      if (body instanceof Response) return bail(body)
+      const src = await meta.getVersion(artifact.id, body.version)
+      if (!src) return bail(fail(c, 404, `no version ${body.version}`))
+      const me = await currentUser(c)
+      const version = await meta.addVersion(artifact.id, {
+        id: newId("v"),
+        blob_key: src.blob_key,
+        content_type: src.content_type,
+        // Same blob as the restored version — carry its size so the storage meter
+        // stays consistent (and dedup'd, since it reuses the same blob_key).
+        size_bytes: src.size_bytes,
+        author: me ? (me.name ?? me.username ?? me.email) : "anonymous",
+        author_id: me?.id ?? null,
+        message: `Restored v${src.n}`,
+        name: null,
+      })
+      await notify(artifact, "version.published", {
+        version: version.n,
+        message: version.message,
+        author: version.author,
+      })
+      bus.publish(artifact.id, {
+        type: "version.published",
+        n: version.n,
+        message: version.message,
+      })
+      // Restoring an old blob is a content change too — re-anchor threads against it.
+      await publishSweepEvents(meta, blobs, bus, artifact.id, version)
+      const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord
+      const versions = await meta.listVersions(artifact.id)
+      return c.json(
+        {
+          ...toJson(deps.baseUrl, fresh, versions),
+          sessions: groupSessions(versions, versionWindowMs),
+          published: version.n,
+        },
+        201,
+      )
+    },
+  )
 
   // Source read-back for machines: returns an artifact's text content for any
   // version, as plain text (?v=N selects a version; defaults to current).
@@ -863,15 +994,29 @@ export const artifactRoutes = (ctx: AppContext) => {
   // Stateless (renders the caller's text, stores nothing) and signed-in only, so
   // it can't be used as an anonymous render farm. HTML drafts preview in the
   // browser, so this is markdown-only.
-  app.post("/v1/preview", async (c) => {
-    if (!(await actingUser(c))) return fail(c, 401, "unauthenticated")
-    const body = await readJson(
-      c,
-      z.object({ source: z.string().max(500_000), title: z.string().max(300).nullish() }),
-    )
-    if (body instanceof Response) return body
-    return c.json({ html: await renderMarkdown(body.source, body.title ?? null) })
-  })
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/preview",
+      tags: ["Artifacts"],
+      summary: "Render a markdown draft to the exact published HTML (stateless; signed-in only).",
+      responses: {
+        200: {
+          description: "The rendered HTML.",
+          content: { "application/json": { schema: z.object({ html: z.string() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      if (!(await actingUser(c))) return bail(fail(c, 401, "unauthenticated"))
+      const body = await readJson(
+        c,
+        z.object({ source: z.string().max(500_000), title: z.string().max(300).nullish() }),
+      )
+      if (body instanceof Response) return bail(body)
+      return c.json({ html: await renderMarkdown(body.source, body.title ?? null) })
+    },
+  )
 
   // Line diff between two versions. Defaults to (current-1 → current).
   // ?format=json returns the structured ops; otherwise unified-style text.

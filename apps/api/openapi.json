@@ -3042,6 +3042,117 @@
         }
       }
     },
+    "/v1/artifacts": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "List artifacts (keyset-paginated; ?query=/tag=/collection=/scope=/author=/favorite=).",
+        "responses": {
+          "200": {
+            "description": "A page of artifacts + next cursor (+ the collection when scoped to one).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "artifacts": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Artifact"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "collection": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "artifacts",
+                    "next_cursor"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tags": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Browse summary for the sidebar (totals + tag counts).",
+        "responses": {
+          "200": {
+            "description": "Total artifacts, the caller's favorite/unlisted counts, tag→count, and workspace name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "number"
+                    },
+                    "favorites": {
+                      "type": "number"
+                    },
+                    "unlisted": {
+                      "type": "number"
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "tag": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "tag",
+                          "count"
+                        ]
+                      }
+                    },
+                    "workspace": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "favorites",
+                    "unlisted",
+                    "tags",
+                    "workspace"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/artifacts/{shortId}": {
       "get": {
         "tags": [
@@ -3065,6 +3176,222 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Artifact"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Permanently delete an artifact and all its dependents (owner only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The artifact was deleted."
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/visibility": {
+      "patch": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Change an artifact's general access (visibility + general-access role).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new visibility + general-access role.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "visibility": {
+                      "type": "string"
+                    },
+                    "general_role": {
+                      "type": "string",
+                      "enum": [
+                        "viewer",
+                        "commenter"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "visibility",
+                    "general_role"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/locked": {
+      "patch": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Lock or unlock an artifact (locked ⇒ changes go through review).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new locked state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "locked": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "locked"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/unlock": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Unlock a password-protected artifact (drops an unlock cookie).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Unlocked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/restore": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Restore a past version as a new revision (history is never rewritten).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The artifact after restore, plus the new version number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Artifact"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "published": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "published"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/preview": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Render a markdown draft to the exact published HTML (stateless; signed-in only).",
+        "responses": {
+          "200": {
+            "description": "The rendered HTML.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "html": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "html"
+                  ]
                 }
               }
             }
