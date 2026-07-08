@@ -227,7 +227,7 @@ exact text is gone, the comment shows "text changed" rather than attaching to th
 |---|---|---|---|---|
 | Lite | Single container | SQLite | Local disk | In-process |
 | Node Basic | Container(s) | Postgres | S3/R2 | In-process |
-| Node Scale | Containers | Postgres | S3/R2 | Redis |
+| Node Scale | Containers | Postgres | S3/R2 | Per-instance |
 | Cloudflare Basic | Workers + DO | D1 | R2 | Durable Objects |
 | Cloudflare Scale | Workers + DO | Postgres | R2 | Durable Objects |
 
@@ -247,7 +247,7 @@ S3: `s3://<key>:<secret>@s3.<region>.amazonaws.com/<bucket>?region=<region>`
 
 ### Node Scale
 
-Add `REDIS_URL` for shared pub/sub backplane across multiple container instances (presence, SSE fan-out, caching, webhook drain).
+Run multiple stateless containers behind a load balancer for throughput. Realtime (SSE/presence) is per-instance and does not fan out across containers yet — for cross-instance realtime, use a Cloudflare tier (Durable Objects). A shared Node backplane (e.g. Redis) is planned but not yet built.
 
 ### Cloudflare Basic
 
@@ -277,9 +277,7 @@ Same as Cloudflare Basic but with `wrangler secret put DATABASE_URL` (Postgres).
 | `PORT` | 8080 | Listen port (Node) |
 | `DATA_DIR` | /data | SQLite + blob dir (Lite) |
 | `DATABASE_URL` | (SQLite) | Postgres connection |
-| `OBJECT_STORE_URL` | (local disk) | S3/R2 blob URL |
-| `REDIS_URL` | (none) | Redis for pub/sub, caching, presence (Node Scale) |
-| `DERIVE_WEB_ORIGIN` | (none) | SPA origin for CORS (split CDN deploy) |
+| `OBJECT_STORE_URL` | (local disk) | S3/R2 blob URL || `DERIVE_WEB_ORIGIN` | (none) | SPA origin for CORS (split CDN deploy) |
 | `DERIVE_CROSS_SITE` | false | SameSite=None cookies for cross-origin SPA |
 | `DERIVE_TOKEN` | (none) | Static bearer for CI/agents |
 | `DERIVE_WEB_DIR` | (auto) | Override bundled SPA path |

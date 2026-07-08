@@ -45,7 +45,7 @@ export const realtimeRoutes = (ctx: AppContext) => {
     if (!artifact || !(await authorize(c, "read", artifact))) return c.text("not found", 404)
     const viewer = await deriveViewer(c, artifact)
     // A Durable Object backplane owns the stream itself (edge) AND tracks presence off
-    // its connect/disconnect lifecycle; relay adapters (in-process, Redis) return null,
+    // its connect/disconnect lifecycle; relay adapters (the in-process bus) return null,
     // so we hold the SSE here and drive presence around it.
     const direct = backplane.handleStream?.(c, artifact.id, viewer)
     if (direct) return direct
