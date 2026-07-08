@@ -92,7 +92,8 @@ export function makePrPreview({ meta, blobs, baseUrl, launch }: PrPreviewDeps) {
       // A malformed map → nothing to tombstone; still drop the source + collection.
     }
     const removedAt = new Date().toISOString()
-    for (const id of artifactIds) await meta.setArtifactRemoved(id, removedAt)
+    // Tombstone every managed artifact in one update, not a setArtifactRemoved per id.
+    await meta.setArtifactsRemoved(artifactIds, removedAt)
     await meta.deleteRepoSource(preview.id, preview.org_id)
     await meta.deleteCollection(preview.collection_id)
   }

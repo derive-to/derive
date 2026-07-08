@@ -299,6 +299,10 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select().from(artifact).where(eq(artifact.id, id))
     return rows[0] ?? null
   }
+  async getArtifactsByIds(ids: string[]): Promise<ArtifactRecord[]> {
+    if (ids.length === 0) return []
+    return this.db.select().from(artifact).where(inArray(artifact.id, ids))
+  }
 
   async siblingsBySourcePaths(
     orgId: string,
@@ -721,6 +725,10 @@ export class PgMetaStore implements MetaStore {
   async enqueueDelivery(d: NewDelivery): Promise<void> {
     await this.db.insert(webhookDelivery).values(d)
   }
+  async enqueueDeliveries(rows: NewDelivery[]): Promise<void> {
+    if (rows.length === 0) return
+    await this.db.insert(webhookDelivery).values(rows)
+  }
   claimDueDeliveries(now: string, limit: number, leaseUntil: string): Promise<DeliveryRecord[]> {
     // FOR UPDATE SKIP LOCKED so concurrent instances each grab a disjoint set;
     // the UPDATE then leases the rows (next_attempt_at -> future) + counts an
@@ -798,6 +806,10 @@ export class PgMetaStore implements MetaStore {
   }
   listMemberships(orgId: string): Promise<MembershipRecord[]> {
     return this.db.select().from(membership).where(eq(membership.org_id, orgId))
+  }
+  async listMembershipsForOrgs(orgIds: string[]): Promise<MembershipRecord[]> {
+    if (orgIds.length === 0) return []
+    return this.db.select().from(membership).where(inArray(membership.org_id, orgIds))
   }
   async countMemberships(orgId: string): Promise<number> {
     const rows = await this.db
@@ -1211,6 +1223,10 @@ export class PgMetaStore implements MetaStore {
   async getCollection(id: string): Promise<CollectionRecord | null> {
     const rows = await this.db.select().from(collection).where(eq(collection.id, id))
     return rows[0] ?? null
+  }
+  async getCollections(ids: string[]): Promise<CollectionRecord[]> {
+    if (ids.length === 0) return []
+    return this.db.select().from(collection).where(inArray(collection.id, ids))
   }
   async updateCollection(id: string, fields: { title?: string }): Promise<CollectionRecord | null> {
     if (fields.title === undefined) return this.getCollection(id)
@@ -1688,6 +1704,14 @@ export class PgMetaStore implements MetaStore {
       .where(eq(sessionMessage.session_id, sessionId))
       .orderBy(asc(sessionMessage.created_at))
   }
+  async listSessionMessagesFor(sessionIds: string[]): Promise<SessionMessageRecord[]> {
+    if (sessionIds.length === 0) return []
+    return this.db
+      .select()
+      .from(sessionMessage)
+      .where(inArray(sessionMessage.session_id, sessionIds))
+      .orderBy(asc(sessionMessage.created_at))
+  }
 
   // ---- User directory (Better Auth's "user" table; raw, may be absent) ---
   async findUserByEmail(email: string): Promise<UserDir | null> {
@@ -1877,6 +1901,10 @@ export class PgMetaStore implements MetaStore {
   async createNotification(n: NewNotification): Promise<void> {
     await this.db.insert(notification).values(n)
   }
+  async createNotifications(rows: NewNotification[]): Promise<void> {
+    if (rows.length === 0) return
+    await this.db.insert(notification).values(rows)
+  }
   listNotifications(userId: string, limit: number): Promise<NotificationRecord[]> {
     return this.db
       .select()
@@ -1979,23 +2007,34 @@ export class PgMetaStore implements MetaStore {
       return false
     }
   }
-  async setOAuthClientWorkspace(userId: string, clientId: string, orgId: string): Promise<void> {
+  // Replace the whole granted-workspace SET for (user, client). Empty array clears
+  // it → the grant reverts to "all workspaces". See schema.ts for the model.
+  async setOAuthClientWorkspaces(
+    userId: string,
+    clientId: string,
+    orgIds: string[],
+  ): Promise<void> {
     await this.db
-      .insert(oauthClientWorkspace)
-      .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
-      .onConflictDoUpdate({
-        target: [oauthClientWorkspace.user_id, oauthClientWorkspace.client_id],
-        set: { org_id: orgId },
-      })
+      .delete(oauthClientWorkspace)
+      .where(
+        and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
+      )
+    for (const orgId of orgIds) {
+      await this.db
+        .insert(oauthClientWorkspace)
+        .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
+        .onConflictDoNothing()
+    }
   }
-  async getOAuthClientWorkspace(userId: string, clientId: string): Promise<string | null> {
+  // The grant's scoped workspaces. Empty array = "all workspaces" (unscoped).
+  async getOAuthClientWorkspaces(userId: string, clientId: string): Promise<string[]> {
     const rows = await this.db
       .select({ org_id: oauthClientWorkspace.org_id })
       .from(oauthClientWorkspace)
       .where(
         and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
       )
-    return rows[0]?.org_id ?? null
+    return rows.map((r) => r.org_id)
   }
   async pruneStaleOAuthClients(cutoffIso: string): Promise<number> {
     try {
@@ -2180,6 +2219,10 @@ export class PgMetaStore implements MetaStore {
   }
   async setArtifactRemoved(id: string, removedAt: string | null): Promise<void> {
     await this.db.update(artifact).set({ removed_at: removedAt }).where(eq(artifact.id, id))
+  }
+  async setArtifactsRemoved(ids: string[], removedAt: string | null): Promise<void> {
+    if (ids.length === 0) return
+    await this.db.update(artifact).set({ removed_at: removedAt }).where(inArray(artifact.id, ids))
   }
   async setArtifactTitle(id: string, title: string): Promise<void> {
     await this.db.update(artifact).set({ title }).where(eq(artifact.id, id))

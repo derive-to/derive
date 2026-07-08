@@ -3,6 +3,7 @@ import {
   anchorContentFor,
   type CommentRecord,
   isAnchored,
+  type NewNotification,
   newId,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
@@ -96,27 +97,25 @@ export const commentRoutes = (ctx: AppContext) => {
     ])
     const preview = previewOf(cm.body_md)
     const notified: string[] = []
+    // Collect the human-mention bell rows so the whole fan-out is ONE bulk insert; agent
+    // mentions land in their own table (a pull inbox), still one row each.
+    const notifRows: NewNotification[] = []
     for (const m of mentions) {
       if (m.id === actorId) continue
       if (real.has(m.id) && collaborators.has(m.id)) {
-        const row = {
+        notifRows.push({
           id: newId("n"),
           user_id: m.id,
           actor: cm.author,
-          kind: "mention" as const,
+          kind: "mention",
           artifact_id: a.id,
           artifact_short_id: a.short_id,
           artifact_title: a.title,
           thread_id: cm.thread_id,
           comment_id: cm.id,
           preview,
-        }
-        await meta.createNotification(row)
-        notified.push(m.name)
-        bus.publish(`u:${m.id}`, {
-          type: "notification",
-          notification: { ...row, read: 0, created_at: new Date().toISOString() },
         })
+        notified.push(m.name)
       } else if (agentIds.has(m.id)) {
         await meta.createAgentMention({
           id: newId("amn"),
@@ -131,6 +130,12 @@ export const commentRoutes = (ctx: AppContext) => {
         notified.push(m.name)
       }
     }
+    await meta.createNotifications(notifRows)
+    for (const row of notifRows)
+      bus.publish(`u:${row.user_id}`, {
+        type: "notification",
+        notification: { ...row, read: 0, created_at: new Date().toISOString() },
+      })
     return notified
   }
 

@@ -4415,7 +4415,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Bind an OAuth client's grants to a workspace (consent screen). */
+        /** Scope an OAuth client's grants to a set of workspaces (consent screen). */
         post: {
             parameters: {
                 query?: never;
@@ -4425,7 +4425,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The binding was saved. */
+                /** @description The workspace scope was saved. */
                 200: {
                     headers: {
                         [name: string]: unknown;

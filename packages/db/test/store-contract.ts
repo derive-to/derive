@@ -1177,6 +1177,108 @@ export function runStoreContract(
       await store.markNotificationsRead("amy", "all")
       expect(await store.unreadNotificationCount("amy")).toBe(0)
     })
+
+    it("createNotifications inserts a whole fan-out in one call (empty ⇒ no-op)", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const base = {
+        actor: "bob",
+        kind: "publish" as const,
+        artifact_id: a.id,
+        artifact_short_id: a.short_id,
+        artifact_title: "Doc",
+        thread_id: "",
+        comment_id: "",
+        preview: "shipped",
+      }
+      await store.createNotifications([]) // no-op, no throw
+      await store.createNotifications([
+        { id: uuid(), user_id: "cara", ...base },
+        { id: uuid(), user_id: "dave", ...base },
+        { id: uuid(), user_id: "cara", ...base },
+      ])
+      expect(await store.unreadNotificationCount("cara")).toBe(2)
+      expect(await store.unreadNotificationCount("dave")).toBe(1)
+    })
+  })
+
+  describe(`${label}: batched reads (no N+1)`, () => {
+    it("getArtifactsByIds / getCollections load a set in one call (empty ⇒ [])", async () => {
+      const a1 = await store.createArtifact(newArtifact({ title: "One" }))
+      const a2 = await store.createArtifact(newArtifact({ title: "Two" }))
+      expect(await store.getArtifactsByIds([])).toEqual([])
+      const arts = await store.getArtifactsByIds([a1.id, a2.id, "missing"])
+      expect(new Set(arts.map((a) => a.id))).toEqual(new Set([a1.id, a2.id]))
+
+      const c1 = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "C1",
+        created_by: "amy",
+      })
+      const c2 = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "C2",
+        created_by: "amy",
+      })
+      expect(await store.getCollections([])).toEqual([])
+      const cols = await store.getCollections([c1.id, c2.id])
+      expect(new Set(cols.map((c) => c.title))).toEqual(new Set(["C1", "C2"]))
+    })
+
+    it("listMembershipsForOrgs returns memberships across orgs (empty ⇒ [])", async () => {
+      const orgA = `org_${uuid()}`
+      const orgB = `org_${uuid()}`
+      await store.setWorkspace(orgA, "A")
+      await store.setWorkspace(orgB, "B")
+      await store.setMembership({ id: uuid(), org_id: orgA, user_id: "amy", role: "owner" })
+      await store.setMembership({ id: uuid(), org_id: orgB, user_id: "amy", role: "editor" })
+      await store.setMembership({ id: uuid(), org_id: orgB, user_id: "bob", role: "viewer" })
+      expect(await store.listMembershipsForOrgs([])).toEqual([])
+      const rows = await store.listMembershipsForOrgs([orgA, orgB])
+      expect(rows.filter((m) => m.org_id === orgA)).toHaveLength(1)
+      expect(rows.filter((m) => m.org_id === orgB)).toHaveLength(2)
+    })
+
+    it("setArtifactsRemoved tombstones many artifacts in one update (empty ⇒ no-op)", async () => {
+      const a1 = await store.createArtifact(newArtifact())
+      const a2 = await store.createArtifact(newArtifact())
+      await store.setArtifactsRemoved([]) // no-op
+      expect((await store.getArtifactById(a1.id))?.removed_at ?? null).toBeNull()
+      await store.setArtifactsRemoved([a1.id, a2.id], "2026-01-01T00:00:00.000Z")
+      expect((await store.getArtifactById(a1.id))?.removed_at).toBe("2026-01-01T00:00:00.000Z")
+      expect((await store.getArtifactById(a2.id))?.removed_at).toBe("2026-01-01T00:00:00.000Z")
+    })
+
+    it("enqueueDeliveries inserts a whole subscriber fan-out in one call (empty ⇒ no-op)", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const hook = await store.createWebhook({
+        id: uuid(),
+        artifact_id: a.id,
+        org_id: ORG,
+        url: "https://example.test/hook",
+        secret: "s",
+        events: "*",
+        kind: "generic",
+      })
+      const row = (id: string) => ({
+        id,
+        webhook_id: hook.id,
+        url: hook.url,
+        secret: hook.secret,
+        kind: hook.kind,
+        event_type: "version.published",
+        payload: "{}",
+      })
+      await store.enqueueDeliveries([]) // no-op
+      await store.enqueueDeliveries([row(uuid()), row(uuid())])
+      const due = await store.claimDueDeliveries(
+        new Date(Date.now() + 60_000).toISOString(),
+        10,
+        new Date(Date.now() + 120_000).toISOString(),
+      )
+      expect(due.filter((d) => d.webhook_id === hook.id)).toHaveLength(2)
+    })
   })
 
   describe(`${label}: agents`, () => {
@@ -1302,6 +1404,24 @@ export function runStoreContract(
       const transcript = await store.listSessionMessages(s.id)
       expect(transcript.map((m) => m.author_kind)).toEqual(["asker", "agent", "asker"])
       expect(JSON.parse(transcript[1].meta ?? "{}").confidence).toBe(0.9)
+
+      // Batched form loads several sessions' transcripts in one call, oldest first, so a
+      // caller can group by session_id instead of a listSessionMessages per session.
+      const s2 = await store.createSession({
+        id: uuid(),
+        context_id: ctx.id,
+        org_id: ORG,
+        asker_id: "erin",
+        context_version: 1,
+      })
+      await store.addSessionMessage(
+        { id: uuid(), session_id: s2.id, author_kind: "asker", author_id: "erin", body_md: "hi" },
+        "open",
+      )
+      expect(await store.listSessionMessagesFor([])).toEqual([])
+      const both = await store.listSessionMessagesFor([s.id, s2.id])
+      expect(both.filter((m) => m.session_id === s.id)).toHaveLength(3)
+      expect(both.filter((m) => m.session_id === s2.id)).toHaveLength(1)
     })
 
     it("scopes session listings to one asker and orders the queue oldest first", async () => {

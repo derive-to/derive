@@ -6413,10 +6413,10 @@
         "tags": [
           "OAuth"
         ],
-        "summary": "Bind an OAuth client's grants to a workspace (consent screen).",
+        "summary": "Scope an OAuth client's grants to a set of workspaces (consent screen).",
         "responses": {
           "200": {
-            "description": "The binding was saved.",
+            "description": "The workspace scope was saved.",
             "content": {
               "application/json": {
                 "schema": {

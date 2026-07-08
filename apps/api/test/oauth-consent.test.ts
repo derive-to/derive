@@ -48,9 +48,7 @@ describe("oauth consent screen", () => {
     expect(evil).toContain("&lt;script&gt;")
   })
 
-  it("never renders the workspace picker — every grant covers all workspaces for now", () => {
-    // Multiple workspaces, a clientId to bind to, and an explicit selection:
-    // exactly the shape that used to render a <select>. It shouldn't anymore.
+  it("renders the multi-select picker: All (default) + a checkbox per workspace, escaped", () => {
     const multi = consentHTML({
       clientName: "Claude Code",
       scopes: ["openid"],
@@ -60,35 +58,53 @@ describe("oauth consent screen", () => {
         { id: "w1", name: "Personal" },
         { id: "w2", name: "Acme <evil>" },
       ],
-      selected: "w2",
     })
-    expect(multi).not.toContain('<select id="ws"')
-    expect(multi).not.toContain("Default workspace")
-    // The rest of the card still renders normally around the absent picker.
-    expect(multi).toContain("Claude Code")
-    // CLIENT_ID is still threaded through — saveWorkspace() (dead now that
-    // #ws never exists) short-circuits on its own `!ws` guard rather than
-    // needing this page to know the picker is gone.
+    // Two modes + a checkbox per workspace.
+    expect(multi).toContain('name="wsmode" value="all"')
+    expect(multi).toContain('name="wsmode" value="some"')
+    expect(multi).toContain('name="ws" value="w1"')
+    expect(multi).toContain('name="ws" value="w2"')
+    // "All workspaces" is the default (checked) with no prior grant; the list starts hidden.
+    expect(multi).toMatch(/value="all"[^>]*checked/)
+    expect(multi).toContain('id="wslist" hidden')
+    // Hostile workspace name is escaped in the checkbox label.
+    expect(multi).not.toContain("Acme <evil>")
+    expect(multi).toContain("Acme &lt;evil&gt;")
+    // CLIENT_ID threaded through for saveWorkspace's array POST; 0-selected is blocked.
     expect(multi).toContain('var CLIENT_ID = "cli_1"')
+    expect(multi).toContain("Select at least one workspace")
+  })
 
-    // Single workspace, no clientId, no workspaces at all — every shape omits it.
+  it("preselects 'Only selected' with the prior grant's set on re-consent", () => {
+    const re = consentHTML({
+      clientName: "Claude Code",
+      scopes: ["openid"],
+      query: "",
+      clientId: "cli_1",
+      workspaces: [
+        { id: "w1", name: "Personal" },
+        { id: "w2", name: "Acme" },
+      ],
+      selected: ["w2"], // a prior grant scoped to just w2
+    })
+    expect(re).toMatch(/value="some"[^>]*checked/) // "some" mode preselected
+    expect(re).toMatch(/value="w2"[^>]*checked/) // w2 pre-ticked
+    expect(re).not.toContain('id="wslist" hidden') // list is visible
+  })
+
+  it("omits the picker for a single-workspace user or when no workspaces are passed", () => {
     const single = consentHTML({
       clientName: "Claude Code",
       scopes: ["openid"],
       query: "",
       clientId: "cli_1",
-      workspaces: [{ id: "w1", name: "Personal" }],
-      selected: "w1",
+      workspaces: [{ id: "w1", name: "Personal" }], // one workspace — nothing to choose
     })
-    expect(single).not.toContain('<select id="ws"')
-    const noClient = consentHTML({
-      clientName: "Claude Code",
-      scopes: ["openid"],
-      query: "",
-      workspaces: [{ id: "w1", name: "Personal" }], // no clientId
-    })
-    expect(noClient).not.toContain('<select id="ws"')
-    expect(html).not.toContain('<select id="ws"') // no workspaces prop at all
+    // The rendered picker container is absent (the JS still references wsmode in
+    // its querySelectors, so assert on the markup, not the script).
+    expect(single).not.toContain('class="ws-access"')
+    expect(single).not.toContain('name="ws" value=')
+    expect(html).not.toContain('class="ws-access"') // no workspaces prop at all
   })
 
   // Emit preview HTML for visual review (both states), when a target dir is given.
