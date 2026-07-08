@@ -479,6 +479,529 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The active workspace: name, the caller's role, and the member directory. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The workspace + its members. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Workspace"] & {
+                            multi: boolean;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Rename the workspace (Admin only). */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new name. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            name: string;
+                        };
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/v1/workspace/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Add a member (by @handle or email) or change their role (Admin only). */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The added/updated member. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArtifactMember"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspace/members/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a member (Admin only; keeps at least one admin). */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    userId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The member was removed (idempotent). */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Change a member's role (Admin only; keeps at least one admin). */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    userId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The member's new role. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            user_id: string;
+                            /** @enum {string} */
+                            role: "viewer" | "commenter" | "editor" | "owner";
+                        };
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/v1/workspace/invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pending invitations for the workspace (Admin only). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The pending invites (no tokens). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            invites: components["schemas"]["Invite"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Invite by email — adds an existing account directly, else a pending invite. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Either the member added directly, or the pending invite + accept link. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["InviteResult"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspace/invites/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a pending invitation (Admin only). */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The invitation was revoked. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/invites/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview an invitation (the accept page reads this). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The workspace + role the token grants. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["InvitePreview"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/invites/{token}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept an invitation (the signed-in token holder joins). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The workspace joined + the caller's effective role. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            org_id: string;
+                            /** @enum {string} */
+                            role: "viewer" | "commenter" | "editor" | "owner";
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspace/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The workspace's integration toggles (any member). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The workspace settings. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OrgSettings"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update the workspace's integration toggles (Admin only). */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The merged settings. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OrgSettings"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/v1/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's workspaces + which one this request resolved to. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The caller's workspaces and the active id. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Workspaces"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a workspace (the creator becomes its Admin and is switched in). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The created workspace. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspaceSummary"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspace/switch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Switch the active workspace (must be a member). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new active workspace id. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            active: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete an empty workspace you own (switches away if it was active). */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The deleted id + the new active workspace (or null). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            deleted: string;
+                            active: string | null;
+                        };
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents": {
         parameters: {
             query?: never;
@@ -644,6 +1167,44 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/artifacts/{shortId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One artifact with its versions, sessions, roles, and counts. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The artifact detail (or a minimal tombstone when taken down). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Artifact"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3595,6 +4156,68 @@ export interface components {
             kind?: "user" | "agent";
             profession?: string | null;
         };
+        ArtifactMember: {
+            user_id: string;
+            handle: string | null;
+            name: string | null;
+            profession?: string | null;
+            /** @enum {string} */
+            role: "viewer" | "commenter" | "editor" | "owner";
+        };
+        Workspace: {
+            id: string;
+            name: string;
+            /** @enum {string} */
+            role: "viewer" | "commenter" | "editor" | "owner";
+            members: components["schemas"]["ArtifactMember"][];
+        };
+        InviteResult: {
+            /** @enum {string} */
+            kind: "member";
+            member: components["schemas"]["ArtifactMember"];
+        } | {
+            /** @enum {string} */
+            kind: "invite";
+            invite: components["schemas"]["Invite"];
+            accept_url: string;
+        };
+        Invite: {
+            id: string;
+            email: string;
+            /** @enum {string} */
+            role: "viewer" | "commenter" | "editor" | "owner";
+            created_at: string;
+            expires_at: string;
+        };
+        InvitePreview: {
+            workspace: string;
+            /** @enum {string} */
+            role: "viewer" | "commenter" | "editor" | "owner";
+            email: string;
+            inviter: string | null;
+        };
+        OrgSettings: {
+            emailNotifications: boolean;
+            githubPostComments: boolean;
+            githubMirrorComments: boolean;
+            githubPreviewLink: boolean;
+            slackPost: boolean;
+            /** @enum {string} */
+            defaultUnlistedRole: "viewer" | "commenter";
+            /** @enum {string} */
+            defaultAgentVisibility: "unlisted" | "private" | "org" | "link" | "public";
+        };
+        Workspaces: {
+            multi: boolean;
+            active: string;
+            workspaces: components["schemas"]["WorkspaceSummary"][];
+        };
+        WorkspaceSummary: {
+            id: string;
+            name: string;
+            /** @enum {string} */
+            role: "viewer" | "commenter" | "editor" | "owner";
+        };
         Agent: {
             id: string;
             name: string;
@@ -3608,13 +4231,76 @@ export interface components {
             scopes: string[];
             grantedAt: string;
         };
-        ArtifactMember: {
-            user_id: string;
-            handle: string | null;
-            name: string | null;
-            profession?: string | null;
+        Artifact: {
+            short_id: string;
+            url: string;
+            title: string | null;
             /** @enum {string} */
-            role: "viewer" | "commenter" | "editor" | "owner";
+            kind: "file" | "bundle";
+            current_content_type?: string | null;
+            locked?: boolean;
+            visibility: string;
+            spa?: boolean;
+            /** @enum {string} */
+            general_role?: "viewer" | "commenter";
+            current_version: number;
+            versions: {
+                n: number;
+                content_type?: string;
+                author: string;
+                author_login?: string | null;
+                author_avatar?: string | null;
+                author_gh_id?: string | null;
+                handle?: string | null;
+                message: string | null;
+                name: string | null;
+                created_at: string;
+            }[];
+            sessions?: components["schemas"]["VersionSession"][];
+            views?: number;
+            /** @enum {string|null} */
+            my_role?: "viewer" | "commenter" | "editor" | "owner" | null;
+            tags?: string[];
+            favorite?: boolean;
+            open_proposals?: number;
+            proposals_total?: number;
+            open_threads?: number;
+            mentions_me?: boolean;
+            i_participated?: boolean;
+            collections?: string[];
+            removed?: boolean;
+            managed?: boolean;
+            bundle?: {
+                isSkill: boolean;
+                name: string | null;
+                description: string | null;
+                entry: string;
+                files: {
+                    path: string;
+                    type: string;
+                }[];
+            };
+            source_path?: string | null;
+            created_at?: string;
+            updated_at?: string | null;
+            author_name?: string | null;
+            author_login?: string | null;
+            author_avatar?: string | null;
+            author_gh_id?: string | null;
+            author?: {
+                name: string | null;
+                login: string | null;
+                avatar: string | null;
+                handle: string | null;
+            } | null;
+        };
+        VersionSession: {
+            n: number;
+            from_n: number;
+            count: number;
+            author: string;
+            name: string | null;
+            created_at: string;
         };
         Follow: {
             id: string;

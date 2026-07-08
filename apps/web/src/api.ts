@@ -33,14 +33,8 @@ export type ConnectedAgent = components["schemas"]["ConnectedAgent"]
 /** A public profile, by handle. Email is private and never returned here.
  *  Generated from the OpenAPI spec. */
 export type PublicProfile = components["schemas"]["PublicProfile"]
-export interface VersionSession {
-  n: number
-  from_n: number
-  count: number
-  author: string
-  name: string | null
-  created_at: string
-}
+/** Time-grouped view of an artifact's versions. Generated from the OpenAPI spec. */
+export type VersionSession = components["schemas"]["VersionSession"]
 export type Role = "viewer" | "commenter" | "editor" | "owner"
 /** What general access (the link) grants a reacher: view-only or comment. */
 export type GeneralRole = "viewer" | "commenter"
@@ -163,59 +157,23 @@ export type ArtifactDomain = components["schemas"]["ArtifactDomain"]
 /** A workspace custom domain (Cloudflare for SaaS). Generated from the OpenAPI spec. */
 export type WorkspaceDomain = components["schemas"]["WorkspaceDomain"]
 /** The workspace: its name, the caller's role, and the member directory. */
-export interface Workspace {
-  id: string
-  name: string
-  role: Role
-  members: ArtifactMember[]
-}
+export type Workspace = components["schemas"]["Workspace"]
 /** A pending workspace invitation (Admin view; the token is never exposed). */
-export interface Invite {
-  id: string
-  email: string
-  role: Role
-  created_at: string
-  expires_at: string
-}
+export type Invite = components["schemas"]["Invite"]
 /** The result of inviting by email: either the person was an existing Derive account
  *  (added straight to the roster) or a pending, emailed invitation was created. */
-export type InviteResult =
-  | { kind: "member"; member: ArtifactMember }
-  | { kind: "invite"; invite: Invite; accept_url: string }
+export type InviteResult = components["schemas"]["InviteResult"]
 /** What the accept page shows before you join. */
-export interface InvitePreview {
-  workspace: string
-  role: Role
-  email: string
-  inviter: string | null
-}
+export type InvitePreview = components["schemas"]["InvitePreview"]
 /** Per-workspace integration switches (mirrors the server's OrgSettings). */
-export interface OrgSettings {
-  emailNotifications: boolean
-  githubPostComments: boolean
-  githubMirrorComments: boolean
-  githubPreviewLink: boolean
-  slackPost: boolean
-  /** What a member opening an unlisted link may do (per-doc override in Share). */
-  defaultUnlistedRole: "viewer" | "commenter"
-  /** Where a NEW agent (MCP) publish lands when the agent doesn't say. */
-  defaultAgentVisibility: "unlisted" | "private" | "org" | "link" | "public"
-}
+export type OrgSettings = components["schemas"]["OrgSettings"]
 /** Slack connection status for the Settings UI. */
 /** Slack connection status for a workspace. Generated from the OpenAPI spec. */
 export type SlackStatus = components["schemas"]["SlackStatus"]
 /** One entry in the workspace switcher. */
-export interface WorkspaceSummary {
-  id: string
-  name: string
-  role: Role
-}
+export type WorkspaceSummary = components["schemas"]["WorkspaceSummary"]
 /** The switcher payload: whether multi-workspace is on, the active id, the list. */
-export interface Workspaces {
-  multi: boolean
-  active: string
-  workspaces: WorkspaceSummary[]
-}
+export type Workspaces = components["schemas"]["Workspaces"]
 /** Per-artifact view stats. Generated from the OpenAPI spec. */
 export type Analytics = components["schemas"]["Analytics"]
 /** A resolved @mention: the picked user's id + the display name shown inline. */

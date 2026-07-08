@@ -93,6 +93,273 @@
           "handle"
         ]
       },
+      "ArtifactMember": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "profession": {
+            "type": "string",
+            "nullable": true
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ]
+          }
+        },
+        "required": [
+          "user_id",
+          "handle",
+          "name",
+          "role"
+        ]
+      },
+      "Workspace": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ]
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactMember"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role",
+          "members"
+        ]
+      },
+      "InviteResult": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "member"
+                ]
+              },
+              "member": {
+                "$ref": "#/components/schemas/ArtifactMember"
+              }
+            },
+            "required": [
+              "kind",
+              "member"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "invite"
+                ]
+              },
+              "invite": {
+                "$ref": "#/components/schemas/Invite"
+              },
+              "accept_url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "invite",
+              "accept_url"
+            ]
+          }
+        ]
+      },
+      "Invite": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role",
+          "created_at",
+          "expires_at"
+        ]
+      },
+      "InvitePreview": {
+        "type": "object",
+        "properties": {
+          "workspace": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ]
+          },
+          "email": {
+            "type": "string"
+          },
+          "inviter": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "workspace",
+          "role",
+          "email",
+          "inviter"
+        ]
+      },
+      "OrgSettings": {
+        "type": "object",
+        "properties": {
+          "emailNotifications": {
+            "type": "boolean"
+          },
+          "githubPostComments": {
+            "type": "boolean"
+          },
+          "githubMirrorComments": {
+            "type": "boolean"
+          },
+          "githubPreviewLink": {
+            "type": "boolean"
+          },
+          "slackPost": {
+            "type": "boolean"
+          },
+          "defaultUnlistedRole": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter"
+            ]
+          },
+          "defaultAgentVisibility": {
+            "type": "string",
+            "enum": [
+              "unlisted",
+              "private",
+              "org",
+              "link",
+              "public"
+            ]
+          }
+        },
+        "required": [
+          "emailNotifications",
+          "githubPostComments",
+          "githubMirrorComments",
+          "githubPreviewLink",
+          "slackPost",
+          "defaultUnlistedRole",
+          "defaultAgentVisibility"
+        ]
+      },
+      "Workspaces": {
+        "type": "object",
+        "properties": {
+          "multi": {
+            "type": "boolean"
+          },
+          "active": {
+            "type": "string"
+          },
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceSummary"
+            }
+          }
+        },
+        "required": [
+          "multi",
+          "active",
+          "workspaces"
+        ]
+      },
+      "WorkspaceSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role"
+        ]
+      },
       "Agent": {
         "type": "object",
         "properties": {
@@ -148,39 +415,296 @@
           "grantedAt"
         ]
       },
-      "ArtifactMember": {
+      "Artifact": {
         "type": "object",
         "properties": {
-          "user_id": {
+          "short_id": {
             "type": "string"
           },
-          "handle": {
+          "url": {
+            "type": "string"
+          },
+          "title": {
             "type": "string",
             "nullable": true
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "file",
+              "bundle"
+            ]
+          },
+          "current_content_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "visibility": {
+            "type": "string"
+          },
+          "spa": {
+            "type": "boolean"
+          },
+          "general_role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter"
+            ]
+          },
+          "current_version": {
+            "type": "number"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "n": {
+                  "type": "number"
+                },
+                "content_type": {
+                  "type": "string"
+                },
+                "author": {
+                  "type": "string"
+                },
+                "author_login": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "author_avatar": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "author_gh_id": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "handle": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "message": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "name": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "created_at": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "n",
+                "author",
+                "message",
+                "name",
+                "created_at"
+              ]
+            }
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VersionSession"
+            }
+          },
+          "views": {
+            "type": "number"
+          },
+          "my_role": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner",
+              null
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "favorite": {
+            "type": "boolean"
+          },
+          "open_proposals": {
+            "type": "number"
+          },
+          "proposals_total": {
+            "type": "number"
+          },
+          "open_threads": {
+            "type": "number"
+          },
+          "mentions_me": {
+            "type": "boolean"
+          },
+          "i_participated": {
+            "type": "boolean"
+          },
+          "collections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removed": {
+            "type": "boolean"
+          },
+          "managed": {
+            "type": "boolean"
+          },
+          "bundle": {
+            "type": "object",
+            "properties": {
+              "isSkill": {
+                "type": "boolean"
+              },
+              "name": {
+                "type": "string",
+                "nullable": true
+              },
+              "description": {
+                "type": "string",
+                "nullable": true
+              },
+              "entry": {
+                "type": "string"
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "type"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "isSkill",
+              "name",
+              "description",
+              "entry",
+              "files"
+            ]
+          },
+          "source_path": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "author_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "author_login": {
+            "type": "string",
+            "nullable": true
+          },
+          "author_avatar": {
+            "type": "string",
+            "nullable": true
+          },
+          "author_gh_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "author": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "name": {
+                "type": "string",
+                "nullable": true
+              },
+              "login": {
+                "type": "string",
+                "nullable": true
+              },
+              "avatar": {
+                "type": "string",
+                "nullable": true
+              },
+              "handle": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "name",
+              "login",
+              "avatar",
+              "handle"
+            ]
+          }
+        },
+        "required": [
+          "short_id",
+          "url",
+          "title",
+          "kind",
+          "visibility",
+          "current_version",
+          "versions"
+        ]
+      },
+      "VersionSession": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "number"
+          },
+          "from_n": {
+            "type": "number"
+          },
+          "count": {
+            "type": "number"
+          },
+          "author": {
+            "type": "string"
           },
           "name": {
             "type": "string",
             "nullable": true
           },
-          "profession": {
-            "type": "string",
-            "nullable": true
-          },
-          "role": {
-            "type": "string",
-            "enum": [
-              "viewer",
-              "commenter",
-              "editor",
-              "owner"
-            ]
+          "created_at": {
+            "type": "string"
           }
         },
         "required": [
-          "user_id",
-          "handle",
+          "n",
+          "from_n",
+          "count",
+          "author",
           "name",
-          "role"
+          "created_at"
         ]
       },
       "Follow": {
@@ -1930,6 +2454,453 @@
         }
       }
     },
+    "/v1/workspace": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "The active workspace: name, the caller's role, and the member directory.",
+        "responses": {
+          "200": {
+            "description": "The workspace + its members.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Workspace"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "multi": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "multi"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Rename the workspace (Admin only).",
+        "responses": {
+          "200": {
+            "description": "The new name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/members": {
+      "put": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Add a member (by @handle or email) or change their role (Admin only).",
+        "responses": {
+          "201": {
+            "description": "The added/updated member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactMember"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/members/{userId}": {
+      "patch": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Change a member's role (Admin only; keeps at least one admin).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "userId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The member's new role.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user_id": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "viewer",
+                        "commenter",
+                        "editor",
+                        "owner"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "user_id",
+                    "role"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Remove a member (Admin only; keeps at least one admin).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "userId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The member was removed (idempotent)."
+          }
+        }
+      }
+    },
+    "/v1/workspace/invites": {
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Invite by email — adds an existing account directly, else a pending invite.",
+        "responses": {
+          "201": {
+            "description": "Either the member added directly, or the pending invite + accept link.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteResult"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Pending invitations for the workspace (Admin only).",
+        "responses": {
+          "200": {
+            "description": "The pending invites (no tokens).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "invites": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Invite"
+                      }
+                    }
+                  },
+                  "required": [
+                    "invites"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/invites/{id}": {
+      "delete": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Revoke a pending invitation (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The invitation was revoked."
+          }
+        }
+      }
+    },
+    "/v1/invites/{token}": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Preview an invitation (the accept page reads this).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "token",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The workspace + role the token grants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitePreview"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/invites/{token}/accept": {
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Accept an invitation (the signed-in token holder joins).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "token",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The workspace joined + the caller's effective role.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "org_id": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "viewer",
+                        "commenter",
+                        "editor",
+                        "owner"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "org_id",
+                    "role"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/settings": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "The workspace's integration toggles (any member).",
+        "responses": {
+          "200": {
+            "description": "The workspace settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgSettings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Update the workspace's integration toggles (Admin only).",
+        "responses": {
+          "200": {
+            "description": "The merged settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgSettings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspaces": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "The caller's workspaces + which one this request resolved to.",
+        "responses": {
+          "200": {
+            "description": "The caller's workspaces and the active id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspaces"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Create a workspace (the creator becomes its Admin and is switched in).",
+        "responses": {
+          "201": {
+            "description": "The created workspace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/switch": {
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Switch the active workspace (must be a member).",
+        "responses": {
+          "200": {
+            "description": "The new active workspace id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "active": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "active"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{id}": {
+      "delete": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Delete an empty workspace you own (switches away if it was active).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted id + the new active workspace (or null).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "string"
+                    },
+                    "active": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "deleted",
+                    "active"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/agents": {
       "get": {
         "tags": [
@@ -2067,6 +3038,36 @@
         "responses": {
           "204": {
             "description": "The grant was revoked (idempotent)."
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "One artifact with its versions, sessions, roles, and counts.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact detail (or a minimal tombstone when taken down).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Artifact"
+                }
+              }
+            }
           }
         }
       }
