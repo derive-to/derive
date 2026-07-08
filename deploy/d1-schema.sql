@@ -231,7 +231,8 @@ CREATE TABLE IF NOT EXISTS collection (
   org_id TEXT NOT NULL DEFAULT 'local',
   title TEXT NOT NULL,
   created_by TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  workspace_access TEXT NOT NULL DEFAULT 'member'
 );
 
 CREATE TABLE IF NOT EXISTS collection_item (

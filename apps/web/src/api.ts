@@ -712,6 +712,13 @@ export const api = {
     f(`/v1/collections/${id}`, { ...opts({ title }), method: "PATCH" }).then(j),
   deleteCollection: (id: string): Promise<void> =>
     f(`/v1/collections/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+  // Change a collection's share experience — the Share dialog's Invited/Workspace
+  // toggle. Same one-question shape as an artifact's setAccess, no link_role/listed.
+  setCollectionAccess: (
+    id: string,
+    workspaceAccess: WorkspaceAccess,
+  ): Promise<{ workspace_access: WorkspaceAccess }> =>
+    f(`/v1/collections/${id}/access`, { ...opts({ workspaceAccess }), method: "PATCH" }).then(j),
   addToCollection: (collectionId: string, shortId: string): Promise<void> =>
     f(`/v1/collections/${collectionId}/items/${shortId}`, { ...opts(), method: "PUT" }).then(
       () => undefined,

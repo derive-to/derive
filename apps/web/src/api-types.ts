@@ -1959,6 +1959,47 @@ export interface paths {
         };
         trace?: never;
     };
+    "/v1/collections/{id}/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change a collection's workspace access. */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new access. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {string} */
+                            workspace_access: "none" | "member";
+                        };
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/v1/collections/{id}/items/{shortId}": {
         parameters: {
             query?: never;
@@ -4692,6 +4733,10 @@ export interface components {
             created_by: string;
             created_at: string;
             count: number;
+            /** @enum {string} */
+            workspace_access?: "none" | "member";
+            /** @enum {string|null} */
+            my_role?: "viewer" | "commenter" | "editor" | "owner" | null;
             /** @enum {string} */
             kind?: "manual" | "repo" | "pr";
             parentId?: string;

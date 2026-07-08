@@ -860,6 +860,24 @@
           "count": {
             "type": "number"
           },
+          "workspace_access": {
+            "type": "string",
+            "enum": [
+              "none",
+              "member"
+            ]
+          },
+          "my_role": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner",
+              null
+            ]
+          },
           "kind": {
             "type": "string",
             "enum": [
@@ -3940,6 +3958,48 @@
         "responses": {
           "204": {
             "description": "The collection was deleted."
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}/access": {
+      "patch": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Change a collection's workspace access.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new access.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "workspace_access": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "member"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "workspace_access"
+                  ]
+                }
+              }
+            }
           }
         }
       }

@@ -748,22 +748,29 @@ export function buildContext(deps: AppDeps) {
   }
 
   // A caller's role on a collection: the static token is owner; otherwise the
-  // creator, else their explicit collection-member role, else null (no access).
-  // Shared by the collections routes and the artifact listing (collection scoping).
+  // creator, else their explicit collection-member role, else — when the
+  // collection's own workspace_access is `member` — their workspace SEAT role,
+  // else null (no access). Shared by the collections routes and the artifact
+  // listing (collection scoping).
   const collectionRole = async (c: Context, col: CollectionRecord): Promise<Role | null> => {
     if (isToken(c)) return "owner"
     const me = await currentUser(c)
     if (!me) return null
     if (col.created_by === me.id) return "owner"
-    // A collection lives in a workspace, so its members reach it at their SEAT role —
-    // the team collaborates on the workspace's collections, not just their creator's
-    // (mirrors an artifact's workspace_access=member). An explicit collection share
-    // (which can cross workspaces) folds in alongside, higher wins. This governs who
-    // can view/manage the COLLECTION only; artifact access still propagates purely
-    // from explicit collection membership (collectionRolesForArtifact), so a seat here
-    // never hands out access to the artifacts inside.
+    // A collection lives in a workspace, so — same share experience as an
+    // artifact's workspace_access — its members reach it at their SEAT role when
+    // it's workspace-open; an invite-only collection (workspace_access=none)
+    // grants nothing from mere membership, matching Invited. An explicit
+    // collection share (which can cross workspaces) folds in alongside either
+    // way, higher wins. This governs who can view/manage the COLLECTION only;
+    // artifact access still propagates purely from explicit collection
+    // membership (collectionRolesForArtifact), so a seat here never hands out
+    // access to the artifacts inside.
     const explicit = (await meta.getCollectionMember(col.id, me.id))?.role ?? null
-    const seat = (await meta.getMembership(col.org_id, me.id))?.role ?? null
+    const seat =
+      col.workspace_access === "member"
+        ? ((await meta.getMembership(col.org_id, me.id))?.role ?? null)
+        : null
     return maxRole(explicit, seat)
   }
 

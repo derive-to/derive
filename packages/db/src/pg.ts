@@ -1237,6 +1237,12 @@ export class PgMetaStore implements MetaStore {
       .returning()
     return rows[0] ?? null
   }
+  async setCollectionAccess(id: string, workspaceAccess: WorkspaceAccess): Promise<void> {
+    await this.db
+      .update(collection)
+      .set({ workspace_access: workspaceAccess })
+      .where(eq(collection.id, id))
+  }
   async deleteCollection(id: string): Promise<void> {
     await this.db.transaction(async (tx) => {
       await tx.delete(collectionItem).where(eq(collectionItem.collection_id, id))

@@ -324,6 +324,9 @@ export const collection = pgTable("collection", {
   title: text("title").notNull(),
   created_by: text("created_by").notNull(),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
+  // See the sqlite dialect's schema.ts for the full comment. Defaults to `member`
+  // (not artifact's fail-closed `none`) to match collections' existing behavior.
+  workspace_access: text("workspace_access").$type<WorkspaceAccess>().notNull().default("member"),
 })
 export const collectionItem = pgTable(
   "collection_item",
