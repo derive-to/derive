@@ -265,7 +265,9 @@ describe("self-healing bylines — a stale byline resolves to the live user", ()
       org_id: "default",
       slug: null,
       title: "CLI doc",
-      visibility: "public",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
       kind: "file",
       spa: 0,
     })
