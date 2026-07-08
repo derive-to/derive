@@ -375,6 +375,12 @@ export const statusOf = (cap: Capability, env: Env): CapabilityStatus => {
   return "partial"
 }
 
+/** Whether a capability is fully configured — the one gating check every surface uses. */
+export const isCapabilityOn = (id: string, env: Env): boolean => {
+  const cap = CAPABILITIES.find((c) => c.id === id)
+  return cap ? statusOf(cap, env) === "on" : false
+}
+
 export interface CapabilityState {
   id: string
   label: string

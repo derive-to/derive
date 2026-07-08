@@ -1,6 +1,7 @@
 import { type Context, Hono } from "hono"
 import { z } from "zod"
 import { OAUTH_SCOPES, resolvePasskey } from "../auth-config"
+import { isCapabilityOn } from "../config-manifest"
 import type { AppContext } from "../context"
 import { fail, readJson } from "../lib/http"
 import { cliCallbackHTML } from "../oauth-cli-callback"
@@ -129,20 +130,17 @@ export const oauthRoutes = (ctx: AppContext) => {
   // read-only. Later phases extend this (emailVerification, passwordReset, passkey,
   // twoFactor) as those flows land — a field appears only once its endpoints exist.
   app.get("/v1/auth/capabilities", (c) => {
-    const oidcOn = !!(
-      process.env.OIDC_ISSUER &&
-      process.env.OIDC_CLIENT_ID &&
-      process.env.OIDC_CLIENT_SECRET
-    )
     return c.json({
       // Email+password is enabled unconditionally in auth-config, so it's always here.
       password: true,
-      // Social / enterprise SSO — env-gated in auth-config; the login page renders a
-      // button only when the capability is present. OIDC carries the provider id the
-      // client needs to start the generic-OAuth sign-in, plus a display label.
-      google: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
-      github: !!(process.env.GITHUB_LOGIN_CLIENT_ID && process.env.GITHUB_LOGIN_CLIENT_SECRET),
-      oidc: oidcOn
+      // Social / enterprise SSO — provider on/off comes from the shared capability model
+      // (config-manifest), the SAME gate `derive doctor` uses, so the two can't disagree.
+      // The login page renders a button only when present; OIDC also carries the display
+      // details (providerId/label) the client needs — those aren't gating, so they're read
+      // here rather than modeled as a capability.
+      google: isCapabilityOn("google", process.env),
+      github: isCapabilityOn("github", process.env),
+      oidc: isCapabilityOn("oidc", process.env)
         ? {
             providerId: process.env.OIDC_PROVIDER_ID ?? "sso",
             label: process.env.OIDC_PROVIDER_LABEL ?? "SSO",
