@@ -1210,6 +1210,384 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sync/github/resync-installations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Re-import this App's installations from GitHub (Admin only). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description How many installations were re-imported. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            synced: number;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sync/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The workspace's synced repos, PR previews, App status, and installations. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Branch sources, PR previews, the App's setup/permissions, installations. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GithubSyncStatus"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Connect a repo for mirroring (App installation or a PAT). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The existing source (this repo was already connected). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoSource"];
+                    };
+                };
+                /** @description The newly connected source (first sync kicked off). */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoSource"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sync/github/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Get the GitHub App install URL for this workspace (Admin only). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The GitHub install URL to navigate the browser to. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            url: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sync/github/installations/{id}/repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The repos an installation can mirror (Admin only). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The installation's repos, most-recent-push first. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            repos: components["schemas"]["InstallationRepo"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sync/github/installations/{id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** How many docs a repo + scope would mirror (Admin only). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Matching file counts by type + whether the tree was truncated. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SyncPreview"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sync/github/{id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Trigger a server-side sync (Admin only). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The finished source (ran inline; no runner wired). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoSource"];
+                    };
+                };
+                /** @description The source, queued (sync runs on the server; poll /status). */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoSource"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sync/github/{id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Cheap status poll for a source's live progress bar. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The source's persisted progress + last status + file count. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SyncStatus"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sync/github/active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Sources mid-sync in this workspace (drives the global syncing chip). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The sources currently syncing. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            active: components["schemas"]["RepoSource"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sync/github/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Disconnect a source (?wipe=true also deletes its artifacts). */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The source was disconnected. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/slack": {
         parameters: {
             query?: never;
@@ -3261,6 +3639,75 @@ export interface components {
             parentId?: string;
             prNumber?: number;
             repo?: string;
+        };
+        GithubSyncStatus: {
+            sources: components["schemas"]["RepoSource"][];
+            prs: components["schemas"]["PrPreview"][];
+            app: {
+                configured: boolean;
+                slug?: string;
+                upToDate?: boolean;
+                missing?: {
+                    permissions: {
+                        [key: string]: string;
+                    };
+                    events: string[];
+                };
+                permissionsUrl?: string;
+                approveUrl?: string;
+            };
+            installations: components["schemas"]["GithubInstallation"][];
+        };
+        RepoSource: {
+            id: string;
+            collection_id: string;
+            repo: string;
+            ref: string;
+            includes: string;
+            token: string | null;
+            installation_id: string | null;
+            last_synced_at: string | null;
+            last_status: string | null;
+            created_by: string;
+            created_at: string;
+            file_count: number;
+            progress: string | null;
+        };
+        PrPreview: {
+            id: string;
+            collection_id: string;
+            repo: string;
+            pr_number: number;
+            title: string;
+            last_status: string | null;
+            last_synced_at: string | null;
+            file_count: number;
+            progress: string | null;
+        };
+        GithubInstallation: {
+            installation_id: string;
+            account_login: string | null;
+        };
+        InstallationRepo: {
+            full_name: string;
+            private: boolean;
+            default_branch: string;
+            pushed_at: string | null;
+        };
+        SyncPreview: {
+            total: number;
+            md: number;
+            html: number;
+            other: number;
+            truncated: boolean;
+        };
+        SyncStatus: {
+            id: string;
+            repo: string;
+            progress: string | null;
+            last_status: string | null;
+            last_synced_at: string | null;
+            file_count: number;
         };
         SlackStatus: {
             available: boolean;

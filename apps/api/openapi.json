@@ -275,6 +275,290 @@
           "count"
         ]
       },
+      "GithubSyncStatus": {
+        "type": "object",
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepoSource"
+            }
+          },
+          "prs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PrPreview"
+            }
+          },
+          "app": {
+            "type": "object",
+            "properties": {
+              "configured": {
+                "type": "boolean"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "upToDate": {
+                "type": "boolean"
+              },
+              "missing": {
+                "type": "object",
+                "properties": {
+                  "permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "events": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "permissions",
+                  "events"
+                ]
+              },
+              "permissionsUrl": {
+                "type": "string"
+              },
+              "approveUrl": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "configured"
+            ]
+          },
+          "installations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GithubInstallation"
+            }
+          }
+        },
+        "required": [
+          "sources",
+          "prs",
+          "app",
+          "installations"
+        ]
+      },
+      "RepoSource": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "collection_id": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "includes": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string",
+            "nullable": true
+          },
+          "installation_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "last_synced_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "last_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "file_count": {
+            "type": "number"
+          },
+          "progress": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "collection_id",
+          "repo",
+          "ref",
+          "includes",
+          "token",
+          "installation_id",
+          "last_synced_at",
+          "last_status",
+          "created_by",
+          "created_at",
+          "file_count",
+          "progress"
+        ]
+      },
+      "PrPreview": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "collection_id": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "pr_number": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "last_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "last_synced_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "file_count": {
+            "type": "number"
+          },
+          "progress": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "collection_id",
+          "repo",
+          "pr_number",
+          "title",
+          "last_status",
+          "last_synced_at",
+          "file_count",
+          "progress"
+        ]
+      },
+      "GithubInstallation": {
+        "type": "object",
+        "properties": {
+          "installation_id": {
+            "type": "string"
+          },
+          "account_login": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "installation_id",
+          "account_login"
+        ]
+      },
+      "InstallationRepo": {
+        "type": "object",
+        "properties": {
+          "full_name": {
+            "type": "string"
+          },
+          "private": {
+            "type": "boolean"
+          },
+          "default_branch": {
+            "type": "string"
+          },
+          "pushed_at": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "full_name",
+          "private",
+          "default_branch",
+          "pushed_at"
+        ]
+      },
+      "SyncPreview": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number"
+          },
+          "md": {
+            "type": "number"
+          },
+          "html": {
+            "type": "number"
+          },
+          "other": {
+            "type": "number"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "total",
+          "md",
+          "html",
+          "other",
+          "truncated"
+        ]
+      },
+      "SyncStatus": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "progress": {
+            "type": "string",
+            "nullable": true
+          },
+          "last_status": {
+            "type": "string",
+            "nullable": true
+          },
+          "last_synced_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "file_count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "repo",
+          "progress",
+          "last_status",
+          "last_synced_at",
+          "file_count"
+        ]
+      },
       "SlackStatus": {
         "type": "object",
         "properties": {
@@ -2355,6 +2639,305 @@
         "responses": {
           "204": {
             "description": "The member was removed."
+          }
+        }
+      }
+    },
+    "/v1/sync/github/resync-installations": {
+      "post": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Re-import this App's installations from GitHub (Admin only).",
+        "responses": {
+          "200": {
+            "description": "How many installations were re-imported.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "synced": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "synced"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github": {
+      "get": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "The workspace's synced repos, PR previews, App status, and installations.",
+        "responses": {
+          "200": {
+            "description": "Branch sources, PR previews, the App's setup/permissions, installations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GithubSyncStatus"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Connect a repo for mirroring (App installation or a PAT).",
+        "responses": {
+          "200": {
+            "description": "The existing source (this repo was already connected).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSource"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The newly connected source (first sync kicked off).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSource"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github/install": {
+      "post": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Get the GitHub App install URL for this workspace (Admin only).",
+        "responses": {
+          "200": {
+            "description": "The GitHub install URL to navigate the browser to.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "url"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github/installations/{id}/repos": {
+      "get": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "The repos an installation can mirror (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The installation's repos, most-recent-push first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/InstallationRepo"
+                      }
+                    }
+                  },
+                  "required": [
+                    "repos"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github/installations/{id}/preview": {
+      "get": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "How many docs a repo + scope would mirror (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching file counts by type + whether the tree was truncated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncPreview"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github/{id}/run": {
+      "post": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Trigger a server-side sync (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The finished source (ran inline; no runner wired).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSource"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The source, queued (sync runs on the server; poll /status).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoSource"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github/{id}/status": {
+      "get": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Cheap status poll for a source's live progress bar.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The source's persisted progress + last status + file count.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github/active": {
+      "get": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Sources mid-sync in this workspace (drives the global syncing chip).",
+        "responses": {
+          "200": {
+            "description": "The sources currently syncing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "active": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RepoSource"
+                      }
+                    }
+                  },
+                  "required": [
+                    "active"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sync/github/{id}": {
+      "delete": {
+        "tags": [
+          "Sync"
+        ],
+        "summary": "Disconnect a source (?wipe=true also deletes its artifacts).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The source was disconnected."
           }
         }
       }

@@ -256,24 +256,11 @@ export type Viewer = components["schemas"]["Viewer"]
 export type Delivery = components["schemas"]["Delivery"]
 /** A GitHub repo mirrored into a collection (token redacted, file map collapsed
  *  to a count by the API). */
-export interface RepoSource {
-  id: string
-  collection_id: string
-  repo: string
-  ref: string
-  includes: string
-  token: string | null
-  installation_id: string | null
-  last_synced_at: string | null
-  last_status: string | null
-  created_by: string
-  created_at: string
-  file_count: number
-  /** Live sync state as a JSON string (parse with `parseProgress`); null when idle. */
-  progress: string | null
-}
+/** A GitHub repo source (branch mirror), client-safe (token redacted, files→count).
+ *  Generated from the OpenAPI spec. */
+export type RepoSource = components["schemas"]["RepoSource"]
 /** Live, pollable sync progress — the engine writes this every batch; the UI bar +
- *  global chip read it. `done`/`total` are doc counts; `phase` drives the wording. */
+ *  global chip read it. Parsed client-side from the `progress` string. */
 export interface SyncProgress {
   phase: "queued" | "listing" | "mirroring" | "done" | "error"
   done: number
@@ -290,64 +277,19 @@ export const parseProgress = (raw: string | null | undefined): SyncProgress | nu
     return null
   }
 }
-/** The cheap status-poll response (no GitHub round-trip) that drives the progress bar. */
-export interface SyncStatus {
-  id: string
-  repo: string
-  progress: string | null
-  last_status: string | null
-  last_synced_at: string | null
-  file_count: number
-}
-export interface GithubInstallation {
-  installation_id: string
-  account_login: string | null
-}
-/** A read-only preview of an open pull request's changed docs, mirrored into its own
- *  collection ("PR #<n>: <title>"). Links out to the PR and into the Derive collection. */
-export interface PrPreview {
-  id: string
-  collection_id: string
-  repo: string
-  pr_number: number
-  title: string
-  last_status: string | null
-  last_synced_at: string | null
-  file_count: number
-  progress: string | null
-}
-export interface GithubSyncStatus {
-  sources: RepoSource[]
-  prs: PrPreview[]
-  app: {
-    configured: boolean
-    slug?: string
-    /** False when the live App lacks a permission/event Derive now requires. */
-    upToDate?: boolean
-    /** The scopes/events still to grant: { permissions: {scope: level}, events: [] }. */
-    missing?: { permissions: Record<string, string>; events: string[] }
-    /** Deep-link to the App's GitHub permissions editor (owner toggles + saves). */
-    permissionsUrl?: string
-    /** Deep-link that surfaces the pending-approval prompt on an existing install. */
-    approveUrl?: string
-  }
-  installations: GithubInstallation[]
-}
-export interface InstallationRepo {
-  full_name: string
-  private: boolean
-  default_branch: string
-  /** Last push (ISO), or null. Server returns repos sorted most-recent-first. */
-  pushed_at: string | null
-}
-/** A repo+scope preview: how many docs would mirror, split by type. */
-export interface SyncPreview {
-  total: number
-  md: number
-  html: number
-  other: number
-  truncated: boolean
-}
+/** The cheap status-poll response that drives the progress bar. Generated from the spec. */
+export type SyncStatus = components["schemas"]["SyncStatus"]
+/** A GitHub App installation on a workspace. Generated from the OpenAPI spec. */
+export type GithubInstallation = components["schemas"]["GithubInstallation"]
+/** A read-only preview of an open pull request's changed docs. Generated from the spec. */
+export type PrPreview = components["schemas"]["PrPreview"]
+/** GitHub sync connection status (sources + PR previews + App + installations).
+ *  Generated from the OpenAPI spec. */
+export type GithubSyncStatus = components["schemas"]["GithubSyncStatus"]
+/** A repo an installation can mirror (the picker). Generated from the OpenAPI spec. */
+export type InstallationRepo = components["schemas"]["InstallationRepo"]
+/** A repo+scope preview: how many docs would mirror, split by type. Generated from the spec. */
+export type SyncPreview = components["schemas"]["SyncPreview"]
 export interface SyncResult {
   added: number
   updated: number
