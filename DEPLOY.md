@@ -8,11 +8,13 @@ Pick the tier that matches your scale and infrastructure:
 |---|---|---|---|---|---|
 | **Lite** | Single container | SQLite (built-in) | Local disk | In-process | Personal use, small teams, hobby projects |
 | **Node Basic** | Container(s) | Postgres | S3/R2 | In-process | Production teams, managed hosting |
-| **Node Scale** | Containers + load balancer | Postgres | S3/R2 | Redis | High-traffic, multi-instance, presence at scale |
+| **Node Scale** | Containers + load balancer | Postgres | S3/R2 | Per-instance¹ | High-traffic, stateless request scale |
 | **Cloudflare Basic** | Workers + D1 + DO | D1 (SQLite on edge) | R2 | Durable Objects | Edge-first, global, no infra to manage |
 | **Cloudflare Scale** | Workers + Postgres + DO | Postgres | R2 | Durable Objects | Edge serving + Postgres at scale (D1 limits exceeded) |
 
-All tiers run the same codebase. Tiers are additive: Lite + `DATABASE_URL` = Node Basic; Node Basic + `REDIS_URL` = Node Scale.
+All tiers run the same codebase and are additive: Lite + `DATABASE_URL` = Node Basic; add containers behind a load balancer for Node Scale.
+
+¹ Realtime (live comments, presence, cursors) is currently **per-instance** on Node — a single container fans out in-process, but events do **not** yet cross containers. For cross-instance realtime today, use a Cloudflare tier (Durable Objects fan out globally); a shared Node backplane is planned but not yet built.
 
 ---
 
@@ -99,8 +101,30 @@ the default role. Sign up at `/login`.
 | `DERIVE_CROSS_SITE` | `false` | `true` for `SameSite=None; Secure` cookies (split deploy only) |
 | `DERIVE_TOKEN` | (none) | Static bearer token for CI/agents. One of the two ways to write (the other is a sign-in session); anonymous callers are always read-only (public/link artifacts), never owners. |
 | `DERIVE_WEB_DIR` | (auto) | Override the bundled SPA path |
+| `DERIVE_PREVIEWS` | `false` | `true` to enable server-side Playwright screenshot generation for share cards (Docker image bundles Chromium; bare-Node hosts must run `playwright install --with-deps chromium` once) |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | (none) | Google sign-in |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_PROVIDER_ID` | (none) | Enterprise SSO |
+
+### Preview screenshots (optional)
+
+Set `DERIVE_PREVIEWS=true` to enable server-side screenshot generation for artifact
+share cards (Open Graph images, link unfurls).
+
+- **Docker image**: Chromium is already bundled. Set the env var and you're done — no
+  extra steps.
+- **Bare-Node host**: run once after install to download the browser binary **and its
+  system libraries** (`--with-deps` installs the shared libs Chromium needs — libnss3,
+  libatk, etc. — on Debian/Ubuntu; without them the browser fails to launch at runtime):
+  ```bash
+  corepack pnpm --filter @derive/api exec playwright install --with-deps chromium
+  ```
+  On a non-apt host, install the equivalent system libraries yourself.
+- **`BASE_URL` is required**: the renderer fetches the artifact's `/raw` URL over HTTP, so
+  `BASE_URL` must be set to the public origin of the instance (or at least the internal
+  origin the Node process can reach itself on). Without it the renderer cannot build the
+  absolute URL and previews will not be generated.
+
+Preview rendering runs in the same Node process as the API (no sidecar needed).
 
 ### OAuth / SSO (optional)
 
@@ -172,27 +196,20 @@ fly secrets set DERIVE_WEB_ORIGIN='https://app.example.com' DERIVE_CROSS_SITE='t
 cross-origin SPA→API request; `DERIVE_WEB_ORIGIN` allow-lists the SPA for CORS.
 `apps/web/public/_redirects` already ships the SPA fallback.
 
-## Node Scale: add Redis
+## Node Scale: multiple containers
 
-When you're running multiple API containers and need shared realtime state across them,
-add Redis. A single container (Lite / Node Basic) uses an in-process event bus for SSE
-and presence — that breaks across multiple instances without a shared backplane.
+Run several API containers behind a load balancer for request throughput — they're
+stateless (session state lives in Postgres, blobs in S3/R2), so scaling out is just
+adding instances.
 
-```bash
-fly secrets set REDIS_URL='redis://...'
-# or with Compose:
-# REDIS_URL=redis://redis:6379 in your env
-```
+One caveat: **realtime is per-instance.** Each container fans out SSE events (live
+comments, version publishes, presence) only to the clients connected to *that* container
+— there is no shared backplane yet, so an event on instance A doesn't reach a viewer on
+instance B. If you need cross-instance realtime today, deploy a Cloudflare tier, where
+Durable Objects own each artifact's stream and fan out globally.
 
-What Redis adds:
-- **Pub/sub backplane** for SSE events (comments, version publishes, presence) — so any
-  instance receives events published by any other
-- **Presence** — who's viewing what, live cursors, shared reading sessions
-- **Caching** — artifact metadata and source read-back for high-read workloads
-- **Webhook outbox drain** — shared queue across instances so deliveries don't duplicate
-
-Redis is optional at any scale. Start without it; add it when you run more than one
-container or start seeing presence/realtime gaps.
+A shared Node backplane (e.g. Redis pub/sub) to close this gap is planned but not yet
+implemented — the `Backplane` port (`apps/api/src/bus.ts`) is where it will plug in.
 
 ---
 

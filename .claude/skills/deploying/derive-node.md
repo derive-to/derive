@@ -3,7 +3,7 @@
 Production deployment on managed container hosts. Two tiers:
 
 - **Node Basic**: stateless containers + Postgres + S3/R2
-- **Node Scale**: add Redis for multi-instance realtime (presence, SSE fan-out, caching)
+- **Node Scale**: multiple stateless containers for throughput (realtime is per-instance; see below)
 
 For local development, see `running-locally/derive-self-host.md`.
 For Cloudflare Workers, see `deploying/derive-cloudflare.md`.
@@ -56,21 +56,17 @@ Public URL is auto-detected from `RAILWAY_PUBLIC_DOMAIN` / `RENDER_EXTERNAL_URL`
 
 ---
 
-## Node Scale: add Redis
+## Node Scale: multiple containers
 
-When you're running multiple containers, add Redis for shared realtime state:
+Run multiple stateless containers behind a load balancer for throughput — session state
+lives in Postgres and blobs in S3/R2, so scaling out is just adding instances.
 
-```
-REDIS_URL=redis://user:pass@host:6379
-```
-
-What Redis enables across instances:
-- **SSE fan-out**: a comment posted to instance A reaches clients connected to instance B
-- **Presence**: who's viewing what, live cursors across all instances
-- **Caching**: artifact metadata and source read-back
-- **Webhook drain**: no duplicate delivery when multiple instances process the outbox
-
-Start without Redis. Add it when you run more than one container or see realtime gaps.
+Caveat: **realtime is per-instance.** Each container fans out SSE events (comments,
+version publishes, presence) only to its own connected clients — there is no shared
+backplane yet, so an event on instance A doesn't reach a viewer on instance B. For
+cross-instance realtime today, deploy a Cloudflare tier (Durable Objects fan out
+globally). A shared Node backplane (e.g. Redis pub/sub) is planned but not yet built —
+it will plug into the `Backplane` port in `apps/api/src/bus.ts`.
 
 ---
 
@@ -102,9 +98,7 @@ fly secrets set DERIVE_WEB_ORIGIN='https://app.example.com' DERIVE_CROSS_SITE='t
 | `DERIVE_AUTH_SECRET` | generated | Session signing key — always set in prod |
 | `PORT` | 8080 | Listen port |
 | `DATABASE_URL` | (SQLite) | Postgres connection |
-| `OBJECT_STORE_URL` | (local disk) | S3/R2 blob URL |
-| `REDIS_URL` | (none) | Redis for pub/sub, caching, presence |
-| `DERIVE_WEB_ORIGIN` | (none) | SPA origin for CORS (split deploy only) |
+| `OBJECT_STORE_URL` | (local disk) | S3/R2 blob URL || `DERIVE_WEB_ORIGIN` | (none) | SPA origin for CORS (split deploy only) |
 | `DERIVE_CROSS_SITE` | false | SameSite=None cookies (split deploy only) |
 | `DERIVE_TOKEN` | (none) | Static bearer for CI/agents |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | (none) | Google sign-in |

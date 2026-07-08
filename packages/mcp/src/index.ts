@@ -122,7 +122,7 @@ server.registerTool(
   "list_artifacts",
   {
     description:
-      "List the artifacts in your workspace — short id, title, kind, current version, visibility. Start here to find what to work on, then catch_up or read it.",
+      "List the artifacts in your workspace — short id, title, kind, current version, access. Start here to find what to work on, then catch_up or read it.",
     inputSchema: { query: z.string().optional().describe("Optional title search filter.") },
   },
   async ({ query }) => {
@@ -506,9 +506,12 @@ server.registerTool(
         .optional()
         .describe("Omit to create a new artifact; pass it to add a version."),
       title: z.string().optional(),
-      // Omitted ⇒ the workspace's agent default (usually `private` — the
-      // human you act for owns the draft and promotes it when ready).
-      visibility: z.enum(["private", "org", "public"]).optional(),
+      // The v2 access triple for a NEW artifact (see access-model.md); omit any to
+      // take the workspace default (the team draft — the human you act for owns it
+      // and promotes it when ready). Ignored on a republish.
+      workspace_access: z.enum(["none", "member"]).optional(),
+      link_role: z.enum(["none", "viewer", "commenter", "editor"]).optional(),
+      listed: z.enum(["none", "workspace", "public"]).optional(),
       message: z.string().optional().describe("What changed in this version."),
       for_review: z
         .boolean()
@@ -533,7 +536,9 @@ server.registerTool(
     filename,
     short_id,
     title,
-    visibility,
+    workspace_access,
+    link_role,
+    listed,
     message,
     for_review,
     addresses,
@@ -572,7 +577,9 @@ server.registerTool(
         baseVersion: base_version,
         filename: filename ?? (edits ? undefined : "index.html"),
         title,
-        visibility,
+        workspaceAccess: workspace_access,
+        linkRole: link_role,
+        listed,
         message,
         resolves: addresses,
         requestReview: request_review,
@@ -592,7 +599,8 @@ server.registerTool(
       version: a.current_version,
       url: a.url,
       title: a.title,
-      visibility: a.visibility,
+      listed: a.listed,
+      link_role: a.link_role,
       ...(a.opened_in_tab !== undefined ? { opened_in_tab: a.opened_in_tab } : {}),
       note:
         (short_id ? `Live — new version${note}.` : `Live — created "${a.title}"${note}.`) +

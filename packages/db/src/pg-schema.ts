@@ -9,8 +9,12 @@ import type {
   DomainStatus,
   FollowKind,
   GeneralRole,
+  LinkRole,
+  Listed,
   NotificationKind,
+  PreviewStatus,
   ProposalState,
+  RenderJobStatus,
   ReportState,
   ReviewRoundState,
   Role,
@@ -18,6 +22,7 @@ import type {
   SessionState,
   Visibility,
   WebhookKind,
+  WorkspaceAccess,
 } from "@derive/core"
 import { getTableConfig, index, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
 import { generateDdl, PERF_INDEXES, placeholderTables } from "./ddl"
@@ -34,8 +39,14 @@ export const artifact = pgTable("artifact", {
   org_id: text("org_id").notNull().default("local"),
   slug: text("slug"),
   title: text("title"),
-  visibility: text("visibility").$type<Visibility>().notNull().default("private"),
+  // The access model (mirrors schema.ts — see the comment there). Three fields:
+  // workspace_access (seat access), link_role (the world link), listed (discovery).
+  workspace_access: text("workspace_access").$type<WorkspaceAccess>().notNull().default("none"),
+  link_role: text("link_role").$type<LinkRole>().notNull().default("none"),
+  listed: text("listed").$type<Listed>().notNull().default("none"),
   password_hash: text("password_hash"),
+  // Orphaned, backfilled once into the fields above; read by nothing (mirrors schema.ts).
+  visibility: text("visibility").$type<Visibility>().notNull().default("private"),
   general_role: text("general_role").$type<GeneralRole>().notNull().default("viewer"),
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
@@ -81,6 +92,9 @@ export const version = pgTable(
     author_id: text("author_id"),
     message: text("message"),
     name: text("name"),
+    preview_key: text("preview_key"),
+    preview_status: text("preview_status").$type<PreviewStatus>(),
+    preview_error: text("preview_error"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   // (artifact_id, n) is unique — addVersion relies on it to turn a concurrent
@@ -130,6 +144,17 @@ export const webhookDelivery = pgTable("webhook_delivery", {
   event_type: text("event_type").notNull(),
   payload: text("payload").notNull(),
   status: text("status").$type<DeliveryStatus>().notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  last_error: text("last_error"),
+  next_attempt_at: text("next_attempt_at").notNull().$defaultFn(isoNow),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+
+export const renderJob = pgTable("render_job", {
+  id: text("id").primaryKey(),
+  artifact_id: text("artifact_id").notNull(),
+  version_n: integer("version_n").notNull(),
+  status: text("status").$type<RenderJobStatus>().notNull().default("pending"),
   attempts: integer("attempts").notNull().default(0),
   last_error: text("last_error"),
   next_attempt_at: text("next_attempt_at").notNull().$defaultFn(isoNow),
@@ -542,6 +567,7 @@ const TABLES = [
   comment,
   webhook,
   webhookDelivery,
+  renderJob,
   membership,
   workspace,
   artifactMember,

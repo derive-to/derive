@@ -5,11 +5,10 @@ import { expect, test } from "../fixtures"
 
 // The strong MCP loop, browser side: an agent-credentialed publish auto-opens the
 // owner's tab (a created artifact navigates; a revision live-reloads with the review
-// card repainting), agent publishes land private (the owner's draft — invisible
-// to teammates until the share dialog promotes it) and the per-device toggle
-// downgrades auto-open to a notification. The
-// agent side is the real token + API — the same calls the MCP server and CLI
-// make — so the loop under test is the shipped one, not a mock.
+// card repainting), agent publishes land as unlisted team drafts (out of the feeds
+// until the share dialog promotes them) and the per-device toggle downgrades
+// auto-open to a notification. The agent side is the real token + API — the same
+// calls the MCP server and CLI make — so the loop under test is the shipped one.
 
 async function createAgent(
   req: APIRequestContext,
@@ -26,7 +25,7 @@ async function agentPublish(
   req: APIRequestContext,
   token: string,
   args: { title?: string; content: string; shortId?: string; requestReview?: boolean },
-): Promise<{ short_id: string; visibility: string; opened_in_tab?: boolean }> {
+): Promise<{ short_id: string; listed: string; opened_in_tab?: boolean }> {
   const multipart: {
     [key: string]: string | { name: string; mimeType: string; buffer: Buffer }
   } = {
@@ -40,7 +39,7 @@ async function agentPublish(
     multipart,
   })
   expect(res.ok(), `agent publish failed: ${res.status()}`).toBeTruthy()
-  return (await res.json()) as { short_id: string; visibility: string; opened_in_tab?: boolean }
+  return (await res.json()) as { short_id: string; listed: string; opened_in_tab?: boolean }
 }
 
 test.describe("the MCP loop — auto-open, live rounds, private drafts", () => {
@@ -59,7 +58,7 @@ test.describe("the MCP loop — auto-open, live rounds, private drafts", () => {
       content: "<h1>Draft v1</h1><p>alpha</p>",
       requestReview: true,
     })
-    expect(created.visibility).toBe("private")
+    expect(created.listed).toBe("none")
     await expect(owner).toHaveURL(new RegExp(`/artifacts/.*${created.short_id}`), {
       timeout: 10_000,
     })
@@ -103,29 +102,31 @@ test.describe("the MCP loop — auto-open, live rounds, private drafts", () => {
       title: "Hidden Draft",
       content: "<h1>hush</h1>",
     })
-    expect(created.visibility).toBe("private")
+    expect(created.listed).toBe("none")
     await owner.waitForTimeout(1000)
     await expect(owner).toHaveURL(/\/$/) // still home — the toggle held navigation
 
-    // A private draft is the owner's: it shows in THEIR library (private rows
-    // list for their members), carries the Private chip, and narrows under
-    // Created by me — the agent published on the owner's behalf.
+    // The unlisted team draft is the owner's: it shows in THEIR library (their
+    // owner row surfaces it) and narrows under Created by me — the agent published
+    // on the owner's behalf.
     await owner.reload()
     await expect(owner.getByText("Hidden Draft").first()).toBeVisible()
     await owner.getByTestId("library-tab-mine").click()
     await expect(owner).toHaveURL(/tab=mine/)
     await expect(owner.getByText("Hidden Draft").first()).toBeVisible()
 
-    // Promote: share dialog → Workspace. One gesture, now it lists in All artifacts too.
+    // Promote: share dialog → show it in the workspace library. One switch, now it
+    // lists in All artifacts for the whole team.
     await owner.goto(`/artifacts/${created.short_id}`)
     await owner.getByTestId("share-trigger").click()
-    await owner.getByTestId("share-visibility").click()
-    await owner.getByRole("menuitemradio", { name: "Workspace", exact: true }).click()
+    const promoted = owner.waitForResponse((r) => r.url().includes("/access") && r.ok())
+    await owner.getByTestId("share-listed").click()
+    await promoted
     await owner.keyboard.press("Escape")
 
     await owner.goto("/")
     await expect(owner.getByText("Hidden Draft").first()).toBeVisible({ timeout: 10_000 })
-    // Created by me is authorship, not visibility — it keeps finding the doc
+    // Created by me is authorship, not listing — it keeps finding the doc
     // no matter how widely it's since been shared.
     await owner.getByTestId("library-tab-mine").click()
     await expect(owner.getByText("Hidden Draft").first()).toBeVisible()

@@ -8,23 +8,59 @@ import { as, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 const ana: TestUser = { id: "u_vis_ana", email: "ana@vis.test", name: "Ana", username: "anav" }
 const ben: TestUser = { id: "u_vis_ben", email: "ben@vis.test", name: "Ben", username: "benv" }
 
-describe("publish defaults to private", () => {
-  it("no visibility field ⇒ private; unreadable to anonymous AND workspace members", async () => {
+describe("publish defaults to the team draft (workspace access, no world link, unlisted)", () => {
+  it("no fields ⇒ unlisted, the workspace reaches at its seat role, the world is out", async () => {
     const { app } = makeAuthedApp("vis-default", [ana, ben], "editor")
     const a = await (await publishAs(app, "<h1>draft</h1>", {}, as(ana.email))).json()
-    expect(a.visibility).toBe("private")
-    // Anonymous: the detail 404s and the bytes don't serve.
+    // The factory default: workspace_access=member (the team folds in at their
+    // seats), link_role=none (no world link), listed=none (out of every feed).
+    expect(a.workspace_access).toBe("member")
+    expect(a.link_role).toBe("none")
+    expect(a.listed).toBe("none")
+    // No world link ⇒ anonymous 404s on both the detail and the bytes.
     expect((await app.request(`/v1/artifacts/${a.short_id}`)).status).toBe(404)
     expect((await app.request(`/raw/${a.short_id}/v/1/index.html`)).status).toBe(404)
-    // Even a workspace EDITOR can't see it — private means invited people only.
-    expect(
-      (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })).status,
-    ).toBe(404)
+    // A workspace member holding the URL opens it at THEIR seat role — Ben is an
+    // editor, so he reaches it as an editor. A pasted link never dead-ends a
+    // teammate, but the team's seats are what confer the access, not the link.
+    const bens = await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })
+    expect(bens.status).toBe(200)
+    expect((await bens.json()).my_role).toBe("editor")
+    // Unlisted stays unlisted: Ben's library never shows it (the URL is the only way in).
+    const bensList = await (await app.request("/v1/artifacts", { headers: as(ben.email) })).json()
+    expect(bensList.artifacts.map((x: { short_id: string }) => x.short_id)).not.toContain(
+      a.short_id,
+    )
     // The publisher owns it (the owner-member row written at publish).
     const mine = await (
       await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ana.email) })
     ).json()
     expect(mine.my_role).toBe("owner")
+  })
+
+  it("workspace_access none ⇒ invite-only: even a workspace member 404s", async () => {
+    const { app } = makeAuthedApp("vis-none", [ana, ben], "editor")
+    const a = await (
+      await publishAs(app, "<h1>draft</h1>", { workspace_access: "none" }, as(ana.email))
+    ).json()
+    expect(a.workspace_access).toBe("none")
+    // No workspace access and no link: an editor teammate reaches nothing.
+    expect(
+      (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })).status,
+    ).toBe(404)
+  })
+
+  it("a world link reaches anyone — even an anonymous holder, even while unlisted", async () => {
+    const { app } = makeAuthedApp("vis-world-link", [ana], "editor")
+    const a = await (
+      await publishAs(app, "<h1>unlisted</h1>", { link_role: "viewer" }, as(ana.email))
+    ).json()
+    expect(a.link_role).toBe("viewer")
+    expect(a.listed).toBe("none")
+    // Anonymous holder reads (clamped to view); it is still listed nowhere.
+    const anonView = await app.request(`/v1/artifacts/${a.short_id}`)
+    expect(anonView.status).toBe(200)
+    expect((await anonView.json()).my_role).toBe("viewer")
   })
 })
 
@@ -40,8 +76,8 @@ describe("agents act as their registrant, capped at their registered role", () =
       })
     ).json()
 
-    // The agent publishes (no visibility ⇒ the workspace's AGENT default,
-    // private: the draft is Ana's until she promotes it).
+    // The agent publishes (no fields ⇒ the workspace default: the team-draft,
+    // unlisted until Ana promotes it).
     const form = new FormData()
     form.append("file", new Blob([new TextEncoder().encode("# memo")]), "memo.md")
     const pub = await app.request("/v1/artifacts", {
@@ -51,7 +87,7 @@ describe("agents act as their registrant, capped at their registered role", () =
     })
     expect(pub.status).toBe(201)
     const a = await pub.json()
-    expect(a.visibility).toBe("private")
+    expect(a.listed).toBe("none")
 
     // Ana can open and owns it; the agent can republish.
     const hers = await (
@@ -77,11 +113,11 @@ describe("agents act as their registrant, capped at their registered role", () =
         })
       ).status,
     ).toBe(403)
-    // Private's contract for a teammate: neither the link nor any listing —
-    // the draft is Ana's until she shares or promotes it.
-    expect(
-      (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })).status,
-    ).toBe(404)
+    // The team-draft contract for a teammate: never LISTED, but the workspace
+    // reaches it at its seat role — Ben is an editor, so a pasted link opens at editor.
+    const bensView = await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })
+    expect(bensView.status).toBe(200)
+    expect((await bensView.json()).my_role).toBe("editor")
     const bensList = await (await app.request("/v1/artifacts", { headers: as(ben.email) })).json()
     expect(bensList.artifacts.map((x: { short_id: string }) => x.short_id)).not.toContain(
       a.short_id,
@@ -137,9 +173,10 @@ describe("agents act as their registrant, capped at their registered role", () =
       })
     ).json()
 
-    // Ana publishes a private draft herself; her agent republishes it.
+    // Ana publishes an invite-only draft herself; her agent republishes it (the
+    // agent borrows Ana's owner standing, capped to its registered editor role).
     const hers = await (
-      await publishAs(app, "<h1>draft</h1>", { visibility: "private" }, as(ana.email))
+      await publishAs(app, "<h1>draft</h1>", { workspace_access: "none" }, as(ana.email))
     ).json()
     const form = new FormData()
     form.append("file", new Blob([new TextEncoder().encode("<h1>v2</h1>")]), "draft.html")
@@ -153,26 +190,38 @@ describe("agents act as their registrant, capped at their registered role", () =
       ).status,
     ).toBe(201)
 
-    // Ben's private draft stays invisible to Ana's agent — derived standing is
-    // Ana's, and Ana has none here.
+    // Ben's invite-only draft (workspace_access=none): the workspace reaches
+    // nothing, and Ana — whose standing the agent borrows — is not a member. So
+    // the agent can't even READ it, let alone revise it.
     const bens = await (
-      await publishAs(app, "<h1>secret</h1>", { visibility: "private" }, as(ben.email))
+      await publishAs(app, "<h1>secret</h1>", { workspace_access: "none" }, as(ben.email))
     ).json()
+    const read = await app.request(`/v1/artifacts/${bens.short_id}`, {
+      headers: { authorization: `Bearer ${reg.token}` },
+    })
+    expect(read.status).toBe(404)
+    // The revise path doesn't hide existence the way read does — it just refuses.
+    const form3 = new FormData()
+    form3.append("file", new Blob([new TextEncoder().encode("<h1>hijack</h1>")]), "draft.html")
     expect(
       (
-        await app.request(`/v1/artifacts/${bens.short_id}`, {
+        await app.request(`/v1/artifacts/${bens.short_id}/versions`, {
+          method: "POST",
+          body: form3,
           headers: { authorization: `Bearer ${reg.token}` },
         })
       ).status,
-    ).toBe(404)
+    ).toBe(403)
   })
 })
 
-describe("private: only invited people", () => {
-  it("hides a private artifact from workspace members until shared", async () => {
+describe("invite-only when workspace access is off", () => {
+  it("hides an invite-only artifact from workspace members until shared", async () => {
     const { app } = makeAuthedApp("vis-private", [ana, ben], "editor")
+    // workspace_access=none, no link: true invite-only — nobody but explicit
+    // members reaches it. (The DEFAULT grants the workspace seat access — above.)
     const a = await (
-      await publishAs(app, "<h1>secret</h1>", { visibility: "private" }, as(ana.email))
+      await publishAs(app, "<h1>secret</h1>", { workspace_access: "none" }, as(ana.email))
     ).json()
 
     // The creator owns it (the owner-member row written at publish).
@@ -181,8 +230,9 @@ describe("private: only invited people", () => {
     ).json()
     expect(mine.my_role).toBe("owner")
 
-    // Ben is a workspace EDITOR and still can't see it — org role grants nothing
-    // on private. Detail, bytes, and the library listing all stay dark.
+    // Ben is a workspace EDITOR and still can't see it — workspace_access=none
+    // withholds the seat grant, and there's no link. Detail, bytes, and the
+    // library listing all stay dark.
     expect(
       (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })).status,
     ).toBe(404)
@@ -213,7 +263,7 @@ describe("private: only invited people", () => {
 
   it("never lists a private artifact on the author's profile, even to themselves", async () => {
     const { app } = makeAuthedApp("vis-private-profile", [ana], "editor")
-    await publishAs(app, "<h1>secret</h1>", { visibility: "private" }, as(ana.email))
+    await publishAs(app, "<h1>secret</h1>", { workspace_access: "none" }, as(ana.email))
     const works = await (
       await app.request("/v1/users/anav/artifacts", { headers: as(ana.email) })
     ).json()
@@ -288,7 +338,7 @@ describe("the last owner is immovable", () => {
   it("refuses to remove or downgrade the sole owner-member", async () => {
     const { app } = makeAuthedApp("vis-last-owner", [ana], "editor")
     const a = await (
-      await publishAs(app, "<h1>mine</h1>", { visibility: "private" }, as(ana.email))
+      await publishAs(app, "<h1>mine</h1>", { workspace_access: "none" }, as(ana.email))
     ).json()
     const del = await app.request(`/v1/artifacts/${a.short_id}/members/${ana.id}`, {
       method: "DELETE",

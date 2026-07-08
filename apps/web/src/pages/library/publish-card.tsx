@@ -41,7 +41,7 @@ export function PublishCard() {
     }
     setBusy(true)
     try {
-      // No visibility: the server default (private) governs; widen from the Share dialog.
+      // No access fields: the server default (the team draft) governs; widen from the Share dialog.
       const a = await api.publish(f, { title: f.name.replace(/\.[^.]+$/, "") })
       // Freshen the library so the new artifact + bumped total are correct on return.
       qc.invalidateQueries({ queryKey: summaryQuery().queryKey })

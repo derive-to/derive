@@ -1,4 +1,4 @@
-import type { GeneralRole, Role } from "@/api"
+import type { LinkRole, Role } from "@/api"
 
 /**
  * The UI side of the access matrix (the API is the hard gate; these keep the UI from
@@ -11,11 +11,13 @@ import type { GeneralRole, Role } from "@/api"
 export const canCommentWithRole = (role: Role | null | undefined): boolean =>
   role === "commenter" || role === "editor" || role === "owner"
 
-/** Should an anonymous visitor be offered "sign in to comment"? Only when the link's
- *  general access actually grants comment (so signing in would lift them to commenter)
- *  and the artifact is live. Anonymous never comments directly: auth is the gate. */
+/** Should an anonymous visitor be offered "sign in to comment"? Only when the link
+ *  actually grants comment or more (so signing in would lift them past viewer) and
+ *  the artifact is live. If an anonymous visitor can SEE the doc at all, the link's
+ *  audience already admitted them, so only the role matters here. Anonymous never
+ *  comments directly: auth is the gate. */
 export const shouldPromptSignInToComment = (
   isAnon: boolean,
-  generalRole: GeneralRole | undefined,
+  linkRole: LinkRole | undefined,
   removed: boolean,
-): boolean => isAnon && generalRole === "commenter" && !removed
+): boolean => isAnon && (linkRole === "commenter" || linkRole === "editor") && !removed

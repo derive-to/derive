@@ -24,13 +24,17 @@ export function runStoreContract(
   let store: MetaStore
   let cleanup: () => void | Promise<void>
 
+  // Default: a fully public doc (workspace seats + a world view link + listed in the
+  // public directory) — the access-model v2 analogue of the old `visibility: public`.
   const newArtifact = (over: Partial<NewArtifact> = {}): NewArtifact => ({
     id: uuid(),
     short_id: uuid().slice(0, 8),
     org_id: ORG,
     slug: "doc",
     title: "Doc",
-    visibility: "public",
+    workspace_access: "member",
+    link_role: "viewer",
+    listed: "public",
     kind: "file",
     spa: 0,
     ...over,
@@ -128,25 +132,69 @@ export function runStoreContract(
       expect(await store.listArtifacts({ ids: [] })).toEqual([])
     })
 
-    it("changes visibility + general-access role (sets/clears the password lock)", async () => {
-      const a = await store.createArtifact(newArtifact())
-      expect(a.general_role).toBe("viewer") // defaults to view-only
-      // A locked public doc: visibility public + a password hash.
-      await store.setVisibility(a.id, "public", "hash123", "viewer")
+    it("setAccess changes the access triple (and sets/clears the password lock)", async () => {
+      const a = await store.createArtifact(
+        newArtifact({ workspace_access: "none", link_role: "none", listed: "none" }),
+      )
+      // Fail-closed store defaults when nothing's stamped.
+      expect(a.workspace_access).toBe("none")
+      expect(a.link_role).toBe("none")
+      expect(a.listed).toBe("none")
+      // A locked public doc: listed public + a password hash + a world view link.
+      await store.setAccess(a.id, "member", "public", "viewer", "hash123")
       expect(await store.getByShortId(a.short_id)).toMatchObject({
-        visibility: "public",
+        workspace_access: "member",
+        listed: "public",
         password_hash: "hash123",
+        link_role: "viewer",
       })
-      // Unlock it and grant comment: hash cleared, general_role round-trips.
-      await store.setVisibility(a.id, "public", null, "commenter")
+      // Unlock it and grant comment: hash cleared, the triple round-trips.
+      await store.setAccess(a.id, "member", "public", "commenter", null)
       expect(await store.getByShortId(a.short_id)).toMatchObject({
-        visibility: "public",
+        listed: "public",
         password_hash: null,
-        general_role: "commenter",
+        link_role: "commenter",
       })
-      // And back to view-only.
-      await store.setVisibility(a.id, "public", null, "viewer")
-      expect((await store.getByShortId(a.short_id))?.general_role).toBe("viewer")
+      // Editor — the full range.
+      await store.setAccess(a.id, "member", "public", "editor", null)
+      expect((await store.getByShortId(a.short_id))?.link_role).toBe("editor")
+      // Back to invite-only (all off).
+      await store.setAccess(a.id, "none", "none", "none", null)
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        workspace_access: "none",
+        listed: "none",
+        link_role: "none",
+      })
+    })
+
+    it("the world link is independent of listing — an unlisted artifact carries a live link", async () => {
+      const a = await store.createArtifact(
+        newArtifact({ workspace_access: "member", link_role: "none", listed: "none" }),
+      )
+      expect(a.link_role).toBe("none")
+      // Unlisted, workspace seats + a world comment link (a shareable draft).
+      await store.setAccess(a.id, "member", "none", "commenter", null)
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        listed: "none",
+        workspace_access: "member",
+        link_role: "commenter",
+      })
+      // Unlisted, world view link, no workspace access (external-only).
+      await store.setAccess(a.id, "none", "none", "viewer", null)
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        listed: "none",
+        workspace_access: "none",
+        link_role: "viewer",
+      })
+    })
+
+    it("createArtifact stamps an explicit access triple (the publish() path)", async () => {
+      const a = await store.createArtifact(
+        newArtifact({ workspace_access: "member", link_role: "commenter", listed: "none" }),
+      )
+      expect(a.workspace_access).toBe("member")
+      expect(a.link_role).toBe("commenter")
+      expect(a.listed).toBe("none")
     })
 
     it("counts storage bytes once per distinct blob (content-addressed)", async () => {
@@ -159,13 +207,19 @@ export function runStoreContract(
     })
   })
 
-  describe(`${label}: private listings (the draft state)`, () => {
-    it("shows private rows to their members only — the owner's drafts stay theirs", async () => {
+  describe(`${label}: unlisted listings (the draft state)`, () => {
+    it("shows unlisted rows to their members only — the owner's drafts stay theirs", async () => {
       const owner = `u_pv_owner_${uuid()}`
       const other = `u_pv_other_${uuid()}`
       const org = `${ORG}_pv_${uuid()}`
       const draft = await store.createArtifact(
-        newArtifact({ org_id: org, visibility: "private", title: "Agent Draft Alpha" }),
+        newArtifact({
+          org_id: org,
+          listed: "none",
+          link_role: "none",
+          workspace_access: "member",
+          title: "Agent Draft Alpha",
+        }),
       )
       await store.setArtifactMember({
         id: uuid(),
@@ -174,7 +228,7 @@ export function runStoreContract(
         role: "owner",
       })
       const listed = await store.createArtifact(
-        newArtifact({ org_id: org, visibility: "org", title: "Team Doc" }),
+        newArtifact({ org_id: org, listed: "workspace", link_role: "none", title: "Team Doc" }),
       )
 
       // The owner sees their draft in an ordinary listing; a teammate never does —
@@ -203,10 +257,12 @@ export function runStoreContract(
       ).not.toContain(draft.id)
     })
 
-    it("keeps private work off profiles, even across a shared workspace", async () => {
+    it("keeps unlisted work off profiles, even across a shared workspace", async () => {
       const author = `u_pv_author_${uuid()}`
       const org = `${ORG}_pv_pp_${uuid()}`
-      const draft = await store.createArtifact(newArtifact({ org_id: org, visibility: "private" }))
+      const draft = await store.createArtifact(
+        newArtifact({ org_id: org, listed: "none", link_role: "none" }),
+      )
       await store.addVersion(draft.id, newVersion({ author: "Author", author_id: author }))
       const works = await store.listUserWorks(author, [], { visibleOrgIds: [org] })
       expect(works.map((a) => a.id)).not.toContain(draft.id)
@@ -268,7 +324,7 @@ export function runStoreContract(
       const someoneElse = `u_owned_other_${uuid()}`
       const org = `${ORG}_owned_${uuid()}`
       const mine = await store.createArtifact(
-        newArtifact({ org_id: org, visibility: "private", author_id: me }),
+        newArtifact({ org_id: org, listed: "none", link_role: "none", author_id: me }),
       )
       await store.setArtifactMember({
         id: uuid(),
@@ -277,7 +333,12 @@ export function runStoreContract(
         role: "owner",
       })
       const theirs = await store.createArtifact(
-        newArtifact({ org_id: org, visibility: "org", author_id: someoneElse }),
+        newArtifact({
+          org_id: org,
+          listed: "workspace",
+          link_role: "none",
+          author_id: someoneElse,
+        }),
       )
       await store.setArtifactMember({
         id: uuid(),
@@ -296,9 +357,9 @@ export function runStoreContract(
       expect(await store.artifactIdsOwnedBy(org, someoneElse)).toEqual([theirs.id])
       expect(await store.countOwnedBy(org, me)).toBe(1)
       expect(await store.countOwnedBy(org, someoneElse)).toBe(1)
-      // The visibility narrow (the link-only pending badge).
-      expect(await store.countOwnedBy(org, me, "private")).toBe(1)
-      expect(await store.countOwnedBy(org, me, "org")).toBe(0)
+      // The listing narrow (the not-in-a-feed pending badge).
+      expect(await store.countOwnedBy(org, me, "none")).toBe(1)
+      expect(await store.countOwnedBy(org, me, "workspace")).toBe(0)
       // Scoped to the workspace — an owner row elsewhere doesn't leak in.
       expect(await store.countOwnedBy(`${org}_other`, me)).toBe(0)
     })
@@ -311,7 +372,7 @@ export function runStoreContract(
       const me = `u_owned_stable_${uuid()}`
       const org = `${ORG}_owned_stable_${uuid()}`
       const a = await store.createArtifact(
-        newArtifact({ org_id: org, visibility: "private", author_id: me }),
+        newArtifact({ org_id: org, listed: "none", link_role: "none", author_id: me }),
       )
       await store.setArtifactMember({ id: uuid(), artifact_id: a.id, user_id: me, role: "owner" })
 
@@ -324,7 +385,7 @@ export function runStoreContract(
       await store.addVersion(a.id, newVersion({ author: "ci", author_id: null }))
       expect((await store.getArtifactById(a.id))?.author_id).toBeNull() // the denorm moved…
       expect(await store.artifactIdsOwnedBy(org, me)).toEqual([a.id]) // …the filter didn't
-      expect(await store.countOwnedBy(org, me, "private")).toBe(1)
+      expect(await store.countOwnedBy(org, me, "none")).toBe(1)
     })
 
     it("sets and clears the current author directly (the backfill path)", async () => {
@@ -629,16 +690,16 @@ export function runStoreContract(
       const mayaOrg = `${ORG}_maya_ws` // the author publishes in HER workspace
 
       // Maya's PUBLIC work, in her own workspace (author_id stamped on hand-publish).
-      const pub = await store.createArtifact(newArtifact({ org_id: mayaOrg, visibility: "public" }))
+      const pub = await store.createArtifact(newArtifact({ org_id: mayaOrg, listed: "public" }))
       await store.addVersion(pub.id, newVersion({ author: "Maya", author_id: maya }))
       // Maya's PRIVATE work — must NOT leak into a follower's feed.
       const priv = await store.createArtifact(
-        newArtifact({ org_id: mayaOrg, visibility: "private" }),
+        newArtifact({ org_id: mayaOrg, listed: "none", link_role: "none" }),
       )
       await store.addVersion(priv.id, newVersion({ author: "Maya", author_id: maya }))
       // Someone else's public work in another workspace — not followed, must not appear.
       const other = await store.createArtifact(
-        newArtifact({ org_id: `${ORG}_other_ws`, visibility: "public" }),
+        newArtifact({ org_id: `${ORG}_other_ws`, listed: "public" }),
       )
       await store.addVersion(
         other.id,
@@ -680,7 +741,7 @@ export function runStoreContract(
       await store.addVersion(localElsewhere.id, newVersion({ author: "Ada", author_login: "ada" }))
       // A followed person's public work in a far workspace (person branch, any workspace).
       const personPub = await store.createArtifact(
-        newArtifact({ org_id: farOrg, visibility: "public" }),
+        newArtifact({ org_id: farOrg, listed: "public" }),
       )
       await store.addVersion(personPub.id, newVersion({ author: "Pat", author_id: person }))
 
@@ -712,17 +773,15 @@ export function runStoreContract(
       const homeOrg = `${ORG}_pp_home_${uuid()}`
       const ghId = `gh-${uuid()}` // distinctive, unused by any other test
       // Public work, hand-authored (author_id) in the author's workspace.
-      const pub = await store.createArtifact(newArtifact({ org_id: homeOrg, visibility: "public" }))
+      const pub = await store.createArtifact(newArtifact({ org_id: homeOrg, listed: "public" }))
       await store.addVersion(pub.id, newVersion({ author: "Author", author_id: author }))
       // Org-visible (non-public) work by the same author.
       const orgWork = await store.createArtifact(
-        newArtifact({ org_id: homeOrg, visibility: "org" }),
+        newArtifact({ org_id: homeOrg, listed: "workspace", link_role: "none" }),
       )
       await store.addVersion(orgWork.id, newVersion({ author: "Author", author_id: author }))
       // Public work attributed by a linked GitHub id (no author_id) — matched via ghIds.
-      const ghWork = await store.createArtifact(
-        newArtifact({ org_id: homeOrg, visibility: "public" }),
-      )
+      const ghWork = await store.createArtifact(newArtifact({ org_id: homeOrg, listed: "public" }))
       await store.addVersion(
         ghWork.id,
         newVersion({ author: "Gh", author_login: "gh", author_gh_id: ghId }),

@@ -127,7 +127,7 @@ export class Presence {
   }
 }
 
-/** Presence as a port: in-process is synchronous; a Durable Object / Redis store
+/** Presence as a port: in-process is synchronous; a Durable Object store
  *  resolves asynchronously, so callers await the result either way. */
 export interface PresenceStore {
   heartbeat(channel: string, viewer: Viewer, now: number): Viewer[] | Promise<Viewer[]>
@@ -147,7 +147,7 @@ export interface PresenceStore {
 
 /**
  * The realtime backplane: cross-instance event relay + presence, with an optional
- * connection-owning hook. Relay adapters (in-process, Redis) return null from
+ * connection-owning hook. Relay adapters (the in-process bus) return null from
  * `handleStream` and let the route hold the SSE stream + `subscribe`; a Durable
  * Object adapter owns the stream itself and returns the Response. `publish` stays
  * synchronous (fire-and-forget for remote adapters) so the route call sites don't

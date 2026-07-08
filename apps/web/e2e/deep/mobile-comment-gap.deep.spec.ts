@@ -49,10 +49,6 @@ test("no black dead-band under the document after commenting on mobile", async (
   await expect(page.getByTestId("comments-sheet-resize")).toHaveAttribute("aria-label", "Expand")
   await page.waitForTimeout(400) // let the padding transition settle
 
-  await page.screenshot({
-    path: "/Users/aniraga/Projects/screenshots/derive-mobile-comment-peek.png",
-  })
-
   const { paddingBottom, sheetHeight, band } = await deadBandPx(page)
   // The reserved padding should hug the sheet's real height, not overshoot it.
   // Allow a small tolerance for the grip/rounding; the bug reserved ~50vh (~380px
