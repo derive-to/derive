@@ -26,13 +26,20 @@ import {
   type BundleManifest,
   capRole,
   diffLines,
+  EditError,
   formatDiff,
+  isHtmlLike,
   newId,
+  type OutlineSection,
+  outlineOf,
   PublishError,
+  pageText,
   propose as proposeChange,
   publish as publishVersion,
   type Role,
   roleAllows,
+  sectionOf,
+  toMarkdown,
   type VersionRecord,
 } from "@derive/core"
 import { StreamableHTTPTransport } from "@hono/mcp"
@@ -49,7 +56,9 @@ import {
   zipBundleFiles,
 } from "./lib/bundle"
 import { parseMeta, quoteOf, REACTIONS } from "./lib/comments"
+import { type MaterializedEdits, materializeEdits } from "./lib/edits"
 import { buildReviewEmail } from "./lib/email"
+import { MAX_UPLOAD_BYTES } from "./lib/http"
 import { notifyCommentBells } from "./lib/notify-comment"
 import { enqueueChannelDelivery } from "./webhooks"
 
@@ -71,8 +80,76 @@ const err = (s: string) => ({
 const MAX_CHARS = 80_000
 const clip = (s: string) =>
   s.length > MAX_CHARS
-    ? `${s.slice(0, MAX_CHARS)}\n\n…[truncated ${s.length - MAX_CHARS} chars — read a specific section]`
+    ? `${s.slice(0, MAX_CHARS)}\n\n…[truncated ${s.length - MAX_CHARS} chars — narrow the range]`
     : s
+
+// Above this, a section-less read of a sectionable doc returns its OUTLINE instead of
+// a blind dump: ~9k tokens leaves room to read on, small enough that most docs still
+// arrive whole. Measured on the formatted body, not the raw source.
+const FULL_DOC_MAX = 30_000
+
+// clip(), but the truncation steer names sections that actually resolve.
+const clipDoc = (s: string, sections: OutlineSection[]) => {
+  if (s.length <= MAX_CHARS) return s
+  const steer = sections.length
+    ? `read a section instead: ${sections
+        .slice(0, 12)
+        .map((x) => x.slug)
+        .join(", ")}${sections.length > 12 ? ", …" : ""}`
+    : "no headings to section by — read a past `version`, or ask for the raw file"
+  return `${s.slice(0, MAX_CHARS)}\n\n…[truncated ${s.length - MAX_CHARS} of ${s.length} chars — ${steer}]`
+}
+
+// A content-bearing response: a frontmatter-style header, a blank line, then the RAW
+// body — one text block, real newlines, never JSON-escaped. When a client spills it
+// to a file, that file is line-oriented and greppable (the old JSON envelope turned a
+// 68k-char document into one escaped line). Receipts and outlines stay `json()`.
+const doc = (meta: Record<string, string | number | null | undefined>, body: string) => {
+  const head = Object.entries(meta)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n")
+  return text(`---\n${head}\n---\n\n${body}`)
+}
+
+// The reading form for stored source at a given format. `markdown` converts HTML;
+// `text` is the flat visible text (exactly what comment quotes anchor against);
+// `html` is the exact source. Markdown/plain sources ARE their own visible text.
+type ReadFormat = "markdown" | "html" | "text"
+const baseType = (t: string) => t.split(";")[0]?.trim() ?? t
+const isTextType = (t: string) => baseType(t) === "text/html" || baseType(t) === "text/markdown"
+const present = (source: string, contentType: string, format: ReadFormat): string => {
+  if (format === "html") return source
+  if (format === "text") return isHtmlLike(contentType) ? pageText(source) : source
+  return toMarkdown(source, contentType)
+}
+const formatLabel = (contentType: string, format: ReadFormat): string => {
+  if (format === "markdown")
+    return isHtmlLike(contentType)
+      ? `markdown (converted from ${baseType(contentType)})`
+      : "markdown (source)"
+  return format === "html" ? "html (source)" : "text (visible text)"
+}
+
+// Images a read can inline as a real MCP image block (vision models see the mockup
+// screenshot instead of PNG bytes decoded as garbage text). Larger ones return
+// metadata + the served URL — open it in a browser instead.
+const IMAGE_INLINE_MAX = 1_000_000
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+// Dependency-free base64 (no Buffer — this file runs on the Workers tier).
+const toBase64 = (bytes: Uint8Array): string => {
+  let out = ""
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i] as number
+    const b = bytes[i + 1]
+    const c = bytes[i + 2]
+    out += B64[a >> 2]
+    out += B64[((a & 3) << 4) | ((b ?? 0) >> 4)]
+    out += b === undefined ? "=" : B64[((b & 15) << 2) | ((c ?? 0) >> 6)]
+    out += c === undefined ? "=" : B64[c & 63]
+  }
+  return out
+}
 
 const summarizeArtifact = (a: ArtifactRecord) => ({
   short_id: a.short_id,
@@ -178,13 +255,17 @@ function buildServer(
         `with ${agent.role} permissions. Derive hosts living documents and plans with versioned ` +
         `history, text-anchored review comments, and a publish → review → revise loop. ` +
         `Start a session with catch_up to re-sync on what changed and what feedback is open; use ` +
-        `read to view content (outline first for multi-page bundles); use comment to leave or ` +
-        `resolve feedback. ${writeGuidance}When a revision fixes specific feedback, pass those ` +
-        `thread ids as publish's "addresses" so the threads resolve (or show pending on a proposal). ` +
-        `This one login reaches EVERY workspace you belong to — call list_workspaces to see them, ` +
+        `read to view content — it returns Markdown by default (HTML is converted) and an outline ` +
+        `first for large documents or bundles, so pull sections by heading slug or page path once ` +
+        `you know what you want; pass format:'html' for the exact source. Use comment to leave or ` +
+        `resolve feedback. ${writeGuidance}To change PART of an artifact, prefer publish's edits ` +
+        `(exact-match search/replace against the stored source) over resending everything. When a ` +
+        `revision fixes specific feedback, pass those thread ids as publish's "addresses" so the ` +
+        `threads resolve (or show pending on a proposal). ` +
+        `This one login reaches the workspaces in your grant — call list_workspaces to see them, ` +
         `then pass a workspace id or name as the "workspace" argument to act in another one (read, ` +
         `catch_up, comment, publish, list_artifacts). read/catch_up/comment also find a short_id in ` +
-        `any of your workspaces automatically, so you never need to switch just to open a doc.`,
+        `any of them automatically, so you never need to switch just to open a doc.`,
     },
   )
   const defaultOrg = agent.org_id
@@ -327,18 +408,27 @@ function buildServer(
     "read",
     {
       description:
-        "Read an artifact's CONTENT by short id. Multi-page bundle: omit `section` to get its outline (the list of pages), then call again with a `section` (a page path) for that page's full text. Single-file artifact: returns the full content. Pass a past `version` to read history. (For what CHANGED, or the comment threads, use catch_up.)",
+        "Read an artifact's CONTENT by short id, as Markdown by default (HTML is converted; the styling noise is dropped). Small docs return whole; a LARGE doc returns its heading OUTLINE first — call again with a `section` slug for just that part. Multi-page bundle: omit `section` for the page outline, then pass a page path (optionally `page.html#slug`). Pass format:'html' for the exact source (required before publish `edits`), or a past `version` for history. (For what CHANGED, or the comment threads, use catch_up.)",
       inputSchema: {
         short_id: z.string().describe("The artifact's short id, e.g. nk0dsral."),
         section: z
           .string()
           .optional()
-          .describe("A bundle page path, e.g. agentic-loop.html. Omit to get the outline first."),
+          .describe(
+            'What to read. Single-file doc: a heading slug from the outline (e.g. rollout-plan). Bundle: a page path (agentic-loop.html), optionally with a slug (agentic-loop.html#risks). Pass "*" (or "page.html#*" for a bundle page) to force the full (clipped) document/page. Omit it: small docs/pages return whole, large ones return their outline.',
+          ),
+        format: z
+          .enum(["markdown", "html", "text"])
+          .optional()
+          .describe(
+            "markdown (default): HTML converted to structured Markdown — headings, lists, tables, code fences; Markdown sources return as-is. html: the exact stored source — read this BEFORE publish `edits` on an HTML artifact (edits match raw source). text: flat visible text, exactly what comment `quote`s anchor against.",
+          ),
         version: z.number().optional().describe("Defaults to the current version."),
         workspace: wsArg,
       },
     },
-    async ({ short_id, section, version, workspace }) => {
+    async ({ short_id, section, format, version, workspace }) => {
+      const fmt: ReadFormat = format ?? "markdown"
       const r = await reach(short_id, workspace)
       if (r && "error" in r) return err(r.error)
       if (!r) return notFound(short_id)
@@ -348,39 +438,238 @@ function buildServer(
         return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
       const v = await ctx.meta.getVersion(a.id, n)
       if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
+      const url = artifactUrl(ctx.deps.baseUrl, a)
       const manifest = await manifestOf(ctx, v)
+
       if (!manifest) {
-        // Single-file artifact — return its content.
-        const body = await ctx.sourceText(v)
-        return json({
+        // Single-file artifact.
+        const src = (await ctx.sourceText(v)) ?? ""
+        const ct = v.content_type
+        const meta = {
           short_id,
           title: a.title,
+          version: `${n}${n === a.current_version ? " (current)" : ""}`,
           kind: a.kind,
-          version: n,
-          content: clip(body ?? ""),
-        })
+          format: formatLabel(ct, fmt),
+          url,
+        }
+        if (section && section !== "*") {
+          const slice = sectionOf(src, ct, section)
+          if (slice === null) {
+            const slugs = outlineOf(src, ct).map((s) => s.slug)
+            return err(
+              slugs.length
+                ? `No section "${section}" in "${short_id}" v${n} — sections: ${slugs.join(", ")}.`
+                : `"${short_id}" has no headings to section by — read it whole (omit \`section\`).`,
+            )
+          }
+          // Also feeds clipDoc's steer below — a single section can itself be huge
+          // (e.g. the last one, which runs to </body>), so it needs the same
+          // MAX_CHARS ceiling the whole-doc path gets, not an unbounded return.
+          const outline = outlineOf(src, ct)
+          const i = outline.findIndex((s) => s.slug === section)
+          const body = present(slice, ct, fmt)
+          return doc(
+            {
+              ...meta,
+              section: `${section} (${i + 1} of ${outline.length})`,
+              chars: body.length,
+            },
+            clipDoc(body, outline),
+          )
+        }
+        const body = present(src, ct, fmt)
+        if (!section && body.length > FULL_DOC_MAX) {
+          const outline = outlineOf(src, ct)
+          if (outline.length)
+            return json({
+              short_id,
+              title: a.title,
+              kind: a.kind,
+              version: n,
+              source: ct,
+              format: fmt,
+              doc_chars: body.length,
+              url,
+              sections: outline,
+              next: 'Large document — call read again with a `section` slug for just that part, or section:"*" for the full clipped text. To revise it, publish with `edits` instead of resending content.',
+            })
+          // No headings to summarize by — fall through to a plain (clipped) return,
+          // reusing the already-computed (empty) outline instead of asking again.
+          return doc({ ...meta, chars: body.length }, clipDoc(body, outline))
+        }
+        // Under FULL_DOC_MAX: clipDoc's MAX_CHARS ceiling is far above this body's
+        // size, so it can never truncate — skip computing an outline it won't use.
+        const outline = body.length > MAX_CHARS ? outlineOf(src, ct) : []
+        return doc({ ...meta, chars: body.length }, clipDoc(body, outline))
       }
+
+      // Bundle.
       const pages = Object.keys(manifest.files).map(cleanPath)
-      if (!section)
+      if (!section) {
+        // Outline: every page, plus sizes + headings for the shallowest text pages
+        // (each costs a blob read — the manifest has no sizes — so cap the sweep).
+        const textPages = pages
+          .filter((p) => isTextType(manifest.files[p]?.type ?? manifest.files[`/${p}`]?.type ?? ""))
+          .sort((x, y) => x.split("/").length - y.split("/").length || x.localeCompare(y))
+        const entry = cleanPath(manifest.entry)
+        const inspect = [entry, ...textPages.filter((p) => p !== entry)].slice(0, 25)
+        // The blob reads are independent — fetch them all at once instead of one
+        // round trip at a time (up to 25 pages, otherwise serialized latency).
+        const detailEntries = await Promise.all(
+          inspect.map(
+            async (p): Promise<[string, { chars: number; headings: OutlineSection[] }] | null> => {
+              const file = manifest.files[p] ?? manifest.files[`/${p}`]
+              if (!file) return null
+              const bytes = await ctx.blobs.get(file.key)
+              if (!bytes) return null
+              const text_ = new TextDecoder().decode(bytes)
+              return [
+                p,
+                {
+                  chars: toMarkdown(text_, file.type).length,
+                  headings: outlineOf(text_, file.type),
+                },
+              ]
+            },
+          ),
+        )
+        const detail = new Map(detailEntries.filter((e) => e !== null))
         return json({
           short_id,
           title: a.title,
           kind: "bundle",
           version: n,
-          entry: cleanPath(manifest.entry),
-          pages,
-          next: "Call read again with a `section` (one of the pages above) for that page's content.",
+          entry,
+          url,
+          pages: pages.map((p) => {
+            const type = manifest.files[p]?.type ?? manifest.files[`/${p}`]?.type
+            const d = detail.get(p)
+            return {
+              path: p,
+              type,
+              ...(d
+                ? {
+                    chars: d.chars,
+                    headings: d.headings.map((h) => ({
+                      slug: h.slug,
+                      level: h.level,
+                      text: h.text,
+                    })),
+                  }
+                : {}),
+            }
+          }),
+          next: "Call read again with a `section` (a page path above, optionally page.html#slug for one heading's part) for content.",
         })
-      const file = manifest.files[section] ?? manifest.files[`/${cleanPath(section)}`]
-      if (!file) return err(`No page "${section}" in "${short_id}". Pages: ${pages.join(", ")}.`)
+      }
+
+      // A page (optionally page#slug — split on the LAST '#'). "#*" forces the
+      // page's full (clipped) content, the same bypass single-file section:"*" is.
+      const hash = section.lastIndexOf("#")
+      const pagePath = hash > 0 ? section.slice(0, hash) : section
+      const rawSlug = hash > 0 ? section.slice(hash + 1) : null
+      const slug = rawSlug === "*" ? null : rawSlug
+      const forceFull = rawSlug === "*"
+      const file = manifest.files[pagePath] ?? manifest.files[`/${cleanPath(pagePath)}`]
+      if (!file) return err(`No page "${pagePath}" in "${short_id}". Pages: ${pages.join(", ")}.`)
       const bytes = await ctx.blobs.get(file.key)
-      return json({
+
+      // An image page is an IMAGE, not text: inline it as a real image block (small
+      // ones), or point at the served URL. Never decode PNG bytes as a string.
+      if (baseType(file.type).startsWith("image/")) {
+        const pageUrl = `${ctx.deps.baseUrl}/raw/${short_id}/v/${n}/${cleanPath(pagePath)}`
+        const size = bytes?.length ?? 0
+        if (!bytes || size > IMAGE_INLINE_MAX)
+          return json({
+            short_id,
+            section: cleanPath(pagePath),
+            type: file.type,
+            bytes: size,
+            url: pageUrl,
+            note: "Too large to inline over MCP — open the url to view it.",
+          })
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `${cleanPath(pagePath)} (${file.type}, ${size} bytes) — served at ${pageUrl}`,
+            },
+            { type: "image" as const, data: toBase64(bytes), mimeType: baseType(file.type) },
+          ],
+        }
+      }
+
+      const raw = bytes ? new TextDecoder().decode(bytes) : ""
+      const isText = isTextType(file.type)
+      const meta = {
         short_id,
-        version: n,
-        section: cleanPath(section),
+        title: a.title,
+        version: `${n}${n === a.current_version ? " (current)" : ""}`,
+        kind: "bundle",
+        url,
         type: file.type,
-        content: clip(bytes ? new TextDecoder().decode(bytes) : ""),
-      })
+      }
+      if (slug) {
+        if (!isText)
+          return err(`"${pagePath}" is ${file.type} — heading sections only apply to text pages.`)
+        const slice = sectionOf(raw, file.type, slug)
+        if (slice === null) {
+          const slugs = outlineOf(raw, file.type).map((s) => s.slug)
+          return err(
+            slugs.length
+              ? `No section "${slug}" in "${pagePath}" — sections: ${slugs.join(", ")}.`
+              : `"${pagePath}" has no headings to section by — read the whole page.`,
+          )
+        }
+        const outline = outlineOf(raw, file.type)
+        const body = present(slice, file.type, fmt)
+        return doc(
+          {
+            ...meta,
+            section: `${cleanPath(pagePath)}#${slug}`,
+            format: formatLabel(file.type, fmt),
+            chars: body.length,
+          },
+          clipDoc(body, outline),
+        )
+      }
+      // css/js/json/etc always return source — conversion only applies to text pages.
+      const body = isText ? present(raw, file.type, fmt) : raw
+      // Same outline-first threshold the single-file path applies: a bundle page can
+      // be just as large as a standalone doc, so it gets the same treatment instead
+      // of only ever cutting at the much higher MAX_CHARS ceiling below.
+      if (isText && !slug && !forceFull && body.length > FULL_DOC_MAX) {
+        const outline = outlineOf(raw, file.type)
+        if (outline.length)
+          return json({
+            short_id,
+            title: a.title,
+            kind: "bundle",
+            version: n,
+            section: cleanPath(pagePath),
+            source: file.type,
+            format: fmt,
+            doc_chars: body.length,
+            url,
+            sections: outline,
+            next: `Large page — call read again with \`section\` set to "${cleanPath(pagePath)}#slug" for just that part, or "${cleanPath(pagePath)}#*" for the full clipped text.`,
+          })
+        return doc(
+          { ...meta, section: cleanPath(pagePath), chars: body.length },
+          clipDoc(body, outline),
+        )
+      }
+      const outline = isText && body.length > MAX_CHARS ? outlineOf(raw, file.type) : []
+      return doc(
+        {
+          ...meta,
+          section: cleanPath(pagePath),
+          format: isText ? formatLabel(file.type, fmt) : file.type,
+          chars: body.length,
+        },
+        clipDoc(body, outline),
+      )
     },
   )
 
@@ -391,7 +680,7 @@ function buildServer(
       description:
         "START HERE on an artifact. The state of it in one call: a one-line summary, the versions that landed since `since_version`, which pages changed, the open (and outdated) comment threads, and the full version history. " +
         "Pass `comments` (open / addressed / resolved / outdated) to instead get that filtered thread list — your feedback to-do queue. " +
-        "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to include the exact line-by-line diff between two versions. " +
+        "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to include a line-by-line diff between two versions — of their READABLE Markdown form, not raw HTML, so it shows what changed rather than tag noise. " +
         "WAITING ON A REVIEW? Pass `wait` (seconds, max 50): the call blocks until the human sends back / approves / comments (or the time runs out), then returns the fresh state. Chain wait calls instead of sleeping between polls — feedback reaches you in seconds.",
       inputSchema: {
         short_id: z.string(),
@@ -503,7 +792,14 @@ function buildServer(
         if (ms && mh) pagesChanged = bundleFileChanges(ms, mh)
         if (response_format === "detailed") {
           const [as_, ah] = [await ctx.sourceText(vs), await ctx.sourceText(vh)]
-          if (as_ !== null && ah !== null) entryDiff = clip(formatDiff(diffLines(as_, ah)))
+          if (as_ !== null && ah !== null) {
+            // Diff the READABLE form, not raw source: HTML tag noise drowns a
+            // real change, and minified one-line HTML produces one useless
+            // del/add pair. Markdown conversion re-introduces line structure so
+            // the diff answers what an agent actually asks — what changed.
+            const md = diffLines(toMarkdown(as_, vs.content_type), toMarkdown(ah, vh.content_type))
+            entryDiff = `diff of markdown conversion (semantic view):\n\n${clip(formatDiff(md))}`
+          }
         }
       }
       const open = await ctx.meta.listComments(a.id, { state: "open" })
@@ -708,7 +1004,7 @@ function buildServer(
     "publish",
     {
       description:
-        "Save a revision of an artifact. It goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or whenever you pass for_review:true — it is filed as a PROPOSAL a human approves before it goes live. Provide `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE (a whole site, images and any binary asset). OMIT short_id to create a NEW artifact (`title` required); PASS short_id to add a version to one you own, matching its kind. A bundle republish REPLACES the whole bundle, so include EVERY page and asset (or use `merge`). Pass `addresses` with the thread ids (from catch_up) this revision resolves. Provide the FULL content, not a patch. (Proposals are single-file only; bundles must be published directly.)",
+        "Save a revision of an artifact. It goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or whenever you pass for_review:true — it is filed as a PROPOSAL a human approves before it goes live. To CHANGE PART of a single-file artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything. Otherwise provide the full `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE (a whole site, images and any binary asset). OMIT short_id to create a NEW artifact (`title` required); PASS short_id to add a version to one you own, matching its kind. A bundle republish REPLACES the whole bundle, so include EVERY page and asset (or use `merge`). Pass `addresses` with the thread ids (from catch_up) this revision resolves. (Proposals are single-file only; bundles must be published directly.)",
       inputSchema: {
         content: z
           .string()
@@ -776,10 +1072,31 @@ function buildServer(
             "After a LIVE publish, open a review round asking your human to review this version — the /derive loop. They answer inline and hit Send back (or Approve); poll catch_up's `review` for the state. No effect on a proposal (that already IS a review).",
           ),
         workspace: wsArg,
+        edits: z
+          .array(
+            z.object({
+              old_str: z
+                .string()
+                .describe(
+                  "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once.",
+                ),
+              new_str: z.string().describe("Replacement text. Empty string deletes."),
+            }),
+          )
+          .optional()
+          .describe(
+            "Surgical revision of a SINGLE-FILE artifact without resending it: exact-match search/replace against the current stored source, applied in order (each edit sees the previous one's result). Errors — applying nothing — if any old_str matches zero or multiple times; add surrounding context to disambiguate. Requires `short_id`; use INSTEAD of `content`. Composes with for_review, addresses, message, request_review.",
+          ),
+        base_version: z
+          .number()
+          .optional()
+          .describe(
+            "Safety check for `edits`: pass the version you read; the publish errors instead of applying when the artifact has moved past it.",
+          ),
       },
     },
     async ({
-      content,
+      content: contentIn,
       files,
       title,
       short_id,
@@ -792,11 +1109,14 @@ function buildServer(
       addresses,
       request_review,
       workspace,
+      edits,
+      base_version,
     }) => {
+      let content = contentIn
       // Revise an existing artifact wherever it lives (reach roams to its
-      // workspace); create a new one in the targeted (or default) workspace. The
-      // acting role is re-capped to that workspace, so publish/propose gating is
-      // correct there, not just in the default workspace.
+      // workspace, within the grant); create a new one in the targeted (or
+      // default) workspace. The acting role is re-capped to that workspace, so
+      // publish/propose gating is correct there, not just in the default one.
       const reached = short_id ? await reach(short_id, workspace) : null
       if (reached && "error" in reached) return text(reached.error)
       const existing = reached && !("error" in reached) ? reached.a : null
@@ -812,12 +1132,44 @@ function buildServer(
         targetOrg = t.org
         actRole = t.role
       }
+
+      // `edits` — materialize the full new content up front, then fall through to the
+      // untouched publish/proposal pipeline (sweep, addresses, receipts all inherit).
+      let editsApplied = 0
+      if (edits !== undefined) {
+        if (content !== undefined || files)
+          return err("Provide `edits` OR `content`/`files`, not both.")
+        if (!existing) return err("`edits` revises an EXISTING artifact — pass its `short_id`.")
+        let materialized: MaterializedEdits
+        try {
+          materialized = await materializeEdits(
+            { getVersion: ctx.meta.getVersion.bind(ctx.meta), sourceText: ctx.sourceText },
+            existing,
+            edits,
+            base_version,
+          )
+        } catch (e) {
+          if (e instanceof EditError) return err(e.message)
+          throw e
+        }
+        // Same size/storage ceiling the REST /versions and /proposals routes apply
+        // after materializing edits — without this the MCP tool could write an
+        // over-quota version the HTTP surfaces would have rejected.
+        const editedBytes = new TextEncoder().encode(materialized.content).length
+        if (editedBytes > MAX_UPLOAD_BYTES) return err("Edited content is too large.")
+        if (await ctx.overStorage(targetOrg, editedBytes))
+          return err(`"${short_id}"'s workspace storage quota is exceeded.`)
+        content = materialized.content
+        editsApplied = edits.length
+        if (!filename) filename = materialized.filename
+      }
+
       // Exactly one of content / files. `files` (a page map) means a bundle.
       const isBundle = !!files && Object.keys(files).length > 0
       if (isBundle && content !== undefined)
         return text("Provide `content` (single file) OR `files` (a bundle), not both.")
       if (!isBundle && (content === undefined || content === ""))
-        return text("Provide `content` (single file) or `files` (a multi-page bundle).")
+        return text("Provide `content` (single file), `files` (a multi-page bundle), or `edits`.")
       if (existing) {
         // Kind can't change on republish; steer to the right field instead of the 409.
         if (existing.kind === "bundle" && !isBundle)
@@ -872,6 +1224,7 @@ function buildServer(
             proposal_id: proposal.id,
             base_version: proposal.base_version,
             addressed,
+            ...(editsApplied ? { edits_applied: editsApplied } : {}),
             note: "Submitted for review — a human approves it or requests changes. It is NOT live yet.",
           })
         } catch (e) {
@@ -1070,6 +1423,7 @@ function buildServer(
           url,
           title: artifact.title,
           visibility: artifact.visibility,
+          ...(editsApplied ? { edits_applied: editsApplied } : {}),
           ...(resolved.length ? { resolved } : {}),
           ...(actingFor ? { opened_in_tab: openedInTab } : {}),
           note:

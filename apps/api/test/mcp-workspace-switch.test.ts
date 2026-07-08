@@ -136,16 +136,17 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("remote MCP workspace switc
     const shortId = created.short_id
 
     // No workspace given: the default is ws_one, but read roams to ws_two by short_id.
-    const auto = await callJson(app, "read", { short_id: shortId })
-    expect(auto.title).toBe("Cross Doc")
-    expect(auto.content).toContain("cross workspace")
+    // read returns a Markdown frontmatter header + body (not JSON).
+    const auto = toolText(await call(app, "read", { short_id: shortId }))
+    expect(auto).toContain("title: Cross Doc")
+    expect(auto).toContain("cross workspace")
 
     // Explicit by id and by name both work.
-    expect((await callJson(app, "read", { short_id: shortId, workspace: "ws_two" })).title).toBe(
-      "Cross Doc",
+    expect(toolText(await call(app, "read", { short_id: shortId, workspace: "ws_two" }))).toContain(
+      "title: Cross Doc",
     )
-    expect((await callJson(app, "read", { short_id: shortId, workspace: "Derive" })).title).toBe(
-      "Cross Doc",
+    expect(toolText(await call(app, "read", { short_id: shortId, workspace: "Derive" }))).toContain(
+      "title: Cross Doc",
     )
   })
 
