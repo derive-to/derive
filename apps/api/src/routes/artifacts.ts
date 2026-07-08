@@ -28,7 +28,7 @@ import { setCookie } from "hono/cookie"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { publishSweepEvents } from "../lib/anchor-sweep"
-import { authorProfile, resolveHandles } from "../lib/author"
+import { authorProfile, resolveHandles, resolveUserBylines } from "../lib/author"
 import { cleanPath, manifestOf } from "../lib/bundle"
 import { hashPassword, signState, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
 import {
@@ -249,6 +249,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     const handleByGhId = await resolveHandles(meta, [
       ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
     ])
+    // Same self-heal for the list: each row's current author (author_id) resolves to its
+    // live byline, so a card never shows a stale agent-client name. One batched query.
+    const bylineByUserId = await resolveUserBylines(
+      meta,
+      page.map((a) => a.author_id).filter((x): x is string => !!x),
+    )
     // Per-artifact comment signals for the viewer (open-thread count + tagged/authored
     // flags) — drives the inline comment badge and the "needs your feedback" featuring.
     const feedback = me ? await meta.commentSignals(pageIds, me.id) : {}
@@ -285,7 +291,7 @@ export const artifactRoutes = (ctx: AppContext) => {
             ),
         // The current author as a resolved profile (name/login/avatar + Derive handle), so
         // the list can render the last editor + filter by them.
-        author: authorProfile(a, handleByGhId),
+        author: authorProfile(a, handleByGhId, bylineByUserId),
         // open_threads + mentions_me + i_participated (defaults for anon / no signals).
         ...(feedback[a.id] ?? { open_threads: 0, mentions_me: false, i_participated: false }),
       })),
@@ -747,6 +753,13 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (artifact.author_gh_id) ghIds.add(artifact.author_gh_id)
     for (const v of versions) if (v.author_gh_id) ghIds.add(v.author_gh_id)
     const handleByGhId = await resolveHandles(meta, [...ghIds])
+    // Resolve the Derive user(s) behind a publish-by-hand (author_id on the artifact + each
+    // version) to their live name/handle, so a byline frozen with an agent-client name self-
+    // heals on read. One batched query alongside the gh_id resolve above — no N+1.
+    const authorIds = new Set<string>()
+    if (artifact.author_id) authorIds.add(artifact.author_id)
+    for (const v of versions) if (v.author_id) authorIds.add(v.author_id)
+    const bylineByUserId = await resolveUserBylines(meta, [...authorIds])
     const base = toJson(deps.baseUrl, artifact, versions)
     // `versions` stays at revision granularity (machines/agents); `sessions` is
     // the time-grouped view the UI shows by default. `my_role` tells the client
@@ -758,11 +771,19 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Resolved author profile for the current author (null when there's none, or the
       // committer never signed in with GitHub — then `handle` is null but name/login/avatar
       // still describe the GitHub identity). The frontend prefers this over the raw fields.
-      author: authorProfile(artifact, handleByGhId),
-      versions: base.versions.map((v) => ({
-        ...v,
-        handle: v.author_gh_id ? (handleByGhId[v.author_gh_id] ?? null) : null,
-      })),
+      author: authorProfile(artifact, handleByGhId, bylineByUserId),
+      versions: base.versions.map((v, i) => {
+        const authorId = versions[i]?.author_id
+        const byUser = authorId ? bylineByUserId[authorId] : undefined
+        return {
+          ...v,
+          // The version's frozen byline heals to its author's live name (an old CLI/MCP
+          // publish stops reading as "Derive CLI"/"Claude"); sync versions keep the gh handle.
+          author: byUser?.name ?? v.author,
+          handle:
+            byUser?.handle ?? (v.author_gh_id ? (handleByGhId[v.author_gh_id] ?? null) : null),
+        }
+      }),
       sessions: groupSessions(versions, versionWindowMs),
       my_role: effectiveRole(actor, artifact.visibility, artifact.general_role),
       // The artifact's current workspace — the move dialog needs this to exclude
