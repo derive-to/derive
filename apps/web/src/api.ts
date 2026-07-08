@@ -276,42 +276,15 @@ export type Notification = components["schemas"]["Notification"]
 export type Webhook = components["schemas"]["Webhook"]
 /** A workspace-registered agent. Generated from the OpenAPI spec. */
 export type Agent = components["schemas"]["Agent"]
-/** An askable agent setup: a registered agent wired to a manifest artifact. */
-export interface ContextInfo {
-  id: string
-  name: string
-  agent_id: string
-  manifest_short_id: string | null
-  created_by: string
-  created_at: string
-}
-export type SessionState = "open" | "answered" | "escalated" | "failed" | "closed"
-/** The runner's structured payload on an agent message (parsed server-side). */
-export interface SessionMeta {
-  query?: string | null
-  confidence?: number | null
-  caveats?: string[]
-  escalation_reason?: string | null
-  /** Artifacts the runner published for this answer (charts, report pages). */
-  artifacts?: { short_id: string; title: string }[]
-}
-export interface SessionMessage {
-  id: string
-  author_kind: "asker" | "agent"
-  author_id: string
-  body_md: string
-  meta: SessionMeta | null
-  created_at: string
-}
-export interface Session {
-  id: string
-  context_id: string
-  asker_id: string
-  context_version: number
-  state: SessionState
-  created_at: string
-  updated_at: string
-}
+/** An askable agent setup: a registered agent wired to a manifest artifact.
+ *  Generated from the OpenAPI spec. */
+export type ContextInfo = components["schemas"]["ContextInfo"]
+/** The runner's structured payload on an agent message. Generated from the spec. */
+export type SessionMeta = components["schemas"]["SessionMeta"]
+export type SessionMessage = components["schemas"]["SessionMessage"]
+/** An ask-conversation with a context's agent. Generated from the OpenAPI spec. */
+export type Session = components["schemas"]["Session"]
+export type SessionState = Session["state"]
 /** A live viewer of an artifact (presence). Identified by a handle-style `name`
  *  (never email — presence is broadcast to anonymous co-viewers); `role` is their
  *  effective role here. */

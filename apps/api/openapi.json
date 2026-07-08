@@ -566,6 +566,157 @@
           "name"
         ]
       },
+      "ContextInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "manifest_short_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "agent_id",
+          "manifest_short_id",
+          "created_by",
+          "created_at"
+        ]
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "context_id": {
+            "type": "string"
+          },
+          "asker_id": {
+            "type": "string"
+          },
+          "context_version": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "answered",
+              "escalated",
+              "failed",
+              "closed"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "context_id",
+          "asker_id",
+          "context_version",
+          "state",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "SessionMessage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "author_kind": {
+            "type": "string",
+            "enum": [
+              "asker",
+              "agent"
+            ]
+          },
+          "author_id": {
+            "type": "string"
+          },
+          "body_md": {
+            "type": "string"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/SessionMeta"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "author_kind",
+          "author_id",
+          "body_md",
+          "meta",
+          "created_at"
+        ]
+      },
+      "SessionMeta": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "query": {
+            "type": "string",
+            "nullable": true
+          },
+          "confidence": {
+            "type": "number",
+            "nullable": true
+          },
+          "caveats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "escalation_reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "short_id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "short_id",
+                "title"
+              ]
+            }
+          }
+        }
+      },
       "Analytics": {
         "type": "object",
         "properties": {
@@ -2425,6 +2576,400 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Create a context (wire an agent to a manifest artifact).",
+        "responses": {
+          "201": {
+            "description": "The created context.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextInfo"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "List the workspace's contexts.",
+        "responses": {
+          "200": {
+            "description": "The workspace's contexts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "contexts": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ContextInfo"
+                      }
+                    }
+                  },
+                  "required": [
+                    "contexts"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}": {
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "One context; the context's agent also gets the manifest source to run.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The context (with manifest source for the agent).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ContextInfo"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "manifest_version": {
+                          "type": "number"
+                        },
+                        "manifest_md": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Delete a context (its creator or a workspace manager).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The context was deleted."
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/sessions": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Ask: open a session with the first question.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The new session and its first message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session": {
+                      "$ref": "#/components/schemas/Session"
+                    },
+                    "messages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SessionMessage"
+                      }
+                    }
+                  },
+                  "required": [
+                    "session",
+                    "messages"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "A context's sessions (owner sees all; others only their own).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The sessions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Session"
+                      }
+                    }
+                  },
+                  "required": [
+                    "sessions"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}": {
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "One session with its transcript (asker or context owner).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The session, its context, and the full transcript.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session": {
+                      "$ref": "#/components/schemas/Session"
+                    },
+                    "context": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ]
+                    },
+                    "messages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SessionMessage"
+                      }
+                    }
+                  },
+                  "required": [
+                    "session",
+                    "context",
+                    "messages"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Close a session (asker/owner) or fail it (the context's agent).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session": {
+                      "$ref": "#/components/schemas/Session"
+                    }
+                  },
+                  "required": [
+                    "session"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/messages": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Append a message to a session (asker follow-up or the agent's answer).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The appended message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "$ref": "#/components/schemas/SessionMessage"
+                    }
+                  },
+                  "required": [
+                    "message"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/queue": {
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "The runner's queue: open sessions with transcripts (agent bearer).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Open sessions, oldest first, each with its transcript.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/Session"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "messages": {
+                                "type": "array",
+                                "items": {
+                                  "$ref": "#/components/schemas/SessionMessage"
+                                }
+                              }
+                            },
+                            "required": [
+                              "messages"
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "sessions"
+                  ]
                 }
               }
             }
