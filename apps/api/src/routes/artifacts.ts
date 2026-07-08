@@ -446,13 +446,13 @@ export const artifactRoutes = (ctx: AppContext) => {
 
     try {
       // The authenticated principal behind this publish (signed-in user or agent). The
-      // Derive-USER behind it is what we attribute work to: for an agent, the user it acts
+      // Derive-USER behind it is what we attribute work to: for an agent, the human it acts
       // on behalf of (created_by / the OAuth grantor). `author_id` keys a person's profile +
       // their followers' feed, so it must be a real user id, never an agent principal.
-      // `human` is that user as a byline too, but only when the delegation is a human's
-      // (a signed-in user, or an OAuth grant from the CLI / a remote MCP client) — so those
-      // publishes read as the person, not the client's "Derive CLI"/"Claude" name. A
-      // registered dk_agt_ agent has no `human` and keeps authoring as itself.
+      // `human` is that same person as a byline — so a delegated publish reads as them, not
+      // as the agent's own name ("Derive CLI", "Claude", or whatever client/model drove it;
+      // authored work is the person's, and which tool typed it is an implementation detail).
+      // `actor` is only the fallback for an ownerless principal (a pre-column agent).
       const actor = await actingUser(c)
       const human = await actingHuman(c)
       const onBehalf = await privateOwnerId(c)
