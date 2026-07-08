@@ -25,24 +25,8 @@ export interface Me {
 }
 /** What sign-in methods + auth flows THIS instance actually has (capability-adaptive:
  *  a bare self-host reports fewer than a fully-wired hosted deploy). Drives the login
- *  page + Security hub so nothing renders a button/flow that can't work here. Grows as
- *  later phases land (emailVerification, passwordReset, passkey, twoFactor). */
-export interface AuthCapabilities {
-  password: boolean
-  google: boolean
-  github: boolean
-  /** Enterprise SSO (generic OIDC); carries the provider id to start sign-in + a label. */
-  oidc: { providerId: string; label: string } | null
-  /** Mail-dependent flows — true only when a real transport is configured. Off ⇒ the SPA
-   *  hides "Forgot password?" + the verify banner (recovery is then the logged link + the
-   *  operator script). */
-  emailVerification: boolean
-  passwordReset: boolean
-  /** Passkeys (WebAuthn) — on wherever rpID/origin resolves (always same-origin; on the
-   *  hosted split only when SPA + API share a registrable parent). Off ⇒ hide the passkey
-   *  button + enrollment. */
-  passkey: boolean
-}
+ *  page + Security hub. Generated from the OpenAPI spec. */
+export type AuthCapabilities = components["schemas"]["AuthCapabilities"]
 /** An OAuth agent the user authorized to act on their behalf (the "Connected agents"
  *  list). Generated from the OpenAPI spec. */
 export type ConnectedAgent = components["schemas"]["ConnectedAgent"]

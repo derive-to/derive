@@ -1134,6 +1134,54 @@
           "name",
           "value"
         ]
+      },
+      "AuthCapabilities": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": "boolean"
+          },
+          "google": {
+            "type": "boolean"
+          },
+          "github": {
+            "type": "boolean"
+          },
+          "oidc": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "providerId": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "providerId",
+              "label"
+            ]
+          },
+          "emailVerification": {
+            "type": "boolean"
+          },
+          "passwordReset": {
+            "type": "boolean"
+          },
+          "passkey": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "password",
+          "google",
+          "github",
+          "oidc",
+          "emailVerification",
+          "passwordReset",
+          "passkey"
+        ]
       }
     },
     "parameters": {}
@@ -4206,6 +4254,54 @@
                   "required": [
                     "ok"
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/oauth/consent/workspace": {
+      "post": {
+        "tags": [
+          "OAuth"
+        ],
+        "summary": "Bind an OAuth client's grants to a workspace (consent screen).",
+        "responses": {
+          "200": {
+            "description": "The binding was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/capabilities": {
+      "get": {
+        "tags": [
+          "OAuth"
+        ],
+        "summary": "The sign-in methods + flows this instance actually has (capability-adaptive).",
+        "responses": {
+          "200": {
+            "description": "What the login page + Security hub may render here.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthCapabilities"
                 }
               }
             }

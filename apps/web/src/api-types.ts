@@ -3041,6 +3041,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/oauth/consent/workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bind an OAuth client's grants to a workspace (consent screen). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The binding was saved. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            ok: boolean;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The sign-in methods + flows this instance actually has (capability-adaptive). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description What the login page + Security hub may render here. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AuthCapabilities"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3312,6 +3386,18 @@ export interface components {
             type: string;
             name: string;
             value: string;
+        };
+        AuthCapabilities: {
+            password: boolean;
+            google: boolean;
+            github: boolean;
+            oidc: {
+                providerId: string;
+                label: string;
+            } | null;
+            emailVerification: boolean;
+            passwordReset: boolean;
+            passkey: boolean;
         };
     };
     responses: never;
