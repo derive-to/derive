@@ -355,11 +355,6 @@ export const CAPABILITIES: Capability[] = [
   },
 ]
 
-/** The var names a capability is gated on — so a consumer (auth-config, oauth) names them
- *  once, here, instead of hardcoding its own copy. */
-export const capabilityVars = (id: string): string[] =>
-  CAPABILITIES.find((c) => c.id === id)?.requires ?? []
-
 // ---- Derivations ----------------------------------------------------------
 export type CapabilityStatus = "on" | "off" | "partial"
 
