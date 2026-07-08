@@ -1,11 +1,13 @@
 import { Hono } from "hono"
+import { capabilityReport } from "../capabilities"
 import type { AppContext } from "../context"
+import { fail } from "../lib/http"
 import { log } from "../log"
 
 /** Operational endpoints: liveness (/healthz), readiness (/readyz — proves the datastore
  *  and blob store are reachable), and the minimal API-origin landing page. */
 export const systemRoutes = (ctx: AppContext) => {
-  const { deps, meta, blobs } = ctx
+  const { deps, meta, blobs, isToken, isSuperAdmin } = ctx
   const app = new Hono()
 
   app.get("/healthz", (c) => c.json({ ok: true }))
@@ -29,6 +31,15 @@ export const systemRoutes = (ctx: AppContext) => {
       })
       return c.json({ ok: false }, 503)
     }
+  })
+
+  // Operator-only config introspection for `derive doctor`: which optional features are
+  // on / off / half-configured, plus the env vars still missing (names only, never secret
+  // values). process.env carries the vars on both runtimes (nodejs_compat populate).
+  app.get("/v1/system/capabilities", async (c) => {
+    if (!isToken(c) && !(await isSuperAdmin(c)))
+      return fail(c, 403, "operator access required (DERIVE_TOKEN or a super-admin account)")
+    return c.json({ capabilities: capabilityReport(process.env) })
   })
 
   // A minimal API-origin landing. Skipped when the SPA is bundled in-process
