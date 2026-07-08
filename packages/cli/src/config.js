@@ -445,13 +445,14 @@ export async function freshToken(server, accountId) {
 }
 
 /** The derive.json a fresh project starts with (no id until first publish).
- *  Private visibility, like every other publish path — a scaffolded project
- *  opts into wider sharing by editing this field, not by accident. */
+ *  No `visibility` — a scaffolded project publishes at the workspace default (the
+ *  "team draft": the workspace can open it at their seat role, so teammates and
+ *  on-behalf agents reach it, but it's not listed in any library and has no world
+ *  link). Add `visibility: public|org|private` to widen or narrow. */
 export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
   $schema: "./derive.schema.json",
   title,
   entry,
-  visibility: "private",
   spa: false,
   id: null,
 })
