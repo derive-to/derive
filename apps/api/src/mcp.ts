@@ -27,10 +27,15 @@ import {
   diffLines,
   formatDiff,
   newId,
+  type OutlineSection,
+  outlineOf,
   PublishError,
+  pageText,
   propose as proposeChange,
   publish as publishVersion,
   roleAllows,
+  sectionOf,
+  toMarkdown,
   type VersionRecord,
 } from "@derive/core"
 import { StreamableHTTPTransport } from "@hono/mcp"
@@ -69,8 +74,55 @@ const err = (s: string) => ({
 const MAX_CHARS = 80_000
 const clip = (s: string) =>
   s.length > MAX_CHARS
-    ? `${s.slice(0, MAX_CHARS)}\n\n…[truncated ${s.length - MAX_CHARS} chars — read a specific section]`
+    ? `${s.slice(0, MAX_CHARS)}\n\n…[truncated ${s.length - MAX_CHARS} chars — narrow the range]`
     : s
+
+// Above this, a section-less read of a sectionable doc returns its OUTLINE instead of
+// a blind dump: ~9k tokens leaves room to read on, small enough that most docs still
+// arrive whole. Measured on the formatted body, not the raw source.
+const FULL_DOC_MAX = 30_000
+
+// clip(), but the truncation steer names sections that actually resolve.
+const clipDoc = (s: string, sections: OutlineSection[]) => {
+  if (s.length <= MAX_CHARS) return s
+  const steer = sections.length
+    ? `read a section instead: ${sections
+        .slice(0, 12)
+        .map((x) => x.slug)
+        .join(", ")}${sections.length > 12 ? ", …" : ""}`
+    : "no headings to section by — read a past `version`, or ask for the raw file"
+  return `${s.slice(0, MAX_CHARS)}\n\n…[truncated ${s.length - MAX_CHARS} of ${s.length} chars — ${steer}]`
+}
+
+// A content-bearing response: a frontmatter-style header, a blank line, then the RAW
+// body — one text block, real newlines, never JSON-escaped. When a client spills it
+// to a file, that file is line-oriented and greppable (the old JSON envelope turned a
+// 68k-char document into one escaped line). Receipts and outlines stay `json()`.
+const doc = (meta: Record<string, string | number | null | undefined>, body: string) => {
+  const head = Object.entries(meta)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n")
+  return text(`---\n${head}\n---\n\n${body}`)
+}
+
+// The reading form for stored source at a given format. `markdown` converts HTML;
+// `text` is the flat visible text (exactly what comment quotes anchor against);
+// `html` is the exact source. Markdown/plain sources ARE their own visible text.
+type ReadFormat = "markdown" | "html" | "text"
+const baseType = (t: string) => t.split(";")[0]?.trim() ?? t
+const isTextType = (t: string) => baseType(t) === "text/html" || baseType(t) === "text/markdown"
+const present = (source: string, contentType: string, format: ReadFormat): string => {
+  if (format === "html") return source
+  if (format === "text") return baseType(contentType) === "text/html" ? pageText(source) : source
+  return toMarkdown(source, contentType)
+}
+const formatLabel = (contentType: string, format: ReadFormat): string => {
+  const ct = contentType.split(";")[0]?.trim() ?? contentType
+  if (format === "markdown")
+    return ct === "text/html" ? "markdown (converted from text/html)" : "markdown (source)"
+  return format === "html" ? "html (source)" : "text (visible text)"
+}
 
 const summarizeArtifact = (a: ArtifactRecord) => ({
   short_id: a.short_id,
@@ -211,17 +263,26 @@ function buildServer(
     "read",
     {
       description:
-        "Read an artifact's CONTENT by short id. Multi-page bundle: omit `section` to get its outline (the list of pages), then call again with a `section` (a page path) for that page's full text. Single-file artifact: returns the full content. Pass a past `version` to read history. (For what CHANGED, or the comment threads, use catch_up.)",
+        "Read an artifact's CONTENT by short id, as Markdown by default (HTML is converted; the styling noise is dropped). Small docs return whole; a LARGE doc returns its heading OUTLINE first — call again with a `section` slug for just that part. Multi-page bundle: omit `section` for the page outline, then pass a page path (optionally `page.html#slug`). Pass format:'html' for the exact source (required before publish `edits`), or a past `version` for history. (For what CHANGED, or the comment threads, use catch_up.)",
       inputSchema: {
         short_id: z.string().describe("The artifact's short id, e.g. nk0dsral."),
         section: z
           .string()
           .optional()
-          .describe("A bundle page path, e.g. agentic-loop.html. Omit to get the outline first."),
+          .describe(
+            'What to read. Single-file doc: a heading slug from the outline (e.g. rollout-plan). Bundle: a page path (agentic-loop.html), optionally with a slug (agentic-loop.html#risks). Pass "*" to force the full (clipped) document. Omit it: small docs return whole, large docs return their outline.',
+          ),
+        format: z
+          .enum(["markdown", "html", "text"])
+          .optional()
+          .describe(
+            "markdown (default): HTML converted to structured Markdown — headings, lists, tables, code fences; Markdown sources return as-is. html: the exact stored source — read this BEFORE publish `edits` on an HTML artifact (edits match raw source). text: flat visible text, exactly what comment `quote`s anchor against.",
+          ),
         version: z.number().optional().describe("Defaults to the current version."),
       },
     },
-    async ({ short_id, section, version }) => {
+    async ({ short_id, section, format, version }) => {
+      const fmt: ReadFormat = format ?? "markdown"
       const a = await own(short_id)
       if (!a) return notFound(short_id)
       const n = version ?? a.current_version
@@ -229,39 +290,168 @@ function buildServer(
         return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
       const v = await ctx.meta.getVersion(a.id, n)
       if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
+      const url = artifactUrl(ctx.deps.baseUrl, a)
       const manifest = await manifestOf(ctx, v)
+
       if (!manifest) {
-        // Single-file artifact — return its content.
-        const body = await ctx.sourceText(v)
-        return json({
+        // Single-file artifact.
+        const src = (await ctx.sourceText(v)) ?? ""
+        const ct = v.content_type
+        const meta = {
           short_id,
           title: a.title,
+          version: `${n}${n === a.current_version ? " (current)" : ""}`,
           kind: a.kind,
-          version: n,
-          content: clip(body ?? ""),
-        })
+          format: formatLabel(ct, fmt),
+          url,
+        }
+        if (section && section !== "*") {
+          const slice = sectionOf(src, ct, section)
+          if (slice === null) {
+            const slugs = outlineOf(src, ct).map((s) => s.slug)
+            return err(
+              slugs.length
+                ? `No section "${section}" in "${short_id}" v${n} — sections: ${slugs.join(", ")}.`
+                : `"${short_id}" has no headings to section by — read it whole (omit \`section\`).`,
+            )
+          }
+          const outline = outlineOf(src, ct)
+          const i = outline.findIndex((s) => s.slug === section)
+          const body = present(slice, ct, fmt)
+          return doc(
+            {
+              ...meta,
+              section: `${section} (${i + 1} of ${outline.length})`,
+              chars: body.length,
+            },
+            body,
+          )
+        }
+        const body = present(src, ct, fmt)
+        if (!section && body.length > FULL_DOC_MAX) {
+          const outline = outlineOf(src, ct)
+          if (outline.length)
+            return json({
+              short_id,
+              title: a.title,
+              kind: a.kind,
+              version: n,
+              source: ct,
+              format: fmt,
+              doc_chars: body.length,
+              url,
+              sections: outline,
+              next: 'Large document — call read again with a `section` slug for just that part, or section:"*" for the full clipped text. To revise it, publish with `edits` instead of resending content.',
+            })
+        }
+        const outline = outlineOf(src, ct)
+        const clipped = clipDoc(body, outline)
+        return doc({ ...meta, chars: body.length }, clipped)
       }
+
+      // Bundle.
       const pages = Object.keys(manifest.files).map(cleanPath)
-      if (!section)
+      if (!section) {
+        // Outline: every page, plus sizes + headings for the shallowest text pages
+        // (each costs a blob read — the manifest has no sizes — so cap the sweep).
+        const textPages = pages
+          .filter((p) => isTextType(manifest.files[p]?.type ?? manifest.files[`/${p}`]?.type ?? ""))
+          .sort((x, y) => x.split("/").length - y.split("/").length || x.localeCompare(y))
+        const entry = cleanPath(manifest.entry)
+        const inspect = [entry, ...textPages.filter((p) => p !== entry)].slice(0, 25)
+        const detail = new Map<string, { chars: number; headings: OutlineSection[] }>()
+        for (const p of inspect) {
+          const file = manifest.files[p] ?? manifest.files[`/${p}`]
+          if (!file) continue
+          const bytes = await ctx.blobs.get(file.key)
+          if (!bytes) continue
+          const text_ = new TextDecoder().decode(bytes)
+          detail.set(p, {
+            chars: toMarkdown(text_, file.type).length,
+            headings: outlineOf(text_, file.type),
+          })
+        }
         return json({
           short_id,
           title: a.title,
           kind: "bundle",
           version: n,
-          entry: cleanPath(manifest.entry),
-          pages,
-          next: "Call read again with a `section` (one of the pages above) for that page's content.",
+          entry,
+          url,
+          pages: pages.map((p) => {
+            const type = manifest.files[p]?.type ?? manifest.files[`/${p}`]?.type
+            const d = detail.get(p)
+            return {
+              path: p,
+              type,
+              ...(d
+                ? {
+                    chars: d.chars,
+                    headings: d.headings.map((h) => ({
+                      slug: h.slug,
+                      level: h.level,
+                      text: h.text,
+                    })),
+                  }
+                : {}),
+            }
+          }),
+          next: "Call read again with a `section` (a page path above, optionally page.html#slug for one heading's part) for content.",
         })
-      const file = manifest.files[section] ?? manifest.files[`/${cleanPath(section)}`]
-      if (!file) return err(`No page "${section}" in "${short_id}". Pages: ${pages.join(", ")}.`)
+      }
+
+      // A page (optionally page#slug — split on the LAST '#').
+      const hash = section.lastIndexOf("#")
+      const pagePath = hash > 0 ? section.slice(0, hash) : section
+      const slug = hash > 0 ? section.slice(hash + 1) : null
+      const file = manifest.files[pagePath] ?? manifest.files[`/${cleanPath(pagePath)}`]
+      if (!file) return err(`No page "${pagePath}" in "${short_id}". Pages: ${pages.join(", ")}.`)
       const bytes = await ctx.blobs.get(file.key)
-      return json({
+      const raw = bytes ? new TextDecoder().decode(bytes) : ""
+      const isText = isTextType(file.type)
+      const meta = {
         short_id,
-        version: n,
-        section: cleanPath(section),
+        title: a.title,
+        version: `${n}${n === a.current_version ? " (current)" : ""}`,
+        kind: "bundle",
+        url,
         type: file.type,
-        content: clip(bytes ? new TextDecoder().decode(bytes) : ""),
-      })
+      }
+      if (slug) {
+        if (!isText)
+          return err(`"${pagePath}" is ${file.type} — heading sections only apply to text pages.`)
+        const slice = sectionOf(raw, file.type, slug)
+        if (slice === null) {
+          const slugs = outlineOf(raw, file.type).map((s) => s.slug)
+          return err(
+            slugs.length
+              ? `No section "${slug}" in "${pagePath}" — sections: ${slugs.join(", ")}.`
+              : `"${pagePath}" has no headings to section by — read the whole page.`,
+          )
+        }
+        const body = present(slice, file.type, fmt)
+        return doc(
+          {
+            ...meta,
+            section: `${cleanPath(pagePath)}#${slug}`,
+            format: formatLabel(file.type, fmt),
+            chars: body.length,
+          },
+          body,
+        )
+      }
+      // css/js/json/etc always return source — conversion only applies to text pages.
+      const body = isText ? present(raw, file.type, fmt) : raw
+      const outline = isText ? outlineOf(raw, file.type) : []
+      return doc(
+        {
+          ...meta,
+          section: cleanPath(pagePath),
+          format: isText ? formatLabel(file.type, fmt) : file.type,
+          chars: body.length,
+        },
+        clipDoc(body, outline),
+      )
     },
   )
 
