@@ -120,6 +120,8 @@ export interface Artifact {
   tags?: string[]
   /** Whether the current user has starred this artifact. */
   favorite?: boolean
+  /** Whether the artifact's current version has a ready screenshot preview. */
+  has_preview?: boolean
   /** Count of proposals awaiting review. */
   open_proposals?: number
   /** Count of non-withdrawn proposals (open + decided) — gates the Proposals entry. */

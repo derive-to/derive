@@ -42,6 +42,7 @@ import type {
   NewMembership,
   NewNotification,
   NewProposal,
+  NewRenderJob,
   NewReport,
   NewRepoSource,
   NewReviewRound,
@@ -54,8 +55,11 @@ import type {
   OAuthGrant,
   OAuthGrantSummary,
   OrgSettings,
+  PreviewStatus,
   ProposalRecord,
   ProposalState,
+  RenderJobRecord,
+  RenderJobStatus,
   ReportRecord,
   ReportState,
   RepoSourceRecord,
@@ -120,6 +124,7 @@ import {
   orgSettings,
   PG_SCHEMA_STATEMENTS,
   proposal,
+  renderJob,
   report,
   repoSource,
   reviewRound,
@@ -152,6 +157,7 @@ export const schema = {
   comment,
   webhook,
   webhookDelivery,
+  renderJob,
   membership,
   workspace,
   artifactMember,
@@ -189,6 +195,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   comment: true,
   webhook: true,
   webhookDelivery: true,
+  renderJob: true,
   membership: true,
   workspace: true,
   artifactMember: true,
@@ -366,6 +373,21 @@ export class PgMetaStore implements MetaStore {
       .update(artifact)
       .set({ current_content_type: contentType })
       .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, n)))
+  }
+
+  async setVersionPreview(
+    artifactId: string,
+    n: number,
+    fields: {
+      preview_key?: string | null
+      preview_status?: PreviewStatus | null
+      preview_error?: string | null
+    },
+  ): Promise<void> {
+    await this.db
+      .update(version)
+      .set(fields)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
   }
 
   async createComment(c: NewComment): Promise<CommentRecord> {
@@ -732,6 +754,36 @@ export class PgMetaStore implements MetaStore {
       .where(eq(webhookDelivery.webhook_id, webhookId))
       .orderBy(desc(webhookDelivery.created_at))
       .limit(limit)
+  }
+
+  // ---- Render-job queue --------------------------------------------------
+  async enqueueRenderJob(j: NewRenderJob): Promise<void> {
+    await this.db.insert(renderJob).values(j)
+  }
+  claimDueRenderJobs(now: string, limit: number, leaseUntil: string): Promise<RenderJobRecord[]> {
+    const due = this.db
+      .select({ id: renderJob.id })
+      .from(renderJob)
+      .where(and(eq(renderJob.status, "pending"), lte(renderJob.next_attempt_at, now)))
+      .orderBy(asc(renderJob.next_attempt_at))
+      .limit(limit)
+      .for("update", { skipLocked: true })
+    return this.db
+      .update(renderJob)
+      .set({ attempts: sql`${renderJob.attempts} + 1`, next_attempt_at: leaseUntil })
+      .where(inArray(renderJob.id, due))
+      .returning()
+  }
+  async updateRenderJob(
+    id: string,
+    fields: {
+      status: RenderJobStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
+  ): Promise<void> {
+    await this.db.update(renderJob).set(fields).where(eq(renderJob.id, id))
   }
 
   // ---- Permissions: membership + per-artifact shares ---------------------
@@ -1124,6 +1176,19 @@ export class PgMetaStore implements MetaStore {
       out[r.artifact_id]?.push(r.tag)
     }
     for (const k in out) out[k]?.sort()
+    return out
+  }
+  async previewReady(artifactIds: string[]): Promise<Record<string, boolean>> {
+    if (artifactIds.length === 0) return {}
+    const ph = artifactIds.map((_, i) => `$${i + 1}`).join(",")
+    const { rows } = await this.pool.query(
+      `SELECT a.id artifact_id FROM artifact a
+       JOIN version v ON v.artifact_id = a.id AND v.n = a.current_version
+       WHERE v.preview_status = 'ready' AND a.id IN (${ph})`,
+      artifactIds,
+    )
+    const out: Record<string, boolean> = {}
+    for (const r of rows) out[r.artifact_id] = true
     return out
   }
   async setArtifactTags(artifactId: string, tags: string[]): Promise<void> {

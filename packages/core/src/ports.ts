@@ -109,6 +109,25 @@ export interface ListArtifactsOpts {
   visibleOrgIds?: string[]
 }
 
+export type PreviewStatus = "pending" | "ready" | "failed"
+
+export type RenderJobStatus = "pending" | "done" | "dead"
+export interface RenderJobRecord {
+  id: string
+  artifact_id: string
+  version_n: number
+  status: RenderJobStatus
+  attempts: number
+  last_error: string | null
+  next_attempt_at: string
+  created_at: string
+}
+export interface NewRenderJob {
+  id: string
+  artifact_id: string
+  version_n: number
+}
+
 export interface VersionRecord {
   id: string
   artifact_id: string
@@ -129,6 +148,12 @@ export interface VersionRecord {
   message: string | null
   /** A named checkpoint (Docs-style). Null = an ordinary auto-saved revision. */
   name: string | null
+  /** Blob key of the rendered PNG preview of this version; null until generated. */
+  preview_key: string | null
+  /** Lifecycle of the preview render; null = never queued. */
+  preview_status: PreviewStatus | null
+  /** Short failure reason when preview_status === "failed". */
+  preview_error: string | null
   created_at: string
 }
 
@@ -195,6 +220,17 @@ export interface MetaStore {
    *  updates the artifact's current_content_type when n is the current version.
    *  Used to repair mis-classified content (e.g. HTML that was tagged markdown). */
   reclassifyVersion(artifactId: string, n: number, contentType: string): Promise<void>
+  /** Set a version's preview render result (blob key + status + error). Partial;
+   *  only given fields are written. */
+  setVersionPreview(
+    artifactId: string,
+    n: number,
+    fields: {
+      preview_key?: string | null
+      preview_status?: PreviewStatus | null
+      preview_error?: string | null
+    },
+  ): Promise<void>
 
   createComment(c: NewComment): Promise<CommentRecord>
   /** Comments on an artifact, oldest-first; optionally filtered by thread state. */
@@ -273,6 +309,9 @@ export interface MetaStore {
   viewStats(artifactId: string): Promise<ViewStats>
   /** Total view counts for many artifacts at once (no N+1). */
   viewCounts(artifactIds: string[]): Promise<Record<string, number>>
+  /** For each artifact id, true iff its CURRENT version has a ready preview render.
+   *  Batched (one query); missing ids may be omitted. */
+  previewReady(artifactIds: string[]): Promise<Record<string, boolean>>
 
   // ---- Webhooks + outbox -------------------------------------------------
   createWebhook(w: NewWebhook): Promise<WebhookRecord>
@@ -306,6 +345,25 @@ export interface MetaStore {
   ): Promise<void>
   /** Recent deliveries for a webhook (for the settings log). */
   recentDeliveries(webhookId: string, limit: number): Promise<DeliveryRecord[]>
+
+  // ---- Render-job queue (screenshot rendering outbox) --------------------
+  /** Enqueue a new render job (status defaults to "pending", attempts to 0). */
+  enqueueRenderJob(j: NewRenderJob): Promise<void>
+  /**
+   * Atomically claim up to `limit` pending render jobs whose next_attempt_at has
+   * passed: increments their attempt count and leases them (sets next_attempt_at
+   * to `leaseUntil`), then returns the claimed rows.
+   */
+  claimDueRenderJobs(now: string, limit: number, leaseUntil: string): Promise<RenderJobRecord[]>
+  updateRenderJob(
+    id: string,
+    fields: {
+      status: RenderJobStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
+  ): Promise<void>
 
   // ---- Permissions: workspace membership + per-artifact shares -----------
   /** The workspace's display name + metadata (one row per org_id). */

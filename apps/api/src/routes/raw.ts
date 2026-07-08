@@ -5,6 +5,7 @@ import type { AppContext } from "../context"
 import { crossDocTransform } from "../lib/cross-doc"
 import { verifyState } from "../lib/crypto"
 import { cacheControlFor, TOMBSTONE } from "../lib/http"
+import { verifyPreviewToken } from "../lib/preview-token"
 import { serveContent } from "../lib/serve-content"
 
 // How long a minted raw_token (artifacts.ts's GET detail response) stays good for. It
@@ -99,8 +100,26 @@ export const rawRoutes = (ctx: AppContext) => {
     const shortId = c.req.param("shortId")
     const n = Number(c.req.param("n"))
     const artifact = await meta.getByShortId(shortId)
-    if (!artifact || !Number.isInteger(n) || !(await authorize(c, "read", artifact)))
-      return c.text("not found", 404)
+    if (!artifact || !Number.isInteger(n)) return c.text("not found", 404)
+
+    // Preview-access token: a short-lived HMAC token minted by the screenshot
+    // renderer so it can load private/gated artifacts without a session. Grants
+    // read of exactly one artifact+version; never widens anything else.
+    const pv = c.req.query("pv")
+    const secret = deps.encryptionKey
+    let pvAuthorized = false
+    if (pv && secret) {
+      try {
+        const claim = await verifyPreviewToken(secret, pv, Date.now())
+        if (claim && claim.artifactId === artifact.id && claim.n === n) {
+          pvAuthorized = true
+        }
+      } catch {
+        // Malformed token — fall through to normal authorize
+      }
+    }
+
+    if (!pvAuthorized && !(await authorize(c, "read", artifact))) return c.text("not found", 404)
     return serveVersion(c, artifact, n, `/raw/${shortId}/v/${c.req.param("n")}/`)
   })
 

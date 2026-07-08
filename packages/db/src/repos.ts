@@ -40,6 +40,7 @@ import type {
   NewMembership,
   NewNotification,
   NewProposal,
+  NewRenderJob,
   NewReport,
   NewRepoSource,
   NewReviewRound,
@@ -51,8 +52,11 @@ import type {
   OAuthGrant,
   OAuthGrantSummary,
   OrgSettings,
+  PreviewStatus,
   ProposalRecord,
   ProposalState,
+  RenderJobRecord,
+  RenderJobStatus,
   ReportRecord,
   ReportState,
   RepoSourceRecord,
@@ -117,6 +121,7 @@ import {
   oauthClientWorkspace,
   orgSettings,
   proposal,
+  renderJob,
   report,
   repoSource,
   reviewRound,
@@ -176,6 +181,7 @@ export const schema = {
   comment,
   webhook,
   webhookDelivery,
+  renderJob,
   membership,
   workspace,
   artifactMember,
@@ -213,6 +219,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   comment: true,
   webhook: true,
   webhookDelivery: true,
+  renderJob: true,
   membership: true,
   workspace: true,
   artifactMember: true,
@@ -429,6 +436,22 @@ export function makeRepos(db: SqliteDb) {
       .update(artifact)
       .set({ current_content_type: contentType })
       .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, n)))
+      .run()
+  }
+
+  const setVersionPreview = async (
+    artifactId: string,
+    n: number,
+    fields: {
+      preview_key?: string | null
+      preview_status?: PreviewStatus | null
+      preview_error?: string | null
+    },
+  ): Promise<void> => {
+    await db
+      .update(version)
+      .set(fields)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
       .run()
   }
 
@@ -781,6 +804,39 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(desc(webhookDelivery.created_at))
       .limit(limit)
       .all()
+
+  // ---- Render-job queue --------------------------------------------------
+  const enqueueRenderJob = async (j: NewRenderJob): Promise<void> => {
+    await db.insert(renderJob).values(j).run()
+  }
+  const claimDueRenderJobs = async (
+    now: string,
+    limit: number,
+    leaseUntil: string,
+  ): Promise<RenderJobRecord[]> => {
+    const due = db
+      .select({ id: renderJob.id })
+      .from(renderJob)
+      .where(and(eq(renderJob.status, "pending"), lte(renderJob.next_attempt_at, now)))
+      .orderBy(asc(renderJob.next_attempt_at))
+      .limit(limit)
+    return (await db
+      .update(renderJob)
+      .set({ attempts: sql`${renderJob.attempts} + 1`, next_attempt_at: leaseUntil })
+      .where(inArray(renderJob.id, due))
+      .returning()) as RenderJobRecord[]
+  }
+  const updateRenderJob = async (
+    id: string,
+    fields: {
+      status: RenderJobStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
+  ): Promise<void> => {
+    await db.update(renderJob).set(fields).where(eq(renderJob.id, id)).run()
+  }
 
   // ---- Workspace membership ----------------------------------------------
   const getMembership = async (orgId: string, userId: string): Promise<MembershipRecord | null> =>
@@ -1207,6 +1263,22 @@ export function makeRepos(db: SqliteDb) {
       out[r.artifact_id]?.push(r.tag)
     }
     for (const k in out) out[k]?.sort()
+    return out
+  }
+
+  const previewReady = async (artifactIds: string[]): Promise<Record<string, boolean>> => {
+    if (artifactIds.length === 0) return {}
+    const rows = await db
+      .select({ artifact_id: artifact.id })
+      .from(artifact)
+      .innerJoin(
+        version,
+        and(eq(version.artifact_id, artifact.id), eq(version.n, artifact.current_version)),
+      )
+      .where(and(inArray(artifact.id, artifactIds), eq(version.preview_status, "ready")))
+      .all()
+    const out: Record<string, boolean> = {}
+    for (const r of rows) out[r.artifact_id] = true
     return out
   }
   // Sequential replace (used by D1). better-sqlite3 overrides with a transaction.
@@ -2143,6 +2215,7 @@ export function makeRepos(db: SqliteDb) {
     listVersions,
     getVersion,
     reclassifyVersion,
+    setVersionPreview,
     listArtifacts,
     artifactIdsByTag,
     artifactIdsByAuthor,
@@ -2174,6 +2247,9 @@ export function makeRepos(db: SqliteDb) {
     claimDueDeliveries,
     updateDelivery,
     recentDeliveries,
+    enqueueRenderJob,
+    claimDueRenderJobs,
+    updateRenderJob,
     getMembership,
     listMemberships,
     countMemberships,
@@ -2206,6 +2282,7 @@ export function makeRepos(db: SqliteDb) {
     listUserWorks,
     countUserWorks,
     tagsForArtifacts,
+    previewReady,
     setArtifactTags,
     createCollection,
     getCollection,

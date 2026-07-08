@@ -83,6 +83,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     versionWindowMs,
     bus,
     notify,
+    notifyRender,
     background,
     isMember,
     isToken,
@@ -243,6 +244,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const pageIds = page.map((a) => a.id)
     const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
     const tags = await meta.tagsForArtifacts(pageIds)
+    const previews = await meta.previewReady(pageIds)
     // Resolve the page's distinct author gh_ids to Derive handles in ONE batched query (no
     // N+1) so each row can show "who last changed this" with a link to the Derive profile.
     const handleByGhId = await resolveHandles(meta, [
@@ -261,6 +263,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         views: counts[a.id] ?? 0,
         tags: tags[a.id] ?? [],
         favorite: favorites.has(a.id),
+        has_preview: previews[a.id] === true,
         // Which actions the client may surface on the row (the card's quick-actions
         // menu gates delete/tags on it). Workspace membership + per-artifact shares
         // + the general-access floor; collection-share roles aren't folded in at
@@ -511,6 +514,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         message: version.message,
         author: version.author,
       })
+      notifyRender(artifact, version.n)
       // Fan out to the publisher's followers: "someone you follow published X". Gated
       // to a known HUMAN behind the publish (their followers are who care — an agent
       // publish fans out to the followers of the person it acts for), a publicly-
@@ -930,6 +934,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       message: version.message,
       author: version.author,
     })
+    notifyRender(artifact, version.n)
     bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
     // Restoring an old blob is a content change too — re-anchor threads against it.
     await publishSweepEvents(meta, blobs, bus, artifact.id, version)

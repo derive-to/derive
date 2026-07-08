@@ -43,6 +43,7 @@ export function ProfileWorkCard({ artifact: a }: { artifact: Artifact }) {
         // Match the library card's gating: the list endpoint sends versions: [], so
         // history reads off current_version (versions.length alone never fires here).
         version={Math.max(a.current_version, a.versions.length) > 1 ? a.current_version : undefined}
+        hasPreview={a.has_preview}
       />
       <div className="flex min-w-0 flex-col gap-2 border-t border-border-soft p-3.5">
         {/* The artifact title is the work — Geist voice, sized to the card caption. */}
