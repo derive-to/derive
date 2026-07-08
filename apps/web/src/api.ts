@@ -184,28 +184,9 @@ export type Collection = components["schemas"]["Collection"]
  *  web client and server can't silently drift. */
 export type Follow = components["schemas"]["Follow"]
 export type FollowKind = Follow["kind"]
-export type ProposalState = "open" | "approved" | "changes_requested" | "withdrawn"
-export interface Proposal {
-  id: string
-  state: ProposalState
-  author: string
-  /** When an agent proposed this, the human it acted on behalf of (delegation provenance);
-   *  null for a direct human proposal. Reviewers see "Agent X on behalf of Alice." */
-  on_behalf_of?: { handle: string | null; name: string | null } | null
-  message: string | null
-  base_version: number
-  kind: "file" | "bundle"
-  decided_by: string | null
-  decided_version: number | null
-  /** The reviewer's feedback when approving or requesting changes. */
-  decision_note: string | null
-  decided_at: string | null
-  created_at: string
-  /** The proposed experience, rendered exactly like a live version. */
-  preview_url: string
-  /** Present on the single-proposal fetch: line diff vs the base version. */
-  diff?: { base_version: number; ops: DiffOp[] }
-}
+/** A proposal: a candidate version awaiting review. Generated from the OpenAPI spec. */
+export type Proposal = components["schemas"]["Proposal"]
+export type ProposalState = Proposal["state"]
 /** A collaborator on an artifact or collection — by public @handle, never email.
  *  Generated from the OpenAPI spec (one shared schema across sharing + collections). */
 export type ArtifactMember = components["schemas"]["ArtifactMember"]
@@ -471,10 +452,8 @@ export interface SyncResult {
   /** Matching docs still pending after this batch (>0 → call run again). */
   remaining: number
 }
-export interface DiffOp {
-  t: "ctx" | "add" | "del"
-  line: string
-}
+/** One line of a unified diff. Generated from the OpenAPI spec. */
+export type DiffOp = components["schemas"]["DiffOp"]
 export interface Diff {
   from: number
   to: number

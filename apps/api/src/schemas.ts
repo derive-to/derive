@@ -18,3 +18,9 @@ export const ArtifactMember = z
     role: z.enum(["viewer", "commenter", "editor", "owner"]),
   })
   .openapi("ArtifactMember")
+
+/** One line of a unified diff: context, addition, or deletion. Returned in a proposal's
+ *  diff and in an artifact version diff, so it's shared here. */
+export const DiffOp = z
+  .object({ t: z.enum(["ctx", "add", "del"]), line: z.string() })
+  .openapi("DiffOp")

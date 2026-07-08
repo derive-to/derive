@@ -213,6 +213,132 @@
           "default_channel"
         ]
       },
+      "DiffOp": {
+        "type": "object",
+        "properties": {
+          "t": {
+            "type": "string",
+            "enum": [
+              "ctx",
+              "add",
+              "del"
+            ]
+          },
+          "line": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "t",
+          "line"
+        ]
+      },
+      "Proposal": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "approved",
+              "changes_requested",
+              "withdrawn"
+            ]
+          },
+          "author": {
+            "type": "string"
+          },
+          "on_behalf_of": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "handle": {
+                "type": "string",
+                "nullable": true
+              },
+              "name": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "handle",
+              "name"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          },
+          "base_version": {
+            "type": "number"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "file",
+              "bundle"
+            ]
+          },
+          "decided_by": {
+            "type": "string",
+            "nullable": true
+          },
+          "decided_version": {
+            "type": "number",
+            "nullable": true
+          },
+          "decision_note": {
+            "type": "string",
+            "nullable": true
+          },
+          "decided_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "preview_url": {
+            "type": "string"
+          },
+          "diff": {
+            "type": "object",
+            "properties": {
+              "base_version": {
+                "type": "number"
+              },
+              "ops": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/DiffOp"
+                }
+              }
+            },
+            "required": [
+              "base_version",
+              "ops"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "author",
+          "message",
+          "base_version",
+          "kind",
+          "decided_by",
+          "decided_version",
+          "decision_note",
+          "decided_at",
+          "created_at",
+          "preview_url"
+        ]
+      },
       "ReviewRound": {
         "type": "object",
         "properties": {
@@ -1250,6 +1376,274 @@
         "responses": {
           "204": {
             "description": "Slack was disconnected."
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/proposals": {
+      "post": {
+        "tags": [
+          "Proposals"
+        ],
+        "summary": "Propose a candidate version (multipart, like publish).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The created proposal, plus the thread ids it marked addressed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Proposal"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "addressed": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "addressed"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Proposals"
+        ],
+        "summary": "List an artifact's proposals (optionally filtered by state).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "approved",
+                "changes_requested",
+                "withdrawn"
+              ]
+            },
+            "required": false,
+            "name": "state",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact's proposals.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "proposals": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Proposal"
+                      }
+                    }
+                  },
+                  "required": [
+                    "proposals"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/proposals/{proposalId}": {
+      "get": {
+        "tags": [
+          "Proposals"
+        ],
+        "summary": "One proposal, with a line diff against its base version.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "proposalId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The proposal, with its diff.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Proposal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/proposals/{proposalId}/approve": {
+      "post": {
+        "tags": [
+          "Proposals"
+        ],
+        "summary": "Approve a proposal (its content goes live as a new version).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "proposalId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The approved proposal + the version number it became.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Proposal"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "published": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "published"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/proposals/{proposalId}/request-changes": {
+      "post": {
+        "tags": [
+          "Proposals"
+        ],
+        "summary": "Request changes on a proposal (it stays open for revision).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "proposalId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The proposal, now changes_requested.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Proposal"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/proposals/{proposalId}/withdraw": {
+      "post": {
+        "tags": [
+          "Proposals"
+        ],
+        "summary": "Withdraw an open proposal (proposer or a manager).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "proposalId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The proposal, now withdrawn.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Proposal"
+                }
+              }
+            }
           }
         }
       }
