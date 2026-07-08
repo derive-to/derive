@@ -46,22 +46,9 @@ export interface AuthCapabilities {
 /** An OAuth agent the user authorized to act on their behalf (the "Connected agents"
  *  list). Generated from the OpenAPI spec. */
 export type ConnectedAgent = components["schemas"]["ConnectedAgent"]
-/** A public profile, by handle. Email is private and never returned here. */
-export interface PublicProfile {
-  username: string
-  name: string | null
-  image: string | null
-  /** Coarse team role; null if unset. (People-search results omit `about`.) */
-  profession?: string | null
-  /** One-line "what you do" blurb; only present on the full /users/:handle profile. */
-  about?: string | null
-  /** GitHub login, when known (the full /users/:handle profile only); null otherwise. */
-  github_login?: string | null
-  /** Work / follower / following counts (the full /users/:handle profile only). */
-  stats?: { works: number; followers: number; following: number }
-  /** Whether the signed-in viewer already follows this person (full profile only). */
-  followed_by_me?: boolean
-}
+/** A public profile, by handle. Email is private and never returned here.
+ *  Generated from the OpenAPI spec. */
+export type PublicProfile = components["schemas"]["PublicProfile"]
 export interface VersionSession {
   n: number
   from_n: number
@@ -258,17 +245,9 @@ export type ReviewRound = components["schemas"]["ReviewRound"]
 /** A comment: threaded, anchored to a text quote, with reactions/edits/soft-delete.
  *  Generated from the OpenAPI spec. */
 export type Comment = components["schemas"]["Comment"]
-/** A person/agent offered by the @mention picker — identified by @handle, never email. */
-export interface DirUser {
-  id: string
-  name: string | null
-  handle: string | null
-  /** "agent" for a registered MCP agent, "user" for a person. The @mention directory
-   *  returns both; the "ask an agent to revise" affordance targets the agents. */
-  kind?: "user" | "agent"
-  /** Role/profession, surfaced by the directory so the picker shows who's who. */
-  profession?: string | null
-}
+/** A person/agent offered by the @mention picker — by @handle, never email.
+ *  Generated from the OpenAPI spec. */
+export type DirUser = components["schemas"]["DirUser"]
 /** An in-app notification (the header bell). Generated from the API's OpenAPI spec
  *  (apps/api/openapi.json) — a backend shape change surfaces here at `tsc`. */
 export type Notification = components["schemas"]["Notification"]

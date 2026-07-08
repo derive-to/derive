@@ -6,6 +6,93 @@
   },
   "components": {
     "schemas": {
+      "PublicProfile": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "image": {
+            "type": "string",
+            "nullable": true
+          },
+          "profession": {
+            "type": "string",
+            "nullable": true
+          },
+          "about": {
+            "type": "string",
+            "nullable": true
+          },
+          "github_login": {
+            "type": "string",
+            "nullable": true
+          },
+          "stats": {
+            "type": "object",
+            "properties": {
+              "works": {
+                "type": "number"
+              },
+              "followers": {
+                "type": "number"
+              },
+              "following": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "works",
+              "followers",
+              "following"
+            ]
+          },
+          "followed_by_me": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "username",
+          "name",
+          "image"
+        ]
+      },
+      "DirUser": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "handle": {
+            "type": "string",
+            "nullable": true
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "user",
+              "agent"
+            ]
+          },
+          "profession": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "handle"
+        ]
+      },
       "Agent": {
         "type": "object",
         "properties": {
@@ -1052,6 +1139,445 @@
     "parameters": {}
   },
   "paths": {
+    "/v1/me": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "The signed-in user + their active-workspace role.",
+        "responses": {
+          "200": {
+            "description": "The current user (SessionUser + role) and whether multi-workspace is on.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "username": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "discoverable": {
+                          "type": "boolean"
+                        },
+                        "profession": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "about": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "onboarded": {
+                          "type": "boolean"
+                        },
+                        "emailVerified": {
+                          "type": "boolean"
+                        },
+                        "role": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email",
+                        "name",
+                        "username",
+                        "discoverable",
+                        "profession",
+                        "about",
+                        "onboarded",
+                        "emailVerified",
+                        "role"
+                      ]
+                    },
+                    "multi": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "user",
+                    "multi"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/username": {
+      "post": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Claim or change your @handle.",
+        "responses": {
+          "200": {
+            "description": "The new handle.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "username": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "username"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/profile": {
+      "post": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Set your team role + one-line bio.",
+        "responses": {
+          "200": {
+            "description": "The saved profession + about (null clears a field).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "profession": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "about": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "profession",
+                    "about"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/discoverable": {
+      "post": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Opt in/out of being findable in people search.",
+        "responses": {
+          "200": {
+            "description": "The new discoverability.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "discoverable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "discoverable"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/onboarded": {
+      "post": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Mark first-run onboarding finished (server-authoritative).",
+        "responses": {
+          "200": {
+            "description": "Onboarded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "onboarded": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "onboarded"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users/search": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Search opted-in accounts by handle or name.",
+        "responses": {
+          "200": {
+            "description": "Matching public profiles (public fields only).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PublicProfile"
+                      }
+                    }
+                  },
+                  "required": [
+                    "users"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/people": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Browse (or search) the discoverable people directory.",
+        "responses": {
+          "200": {
+            "description": "Public profiles (public fields only).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PublicProfile"
+                      }
+                    }
+                  },
+                  "required": [
+                    "users"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users/{handle}": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "A public profile by @handle (email never returned).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "handle",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The public profile with stats + follow state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user": {
+                      "$ref": "#/components/schemas/PublicProfile"
+                    }
+                  },
+                  "required": [
+                    "user"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users/{handle}/followers": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Who follows this user (signed-in only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "handle",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Followers as public profiles.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PublicProfile"
+                      }
+                    }
+                  },
+                  "required": [
+                    "users"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users/{handle}/following": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Who this user follows (signed-in only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "handle",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Following as public profiles.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PublicProfile"
+                      }
+                    }
+                  },
+                  "required": [
+                    "users"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/me/avatar": {
+      "post": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Upload your profile picture (multipart; raster images only).",
+        "responses": {
+          "200": {
+            "description": "The served avatar URL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "image": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "image"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "The @mention directory: workspace people + agents (auth only).",
+        "responses": {
+          "200": {
+            "description": "Mentionable people + agents (by @handle, never email).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/DirUser"
+                      }
+                    }
+                  },
+                  "required": [
+                    "users"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/agents": {
       "get": {
         "tags": [
