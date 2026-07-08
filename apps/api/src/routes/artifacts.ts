@@ -1,5 +1,6 @@
 import {
   type ArtifactRecord,
+  applyEdits,
   artifactUrl,
   type BundleDoc,
   type BundleManifest,
@@ -7,15 +8,20 @@ import {
   can,
   capRole,
   diffLines,
+  EditError,
   effectiveRole,
   formatDiff,
   groupSessions,
   isMarkdownBundle,
   newId,
+  outlineOf,
   PublishError,
+  pageText,
   publish,
   renderMarkdown,
+  sectionOf,
   toJson,
+  toMarkdown,
 } from "@derive/core"
 import { type Context, Hono } from "hono"
 import { setCookie } from "hono/cookie"
@@ -23,6 +29,7 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { publishSweepEvents } from "../lib/anchor-sweep"
 import { authorProfile, resolveHandles } from "../lib/author"
+import { cleanPath, manifestOf } from "../lib/bundle"
 import { hashPassword, signState, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
 import { buildReviewEmail } from "../lib/email"
 import {
@@ -32,6 +39,7 @@ import {
   readJson,
   str,
   TOMBSTONE,
+  toBody,
   visibilityOf,
 } from "../lib/http"
 import { enqueueChannelDelivery } from "../webhooks"
@@ -335,18 +343,65 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (len > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
 
     const body = await c.req.parseBody()
-    const file = body["file"]
-    if (!(file instanceof File)) return fail(c, 400, "multipart field 'file' required")
 
-    const bytes = new Uint8Array(await file.arrayBuffer())
-    // The content-length header is advisory (a client can omit/understate it),
-    // so re-check the actual buffered size — the hard cap before anything stores.
-    if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
-    if (await overStorage(org, bytes.length)) return fail(c, 413, "storage quota exceeded")
-    const isBundle =
-      /\.zip$/i.test(file.name) ||
-      body["kind"] === "bundle" ||
-      (bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5))
+    // `edits` — a token-cheap revision (stdio/API parity with the MCP publish
+    // tool's `edits`): exact-match search/replace against the current stored
+    // source instead of a re-uploaded `file`. Materialize the full content, then
+    // fall through to the same publish path everything else uses.
+    const editsField = body["edits"]
+    let bytes: Uint8Array
+    let filename: string
+    let isBundle: boolean
+    if (typeof editsField === "string") {
+      if (!shortId || !existing)
+        return fail(c, 400, "edits revises an EXISTING artifact — POST to its /versions endpoint")
+      if (existing.kind !== "file")
+        return fail(c, 409, "edits applies to single-file artifacts only")
+      const baseVersionField = str(body["base_version"])
+      const baseVersion = baseVersionField ? Number(baseVersionField) : undefined
+      if (baseVersion !== undefined && baseVersion !== existing.current_version)
+        return fail(
+          c,
+          409,
+          `"${shortId}" moved to v${existing.current_version} (you read v${baseVersion}) — re-read and retry`,
+        )
+      let edits: { old_str: string; new_str: string }[]
+      try {
+        edits = JSON.parse(editsField)
+      } catch {
+        return fail(c, 400, "edits must be a JSON array of {old_str,new_str}")
+      }
+      const cur = await meta.getVersion(existing.id, existing.current_version)
+      const src = cur ? await sourceText(cur) : null
+      if (!cur || src === null) return fail(c, 500, "blob missing")
+      let materialized: string
+      try {
+        materialized = applyEdits(src, edits)
+      } catch (e) {
+        return fail(c, 400, e instanceof EditError ? e.message : "edit failed")
+      }
+      bytes = new TextEncoder().encode(materialized)
+      if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
+      if (await overStorage(org, bytes.length)) return fail(c, 413, "storage quota exceeded")
+      filename =
+        (cur.content_type.split(";")[0]?.trim() ?? cur.content_type) === "text/markdown"
+          ? "index.md"
+          : "index.html"
+      isBundle = false
+    } else {
+      const file = body["file"]
+      if (!(file instanceof File)) return fail(c, 400, "multipart field 'file' required")
+      bytes = new Uint8Array(await file.arrayBuffer())
+      // The content-length header is advisory (a client can omit/understate it),
+      // so re-check the actual buffered size — the hard cap before anything stores.
+      if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
+      if (await overStorage(org, bytes.length)) return fail(c, 413, "storage quota exceeded")
+      filename = file.name
+      isBundle =
+        /\.zip$/i.test(file.name) ||
+        body["kind"] === "bundle" ||
+        (bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5))
+    }
 
     // A password is a lock on a public link — hashed at create; a republish keeps
     // whatever the artifact already has (publish() never re-creates the artifact,
@@ -388,7 +443,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         blobs,
         {
           bytes,
-          filename: file.name,
+          filename,
           isBundle,
           title: str(body["title"]),
           slug: str(body["slug"]),
@@ -869,6 +924,12 @@ export const artifactRoutes = (ctx: AppContext) => {
 
   // Source read-back for machines: returns an artifact's text content for any
   // version, as plain text (?v=N selects a version; defaults to current).
+  //
+  // ?format=markdown|text renders instead of returning raw source (default: raw,
+  // for existing byte-exact consumers). ?outline=1 returns a JSON heading/page
+  // outline instead of content. ?section=<slug|page|page#slug> returns just that
+  // part. X-Derive-* response headers double as a capability probe for older
+  // clients that predate these params (self-hosted stdio server parity).
   app.get("/v1/artifacts/:shortId/content", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
@@ -878,14 +939,91 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!Number.isInteger(v)) return fail(c, 400, "bad version")
     const version = await meta.getVersion(artifact.id, v)
     if (!version) return fail(c, 404, `no version ${v}`)
-    const src = await sourceText(version)
-    if (src === null) return fail(c, 500, "blob missing")
-    c.header("Content-Type", "text/plain; charset=utf-8")
-    c.header("X-Content-Type-Options", "nosniff")
+
+    const formatQ = c.req.query("format")
+    const format = formatQ === "markdown" || formatQ === "text" ? formatQ : null
+    // "*" forces full content — the escape hatch a caller uses after already
+    // seeing (or skipping) the outline, same sentinel the MCP `read` tool takes.
+    const sectionQ = c.req.query("section")
+    const section = sectionQ && sectionQ !== "*" ? sectionQ : null
+    const outline = c.req.query("outline") === "1"
+    const present = (source: string, contentType: string): string => {
+      if (!format) return source
+      if (format === "text")
+        return (contentType.split(";")[0]?.trim() ?? contentType) === "text/html"
+          ? pageText(source)
+          : source
+      return toMarkdown(source, contentType)
+    }
+
     c.header("Access-Control-Allow-Origin", "*")
+    c.header("X-Content-Type-Options", "nosniff")
     c.header("X-Derive-Version", String(v))
     c.header("X-Derive-Kind", artifact.kind)
-    return c.body(src)
+
+    const manifest = await manifestOf(blobs, version)
+    if (!manifest) {
+      // Single-file artifact.
+      const src = await sourceText(version)
+      if (src === null) return fail(c, 500, "blob missing")
+      if (outline) {
+        c.header("X-Derive-Format", "outline")
+        return c.json({ sections: outlineOf(src, version.content_type) })
+      }
+      if (section) {
+        const slice = sectionOf(src, version.content_type, section)
+        if (slice === null) return fail(c, 404, `no section "${section}"`)
+        const body = present(slice, version.content_type)
+        c.header("X-Derive-Format", format ?? "raw")
+        c.header("X-Derive-Section", section)
+        c.header("Content-Type", "text/plain; charset=utf-8")
+        return c.body(body)
+      }
+      const body = present(src, version.content_type)
+      c.header("X-Derive-Format", format ?? "raw")
+      c.header("X-Derive-Sections", String(outlineOf(src, version.content_type).length))
+      c.header("Content-Type", "text/plain; charset=utf-8")
+      return c.body(body)
+    }
+
+    // Bundle.
+    if (outline) {
+      c.header("X-Derive-Format", "outline")
+      return c.json({
+        entry: cleanPath(manifest.entry),
+        pages: Object.keys(manifest.files).map((p) => ({
+          path: cleanPath(p),
+          type: manifest.files[p]?.type,
+        })),
+      })
+    }
+    const pagePath = section ? (section.split("#")[0] as string) : cleanPath(manifest.entry)
+    const slug = section?.includes("#") ? section.slice(section.indexOf("#") + 1) : null
+    const file = manifest.files[pagePath] ?? manifest.files[`/${cleanPath(pagePath)}`]
+    if (!file) return fail(c, 404, `no page "${pagePath}"`)
+    const bytes = await blobs.get(file.key)
+    if (!bytes) return fail(c, 500, "blob missing")
+    const fileBaseType = file.type.split(";")[0]?.trim() ?? file.type
+    const isText = fileBaseType === "text/html" || fileBaseType === "text/markdown"
+    if (!isText) {
+      c.header("Content-Type", file.type)
+      c.header("X-Derive-Format", "raw")
+      return c.body(toBody(bytes))
+    }
+    const raw = new TextDecoder().decode(bytes)
+    if (slug) {
+      const slice = sectionOf(raw, file.type, slug)
+      if (slice === null) return fail(c, 404, `no section "${slug}" in "${pagePath}"`)
+      c.header("X-Derive-Format", format ?? "raw")
+      c.header("X-Derive-Section", `${pagePath}#${slug}`)
+      c.header("Content-Type", "text/plain; charset=utf-8")
+      return c.body(present(slice, file.type))
+    }
+    c.header("X-Derive-Format", format ?? "raw")
+    c.header("X-Derive-Section", pagePath)
+    c.header("X-Derive-Sections", String(outlineOf(raw, file.type).length))
+    c.header("Content-Type", "text/plain; charset=utf-8")
+    return c.body(present(raw, file.type))
   })
 
   // Live editor preview: render a markdown draft to the exact published HTML.
@@ -919,7 +1057,13 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!vf || !vt) return fail(c, 404, "version not found")
     const [a, b] = [await sourceText(vf), await sourceText(vt)]
     if (a === null || b === null) return fail(c, 500, "blob missing")
-    const ops = diffLines(a, b)
+    // ?content=markdown diffs the readable form (HTML converted) instead of raw
+    // source — kills tag noise and fixes minified one-line HTML producing a
+    // single useless del/add pair. Default stays raw bytes for existing consumers.
+    const ops =
+      c.req.query("content") === "markdown"
+        ? diffLines(toMarkdown(a, vf.content_type), toMarkdown(b, vt.content_type))
+        : diffLines(a, b)
 
     c.header("Access-Control-Allow-Origin", "*")
     c.header("X-Derive-From", String(from))

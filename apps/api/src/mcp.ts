@@ -237,9 +237,13 @@ function buildServer(
         `with ${agent.role} permissions. Derive hosts living documents and plans with versioned ` +
         `history, text-anchored review comments, and a publish → review → revise loop. ` +
         `Start a session with catch_up to re-sync on what changed and what feedback is open; use ` +
-        `read to view content (outline first for multi-page bundles); use comment to leave or ` +
-        `resolve feedback. ${writeGuidance}When a revision fixes specific feedback, pass those ` +
-        `thread ids as publish's "addresses" so the threads resolve (or show pending on a proposal).`,
+        `read to view content — it returns Markdown by default (HTML is converted) and an outline ` +
+        `first for large documents or bundles, so pull sections by heading slug or page path once ` +
+        `you know what you want; pass format:'html' for the exact source. Use comment to leave or ` +
+        `resolve feedback. ${writeGuidance}To change PART of an artifact, prefer publish's edits ` +
+        `(exact-match search/replace against the stored source) over resending everything. When a ` +
+        `revision fixes specific feedback, pass those thread ids as publish's "addresses" so the ` +
+        `threads resolve (or show pending on a proposal).`,
     },
   )
   const org = agent.org_id
