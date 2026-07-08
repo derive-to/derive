@@ -64,6 +64,22 @@ const NAMED: Record<string, string> = {
   nbsp: " ",
 }
 
+/** Decode numeric character references and the common named entities the browser
+ *  would. Unknown named entities pass through untouched. Shared by `pageText` and
+ *  the doc-text markdown conversion so both read an `&amp;` the same way. */
+export function decodeEntities(s: string): string {
+  return s.replace(ENTITY, (whole, body: string) => {
+    if (body[0] === "#") {
+      const cp =
+        body[1] === "x" || body[1] === "X"
+          ? Number.parseInt(body.slice(2), 16)
+          : Number.parseInt(body.slice(1), 10)
+      return Number.isFinite(cp) ? String.fromCodePoint(cp) : whole
+    }
+    return NAMED[body] ?? whole
+  })
+}
+
 /**
  * The visible text of an HTML page, for matching a text quote server-side — the
  * counterpart to the browser client's text-node concatenation. Drops script/style/
@@ -73,20 +89,9 @@ const NAMED: Record<string, string> = {
  * NOT a full HTML parser; findQuote's whitespace tolerance absorbs the small differences.
  */
 export function pageText(html: string): string {
-  return html
-    .replace(INVISIBLE_TAGS, " ")
-    .replace(HTML_COMMENT, " ")
-    .replace(ANY_TAG, " ")
-    .replace(ENTITY, (whole, body: string) => {
-      if (body[0] === "#") {
-        const cp =
-          body[1] === "x" || body[1] === "X"
-            ? Number.parseInt(body.slice(2), 16)
-            : Number.parseInt(body.slice(1), 10)
-        return Number.isFinite(cp) ? String.fromCodePoint(cp) : whole
-      }
-      return NAMED[body] ?? whole
-    })
+  return decodeEntities(
+    html.replace(INVISIBLE_TAGS, " ").replace(HTML_COMMENT, " ").replace(ANY_TAG, " "),
+  )
 }
 
 // The comment-anchor client that runs inside the sandboxed artifact iframe. It is real,
