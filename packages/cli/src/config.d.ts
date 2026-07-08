@@ -92,6 +92,12 @@ export declare function setWorkspaces(
   workspacesMap: Record<string, WorkspaceInfo>,
 ): WorkspaceDiff
 
+export declare function mergeChosenWorkspaces(
+  existing: Record<string, WorkspaceInfo>,
+  chosen: Record<string, WorkspaceInfo>,
+  narrowing: boolean,
+): Record<string, WorkspaceInfo>
+
 export interface AccountSummary {
   id: string
   handle: string | null

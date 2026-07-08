@@ -16,6 +16,7 @@ import {
   getDefault,
   listAccounts,
   loadConfig,
+  mergeChosenWorkspaces,
   removeAccount,
   resolveAccountRef,
   resolvePublish,
@@ -345,6 +346,51 @@ describe("credentials (derive login)", () => {
       setDefaultWorkspace(SERVER, "u1", "ws_a")
       setWorkspaces(SERVER, "u1", { ws_b: { name: "B", role: "editor" } })
       expect(getDefault(SERVER).workspace).toBe("ws_b")
+    })
+  })
+
+  describe("mergeChosenWorkspaces (derive login --workspace/--pick vs. an already-synced account)", () => {
+    it("merges a narrowed selection into an existing roster instead of replacing it", () => {
+      const existing = {
+        ws_a: { name: "A", role: "owner" },
+        ws_b: { name: "B", role: "editor" },
+        ws_c: { name: "C", role: "viewer" },
+      }
+      const chosen = { ws_b: { name: "B", role: "owner" } } // e.g. --workspace "B", role refreshed
+      const merged = mergeChosenWorkspaces(existing, chosen, true)
+      expect(merged).toEqual({
+        ws_a: { name: "A", role: "owner" },
+        ws_b: { name: "B", role: "owner" }, // refreshed, not stale
+        ws_c: { name: "C", role: "viewer" },
+      })
+    })
+
+    it("uses chosen as-is when there's no existing roster to protect (a fresh account)", () => {
+      const chosen = { ws_b: { name: "B", role: "owner" } }
+      expect(mergeChosenWorkspaces({}, chosen, true)).toBe(chosen)
+    })
+
+    it("uses chosen as-is when not narrowing (a full discovery legitimately replaces/diffs the roster)", () => {
+      const existing = { ws_a: { name: "A", role: "owner" }, ws_b: { name: "B", role: "editor" } }
+      const chosen = { ws_a: { name: "A", role: "owner" } } // e.g. the account left ws_b server-side
+      expect(mergeChosenWorkspaces(existing, chosen, false)).toBe(chosen)
+    })
+
+    it("end to end: derive login --workspace on an already-synced account keeps the others", () => {
+      saveAccount(SERVER, "u1", { grant: { token: "tok1" } })
+      setWorkspaces(SERVER, "u1", {
+        ws_a: { name: "A", role: "owner" },
+        ws_b: { name: "B", role: "editor" },
+        ws_c: { name: "C", role: "viewer" },
+      })
+      const chosen = { ws_b: { name: "B", role: "editor" } } // re-login narrowed to just B
+      const toSave = mergeChosenWorkspaces(getAccount(SERVER, "u1").workspaces, chosen, true)
+      setWorkspaces(SERVER, "u1", toSave)
+      expect(Object.keys(getAccount(SERVER, "u1").workspaces).sort()).toEqual([
+        "ws_a",
+        "ws_b",
+        "ws_c",
+      ])
     })
   })
 

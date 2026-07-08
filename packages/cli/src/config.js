@@ -197,6 +197,19 @@ const pickDefaultWorkspace = (workspacesMap) => {
   return ids.find((id) => workspacesMap[id].role === "owner") ?? ids[0] ?? null
 }
 
+/** What `derive login` should hand `setWorkspaces()` after a sign-in discovers
+ *  `chosen` workspaces (the full roster, or a `--workspace`/`--pick` subset).
+ *  `setWorkspaces` replaces the roster outright — correct for a fresh account
+ *  or a full discovery, but a NARROWED `chosen` against an account that
+ *  already has other workspaces synced would read as "the rest were removed"
+ *  and delete them locally. `narrowing` (true for `--workspace`/`--pick`) MERGES
+ *  `chosen` into `existing` instead in that case; otherwise `chosen` is used
+ *  as-is (there's nothing narrower-than-nothing to protect on a fresh account,
+ *  and a full discovery is meant to replace/diff the whole roster). */
+export function mergeChosenWorkspaces(existing, chosen, narrowing) {
+  return narrowing && Object.keys(existing).length ? { ...existing, ...chosen } : chosen
+}
+
 /** Replace `accountId`'s workspace roster with `workspacesMap`, as returned by a
  *  fresh `GET /v1/workspaces`. Returns what changed since the last sync —
  *  `{added, renamed, removed}`, each a list of `{id, name}` (`renamed` also

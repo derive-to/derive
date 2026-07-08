@@ -42,6 +42,7 @@ import {
   getDefault,
   listAccounts,
   loadConfig,
+  mergeChosenWorkspaces,
   removeAccount,
   resolveAccountRef,
   resolvePublish,
@@ -334,6 +335,10 @@ async function doOAuthLogin(server, loginFlags) {
   }
   const accountId = discovered.account.id
   const wasSignedIn = !!getDefault(server)
+  // Captured before saveAccount/setWorkspaces touch anything: whether THIS
+  // account already had a roster locally, so a --workspace/--pick narrowing
+  // below can be told apart from a first-time discovery.
+  const existingWorkspaces = getAccount(server, accountId)?.workspaces ?? {}
   saveAccount(server, accountId, {
     handle: discovered.account.handle ?? null,
     grant: {
@@ -374,7 +379,8 @@ async function doOAuthLogin(server, loginFlags) {
             .map((i) => entries[i])
     chosen = Object.fromEntries(picked)
   }
-  setWorkspaces(server, accountId, chosen)
+  const narrowing = !!(loginFlags.workspace || loginFlags.pick)
+  setWorkspaces(server, accountId, mergeChosenWorkspaces(existingWorkspaces, chosen, narrowing))
 
   const handleLabel = discovered.account.handle ? `@${discovered.account.handle}` : accountId
   console.log()
@@ -540,13 +546,7 @@ if (cmd === "workspaces") {
     process.exit(0)
   }
   console.log(`${server} · ${account.handle ? `@${account.handle}` : accountId}`)
-  for (const [id, w] of Object.entries(account.workspaces ?? {})) {
-    const mark = id === account.defaultWorkspace ? "●" : " "
-    console.log(
-      `  ${mark} ${w.name}   ${w.role}${id === account.defaultWorkspace ? "  (default)" : ""}`,
-    )
-    if (w.description) console.log(`      ${w.description}`)
-  }
+  printAccountBlock(server, accountId, "", false)
   process.exit(0)
 }
 
