@@ -1,5 +1,6 @@
 import { type ArtifactRecord, parseRef } from "@derive/core"
 import { OpenAPIHono } from "@hono/zod-openapi"
+import { Scalar } from "@scalar/hono-api-reference"
 import type { Context, Hono } from "hono"
 import { compress } from "hono/compress"
 import type { BlankEnv } from "hono/types"
@@ -388,6 +389,11 @@ export function createApp(deps: AppDeps): Hono {
     openapi: "3.0.3",
     info: { title: "Derive API", version: "1.0.0" },
   })
+
+  // Interactive API reference (Scalar) rendered from the spec above. Public +
+  // static like /openapi.json — a viewer for the already-public contract, no new
+  // exposure and no per-request state, so it also sits outside the /v1 auth context.
+  app.get("/docs", Scalar({ url: "/openapi.json" }))
 
   // The remote MCP endpoint — Streamable HTTP, bearer-gated by the agent bridge.
   mountMcp(app, ctx)
