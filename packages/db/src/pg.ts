@@ -76,7 +76,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@derive/core"
+import { GLOBAL_FOLLOW_ORG } from "@derive/core"
 import {
   and,
   asc,
