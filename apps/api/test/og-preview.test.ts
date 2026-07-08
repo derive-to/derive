@@ -157,10 +157,36 @@ describe("/v1/og/:ref — PNG preview serving", () => {
     const res = await app.request(`/v1/og/${short_id}`)
     expect(res.status).toBe(200)
     expect(res.headers.get("content-type")).toBe("image/png")
+    // A public artifact's screenshot may live in shared caches.
+    expect(res.headers.get("cache-control")).toContain("public")
 
     // Body must be the exact PNG bytes we stored.
     const buf = await res.arrayBuffer()
     expect(new Uint8Array(buf)).toEqual(TINY_PNG)
+  })
+
+  it("gated artifact's PNG (served to an authorized reader) is never shared-cacheable", async () => {
+    const { app, meta, blobs } = makeApp("og-gated-cache")
+    const { short_id, current_version } = await publish(app, "<h1>Team only</h1>", {
+      visibility: "org",
+      title: "Gated Artifact",
+    })
+
+    const artifact = await meta.getByShortId(short_id)
+    if (!artifact) throw new Error("artifact not found after publish")
+    const pngKey = await blobs.put(TINY_PNG)
+    await meta.setVersionPreview(artifact.id, current_version, {
+      preview_key: pngKey,
+      preview_status: "ready",
+    })
+
+    // The token principal reads as owner, so the PNG branch is reached — but the
+    // response must be browser-cache only (private), never shared-cacheable.
+    const res = await app.request(`/v1/og/${short_id}`, { headers: AUTH })
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toBe("image/png")
+    expect(res.headers.get("cache-control")).toContain("private")
+    expect(res.headers.get("cache-control")).not.toContain("public")
   })
 
   it("SECURITY: private artifact with ready preview → anonymous caller gets SVG, never the PNG", async () => {
