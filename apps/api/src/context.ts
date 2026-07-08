@@ -486,6 +486,25 @@ export function buildContext(deps: AppDeps) {
   const actingUser = async (c: Context): Promise<{ id: string; name: string } | null> =>
     principalActor(await resolvePrincipal(c))
 
+  // The HUMAN byline behind a request, for attributing authored work: a signed-in user is
+  // themselves; an agent (the `derive login` CLI, a remote MCP client, or a registered
+  // dk_agt_ token) attributes to the human it acts on behalf of — the OAuth grantor or the
+  // registrant. Authored work is always the person's, so a byline must NEVER read as the
+  // agent's own name: which model/client drove a publish ("Derive CLI", "Claude", an
+  // OpenAI-backed tool) is an implementation detail, not the author. Null only when no
+  // human is known — anonymous, the static token, or an ownerless agent — and the caller
+  // then falls back to actingUser. The agent Principal carries only the human's id, so the
+  // display name is resolved here.
+  const actingHuman = async (c: Context): Promise<{ id: string; name: string } | null> => {
+    const p = await resolvePrincipal(c)
+    if (p.kind === "human")
+      return { id: p.user.id, name: p.user.name ?? p.user.username ?? p.user.email }
+    const owner = principalOwnerId(p)
+    if (!owner) return null
+    const u = (await meta.getUsers([owner]))[0]
+    return { id: owner, name: u?.name ?? u?.username ?? u?.email ?? owner }
+  }
+
   // A stable rate-limit key for the caller: the signed-in user / agent if known,
   // otherwise their IP so anonymous floods are still bounded.
   const actorKey = async (c: Context): Promise<string> => {
@@ -796,6 +815,7 @@ export function buildContext(deps: AppDeps) {
     agentFor,
     resolvePrincipal,
     actingUser,
+    actingHuman,
     privateOwnerId,
     managementPrincipal,
     oauthGrant,

@@ -244,3 +244,54 @@ describe("GitHub author tracking — user mapping", () => {
     m2.close()
   })
 })
+
+describe("self-healing bylines — a stale byline resolves to the live user", () => {
+  it("an old version frozen as 'Derive CLI' reads as its author_id user on read", async () => {
+    // A Derive account exists (Better Auth's user table).
+    const raw = new Database(dbPath)
+    raw.exec(
+      `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT)`,
+    )
+    raw
+      .prepare(`INSERT OR IGNORE INTO user (id, email, name, username) VALUES (?,?,?,?)`)
+      .run("u_cli", "anir@x.test", "Anir Agarwal", "anir")
+    raw.close()
+
+    // Simulate a pre-fix CLI publish: the byline string is frozen as the OAuth client name,
+    // but author_id already points at the human (what makes it show under "created by me").
+    const art = await meta.createArtifact({
+      id: newId("a"),
+      short_id: newId("s"),
+      org_id: "default",
+      slug: null,
+      title: "CLI doc",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+      kind: "file",
+      spa: 0,
+    })
+    await meta.addVersion(art.id, {
+      id: newId("v"),
+      blob_key: await blobStore.put(new TextEncoder().encode("<h1>x</h1>")),
+      content_type: "text/html",
+      size_bytes: 1,
+      author: "Derive CLI", // the stale frozen byline
+      author_id: "u_cli", // the truth — denormalized onto the artifact too
+      message: null,
+    })
+
+    const detail = await (
+      await app.request(`/v1/artifacts/${art.short_id}`, { headers: auth })
+    ).json()
+    // Both the version byline and the current-author profile heal to the live user.
+    expect(detail.versions[0].author).toBe("Anir Agarwal")
+    expect(detail.versions[0].handle).toBe("anir")
+    expect(detail.author).toMatchObject({ name: "Anir Agarwal", handle: "anir" })
+
+    // And the list view heals the same way (no stale name on the card).
+    const list = await (await app.request("/v1/artifacts?limit=100", { headers: auth })).json()
+    const row = list.artifacts.find((a: { short_id: string }) => a.short_id === art.short_id)
+    expect(row.author).toMatchObject({ name: "Anir Agarwal", handle: "anir" })
+  })
+})
