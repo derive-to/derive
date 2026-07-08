@@ -24,6 +24,11 @@ const API_PREFIXES = ["/v1", "/api", "/raw", "/oauth"] as const
 const API_EXACT = [
   "/healthz",
   "/mcp",
+  // The generated OpenAPI spec + its Scalar reference UI. Worker-first, else the SPA
+  // not_found_handling shadows them: /docs would render the app shell and the
+  // reference's fetch of /openapi.json would get HTML instead of the spec.
+  "/openapi.json",
+  "/docs",
   "/.well-known/oauth-authorization-server",
   "/.well-known/oauth-protected-resource",
   "/.well-known/openid-configuration",

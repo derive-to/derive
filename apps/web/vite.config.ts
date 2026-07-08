@@ -51,6 +51,8 @@ export default defineConfig({
         "/healthz",
         "/oauth",
         "/mcp",
+        "/openapi.json",
+        "/docs",
         "/.well-known/oauth-authorization-server",
         "/.well-known/oauth-protected-resource",
         "/.well-known/openid-configuration",

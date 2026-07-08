@@ -158,7 +158,7 @@ crons = ["* * * * *"]
 [assets]
 directory = "../web/dist/client"
 binding = "ASSETS"
-run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/settings/github/*", "/settings/slack/*", "/artifacts/*", "/users/*", "/healthz", "/mcp", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration"]
+run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/settings/github/*", "/settings/slack/*", "/artifacts/*", "/users/*", "/healthz", "/mcp", "/openapi.json", "/docs", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration"]
 not_found_handling = "single-page-application"
 
 # Public hosts: the derive.to apex is canonical, app.derive.to an alias. Cloudflare
