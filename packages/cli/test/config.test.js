@@ -60,8 +60,10 @@ describe("scaffold", () => {
       title: "Report",
       entry: "index.md",
       id: null,
-      visibility: "private",
     })
+    // No `visibility` — a scaffold inherits the workspace's team-draft default
+    // (workspace access, unlisted), not invite-only.
+    expect(cfg.visibility).toBeUndefined()
     // The MCP config + skill are present and reference the published server.
     expect(JSON.parse(readFileSync(join(d, ".mcp.json"), "utf8")).mcpServers.derive.args).toContain(
       "@derive-to/mcp",
