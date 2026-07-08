@@ -279,14 +279,13 @@ export const parseOAuthScopes = (s: string | string[] | null): string[] => {
   return s.split(/\s+/).filter(Boolean)
 }
 
-/** Parse a stored org-settings JSON blob over the defaults, normalizing values
- *  written before the visibility collapse: a legacy agent default of `unlisted`
- *  is today's `private`, `link`/`public` clamp to `org` (an agent default must
- *  never world-publish), and the retired defaultUnlistedRole key is dropped.
- *  The round-4 link-grant defaults normalize the same way: an unknown or missing
- *  value reads as the factory default (`commenter` / `org`), so a stale blob can
- *  never widen a workspace's default link. Shared by both drivers so old blobs
- *  read identically everywhere. */
+/** Parse a stored org-settings JSON blob over the defaults, normalizing the v2
+ *  access defaults (defaultWorkspaceAccess/defaultLinkRole/defaultListed) and
+ *  dropping the retired keys (defaultUnlistedRole, defaultAgentVisibility,
+ *  defaultLinkAudience). An unknown or missing value reads as the factory default
+ *  (the team draft: `member` / `none` / `none` — see DEFAULT_ORG_SETTINGS), so a
+ *  stale or malformed blob can never silently widen a workspace's defaults. Shared
+ *  by both drivers so old blobs read identically everywhere. */
 export const parseOrgSettings = (raw: string | null): OrgSettings => {
   let parsed: Partial<OrgSettings> & { defaultUnlistedRole?: unknown } = {}
   try {
@@ -406,11 +405,14 @@ export function makeRepos(db: SqliteDb) {
   // — so a second boot, and every row created after (born visibility='private'),
   // is a no-op. setAccess never writes visibility, so a later access change is
   // never re-clobbered. See docs/plans/access-model.md.
+  // Self-sufficient: it also folds in the pre-collapse vocabulary (`link`/`password`
+  // → public, `unlisted` → private) so it maps correctly on ANY caller — the hosted
+  // deploy path (apply-pg-schema.ts) runs it without node.ts's separate collapse.
   const backfillAccess = async (): Promise<void> => {
     await db.run(sql`UPDATE artifact SET
-      workspace_access = CASE WHEN visibility IN ('org','public') THEN 'member' ELSE 'none' END,
-      listed = CASE visibility WHEN 'public' THEN 'public' WHEN 'org' THEN 'workspace' ELSE 'none' END,
-      link_role = CASE WHEN visibility = 'public' THEN general_role ELSE 'none' END,
+      workspace_access = CASE WHEN visibility IN ('org','public','link','password') THEN 'member' ELSE 'none' END,
+      listed = CASE WHEN visibility IN ('public','link','password') THEN 'public' WHEN visibility = 'org' THEN 'workspace' ELSE 'none' END,
+      link_role = CASE WHEN visibility IN ('public','link','password') THEN general_role ELSE 'none' END,
       visibility = 'private',
       general_role = 'viewer'
       WHERE visibility != 'private'`)

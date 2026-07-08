@@ -273,7 +273,7 @@ function buildServer(
     "list_artifacts",
     {
       description:
-        "List the artifacts (docs, plans, sites) in your workspace — short id, title, kind, current version, visibility. Includes your own unlisted (link-only) publishes — hidden from the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
+        "List the artifacts (docs, plans, sites) in your workspace — short id, title, kind, current version, access (workspace_access/link_role/listed). Includes your own unlisted publishes — out of the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
       inputSchema: { query: z.string().optional().describe("Optional title search filter.") },
     },
     async ({ query }) => {

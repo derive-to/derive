@@ -564,6 +564,14 @@ export const workspaceRoutes = (ctx: AppContext) => {
       const org = await activeWorkspace(c)
       // Merge over current (so a partial PATCH only flips the keys it sends).
       const next = { ...(await meta.getOrgSettings(org)), ...b }
+      // The default access must satisfy the same listing preconditions a publish
+      // would (see access-model.md) — otherwise every new publish that takes the
+      // defaults would 400. Validate the MERGED result, so a partial PATCH can't
+      // leave the pair incoherent.
+      if (next.defaultListed === "workspace" && next.defaultWorkspaceAccess !== "member")
+        return bail(fail(c, 400, "a workspace-listed default needs default workspace access"))
+      if (next.defaultListed === "public" && next.defaultLinkRole === "none")
+        return bail(fail(c, 400, "a publicly-listed default needs a default link role"))
       await meta.setOrgSettings(org, next)
       return c.json(next)
     },
