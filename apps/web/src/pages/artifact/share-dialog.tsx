@@ -55,7 +55,7 @@ const LINK_ROLE_LABELS: Record<Exclude<LinkRole, "none">, string> = {
 }
 const linkBlurb = (audience: string, role: LinkRole): string => {
   if (audience === "invited" || role === "none")
-    return "The link is inert — only people added below can open it."
+    return "The link is inert: only people added below can open it."
   const who = audience === "org" ? "Anyone in this workspace with the link" : "Anyone with the link"
   if (role === "viewer") return `${who} can view.`
   const what = role === "editor" ? "edit" : "comment"
@@ -70,7 +70,7 @@ const LISTING: { value: string; label: string; blurb: string; icon: IconName }[]
   {
     value: "private",
     label: "Not listed",
-    blurb: "In no feeds or libraries — the link above decides who can open it.",
+    blurb: "In no feeds or libraries. The link above decides who can open it.",
     icon: "lock",
   },
   {
@@ -82,7 +82,7 @@ const LISTING: { value: string; label: string; blurb: string; icon: IconName }[]
   {
     value: "public",
     label: "Public",
-    blurb: "Listed publicly — the link works for anyone.",
+    blurb: "Listed publicly. The link works for anyone.",
     icon: "globe",
   },
 ]
