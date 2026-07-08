@@ -430,6 +430,16 @@ export function buildContext(deps: AppDeps) {
     return grant && grant.scopeRole === "owner" ? grant.ownerId : null
   }
 
+  // The OAuth grant behind this request — the consenting user and their UNCAPPED
+  // scope role — or null for a registered dk_agt_ token. The MCP layer uses the
+  // scope role to re-cap a roamed workspace's role (mirrors agentFor's header
+  // re-home), so a single connection can act across every workspace the grantor
+  // belongs to. Resolves the bearer first so the grant cache is filled.
+  const oauthGrant = async (c: Context): Promise<{ ownerId: string; scopeRole: Role } | null> => {
+    await agentFor(c)
+    return oauthGrantCache.get(c) ?? null
+  }
+
   // The acting identity (agent or signed-in user) for authorship bylines; null when
   // anonymous. Agents author as their name, never spoofing a person. Also a Principal read.
   const actingUser = async (c: Context): Promise<{ id: string; name: string } | null> =>
@@ -728,6 +738,7 @@ export function buildContext(deps: AppDeps) {
     actingUser,
     privateOwnerId,
     managementPrincipal,
+    oauthGrant,
     limited,
     overStorage,
     ensureMembership,

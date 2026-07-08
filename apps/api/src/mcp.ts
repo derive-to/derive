@@ -24,12 +24,14 @@ import {
   type ArtifactRecord,
   artifactUrl,
   type BundleManifest,
+  capRole,
   diffLines,
   formatDiff,
   newId,
   PublishError,
   propose as proposeChange,
   publish as publishVersion,
+  type Role,
   roleAllows,
   type VersionRecord,
 } from "@derive/core"
@@ -145,6 +147,14 @@ function buildServer(
   ctx: AppContext,
   agent: AgentRecord,
   actingFor: { id: string; name: string | null } | null,
+  // The granting user (OAuth grantor, or a dk_agt_ token's creator) whose
+  // memberships bound which workspaces this connection can roam — null for a
+  // legacy token with no known owner, which stays pinned to its one workspace.
+  ownerId: string | null,
+  // The grant's UNCAPPED scope role (OAuth) or the agent's runtime role (dk_agt_),
+  // re-capped against each roamed workspace's membership — exactly like the
+  // X-Derive-Workspace header re-home in agentFor.
+  scopeForCap: Role,
 ): McpServer {
   // Steer the write guidance by what this grant can actually do: a publish-capable
   // grant gets the direct-publish path; a lower grant is told its writes go to review.
@@ -165,44 +175,130 @@ function buildServer(
         `Start a session with catch_up to re-sync on what changed and what feedback is open; use ` +
         `read to view content (outline first for multi-page bundles); use comment to leave or ` +
         `resolve feedback. ${writeGuidance}When a revision fixes specific feedback, pass those ` +
-        `thread ids as publish's "addresses" so the threads resolve (or show pending on a proposal).`,
+        `thread ids as publish's "addresses" so the threads resolve (or show pending on a proposal). ` +
+        `This one login reaches EVERY workspace you belong to — call list_workspaces to see them, ` +
+        `then pass a workspace id or name as the "workspace" argument to act in another one (read, ` +
+        `catch_up, comment, publish, list_artifacts). read/catch_up/comment also find a short_id in ` +
+        `any of your workspaces automatically, so you never need to switch just to open a doc.`,
     },
   )
-  const org = agent.org_id
+  const defaultOrg = agent.org_id
+  const defaultRole = agent.role
 
-  // Resolve a short id within the caller's workspace (never another org's
-  // artifact). `private` narrows further: the agent touches it only through its
-  // human's standing (or a legacy row of its own) — a teammate's private draft
-  // is as untouchable over MCP as its listings are invisible.
-  const own = async (shortId: string): Promise<ArtifactRecord | null> => {
+  // Resolve a workspace REFERENCE (id or name) to an org + the role the grant
+  // holds there. No ref → the connection's default workspace. Roaming needs a
+  // known granting user (ownerId); the role is re-capped from the grant's scope
+  // against that workspace's membership — the same rule as agentFor's
+  // X-Derive-Workspace re-home. Returns an actionable error the model recovers from.
+  const resolveWs = async (
+    ref?: string,
+  ): Promise<{ org: string; role: Role } | { error: string }> => {
+    if (!ref) return { org: defaultOrg, role: defaultRole }
+    if (!ownerId)
+      return {
+        error:
+          "This connection is pinned to a single workspace and can't switch. Reconnect it with an OAuth login to reach your other workspaces.",
+      }
+    const mine = await ctx.meta.listWorkspaces(ownerId)
+    const w =
+      mine.find((x) => x.id === ref) ??
+      mine.find((x) => x.name.toLowerCase() === ref.trim().toLowerCase())
+    if (!w)
+      return {
+        error: `No workspace "${ref}" you can reach. Call list_workspaces to see your workspaces (match by id or name).`,
+      }
+    return { org: w.id, role: capRole(scopeForCap, w.role) }
+  }
+
+  // Reach an artifact this connection can act on, resolving WHERE it lives.
+  // With `wsRef`: only that workspace. Without: the default workspace, then —
+  // for a bare short_id — ANY workspace the granting user belongs to, so a doc
+  // is found wherever it lives without the model naming the workspace. `private`
+  // narrows further: touchable only through the agent's human (or a legacy row of
+  // the agent's own) — a teammate's private draft stays invisible over MCP.
+  // Returns the artifact plus the org + re-capped role to act with there.
+  const reach = async (
+    shortId: string,
+    wsRef?: string,
+  ): Promise<{ a: ArtifactRecord; org: string; role: Role } | { error: string } | null> => {
     const a = await ctx.meta.getByShortId(shortId)
-    if (!a || a.org_id !== org) return null
-    if (a.visibility !== "private") return a
-    if (actingFor && (await ctx.meta.getArtifactMember(a.id, actingFor.id))) return a
-    if (await ctx.meta.getArtifactMember(a.id, agent.id)) return a
-    return null
+    if (!a) return null
+    let org = defaultOrg
+    let role = defaultRole
+    if (wsRef) {
+      const t = await resolveWs(wsRef)
+      if ("error" in t) return t
+      if (a.org_id !== t.org) return null // named a workspace this artifact isn't in
+      org = t.org
+      role = t.role
+    } else if (a.org_id !== defaultOrg) {
+      if (!ownerId) return null
+      const m = await ctx.meta.getMembership(a.org_id, ownerId)
+      if (!m) return null
+      org = a.org_id
+      role = capRole(scopeForCap, m.role)
+    }
+    if (a.visibility === "private") {
+      const ok =
+        (actingFor && (await ctx.meta.getArtifactMember(a.id, actingFor.id))) ||
+        (await ctx.meta.getArtifactMember(a.id, agent.id))
+      if (!ok) return null
+    }
+    return { a, org, role }
   }
   const notFound = (shortId: string) =>
-    err(`No artifact "${shortId}" in your workspace. Call list_artifacts to see what's here.`)
+    err(
+      `No artifact "${shortId}" you can reach in any of your workspaces. Call list_artifacts (optionally with a workspace) to see what's there.`,
+    )
+
+  // The `workspace` argument shared by every workspace-scoped tool.
+  const wsArg = z
+    .string()
+    .optional()
+    .describe(
+      "Workspace to act in — its id or name from list_workspaces. Omit for your default workspace; read/catch_up/comment also find a short_id in ANY of your workspaces automatically.",
+    )
+
+  // WORKSPACES — the switcher: every workspace this one login can reach --------
+  server.registerTool(
+    "list_workspaces",
+    {
+      description:
+        "List every workspace this one login can act in — id, name, your role there, and which is your default. Your token already reaches them all; pass a workspace's id or name as the `workspace` argument to list_artifacts / read / catch_up / comment / publish to act there. No reconnect, no re-consent — read/catch_up/comment even find a short_id across your workspaces automatically.",
+      inputSchema: {},
+    },
+    async () => {
+      const mine = ownerId ? await ctx.meta.listWorkspaces(ownerId) : []
+      const rows = mine.length
+        ? mine.map((w) => ({ id: w.id, name: w.name, role: w.role, default: w.id === defaultOrg }))
+        : [{ id: defaultOrg, name: null as string | null, role: agent.role, default: true }]
+      return json({ count: rows.length, workspaces: rows })
+    },
+  )
 
   // FIND ----------------------------------------------------------------------
   server.registerTool(
     "list_artifacts",
     {
       description:
-        "List the artifacts (docs, plans, sites) in your workspace — short id, title, kind, current version, visibility. Includes your own unlisted (link-only) publishes — hidden from the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
-      inputSchema: { query: z.string().optional().describe("Optional title search filter.") },
+        "List the artifacts (docs, plans, sites) in a workspace — short id, title, kind, current version, visibility. Defaults to your current workspace; pass `workspace` (id or name from list_workspaces) to list another one. Includes your own unlisted (link-only) publishes — hidden from the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
+      inputSchema: {
+        query: z.string().optional().describe("Optional title search filter."),
+        workspace: wsArg,
+      },
     },
-    async ({ query }) => {
-      // viewerId keeps private rows scoped to the agent's human (mirrors `own`) —
+    async ({ query, workspace }) => {
+      const t = await resolveWs(workspace)
+      if ("error" in t) return err(t.error)
+      // viewerId keeps private rows scoped to the agent's human (mirrors `reach`) —
       // the owner row written at publish is what lets the agent always find its
       // own drafts while a teammate's private work stays invisible.
       const arts = await ctx.meta.listArtifacts({
-        orgId: org,
+        orgId: t.org,
         q: query,
         viewerId: actingFor?.id ?? agent.id,
       })
-      return json({ count: arts.length, artifacts: arts.map(summarizeArtifact) })
+      return json({ workspace: t.org, count: arts.length, artifacts: arts.map(summarizeArtifact) })
     },
   )
 
@@ -219,11 +315,14 @@ function buildServer(
           .optional()
           .describe("A bundle page path, e.g. agentic-loop.html. Omit to get the outline first."),
         version: z.number().optional().describe("Defaults to the current version."),
+        workspace: wsArg,
       },
     },
-    async ({ short_id, section, version }) => {
-      const a = await own(short_id)
-      if (!a) return notFound(short_id)
+    async ({ short_id, section, version, workspace }) => {
+      const r = await reach(short_id, workspace)
+      if (r && "error" in r) return err(r.error)
+      if (!r) return notFound(short_id)
+      const a = r.a
       const n = version ?? a.current_version
       if (n < 1 || n > a.current_version)
         return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
@@ -305,11 +404,14 @@ function buildServer(
           .describe(
             "Long-poll: block up to this many seconds for the human's next action (send back, approve, or a new comment) before returning. Returns immediately when something is already actionable.",
           ),
+        workspace: wsArg,
       },
     },
-    async ({ short_id, since_version, to_version, comments, response_format, wait }) => {
-      let a = await own(short_id)
-      if (!a) return notFound(short_id)
+    async ({ short_id, since_version, to_version, comments, response_format, wait, workspace }) => {
+      const r = await reach(short_id, workspace)
+      if (r && "error" in r) return err(r.error)
+      if (!r) return notFound(short_id)
+      let a = r.a
 
       // Long-poll: when the agent is waiting on the human, block on the artifact
       // channel until they act, then fall through and build the response fresh
@@ -351,7 +453,8 @@ function buildServer(
         } else {
           await waited
           // Refresh: the head (or the artifact itself) may have moved while waiting.
-          a = (await own(short_id)) ?? a
+          const rr = await reach(short_id, workspace)
+          a = rr && !("error" in rr) ? rr.a : a
         }
       }
 
@@ -489,12 +592,15 @@ function buildServer(
           .enum(["resolved", "open"])
           .optional()
           .describe("Resolve the thread, or reopen it (with `reply_to`)."),
+        workspace: wsArg,
       },
     },
-    async ({ short_id, body, reply_to, quote, react, set_state }) => {
-      const a = await own(short_id)
-      if (!a) return notFound(short_id)
-      if (!roleAllows(agent.role, "comment"))
+    async ({ short_id, body, reply_to, quote, react, set_state, workspace }) => {
+      const r = await reach(short_id, workspace)
+      if (r && "error" in r) return err(r.error)
+      if (!r) return notFound(short_id)
+      const a = r.a
+      if (!roleAllows(r.role, "comment"))
         return err(
           "Your grant is read-only (derive:read). Re-authorize the connector with derive:comment to leave feedback.",
         )
@@ -649,6 +755,7 @@ function buildServer(
           .describe(
             "After a LIVE publish, open a review round asking your human to review this version — the /derive loop. They answer inline and hit Send back (or Approve); poll catch_up's `review` for the state. No effect on a proposal (that already IS a review).",
           ),
+        workspace: wsArg,
       },
     },
     async ({
@@ -664,9 +771,27 @@ function buildServer(
       for_review,
       addresses,
       request_review,
+      workspace,
     }) => {
-      const existing = short_id ? await own(short_id) : null
-      if (short_id && !existing) return text(`No artifact "${short_id}" in this workspace.`)
+      // Revise an existing artifact wherever it lives (reach roams to its
+      // workspace); create a new one in the targeted (or default) workspace. The
+      // acting role is re-capped to that workspace, so publish/propose gating is
+      // correct there, not just in the default workspace.
+      const reached = short_id ? await reach(short_id, workspace) : null
+      if (reached && "error" in reached) return text(reached.error)
+      const existing = reached && !("error" in reached) ? reached.a : null
+      if (short_id && !existing) return text(`No artifact "${short_id}" you can reach.`)
+      let targetOrg = defaultOrg
+      let actRole = defaultRole
+      if (existing && reached && !("error" in reached)) {
+        targetOrg = reached.org
+        actRole = reached.role
+      } else if (!short_id) {
+        const t = await resolveWs(workspace)
+        if ("error" in t) return text(t.error)
+        targetOrg = t.org
+        actRole = t.role
+      }
       // Exactly one of content / files. `files` (a page map) means a bundle.
       const isBundle = !!files && Object.keys(files).length > 0
       if (isBundle && content !== undefined)
@@ -686,9 +811,9 @@ function buildServer(
       // Direct publish is gated on the agent's role (Creator/Admin). A commenter-level
       // grant — or anyone asking for_review — is routed to a human-reviewed proposal,
       // so a low-privilege agent still can't push live content.
-      const review = for_review === true || !roleAllows(agent.role, "publish")
+      const review = for_review === true || !roleAllows(actRole, "publish")
       if (review) {
-        if (!roleAllows(agent.role, "propose"))
+        if (!roleAllows(actRole, "propose"))
           return text(
             "Your grant is read-only (derive:read). Re-authorize with derive:propose (or a publish scope) to suggest changes.",
           )
@@ -765,7 +890,7 @@ function buildServer(
         // The workspace decides where an agent's NEW artifact lands when the
         // agent doesn't say — unlisted by default: out of the team library, one
         // link away for the human. Sharing wider stays a deliberate human act.
-        const settings = short_id ? null : await ctx.meta.getOrgSettings(org)
+        const settings = short_id ? null : await ctx.meta.getOrgSettings(targetOrg)
         const { artifact, version } = await publishVersion(
           ctx.meta,
           ctx.blobs,
@@ -780,9 +905,10 @@ function buildServer(
             // Attributed to the human the agent acts for — their profile, their
             // followers' feed (same as the HTTP publish route).
             authorId: actingFor?.id ?? null,
-            // New artifacts land in the granting user's workspace, never wider
-            // than asked (the workspace's agent default when unspecified).
-            orgId: agent.org_id,
+            // New artifacts land in the TARGETED workspace (the default unless a
+            // `workspace` was named), never wider than asked (the workspace's
+            // agent default visibility when unspecified).
+            orgId: targetOrg,
             visibility:
               visibility === "public"
                 ? "public"
@@ -852,7 +978,7 @@ function buildServer(
           // blocked on the human, who may have no tab open (same policy as the
           // HTTP publish path). `settings` is only pre-loaded on a create, so a
           // republish (where most review rounds happen) fetches the gate here.
-          if ((settings ?? (await ctx.meta.getOrgSettings(org))).emailNotifications) {
+          if ((settings ?? (await ctx.meta.getOrgSettings(targetOrg))).emailNotifications) {
             const [r] = await ctx.meta.getUsers([actingFor.id])
             if (r?.email)
               await enqueueChannelDelivery(ctx.meta, "email", "review.requested", {
@@ -965,7 +1091,12 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
     }
     const ownerId = await ctx.privateOwnerId(c)
     const actingFor = ownerId ? ((await ctx.meta.getUsers([ownerId]))[0] ?? null) : null
-    const server = buildServer(ctx, agent, actingFor)
+    // The grant's uncapped scope role (OAuth) — or the agent's own role for a
+    // registered dk_agt_ token — is what a roamed workspace's role is re-capped
+    // from, mirroring agentFor's X-Derive-Workspace re-home.
+    const grant = await ctx.oauthGrant(c)
+    const scopeForCap = grant?.scopeRole ?? agent.role
+    const server = buildServer(ctx, agent, actingFor, ownerId, scopeForCap)
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
     return transport.handleRequest(c)
