@@ -43,6 +43,7 @@
     "jose": "^6.1.0",
     "kysely": "^0.29.2",
     "pg": "^8.13.1",
+    "playwright": "^1.61.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
