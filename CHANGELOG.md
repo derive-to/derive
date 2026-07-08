@@ -7,24 +7,29 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
 ## [Unreleased]
 
 ### Changed
-- **Publishing is private by default.** An absent `visibility` on
-  `POST /v1/artifacts`, `derive publish`, the MCP `publish` tool, the web
-  publish flows, and the `derive init` scaffold now defaults to `private`
-  (previously `link` — URL-readable): only the publisher and the people they
-  invite can see a fresh artifact. Pass `--visibility org|link|public` (or set
-  `visibility` in `derive.json`, or use the Share dialog) to widen. Existing
-  artifacts and existing `derive.json` files (which carry an explicit value) are
-  unaffected; GitHub-mirror syncs stay workspace-visible. The CLI prints the
-  published visibility and how to widen it.
+- **Access is three single-purpose fields.** Replaced the overloaded `visibility`
+  with `workspace_access` (does the artifact's workspace reach it, at each member's
+  seat role), `link_role` (what merely holding the URL grants anyone — anonymous
+  holders clamped to view), and `listed` (discovery only: the workspace library or
+  public directory — no access of its own). A fresh publish defaults to the **team
+  draft** — the workspace can open it at their seat role, there's no world link, and
+  it's listed nowhere until promoted. The Share dialog is now a segmented
+  Invited / Workspace / Anyone control, and the reach endpoint moved
+  `PATCH /v1/artifacts/:id/visibility` → `/access`. Legacy `visibility` (+ its
+  `link`/`unlisted`/`password`/`workspace` aliases) and `general_role` are still
+  accepted on the wire, so a pinned `derive publish`/MCP client and saved
+  `derive.json` files keep publishing unchanged; GitHub-mirror syncs stay
+  workspace-listed. Changing an artifact's reach or lock requires standing
+  (membership or an explicit share), not merely holding an editor link.
 - **Agents act as their registrant.** The `agent` table gains `created_by`; an
   agent's publishes are attributed (`author_id`) and owned by that user, and the
   agent's per-artifact standing is *derived* from the human's member rows —
   capped at the agent's registered role and bound to its home workspace. Agents
   hold no member rows, so share rosters stay a human contract, and no agent can
   `manage` (delete/transfer) anything. Applies to the HTTP routes and the
-  remote-MCP tools alike (MCP reads and listings now also scope `private`
-  artifacts to the agent's human). Agents created before the column act as
-  themselves; recreate the agent to link it.
+  remote-MCP tools alike (MCP reads and listings scope invite-only artifacts — those
+  with no workspace access — to the agent's human). Agents created before the column
+  act as themselves; recreate the agent to link it.
 - **`discoverable` is real profile privacy now.** Turning it off hides your
   profile page, work list, and follow lists from everyone except people who share
   a workspace with you (they 404, same as an unknown handle). Follower/following
@@ -35,9 +40,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
   manage their own artifacts in team workspaces).
 
 ### Added
-- **`private` visibility** — only people explicitly shared on the artifact can
-  see it; workspace membership grants nothing. Completes the Google-Docs-style
-  ladder: private · workspace · anyone with link · public · password.
+- **Invite-only, org-wide collections, and a world-link password lock.** An artifact
+  can be invite-only (`workspace_access=none`) so only explicit shares reach it, even
+  for teammates. Collections are workspace-wide — any member manages one at their seat
+  role and can organize any workspace-accessible artifact, not just their own. A
+  password locks the world link (members and explicit shares never need it).
 - Restructured the backend for clarity: `apps/api/app.ts` split into per-feature
   route modules over a shared app context; the SQLite and D1 database adapters
   collapsed onto a shared repository layer (one place to add a query); typed config
