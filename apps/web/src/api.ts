@@ -1,3 +1,5 @@
+import type { components } from "./api-types"
+
 export interface Me {
   id: string
   email: string
@@ -193,24 +195,13 @@ export interface Collection {
   /** For repo/PR collections: "owner/name". */
   repo?: string
 }
-export type FollowKind = "author" | "path" | "user"
 /** A per-user follow: a GitHub author (kind="author", target=login), a repo path
  *  prefix (kind="path", target=path prefix), or a person (kind="user", target=username
- *  on the wire). Drives the `scope=following` feed. */
-export interface Follow {
-  id: string
-  org_id: string
-  user_id: string
-  kind: FollowKind
-  /** For author/path: the login / path prefix. For user: the followed person's id. */
-  target: string
-  created_at: string
-  /** Present for kind="user": the followed person's public handle/name/avatar, resolved
-   *  server-side so the client renders them (and matches follow-state) without raw ids. */
-  handle?: string | null
-  name?: string | null
-  image?: string | null
-}
+ *  on the wire). Drives the `scope=following` feed. Generated from the API's OpenAPI
+ *  spec (apps/api/openapi.json) — a backend shape change surfaces here at `tsc`, so the
+ *  web client and server can't silently drift. */
+export type Follow = components["schemas"]["Follow"]
+export type FollowKind = Follow["kind"]
 export type ProposalState = "open" | "approved" | "changes_requested" | "withdrawn"
 export interface Proposal {
   id: string
