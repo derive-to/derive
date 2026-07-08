@@ -139,6 +139,57 @@ export const buildInviteEmail = (input: {
   return { to: input.to, subject: `Join ${input.workspace} on Derive`, html, text }
 }
 
+/** Render a review-request email — an agent finished a revision and is blocked on
+ *  its human. The one notification that most deserves to interrupt: the recipient
+ *  may have no tab open, and the loop is waiting on them. */
+export const buildReviewEmail = (
+  baseUrl: string,
+  artifact: ArtifactRecord,
+  input: { requestedBy: string; version: number; note?: string | null },
+): { subject: string; html: string; text: string } => {
+  const title = artifact.title ?? artifact.short_id
+  const link = `${baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}`
+  const subject = `${input.requestedBy} requested your review of ${title}`
+  const note = input.note ? truncate(input.note, 600) : null
+  const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.5">
+  <p><strong>${escapeHtml(input.requestedBy)}</strong> requested your review of <a href="${escapeHtml(link)}">${escapeHtml(title)}</a> (v${input.version}).</p>
+  ${note ? `<p style="white-space:pre-wrap">${escapeHtml(note)}</p>` : ""}
+  <p><a href="${escapeHtml(link)}" style="display:inline-block;background:#111;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none">Review in Derive</a></p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
+  <p style="color:#999;font-size:12px">You're receiving this because the revision is waiting on your review.</p>
+  </body></html>`
+  const text = [
+    `${input.requestedBy} requested your review of ${title} (v${input.version}).`,
+    note ? `\n${note}` : "",
+    `\nReview in Derive: ${link}`,
+  ]
+    .filter(Boolean)
+    .join("\n")
+  return { subject, html, text }
+}
+
+/** Render a share email — someone explicitly added the recipient to an artifact.
+ *  Deliberate and personal, so it clears the interrupt bar. */
+export const buildShareEmail = (
+  baseUrl: string,
+  artifact: ArtifactRecord,
+  input: { sharedBy: string; role: string },
+): { subject: string; html: string; text: string } => {
+  const title = artifact.title ?? artifact.short_id
+  const link = `${baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}`
+  const subject = `${input.sharedBy} shared ${title} with you`
+  const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.5">
+  <p><strong>${escapeHtml(input.sharedBy)}</strong> shared <a href="${escapeHtml(link)}">${escapeHtml(title)}</a> with you${input.role === "viewer" ? "" : ` as ${escapeHtml(input.role)}`}.</p>
+  <p><a href="${escapeHtml(link)}" style="display:inline-block;background:#111;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none">Open in Derive</a></p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
+  <p style="color:#999;font-size:12px">You're receiving this because you were added to this artifact.</p>
+  </body></html>`
+  const text = [`${input.sharedBy} shared ${title} with you.`, `\nOpen in Derive: ${link}`].join(
+    "\n",
+  )
+  return { subject, html, text }
+}
+
 export interface CommentEmailInput {
   author: string
   body: string

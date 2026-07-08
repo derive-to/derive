@@ -2,13 +2,15 @@ import { type ArtifactRecord, effectiveRole, isRole, newId, ROLES, type Role } f
 import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
+import { buildShareEmail } from "../lib/email"
 import { fail, readJson } from "../lib/http"
 import { resolveUserRef } from "../lib/resolve-user"
+import { enqueueChannelDelivery } from "../webhooks"
 
 /** Per-artifact role overrides (a share). Managing shares requires `share`
  *  (editor+, GDocs model); the share's role beats the caller's workspace baseline. */
 export const sharingRoutes = (ctx: AppContext) => {
-  const { meta, defaultRole, authorize, actorFor, actingUser, bus } = ctx
+  const { meta, deps, defaultRole, authorize, actorFor, actingUser, bus } = ctx
   const app = new Hono()
 
   // A sharer can never grant — or remove — a role above their own. An editor (who
@@ -106,6 +108,18 @@ export const sharingRoutes = (ctx: AppContext) => {
         type: "notification",
         notification: { ...row, read: 0, created_at: new Date().toISOString() },
       })
+      // A share is deliberate and personal — it clears the email bar (the doc may
+      // be the recipient's first contact with this workspace, so a bell alone can
+      // sit unseen). Same workspace gate as the other notification emails.
+      if (user.email && (await meta.getOrgSettings(artifact.org_id)).emailNotifications)
+        await enqueueChannelDelivery(meta, "email", "artifact.shared", {
+          to: user.email,
+          toName: user.name ?? undefined,
+          ...buildShareEmail(deps.baseUrl, artifact, {
+            sharedBy: sharer.name ?? "Someone",
+            role: b.role,
+          }),
+        })
     }
     // Echo the public handle, never the email — otherwise sharing by @handle would
     // be a handle→email oracle (resolve anyone's email by sharing an artifact with them).
