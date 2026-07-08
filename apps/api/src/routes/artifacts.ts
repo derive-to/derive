@@ -24,6 +24,7 @@ import type { AppContext } from "../context"
 import { publishSweepEvents } from "../lib/anchor-sweep"
 import { authorProfile, resolveHandles } from "../lib/author"
 import { hashPassword, signState, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
+import { buildReviewEmail } from "../lib/email"
 import {
   DEFAULT_WORKSPACE_NAME,
   fail,
@@ -33,6 +34,7 @@ import {
   TOMBSTONE,
   visibilityOf,
 } from "../lib/http"
+import { enqueueChannelDelivery } from "../webhooks"
 
 /** The artifact lifecycle: browse + summary, publish/republish, detail, restore,
  *  source read-back, and version diffs. */
@@ -192,15 +194,10 @@ export const artifactRoutes = (ctx: AppContext) => {
       // feed back to the active workspace and strip a followed person's public work.
       orgId: shared || following ? undefined : listOrg,
       publicOnly: shared || following ? false : publicOnly,
-      // Private artifacts appear only for their explicit members; the operator
-      // token sees everything (viewerId omitted).
+      // Private artifacts appear only for their explicit members (the publisher's
+      // owner row included, so agents and owners always find their own drafts);
+      // the operator token sees everything (viewerId omitted).
       viewerId: isOperator ? undefined : (memberKey ?? undefined),
-      // Agents fold their registrant's unlisted work back in (an agent must always
-      // find what it published — the stdio shim's list rides this route). Shared,
-      // needs-feedback, and mine are equally deliberate signals — an explicit
-      // share, a thread you're in, your own authorship — so unlisted docs surface
-      // there too. Ordinary listings stay clean; that's what the filter is for.
-      unlisted: agent || shared || needsFeedback || mineScope ? "include" : undefined,
     })
     const hasMore = rows.length > limit
     const page = hasMore ? rows.slice(0, limit) : rows
@@ -275,11 +272,11 @@ export const artifactRoutes = (ctx: AppContext) => {
         total: 0,
         favorites: 0,
         mine: 0,
-        mine_link_only: 0,
+        mine_private: 0,
         tags: [],
         workspace: null,
       })
-    const [total, tags, favIds, ws, mine, mineLinkOnly] = await Promise.all([
+    const [total, tags, favIds, ws, mine, minePrivate] = await Promise.all([
       meta.countArtifacts(org),
       meta.tagCounts(org),
       // Scope the favorites count to THIS workspace's live artifacts — the favorites
@@ -289,16 +286,16 @@ export const artifactRoutes = (ctx: AppContext) => {
       meta.getWorkspace(org),
       // The caller's owned artifacts — the "Created by me" filter's badge.
       me ? meta.countOwnedBy(org, me.id) : Promise.resolve(0),
-      // …and how many of those are still link-only: the "waiting on you to
-      // surface it" signal (agent publishes land unlisted until promoted).
-      me ? meta.countOwnedBy(org, me.id, "unlisted") : Promise.resolve(0),
+      // …and how many of those are still private: the "waiting on you to
+      // share it" signal (agent publishes land private until promoted).
+      me ? meta.countOwnedBy(org, me.id, "private") : Promise.resolve(0),
     ])
     tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
     return c.json({
       total,
       favorites: favIds.length,
       mine,
-      mine_link_only: mineLinkOnly,
+      mine_private: minePrivate,
       tags,
       workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
     })
@@ -351,22 +348,22 @@ export const artifactRoutes = (ctx: AppContext) => {
       body["kind"] === "bundle" ||
       (bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5))
 
-    // `password` visibility on a NEW artifact must carry a password to hash; a
-    // republish keeps whatever the artifact already has (publish() never re-creates
-    // the artifact, only adds a version, so visibility/password are set-on-create).
-    const visibility = visibilityOf(body["visibility"])
+    // A password is a lock on a public link — hashed at create; a republish keeps
+    // whatever the artifact already has (publish() never re-creates the artifact,
+    // only adds a version, so visibility/password are set-on-create). Legacy
+    // vocabularies (link/unlisted/password/workspace) map in visibilityOf; an old
+    // client sending visibility=password without a password gets the same 400 it
+    // always did — never a silently open publish.
+    const rawVisibility = str(body["visibility"])
+    const visibility = visibilityOf(rawVisibility)
     // An explicitly-provided visibility that isn't a known value is rejected, not
     // silently coerced — a typo must not publish more openly than intended.
-    if (str(body["visibility"]) && !visibility)
-      return fail(
-        c,
-        400,
-        "visibility must be one of: public, link, org, password, private, unlisted",
-      )
+    if (rawVisibility && !visibility)
+      return fail(c, 400, "visibility must be one of: public, org, private")
     const password = str(body["password"])
-    if (!shortId && visibility === "password" && !password)
+    if (!shortId && rawVisibility === "password" && !password)
       return fail(c, 400, "a password is required for password visibility")
-    const passwordHash = visibility === "password" && password ? hashPassword(password) : undefined
+    const passwordHash = visibility === "public" && password ? hashPassword(password) : undefined
 
     try {
       // The authenticated principal behind this publish (signed-in user or agent) — its
@@ -378,8 +375,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       const onBehalf = await privateOwnerId(c)
       // An AGENT-credentialed create (registered token / OAuth bearer — the CLI
       // and stdio-shim paths) lands with the workspace's agent default when no
-      // visibility was asked for: usually `unlisted`, workspace link-only. A
-      // signed-in human's own publish keeps the private default.
+      // visibility was asked for: usually `private` — the human promotes. A
+      // signed-in human's own publish keeps the same private default.
       const agentPrincipal = await agentFor(c)
       const resolvedVisibility =
         visibility ??
@@ -426,16 +423,6 @@ export const artifactRoutes = (ctx: AppContext) => {
           user_id: ownerId,
           role: "owner",
         })
-      // A NEW unlisted artifact takes the workspace's default link permission as
-      // its general_role (what a member with the link may do); the share dialog
-      // can still override per doc.
-      if (!shortId && artifact.visibility === "unlisted")
-        await meta.setVisibility(
-          artifact.id,
-          "unlisted",
-          null,
-          (await meta.getOrgSettings(org)).defaultUnlistedRole,
-        )
       bus.publish(artifact.id, {
         type: "version.published",
         n: version.n,
@@ -518,6 +505,22 @@ export const artifactRoutes = (ctx: AppContext) => {
             version: version.n,
             requested_by: actor?.name ?? "An agent",
           })
+          // The review request is the one event that earns an email: the loop is
+          // blocked on the reviewer, who may have no tab open. Never for your own
+          // request on yourself (a human publishing with request_review).
+          if (reviewer !== actor?.id && (await meta.getOrgSettings(org)).emailNotifications) {
+            const [r] = await meta.getUsers([reviewer])
+            if (r?.email)
+              await enqueueChannelDelivery(meta, "email", "review.requested", {
+                to: r.email,
+                toName: r.name ?? undefined,
+                ...buildReviewEmail(deps.baseUrl, artifact, {
+                  requestedBy: actor?.name ?? "An agent",
+                  version: version.n,
+                  note: str(body["review_note"]) ?? null,
+                }),
+              })
+          }
         }
       }
       // The MCP loop over HTTP: an AGENT-credentialed publish (a registered
@@ -597,9 +600,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     const actor = await actorFor(c, artifact ?? ({ id: "", visibility: "org" } as ArtifactRecord))
     if (!artifact) return fail(c, 404, "not found")
     if (!can(actor, "read", artifact.visibility, artifact.general_role))
-      // A password artifact isn't hidden, it's lockable: tell the client to prompt
-      // for the password (401) rather than claim it doesn't exist (404).
-      return artifact.visibility === "password"
+      // A locked public artifact isn't hidden, it's lockable: tell the client to
+      // prompt for the password (401) rather than claim it doesn't exist (404).
+      return artifact.visibility === "public" && artifact.password_hash
         ? fail(c, 401, "password required")
         : fail(c, 404, "not found")
     // Taken down: serve a minimal tombstone, not the full record. A takedown is a
@@ -727,22 +730,24 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (b instanceof Response) return b
     const visibility = visibilityOf(b.visibility)
     if (!visibility) return fail(c, 400, "invalid visibility")
-    // Turning unlisted without an explicit choice seeds the workspace's default
-    // link permission (view or comment); the dialog's per-doc override still wins.
-    const generalRole =
-      b.generalRole ??
-      (visibility === "unlisted"
-        ? (await meta.getOrgSettings(artifact.org_id)).defaultUnlistedRole
-        : "viewer")
+    const generalRole = b.generalRole ?? "viewer"
+    // The password is a lock on the public link. On `public`: a supplied
+    // password (re)sets the hash; omitting it keeps the existing lock (so
+    // flipping view↔comment doesn't drop it); an explicit empty string clears
+    // it. Leaving `public` always clears — a lock on org/private is meaningless
+    // (both are already explicit-standing-only) and a stale hash must not
+    // resurrect if the doc later goes public again.
     let passwordHash: string | null = null
-    if (visibility === "password") {
+    if (visibility === "public") {
       if (b.password) passwordHash = hashPassword(b.password)
-      else if (artifact.visibility === "password" && artifact.password_hash)
-        passwordHash = artifact.password_hash
-      else return fail(c, 400, "a password is required for password visibility")
+      else if (b.password === undefined) passwordHash = artifact.password_hash ?? null
     }
+    // Legacy clients say visibility=password meaning "public + lock" — they must
+    // carry a password (or already have one) or the lock would silently vanish.
+    if (b.visibility === "password" && !passwordHash)
+      return fail(c, 400, "a password is required for password visibility")
     await meta.setVisibility(artifact.id, visibility, passwordHash, generalRole)
-    return c.json({ visibility, general_role: generalRole })
+    return c.json({ visibility, general_role: generalRole, locked: !!passwordHash })
   })
 
   // Lock / unlock an artifact. Any editor (publish rights) can flip it. While
@@ -791,7 +796,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     return c.json({ org_id: b.targetOrgId })
   })
 
-  // Unlock a `password` artifact: verify the password and drop a cookie whose
+  // Unlock a password-locked artifact: verify the password and drop a cookie whose
   // value is derived from the server-only hash (so it can't be forged and dies if
   // the password changes). Brute force is bounded by a dedicated tight limiter
   // (10 attempts/min per caller), well below the lenient global /v1 write cap.
@@ -800,8 +805,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const over = await limited(c, unlockLimiter)
     if (over) return over
     const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (artifact?.visibility !== "password" || !artifact.password_hash)
-      return fail(c, 404, "not found")
+    if (!artifact?.password_hash) return fail(c, 404, "not found")
     const b = await readJson(c, z.object({ password: z.string().min(1) }))
     if (b instanceof Response) return b
     if (!verifyPassword(b.password, artifact.password_hash)) return fail(c, 401, "wrong password")

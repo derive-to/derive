@@ -231,26 +231,26 @@ describe("HTTP publish parity (the CLI / stdio-shim path)", () => {
     const out = (await res.json()) as Record<string, unknown>
     expect(out.review_requested).toBe(true)
     expect(out.opened_in_tab).toBe(true) // the recorder holds the user channel
-    expect(out.visibility).toBe("unlisted") // agent creates take the workspace default here too
+    expect(out.visibility).toBe("private") // agent creates take the workspace default here too
     expect(userEvents.some((e) => e.type === "artifact.pushed" && e.kind === "created")).toBe(true)
     const rows = await meta.listNotifications("u_o", 10)
     expect(rows.some((r) => r.kind === "review")).toBe(true)
   })
 })
 
-describe("unlisted — the agent-draft default", () => {
-  it("new MCP publishes land unlisted, seeded with the workspace default role, still findable by the agent", async () => {
+describe("private — the agent-draft default", () => {
+  it("new MCP publishes land private, still findable by the agent", async () => {
     const { app, meta, token } = loopApp("unlisted")
     const created = await call(app, token, "publish", {
       content: "<h1>Draft</h1>",
       title: "Quiet Draft",
     })
-    expect(created.visibility).toBe("unlisted")
+    expect(created.visibility).toBe("private")
     const a = await meta.getByShortId(created.short_id as string)
-    expect(a?.general_role).toBe("viewer") // the workspace default, seeded on create
+    expect(a?.general_role).toBe("viewer")
 
-    // Hidden from an ordinary listing, but the agent's list_artifacts folds the
-    // acting user's own drafts back in — it can always find its work.
+    // The agent's list_artifacts finds it through the acting user's owner row —
+    // it can always find its own work; a teammate's private draft stays invisible.
     const list = await call(app, token, "list_artifacts", {})
     const shortIds = (list.artifacts as { short_id: string }[]).map((x) => x.short_id)
     expect(shortIds).toContain(created.short_id)
@@ -264,21 +264,17 @@ describe("unlisted — the agent-draft default", () => {
     expect(open.visibility).toBe("org")
   })
 
-  it("honors the workspace's defaultUnlistedRole and defaultAgentVisibility settings", async () => {
+  it("honors the workspace's defaultAgentVisibility setting", async () => {
     const { app, meta, token } = loopApp("wsdefaults")
     // The OAuth agent runs in the granting user's personal workspace.
     const org = "ws_p_u_o"
     const { DEFAULT_ORG_SETTINGS } = await import("@derive/core")
-    await meta.setOrgSettings(org, {
-      ...DEFAULT_ORG_SETTINGS,
-      defaultUnlistedRole: "commenter",
-    })
+    await meta.setOrgSettings(org, { ...DEFAULT_ORG_SETTINGS, defaultAgentVisibility: "org" })
     const created = await call(app, token, "publish", {
       content: "<h1>C</h1>",
-      title: "Comment Draft",
+      title: "Team Draft",
     })
-    expect(created.visibility).toBe("unlisted")
-    expect((await meta.getByShortId(created.short_id as string))?.general_role).toBe("commenter")
+    expect(created.visibility).toBe("org")
 
     await meta.setOrgSettings(org, {
       ...DEFAULT_ORG_SETTINGS,
@@ -350,5 +346,23 @@ describe("catch_up `wait` long-poll", () => {
     const elapsed = Date.now() - started
     expect(elapsed).toBeGreaterThanOrEqual(900)
     expect((out.review as { state: string }).state).toBe("pending")
+  })
+})
+
+describe("comment bells (the MCP path)", () => {
+  it("an agent's comment on the human's artifact bells them — parity with HTTP", async () => {
+    const { app, meta, token } = loopApp("comment-bell")
+    const created = await call(app, token, "publish", {
+      content: "<h1>Doc</h1>",
+      title: "Doc",
+    })
+    // The publish itself belled u_o (kind publish/review); an agent COMMENT on
+    // the doc must too — before the shared fan-out, this path belled no one.
+    await call(app, token, "comment", {
+      short_id: created.short_id,
+      body: "I have a question about the intro.",
+    })
+    const rows = await meta.listNotifications("u_o", 10)
+    expect(rows.some((n) => n.kind === "comment")).toBe(true)
   })
 })

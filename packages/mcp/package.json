@@ -1,6 +1,6 @@
 {
   "name": "@derive-to/mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Stdio MCP server for Derive — list, read, catch up on, comment on, and publish artifacts on a Derive instance.",
   "keywords": [

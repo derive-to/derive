@@ -34,6 +34,12 @@ export const followRoutes = (ctx: AppContext) => {
       const profile = await meta.getUserByUsername(normalizeUsername(b.target))
       if (!profile) return fail(c, 404, "no profile with that username")
       if (profile.id === me.id) return fail(c, 400, "you can't follow yourself")
+      // Following is work awareness, not a social graph: you follow people you
+      // work with. Enforced here (not just hidden in the UI) so no client can
+      // build a global follower graph. The stored row stays global-keyed — if a
+      // shared workspace appears later, the feed just starts matching.
+      if ((await meta.sharedOrgIds(me.id, profile.id)).length === 0)
+        return fail(c, 403, "you can only follow people you share a workspace with")
       return { target: profile.id, orgId: GLOBAL_FOLLOW_ORG, followedUserId: profile.id }
     }
     const target = normalizeTarget(b.kind, b.target)

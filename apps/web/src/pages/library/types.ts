@@ -14,8 +14,7 @@ export type Filter =
   | { kind: "feedback" }
   // "Created by me": every artifact you own in the active workspace (your owner
   // member row — written at creation, agents' on-behalf publishes included), any
-  // visibility. A link-only doc surfaces here even though the plain "all" feed
-  // hides it.
+  // visibility.
   | { kind: "mine" }
   | { kind: "tag"; tag: string }
   | { kind: "collection"; id: string; title: string }
@@ -26,8 +25,8 @@ export type Summary = {
   total: number
   favorites: number
   mine: number
-  // Owned docs still at link-only visibility — the "waiting to be shared" signal.
-  mine_link_only: number
+  // Owned docs still private — the "waiting to be shared" signal.
+  mine_private: number
   tags: TagCount[]
   workspace: string
 }

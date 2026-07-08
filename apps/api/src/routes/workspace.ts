@@ -326,9 +326,9 @@ export const workspaceRoutes = (ctx: AppContext) => {
           githubMirrorComments: z.boolean(),
           githubPreviewLink: z.boolean(),
           slackPost: z.boolean(),
-          defaultUnlistedRole: z.enum(["viewer", "commenter"]),
-          // `password` is excluded: a default can't carry the password it needs.
-          defaultAgentVisibility: z.enum(["unlisted", "private", "org", "link", "public"]),
+          // `public` is deliberately not offered: an agent default should never
+          // make work world-readable without a human's per-doc decision.
+          defaultAgentVisibility: z.enum(["private", "org"]),
         })
         .partial(),
     )

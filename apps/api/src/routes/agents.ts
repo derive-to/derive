@@ -8,7 +8,7 @@ import { fail, readJson } from "../lib/http"
 
 /** Agent registry (Admin-managed) + the agent's pull inbox of @mentions. */
 export const agentRoutes = (ctx: AppContext) => {
-  const { meta, activeWorkspace, agentFor, currentUser, requireUser, workspaceCan } = ctx
+  const { meta, activeWorkspace, agentFor, privateOwnerId, requireUser, workspaceCan } = ctx
   const app = new Hono()
 
   const agentJson = (a: AgentRecord) => ({
@@ -52,7 +52,9 @@ export const agentRoutes = (ctx: AppContext) => {
         role,
         // The agent publishes on behalf of whoever registered it: their id keys
         // attribution (author_id) and ownership (the owner-member row) at publish.
-        created_by: (await currentUser(c))?.id ?? null,
+        // privateOwnerId so a `derive context push` registration (an OAuth agent
+        // with the manage scope) attributes to the GRANTOR, not to nobody.
+        created_by: (await privateOwnerId(c)) ?? null,
       })
       // The only place the raw token is ever exposed.
       return c.json({ ...agentJson(agent), token }, 201)

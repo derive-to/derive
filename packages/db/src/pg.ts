@@ -76,7 +76,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@derive/core"
+import { GLOBAL_FOLLOW_ORG } from "@derive/core"
 import {
   and,
   asc,
@@ -131,7 +131,12 @@ import {
   webhookDelivery,
   workspace,
 } from "./pg-schema"
-import { artifactListConditions, collectManagedIds, parseOAuthScopes } from "./repos"
+import {
+  artifactListConditions,
+  collectManagedIds,
+  parseOAuthScopes,
+  parseOrgSettings,
+} from "./repos"
 
 const one = <T>(rows: T[]): T => {
   const r = rows[0]
@@ -1031,17 +1036,12 @@ export class PgMetaStore implements MetaStore {
     } else {
       conds.push(eq(artifact.author_id, userId))
     }
-    // Private and unlisted work never rides a profile, shared workspace or not
-    // (see repos.ts).
+    // Private work never rides a profile, shared workspace or not (see repos.ts).
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
       const v = or(
         eq(artifact.visibility, "public"),
-        and(
-          inArray(artifact.org_id, orgs),
-          ne(artifact.visibility, "private"),
-          ne(artifact.visibility, "unlisted"),
-        ),
+        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
       )
       if (v) conds.push(v)
     } else {
@@ -1308,11 +1308,7 @@ export class PgMetaStore implements MetaStore {
   }
   async getOrgSettings(orgId: string): Promise<OrgSettings> {
     const rows = await this.db.select().from(orgSettings).where(eq(orgSettings.org_id, orgId))
-    let parsed: Partial<OrgSettings> = {}
-    try {
-      if (rows[0]?.settings) parsed = JSON.parse(rows[0].settings) as Partial<OrgSettings>
-    } catch {}
-    return { ...DEFAULT_ORG_SETTINGS, ...parsed }
+    return parseOrgSettings(rows[0]?.settings ?? null)
   }
   async setOrgSettings(orgId: string, settings: OrgSettings): Promise<void> {
     await this.db
@@ -1885,6 +1881,17 @@ export class PgMetaStore implements MetaStore {
       return (rows[0] as { name?: string | null } | undefined)?.name ?? null
     } catch {
       return null
+    }
+  }
+  async oauthClientExists(clientId: string): Promise<boolean> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT 1 FROM "oauthClient" WHERE "clientId" = $1 LIMIT 1`,
+        [clientId],
+      )
+      return rows.length > 0
+    } catch {
+      return false
     }
   }
   async setOAuthClientWorkspace(userId: string, clientId: string, orgId: string): Promise<void> {

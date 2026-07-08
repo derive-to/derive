@@ -14,8 +14,10 @@ const isEnvSecret = (name) =>
 
 /** Recursively collect a directory into {relativePath: bytes} for zipping.
  *  Returns the files plus the .env-rule exclusions in `skipped`, so the caller
- *  can make the "your secrets stayed local" contract visible. */
-export function collectDir(dir, base = dir, out = { files: {}, skipped: [] }) {
+ *  can make the "your secrets stayed local" contract visible. `skipTopDirs`
+ *  drops named TOP-LEVEL directories (context push uses it for repos/ — the
+ *  runner's clone workspace is pointer state, not source). */
+export function collectDir(dir, base = dir, out = { files: {}, skipped: [] }, skipTopDirs = []) {
   for (const name of readdirSync(dir)) {
     if (
       name === ".DS_Store" ||
@@ -30,17 +32,19 @@ export function collectDir(dir, base = dir, out = { files: {}, skipped: [] }) {
       continue
     }
     const st = statSync(path)
-    if (st.isDirectory()) collectDir(path, base, out)
-    else out.files[relative(base, path).split("\\").join("/")] = readFileSync(path)
+    if (st.isDirectory()) {
+      if (dir === base && skipTopDirs.includes(name)) continue
+      collectDir(path, base, out)
+    } else out.files[relative(base, path).split("\\").join("/")] = readFileSync(path)
   }
   return out
 }
 
 /** Read the publish target (file or directory) into upload bytes.
  *  Directories zip client-side; the server unpacks them into a bundle. */
-export function readTarget(target) {
+export function readTarget(target, skipTopDirs = []) {
   if (statSync(target).isDirectory()) {
-    const { files, skipped } = collectDir(target)
+    const { files, skipped } = collectDir(target, target, undefined, skipTopDirs)
     if (Object.keys(files).length === 0) throw new Error(`${target} is empty`)
     return { bytes: zipSync(files), filename: `${basename(target)}.zip`, skipped }
   }
@@ -58,7 +62,8 @@ export async function uploadArtifact(p, bytes, filename, extra = {}) {
   if (p.message) form.append("message", p.message)
   if (p.name) form.append("name", p.name)
   if (p.visibility) form.append("visibility", p.visibility)
-  // --password is a per-publish secret for `--visibility password`; never put it in
+  // --password gates a public publish behind a passphrase (the server hashes it;
+  // the legacy `--visibility password` spelling still maps). Never put it in
   // derive.json (it isn't a config field), only pass it on the command line.
   if (p.password) form.append("password", p.password)
   for (const [k, v] of Object.entries(extra)) form.append(k, v)

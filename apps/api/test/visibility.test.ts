@@ -41,8 +41,7 @@ describe("agents act as their registrant, capped at their registered role", () =
     ).json()
 
     // The agent publishes (no visibility ⇒ the workspace's AGENT default,
-    // unlisted: the draft state — hidden from listings, one link away for
-    // members). A signed-in human's own publish still defaults to private.
+    // private: the draft is Ana's until she promotes it).
     const form = new FormData()
     form.append("file", new Blob([new TextEncoder().encode("# memo")]), "memo.md")
     const pub = await app.request("/v1/artifacts", {
@@ -52,7 +51,7 @@ describe("agents act as their registrant, capped at their registered role", () =
     })
     expect(pub.status).toBe(201)
     const a = await pub.json()
-    expect(a.visibility).toBe("unlisted")
+    expect(a.visibility).toBe("private")
 
     // Ana can open and owns it; the agent can republish.
     const hers = await (
@@ -78,11 +77,11 @@ describe("agents act as their registrant, capped at their registered role", () =
         })
       ).status,
     ).toBe(403)
-    // Unlisted's contract for a teammate: the LINK opens it (view), but no
-    // listing ever surfaces it to him.
+    // Private's contract for a teammate: neither the link nor any listing —
+    // the draft is Ana's until she shares or promotes it.
     expect(
       (await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ben.email) })).status,
-    ).toBe(200)
+    ).toBe(404)
     const bensList = await (await app.request("/v1/artifacts", { headers: as(ben.email) })).json()
     expect(bensList.artifacts.map((x: { short_id: string }) => x.short_id)).not.toContain(
       a.short_id,
@@ -98,22 +97,22 @@ describe("agents act as their registrant, capped at their registered role", () =
         })
       ).status,
     ).toBe(201)
-    // Ana's ORDINARY listing hides the unlisted publish (hidden even from its
-    // owner there — "Created by me" is the finder, any visibility included).
+    // Ana's ORDINARY listing shows her own private draft (hers alone to see);
+    // "Created by me" narrows to owned work.
     const list = await (await app.request("/v1/artifacts", { headers: as(ana.email) })).json()
-    expect(list.artifacts.map((x: { short_id: string }) => x.short_id)).not.toContain(a.short_id)
+    expect(list.artifacts.map((x: { short_id: string }) => x.short_id)).toContain(a.short_id)
     const mine = await (
       await app.request("/v1/artifacts?scope=mine", { headers: as(ana.email) })
     ).json()
     expect(mine.artifacts.map((x: { short_id: string }) => x.short_id)).toContain(a.short_id)
-    // The summary counts it as hers — and as still link-only (the pending badge).
+    // The summary counts it as hers — and as still private (the pending badge).
     // Note the agent republish above: ownership keys on her owner row, so a
     // revision by someone else never evicts it from "Created by me".
     const summary = await (await app.request("/v1/tags", { headers: as(ana.email) })).json()
     expect(summary.mine).toBeGreaterThanOrEqual(1)
-    expect(summary.mine_link_only).toBeGreaterThanOrEqual(1)
+    expect(summary.mine_private).toBeGreaterThanOrEqual(1)
 
-    // The agent lists too (MCP list_artifacts rides this) and sees the unlisted
+    // The agent lists too (MCP list_artifacts rides this) and sees the private
     // publish through its registrant's owner row, capped to its own rank.
     const agentList = await (
       await app.request("/v1/artifacts", {
@@ -267,8 +266,8 @@ describe("profile privacy: discoverable off hides the profile", () => {
   })
 })
 
-describe("/v1/people?scope=workspace", () => {
-  it("lists workspace-mates regardless of discoverability; global browse still honors it", async () => {
+describe("/v1/people — workmates only", () => {
+  it("lists workspace-mates regardless of discoverability, never yourself", async () => {
     const opted: TestUser = {
       id: "u_vis_out",
       email: "out@vis.test",
@@ -277,15 +276,11 @@ describe("/v1/people?scope=workspace", () => {
       discoverable: false,
     }
     const { app } = makeAuthedApp("vis-people", [ana, opted], "editor")
-    const ws = await (
-      await app.request("/v1/people?scope=workspace", { headers: as(ana.email) })
-    ).json()
+    // Membership already implies you can see each other — the discoverable
+    // opt-out governs strangers (search/profiles), not teammates.
+    const ws = await (await app.request("/v1/people", { headers: as(ana.email) })).json()
     expect(ws.users.map((u: { username: string }) => u.username)).toContain("outv")
-    // Not yourself.
     expect(ws.users.map((u: { username: string }) => u.username)).not.toContain("anav")
-    // The global directory still hides the opt-out.
-    const all = await (await app.request("/v1/people", { headers: as(ana.email) })).json()
-    expect(all.users.map((u: { username: string }) => u.username)).not.toContain("outv")
   })
 })
 

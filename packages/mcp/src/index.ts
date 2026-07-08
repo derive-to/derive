@@ -411,11 +411,9 @@ server.registerTool(
         .optional()
         .describe("Omit to create a new artifact; pass it to add a version."),
       title: z.string().optional(),
-      // `password` stays CLI/web-only (it needs a password argument this tool
-      // doesn't take). Omitted ⇒ the workspace's agent default (usually
-      // `unlisted` — workspace members with the link, hidden from the shared
-      // library until a human decides to surface it).
-      visibility: z.enum(["unlisted", "public", "link", "org", "private"]).optional(),
+      // Omitted ⇒ the workspace's agent default (usually `private` — the
+      // human you act for owns the draft and promotes it when ready).
+      visibility: z.enum(["private", "org", "public"]).optional(),
       message: z.string().optional().describe("What changed in this version."),
       for_review: z
         .boolean()

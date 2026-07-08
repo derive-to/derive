@@ -579,6 +579,7 @@ export function Artifact() {
               myRole={art.my_role}
               visibility={art.visibility}
               generalRole={art.general_role}
+              passwordProtected={!!art.password_protected}
               favorite={!!art.favorite}
               tags={art.tags ?? []}
               collections={art.collections ?? []}

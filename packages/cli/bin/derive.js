@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // derive — scaffold, publish, and run the review loop against a Derive server.
 //   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
-//   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync]
+//   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
 //                                          OAuth sign-in; discovers every workspace
 //                                          you belong to. Already signed in? Shows
 //                                          a manage menu (or acts on --add/--sync).
+//                                          --manage adds the agent/context admin grant.
 //   derive accounts [--json]              every signed-in account + its workspaces
 //   derive workspaces [--account a]        the resolved account's workspaces
 //   derive workspace use <ref> [--account a]      set the default workspace
@@ -77,6 +78,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--all") flags.all = "true"
   else if (a === "--clear") flags.clear = "true"
   else if (a === "--mock") flags.mock = "true"
+  else if (a === "--manage") flags.manage = "true"
   // Repeatable: `--env-file a --env-file b` stacks (equivalent to --env-file a,b).
   else if (a === "--env-file")
     flags["env-file"] = flags["env-file"] ? `${flags["env-file"]},${args[++i]}` : args[++i]
@@ -245,9 +247,15 @@ async function doOAuthLogin(server, loginFlags) {
   const b64url = (b) =>
     b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
   const redirect = `${server}/oauth/cli-callback`
+  // derive:manage (opt-in via --manage) lets `derive context push` mint the
+  // answering agent and create the context. Opt-in, not default: it raises a
+  // leaked token's blast radius from editor to your full workspace authority,
+  // so only sessions that actually manage contexts should carry it.
   const scope =
     loginFlags.scope ??
-    "openid offline_access derive:read derive:comment derive:propose derive:publish derive:review"
+    `openid offline_access derive:read derive:comment derive:propose derive:publish derive:review${
+      loginFlags.manage === "true" ? " derive:manage" : ""
+    }`
   const verifier = b64url(randomBytes(64))
   const challenge = b64url(createHash("sha256").update(verifier).digest())
   const state = b64url(randomBytes(16))
@@ -753,7 +761,8 @@ if (cmd === "context") {
     }
     let up
     try {
-      up = readTarget(target)
+      // repos/ is the runner's clone workspace — pointer state, never source.
+      up = readTarget(target, ["repos"])
     } catch (e) {
       console.error(`error: ${e.message}`)
       process.exit(1)
@@ -989,9 +998,10 @@ if (LOOP.includes(cmd)) {
 if (cmd !== "publish") {
   console.error(`usage:
   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
-  derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync]
+  derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
                                             OAuth sign-in (defaults to https://derive.to);
-                                            discovers every workspace you belong to
+                                            discovers every workspace you belong to;
+                                            --manage adds the agent/context admin grant
   derive accounts [--json]                 every signed-in account + its workspaces
   derive workspaces [--account a] [--json] the resolved account's workspaces
   derive workspace use|forget <ref> [--account a]   set/drop the default workspace
@@ -1074,7 +1084,7 @@ if (flags.json) {
   // for the recipient.
   if (json.visibility === "org" || json.visibility === "private")
     console.log(
-      `  ${json.visibility === "org" ? "workspace-only" : "invite-only"} — pass --visibility link (or use the Share dialog) to make the URL readable by others`,
+      `  ${json.visibility === "org" ? "workspace-only" : "invite-only"} — pass --visibility public (or use the Share dialog) to widen the audience`,
     )
   if (flags.review)
     console.log(`  ↩ review requested — the human reviews in the app, then Send back`)

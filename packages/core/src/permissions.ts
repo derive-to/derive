@@ -70,7 +70,9 @@ export interface Actor {
   artifactRole?: Role | null
   /** Baseline role from membership in the artifact's workspace, if any. */
   orgRole?: Role | null
-  /** The caller has entered the correct password for a `password` artifact. */
+  /** The artifact carries a password (a lock on its public link). */
+  locked?: boolean
+  /** The caller has entered the correct password for a locked artifact. */
   unlocked?: boolean
 }
 
@@ -81,17 +83,21 @@ export interface Actor {
  * null means no access at all. This function is the single source of truth for the
  * access matrix; SECURITY.md documents the same table for humans.
  *
- *   General access (the link)    Anonymous              Signed in via link    Member / share
+ *   Visibility                   Anonymous              Signed in via link    Member / share
  *   ───────────────────────────  ─────────────────────  ────────────────────  ────────────────
- *   link / public · view         view                   view                  their role (>= view)
- *   link / public · comment      view (sign in to cmt)  view + comment        their role (>= cmt)
- *   password · view|comment      unlock, then as above  unlock, then above    their role (no pw)
- *   workspace only (org)         no access              no access             their role (members)
- *   unlisted · view|comment      no access              members only: v/c     their role (>= floor)
+ *   public · view                view                   view                  their role (>= view)
+ *   public · comment             view (sign in to cmt)  view + comment        their role (>= cmt)
+ *   public + password            unlock, then as above  unlock, then above    their role (no pw)
+ *   workspace (org)              no access              no access             their role (members)
+ *   private (default)            no access              no access             explicit share only
  *
- * `unlisted` is workspace link-only (the usual agent-publish default): hidden from
- * every listing, but a workspace member WITH THE LINK gets the general role
- * (view or comment). Non-members and anonymous visitors get nothing.
+ * Three visibilities, one modifier: `public` means the link works for anyone
+ * (at the doc's general role, view or comment); a password on a public doc
+ * gates the reach floor until unlocked — members and explicit shares never
+ * need the password. `org` is the team: membership alone grants access, at the
+ * member's own role. `private` grants nothing by membership — only explicit
+ * shares (per-artifact and collection shares both ride artifactRole), which is
+ * what keeps an agent's draft out of teammates' reach until promoted.
  *
  * Invariant: an anonymous caller is never more than `viewer`. Anything past view
  * (comment, propose, publish, share, manage) needs an authenticated identity — a
@@ -104,26 +110,23 @@ export function effectiveRole(
 ): Role | null {
   if (actor.kind === "token") return "owner"
   // A per-artifact share or workspace membership — authenticated callers only.
-  // `private` and `unlisted` are the exceptions: workspace membership grants
-  // nothing there by itself, so a team-workspace draft stays out of teammates'
-  // standing until explicitly shared (per-artifact and collection shares both
-  // ride artifactRole). Unlisted members instead get the reach floor below.
+  // `private` is the exception: workspace membership grants nothing there by
+  // itself, so a team-workspace draft stays out of teammates' standing until
+  // explicitly shared.
   const explicit =
     actor.kind === "user"
-      ? visibility === "private" || visibility === "unlisted"
+      ? visibility === "private"
         ? actor.artifactRole
         : (actor.artifactRole ?? actor.orgRole)
       : null
   // The general-access floor for a reacher with no higher explicit grant. Only an
   // authenticated reacher gets the configured general role; an anonymous reacher is
-  // clamped to `viewer` — never elevated to a writing role without an account.
+  // clamped to `viewer` — never elevated to a writing role without an account. A
+  // password (the lock) suspends the floor until unlocked; explicit standing above
+  // is untouched, so members and shares never need the password.
   const reach: Role = actor.kind === "user" ? generalRole : "viewer"
-  let floor: Role | null = null
-  if (visibility === "public" || visibility === "link") floor = reach
-  else if (visibility === "password") floor = actor.unlocked ? reach : null
-  // Unlisted: the link works, but only for the workspace's own members.
-  else if (visibility === "unlisted")
-    floor = actor.kind === "user" && actor.orgRole != null ? generalRole : null
+  const floor: Role | null =
+    visibility === "public" ? (actor.locked && !actor.unlocked ? null : reach) : null
   // org/private grant nothing by reach — only an explicit role opens them.
   return maxRole(explicit, floor)
 }

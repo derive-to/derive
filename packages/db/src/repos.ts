@@ -142,24 +142,18 @@ export function artifactListConditions(
 ): SQL[] {
   const conds: SQL[] = []
   // Anonymous / non-member callers only ever see public artifacts in a listing — an
-  // org/link/password title must not leak to someone who can't open it.
+  // org title must not leak to someone who can't open it.
   if (opts?.publicOnly) conds.push(eq(art.visibility, "public"))
   // `private` artifacts are invisible even to workspace members unless they're an
-  // explicit artifact member. The subquery names the table literally — sqlite, D1,
-  // and pg all call it artifact_member, and this function serves all three.
+  // explicit artifact member (the publisher's owner row, a share, a collection).
+  // The subquery names the table literally — sqlite, D1, and pg all call it
+  // artifact_member, and this function serves all three.
   else if (opts?.viewerId) {
     const isMember = sql`EXISTS (
         SELECT 1 FROM artifact_member am
         WHERE am.artifact_id = ${art.id} AND am.user_id = ${opts.viewerId}
       )`
     conds.push(sql`(${art.visibility} != 'private' OR ${isMember})`)
-    // `unlisted` hides from every ordinary listing — even the owner's ("Created
-    // by me" is the finder). "include" folds the viewer's own back in (MCP
-    // list_artifacts + the deliberate shared/feedback/mine signals).
-    // Ownership = an explicit artifact_member row, the same contract `private` uses.
-    if (opts.unlisted === "include")
-      conds.push(sql`(${art.visibility} != 'unlisted' OR ${isMember})`)
-    else conds.push(sql`${art.visibility} != 'unlisted'`)
   }
   // A trusted caller (operator token / internal jobs, no viewerId) sees everything.
   if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
@@ -274,6 +268,23 @@ export const parseOAuthScopes = (s: string | string[] | null): string[] => {
     // not JSON; fall through to the space-separated form
   }
   return s.split(/\s+/).filter(Boolean)
+}
+
+/** Parse a stored org-settings JSON blob over the defaults, normalizing values
+ *  written before the visibility collapse: a legacy agent default of `unlisted`
+ *  is today's `private`, `link`/`public` clamp to `org` (an agent default must
+ *  never world-publish), and the retired defaultUnlistedRole key is dropped.
+ *  Shared by both drivers so old blobs read identically everywhere. */
+export const parseOrgSettings = (raw: string | null): OrgSettings => {
+  let parsed: Partial<OrgSettings> & { defaultUnlistedRole?: unknown } = {}
+  try {
+    if (raw) parsed = JSON.parse(raw) as Partial<OrgSettings>
+  } catch {}
+  const { defaultUnlistedRole: _retired, ...rest } = parsed
+  const v = rest.defaultAgentVisibility as string | undefined
+  const defaultAgentVisibility: OrgSettings["defaultAgentVisibility"] =
+    v === "org" || v === "link" || v === "public" ? "org" : "private"
+  return { ...DEFAULT_ORG_SETTINGS, ...rest, defaultAgentVisibility }
 }
 
 export const collectManagedIds = (rows: { files: string }[]): string[] => {
@@ -1101,17 +1112,13 @@ export function makeRepos(db: SqliteDb) {
       conds.push(eq(artifact.author_id, userId))
     }
     // Visible to the viewer: public OR in a workspace they share with the profile
-    // owner. Private and unlisted work never rides a profile, shared workspace or
-    // not — the owner finds them in their library, not on their public face.
+    // owner. Private work never rides a profile, shared workspace or not — the
+    // owner finds it in their library, not on their public face.
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
       const v = or(
         eq(artifact.visibility, "public"),
-        and(
-          inArray(artifact.org_id, orgs),
-          ne(artifact.visibility, "private"),
-          ne(artifact.visibility, "unlisted"),
-        ),
+        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
       )
       if (v) conds.push(v)
     } else {
@@ -1391,11 +1398,7 @@ export function makeRepos(db: SqliteDb) {
   // ---- Workspace integration settings -------------------------------------
   const getOrgSettings = async (orgId: string): Promise<OrgSettings> => {
     const row = await db.select().from(orgSettings).where(eq(orgSettings.org_id, orgId)).get()
-    let parsed: Partial<OrgSettings> = {}
-    try {
-      if (row?.settings) parsed = JSON.parse(row.settings) as Partial<OrgSettings>
-    } catch {}
-    return { ...DEFAULT_ORG_SETTINGS, ...parsed }
+    return parseOrgSettings(row?.settings ?? null)
   }
   const setOrgSettings = async (orgId: string, settings: OrgSettings): Promise<void> => {
     await db
@@ -1791,6 +1794,16 @@ export function makeRepos(db: SqliteDb) {
       return r?.name ?? null
     } catch {
       return null
+    }
+  }
+  const oauthClientExists = async (clientId: string): Promise<boolean> => {
+    try {
+      const r = await db.get(
+        sql`select 1 as one from "oauthClient" where "clientId" = ${clientId} limit 1`,
+      )
+      return !!r
+    } catch {
+      return false
     }
   }
   const setOAuthClientWorkspace = async (
@@ -2265,6 +2278,7 @@ export function makeRepos(db: SqliteDb) {
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,
+    oauthClientExists,
     listUserGrants,
     revokeUserGrant,
     setOAuthClientWorkspace,

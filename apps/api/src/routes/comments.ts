@@ -20,6 +20,7 @@ import {
 } from "../lib/comments"
 import { enqueueGithubPrComment } from "../lib/github-comments"
 import { fail, readJson } from "../lib/http"
+import { notifyCommentBells } from "../lib/notify-comment"
 import { enqueueCommentEmails } from "../lib/notify-email"
 import { enqueueSlackComment } from "../lib/slack-comments"
 
@@ -220,6 +221,12 @@ export const commentRoutes = (ctx: AppContext) => {
             quote: quoteOf(created.anchor),
             thread_id: created.thread_id,
           })
+        // Bell the comment's natural audience — thread participants + the
+        // artifact's owners (your content) — shared with the MCP path.
+        await notifyCommentBells({ meta, bus }, artifact, created, {
+          mentionIds: new Set(mentions.map((m) => m.id)),
+          actorId: acting?.id ?? null,
+        })
         // Channel fan-out is gated per workspace (Settings -> integrations toggles).
         const settings = await meta.getOrgSettings(artifact.org_id)
         if (settings.emailNotifications)

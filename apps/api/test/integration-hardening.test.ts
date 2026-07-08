@@ -20,7 +20,7 @@ describe("collaborator-author gate (external fan-out)", () => {
       org_id: "org1",
       slug: null,
       title: "Doc",
-      visibility: "link",
+      visibility: "public",
       kind: "file",
       spa: 0,
     })

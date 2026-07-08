@@ -116,7 +116,7 @@ describe("scaffold", () => {
     const cfg = JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8"))
     expect(cfg.$schema).toBe("./derive.schema.json")
     const schema = JSON.parse(readFileSync(join(d, "derive.schema.json"), "utf8"))
-    expect(schema.properties.visibility.enum).toContain("link")
+    expect(schema.properties.visibility.enum).toEqual(["public", "org", "private"])
   })
 
   it("exposes the templates", () => {
@@ -142,9 +142,12 @@ describe("scaffold", () => {
     expect(names).toContain("context/references/example.md")
     expect(names).toContain("context/.mcp.json")
     expect(names).toContain("context/.env.example")
-    // .env and the minted agent token must never reach git.
+    // .env, the minted agent token, and the clone workspace must never reach git.
     expect(files[".gitignore"]).toContain("context/.env")
     expect(files[".gitignore"]).toContain(".derive/")
+    expect(files[".gitignore"]).toContain("context/repos/")
+    // The repo-pointer example ships commented out — scaffolds must parse to zero repos.
+    expect(files["context/MANIFEST.md"]).toContain("# repos:")
     const cfg = JSON.parse(files[CONFIG_FILE])
     expect(cfg.entry).toBe("context")
     expect(cfg.context).toEqual({ id: null, agent_id: null, name: "Analytics" })

@@ -400,6 +400,9 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   current_content_type: a.current_content_type,
   visibility: a.visibility,
   general_role: a.general_role,
+  // A password on the public link (never the hash itself). Distinct from
+  // `locked`, which is the publish lock (changes must go through proposals).
+  password_protected: !!a.password_hash,
   spa: !!a.spa,
   locked: !!a.locked,
   current_version: a.current_version,

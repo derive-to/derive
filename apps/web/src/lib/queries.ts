@@ -125,17 +125,6 @@ export const profileArtifactsQuery = (handle: string) =>
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   })
 
-// The follower / following list behind a profile's stat, fetched lazily when its
-// dialog opens. Keyed by (handle, kind) so followers and following cache apart.
-export const profilePeopleQuery = (handle: string, kind: "followers" | "following") =>
-  queryOptions({
-    queryKey: ["profile-people", handle, kind] as const,
-    queryFn: () =>
-      (kind === "followers" ? api.profileFollowers(handle) : api.profileFollowing(handle)).then(
-        (r) => r.users,
-      ),
-  })
-
 // The People directory search. Empty query browses everyone discoverable; a term
 // searches (debounced by the caller). keepPreviousData holds results across
 // keystrokes so the grid never flashes its skeleton mid-search.

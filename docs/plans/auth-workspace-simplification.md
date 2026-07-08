@@ -1,6 +1,9 @@
 # Simplifying auth, workspaces, and sharing before launch
 
-Status: proposal, not decided. Written for team review ahead of launch.
+Status: HISTORICAL. Rounds 1–2 shipped as #314; round 3 then went further than
+this doc proposes — visibility collapsed to three values and the global social
+layer was cut for launch. Current model: [visibility-collapse.md](./visibility-collapse.md).
+Kept as the record of how the decisions evolved.
 
 We're about to put this in front of new users, and the auth/workspace/sharing
 surface feels more complicated than it needs to be. This doc is a diagnosis and

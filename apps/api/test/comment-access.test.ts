@@ -17,7 +17,7 @@ describe("comment access via the general-access link", () => {
     app.request(`/v1/artifacts/${shortId}/visibility`, {
       method: "PATCH",
       headers: { "content-type": "application/json", ...as(alice.email) },
-      body: JSON.stringify({ visibility: "link", generalRole }),
+      body: JSON.stringify({ visibility: "public", generalRole }),
     })
   const comment = (shortId: string, headers: Record<string, string>) =>
     app.request(`/v1/artifacts/${shortId}/comments`, jsonAs(headers, { body_md: "hi" }))

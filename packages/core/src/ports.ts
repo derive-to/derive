@@ -11,15 +11,18 @@ export interface BlobStore {
 }
 
 export type ArtifactKind = "file" | "bundle"
-// `password`: world-reachable by URL like `link`, but the bytes stay gated until
-// the visitor enters the password (then a viewer; members/owners see it by role).
+// Three audiences, each answering one question: who can open the link.
 // `private`: only per-artifact members (the publisher becomes the owner-member at
-// creation) — workspace membership grants nothing, unlike `org`.
-// `unlisted`: workspace link-only (the usual agent-publish default) — hidden
-// from every listing, but a workspace
-// member WITH THE LINK gets the general role (view or comment, the workspace's
-// default). Between `private` (explicit shares only) and `org` (listed for all).
-export type Visibility = "public" | "link" | "org" | "password" | "private" | "unlisted"
+// creation) — workspace membership grants nothing. The agent-draft default.
+// `org`: the team — any workspace member, at their membership role, listed in
+// the workspace library.
+// `public`: anyone with the URL. A `password_hash` on a public artifact is a
+// LOCK, not a visibility: the reach floor stays gated until unlocked, while
+// members and explicit shares pass by role. There is no listing axis —
+// broadcast is not a per-artifact state.
+// (Pre-collapse rows migrate at boot: unlisted→private, link→public,
+// password→public with the hash kept. See docs/plans/visibility-collapse.md.)
+export type Visibility = "public" | "org" | "private"
 
 /** A platform subdomain (`name.derived.app`) or a customer's own domain. */
 export type DomainKind = "subdomain" | "custom"
@@ -99,12 +102,6 @@ export interface ListArtifactsOpts {
    *  members, so the query needs the viewer to check membership against. Omitted ⇒
    *  a trusted caller (the operator token / internal jobs) that sees everything. */
   viewerId?: string
-  /** How `unlisted` rows behave for a viewer-scoped listing. Default (omitted) =
-   *  exclude: unlisted is hidden from every ordinary listing, even the owner's —
-   *  "Created by me" is the finder. "include" folds the viewer's own unlisted
-   *  work in (MCP list_artifacts + the deliberate shared/feedback/mine signals,
-   *  so you always find what's yours). Ignored without `viewerId`. */
-  unlisted?: "exclude" | "include"
   /** Profile work-list visibility gate: a row is included when it is `public` OR its
    *  `org_id` is in this set (the workspaces the viewer shares with the profile owner).
    *  An empty/omitted set with a profile query ⇒ public-only. Used by `listUserWorks`
@@ -168,8 +165,9 @@ export interface NewVersion {
 
 export interface MetaStore {
   createArtifact(a: NewArtifact): Promise<ArtifactRecord>
-  /** Change an artifact's general access: visibility, the unlock password hash (null for
-   *  any non-`password` visibility), and the general-access role (view vs comment). */
+  /** Change an artifact's general access: visibility, the password hash locking a
+   *  public link (null clears; meaningless off `public`), and the general-access
+   *  role (view vs comment). */
   setVisibility(
     artifactId: string,
     visibility: Visibility,
@@ -624,6 +622,10 @@ export interface MetaStore {
   getOAuthGrant(tokenHash: string): Promise<OAuthGrant | null>
   /** The display name of a registered OAuth client (for the consent screen). */
   getOAuthClientName(clientId: string): Promise<string | null>
+  /** Does this client_id still have a row? Backs the /authorize self-heal: a client_id an
+   *  agent is holding can go stale (reaped by pruneStaleOAuthClients, or any other loss of
+   *  the row) without the agent knowing, so /authorize checks this before trusting it. */
+  oauthClientExists(clientId: string): Promise<boolean>
   /** The agents a USER has authorized via the browser consent (one per client), so they can
    *  review + revoke what may act on their behalf. Reads Better Auth's oauth-provider tables;
    *  empty when they aren't present. */
@@ -1319,13 +1321,9 @@ export interface OrgSettings {
   githubPreviewLink: boolean
   /** Post Derive activity to the connected Slack workspace. */
   slackPost: boolean
-  /** What a workspace member reaching an `unlisted` artifact via its link may do:
-   *  view or also comment. Seeded onto the artifact's general_role when it turns
-   *  unlisted without an explicit choice; the share dialog can override per doc. */
-  defaultUnlistedRole: GeneralRole
   /** The visibility a NEW agent (MCP) publish lands with when the agent doesn't
-   *  say. Unlisted by default: drafts stay out of the team library but stay one
-   *  link away for the human — sharing wider is the deliberate act. */
+   *  say. Private by default: an agent's draft is the human's until they promote
+   *  it — sharing wider is the deliberate act (the blessing gesture). */
   defaultAgentVisibility: Visibility
 }
 
@@ -1335,8 +1333,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   githubMirrorComments: true,
   githubPreviewLink: true,
   slackPost: true,
-  defaultUnlistedRole: "viewer",
-  defaultAgentVisibility: "unlisted",
+  defaultAgentVisibility: "private",
 }
 
 /** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot

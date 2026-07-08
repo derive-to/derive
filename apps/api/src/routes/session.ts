@@ -116,25 +116,25 @@ export const sessionRoutes = (ctx: AppContext) => {
     })
   })
 
-  // The People directory — browse opted-in (discoverable) people to find someone to
-  // follow, the home the search backend never got. With `?query=` it searches; without, it
-  // BROWSES (the deliberate difference from /v1/users/search, which never enumerates).
-  // Browsing surfaces discoverable people only (on by default; opting out also
-  // hides the profile — see profileVisibleTo). Signed-in only; public fields only
-  // (handle/name/avatar/role) — never email.
+  // The People page's data — the people you actually work with (any shared
+  // workspace), discoverable or not: membership already implies you can see each
+  // other. There is deliberately no global directory here — People is work
+  // awareness, not a social network (addressing a stranger to SHARE with them
+  // still works via /v1/users/search, which never enumerates). `?query=` filters
+  // within your workmates. Signed-in only; public fields only — never email.
   app.get("/v1/people", async (c) => {
     const me = await currentUser(c)
     if (!me) return fail(c, 401, "unauthenticated")
-    const q = (c.req.query("query") ?? "").trim()
-    // ?scope=workspace → the people you actually work with (any shared workspace),
-    // discoverable or not — membership already implies you can see each other.
-    // Default → the global discoverable directory, as before.
-    const found =
-      c.req.query("scope") === "workspace"
-        ? await meta.listWorkspaceMates(me.id, 60)
-        : q
-          ? await meta.searchDiscoverableUsers(q, 60)
-          : await meta.listDiscoverableUsers(60)
+    const q = (c.req.query("query") ?? "").trim().toLowerCase()
+    const mates = await meta.listWorkspaceMates(me.id, 60)
+    const found = q
+      ? mates.filter(
+          (u) =>
+            u.username?.toLowerCase().includes(q) ||
+            u.name?.toLowerCase().includes(q) ||
+            u.profession?.toLowerCase().includes(q),
+        )
+      : mates
     return c.json({
       users: found.map((u) => ({
         username: u.username,
@@ -161,23 +161,24 @@ export const sessionRoutes = (ctx: AppContext) => {
     return (await meta.sharedOrgIds(me.id, p.id)).length > 0
   }
 
-  // A public profile by handle — the GitHub-style discovery surface. Email is
-  // intentionally omitted (private); the handle, name, avatar, stats, GitHub link, and
-  // (for a signed-in viewer) whether they already follow are public. Readable by anyone
-  // while the account is discoverable; hidden otherwise (profileVisibleTo).
+  // A profile by handle. For a TEAMMATE (a viewer sharing a workspace, or the
+  // person themselves) it's the full card: work count, GitHub link, follow state.
+  // For anyone else it's an identity card — enough for an author chip to resolve
+  // (name/handle/avatar/role/bio), no work, no graph. There is no public follower
+  // count or global work grid at launch; the profile is who-you-work-with
+  // infrastructure, not a broadcast surface. Email is never returned.
   app.get("/v1/users/:handle", async (c) => {
     const handle = normalizeUsername(c.req.param("handle"))
     const p = await meta.getUserByUsername(handle)
     if (!p) return fail(c, 404, "no profile with that username")
     if (!(await profileVisibleTo(c, p))) return fail(c, 404, "no profile with that username")
     const me = await currentUser(c)
-    const ghIds = await meta.githubIdsForUser(p.id)
-    // A signed-in viewer also sees the owner's non-public work in workspaces they share.
+    // sharedOrgIds(x, x) is all of x's workspaces — self is trivially a teammate.
     const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
-    const [works, followers, following, githubLogin] = await Promise.all([
-      meta.countUserWorks(p.id, ghIds, { visibleOrgIds: sharedOrgs }),
-      meta.countFollowers(p.id),
-      meta.countFollowing(p.id),
+    const teammate = !!me && (me.id === p.id || sharedOrgs.length > 0)
+    const ghIds = await meta.githubIdsForUser(p.id)
+    const [works, githubLogin] = await Promise.all([
+      teammate ? meta.countUserWorks(p.id, ghIds, { visibleOrgIds: sharedOrgs }) : 0,
       meta.githubLoginForUser(p.id, ghIds),
     ])
     // Already following? People-follows are global, so listFollows (which folds in the
@@ -195,24 +196,28 @@ export const sessionRoutes = (ctx: AppContext) => {
         profession: p.profession ?? null,
         about: p.about ?? null,
         github_login: githubLogin,
-        stats: { works, followers, following },
+        teammate,
+        ...(teammate ? { stats: { works } } : {}),
         followed_by_me: followedByMe,
       },
     })
   })
 
-  // A person's work — the artifacts they've authored (hand-published or via a linked
-  // GitHub commit), newest first, keyset-paginated (?cursor=<created_at>|<id>&limit=N).
-  // Visibility-gated IN SQL: an anonymous viewer sees only public work; a signed-in
-  // viewer also sees non-public work in workspaces they share with the owner. Safe to
-  // serve unauthenticated because the gate lives in the query, not the caller.
+  // A person's work — for TEAMMATES (and the person themselves): the artifacts
+  // they've authored, newest first, keyset-paginated (?cursor=<created_at>|<id>&limit=N),
+  // visibility-gated IN SQL to the workspaces the viewer shares. Anyone else gets
+  // an empty page — a profile is not a broadcast surface at launch, so there is
+  // no public work grid to crawl.
   app.get("/v1/users/:handle/artifacts", async (c) => {
     const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
     if (!p) return fail(c, 404, "no profile with that username")
     if (!(await profileVisibleTo(c, p))) return fail(c, 404, "no profile with that username")
     const me = await currentUser(c)
-    const ghIds = await meta.githubIdsForUser(p.id)
+    // sharedOrgIds(x, x) is all of x's workspaces — self always sees their own work.
     const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
+    if (!me || (me.id !== p.id && sharedOrgs.length === 0))
+      return c.json({ artifacts: [], next_cursor: null })
+    const ghIds = await meta.githubIdsForUser(p.id)
     const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 24))
     const rawCursor = c.req.query("cursor")
     const sep = rawCursor?.indexOf("|") ?? -1
@@ -246,32 +251,9 @@ export const sessionRoutes = (ctx: AppContext) => {
     })
   })
 
-  // The people who follow / are followed by this user, as public profiles (handle +
-  // name + avatar + role; never ids or email). Powers the profile's followers/following
-  // dialogs. The internal user id is stripped here so it never reaches a client.
-  const publicCard = (u: {
-    username: string
-    name: string | null
-    image: string | null
-    profession?: string | null
-  }) => ({ username: u.username, name: u.name, image: u.image, profession: u.profession ?? null })
-  // The follow graph is for participants: sign in to read it. (The counts on the
-  // profile stay public; who exactly follows whom does not — that's the part a
-  // crawler could mine.)
-  app.get("/v1/users/:handle/followers", async (c) => {
-    if (!(await currentUser(c))) return fail(c, 401, "unauthenticated")
-    const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
-    if (!p) return fail(c, 404, "no profile with that username")
-    if (!(await profileVisibleTo(c, p))) return fail(c, 404, "no profile with that username")
-    return c.json({ users: (await meta.listFollowers(p.id, 100)).map(publicCard) })
-  })
-  app.get("/v1/users/:handle/following", async (c) => {
-    if (!(await currentUser(c))) return fail(c, 401, "unauthenticated")
-    const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
-    if (!p) return fail(c, 404, "no profile with that username")
-    if (!(await profileVisibleTo(c, p))) return fail(c, 404, "no profile with that username")
-    return c.json({ users: (await meta.listFollowing(p.id, 100)).map(publicCard) })
-  })
+  // (The followers/following list routes were removed with the launch social
+  // cut — the follow graph is workspace work-awareness now, not a browsable
+  // surface. They return with the social layer if that bet is ever taken.)
 
   // Upload your profile picture. We take only raster images (identified by their
   // magic bytes, not the client content-type) and store them content-addressed in

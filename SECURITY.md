@@ -30,31 +30,29 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   reacher view or comment; the comment grant only lifts a *signed-in* reacher to commenter,
   never an anonymous one. The effective capability by who's asking:
 
-  | General access (the link)     | Anonymous (no account)         | Signed in via link (no explicit grant) | Member / explicit share        |
+  | Visibility                     | Anonymous (no account)         | Signed in via link (no explicit grant) | Member / explicit share        |
   |--------------------------------|--------------------------------|----------------------------------------|--------------------------------|
-  | Anyone with link, **view**     | View                           | View                                   | Their role (at least view)     |
-  | Anyone with link, **comment**  | View only (sign in to comment) | View + comment                         | Their role (at least comment)  |
-  | Public (listed), view/comment  | same as link row               | same as link row                       | Their role                     |
-  | Password, view/comment         | Unlock, then as above          | Unlock, then as above                  | Their role (no password needed)|
+  | Public, **view**               | View                           | View                                   | Their role (at least view)     |
+  | Public, **comment**            | View only (sign in to comment) | View + comment                         | Their role (at least comment)  |
+  | Public + password (the lock)   | Unlock, then as above          | Unlock, then as above                  | Their role (no password needed)|
   | Workspace (org)                | No access                      | No access                              | Their role (members only)      |
-  | Private (invite-only) — default | No access                     | No access                              | Explicit share only — workspace role grants nothing |
-  | Unlisted (workspace, link only), view/comment | No access       | No access (non-members)                | Members with the link: view/comment; explicit shares: their role |
+  | Private — default              | No access                      | No access                              | Explicit share only — workspace role grants nothing |
 
-  A signed-in human's publish defaults to **private**: only the publisher (written
-  as the owner-member at creation) can see a fresh artifact. AGENT-credentialed
+  Three visibilities, one modifier: a password on a public artifact gates its
+  reach until unlocked (members and explicit shares never need it), and a locked
+  artifact's bytes are never shared-cacheable. There is no listing axis —
+  "public" means the link works, full stop.
+
+  Every publish defaults to **private**: only the publisher (written as the
+  owner-member at creation) can see a fresh artifact. That includes AGENT
   publishes — the /mcp server, and any /v1 publish carrying a registered agent
-  token or OAuth bearer (the CLI and stdio-shim paths) — default to **unlisted**,
-  a workspace setting (`defaultAgentVisibility`): hidden from every listing, but a
-  workspace member with the link gets the workspace's default general role. It's
-  the same who × listed-or-link-only pairing as public/link, one tier down: a
-  workspace audience that stays out of the shared library until surfaced. Reach is
-  only ever workspace-inward of private's explicit-share-only model plus the link
-  requirement, and the setting restores private-by-default in one click. Private
-  and unlisted artifacts never appear in workspace listings, profile work lists,
-  or the People-visible surfaces (the library's "Created by me" filter still finds
-  your own regardless of visibility). Widening (workspace, link, public) is always
-  an explicit act. GitHub-mirror syncs publish workspace-visible — a mirrored repo
-  is a workspace resource, not a personal draft.
+  token or OAuth bearer (the CLI and stdio-shim paths) — governed by the
+  workspace's `defaultAgentVisibility` (private, or workspace for teams that
+  want agent work landing shared). Private artifacts never appear in another
+  viewer's listings, profiles, or People surfaces (your own library and the
+  "Created by me" filter always find your own). Widening (workspace, public) is
+  always an explicit act. GitHub-mirror syncs publish workspace-visible — a
+  mirrored repo is a workspace resource, not a personal draft.
 
   `packages/core/src/permissions.ts` (`effectiveRole`) is the single source of truth for
   this table, enforced on every request by the one `can()` gate and surfaced in the UI so

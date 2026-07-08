@@ -26,6 +26,7 @@ export const contextRoutes = (ctx: AppContext) => {
     agentFor,
     authorize,
     currentUser,
+    managementPrincipal,
     requireUser,
     sourceText,
     workspaceCan,
@@ -85,8 +86,14 @@ export const contextRoutes = (ctx: AppContext) => {
   // workspace, and share-standing on the manifest — creating a context makes the
   // manifest's roster govern who can ask, which is a sharing decision.
   app.post("/v1/contexts", async (c) => {
-    const me = await requireUser(c)
-    if (me instanceof Response) return me
+    // Management principals only: a signed-in user, or an OAuth grant carrying
+    // derive:manage (`derive context push`) acting as its grantor — that human
+    // keys created_by. Registered dk_agt_ runner tokens are deliberately NOT
+    // accepted here (nor on list/delete): they're runtime principals, and a
+    // stolen one must not be able to rewire ask surfaces. The capability gate
+    // still applies on top with the grant's membership-capped role.
+    const owner = await managementPrincipal(c)
+    if (!owner) return fail(c, 401, "unauthenticated")
     if (!(await workspaceCan(c, "publish"))) return fail(c, 403, "forbidden")
     const b = await readJson(
       c,
@@ -110,7 +117,7 @@ export const contextRoutes = (ctx: AppContext) => {
         name: b.name,
         agent_id: b.agent_id,
         manifest_artifact_id: manifest.id,
-        created_by: me.id,
+        created_by: owner,
       })
       return c.json(contextJson(created, manifest.short_id), 201)
     } catch {
@@ -119,8 +126,10 @@ export const contextRoutes = (ctx: AppContext) => {
   })
 
   app.get("/v1/contexts", async (c) => {
-    const me = await requireUser(c)
-    if (me instanceof Response) return me
+    // Management principals only (see POST): the list exposes every context's
+    // wiring (agent ids, creators), which GET /:id deliberately hides from
+    // agents that aren't the context's own.
+    if (!(await managementPrincipal(c))) return fail(c, 401, "unauthenticated")
     if (!(await workspaceCan(c, "read"))) return fail(c, 403, "forbidden")
     const rows = await meta.listContexts(await activeWorkspace(c))
     const contexts = await Promise.all(
@@ -161,15 +170,18 @@ export const contextRoutes = (ctx: AppContext) => {
   })
 
   app.delete("/v1/contexts/:id", async (c) => {
-    const me = await requireUser(c)
-    if (me instanceof Response) return me
+    // Management principals only (see POST) — the created_by match below must
+    // never be reachable by the runner's own token, whose registrant usually
+    // IS the context creator.
+    const owner = await managementPrincipal(c)
+    if (!owner) return fail(c, 401, "unauthenticated")
     const x = await meta.getContext(c.req.param("id"))
     // workspaceCan reads the CALLER's active workspace, so it only authorizes
     // deletes of that workspace's contexts — without the org check, a manager of
     // workspace B would pass it and reach into workspace A. Cross-workspace
     // callers get the same 404 as a missing id.
     if (!x || x.org_id !== (await activeWorkspace(c))) return fail(c, 404, "not found")
-    if (x.created_by !== me.id && !(await workspaceCan(c, "manage")))
+    if (x.created_by !== owner && !(await workspaceCan(c, "manage")))
       return fail(c, 403, "forbidden")
     await meta.deleteContext(x.id, x.org_id)
     return c.body(null, 204)

@@ -47,6 +47,9 @@ import {
   zipBundleFiles,
 } from "./lib/bundle"
 import { parseMeta, quoteOf, REACTIONS } from "./lib/comments"
+import { buildReviewEmail } from "./lib/email"
+import { notifyCommentBells } from "./lib/notify-comment"
+import { enqueueChannelDelivery } from "./webhooks"
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
 // Bound a best-effort promise (the tab-delivery receipt) so it can never stall a
@@ -168,15 +171,13 @@ function buildServer(
   const org = agent.org_id
 
   // Resolve a short id within the caller's workspace (never another org's
-  // artifact). `private` AND `unlisted` narrow further: the agent touches them
-  // only through its human's standing (or a legacy row of its own) — a
-  // teammate's unlisted doc is as untouchable over MCP as its listings are invisible.
-  // (Members reach a teammate's unlisted doc through the web link at the
-  // view/comment floor; agent tools are write-capable, so they stay stricter.)
+  // artifact). `private` narrows further: the agent touches it only through its
+  // human's standing (or a legacy row of its own) — a teammate's private draft
+  // is as untouchable over MCP as its listings are invisible.
   const own = async (shortId: string): Promise<ArtifactRecord | null> => {
     const a = await ctx.meta.getByShortId(shortId)
     if (!a || a.org_id !== org) return null
-    if (a.visibility !== "private" && a.visibility !== "unlisted") return a
+    if (a.visibility !== "private") return a
     if (actingFor && (await ctx.meta.getArtifactMember(a.id, actingFor.id))) return a
     if (await ctx.meta.getArtifactMember(a.id, agent.id)) return a
     return null
@@ -193,14 +194,13 @@ function buildServer(
       inputSchema: { query: z.string().optional().describe("Optional title search filter.") },
     },
     async ({ query }) => {
-      // viewerId keeps private rows scoped to the agent's human (mirrors `own`);
-      // "include" folds in that human's own unlisted work, so the agent can
-      // always find what it published even though listings hide it.
+      // viewerId keeps private rows scoped to the agent's human (mirrors `own`) —
+      // the owner row written at publish is what lets the agent always find its
+      // own drafts while a teammate's private work stays invisible.
       const arts = await ctx.meta.listArtifacts({
         orgId: org,
         q: query,
         viewerId: actingFor?.id ?? agent.id,
-        unlisted: "include",
       })
       return json({ count: arts.length, artifacts: arts.map(summarizeArtifact) })
     },
@@ -520,6 +520,15 @@ function buildServer(
           author_id: agent.id,
         })
         ctx.bus.publish(a.id, { type: "comment.created" })
+        // Same bell fan-out as the HTTP route: thread participants + the
+        // artifact's owners hear the agent's reply even with no tab open.
+        // (Previously this path belled no one.) The MCP tool has no mentions.
+        const created = await ctx.meta.getComment(commentId)
+        if (created)
+          await notifyCommentBells({ meta: ctx.meta, bus: ctx.bus }, a, created, {
+            mentionIds: new Set(),
+            actorId: agent.id,
+          })
       }
       // The ack: land the emoji on the thread's newest comment by someone ELSE
       // (the human being acknowledged), falling back to its newest comment.
@@ -598,10 +607,10 @@ function buildServer(
           .optional()
           .describe("Omit to create a new artifact; pass it to revise one you own."),
         visibility: z
-          .enum(["unlisted", "private", "workspace", "link", "public"])
+          .enum(["private", "workspace", "public"])
           .optional()
           .describe(
-            "Who can see a NEW artifact: unlisted (workspace members with the link — hidden from the shared library until a human surfaces it; the usual default for agent publishes), private (you and people you invite), workspace (your team, listed), link (anyone with the link), or public (discoverable). Omit to use the workspace's agent default. Ignored on republish — the human promotes via the share dialog.",
+            "Who can open a NEW artifact: private (the human you act for + people they add — the usual default for agent publishes; they promote it when ready), workspace (their team), or public (the link works for anyone). Omit to use the workspace's agent default. Ignored on republish — the human promotes via the share dialog.",
           ),
         spa: z
           .boolean()
@@ -775,17 +784,13 @@ function buildServer(
             // than asked (the workspace's agent default when unspecified).
             orgId: agent.org_id,
             visibility:
-              visibility === "link"
-                ? "link"
-                : visibility === "public"
-                  ? "public"
-                  : visibility === "workspace"
-                    ? "org"
-                    : visibility === "private"
-                      ? "private"
-                      : visibility === "unlisted"
-                        ? "unlisted"
-                        : (settings?.defaultAgentVisibility ?? "private"),
+              visibility === "public"
+                ? "public"
+                : visibility === "workspace"
+                  ? "org"
+                  : visibility === "private"
+                    ? "private"
+                    : (settings?.defaultAgentVisibility ?? "private"),
           },
           short_id,
         )
@@ -798,10 +803,6 @@ function buildServer(
             user_id: actingFor?.id ?? agent.id,
             role: "owner",
           })
-        // A NEW unlisted artifact takes the workspace's default link permission
-        // as its general_role (what a member with the link may do).
-        if (!short_id && artifact.visibility === "unlisted" && settings)
-          await ctx.meta.setVisibility(artifact.id, "unlisted", null, settings.defaultUnlistedRole)
         // Event parity with the HTTP publish route: the artifact channel makes a
         // tab viewing this doc live-reload; the webhook outbox fans out to
         // integrations. Without these an MCP publish is invisible to open tabs.
@@ -847,6 +848,22 @@ function buildServer(
             version: version.n,
             requested_by: agent.name,
           })
+          // The review request is the one event that earns an email: the loop is
+          // blocked on the human, who may have no tab open (same policy as the
+          // HTTP publish path). `settings` is only pre-loaded on a create, so a
+          // republish (where most review rounds happen) fetches the gate here.
+          if ((settings ?? (await ctx.meta.getOrgSettings(org))).emailNotifications) {
+            const [r] = await ctx.meta.getUsers([actingFor.id])
+            if (r?.email)
+              await enqueueChannelDelivery(ctx.meta, "email", "review.requested", {
+                to: r.email,
+                toName: r.name ?? undefined,
+                ...buildReviewEmail(ctx.deps.baseUrl, artifact, {
+                  requestedBy: agent.name,
+                  version: version.n,
+                }),
+              })
+          }
         }
         const url = artifactUrl(ctx.deps.baseUrl, artifact)
         // Bell entry for the human behind the grant, so a push reaches them even
