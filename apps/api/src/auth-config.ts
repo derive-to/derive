@@ -75,6 +75,7 @@ export const OAUTH_SCOPES = [
   "derive:propose",
   "derive:publish",
   "derive:review",
+  "derive:manage",
 ] as const
 
 // How long an anonymous DCR-registered client (a headless agent that self-registered

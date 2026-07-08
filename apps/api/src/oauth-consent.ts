@@ -18,6 +18,7 @@ const SCOPE_LABELS: Record<string, string> = {
   "derive:propose": "Propose new versions (you approve before they go live)",
   "derive:publish": "Publish new versions directly",
   "derive:review": "Approve or request changes on proposals",
+  "derive:manage": "Manage agents and contexts (only as far as your workspace role allows)",
 }
 
 // Scopes that let the agent change something get a distinct accent tick; read-only
@@ -27,6 +28,7 @@ const WRITE_SCOPES = new Set([
   "derive:propose",
   "derive:publish",
   "derive:review",
+  "derive:manage",
 ])
 
 const esc = (s: string): string =>

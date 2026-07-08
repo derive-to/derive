@@ -19,16 +19,18 @@ const post = async (server, token, path, body) => {
  *  persist it immediately. */
 export async function createAgent(server, token, name) {
   const { res, json } = await post(server, token, "/v1/agents", { name, role: "editor" })
-  // 401: agent/context management currently needs a signed-in user — the CLI's
-  // OAuth token resolves as an on-behalf agent, which these routes don't accept
-  // yet. The manifest still pushed; only the one-time wiring is manual.
+  // 401/403: the token lacks the manage grant (derive:manage is opt-in at
+  // login) or the user isn't workspace admin. The manifest still pushed; only
+  // the one-time wiring is blocked.
   if (res.status === 401 || res.status === 403)
     throw new Error(
-      `this token can't manage agents (${res.status}) — wire it once in the console:\n` +
-        `  1. ${server} → Settings → Agents → New agent ("${name}", role editor); save its token to .derive/agent-token\n` +
-        `  2. ${server} → Contexts → New context → pick the agent + this manifest\n` +
-        `  3. put the agent id in derive.json (context.agent_id) and the context id in context.id\n` +
-        `after that, every push is just a manifest version — no wiring, no console`,
+      `this token can't manage agents (${res.status}).\n` +
+        `  If you're a workspace admin: re-run \`derive login --manage\` (the manage grant is opt-in).\n` +
+        `  Otherwise, wire it once in the console:\n` +
+        `    1. ${server} → Settings → Agents → New agent ("${name}", role editor); save its token to .derive/agent-token\n` +
+        `    2. ${server} → Contexts → New context → pick the agent + this manifest\n` +
+        `    3. put the agent id in derive.json (context.agent_id) and the context id in context.id\n` +
+        `  After that, every push is just a manifest version — no wiring, no console.`,
     )
   if (res.status === 409)
     throw new Error(

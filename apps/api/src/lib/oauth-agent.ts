@@ -41,12 +41,17 @@ export function makeOauthAgent({
 }: OauthAgentDeps) {
   // The least-privilege role an OAuth-granted scope set maps to: publish/review earn
   // editor; propose/comment earn commenter; read alone is viewer.
+  // derive:manage maps to owner-grade, but scopeRole is always capped by the
+  // grantor's ACTUAL membership role (capRole below) — the scope can widen what
+  // the grant may attempt, never what the human could do themselves.
   const roleFromScopes = (scopes: string[]): Role =>
-    scopes.includes("derive:publish") || scopes.includes("derive:review")
-      ? "editor"
-      : scopes.includes("derive:propose") || scopes.includes("derive:comment")
-        ? "commenter"
-        : "viewer"
+    scopes.includes("derive:manage")
+      ? "owner"
+      : scopes.includes("derive:publish") || scopes.includes("derive:review")
+        ? "editor"
+        : scopes.includes("derive:propose") || scopes.includes("derive:comment")
+          ? "commenter"
+          : "viewer"
 
   // The workspace the agent runs in, and the owner's membership role there (the
   // cap on the scope-derived role). Precedence: the workspace the user picked on
