@@ -113,6 +113,20 @@ floor:    none => no floor; holder must be in the audience (public admits all,
   role alias; `visibilityOf` keeps the round-3 legacy map (`link → public`,
   which now lands the classic public · viewer pair).
 
+## Share dialog (`apps/web/src/pages/artifact/share-dialog.tsx`)
+
+The dialog is additive, not redesigned: **General access** (visibility —
+Private/Workspace/Public, plus the Public-only Can view/Can comment select) is
+byte-identical to the pre-round-4 dialog. **Link access** is a new section
+below it — who the link works for (`No one` / `Workspace` / `Public`, never
+"unlisted") and what it grants (`Can view` / `Can comment` / `Can edit`) —
+that applies even when General access is Private. Both sections write the
+same underlying `link_role`/`link_audience`; a public General access still
+forces the link to Public underneath (the coherence rule), and Link access
+mirrors that instead of going stale. An earlier version of this PR merged the
+two into one control — reverted after review; the split favors muscle memory
+and a smaller mental model per change over a single denser control.
+
 ## Deferred (recorded, deliberate)
 
 - Password lock on non-public link-bearing docs (natural now that private links
