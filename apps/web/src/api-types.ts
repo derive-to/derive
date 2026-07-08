@@ -430,6 +430,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record a view of an artifact (de-duped; owner self-views excluded). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Recorded (or skipped as a dup / self-view / disabled). */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/artifacts/{shortId}/analytics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** View stats for an artifact (collaborators only). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Totals, per-version + daily counts, and recent distinct viewers. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Analytics"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/notifications": {
         parameters: {
             query?: never;
@@ -721,6 +795,26 @@ export interface components {
             parentId?: string;
             prNumber?: number;
             repo?: string;
+        };
+        Analytics: {
+            total: number;
+            unique: number;
+            anonViewers: number;
+            perVersion: {
+                version: number;
+                count: number;
+            }[];
+            daily: {
+                day: string;
+                count: number;
+            }[];
+            recent: {
+                viewer: string;
+                /** @enum {string} */
+                kind: "user" | "anon";
+                at: string;
+                avatar?: string | null;
+            }[];
         };
         Notification: {
             id: string;

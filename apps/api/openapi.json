@@ -153,6 +153,94 @@
           "count"
         ]
       },
+      "Analytics": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number"
+          },
+          "unique": {
+            "type": "number"
+          },
+          "anonViewers": {
+            "type": "number"
+          },
+          "perVersion": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "number"
+                },
+                "count": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "version",
+                "count"
+              ]
+            }
+          },
+          "daily": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "day",
+                "count"
+              ]
+            }
+          },
+          "recent": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "viewer": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "anon"
+                  ]
+                },
+                "at": {
+                  "type": "string"
+                },
+                "avatar": {
+                  "type": "string",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "viewer",
+                "kind",
+                "at"
+              ]
+            }
+          }
+        },
+        "required": [
+          "total",
+          "unique",
+          "anonViewers",
+          "perVersion",
+          "daily",
+          "recent"
+        ]
+      },
       "Notification": {
         "type": "object",
         "properties": {
@@ -709,6 +797,59 @@
         "responses": {
           "204": {
             "description": "The artifact was removed."
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/view": {
+      "post": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Record a view of an artifact (de-duped; owner self-views excluded).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Recorded (or skipped as a dup / self-view / disabled)."
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/analytics": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "View stats for an artifact (collaborators only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Totals, per-version + daily counts, and recent distinct viewers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Analytics"
+                }
+              }
+            }
           }
         }
       }

@@ -297,14 +297,8 @@ export interface Workspaces {
   active: string
   workspaces: WorkspaceSummary[]
 }
-export interface Analytics {
-  total: number
-  unique: number
-  anonViewers: number
-  perVersion: { version: number; count: number }[]
-  daily: { day: string; count: number }[]
-  recent: { viewer: string; kind: "user" | "anon"; at: string; avatar?: string | null }[]
-}
+/** Per-artifact view stats. Generated from the OpenAPI spec. */
+export type Analytics = components["schemas"]["Analytics"]
 /** A resolved @mention: the picked user's id + the display name shown inline. */
 export interface Mention {
   id: string
