@@ -59,12 +59,14 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) first. Two rules matter most:
 - **The dependency rule.** `packages/core` depends on nothing internal; everything
   depends inward on it. `core` owns the `MetaStore`/`BlobStore` ports; `db`/`storage`
   provide adapters. Don't import a sibling app, and never pull Node-only code into
-  the Workers/edge path.
+  the Workers/edge path. Machine-enforced by `pnpm lint:boundaries` (see Guardrails).
 - **One authorization gate.** All access checks go through
   `can(actor, action, visibility)` in `packages/core/src/permissions.ts`. Resolve an
   `Actor` and ask it; don't hand-roll role checks in routes.
 
-Adding a `MetaStore` method? Implement it once in the shared sqlite repos
+Adding a `MetaStore` method? Declare it on the relevant feature sub-port in
+[`ports.ts`](packages/core/src/ports.ts) (`ArtifactStore`, `CommentStore`, `ReviewStore`,
+… — `MetaStore` composes all of them), then implement it once in the shared sqlite repos
 (`packages/db/src/repos.ts`, covers SQLite + D1) and once in the Postgres driver
 (`pg.ts`). The `implements MetaStore` annotation fails typecheck if a driver misses one.
 
@@ -80,6 +82,18 @@ shipping. If something below surprises you, that's the guardrail doing its job:
 - **DB drivers in routes/lib.** Importing `drizzle-orm`, a driver, or `@derive/db/*` from
   `routes/*` or `lib/*` is a lint error. Reach the database through `ctx.meta` (the
   `MetaStore` port); add a store method instead.
+- **Cross-package boundaries.** The dependency rule is machine-enforced by
+  `pnpm lint:boundaries` (dependency-cruiser, `.dependency-cruiser.mjs`): `core` may import
+  nothing in-repo, `db`/`storage` depend only on `core`, the clients (`web`/`cli`/`mcp`/
+  `runner`) hold no runtime `@derive/core` import, and there are no import cycles. A
+  violation — or a new cycle — fails the gate.
+- **Config completeness.** `pnpm lint:env` (`scripts/check-env.mjs`) fails if a config var
+  the server reads is missing from `.env.example`, or a var documented there is read
+  nowhere. `.env.example` is therefore the full, honest list — it can't quietly go
+  incomplete or advertise a setting the code ignores. A binding/platform var that isn't
+  self-host config is listed in the script's `NON_CONFIG` set. (Half-configured optional
+  features — an OAuth id without its secret — warn loudly at boot and fail `derive doctor`,
+  from the capability model in `apps/api/src/capabilities.ts`.)
 - **Schema parity + exhaustiveness.** Every drizzle table must be classified in
   `packages/db/src/parity.ts` (typed-and-shape-checked against its core Record, or named
   a junction). Add a table without classifying it and typecheck fails. A column that
@@ -133,9 +147,10 @@ shipping. If something below surprises you, that's the guardrail doing its job:
   files + dependencies only (not every unused export, to leave the design-system surface
   alone).
 
-The custom checks (`lint:tokens`, `lint:frontend`, `lint:testids`, `lint:api`, `lint:schema`)
-and Biome all run inside `pnpm run ci`, so the one gate command covers them; `pnpm typecheck`
-and `pnpm test` (which includes the authz-coverage test) complete it.
+The custom checks (`lint:tokens`, `lint:frontend`, `lint:testids`, `lint:api`, `lint:schema`,
+`lint:hyperdrive`, `lint:boundaries`, `lint:env`, `lint:deadcode`) and Biome all run inside
+`pnpm run ci`, so the one gate command covers them; `pnpm typecheck` and `pnpm test` (which
+includes the authz-coverage test) complete it.
 
 ## Database migrations
 

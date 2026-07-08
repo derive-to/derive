@@ -1,39 +1,92 @@
-import { Hono } from "hono"
+import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import { streamSSE } from "hono/streaming"
-import { z } from "zod"
+import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { readJson } from "../lib/http"
+import { bail, readJson } from "../lib/http"
 
-/** In-app notifications (the header bell) for the signed-in user. */
+/** In-app notifications (the header bell) for the signed-in user. The Notification
+ *  response schema is the single source for the web client's `Notification` type
+ *  (generated from the OpenAPI spec). */
 export const notificationRoutes = (ctx: AppContext) => {
   const { meta, bus, backplane, requireUser, currentUser } = ctx
-  const app = new Hono()
+  const app = new OpenAPIHono<BlankEnv>()
 
-  app.get("/v1/notifications", async (c) => {
-    const me = await requireUser(c)
-    if (me instanceof Response) return me
-    const [notifications, unread] = await Promise.all([
-      meta.listNotifications(me.id, 50),
-      meta.unreadNotificationCount(me.id),
-    ])
-    return c.json({ notifications, unread })
-  })
+  const Notification = z
+    .object({
+      id: z.string(),
+      user_id: z.string(),
+      /** Who triggered it. For follow/publish this is the person's @handle. */
+      actor: z.string(),
+      kind: z.enum(["mention", "comment", "share", "follow", "publish", "review"]),
+      artifact_id: z.string(),
+      artifact_short_id: z.string(),
+      artifact_title: z.string().nullable(),
+      thread_id: z.string(),
+      comment_id: z.string(),
+      preview: z.string(),
+      read: z.union([z.literal(0), z.literal(1)]),
+      created_at: z.string(),
+    })
+    .openapi("Notification")
 
-  app.post("/v1/notifications/read", async (c) => {
-    const me = await requireUser(c)
-    if (me instanceof Response) return me
-    const body = await readJson(
-      c,
-      z.object({ all: z.boolean().optional(), ids: z.array(z.string()).optional() }),
-    )
-    if (body instanceof Response) return body
-    const ids = body.all === true ? "all" : (body.ids ?? [])
-    await meta.markNotificationsRead(me.id, ids)
-    const unread = await meta.unreadNotificationCount(me.id)
-    return c.json({ unread })
-  })
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/notifications",
+      tags: ["Notifications"],
+      summary: "List the signed-in user's recent notifications and unread count.",
+      responses: {
+        200: {
+          description: "The 50 most recent notifications and the current unread count.",
+          content: {
+            "application/json": {
+              schema: z.object({ notifications: z.array(Notification), unread: z.number() }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await requireUser(c)
+      if (me instanceof Response) return bail(me)
+      const [notifications, unread] = await Promise.all([
+        meta.listNotifications(me.id, 50),
+        meta.unreadNotificationCount(me.id),
+      ])
+      return c.json({ notifications, unread })
+    },
+  )
 
-  // Live notification stream for the signed-in user (the header bell subscribes).
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/notifications/read",
+      tags: ["Notifications"],
+      summary: "Mark notifications read (all, or a set of ids); returns the new unread count.",
+      responses: {
+        200: {
+          description: "The unread count after marking.",
+          content: { "application/json": { schema: z.object({ unread: z.number() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await requireUser(c)
+      if (me instanceof Response) return bail(me)
+      const body = await readJson(
+        c,
+        z.object({ all: z.boolean().optional(), ids: z.array(z.string()).optional() }),
+      )
+      if (body instanceof Response) return bail(body)
+      const ids = body.all === true ? "all" : (body.ids ?? [])
+      await meta.markNotificationsRead(me.id, ids)
+      const unread = await meta.unreadNotificationCount(me.id)
+      return c.json({ unread })
+    },
+  )
+
+  // Live notification stream for the signed-in user (the header bell subscribes). SSE, not
+  // JSON — kept a plain route (the OpenAPI spec describes typed JSON responses only).
   app.get("/v1/notifications/events", async (c) => {
     const me = await currentUser(c)
     if (!me) return c.text("unauthenticated", 401)

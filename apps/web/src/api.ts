@@ -1,3 +1,5 @@
+import type { components } from "./api-types"
+
 export interface Me {
   id: string
   email: string
@@ -23,496 +25,119 @@ export interface Me {
 }
 /** What sign-in methods + auth flows THIS instance actually has (capability-adaptive:
  *  a bare self-host reports fewer than a fully-wired hosted deploy). Drives the login
- *  page + Security hub so nothing renders a button/flow that can't work here. Grows as
- *  later phases land (emailVerification, passwordReset, passkey, twoFactor). */
-export interface AuthCapabilities {
-  password: boolean
-  google: boolean
-  github: boolean
-  /** Enterprise SSO (generic OIDC); carries the provider id to start sign-in + a label. */
-  oidc: { providerId: string; label: string } | null
-  /** Mail-dependent flows — true only when a real transport is configured. Off ⇒ the SPA
-   *  hides "Forgot password?" + the verify banner (recovery is then the logged link + the
-   *  operator script). */
-  emailVerification: boolean
-  passwordReset: boolean
-  /** Passkeys (WebAuthn) — on wherever rpID/origin resolves (always same-origin; on the
-   *  hosted split only when SPA + API share a registrable parent). Off ⇒ hide the passkey
-   *  button + enrollment. */
-  passkey: boolean
-}
-/** An OAuth agent the user authorized to act on their behalf (the "Connected agents" list). */
-export interface ConnectedAgent {
-  clientId: string
-  clientName: string
-  scopes: string[]
-  grantedAt: string
-}
-/** A public profile, by handle. Email is private and never returned here. */
-export interface PublicProfile {
-  username: string
-  name: string | null
-  image: string | null
-  /** Coarse team role; null if unset. (People-search results omit `about`.) */
-  profession?: string | null
-  /** One-line "what you do" blurb; only present on the full /users/:handle profile. */
-  about?: string | null
-  /** GitHub login, when known (the full /users/:handle profile only); null otherwise. */
-  github_login?: string | null
-  /** The viewer shares a workspace with this person (or is them) — gates the work
-   *  grid and Follow. A stranger's profile is the identity card alone. */
-  teammate?: boolean
-  /** Work count, present for teammates only (/users/:handle). */
-  stats?: { works: number }
-  /** Whether the signed-in viewer already follows this person (full profile only). */
-  followed_by_me?: boolean
-}
-export interface VersionSession {
-  n: number
-  from_n: number
-  count: number
-  author: string
-  name: string | null
-  created_at: string
-}
+ *  page + Security hub. Generated from the OpenAPI spec. */
+export type AuthCapabilities = components["schemas"]["AuthCapabilities"]
+/** An OAuth agent the user authorized to act on their behalf (the "Connected agents"
+ *  list). Generated from the OpenAPI spec. */
+export type ConnectedAgent = components["schemas"]["ConnectedAgent"]
+/** A public profile, by handle. Email is private and never returned here.
+ *  Generated from the OpenAPI spec. */
+export type PublicProfile = components["schemas"]["PublicProfile"]
+/** Time-grouped view of an artifact's versions. Generated from the OpenAPI spec. */
+export type VersionSession = components["schemas"]["VersionSession"]
 export type Role = "viewer" | "commenter" | "editor" | "owner"
 /** What general access (the link) grants a reacher: view-only or comment. */
 export type GeneralRole = "viewer" | "commenter"
-export interface Artifact {
-  short_id: string
-  url: string
-  title: string | null
-  kind: "file" | "bundle"
-  current_content_type?: string | null
-  /** Locked: direct publishes are rejected; even editors must propose changes. */
-  locked?: boolean
-  visibility: string
-  /** The role the general-access link grants (view vs comment). Anonymous reachers are
-   *  always clamped to view regardless; commenting requires signing in. */
-  general_role?: GeneralRole
-  /** The public link carries a password (the lock). Never the password itself. */
-  password_protected?: boolean
-  current_version: number
-  versions: {
-    n: number
-    content_type?: string
-    author: string
-    /** The GitHub identity behind this version (sync only): login, avatar URL, numeric
-     *  user id (text). Null for manual/anonymous/unmappable publishes. */
-    author_login?: string | null
-    author_avatar?: string | null
-    author_gh_id?: string | null
-    /** The Derive handle of this version's GitHub author, when they signed in with GitHub
-     *  (single-artifact detail only); null otherwise. */
-    handle?: string | null
-    message: string | null
-    name: string | null
-    created_at: string
-  }[]
-  /** Time-grouped view of versions for display; newest-first. */
-  sessions?: VersionSession[]
-  views?: number
-  /** The current caller's effective role on this artifact (null = no access). */
-  my_role?: Role | null
-  /** The artifact's current workspace (absent on a removed-tombstone response). */
-  org_id?: string
-  /** Browse tags (workspace-wide). */
-  tags?: string[]
-  /** Whether the current user has starred this artifact. */
-  favorite?: boolean
-  /** Count of proposals awaiting review. */
-  open_proposals?: number
-  /** Count of non-withdrawn proposals (open + decided) — gates the Proposals entry. */
-  proposals_total?: number
-  /** Open comment threads on this artifact (drives the inline comment indicator). */
-  open_threads?: number
-  /** An open thread on this artifact @mentions the current user — "needs your feedback". */
-  mentions_me?: boolean
-  /** The current user authored a comment in an open thread on this artifact. */
-  i_participated?: boolean
-  /** Collection ids this artifact belongs to (detail endpoint). */
-  collections?: string[]
-  /** Taken down by a moderator: the content is gone (410), the record stays. */
-  removed?: boolean
-  /** Mirrored from a GitHub sync source → read-only in Derive (Edit/Propose hidden). */
-  managed?: boolean
-  /** Short-lived signed capability for the /raw content iframe (detail endpoint only).
-   *  The iframe is sandboxed with no `allow-same-origin`, so it has no origin to attach
-   *  cookies to — Chrome refuses to send them for its requests even same-site, breaking
-   *  every non-public bundle's sub-resources (images, css, ...) there (Safari is more
-   *  lenient). This token lets the SPA embed proof-of-access directly in the raw URL's
-   *  PATH, so relative asset references inherit it automatically with no HTML rewriting. */
-  raw_token?: string
-  /** Present when this bundle's entry is markdown — a skill (entry SKILL.md) or a
-   *  plain docs folder. Drives the file tree + (for skills) the identity chrome.
-   *  Detail endpoint only; absent for HTML "site" bundles. */
-  bundle?: {
-    /** True when it's a Claude Code skill (entry SKILL.md) — gates the "Skill" badge. */
-    isSkill: boolean
-    /** Skill frontmatter name/description; null for a plain docs bundle. */
-    name: string | null
-    description: string | null
-    /** Entry document path, sans leading slash (e.g. "SKILL.md", "README.md"). */
-    entry: string
-    files: { path: string; type: string }[]
-  }
-  /** Repo path for a synced artifact (e.g. "docs/plans/foo.md") — drives the folder view. */
-  source_path?: string | null
-  /** First-published time. */
-  created_at?: string
-  /** Last-updated time (set on each new version; null until versioned). Read as
-   *  `updated_at ?? created_at`. Drives the recency sort + the "updated X" label. */
-  updated_at?: string | null
-  /** The CURRENT (last) author, denormalized — for a GitHub-synced artifact these mirror
-   *  the last commit's author. Drives "who last changed this" + the ?author= filter. */
-  author_name?: string | null
-  author_login?: string | null
-  author_avatar?: string | null
-  author_gh_id?: string | null
-  /** The current author resolved to a profile: the raw GitHub identity plus the Derive
-   *  `handle` (username) when the committer signed in with GitHub. Null when there's no
-   *  recorded author. Prefer this over the raw fields for rendering. */
-  author?: {
-    name: string | null
-    login: string | null
-    avatar: string | null
-    handle: string | null
-  } | null
-}
-export interface Report {
-  id: string
-  artifact_id: string
-  artifact_short_id: string
-  reason: string
-  detail: string | null
-  reporter: string | null
-  state: "open" | "actioned" | "dismissed"
-  created_at: string
-}
-export interface Collection {
-  id: string
-  title: string
-  created_by: string
-  created_at: string
-  count: number
-  /** Where the collection came from: "repo" = a GitHub repo mirror, "pr" = a
-   *  read-only PR preview nested under its repo, "manual" = user-created. Absent on
-   *  older responses → treat as "manual". */
-  kind?: "manual" | "repo" | "pr"
-  /** For a PR preview: the repo collection it nests under (when that repo is still
-   *  connected). Drives the sidebar hierarchy. */
-  parentId?: string
-  /** For a PR preview: the pull-request number. */
-  prNumber?: number
-  /** For repo/PR collections: "owner/name". */
-  repo?: string
-}
-export type FollowKind = "author" | "path" | "user"
+/** The artifact view-model — the largest, most-composed shape in the client. Generated
+ *  from the OpenAPI spec (apps/api/openapi.json). `my_role` is `Role | null`, `general_role`
+ *  is `GeneralRole`; both are inline enums identical to those aliases. */
+export type Artifact = components["schemas"]["Artifact"]
+/** An abuse report against an artifact. Generated from the OpenAPI spec. */
+export type Report = components["schemas"]["Report"]
+/** A collection: a shareable group of artifacts, tagged with its item count and origin
+ *  (kind = manual / repo / pr). Generated from the OpenAPI spec (apps/api/openapi.json)
+ *  — a backend shape change surfaces here at `tsc`. */
+export type Collection = components["schemas"]["Collection"]
 /** A per-user follow: a GitHub author (kind="author", target=login), a repo path
  *  prefix (kind="path", target=path prefix), or a person (kind="user", target=username
- *  on the wire). Drives the `scope=following` feed. */
-export interface Follow {
-  id: string
-  org_id: string
-  user_id: string
-  kind: FollowKind
-  /** For author/path: the login / path prefix. For user: the followed person's id. */
-  target: string
-  created_at: string
-  /** Present for kind="user": the followed person's public handle/name/avatar, resolved
-   *  server-side so the client renders them (and matches follow-state) without raw ids. */
-  handle?: string | null
-  name?: string | null
-  image?: string | null
-}
-export type ProposalState = "open" | "approved" | "changes_requested" | "withdrawn"
-export interface Proposal {
-  id: string
-  state: ProposalState
-  author: string
-  /** When an agent proposed this, the human it acted on behalf of (delegation provenance);
-   *  null for a direct human proposal. Reviewers see "Agent X on behalf of Alice." */
-  on_behalf_of?: { handle: string | null; name: string | null } | null
-  message: string | null
-  base_version: number
-  kind: "file" | "bundle"
-  decided_by: string | null
-  decided_version: number | null
-  /** The reviewer's feedback when approving or requesting changes. */
-  decision_note: string | null
-  decided_at: string | null
-  created_at: string
-  /** The proposed experience, rendered exactly like a live version. */
-  preview_url: string
-  /** Present on the single-proposal fetch: line diff vs the base version. */
-  diff?: { base_version: number; ops: DiffOp[] }
-}
-export interface ArtifactMember {
-  user_id: string
-  /** Public handle; null only for a legacy account not yet backfilled. No email —
-   *  the member list identifies collaborators by handle, never by address. */
-  handle: string | null
-  name: string | null
-  /** Coarse team role (Product / Engineering / …); null if unset. Shown in member
-   *  lists; absent on artifact/collection member payloads that don't join it. */
-  profession?: string | null
-  role: Role
-}
+ *  on the wire). Drives the `scope=following` feed. Generated from the API's OpenAPI
+ *  spec (apps/api/openapi.json) — a backend shape change surfaces here at `tsc`, so the
+ *  web client and server can't silently drift. */
+export type Follow = components["schemas"]["Follow"]
+export type FollowKind = Follow["kind"]
+/** A proposal: a candidate version awaiting review. Generated from the OpenAPI spec. */
+export type Proposal = components["schemas"]["Proposal"]
+export type ProposalState = Proposal["state"]
+/** A collaborator on an artifact or collection — by public @handle, never email.
+ *  Generated from the OpenAPI spec (one shared schema across sharing + collections). */
+export type ArtifactMember = components["schemas"]["ArtifactMember"]
 /** A DNS record the customer adds to validate a custom domain. */
-export interface DomainDnsRecord {
-  type: string
-  name: string
-  value: string
-}
+/** A DNS record to add when validating a custom domain. Generated from the OpenAPI spec. */
+export type DomainDnsRecord = components["schemas"]["DomainDnsRecord"]
 /** A vanity subdomain bound to one artifact (the per-artifact share section). */
-export interface ArtifactDomain {
-  host: string
-  url: string
-  kind: string
-  status: string
-  created_at: string
-}
+/** A vanity subdomain claimed for an artifact. Generated from the OpenAPI spec. */
+export type ArtifactDomain = components["schemas"]["ArtifactDomain"]
 /** A workspace custom domain (managed in settings; Cloudflare for SaaS). */
-export interface WorkspaceDomain {
-  host: string
-  status: string
-  /** DNS records to add while pending (undefined once active). */
-  records?: DomainDnsRecord[]
-  created_at: string
-}
+/** A workspace custom domain (Cloudflare for SaaS). Generated from the OpenAPI spec. */
+export type WorkspaceDomain = components["schemas"]["WorkspaceDomain"]
 /** The workspace: its name, the caller's role, and the member directory. */
-export interface Workspace {
-  id: string
-  name: string
-  role: Role
-  members: ArtifactMember[]
-}
+export type Workspace = components["schemas"]["Workspace"]
 /** A pending workspace invitation (Admin view; the token is never exposed). */
-export interface Invite {
-  id: string
-  email: string
-  role: Role
-  created_at: string
-  expires_at: string
-}
+export type Invite = components["schemas"]["Invite"]
 /** The result of inviting by email: either the person was an existing Derive account
  *  (added straight to the roster) or a pending, emailed invitation was created. */
-export type InviteResult =
-  | { kind: "member"; member: ArtifactMember }
-  | { kind: "invite"; invite: Invite; accept_url: string }
+export type InviteResult = components["schemas"]["InviteResult"]
 /** What the accept page shows before you join. */
-export interface InvitePreview {
-  workspace: string
-  role: Role
-  email: string
-  inviter: string | null
-}
+export type InvitePreview = components["schemas"]["InvitePreview"]
 /** Per-workspace integration switches (mirrors the server's OrgSettings). */
-export interface OrgSettings {
-  emailNotifications: boolean
-  githubPostComments: boolean
-  githubMirrorComments: boolean
-  githubPreviewLink: boolean
-  slackPost: boolean
-  /** Where a NEW agent (MCP) publish lands when the agent doesn't say. */
-  defaultAgentVisibility: "private" | "org"
-}
+export type OrgSettings = components["schemas"]["OrgSettings"]
 /** Slack connection status for the Settings UI. */
-export interface SlackStatus {
-  available: boolean
-  connected: boolean
-  team_name: string | null
-  default_channel: string | null
-}
+/** Slack connection status for a workspace. Generated from the OpenAPI spec. */
+export type SlackStatus = components["schemas"]["SlackStatus"]
 /** One entry in the workspace switcher. */
-export interface WorkspaceSummary {
-  id: string
-  name: string
-  role: Role
-  /** The caller's auto-provisioned personal workspace — shown as "Personal", pinned first. */
-  personal: boolean
-}
-/** The caller's own identity (never email — surfaces identify by handle). */
-export interface AccountSummary {
-  id: string
-  handle: string | null
-  name: string | null
-}
+export type WorkspaceSummary = components["schemas"]["WorkspaceSummary"]
+/** The switcher payload: whether multi-workspace is on, the active id, the list. */
+export type Workspaces = components["schemas"]["Workspaces"]
 /** The one display rule for workspace names: the personal workspace renders as
  *  "Personal" everywhere — its stored name is provisioning plumbing, not a name
  *  the user chose. */
 export const workspaceDisplayName = (w: { name: string; personal: boolean }): string =>
   w.personal ? "Personal" : w.name
-/** The switcher payload: whether multi-workspace is on, the active id, the list.
- *  `account` is the CLI/MCP's discovery surface for a bearer-only caller, which
- *  has no session to ask `/v1/me` with — the web app doesn't need it. */
-export interface Workspaces {
-  multi: boolean
-  active: string
-  account?: AccountSummary | null
-  workspaces: WorkspaceSummary[]
-}
-export interface Analytics {
-  total: number
-  unique: number
-  anonViewers: number
-  perVersion: { version: number; count: number }[]
-  daily: { day: string; count: number }[]
-  recent: { viewer: string; kind: "user" | "anon"; at: string; avatar?: string | null }[]
-}
+/** Per-artifact view stats. Generated from the OpenAPI spec. */
+export type Analytics = components["schemas"]["Analytics"]
 /** A resolved @mention: the picked user's id + the display name shown inline. */
-export interface Mention {
-  id: string
-  name: string
-}
+/** A person/agent @mentioned in a comment. Generated from the OpenAPI spec. */
+export type Mention = components["schemas"]["Mention"]
 /** A review round: the agent asked this person to review a version, and polls for
  *  the answer. `pending` = waiting; `sent_back` = they returned answers; `approved`. */
-export interface ReviewRound {
-  id: string
-  artifact_id: string
-  version: number
-  requested_by: string
-  requested_for: string
-  state: "pending" | "sent_back" | "approved"
-  note: string | null
-  created_at: string
-  resolved_at: string | null
-}
+/** A review round on an artifact (the /derive loop). Generated from the OpenAPI spec. */
+export type ReviewRound = components["schemas"]["ReviewRound"]
 
-export interface Comment {
-  id: string
-  thread_id: string
-  base_version: number
-  path: string | null
-  anchor: string | null
-  body_md: string
-  author: string
-  // `addressed` = a proposed revision citing this thread is pending review.
-  // `outdated` = the quoted text this thread anchored to changed in a later
-  // version (set by the server's re-anchor sweep); the feedback may no longer apply.
-  state: "open" | "addressed" | "resolved" | "outdated"
-  created_at: string
-  anchored?: boolean
-  reactions?: Record<string, string[]>
-  edited?: boolean
-  edited_at?: string | null
-  deleted?: boolean
-  mentions?: Mention[]
-}
-/** A person/agent offered by the @mention picker — identified by @handle, never email. */
-export interface DirUser {
-  id: string
-  name: string | null
-  handle: string | null
-  /** "agent" for a registered MCP agent, "user" for a person. The @mention directory
-   *  returns both; the "ask an agent to revise" affordance targets the agents. */
-  kind?: "user" | "agent"
-  /** Role/profession, surfaced by the directory so the picker shows who's who. */
-  profession?: string | null
-}
-export interface Notification {
-  id: string
-  user_id: string
-  /** Who triggered it. For `follow`/`publish` this is the person's @handle. */
-  actor: string
-  kind: "mention" | "comment" | "share" | "follow" | "publish" | "review"
-  artifact_id: string
-  artifact_short_id: string
-  artifact_title: string | null
-  thread_id: string
-  comment_id: string
-  preview: string
-  read: 0 | 1
-  created_at: string
-}
-export interface Webhook {
-  id: string
-  artifact_id: string | null
-  url: string
-  kind: "generic" | "slack"
-  events: string
-  label: string | null
-  active: 0 | 1
-  created_at: string
-}
-export interface Agent {
-  id: string
-  name: string
-  role: Role
-  created_at: string
-}
-/** An askable agent setup: a registered agent wired to a manifest artifact. */
-export interface ContextInfo {
-  id: string
-  name: string
-  agent_id: string
-  manifest_short_id: string | null
-  created_by: string
-  created_at: string
-}
-export type SessionState = "open" | "answered" | "escalated" | "failed" | "closed"
-/** The runner's structured payload on an agent message (parsed server-side). */
-export interface SessionMeta {
-  query?: string | null
-  confidence?: number | null
-  caveats?: string[]
-  escalation_reason?: string | null
-  /** Artifacts the runner published for this answer (charts, report pages). */
-  artifacts?: { short_id: string; title: string }[]
-}
-export interface SessionMessage {
-  id: string
-  author_kind: "asker" | "agent"
-  author_id: string
-  body_md: string
-  meta: SessionMeta | null
-  created_at: string
-}
-export interface Session {
-  id: string
-  context_id: string
-  asker_id: string
-  context_version: number
-  state: SessionState
-  created_at: string
-  updated_at: string
-}
+/** A comment: threaded, anchored to a text quote, with reactions/edits/soft-delete.
+ *  Generated from the OpenAPI spec. */
+export type Comment = components["schemas"]["Comment"]
+/** A person/agent offered by the @mention picker — by @handle, never email.
+ *  Generated from the OpenAPI spec. */
+export type DirUser = components["schemas"]["DirUser"]
+/** An in-app notification (the header bell). Generated from the API's OpenAPI spec
+ *  (apps/api/openapi.json) — a backend shape change surfaces here at `tsc`. */
+export type Notification = components["schemas"]["Notification"]
+/** An outbound webhook, without its signing secret. Generated from the OpenAPI spec. */
+export type Webhook = components["schemas"]["Webhook"]
+/** A workspace-registered agent. Generated from the OpenAPI spec. */
+export type Agent = components["schemas"]["Agent"]
+/** An askable agent setup: a registered agent wired to a manifest artifact.
+ *  Generated from the OpenAPI spec. */
+export type ContextInfo = components["schemas"]["ContextInfo"]
+/** The runner's structured payload on an agent message. Generated from the spec. */
+export type SessionMeta = components["schemas"]["SessionMeta"]
+export type SessionMessage = components["schemas"]["SessionMessage"]
+/** An ask-conversation with a context's agent. Generated from the OpenAPI spec. */
+export type Session = components["schemas"]["Session"]
+export type SessionState = Session["state"]
 /** A live viewer of an artifact (presence). Identified by a handle-style `name`
  *  (never email — presence is broadcast to anonymous co-viewers); `role` is their
  *  effective role here. */
-export interface Viewer {
-  id: string
-  name: string
-  role: string | null
-}
-export interface Delivery {
-  id: string
-  event_type: string
-  status: "pending" | "delivered" | "dead"
-  attempts: number
-  last_error: string | null
-  created_at: string
-}
+export type Viewer = components["schemas"]["Viewer"]
+/** A webhook delivery attempt. Generated from the OpenAPI spec. */
+export type Delivery = components["schemas"]["Delivery"]
 /** A GitHub repo mirrored into a collection (token redacted, file map collapsed
  *  to a count by the API). */
-export interface RepoSource {
-  id: string
-  collection_id: string
-  repo: string
-  ref: string
-  includes: string
-  token: string | null
-  installation_id: string | null
-  last_synced_at: string | null
-  last_status: string | null
-  created_by: string
-  created_at: string
-  file_count: number
-  /** Live sync state as a JSON string (parse with `parseProgress`); null when idle. */
-  progress: string | null
-}
+/** A GitHub repo source (branch mirror), client-safe (token redacted, files→count).
+ *  Generated from the OpenAPI spec. */
+export type RepoSource = components["schemas"]["RepoSource"]
 /** Live, pollable sync progress — the engine writes this every batch; the UI bar +
- *  global chip read it. `done`/`total` are doc counts; `phase` drives the wording. */
+ *  global chip read it. Parsed client-side from the `progress` string. */
 export interface SyncProgress {
   phase: "queued" | "listing" | "mirroring" | "done" | "error"
   done: number
@@ -529,77 +154,21 @@ export const parseProgress = (raw: string | null | undefined): SyncProgress | nu
     return null
   }
 }
-/** The cheap status-poll response (no GitHub round-trip) that drives the progress bar. */
-export interface SyncStatus {
-  id: string
-  repo: string
-  progress: string | null
-  last_status: string | null
-  last_synced_at: string | null
-  file_count: number
-}
-export interface GithubInstallation {
-  installation_id: string
-  account_login: string | null
-}
-/** A read-only preview of an open pull request's changed docs, mirrored into its own
- *  collection ("PR #<n>: <title>"). Links out to the PR and into the Derive collection. */
-export interface PrPreview {
-  id: string
-  collection_id: string
-  repo: string
-  pr_number: number
-  title: string
-  last_status: string | null
-  last_synced_at: string | null
-  file_count: number
-  progress: string | null
-}
-export interface GithubSyncStatus {
-  sources: RepoSource[]
-  prs: PrPreview[]
-  app: {
-    configured: boolean
-    slug?: string
-    /** False when the live App lacks a permission/event Derive now requires. */
-    upToDate?: boolean
-    /** The scopes/events still to grant: { permissions: {scope: level}, events: [] }. */
-    missing?: { permissions: Record<string, string>; events: string[] }
-    /** Deep-link to the App's GitHub permissions editor (owner toggles + saves). */
-    permissionsUrl?: string
-    /** Deep-link that surfaces the pending-approval prompt on an existing install. */
-    approveUrl?: string
-  }
-  installations: GithubInstallation[]
-}
-export interface InstallationRepo {
-  full_name: string
-  private: boolean
-  default_branch: string
-  /** Last push (ISO), or null. Server returns repos sorted most-recent-first. */
-  pushed_at: string | null
-}
-/** A repo+scope preview: how many docs would mirror, split by type. */
-export interface SyncPreview {
-  total: number
-  md: number
-  html: number
-  other: number
-  truncated: boolean
-}
-export interface SyncResult {
-  added: number
-  updated: number
-  removed: number
-  renamed: number
-  skipped: number
-  /** Matching docs still pending after this batch (>0 → call run again). */
-  remaining: number
-}
-export interface DiffOp {
-  t: "ctx" | "add" | "del"
-  line: string
-}
+/** The cheap status-poll response that drives the progress bar. Generated from the spec. */
+export type SyncStatus = components["schemas"]["SyncStatus"]
+/** A GitHub App installation on a workspace. Generated from the OpenAPI spec. */
+export type GithubInstallation = components["schemas"]["GithubInstallation"]
+/** A read-only preview of an open pull request's changed docs. Generated from the spec. */
+export type PrPreview = components["schemas"]["PrPreview"]
+/** GitHub sync connection status (sources + PR previews + App + installations).
+ *  Generated from the OpenAPI spec. */
+export type GithubSyncStatus = components["schemas"]["GithubSyncStatus"]
+/** A repo an installation can mirror (the picker). Generated from the OpenAPI spec. */
+export type InstallationRepo = components["schemas"]["InstallationRepo"]
+/** A repo+scope preview: how many docs would mirror, split by type. Generated from the spec. */
+export type SyncPreview = components["schemas"]["SyncPreview"]
+/** One line of a unified diff. Generated from the OpenAPI spec. */
+export type DiffOp = components["schemas"]["DiffOp"]
 export interface Diff {
   from: number
   to: number
@@ -640,8 +209,8 @@ const authJson = async (r: Response) => {
   return data
 }
 
-// Map Better Auth's session user onto our Me (discoverable defaults on). Shared
-// by session() and me() so the shape is defined once.
+// Map Better Auth's session user onto our Me (discoverable defaults on). Used by
+// session() so the mapping lives in one place.
 type SessionUser = {
   id: string
   email: string
