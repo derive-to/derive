@@ -128,7 +128,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(r.wwwAuth).toContain("oauth-protected-resource")
   })
 
-  it("initializes (identity in instructions) and lists the five consolidated tools", async () => {
+  it("initializes (identity in instructions) and lists the consolidated tools", async () => {
     const { app, token } = appWithGrant("init", "openid derive:read derive:publish")
     const init = await rpc(app, token, initBody)
     const result = init.parsed?.result as { serverInfo?: { name: string }; instructions?: string }
@@ -136,10 +136,19 @@ describe("remote MCP endpoint (/mcp)", () => {
     // Identity rides in the server instructions, not a whoami tool.
     expect(result.instructions).toContain("Claude")
     expect(result.instructions).toContain("editor")
+    // The instructions teach the switcher: one login reaches every workspace.
+    expect(result.instructions).toContain("list_workspaces")
 
     const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
     const names = toolNames(list)
-    expect(names.sort()).toEqual(["catch_up", "comment", "list_artifacts", "publish", "read"])
+    expect(names.sort()).toEqual([
+      "catch_up",
+      "comment",
+      "list_artifacts",
+      "list_workspaces",
+      "publish",
+      "read",
+    ])
     // Consolidated away — folded into catch_up / comment / publish.
     for (const gone of [
       "whoami",

@@ -1951,31 +1951,37 @@ export function makeRepos(db: SqliteDb) {
       return false
     }
   }
-  const setOAuthClientWorkspace = async (
+  // Replace the whole granted-workspace SET for (user, client): clear, then insert
+  // one row per ticked workspace. An EMPTY array clears it → the grant reverts to
+  // "all workspaces". This is what the consent screen's multi-select persists.
+  const setOAuthClientWorkspaces = async (
     userId: string,
     clientId: string,
-    orgId: string,
+    orgIds: string[],
   ): Promise<void> => {
     await db
-      .insert(oauthClientWorkspace)
-      .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
-      .onConflictDoUpdate({
-        target: [oauthClientWorkspace.user_id, oauthClientWorkspace.client_id],
-        set: { org_id: orgId },
-      })
+      .delete(oauthClientWorkspace)
+      .where(
+        and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
+      )
       .run()
+    for (const orgId of orgIds) {
+      await db
+        .insert(oauthClientWorkspace)
+        .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
+        .onConflictDoNothing()
+        .run()
+    }
   }
-  const getOAuthClientWorkspace = async (
-    userId: string,
-    clientId: string,
-  ): Promise<string | null> => {
+  // The grant's scoped workspaces. Empty array = "all workspaces" (unscoped).
+  const getOAuthClientWorkspaces = async (userId: string, clientId: string): Promise<string[]> => {
     const rows = await db
       .select({ org_id: oauthClientWorkspace.org_id })
       .from(oauthClientWorkspace)
       .where(
         and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
       )
-    return rows[0]?.org_id ?? null
+    return rows.map((r) => r.org_id)
   }
   const pruneStaleOAuthClients = async (cutoffIso: string): Promise<number> => {
     try {
@@ -2439,8 +2445,8 @@ export function makeRepos(db: SqliteDb) {
     oauthClientExists,
     listUserGrants,
     revokeUserGrant,
-    setOAuthClientWorkspace,
-    getOAuthClientWorkspace,
+    setOAuthClientWorkspaces,
+    getOAuthClientWorkspaces,
     pruneStaleOAuthClients,
     deleteAgent,
     createAgentMention,

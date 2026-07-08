@@ -15,17 +15,20 @@ import { z } from "zod"
 import { createClient } from "./client"
 
 // Stdio MCP server for self-hosters: `npx @derive-to/mcp` talks to a Derive instance over
-// the /v1 HTTP API (DERIVE_SERVER). It exposes the SAME five tools as the remote /mcp
-// server — list_artifacts, read, catch_up, comment, publish — so the vocabulary is
-// identical whether an agent connects over OAuth or a static token.
+// the /v1 HTTP API (DERIVE_SERVER). It exposes the SAME tools as the remote /mcp
+// server — list_workspaces, list_artifacts, read, catch_up, comment, publish — so the
+// vocabulary is identical whether an agent connects over OAuth or a static token.
 //
 // No token to paste: by default this reads the SAME local store `derive login`
 // writes (~/.config/derive/credentials.json), refreshing silently — sign in once
 // on the machine and every project's MCP server just works. DERIVE_ACCOUNT /
-// DERIVE_WORKSPACE pin which signed-in account/workspace THIS project acts as (id
-// or name); unset, it falls back to your stored default. DERIVE_TOKEN remains an
-// escape hatch for a static bearer (CI, no local login) — DERIVE_WORKSPACE has no
-// effect there, since a static token already acts as every workspace's owner.
+// DERIVE_WORKSPACE pin which signed-in account/workspace THIS project acts as by
+// DEFAULT (id or name); unset, it falls back to your stored default. Because one
+// login reaches every workspace the account belongs to, any tool also takes a
+// per-call `workspace` argument (see list_workspaces) to act in another one without
+// changing that pin. DERIVE_TOKEN remains an escape hatch for a static bearer (CI,
+// no local login) — DERIVE_WORKSPACE has no effect there, since a static token
+// already acts as every workspace's owner.
 const server_ = process.env.DERIVE_SERVER ?? "http://localhost:8080"
 
 /** {token, workspace} for the client below — see the module doc comment for the
@@ -117,16 +120,79 @@ const doc = (meta: Record<string, string | number | null | undefined>, body: str
   return text(`---\n${head}\n---\n\n${body}`)
 }
 
+// A `workspace` arg (id or name) on any tool acts in THAT workspace for the one
+// call, without re-pinning the session: the token already reaches every workspace
+// the account belongs to, so we just build a throwaway client that sends the
+// matching X-Derive-Workspace header. Names resolve against the active account's
+// local roster; an unrecognized ref is passed through as a literal id (a static
+// DERIVE_TOKEN caller has no roster to match names against). Omit → the session's
+// resolved default client.
+const resolveWsId = (ref: string): string => {
+  if (accountId) {
+    const found = findAccountWorkspace(server_, accountId, ref)
+    if (found) return found.id
+  }
+  return ref
+}
+const clientFor = (ref?: string) =>
+  ref ? createClient({ baseUrl: server_, token, workspace: resolveWsId(ref) }) : client
+const wsArg = z
+  .string()
+  .optional()
+  .describe(
+    "Workspace to act in — its id or name from list_workspaces. Omit to use this session's default workspace.",
+  )
+
+// The signed-in roster on THIS machine (shared by the list_workspaces tool and the
+// derive://workspaces resource) — read fresh so a sibling `derive login`/`describe`
+// shows up mid-session.
+const buildRoster = () => {
+  const accounts = listAccounts(server_).map((a) => {
+    const account = getAccount(server_, a.id)
+    return {
+      account_id: a.id,
+      handle: a.handle,
+      is_default_account: a.isDefault,
+      workspaces: Object.entries(account?.workspaces ?? {}).map(([id, w]) => ({
+        workspace_id: id,
+        name: w.name,
+        role: w.role,
+        description: w.description ?? null,
+        is_default_workspace: id === account?.defaultWorkspace,
+        is_active: id === workspace,
+      })),
+    }
+  })
+  const active = accountId
+    ? { server: server_, account_id: accountId, workspace_id: workspace ?? null }
+    : { server: server_, note: "No signed-in account resolved for this session." }
+  return { active, accounts }
+}
+
+// WORKSPACES — the switcher: every workspace signed in on this machine ---------
+server.registerTool(
+  "list_workspaces",
+  {
+    description:
+      "List every workspace signed in on this machine you can act in — id, name, your role, local description, and which is active. One login reaches them all; pass a workspace's id or name as the `workspace` argument to list_artifacts / read / catch_up / comment / publish to act there for that call.",
+    inputSchema: {},
+  },
+  async () => json(buildRoster()),
+)
+
 // FIND ------------------------------------------------------------------------
 server.registerTool(
   "list_artifacts",
   {
     description:
-      "List the artifacts in your workspace — short id, title, kind, current version, access. Start here to find what to work on, then catch_up or read it.",
-    inputSchema: { query: z.string().optional().describe("Optional title search filter.") },
+      "List the artifacts in your workspace — short id, title, kind, current version, access. Defaults to this session's workspace; pass `workspace` (id or name from list_workspaces) to list another. Start here to find what to work on, then catch_up or read it.",
+    inputSchema: {
+      query: z.string().optional().describe("Optional title search filter."),
+      workspace: wsArg,
+    },
   },
-  async ({ query }) => {
-    const arts = await client.list(query)
+  async ({ query, workspace: ws }) => {
+    const arts = await clientFor(ws).list(query)
     return json({ count: arts.length, artifacts: arts })
   },
 )
@@ -150,9 +216,11 @@ server.registerTool(
         .optional()
         .describe("markdown (default, HTML converted) or text (flat visible text)."),
       version: z.number().int().optional().describe("Defaults to the current version."),
+      workspace: wsArg,
     },
   },
-  async ({ short_id, section, format, version }) => {
+  async ({ short_id, section, format, version, workspace: ws }) => {
+    const client = clientFor(ws)
     const a = await client.get(short_id)
     const v = version ?? a.current_version
 
@@ -245,9 +313,19 @@ server.registerTool(
         .describe(
           "Long-poll: block up to this many seconds for the human's next review action before returning. Returns immediately when something is already actionable.",
         ),
+      workspace: wsArg,
     },
   },
-  async ({ short_id, since_version, to_version, comments, response_format, wait }) => {
+  async ({
+    short_id,
+    since_version,
+    to_version,
+    comments,
+    response_format,
+    wait,
+    workspace: ws,
+  }) => {
+    const client = clientFor(ws)
     const summarizeComment = (c: {
       thread_id: string
       author: string
@@ -399,9 +477,11 @@ server.registerTool(
         .string()
         .optional()
         .describe("A comment in the thread to react to / set_state on (when not posting)."),
+      workspace: wsArg,
     },
   },
-  async ({ short_id, body, reply_to, quote, react, set_state, comment_id }) => {
+  async ({ short_id, body, reply_to, quote, react, set_state, comment_id, workspace: ws }) => {
+    const client = clientFor(ws)
     if (!body && !set_state && !react)
       return text(
         "Provide `body` (to comment), `react` (to acknowledge), or `set_state` (to resolve/reopen).",
@@ -527,6 +607,7 @@ server.registerTool(
         .describe(
           "Open a review round asking your human to review this version — the /derive loop. Poll catch_up's `review` (or pass `wait`) for the state.",
         ),
+      workspace: wsArg,
     },
   },
   async ({
@@ -543,7 +624,9 @@ server.registerTool(
     for_review,
     addresses,
     request_review,
+    workspace: ws,
   }) => {
+    const client = clientFor(ws)
     if (content !== undefined && edits) return text("Provide `content` OR `edits`, not both.")
     if (for_review) {
       if (!short_id) return text("A proposal revises an EXISTING artifact — pass its short_id.")
@@ -641,35 +724,15 @@ server.registerResource(
       "name is enough context, or before touching a project's DERIVE_ACCOUNT/DERIVE_WORKSPACE pin.",
     mimeType: "application/json",
   },
-  async (uri) => {
-    const accounts = listAccounts(server_).map((a) => {
-      const account = getAccount(server_, a.id)
-      return {
-        account_id: a.id,
-        handle: a.handle,
-        is_default_account: a.isDefault,
-        workspaces: Object.entries(account?.workspaces ?? {}).map(([id, w]) => ({
-          workspace_id: id,
-          name: w.name,
-          role: w.role,
-          description: w.description ?? null,
-          is_default_workspace: id === account?.defaultWorkspace,
-        })),
-      }
-    })
-    const active = accountId
-      ? { server: server_, account_id: accountId, workspace_id: workspace ?? null }
-      : { server: server_, note: "No signed-in account resolved for this session." }
-    return {
-      contents: [
-        {
-          uri: uri.href,
-          mimeType: "application/json",
-          text: JSON.stringify({ active, accounts }, null, 2),
-        },
-      ],
-    }
-  },
+  async (uri) => ({
+    contents: [
+      {
+        uri: uri.href,
+        mimeType: "application/json",
+        text: JSON.stringify(buildRoster(), null, 2),
+      },
+    ],
+  }),
 )
 
 await server.connect(new StdioServerTransport())
