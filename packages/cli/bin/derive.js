@@ -14,7 +14,7 @@
 //                                           set/show/clear what a workspace is FOR
 //   derive account use <ref>               set the default account
 //   derive logout [--account a] [--all]    sign out
-//   derive publish [file|dir] [--id --title --slug --spa --message --name --visibility --server --token --workspace --account]
+//   derive publish [file|dir] [--id --title --slug --spa --message --name --workspace-access --link-role --listed --password --server --token --workspace --account]  (--visibility is a deprecated shorthand)
 //   derive comments [--id]                 list the artifact's comment threads
 //   derive pull [short_id] [--v N] [--out f]  print an artifact's source (bundles: entry file)
 //   derive open [short_id] [--id]          open the artifact in a browser
@@ -1051,7 +1051,12 @@ if (cmd !== "publish") {
                                             set/show/clear what a workspace is FOR
   derive account use <ref>                 set the default account
   derive logout [--account a] [--all]      sign out
-  derive publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"] [--visibility v] [--password p] [--server url] [--token t] [--workspace w] [--account a] [--json]
+  derive publish [file|dir] [--id X] [--title t] [--slug s] [--spa] [--message m] [--name "x"]
+                 [--workspace-access none|member] [--link-role none|viewer|commenter|editor]
+                 [--listed none|workspace|public] [--password p]
+                 [--server url] [--token t] [--workspace w] [--account a] [--json]
+                 (access omitted ⇒ the workspace default — the "team draft".
+                  --visibility public|org|private is a deprecated shorthand.)
   derive comments [--id X]                 list comment threads
   derive pull [short_id] [--v N] [--out f] print an artifact's source (bundles: entry file only)
   derive open [--id X]                     open the artifact in a browser

@@ -540,6 +540,13 @@ export function resolvePublish(opts = {}, config = null) {
     target: opts.target ?? c.entry ?? null,
     title: opts.title ?? c.title,
     slug: opts.slug ?? c.slug,
+    // The canonical v2 access fields (flag > derive.json). Each is independent;
+    // omit all to inherit the workspace default (the team draft). `visibility` is
+    // the deprecated single-axis alias — the server still maps it — kept so existing
+    // derive.json files and muscle memory keep working. See docs/plans/access-model.md.
+    workspaceAccess: opts["workspace-access"] ?? c.workspace_access,
+    linkRole: opts["link-role"] ?? c.link_role,
+    listed: opts.listed ?? c.listed,
     visibility: opts.visibility ?? c.visibility,
     spa,
     message: opts.message,
@@ -676,11 +683,28 @@ export const DERIVE_SCHEMA = {
   properties: {
     title: { type: "string", description: "Artifact title." },
     entry: { type: "string", description: "File or directory `derive publish` targets." },
+    // The v2 access model — three independent fields (see docs/plans/access-model.md).
+    // Omit all to inherit the workspace default (the team draft: workspace access at
+    // seat role, no world link, unlisted).
+    workspace_access: {
+      enum: ["none", "member"],
+      description: "Do the workspace's members reach it at their seat role? (none = invite-only)",
+    },
+    link_role: {
+      enum: ["none", "viewer", "commenter", "editor"],
+      description: "What merely holding the URL grants anyone (none = no world link).",
+    },
+    listed: {
+      enum: ["none", "workspace", "public"],
+      description: "Where it surfaces for discovery — no access of its own.",
+    },
     visibility: {
-      // Three audiences. (The server still maps the retired vocabulary —
-      // link/password → public, unlisted → private — so old files publish.)
+      // DEPRECATED single-axis alias, mapped server-side onto the three fields above
+      // (public → member+viewer+public, org → member+workspace, private → invite-only;
+      // link/password → public, unlisted → private). Kept so old files keep publishing.
       enum: ["public", "org", "private"],
-      default: "private",
+      deprecated: true,
+      description: "Deprecated — prefer workspace_access / link_role / listed.",
     },
     spa: {
       type: "boolean",

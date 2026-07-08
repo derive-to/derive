@@ -20,7 +20,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
   accepted on the wire, so a pinned `derive publish`/MCP client and saved
   `derive.json` files keep publishing unchanged; GitHub-mirror syncs stay
   workspace-listed. Changing an artifact's reach or lock requires standing
-  (membership or an explicit share), not merely holding an editor link.
+  (membership or an explicit share), not merely holding an editor link. The
+  programmatic surfaces speak the same three fields: the MCP `publish` tool and the
+  CLI (`--workspace-access` / `--link-role` / `--listed`, and the matching
+  `derive.json` keys) — with the CLI's `--visibility` kept as a deprecated alias.
 - **Agents act as their registrant.** The `agent` table gains `created_by`; an
   agent's publishes are attributed (`author_id`) and owned by that user, and the
   agent's per-artifact standing is *derived* from the human's member rows —
