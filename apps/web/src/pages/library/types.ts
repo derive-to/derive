@@ -12,8 +12,10 @@ export type Filter =
   // "Needs your feedback": artifacts with an open thread you're tagged in or have
   // commented on — the triage feed.
   | { kind: "feedback" }
-  // Your own unlisted drafts (agent publishes land here until shared wider).
-  | { kind: "unlisted" }
+  // "Created by me": every artifact you own in the active workspace (your owner
+  // member row — written at creation, agents' on-behalf publishes included), any
+  // visibility.
+  | { kind: "mine" }
   | { kind: "tag"; tag: string }
   | { kind: "collection"; id: string; title: string }
 
@@ -22,7 +24,9 @@ export type TagCount = { tag: string; count: number }
 export type Summary = {
   total: number
   favorites: number
-  unlisted: number
+  mine: number
+  // Owned docs still private — the "waiting to be shared" signal.
+  mine_private: number
   tags: TagCount[]
   workspace: string
 }
@@ -44,8 +48,8 @@ export type LibrarySearch = {
   query?: string
   // Narrow to artifacts last changed by this GitHub login (synced collections).
   author?: string
-  // The home library's second tab: your own drafts (the `unlisted` visibility,
-  // renamed for humans). A query param, not a route — a view of YOUR OWN work
-  // is a filter on the home library, not a separate feed (docs/decisions/0002).
-  tab?: "drafts"
+  // The home library's second tab: everything YOU created, any visibility. A
+  // query param, not a route — a view of your own work is a filter on the home
+  // library, not a separate feed (docs/decisions/0002).
+  tab?: "mine"
 }

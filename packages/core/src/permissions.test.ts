@@ -14,7 +14,7 @@ import {
 import type { Visibility } from "./ports"
 
 const ACTIONS: Action[] = ["read", "comment", "propose", "publish", "approve", "share", "manage"]
-const VISIBILITIES: Visibility[] = ["public", "link", "password", "org", "private", "unlisted"]
+const VISIBILITIES: Visibility[] = ["public", "org", "private"]
 const WRITE_ACTIONS: Action[] = ["comment", "propose", "publish", "approve", "share", "manage"]
 
 // The authoritative access matrix: the minimum role each action requires. This is
@@ -93,16 +93,24 @@ describe("effectiveRole — the documented access table", () => {
     for (const v of VISIBILITIES) expect(effectiveRole(token, v)).toBe("owner")
   })
 
-  it("link/public grant the general-access floor to a signed-in reacher", () => {
+  it("public grants the general-access floor to a signed-in reacher", () => {
     // Default floor is view; a comment link lifts a signed-in reacher to commenter.
-    expect(effectiveRole(user(), "link")).toBe("viewer")
-    expect(effectiveRole(user(), "link", "commenter")).toBe("commenter")
+    expect(effectiveRole(user(), "public")).toBe("viewer")
     expect(effectiveRole(user(), "public", "commenter")).toBe("commenter")
   })
 
-  it("password gates the floor behind unlock", () => {
-    expect(effectiveRole(user(), "password", "commenter")).toBeNull()
-    expect(effectiveRole(user({ unlocked: true }), "password", "commenter")).toBe("commenter")
+  it("a password (the lock) gates the public floor behind unlock", () => {
+    expect(effectiveRole(user({ locked: true }), "public", "commenter")).toBeNull()
+    expect(effectiveRole(user({ locked: true, unlocked: true }), "public", "commenter")).toBe(
+      "commenter",
+    )
+    // The lock gates REACH only — members and explicit shares pass by role.
+    expect(effectiveRole(user({ locked: true, orgRole: "editor" }), "public")).toBe("editor")
+    expect(effectiveRole(user({ locked: true, artifactRole: "commenter" }), "public")).toBe(
+      "commenter",
+    )
+    // A lock is meaningless off public: org/private are already explicit-only.
+    expect(effectiveRole(user({ locked: true, orgRole: "viewer" }), "org")).toBe("viewer")
   })
 
   it("org/private grants nothing by reach — only an explicit role opens it", () => {
@@ -119,28 +127,9 @@ describe("effectiveRole — the documented access table", () => {
 
   it("the general-access floor can lift an explicit role but never lower it", () => {
     // On a comment link, an org viewer is lifted to commenter by the floor...
-    expect(effectiveRole(user({ orgRole: "viewer" }), "link", "commenter")).toBe("commenter")
+    expect(effectiveRole(user({ orgRole: "viewer" }), "public", "commenter")).toBe("commenter")
     // ...but an editor stays editor (max of explicit and floor).
-    expect(effectiveRole(user({ orgRole: "editor" }), "link", "commenter")).toBe("editor")
-  })
-
-  it("unlisted opens for workspace members at the general role — nobody else", () => {
-    // The agent-draft state: a member WITH THE LINK gets the workspace's default
-    // (view or comment). Their workspace role itself grants nothing (that would
-    // be `org`), so an unlisted doc never rides membership into listings/standing.
-    expect(effectiveRole(user({ orgRole: "viewer" }), "unlisted")).toBe("viewer")
-    expect(effectiveRole(user({ orgRole: "viewer" }), "unlisted", "commenter")).toBe("commenter")
-    // An org editor still only gets the floor — membership is reach, not standing.
-    expect(effectiveRole(user({ orgRole: "editor" }), "unlisted")).toBe("viewer")
-    // Non-members (no orgRole) and anonymous visitors get nothing.
-    expect(effectiveRole(user(), "unlisted", "commenter")).toBeNull()
-    expect(effectiveRole(anon, "unlisted", "commenter")).toBeNull()
-    // An explicit share still opens it at the shared role (and can exceed the floor).
-    expect(effectiveRole(user({ artifactRole: "owner" }), "unlisted")).toBe("owner")
-    expect(effectiveRole(user({ artifactRole: "editor", orgRole: "viewer" }), "unlisted")).toBe(
-      "editor",
-    )
-    expect(effectiveRole(token, "unlisted")).toBe("owner")
+    expect(effectiveRole(user({ orgRole: "editor" }), "public", "commenter")).toBe("editor")
   })
 
   it("private admits only per-artifact members — workspace role grants nothing", () => {
@@ -160,25 +149,29 @@ describe("effectiveRole — the documented access table", () => {
 })
 
 describe("effectiveRole — the anonymous invariant", () => {
-  it("never elevates an anonymous caller above viewer, for ANY visibility or general role", () => {
+  it("never elevates an anonymous caller above viewer, for ANY visibility, lock, or general role", () => {
     const generalRoles: GeneralRole[] = ["viewer", "commenter"]
     for (const v of VISIBILITIES) {
       for (const g of generalRoles) {
-        for (const unlocked of [false, true]) {
-          const role = effectiveRole({ kind: "anon", unlocked }, v, g)
-          expect(role === null || role === "viewer", `anon ${v}/${g}/unlocked=${unlocked}`).toBe(
-            true,
-          )
+        for (const locked of [false, true]) {
+          for (const unlocked of [false, true]) {
+            const role = effectiveRole({ kind: "anon", locked, unlocked }, v, g)
+            expect(
+              role === null || role === "viewer",
+              `anon ${v}/${g}/locked=${locked}/unlocked=${unlocked}`,
+            ).toBe(true)
+          }
         }
       }
     }
   })
 
-  it("gives an anon caller view on an open link, and no access on org", () => {
-    expect(effectiveRole(anon, "link", "commenter")).toBe("viewer")
+  it("gives an anon caller view on a public link, and no access on org or a lock", () => {
     expect(effectiveRole(anon, "public")).toBe("viewer")
+    expect(effectiveRole(anon, "public", "commenter")).toBe("viewer")
     expect(effectiveRole(anon, "org", "commenter")).toBeNull()
-    expect(effectiveRole(anon, "password", "commenter")).toBeNull()
+    expect(effectiveRole({ kind: "anon", locked: true }, "public", "commenter")).toBeNull()
+    expect(effectiveRole({ kind: "anon", locked: true, unlocked: true }, "public")).toBe("viewer")
   })
 })
 
@@ -190,8 +183,8 @@ describe("can — the one authorization gate", () => {
         expect(can(anon, action, v, "commenter"), `anon ${action} on ${v}`).toBe(false)
   })
 
-  it("lets an anon caller read an open link but not a private one", () => {
-    expect(can(anon, "read", "link")).toBe(true)
+  it("lets an anon caller read a public doc but not a workspace one", () => {
+    expect(can(anon, "read", "public")).toBe(true)
     expect(can(anon, "read", "org")).toBe(false)
   })
 

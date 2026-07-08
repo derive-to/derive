@@ -36,6 +36,7 @@ import {
   rateLimited,
 } from "./lib/rate-limit"
 import { log } from "./log"
+import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
 
@@ -194,6 +195,10 @@ export interface AppDeps {
    * the sync inline to completion, so a "Sync now" still finishes within the request.
    */
   startSync?: (sourceId: string) => void
+  /** Enqueue + drain preview renders (true when a renderer is configured). */
+  renderPreviews?: boolean
+  /** Wake the preview worker after enqueuing (Workers: poke the PreviewRenderer DO). */
+  pokePreviews?: () => void
 }
 
 /**
@@ -250,6 +255,22 @@ export function buildContext(deps: AppDeps) {
           error: err instanceof Error ? err.message : String(err),
         }),
       )
+
+  // Enqueue a screenshot render for a newly-published version. Fire-and-forget,
+  // mirroring `notify` above: non-fatal (logged on error), never awaited in the
+  // request path. Gated by deps.renderPreviews so self-hosted deployments without
+  // a renderer configured never attempt to enqueue.
+  const notifyRender = (a: ArtifactRecord, n: number): void => {
+    if (!deps.renderPreviews) return
+    enqueueRender(meta, a.id, n)
+      .then(() => deps.pokePreviews?.())
+      .catch((err) =>
+        log.error("preview enqueue failed", {
+          artifact: a.short_id,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      )
+  }
 
   // Run after-the-response work without blocking the reply. On Workers the request
   // executionCtx keeps the isolate alive past the sent response via waitUntil; on
@@ -362,6 +383,11 @@ export function buildContext(deps: AppDeps) {
   // human the agent acts for, resolved in lockstep and surfaced on the agent Principal.
   const agentCache = new WeakMap<Context, AgentRecord | null>()
   const onBehalfOfCache = new WeakMap<Context, string | null>()
+  // The OAuth grant behind an agent principal, when there is one — registered
+  // dk_agt_ tokens leave this unset. Managemently-scoped routes read it to tell
+  // the two apart: a grant carries the consenting user's scopes; a registered
+  // token carries only a runtime role.
+  const oauthGrantCache = new WeakMap<Context, { ownerId: string; scopeRole: Role }>()
   const agentFor = async (c: Context): Promise<AgentRecord | null> => {
     if (agentCache.has(c)) return agentCache.get(c) ?? null
     const b = bearer(c)
@@ -381,6 +407,7 @@ export function buildContext(deps: AppDeps) {
         if (o) {
           a = o.rec
           owner = o.ownerId
+          oauthGrantCache.set(c, { ownerId: o.ownerId, scopeRole: o.scopeRole })
           // An OAuth agent may act in any workspace its granting user belongs to:
           // an explicit X-Derive-Workspace header, validated against the OWNER's
           // membership, re-homes the agent record itself — so activeWorkspace AND
@@ -408,6 +435,21 @@ export function buildContext(deps: AppDeps) {
   // A thin read of the one Principal, so the delegation rule lives in exactly one place.
   const privateOwnerId = async (c: Context): Promise<string | null> =>
     principalOwnerId(await resolvePrincipal(c))
+
+  // The human allowed to MANAGE through this request: a signed-in user, or an
+  // OAuth grant whose scopes reach manage-grade (scopeRole owner — only
+  // derive:manage maps there), acting as its grantor. Registered dk_agt_ tokens
+  // are runtime principals (answer sessions, publish charts) and never
+  // management ones — a stolen runner token must not be able to rewire or tear
+  // down the surfaces it serves. Capability gates still apply on top: the
+  // grant's role stays capped by the grantor's actual membership.
+  const managementPrincipal = async (c: Context): Promise<string | null> => {
+    const me = await currentUser(c)
+    if (me) return me.id
+    await agentFor(c) // resolves the bearer and fills the grant cache
+    const grant = oauthGrantCache.get(c)
+    return grant && grant.scopeRole === "owner" ? grant.ownerId : null
+  }
 
   // The acting identity (agent or signed-in user) for authorship bylines; null when
   // anonymous. Agents author as their name, never spoofing a person. Also a Principal read.
@@ -533,16 +575,17 @@ export function buildContext(deps: AppDeps) {
   }
 
   const actorFor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
-    // For a `password` artifact, has this visitor entered the password? The unlock
-    // cookie's value is derived from the server-only hash, so it can't be forged.
+    // A password on the artifact is a lock on its public link. Has this visitor
+    // entered it? The unlock cookie's value is derived from the server-only
+    // hash, so it can't be forged.
+    const hash = a.password_hash
+    const locked = !!hash
     const unlocked =
-      a.visibility === "password" &&
-      !!a.password_hash &&
-      safeEqual(getCookie(c, unlockCookie(a.short_id)) ?? "", unlockToken(a.id, a.password_hash))
+      !!hash && safeEqual(getCookie(c, unlockCookie(a.short_id)) ?? "", unlockToken(a.id, hash))
     // Narrow the one Principal to this artifact's Actor (the can() input).
     const p = await resolvePrincipal(c)
     if (p.kind === "token") return { kind: "token" }
-    if (p.kind === "anonymous") return { kind: "anon", unlocked }
+    if (p.kind === "anonymous") return { kind: "anon", locked, unlocked }
     if (p.kind === "agent") {
       const ag = p.agent
       // An agent acts AS ITS REGISTRANT, capped at its registered role and bound
@@ -567,6 +610,7 @@ export function buildContext(deps: AppDeps) {
         userId: ag.id,
         artifactRole: maxRole(own?.role ?? null, derived),
         orgRole,
+        locked,
       }
     }
     // A signed-in human. Baseline role = membership in the ARTIFACT's workspace. Opening a
@@ -579,7 +623,7 @@ export function buildContext(deps: AppDeps) {
     // folded in alongside any per-artifact share (the higher wins).
     const cRoles = await meta.collectionRolesForArtifact(a.id, me.id)
     const artifactRole = maxRole(am?.role ?? null, ...cRoles)
-    return { kind: "user", userId: me.id, artifactRole, orgRole, unlocked }
+    return { kind: "user", userId: me.id, artifactRole, orgRole, locked, unlocked }
   }
 
   /** Authorize an action against a specific artifact. The artifact's general-access role
@@ -698,12 +742,14 @@ export function buildContext(deps: AppDeps) {
     commentLimiter,
     unlockLimiter,
     notify,
+    notifyRender,
     background,
     currentUser,
     agentFor,
     resolvePrincipal,
     actingUser,
     privateOwnerId,
+    managementPrincipal,
     limited,
     overStorage,
     ensureMembership,

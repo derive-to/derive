@@ -79,7 +79,7 @@ function deriveFilter(
   if (view === "following") return { kind: "following" }
   if (view === "shared") return { kind: "shared" }
   if (view === "feedback") return { kind: "feedback" }
-  if (search.tab === "drafts") return { kind: "unlisted" }
+  if (search.tab === "mine") return { kind: "mine" }
   if (search.tag) return { kind: "tag", tag: search.tag }
   if (search.collection)
     return {
@@ -125,7 +125,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
     collection: search.collection,
     favorite: view === "favorites" || undefined,
     author: search.author,
-    scope: filter.kind === "unlisted" ? ("unlisted" as const) : scopeFor(view),
+    scope: filter.kind === "mine" ? ("mine" as const) : scopeFor(view),
   }
   const { query: feed, items, listQuery, toggleFavorite, deleteArtifact } = useLibraryFeed(params)
   const { isPending, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = feed
@@ -275,8 +275,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
             ? "Shared with you"
             : filter.kind === "feedback"
               ? "Needs your feedback"
-              : filter.kind === "unlisted"
-                ? "Drafts"
+              : filter.kind === "mine"
+                ? "Created by me"
                 : filter.kind === "tag"
                   ? `#${filter.tag}`
                   : collectionTitle
@@ -289,8 +289,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
       ? summary?.total
       : filter.kind === "favorites"
         ? summary?.favorites
-        : filter.kind === "unlisted"
-          ? summary?.unlisted
+        : filter.kind === "mine"
+          ? summary?.mine
           : filter.kind === "tag"
             ? summary?.tags.find((t) => t.tag === filter.tag)?.count
             : filter.kind === "collection"
@@ -425,13 +425,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
           <RepoPullRequests prs={repoPrs} repo={activeCollection?.repo} activeId={filter.id} />
         </>
       ) : view === "all" && !isSearching ? (
-        // Always both tabs, even over the first-run guide — an agent's first
-        // draft can exist before any shared artifact does, and the empty Drafts
-        // tab is itself how the concept gets discovered (round-1 decision).
+        // Always both tabs, even over the first-run guide — an empty "Created
+        // by me" tab is a fine place to land before you've published anything.
         <LibraryTabs
-          active={filter.kind === "unlisted" ? "drafts" : "all"}
+          active={filter.kind === "mine" ? "mine" : "all"}
           total={summary?.total}
-          drafts={summary?.unlisted}
+          mine={summary?.mine}
+          pending={summary?.mine_private}
         />
       ) : (
         // Hide the heading on a brand-new empty home — the visual guide carries it.
@@ -638,26 +638,29 @@ function SyncedCollection({
   )
 }
 
-// The home library's two tabs: your shared work and your drafts. Always both —
-// the empty Drafts tab is how the concept gets discovered (see the sidebar-
-// cleanup plan's round-1 decisions). Route stays "/", the tab rides ?tab=drafts.
+// The home library's two tabs: everything, and just what you created. Route
+// stays "/", the tab rides ?tab=mine. `pending` counts your still-link-only
+// docs — the "waiting on you to surface it" signal the old Drafts badge
+// carried — shown as an accent pill beside the neutral total.
 function LibraryTabs({
   active,
   total,
-  drafts,
+  mine,
+  pending,
 }: {
-  active: "all" | "drafts"
+  active: "all" | "mine"
   total?: number
-  drafts?: number
+  mine?: number
+  pending?: number
 }) {
   const nav = useNavigate()
-  const tab = (id: "all" | "drafts", label: string, count?: number) => (
+  const tab = (id: "all" | "mine", label: string, count?: number, accent?: number) => (
     <button
       type="button"
       data-testid={`library-tab-${id}`}
       aria-current={active === id ? "page" : undefined}
       onClick={() =>
-        nav({ to: "/", search: (s) => ({ ...s, tab: id === "drafts" ? "drafts" : undefined }) })
+        nav({ to: "/", search: (s) => ({ ...s, tab: id === "mine" ? "mine" : undefined }) })
       }
       className={cn(
         "flex items-center gap-1.5 border-b-2 pb-2 text-sm font-medium transition-colors",
@@ -670,12 +673,20 @@ function LibraryTabs({
       {count != null && (
         <span className="font-mono text-2xs tabular-nums text-muted-foreground">{count}</span>
       )}
+      {accent != null && accent > 0 && (
+        <span
+          title={`${accent} link-only — hidden from the shared library until shared wider`}
+          className="rounded-full bg-primary/10 px-1.5 font-mono text-2xs tabular-nums text-primary"
+        >
+          {accent}
+        </span>
+      )}
     </button>
   )
   return (
     <div className="mb-3.5 flex items-center gap-5 border-b border-border-soft">
       {tab("all", "All artifacts", total)}
-      {tab("drafts", "Drafts", drafts)}
+      {tab("mine", "Created by me", mine, pending)}
     </div>
   )
 }
@@ -725,12 +736,12 @@ function emptyStateFor(
         title: "Nothing shared with you yet.",
         description: "When someone shares an artifact with you, it shows up here.",
       }
-    case "unlisted":
+    case "mine":
       return {
         icon: <Icon name="sparkles" strokeWidth={1.75} />,
-        title: "No drafts yet.",
+        title: "Nothing you've created yet.",
         description:
-          "Your agent's drafts land here until you share them — everything it writes stays out of the team's way until you say so.",
+          "Publish something, or connect an agent — everything you or your agents create shows up here, whatever its audience.",
         action: (
           <Button
             variant="outline"

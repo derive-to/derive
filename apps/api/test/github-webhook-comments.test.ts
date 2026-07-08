@@ -30,7 +30,7 @@ const seedPrSource = async (meta: Awaited<ReturnType<typeof quotaApp>>["meta"]) 
     org_id: "default",
     slug: null,
     title: "Doc",
-    visibility: "link",
+    visibility: "public",
     kind: "file",
     spa: 0,
   })

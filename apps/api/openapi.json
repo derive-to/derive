@@ -32,23 +32,18 @@
             "type": "string",
             "nullable": true
           },
+          "teammate": {
+            "type": "boolean"
+          },
           "stats": {
             "type": "object",
             "properties": {
               "works": {
                 "type": "number"
-              },
-              "followers": {
-                "type": "number"
-              },
-              "following": {
-                "type": "number"
               }
             },
             "required": [
-              "works",
-              "followers",
-              "following"
+              "works"
             ]
           },
           "followed_by_me": {
@@ -92,12 +87,18 @@
             "type": "string",
             "enum": [
               "public",
-              "link",
               "org",
-              "password",
-              "private",
-              "unlisted"
+              "private"
             ]
+          },
+          "password_protected": {
+            "type": "boolean"
+          },
+          "org_id": {
+            "type": "string"
+          },
+          "raw_token": {
+            "type": "string"
           },
           "spa": {
             "type": "boolean"
@@ -190,6 +191,9 @@
             }
           },
           "favorite": {
+            "type": "boolean"
+          },
+          "has_preview": {
             "type": "boolean"
           },
           "open_proposals": {
@@ -585,21 +589,12 @@
           "slackPost": {
             "type": "boolean"
           },
-          "defaultUnlistedRole": {
-            "type": "string",
-            "enum": [
-              "viewer",
-              "commenter"
-            ]
-          },
           "defaultAgentVisibility": {
             "type": "string",
             "enum": [
-              "unlisted",
-              "private",
+              "public",
               "org",
-              "link",
-              "public"
+              "private"
             ]
           }
         },
@@ -609,7 +604,6 @@
           "githubMirrorComments",
           "githubPreviewLink",
           "slackPost",
-          "defaultUnlistedRole",
           "defaultAgentVisibility"
         ]
       },
@@ -622,6 +616,9 @@
           "active": {
             "type": "string"
           },
+          "account": {
+            "$ref": "#/components/schemas/AccountSummary"
+          },
           "workspaces": {
             "type": "array",
             "items": {
@@ -632,7 +629,30 @@
         "required": [
           "multi",
           "active",
+          "account",
           "workspaces"
+        ]
+      },
+      "AccountSummary": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "handle",
+          "name"
         ]
       },
       "WorkspaceSummary": {
@@ -652,12 +672,16 @@
               "editor",
               "owner"
             ]
+          },
+          "personal": {
+            "type": "boolean"
           }
         },
         "required": [
           "id",
           "name",
-          "role"
+          "role",
+          "personal"
         ]
       },
       "Agent": {
@@ -2306,7 +2330,7 @@
         "tags": [
           "Session"
         ],
-        "summary": "Browse (or search) the discoverable people directory.",
+        "summary": "Browse the people you work with (optionally filtered by ?query=).",
         "responses": {
           "200": {
             "description": "Public profiles (public fields only).",
@@ -2408,88 +2432,6 @@
                   "required": [
                     "artifacts",
                     "next_cursor"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/users/{handle}/followers": {
-      "get": {
-        "tags": [
-          "Session"
-        ],
-        "summary": "Who follows this user (signed-in only).",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "handle",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Followers as public profiles.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "users": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/PublicProfile"
-                      }
-                    }
-                  },
-                  "required": [
-                    "users"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/users/{handle}/following": {
-      "get": {
-        "tags": [
-          "Session"
-        ],
-        "summary": "Who this user follows (signed-in only).",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "handle",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Following as public profiles.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "users": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/PublicProfile"
-                      }
-                    }
-                  },
-                  "required": [
-                    "users"
                   ]
                 }
               }
@@ -3204,7 +3146,7 @@
         "summary": "Browse summary for the sidebar (totals + tag counts).",
         "responses": {
           "200": {
-            "description": "Total artifacts, the caller's favorite/unlisted counts, tag→count, and workspace name.",
+            "description": "Total artifacts, the caller's favorite/owned counts, tag→count, and workspace name.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3216,7 +3158,10 @@
                     "favorites": {
                       "type": "number"
                     },
-                    "unlisted": {
+                    "mine": {
+                      "type": "number"
+                    },
+                    "mine_private": {
                       "type": "number"
                     },
                     "tags": {
@@ -3245,7 +3190,8 @@
                   "required": [
                     "total",
                     "favorites",
-                    "unlisted",
+                    "mine",
+                    "mine_private",
                     "tags",
                     "workspace"
                   ]
@@ -3325,7 +3271,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The new visibility + general-access role.",
+            "description": "The new visibility, general-access role, and lock state.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3335,11 +3281,8 @@
                       "type": "string",
                       "enum": [
                         "public",
-                        "link",
                         "org",
-                        "password",
-                        "private",
-                        "unlisted"
+                        "private"
                       ]
                     },
                     "general_role": {
@@ -3348,11 +3291,15 @@
                         "viewer",
                         "commenter"
                       ]
+                    },
+                    "locked": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
                     "visibility",
-                    "general_role"
+                    "general_role",
+                    "locked"
                   ]
                 }
               }
@@ -3391,6 +3338,44 @@
                   },
                   "required": [
                     "locked"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/move": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Move an artifact to another workspace you belong to (owner only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact's new workspace id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "org_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "org_id"
                   ]
                 }
               }

@@ -54,7 +54,13 @@ export const Artifact = z
     kind: z.enum(["file", "bundle"]),
     current_content_type: z.string().nullable().optional(),
     locked: z.boolean().optional(),
-    visibility: z.enum(["public", "link", "org", "password", "private", "unlisted"]),
+    visibility: z.enum(["public", "org", "private"]),
+    /** The public link carries a password lock (never the password itself). */
+    password_protected: z.boolean().optional(),
+    /** The artifact's workspace id — returned on list + detail; drives move-to-workspace. */
+    org_id: z.string().optional(),
+    /** A signed, short-lived token for fetching this artifact's raw content (detail only). */
+    raw_token: z.string().optional(),
     /** Single-page app bundle flag (present on the tombstone branch of the detail view). */
     spa: z.boolean().optional(),
     general_role: z.enum(["viewer", "commenter"]).optional(),
@@ -78,6 +84,8 @@ export const Artifact = z
     my_role: z.enum(["viewer", "commenter", "editor", "owner"]).nullable().optional(),
     tags: z.array(z.string()).optional(),
     favorite: z.boolean().optional(),
+    /** The current version has a ready screenshot preview render. */
+    has_preview: z.boolean().optional(),
     open_proposals: z.number().optional(),
     proposals_total: z.number().optional(),
     open_threads: z.number().optional(),

@@ -77,9 +77,14 @@ describe("str / visibilityOf — input coercion", () => {
     expect(str(null)).toBeUndefined()
   })
 
-  it("visibilityOf accepts only the known visibilities", () => {
-    for (const v of ["public", "link", "org", "password", "private"])
-      expect(visibilityOf(v)).toBe(v)
+  it("visibilityOf accepts the three visibilities and maps the legacy vocabulary", () => {
+    for (const v of ["public", "org", "private"]) expect(visibilityOf(v)).toBe(v)
+    // Pre-collapse client values keep working: link/password → public,
+    // unlisted → private, workspace → org.
+    expect(visibilityOf("link")).toBe("public")
+    expect(visibilityOf("password")).toBe("public")
+    expect(visibilityOf("unlisted")).toBe("private")
+    expect(visibilityOf("workspace")).toBe("org")
     for (const bad of ["secret", "", "PUBLIC", null, 3]) expect(visibilityOf(bad)).toBeUndefined()
   })
 })

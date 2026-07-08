@@ -21,7 +21,7 @@ import {
 
 describe("view analytics", () => {
   it("de-dups rapid re-opens and aggregates uniques, per-version, recent viewers", async () => {
-    const { short_id } = await (await upload("a.md", "# A", { visibility: "link" })).json()
+    const { short_id } = await (await upload("a.md", "# A", { visibility: "public" })).json()
     await upload("a.md", "# A v2", { message: "v2" }, short_id) // now at v2
 
     // Three rapid opens from one anonymous viewer (cookie reused) collapse to ONE
@@ -180,7 +180,7 @@ describe("analytics: identity + retention", () => {
 
   it("excludes the owner's own opens; counts a viewer (by name + avatar) and anon", async () => {
     const sid = (
-      await (await publishAs(app, "<h1>v</h1>", { visibility: "link" }, as(ann.email))).json()
+      await (await publishAs(app, "<h1>v</h1>", { visibility: "public" }, as(ann.email))).json()
     ).short_id
     // Ann is the workspace owner (first member). Her own opens don't count.
     for (let i = 0; i < 2; i++)

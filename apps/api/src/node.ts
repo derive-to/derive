@@ -9,7 +9,7 @@ import { serve } from "@hono/node-server"
 import Database from "better-sqlite3"
 import { Pool } from "pg"
 import { createApp } from "./app"
-import { type AuthDb, makeAuth, migrateAuth } from "./auth-config"
+import { type AuthDb, makeAuth, migrateAuth, OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
 import { configWarnings } from "./config-manifest"
 import { workspacesBlockingDeletion } from "./lib/account"
@@ -21,6 +21,8 @@ import { makeSlackSender } from "./lib/slack-comments"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { createNodeSyncRunner } from "./node-sync"
+import { playwrightRenderer } from "./preview-node"
+import { startPreviewWorker } from "./previews"
 import { type ChannelSenders, enqueueChannelDelivery, startWebhookWorker } from "./webhooks"
 import { nodeDnsGuard } from "./webhooks-node"
 
@@ -178,6 +180,29 @@ if (defaultOrg !== "local") {
   }
 }
 
+// One-time collapse of the pre-3-value visibility vocabulary (see
+// docs/plans/visibility-collapse.md). unlisted → private (the draft intent —
+// owner rows preserve access, nothing widens); link → public (reach was already
+// anyone-with-URL); password → public with the hash KEPT (the password is now a
+// lock on the public link, gating exactly as before). Idempotent: no rows keep
+// a legacy value afterward, so re-runs match nothing.
+{
+  const remap: [string, string][] = [
+    ["unlisted", "private"],
+    ["link", "public"],
+    ["password", "public"],
+  ]
+  if (cfg.databaseUrl) {
+    const pool = authDb as Pool
+    for (const [from, to] of remap)
+      await pool.query(`UPDATE artifact SET visibility = $1 WHERE visibility = $2`, [to, from])
+  } else {
+    const db = authDb as Database.Database
+    for (const [from, to] of remap)
+      db.prepare(`UPDATE artifact SET visibility = ? WHERE visibility = ?`).run(to, from)
+  }
+}
+
 // Blobs: S3/R2 when OBJECT_STORE_URL is set, else local disk (zero-config).
 const blobs: BlobStore = cfg.objectStoreUrl
   ? s3FromUrl(cfg.objectStoreUrl)
@@ -209,6 +234,20 @@ const channelSenders: ChannelSenders = {
   slack_app: makeSlackSender(meta, authSecret),
 }
 const webhookWorker = startWebhookWorker(meta, nodeDnsGuard, channelSenders)
+
+// Preview render worker: an in-process interval + poke that renders screenshot jobs via
+// Playwright Chromium. Only started when DERIVE_PREVIEWS=true; when off the render queue
+// is never enqueued (renderPreviews stays false below) and no worker runs.
+const previewWorker = cfg.previews
+  ? startPreviewWorker({
+      meta,
+      blobs,
+      renderer: playwrightRenderer(),
+      baseUrl: cfg.baseUrl,
+      sandboxOrigin: cfg.sandboxOrigin,
+      secret: authSecret,
+    })
+  : undefined
 
 // GitHub-sync runner: drives a triggered sync to completion in-process (detached from
 // the request) so it survives the user navigating away — the self-host counterpart to
@@ -254,6 +293,9 @@ const app = createApp({
   commentRate: cfg.commentRate,
   // Deliver freshly enqueued events immediately instead of on the next interval.
   pokeWebhooks: webhookWorker.poke,
+  // Enqueue a render job on publish and drain on demand when previews are enabled.
+  renderPreviews: cfg.previews,
+  pokePreviews: previewWorker?.poke,
   // Run a triggered GitHub sync in the background so it survives a closed tab.
   startSync: syncRunner.start,
 })
@@ -272,7 +314,9 @@ if (cfg.serveWeb && shellHtml !== undefined)
 // prune keeps the append-only view table bounded. 0 disables pruning entirely.
 // Daily maintenance: prune the rolling view window (when retention is on) and reap
 // abandoned anonymous OAuth clients (open-DCR rows never consented, holding no
-// tokens, > 1 day old). The reaper runs regardless of view retention.
+// tokens, > OAUTH_ANON_CLIENT_TTL_MS old). The reaper runs regardless of view
+// retention; the authorize-time self-heal in app.ts covers a client that slips
+// through anyway.
 let pruneTimer: ReturnType<typeof setInterval> | undefined
 const maintain = async () => {
   if (cfg.retentionDays > 0)
@@ -280,7 +324,7 @@ const maintain = async () => {
       .pruneViews(new Date(Date.now() - cfg.retentionDays * 86400_000).toISOString())
       .catch(() => 0)
   await meta
-    .pruneStaleOAuthClients(new Date(Date.now() - 24 * 3600_000).toISOString())
+    .pruneStaleOAuthClients(new Date(Date.now() - OAUTH_ANON_CLIENT_TTL_MS).toISOString())
     .catch(() => 0)
 }
 void maintain()
@@ -351,7 +395,10 @@ const shutdown = makeShutdown({
     closeIdleConnections:
       "closeIdleConnections" in server ? () => server.closeIdleConnections() : undefined,
   },
-  stopWorker: webhookWorker.stop,
+  stopWorker: () => {
+    webhookWorker.stop()
+    previewWorker?.stop()
+  },
   clearTimers: () => {
     if (pruneTimer) clearInterval(pruneTimer)
     clearInterval(syncResumeTimer)

@@ -4,12 +4,12 @@ import { STORAGE_KEYS } from "../../src/lib/storage-keys"
 import { expect, test } from "../fixtures"
 
 // The strong MCP loop, browser side: an agent-credentialed publish auto-opens the
-// owner's tab (a created draft navigates; a revision live-reloads with the review
-// card repainting), drafts land unlisted (hidden from the library, one link away
-// in the Unlisted feed) until the share dialog promotes them, and the per-device
-// toggle downgrades auto-open to a notification. The agent side is the real
-// token + API — the same calls the MCP server and CLI make — so the loop under
-// test is the shipped one, not a mock.
+// owner's tab (a created artifact navigates; a revision live-reloads with the review
+// card repainting), agent publishes land private (the owner's draft — invisible
+// to teammates until the share dialog promotes it) and the per-device toggle
+// downgrades auto-open to a notification. The
+// agent side is the real token + API — the same calls the MCP server and CLI
+// make — so the loop under test is the shipped one, not a mock.
 
 async function createAgent(
   req: APIRequestContext,
@@ -43,7 +43,7 @@ async function agentPublish(
   return (await res.json()) as { short_id: string; visibility: string; opened_in_tab?: boolean }
 }
 
-test.describe("the MCP loop — auto-open, live rounds, unlisted drafts", () => {
+test.describe("the MCP loop — auto-open, live rounds, private drafts", () => {
   test("a created agent draft auto-opens the tab; a revision live-reloads and repaints the review card", async ({
     owner,
   }) => {
@@ -59,7 +59,7 @@ test.describe("the MCP loop — auto-open, live rounds, unlisted drafts", () => 
       content: "<h1>Draft v1</h1><p>alpha</p>",
       requestReview: true,
     })
-    expect(created.visibility).toBe("unlisted")
+    expect(created.visibility).toBe("private")
     await expect(owner).toHaveURL(new RegExp(`/artifacts/.*${created.short_id}`), {
       timeout: 10_000,
     })
@@ -88,14 +88,14 @@ test.describe("the MCP loop — auto-open, live rounds, unlisted drafts", () => 
     await expect(owner.getByTestId("review-card")).toBeVisible({ timeout: 10_000 })
   })
 
-  test("unlisted drafts hide from the library until the share dialog promotes them; the toggle quiets auto-open", async ({
+  test("agent drafts stay the owner's until promoted to Workspace; the toggle quiets auto-open", async ({
     owner,
   }) => {
     const agent = await createAgent(owner.request, "Drafter")
     await owner.goto("/")
     await expect(owner.getByTestId("notif-bell")).toBeVisible()
     // Auto-open off (the Appearance toggle writes the same key) → a created
-    // draft must NOT yank navigation; it lands as a notification instead.
+    // publish must NOT yank navigation; it lands as a notification instead.
     await owner.evaluate((key) => localStorage.setItem(key, "off"), STORAGE_KEYS.autoOpen)
     await owner.waitForTimeout(500)
 
@@ -103,29 +103,31 @@ test.describe("the MCP loop — auto-open, live rounds, unlisted drafts", () => 
       title: "Hidden Draft",
       content: "<h1>hush</h1>",
     })
-    expect(created.visibility).toBe("unlisted")
+    expect(created.visibility).toBe("private")
     await owner.waitForTimeout(1000)
     await expect(owner).toHaveURL(/\/$/) // still home — the toggle held navigation
 
-    // Hidden from the All grid, but the Drafts tab (always present on home,
-    // even before the first draft existed) has it, with a live count.
-    await expect(owner.getByTestId("library-tab-drafts")).toBeVisible()
-    await expect(owner.getByText("Hidden Draft")).toHaveCount(0)
-    await owner.getByTestId("library-tab-drafts").click()
-    await expect(owner).toHaveURL(/tab=drafts/)
+    // A private draft is the owner's: it shows in THEIR library (private rows
+    // list for their members), carries the Private chip, and narrows under
+    // Created by me — the agent published on the owner's behalf.
+    await owner.reload()
+    await expect(owner.getByText("Hidden Draft").first()).toBeVisible()
+    await owner.getByTestId("library-tab-mine").click()
+    await expect(owner).toHaveURL(/tab=mine/)
     await expect(owner.getByText("Hidden Draft").first()).toBeVisible()
 
-    // Promote: share dialog → Workspace only. One gesture, now it lists.
+    // Promote: share dialog → Workspace. One gesture, now it lists in All artifacts too.
     await owner.goto(`/artifacts/${created.short_id}`)
     await owner.getByTestId("share-trigger").click()
     await owner.getByTestId("share-visibility").click()
-    await owner.getByRole("menuitemradio", { name: "Workspace only" }).click()
+    await owner.getByRole("menuitemradio", { name: "Workspace", exact: true }).click()
     await owner.keyboard.press("Escape")
 
     await owner.goto("/")
     await expect(owner.getByText("Hidden Draft").first()).toBeVisible({ timeout: 10_000 })
-    // The Drafts tab stays (always-on chrome, the teaching surface) — it's just
-    // empty again now that the doc was promoted to the workspace.
-    await expect(owner.getByTestId("library-tab-drafts")).toBeVisible()
+    // Created by me is authorship, not visibility — it keeps finding the doc
+    // no matter how widely it's since been shared.
+    await owner.getByTestId("library-tab-mine").click()
+    await expect(owner.getByText("Hidden Draft").first()).toBeVisible()
   })
 })

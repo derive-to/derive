@@ -16,6 +16,16 @@ describe("oauth consent screen", () => {
     expect(html).toContain("Propose new versions")
   })
 
+  it("labels the manage scope — a manage-grade grant must never render as an unknown blob", () => {
+    const managed = consentHTML({
+      clientName: "Derive CLI",
+      scopes: ["openid", "derive:manage"],
+      query: "",
+    })
+    expect(managed).toContain("Manage agents and contexts")
+    expect(managed).toContain("only as far as your workspace role allows")
+  })
+
   it("ships the branded post-approve confirmation card + the goConnected handoff", () => {
     expect(html).toContain("var CONNECTED =")
     expect(html).toContain("function goConnected(")
@@ -38,7 +48,9 @@ describe("oauth consent screen", () => {
     expect(evil).toContain("&lt;script&gt;")
   })
 
-  it("renders the workspace picker with the bound/active workspace preselected", () => {
+  it("never renders the workspace picker — every grant covers all workspaces for now", () => {
+    // Multiple workspaces, a clientId to bind to, and an explicit selection:
+    // exactly the shape that used to render a <select>. It shouldn't anymore.
     const multi = consentHTML({
       clientName: "Claude Code",
       scopes: ["openid"],
@@ -50,17 +62,16 @@ describe("oauth consent screen", () => {
       ],
       selected: "w2",
     })
-    expect(multi).toContain('<select id="ws"')
-    expect(multi).toContain('value="w2" selected')
-    expect(multi).toContain("Acme &lt;evil&gt;") // workspace names are escaped
+    expect(multi).not.toContain('<select id="ws"')
+    expect(multi).not.toContain("Default workspace")
+    // The rest of the card still renders normally around the absent picker.
+    expect(multi).toContain("Claude Code")
+    // CLIENT_ID is still threaded through — saveWorkspace() (dead now that
+    // #ws never exists) short-circuits on its own `!ws` guard rather than
+    // needing this page to know the picker is gone.
     expect(multi).toContain('var CLIENT_ID = "cli_1"')
-    // The binding is saved only after the consent POST succeeds — an abandoned
-    // or denied consent must not re-point tokens from an earlier grant.
-    expect(multi).toContain("var saved = await saveWorkspace()")
-    expect(multi).toContain("goConnected(to, saved")
-  })
 
-  it("renders (and binds) a single workspace too — the choice pins the grant", () => {
+    // Single workspace, no clientId, no workspaces at all — every shape omits it.
     const single = consentHTML({
       clientName: "Claude Code",
       scopes: ["openid"],
@@ -69,11 +80,7 @@ describe("oauth consent screen", () => {
       workspaces: [{ id: "w1", name: "Personal" }],
       selected: "w1",
     })
-    expect(single).toContain('<select id="ws"')
-    expect(single).toContain('value="w1" selected')
-  })
-
-  it("omits the picker when there is nothing to bind", () => {
+    expect(single).not.toContain('<select id="ws"')
     const noClient = consentHTML({
       clientName: "Claude Code",
       scopes: ["openid"],

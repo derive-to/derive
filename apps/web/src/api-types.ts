@@ -252,7 +252,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Browse (or search) the discoverable people directory. */
+        /** Browse the people you work with (optionally filtered by ?query=). */
         get: {
             parameters: {
                 query?: never;
@@ -351,86 +351,6 @@ export interface paths {
                         "application/json": {
                             artifacts: components["schemas"]["Artifact"][];
                             next_cursor: string | null;
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/users/{handle}/followers": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Who follows this user (signed-in only). */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    handle: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Followers as public profiles. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            users: components["schemas"]["PublicProfile"][];
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/users/{handle}/following": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Who this user follows (signed-in only). */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    handle: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Following as public profiles. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            users: components["schemas"]["PublicProfile"][];
                         };
                     };
                 };
@@ -1273,7 +1193,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Total artifacts, the caller's favorite/unlisted counts, tag→count, and workspace name. */
+                /** @description Total artifacts, the caller's favorite/owned counts, tag→count, and workspace name. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -1282,7 +1202,8 @@ export interface paths {
                         "application/json": {
                             total: number;
                             favorites: number;
-                            unlisted: number;
+                            mine: number;
+                            mine_private: number;
                             tags: {
                                 tag: string;
                                 count: number;
@@ -1384,7 +1305,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The new visibility + general-access role. */
+                /** @description The new visibility, general-access role, and lock state. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -1392,9 +1313,10 @@ export interface paths {
                     content: {
                         "application/json": {
                             /** @enum {string} */
-                            visibility: "public" | "link" | "org" | "password" | "private" | "unlisted";
+                            visibility: "public" | "org" | "private";
                             /** @enum {string} */
                             general_role: "viewer" | "commenter";
+                            locked: boolean;
                         };
                     };
                 };
@@ -1440,6 +1362,46 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/v1/artifacts/{shortId}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move an artifact to another workspace you belong to (owner only). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The artifact's new workspace id. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            org_id: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/artifacts/{shortId}/unlock": {
@@ -4527,10 +4489,9 @@ export interface components {
             profession?: string | null;
             about?: string | null;
             github_login?: string | null;
+            teammate?: boolean;
             stats?: {
                 works: number;
-                followers: number;
-                following: number;
             };
             followed_by_me?: boolean;
         };
@@ -4543,7 +4504,10 @@ export interface components {
             current_content_type?: string | null;
             locked?: boolean;
             /** @enum {string} */
-            visibility: "public" | "link" | "org" | "password" | "private" | "unlisted";
+            visibility: "public" | "org" | "private";
+            password_protected?: boolean;
+            org_id?: string;
+            raw_token?: string;
             spa?: boolean;
             /** @enum {string} */
             general_role?: "viewer" | "commenter";
@@ -4566,6 +4530,7 @@ export interface components {
             my_role?: "viewer" | "commenter" | "editor" | "owner" | null;
             tags?: string[];
             favorite?: boolean;
+            has_preview?: boolean;
             open_proposals?: number;
             proposals_total?: number;
             open_threads?: number;
@@ -4661,20 +4626,25 @@ export interface components {
             githubPreviewLink: boolean;
             slackPost: boolean;
             /** @enum {string} */
-            defaultUnlistedRole: "viewer" | "commenter";
-            /** @enum {string} */
-            defaultAgentVisibility: "unlisted" | "private" | "org" | "link" | "public";
+            defaultAgentVisibility: "public" | "org" | "private";
         };
         Workspaces: {
             multi: boolean;
             active: string;
+            account: components["schemas"]["AccountSummary"];
             workspaces: components["schemas"]["WorkspaceSummary"][];
         };
+        AccountSummary: {
+            id: string;
+            handle: string | null;
+            name: string | null;
+        } | null;
         WorkspaceSummary: {
             id: string;
             name: string;
             /** @enum {string} */
             role: "viewer" | "commenter" | "editor" | "owner";
+            personal: boolean;
         };
         Agent: {
             id: string;

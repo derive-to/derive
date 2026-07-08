@@ -88,6 +88,11 @@ export type SlackStatus = components["schemas"]["SlackStatus"]
 export type WorkspaceSummary = components["schemas"]["WorkspaceSummary"]
 /** The switcher payload: whether multi-workspace is on, the active id, the list. */
 export type Workspaces = components["schemas"]["Workspaces"]
+/** The one display rule for workspace names: the personal workspace renders as
+ *  "Personal" everywhere — its stored name is provisioning plumbing, not a name
+ *  the user chose. */
+export const workspaceDisplayName = (w: { name: string; personal: boolean }): string =>
+  w.personal ? "Personal" : w.name
 /** Per-artifact view stats. Generated from the OpenAPI spec. */
 export type Analytics = components["schemas"]["Analytics"]
 /** A resolved @mention: the picked user's id + the display name shown inline. */
@@ -275,10 +280,6 @@ export const api = {
     }).then(j)
   },
   // People who follow / are followed by this user (public profiles; no ids or email).
-  profileFollowers: (handle: string): Promise<{ users: PublicProfile[] }> =>
-    f(`/v1/users/${encodeURIComponent(handle)}/followers`, { credentials: "include" }).then(j),
-  profileFollowing: (handle: string): Promise<{ users: PublicProfile[] }> =>
-    f(`/v1/users/${encodeURIComponent(handle)}/following`, { credentials: "include" }).then(j),
   // Set your team role + "what you do" blurb (onboarding + Settings → Profile).
   // Omitted fields are left untouched; "" clears a field.
   setProfile: (fields: {
@@ -379,8 +380,10 @@ export const api = {
     /** "shared" → only artifacts explicitly shared with you (across workspaces).
      *  "following" → artifacts in the active workspace matching your follows
      *  (followed GitHub authors + repo path prefixes) — the activity feed.
-     *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on. */
-    scope?: "shared" | "following" | "needs_feedback" | "unlisted"
+     *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on.
+     *  "mine" → everything you published by hand in the active workspace, any
+     *  visibility included — the library's "Created by me" filter. */
+    scope?: "shared" | "following" | "needs_feedback" | "mine"
     cursor?: string
     limit?: number
   }): Promise<{
@@ -405,8 +408,10 @@ export const api = {
   browseSummary: (): Promise<{
     total: number
     favorites: number
-    /** The caller's own unlisted drafts — badges the library's Unlisted feed. */
-    unlisted: number
+    /** The caller's owned artifacts — badges the library's "Created by me" filter. */
+    mine: number
+    /** How many of those are still private — the pending signal. */
+    mine_private: number
     tags: { tag: string; count: number }[]
     workspace: string
   }> => f("/v1/tags", opts()).then(j),
@@ -431,8 +436,9 @@ export const api = {
     id: string,
     visibility: string,
     generalRole?: GeneralRole,
+    // A string (re)sets the lock on a public link; "" clears it; undefined keeps it.
     password?: string,
-  ): Promise<{ visibility: string; general_role: GeneralRole }> =>
+  ): Promise<{ visibility: string; general_role: GeneralRole; locked: boolean }> =>
     f(`/v1/artifacts/${id}/visibility`, {
       ...opts({ visibility, generalRole, password }),
       method: "PATCH",
@@ -442,6 +448,9 @@ export const api = {
       ...opts({ locked }),
       method: "PATCH",
     }).then(j),
+  // Move to a different workspace you belong to. Owner-only server-side.
+  moveArtifact: (id: string, targetOrgId: string): Promise<{ org_id: string }> =>
+    f(`/v1/artifacts/${id}/move`, opts({ targetOrgId })).then(j),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   restore: (id: string, version: number): Promise<Artifact> =>
@@ -656,8 +665,16 @@ export const api = {
   // The accept page: preview an invite by token, then join.
   previewInvite: (token: string): Promise<InvitePreview> =>
     f(`/v1/invites/${encodeURIComponent(token)}`, opts()).then(j),
-  acceptInvite: (token: string): Promise<{ org_id: string; role: Role }> =>
-    f(`/v1/invites/${encodeURIComponent(token)}/accept`, opts({})).then(j),
+  // confirmMismatch: the holder is signed in under a different email than the
+  // invite named — the server 409s until they explicitly accept anyway.
+  acceptInvite: (
+    token: string,
+    confirmMismatch?: boolean,
+  ): Promise<{ org_id: string; role: Role }> =>
+    f(
+      `/v1/invites/${encodeURIComponent(token)}/accept`,
+      opts(confirmMismatch ? { confirm_mismatch: true } : {}),
+    ).then(j),
   setWorkspaceMemberRole: (userId: string, role: Role): Promise<{ user_id: string; role: Role }> =>
     f(`/v1/workspace/members/${userId}`, { ...opts({ role }), method: "PATCH" }).then(j),
   removeWorkspaceMember: (userId: string): Promise<void> =>

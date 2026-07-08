@@ -36,8 +36,12 @@ export const workspaceRoutes = (ctx: AppContext) => {
   const roleEnum = z.enum(["viewer", "commenter", "editor", "owner"])
 
   const WorkspaceSummary = z
-    .object({ id: z.string(), name: z.string(), role: roleEnum })
+    .object({ id: z.string(), name: z.string(), role: roleEnum, personal: z.boolean() })
     .openapi("WorkspaceSummary")
+
+  const AccountSummary = z
+    .object({ id: z.string(), handle: z.string().nullable(), name: z.string().nullable() })
+    .openapi("AccountSummary")
 
   const Workspace = z
     .object({
@@ -55,8 +59,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
       githubMirrorComments: z.boolean(),
       githubPreviewLink: z.boolean(),
       slackPost: z.boolean(),
-      defaultUnlistedRole: z.enum(["viewer", "commenter"]),
-      defaultAgentVisibility: z.enum(["unlisted", "private", "org", "link", "public"]),
+      defaultAgentVisibility: z.enum(["public", "org", "private"]),
     })
     .openapi("OrgSettings")
 
@@ -87,7 +90,12 @@ export const workspaceRoutes = (ctx: AppContext) => {
     .openapi("InviteResult")
 
   const Workspaces = z
-    .object({ multi: z.boolean(), active: z.string(), workspaces: z.array(WorkspaceSummary) })
+    .object({
+      multi: z.boolean(),
+      active: z.string(),
+      account: AccountSummary.nullable(),
+      workspaces: z.array(WorkspaceSummary),
+    })
     .openapi("Workspaces")
 
   // A pending invite, minus the secret token (never leaves the server).
@@ -472,6 +480,18 @@ export const workspaceRoutes = (ctx: AppContext) => {
       const inv = await meta.getInvitationByToken(sha256(c.req.param("token")))
       if (!inv || inv.accepted_at || new Date(inv.expires_at).getTime() < Date.now())
         return bail(fail(c, 404, "this invitation is invalid or has expired"))
+      // Possession still authorizes (self-hosts without email verification must keep
+      // working), but a mismatched account is SURFACED, not silently joined: the
+      // holder must explicitly confirm they meant to accept under this identity.
+      // The web accept page pre-warns from the preview and sends the confirm with
+      // the click; the machine-readable 409 is for headless callers.
+      if (inv.email && inv.email.toLowerCase() !== me.email.toLowerCase()) {
+        const b = await readJson(c, z.object({ confirm_mismatch: z.boolean().optional() }))
+        // A malformed/absent body counts as "not confirmed", not a 400 — the 409
+        // carries the flow either way.
+        const confirmed = !(b instanceof Response) && b.confirm_mismatch === true
+        if (!confirmed) return bail(fail(c, 409, "email_mismatch", { invited_email: inv.email }))
+      }
       const existing = await meta.getMembership(inv.org_id, me.id)
       if (!existing)
         await meta.setMembership({
@@ -484,28 +504,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
       return c.json({ org_id: inv.org_id, role: existing?.role ?? inv.role })
     },
   )
-
-  // getOrgSettings types defaultAgentVisibility as the full core `Visibility` (incl.
-  // "password"), but a stored setting is only ever one of the client's five: the PATCH
-  // validates to them and the default is "unlisted". Narrow with a runtime type-guard —
-  // no unsound `as`, and a stray value (e.g. a hand-edited row) falls back to the default
-  // rather than lying. (defaultUnlistedRole is already GeneralRole = the client enum.)
-  type AgentVisibility = z.infer<typeof OrgSettings>["defaultAgentVisibility"]
-  const isAgentVisibility = (v: string): v is AgentVisibility =>
-    v === "unlisted" || v === "private" || v === "org" || v === "link" || v === "public"
-  const settingsJson = (
-    s: Awaited<ReturnType<typeof meta.getOrgSettings>>,
-  ): z.infer<typeof OrgSettings> => ({
-    emailNotifications: s.emailNotifications,
-    githubPostComments: s.githubPostComments,
-    githubMirrorComments: s.githubMirrorComments,
-    githubPreviewLink: s.githubPreviewLink,
-    slackPost: s.slackPost,
-    defaultUnlistedRole: s.defaultUnlistedRole,
-    defaultAgentVisibility: isAgentVisibility(s.defaultAgentVisibility)
-      ? s.defaultAgentVisibility
-      : "unlisted",
-  })
 
   // ---- Integration settings (enable/disable each channel) -----------------
   app.openapi(
@@ -524,7 +522,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
     async (c) => {
       const role = await workspaceRole(c)
       if (role === null) return bail(fail(c, 401, "unauthenticated"))
-      return c.json(settingsJson(await meta.getOrgSettings(await activeWorkspace(c))))
+      return c.json(await meta.getOrgSettings(await activeWorkspace(c)))
     },
   )
 
@@ -552,8 +550,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
             githubMirrorComments: z.boolean(),
             githubPreviewLink: z.boolean(),
             slackPost: z.boolean(),
-            defaultUnlistedRole: z.enum(["viewer", "commenter"]),
-            defaultAgentVisibility: z.enum(["unlisted", "private", "org", "link", "public"]),
+            defaultAgentVisibility: z.enum(["private", "org"]),
           })
           .partial(),
       )
@@ -562,7 +559,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
       // Merge over current (so a partial PATCH only flips the keys it sends).
       const next = { ...(await meta.getOrgSettings(org)), ...b }
       await meta.setOrgSettings(org, next)
-      return c.json(settingsJson(next))
+      return c.json(next)
     },
   )
 
@@ -585,27 +582,49 @@ export const workspaceRoutes = (ctx: AppContext) => {
       if (role === null) return bail(fail(c, 401, "unauthenticated"))
       const active = await activeWorkspace(c)
       const me = await currentUser(c)
+      // `personal` marks the caller's auto-provisioned workspace (its id is
+      // deterministic — ws_p_<userId>, see provisionPersonal) so clients can label
+      // it "Personal" and pin it, instead of leaking "X's Workspace" plumbing.
+      const wsJson = (w: { id: string; name: string; role: Role }, ownerId: string) => ({
+        id: w.id,
+        name: w.name,
+        role: w.role,
+        personal: w.id === `ws_p_${ownerId}`,
+      })
       if (!me) {
+        // An OAuth agent lists its granting user's workspaces — the discovery
+        // surface for choosing an X-Derive-Workspace target. `account` is the
+        // owner's identity (id + handle, never email) that a bearer-only client
+        // (CLI / local MCP) keys its per-account credential store by.
         const owner = await privateOwnerId(c)
+        const [ownerUser] = owner ? await meta.getUsers([owner]) : []
+        const account = owner
+          ? { id: owner, handle: ownerUser?.username ?? null, name: ownerUser?.name ?? null }
+          : null
         const mine = owner ? await meta.listWorkspaces(owner) : []
-        if (mine.length)
+        if (owner && mine.length)
           return c.json({
             multi: true,
             active,
-            workspaces: mine.map((w) => ({ id: w.id, name: w.name, role: w.role })),
+            account,
+            workspaces: mine.map((w) => wsJson(w, owner)),
           })
         const ws = await meta.getWorkspace(active)
         return c.json({
           multi: true,
           active,
-          workspaces: [{ id: active, name: ws?.name ?? DEFAULT_WORKSPACE_NAME, role }],
+          account,
+          workspaces: [
+            { id: active, name: ws?.name ?? DEFAULT_WORKSPACE_NAME, role, personal: false },
+          ],
         })
       }
       const mine = await meta.listWorkspaces(me.id)
       return c.json({
         multi: true,
         active,
-        workspaces: mine.map((w) => ({ id: w.id, name: w.name, role: w.role })),
+        account: { id: me.id, handle: me.username ?? null, name: me.name ?? null },
+        workspaces: mine.map((w) => wsJson(w, me.id)),
       })
     },
   )
@@ -637,7 +656,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
       await meta.setWorkspace(id, name)
       await meta.setMembership({ id: newId("m"), org_id: id, user_id: me.id, role: "owner" })
       setWsCookie(c, id)
-      return c.json({ id, name, role: "owner" as const }, 201)
+      return c.json({ id, name, role: "owner" as const, personal: false }, 201)
     },
   )
 

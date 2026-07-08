@@ -7,15 +7,21 @@ import {
   can,
   capRole,
   diffLines,
+  EditError,
   effectiveRole,
   formatDiff,
   groupSessions,
+  isHtmlLike,
   isMarkdownBundle,
   newId,
+  outlineOf,
   PublishError,
+  pageText,
   publish,
   renderMarkdown,
+  sectionOf,
   toJson,
+  toMarkdown,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
@@ -24,7 +30,15 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { publishSweepEvents } from "../lib/anchor-sweep"
 import { authorProfile, resolveHandles } from "../lib/author"
-import { hashPassword, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
+import { cleanPath, manifestOf } from "../lib/bundle"
+import { hashPassword, signState, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
+import {
+  EditConflictError,
+  type MaterializedEdits,
+  materializeEdits,
+  parseBaseVersion,
+} from "../lib/edits"
+import { buildReviewEmail } from "../lib/email"
 import {
   bail,
   DEFAULT_WORKSPACE_NAME,
@@ -33,9 +47,33 @@ import {
   readJson,
   str,
   TOMBSTONE,
+  toBody,
   visibilityOf,
 } from "../lib/http"
 import { Artifact } from "../schemas"
+import { enqueueChannelDelivery } from "../webhooks"
+
+// Bundle asset types the /content route serves with their real Content-Type. Not
+// image/svg+xml: an SVG is a scriptable document when a browser navigates to it
+// directly, and this route (unlike /raw/, which sandboxes every asset behind a CSP)
+// has no such isolation — anything off this list serves as application/octet-stream.
+const SAFE_BINARY_CONTENT_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/avif",
+  "image/x-icon",
+  "image/vnd.microsoft.icon",
+  "font/woff",
+  "font/woff2",
+  "font/ttf",
+  "font/otf",
+  "text/css",
+  "application/javascript",
+  "text/javascript",
+  "application/json",
+])
 
 /** The artifact lifecycle: browse + summary, publish/republish, detail, restore,
  *  source read-back, and version diffs. */
@@ -48,6 +86,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     versionWindowMs,
     bus,
     notify,
+    notifyRender,
     background,
     isMember,
     isToken,
@@ -66,9 +105,6 @@ export const artifactRoutes = (ctx: AppContext) => {
     unlockLimiter,
     sourceText,
   } = ctx
-  // OpenAPIHono: the detail endpoint is contract-first (generates the Artifact +
-  // VersionSession web types); the rest stay plain routes (the list's many branches,
-  // the multipart publish, and the mixed-content source/diff reads) and compose as before.
   const app = new OpenAPIHono<BlankEnv>()
 
   // Newest-first, keyset-paginated (?cursor=<created_at>&limit=N), with optional
@@ -153,9 +189,14 @@ export const artifactRoutes = (ctx: AppContext) => {
         if (!me) return c.json({ artifacts: [], next_cursor: null })
         narrow(await meta.artifactIdsNeedingFeedback(me.id, await activeWorkspace(c)))
       }
-      // scope=unlisted → the caller's own unlisted drafts in this workspace: the
-      // library's Unlisted filter. Ordinary listings hide unlisted entirely.
-      const unlistedScope = c.req.query("scope") === "unlisted"
+      // scope=mine → everything the caller owns in this workspace (their owner
+      // member row — written at creation for the human behind the publish, agents
+      // included), any visibility — the library's "Created by me" filter.
+      const mineScope = c.req.query("scope") === "mine"
+      if (mineScope) {
+        if (!me) return c.json({ artifacts: [], next_cursor: null })
+        narrow(await meta.artifactIdsOwnedBy(await activeWorkspace(c), me.id))
+      }
       if (tag) narrow(await meta.artifactIdsByTag(tag))
       if (favOnly) narrow(favIds)
 
@@ -200,9 +241,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       // sees public artifacts only, so org/link titles never leak via the list or ?query=.
       // For a collection, collection access (member/creator/share) also unlocks it.
       const publicOnly = collectionId ? !collectionAccess : !(isOperator || baselineRole !== null)
-      // The Unlisted filter is a members-only view of their OWN drafts — a caller
-      // with no standing here (or no member rows to match) has none by definition.
-      if (unlistedScope && (publicOnly || !memberKey))
+      // "Created by me" is a members-only view of the caller's OWN authored work —
+      // a caller with no standing here (or no member rows to match) has none by definition.
+      if (mineScope && (publicOnly || !memberKey))
         return c.json({ artifacts: [], next_cursor: null })
       const rows = await meta.listArtifacts({
         limit: limit + 1,
@@ -217,16 +258,10 @@ export const artifactRoutes = (ctx: AppContext) => {
         // feed back to the active workspace and strip a followed person's public work.
         orgId: shared || following ? undefined : listOrg,
         publicOnly: shared || following ? false : publicOnly,
-        // Private artifacts appear only for their explicit members; the operator
-        // token sees everything (viewerId omitted).
+        // Private artifacts appear only for their explicit members (the publisher's
+        // owner row included, so agents and owners always find their own drafts);
+        // the operator token sees everything (viewerId omitted).
         viewerId: isOperator ? undefined : (memberKey ?? undefined),
-        // Agents get their registrant's unlisted drafts folded back in (an agent
-        // must always find the work it published — the stdio shim's list rides
-        // this route). Shared-with-you and needs-feedback are deliberate human
-        // signals (an explicit share, a thread you're in), so a member's unlisted
-        // docs surface there too. Ordinary listings stay clean — the Unlisted
-        // feed is the finder.
-        unlisted: unlistedScope ? "only" : agent || shared || needsFeedback ? "include" : undefined,
       })
       const hasMore = rows.length > limit
       const page = hasMore ? rows.slice(0, limit) : rows
@@ -236,6 +271,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const pageIds = page.map((a) => a.id)
       const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
       const tags = await meta.tagsForArtifacts(pageIds)
+      const previews = await meta.previewReady(pageIds)
       // Resolve the page's distinct author gh_ids to Derive handles in ONE batched query (no
       // N+1) so each row can show "who last changed this" with a link to the Derive profile.
       const handleByGhId = await resolveHandles(meta, [
@@ -254,6 +290,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           views: counts[a.id] ?? 0,
           tags: tags[a.id] ?? [],
           favorite: favorites.has(a.id),
+          has_preview: previews[a.id] === true,
           // Which actions the client may surface on the row (the card's quick-actions
           // menu gates delete/tags on it). Workspace membership + per-artifact shares
           // + the general-access floor; collection-share roles aren't folded in at
@@ -298,13 +335,14 @@ export const artifactRoutes = (ctx: AppContext) => {
       responses: {
         200: {
           description:
-            "Total artifacts, the caller's favorite/unlisted counts, tag→count, and workspace name.",
+            "Total artifacts, the caller's favorite/owned counts, tag→count, and workspace name.",
           content: {
             "application/json": {
               schema: z.object({
                 total: z.number(),
                 favorites: z.number(),
-                unlisted: z.number(),
+                mine: z.number(),
+                mine_private: z.number(),
                 tags: z.array(z.object({ tag: z.string(), count: z.number() })),
                 workspace: z.string().nullable(),
               }),
@@ -322,8 +360,15 @@ export const artifactRoutes = (ctx: AppContext) => {
       // empty summary with no workspace name, so it can't be used to enumerate a private
       // workspace's name + size.
       if (!(await isMember(c, org)))
-        return c.json({ total: 0, favorites: 0, unlisted: 0, tags: [], workspace: null })
-      const [total, tags, favIds, ws, unlisted] = await Promise.all([
+        return c.json({
+          total: 0,
+          favorites: 0,
+          mine: 0,
+          mine_private: 0,
+          tags: [],
+          workspace: null,
+        })
+      const [total, tags, favIds, ws, mine, minePrivate] = await Promise.all([
         meta.countArtifacts(org),
         meta.tagCounts(org),
         // Scope the favorites count to THIS workspace's live artifacts — the favorites
@@ -331,15 +376,18 @@ export const artifactRoutes = (ctx: AppContext) => {
         // must not inflate the count (otherwise "Favorites · 1" with an empty list).
         me ? meta.listUserFavoriteIds(me.id, org) : Promise.resolve([]),
         meta.getWorkspace(org),
-        // The caller's own unlisted drafts — the Unlisted filter's badge. Zero hides
-        // the filter, so it only exists when there's something in it.
-        me ? meta.countUnlistedFor(org, me.id) : Promise.resolve(0),
+        // The caller's owned artifacts — the "Created by me" filter's badge.
+        me ? meta.countOwnedBy(org, me.id) : Promise.resolve(0),
+        // …and how many of those are still private: the "waiting on you to
+        // share it" signal (agent publishes land private until promoted).
+        me ? meta.countOwnedBy(org, me.id, "private") : Promise.resolve(0),
       ])
       tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
       return c.json({
         total,
         favorites: favIds.length,
-        unlisted,
+        mine,
+        mine_private: minePrivate,
         tags,
         workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
       })
@@ -380,35 +428,77 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (len > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
 
     const body = await c.req.parseBody()
-    const file = body["file"]
-    if (!(file instanceof File)) return fail(c, 400, "multipart field 'file' required")
 
-    const bytes = new Uint8Array(await file.arrayBuffer())
-    // The content-length header is advisory (a client can omit/understate it),
-    // so re-check the actual buffered size — the hard cap before anything stores.
-    if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
-    if (await overStorage(org, bytes.length)) return fail(c, 413, "storage quota exceeded")
-    const isBundle =
-      /\.zip$/i.test(file.name) ||
-      body["kind"] === "bundle" ||
-      (bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5))
+    // `edits` — a token-cheap revision (stdio/API parity with the MCP publish
+    // tool's `edits`): exact-match search/replace against the current stored
+    // source instead of a re-uploaded `file`. Materialize the full content, then
+    // fall through to the same publish path everything else uses.
+    const editsField = body["edits"]
+    let bytes: Uint8Array
+    let filename: string
+    let isBundle: boolean
+    if (typeof editsField === "string") {
+      if (!shortId || !existing)
+        return fail(c, 400, "edits revises an EXISTING artifact — POST to its /versions endpoint")
+      let edits: { old_str: string; new_str: string }[]
+      try {
+        edits = JSON.parse(editsField)
+      } catch {
+        return fail(c, 400, "edits must be a JSON array of {old_str,new_str}")
+      }
+      let materialized: MaterializedEdits
+      try {
+        const baseVersion = parseBaseVersion(str(body["base_version"]))
+        materialized = await materializeEdits(
+          { getVersion: meta.getVersion.bind(meta), sourceText },
+          existing,
+          edits,
+          baseVersion,
+        )
+      } catch (e) {
+        if (e instanceof EditConflictError) return fail(c, 409, e.message)
+        return fail(
+          c,
+          e instanceof EditError ? 400 : 500,
+          e instanceof Error ? e.message : "edit failed",
+        )
+      }
+      bytes = new TextEncoder().encode(materialized.content)
+      if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
+      if (await overStorage(org, bytes.length)) return fail(c, 413, "storage quota exceeded")
+      filename = materialized.filename
+      isBundle = false
+    } else {
+      const file = body["file"]
+      if (!(file instanceof File)) return fail(c, 400, "multipart field 'file' required")
+      bytes = new Uint8Array(await file.arrayBuffer())
+      // The content-length header is advisory (a client can omit/understate it),
+      // so re-check the actual buffered size — the hard cap before anything stores.
+      if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
+      if (await overStorage(org, bytes.length)) return fail(c, 413, "storage quota exceeded")
+      filename = file.name
+      isBundle =
+        /\.zip$/i.test(file.name) ||
+        body["kind"] === "bundle" ||
+        (bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5))
+    }
 
-    // `password` visibility on a NEW artifact must carry a password to hash; a
-    // republish keeps whatever the artifact already has (publish() never re-creates
-    // the artifact, only adds a version, so visibility/password are set-on-create).
-    const visibility = visibilityOf(body["visibility"])
+    // A password is a lock on a public link — hashed at create; a republish keeps
+    // whatever the artifact already has (publish() never re-creates the artifact,
+    // only adds a version, so visibility/password are set-on-create). Legacy
+    // vocabularies (link/unlisted/password/workspace) map in visibilityOf; an old
+    // client sending visibility=password without a password gets the same 400 it
+    // always did — never a silently open publish.
+    const rawVisibility = str(body["visibility"])
+    const visibility = visibilityOf(rawVisibility)
     // An explicitly-provided visibility that isn't a known value is rejected, not
     // silently coerced — a typo must not publish more openly than intended.
-    if (str(body["visibility"]) && !visibility)
-      return fail(
-        c,
-        400,
-        "visibility must be one of: public, link, org, password, private, unlisted",
-      )
+    if (rawVisibility && !visibility)
+      return fail(c, 400, "visibility must be one of: public, org, private")
     const password = str(body["password"])
-    if (!shortId && visibility === "password" && !password)
+    if (!shortId && rawVisibility === "password" && !password)
       return fail(c, 400, "a password is required for password visibility")
-    const passwordHash = visibility === "password" && password ? hashPassword(password) : undefined
+    const passwordHash = visibility === "public" && password ? hashPassword(password) : undefined
 
     try {
       // The authenticated principal behind this publish (signed-in user or agent) — its
@@ -420,8 +510,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       const onBehalf = await privateOwnerId(c)
       // An AGENT-credentialed create (registered token / OAuth bearer — the CLI
       // and stdio-shim paths) lands with the workspace's agent default when no
-      // visibility was asked for: usually `unlisted`, the draft state. A
-      // signed-in human's own publish keeps the private default.
+      // visibility was asked for: usually `private` — the human promotes. A
+      // signed-in human's own publish keeps the same private default.
       const agentPrincipal = await agentFor(c)
       const resolvedVisibility =
         visibility ??
@@ -433,7 +523,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         blobs,
         {
           bytes,
-          filename: file.name,
+          filename,
           isBundle,
           title: str(body["title"]),
           slug: str(body["slug"]),
@@ -468,16 +558,6 @@ export const artifactRoutes = (ctx: AppContext) => {
           user_id: ownerId,
           role: "owner",
         })
-      // A NEW unlisted artifact takes the workspace's default link permission as
-      // its general_role (what a member with the link may do); the share dialog
-      // can still override per doc.
-      if (!shortId && artifact.visibility === "unlisted")
-        await meta.setVisibility(
-          artifact.id,
-          "unlisted",
-          null,
-          (await meta.getOrgSettings(org)).defaultUnlistedRole,
-        )
       bus.publish(artifact.id, {
         type: "version.published",
         n: version.n,
@@ -488,6 +568,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         message: version.message,
         author: version.author,
       })
+      notifyRender(artifact, version.n)
       // Fan out to the publisher's followers: "someone you follow published X". Gated
       // to a known HUMAN behind the publish (their followers are who care — an agent
       // publish fans out to the followers of the person it acts for), a publicly-
@@ -560,6 +641,22 @@ export const artifactRoutes = (ctx: AppContext) => {
             version: version.n,
             requested_by: actor?.name ?? "An agent",
           })
+          // The review request is the one event that earns an email: the loop is
+          // blocked on the reviewer, who may have no tab open. Never for your own
+          // request on yourself (a human publishing with request_review).
+          if (reviewer !== actor?.id && (await meta.getOrgSettings(org)).emailNotifications) {
+            const [r] = await meta.getUsers([reviewer])
+            if (r?.email)
+              await enqueueChannelDelivery(meta, "email", "review.requested", {
+                to: r.email,
+                toName: r.name ?? undefined,
+                ...buildReviewEmail(deps.baseUrl, artifact, {
+                  requestedBy: actor?.name ?? "An agent",
+                  version: version.n,
+                  note: str(body["review_note"]) ?? null,
+                }),
+              })
+          }
         }
       }
       // The MCP loop over HTTP: an AGENT-credentialed publish (a registered
@@ -653,10 +750,10 @@ export const artifactRoutes = (ctx: AppContext) => {
       const actor = await actorFor(c, artifact ?? ({ id: "", visibility: "org" } as ArtifactRecord))
       if (!artifact) return bail(fail(c, 404, "not found"))
       if (!can(actor, "read", artifact.visibility, artifact.general_role))
-        // A password artifact isn't hidden, it's lockable: tell the client to prompt
-        // for the password (401) rather than claim it doesn't exist (404).
+        // A locked public artifact isn't hidden, it's lockable: tell the client to
+        // prompt for the password (401) rather than claim it doesn't exist (404).
         return bail(
-          artifact.visibility === "password"
+          artifact.visibility === "public" && artifact.password_hash
             ? fail(c, 401, "password required")
             : fail(c, 404, "not found"),
         )
@@ -735,6 +832,9 @@ export const artifactRoutes = (ctx: AppContext) => {
         })),
         sessions: groupSessions(versions, versionWindowMs),
         my_role: effectiveRole(actor, artifact.visibility, artifact.general_role),
+        // The artifact's current workspace — the move dialog needs this to exclude
+        // it from the destination picker.
+        org_id: artifact.org_id,
         tags,
         favorite,
         collections,
@@ -749,6 +849,15 @@ export const artifactRoutes = (ctx: AppContext) => {
         // Mirrored from a GitHub sync source → read-only in Derive (the client hides
         // Edit/Propose; the publish/propose routes also refuse it server-side).
         managed: (await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id),
+        // The content iframe is sandboxed with no `allow-same-origin` (opaque origin —
+        // it must not be able to touch derive.to cookies/storage), which means it also has
+        // no origin of its own to send OUR session cookie back on, and Chrome refuses to
+        // attach cookies to requests from an opaque origin at all (even same-site) — every
+        // sub-resource (image, css, ...) in a non-public bundle 404s there. `read` access
+        // was just proven above, so mint a short-lived capability the SPA embeds in the raw
+        // URL's path (raw.ts's `t/:token` route + RAW_TOKEN_MAX_AGE_MS) — path, not query,
+        // so relative asset references inherit it with zero HTML rewriting.
+        raw_token: signState({ rid: artifact.id }, deps.encryptionKey ?? ""),
       })
     },
   )
@@ -768,12 +877,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       request: { params: z.object({ shortId: z.string() }) },
       responses: {
         200: {
-          description: "The new visibility + general-access role.",
+          description: "The new visibility, general-access role, and lock state.",
           content: {
             "application/json": {
               schema: z.object({
-                visibility: z.enum(["public", "link", "org", "password", "private", "unlisted"]),
+                visibility: z.enum(["public", "org", "private"]),
                 general_role: z.enum(["viewer", "commenter"]),
+                locked: z.boolean(),
               }),
             },
           },
@@ -795,22 +905,24 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (b instanceof Response) return bail(b)
       const visibility = visibilityOf(b.visibility)
       if (!visibility) return bail(fail(c, 400, "invalid visibility"))
-      // Turning unlisted without an explicit choice seeds the workspace's default
-      // link permission (view or comment); the dialog's per-doc override still wins.
-      const generalRole =
-        b.generalRole ??
-        (visibility === "unlisted"
-          ? (await meta.getOrgSettings(artifact.org_id)).defaultUnlistedRole
-          : "viewer")
+      const generalRole = b.generalRole ?? "viewer"
+      // The password is a lock on the public link. On `public`: a supplied
+      // password (re)sets the hash; omitting it keeps the existing lock (so
+      // flipping view↔comment doesn't drop it); an explicit empty string clears
+      // it. Leaving `public` always clears — a lock on org/private is meaningless
+      // (both are already explicit-standing-only) and a stale hash must not
+      // resurrect if the doc later goes public again.
       let passwordHash: string | null = null
-      if (visibility === "password") {
+      if (visibility === "public") {
         if (b.password) passwordHash = hashPassword(b.password)
-        else if (artifact.visibility === "password" && artifact.password_hash)
-          passwordHash = artifact.password_hash
-        else return bail(fail(c, 400, "a password is required for password visibility"))
+        else if (b.password === undefined) passwordHash = artifact.password_hash ?? null
       }
+      // Legacy clients say visibility=password meaning "public + lock" — they must
+      // carry a password (or already have one) or the lock would silently vanish.
+      if (b.visibility === "password" && !passwordHash)
+        return bail(fail(c, 400, "a password is required for password visibility"))
       await meta.setVisibility(artifact.id, visibility, passwordHash, generalRole)
-      return c.json({ visibility, general_role: generalRole })
+      return c.json({ visibility, general_role: generalRole, locked: !!passwordHash })
     },
   )
 
@@ -862,7 +974,45 @@ export const artifactRoutes = (ctx: AppContext) => {
     },
   )
 
-  // Unlock a `password` artifact: verify the password and drop a cookie whose
+  // Move to a different workspace you belong to. Owner-only (the `manage` gate —
+  // same as delete). No role requirement on the destination: you can move into a
+  // workspace where you're just a viewer/editor. A future org-level "block
+  // cross-workspace moves" policy is a single guard here, not a new subsystem.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/artifacts/{shortId}/move",
+      tags: ["Artifacts"],
+      summary: "Move an artifact to another workspace you belong to (owner only).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        200: {
+          description: "The artifact's new workspace id.",
+          content: { "application/json": { schema: z.object({ org_id: z.string() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact) return bail(fail(c, 404, "not found"))
+      if (!(await authorize(c, "manage", artifact))) return bail(fail(c, 403, "forbidden"))
+      const b = await readJson(c, z.object({ targetOrgId: z.string().min(1) }))
+      if (b instanceof Response) return bail(b)
+      if (b.targetOrgId === artifact.org_id) return bail(fail(c, 400, "already in that workspace"))
+      const me = await currentUser(c)
+      if (!me) return bail(fail(c, 401, "unauthenticated"))
+      if (!(await meta.getMembership(b.targetOrgId, me.id)))
+        return bail(fail(c, 403, "you're not a member of that workspace"))
+      // A bound custom domain routes by artifact_id; moving orgs out from under it
+      // would silently break live traffic, so refuse rather than cascade.
+      if ((await meta.getArtifactDomains(artifact.id)).length > 0)
+        return bail(fail(c, 409, "remove the custom domain before moving this artifact"))
+      await meta.moveArtifactOrg(artifact.id, b.targetOrgId)
+      return c.json({ org_id: b.targetOrgId })
+    },
+  )
+
+  // Unlock a password-locked artifact: verify the password and drop a cookie whose
   // value is derived from the server-only hash (so it can't be forged and dies if
   // the password changes). Brute force is bounded by a dedicated tight limiter
   // (10 attempts/min per caller), well below the lenient global /v1 write cap.
@@ -885,8 +1035,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const over = await limited(c, unlockLimiter)
       if (over) return bail(over)
       const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (artifact?.visibility !== "password" || !artifact.password_hash)
-        return bail(fail(c, 404, "not found"))
+      if (!artifact?.password_hash) return bail(fail(c, 404, "not found"))
       const b = await readJson(c, z.object({ password: z.string().min(1) }))
       if (b instanceof Response) return bail(b)
       if (!verifyPassword(b.password, artifact.password_hash))
@@ -949,6 +1098,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         message: version.message,
         author: version.author,
       })
+      notifyRender(artifact, version.n)
       bus.publish(artifact.id, {
         type: "version.published",
         n: version.n,
@@ -971,6 +1121,12 @@ export const artifactRoutes = (ctx: AppContext) => {
 
   // Source read-back for machines: returns an artifact's text content for any
   // version, as plain text (?v=N selects a version; defaults to current).
+  //
+  // ?format=markdown|text renders instead of returning raw source (default: raw,
+  // for existing byte-exact consumers). ?outline=1 returns a JSON heading/page
+  // outline instead of content. ?section=<slug|page|page#slug> returns just that
+  // part. X-Derive-* response headers double as a capability probe for older
+  // clients that predate these params (self-hosted stdio server parity).
   app.get("/v1/artifacts/:shortId/content", async (c) => {
     const artifact = await meta.getByShortId(c.req.param("shortId"))
     if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
@@ -980,14 +1136,100 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!Number.isInteger(v)) return fail(c, 400, "bad version")
     const version = await meta.getVersion(artifact.id, v)
     if (!version) return fail(c, 404, `no version ${v}`)
-    const src = await sourceText(version)
-    if (src === null) return fail(c, 500, "blob missing")
-    c.header("Content-Type", "text/plain; charset=utf-8")
-    c.header("X-Content-Type-Options", "nosniff")
+
+    const formatQ = c.req.query("format")
+    const format = formatQ === "markdown" || formatQ === "text" ? formatQ : null
+    // "*" forces full content — the escape hatch a caller uses after already
+    // seeing (or skipping) the outline, same sentinel the MCP `read` tool takes.
+    const sectionQ = c.req.query("section")
+    const section = sectionQ && sectionQ !== "*" ? sectionQ : null
+    const outline = c.req.query("outline") === "1"
+    const present = (source: string, contentType: string): string => {
+      if (!format) return source
+      if (format === "text") return isHtmlLike(contentType) ? pageText(source) : source
+      return toMarkdown(source, contentType)
+    }
+
     c.header("Access-Control-Allow-Origin", "*")
+    c.header("X-Content-Type-Options", "nosniff")
     c.header("X-Derive-Version", String(v))
     c.header("X-Derive-Kind", artifact.kind)
-    return c.body(src)
+
+    const manifest = await manifestOf(blobs, version)
+    if (!manifest) {
+      // Single-file artifact.
+      const src = await sourceText(version)
+      if (src === null) return fail(c, 500, "blob missing")
+      if (outline) {
+        c.header("X-Derive-Format", "outline")
+        return c.json({ sections: outlineOf(src, version.content_type) })
+      }
+      if (section) {
+        const slice = sectionOf(src, version.content_type, section)
+        if (slice === null) return fail(c, 404, `no section "${section}"`)
+        const body = present(slice, version.content_type)
+        c.header("X-Derive-Format", format ?? "raw")
+        c.header("X-Derive-Section", section)
+        c.header("Content-Type", "text/plain; charset=utf-8")
+        return c.body(body)
+      }
+      const body = present(src, version.content_type)
+      c.header("X-Derive-Format", format ?? "raw")
+      c.header("X-Derive-Sections", String(outlineOf(src, version.content_type).length))
+      c.header("Content-Type", "text/plain; charset=utf-8")
+      return c.body(body)
+    }
+
+    // Bundle.
+    if (outline) {
+      c.header("X-Derive-Format", "outline")
+      return c.json({
+        entry: cleanPath(manifest.entry),
+        pages: Object.keys(manifest.files).map((p) => ({
+          path: cleanPath(p),
+          type: manifest.files[p]?.type,
+        })),
+      })
+    }
+    // Split on the LAST '#' — matches the MCP `read` tool's page#slug parsing, so a
+    // page path/slug resolves to the same (pagePath, slug) pair on both surfaces.
+    const hash = section ? section.lastIndexOf("#") : -1
+    const pagePath =
+      hash > 0 ? (section as string).slice(0, hash) : (section ?? cleanPath(manifest.entry))
+    const slug = hash > 0 ? (section as string).slice(hash + 1) : null
+    const file = manifest.files[pagePath] ?? manifest.files[`/${cleanPath(pagePath)}`]
+    if (!file) return fail(c, 404, `no page "${pagePath}"`)
+    const bytes = await blobs.get(file.key)
+    if (!bytes) return fail(c, 500, "blob missing")
+    const fileBaseType = file.type.split(";")[0]?.trim() ?? file.type
+    const isText = fileBaseType === "text/html" || fileBaseType === "text/markdown"
+    if (!isText) {
+      // This route is a machine content API, not a rendering surface (unlike /raw/,
+      // which applies a CSP sandbox to every bundle asset it serves). Native
+      // Content-Type is safe for the SAFE set below; anything else — most notably
+      // image/svg+xml, which a direct navigation renders as a scriptable document —
+      // is served inert instead of trusting the stored type verbatim.
+      c.header(
+        "Content-Type",
+        SAFE_BINARY_CONTENT_TYPES.has(fileBaseType) ? file.type : "application/octet-stream",
+      )
+      c.header("X-Derive-Format", "raw")
+      return c.body(toBody(bytes))
+    }
+    const raw = new TextDecoder().decode(bytes)
+    if (slug) {
+      const slice = sectionOf(raw, file.type, slug)
+      if (slice === null) return fail(c, 404, `no section "${slug}" in "${pagePath}"`)
+      c.header("X-Derive-Format", format ?? "raw")
+      c.header("X-Derive-Section", `${pagePath}#${slug}`)
+      c.header("Content-Type", "text/plain; charset=utf-8")
+      return c.body(present(slice, file.type))
+    }
+    c.header("X-Derive-Format", format ?? "raw")
+    c.header("X-Derive-Section", pagePath)
+    c.header("X-Derive-Sections", String(outlineOf(raw, file.type).length))
+    c.header("Content-Type", "text/plain; charset=utf-8")
+    return c.body(present(raw, file.type))
   })
 
   // Live editor preview: render a markdown draft to the exact published HTML.
@@ -1035,7 +1277,13 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!vf || !vt) return fail(c, 404, "version not found")
     const [a, b] = [await sourceText(vf), await sourceText(vt)]
     if (a === null || b === null) return fail(c, 500, "blob missing")
-    const ops = diffLines(a, b)
+    // ?content=markdown diffs the readable form (HTML converted) instead of raw
+    // source — kills tag noise and fixes minified one-line HTML producing a
+    // single useless del/add pair. Default stays raw bytes for existing consumers.
+    const ops =
+      c.req.query("content") === "markdown"
+        ? diffLines(toMarkdown(a, vf.content_type), toMarkdown(b, vt.content_type))
+        : diffLines(a, b)
 
     c.header("Access-Control-Allow-Origin", "*")
     c.header("X-Derive-From", String(from))

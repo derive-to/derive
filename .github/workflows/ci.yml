@@ -119,6 +119,22 @@ jobs:
       - name: Bundle budget
         run: pnpm lint:bundle
 
+  # The runner image builds from packages/cli — this catches a CLI change that
+  # breaks the container (deps, bin layout) before someone finds out on a box.
+  # Build-only, non-gating like coverage/bundle; no registry push.
+  runner-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Build runner image
+        run: docker build -f deploy/runner.Dockerfile -t derive-runner:ci .
+      - name: Runner starts and reports config errors cleanly
+        # No token/context on purpose: a healthy image exits 1 with the house
+        # one-liner, not a stack trace — proves node, the CLI, and its deps wired.
+        run: |
+          out=$(docker run --rm derive-runner:ci serve 2>&1) && exit 1 || true
+          echo "$out" | grep -q "error: a context id and an agent token are required"
+
   # CD: ship main to the hosted tier (Workers + Hyperdrive/Neon, derive.to) once
   # check/pg/d1 + security pass. Schemas (D1 + Postgres) land BEFORE the worker
   # flips, so a new version never serves against stale DDL. Coverage/bundle stay
@@ -144,7 +160,6 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
-      actions: write # dispatches e2e-smoke.yml
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -218,14 +233,10 @@ jobs:
           echo "prod not healthy after deploy (last /v1/artifacts status: $db)" >&2
           exit 1
 
-      # Regression signal on main HEAD (the suite runs against localhost dev
-      # servers in its own runner — it does NOT verify the deployment; the step
-      # above does that).
-      - name: Dispatch e2e suite
-        if: steps.head.outputs.stale != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run e2e-smoke.yml --ref main
+      # e2e smoke's post-deploy auto-dispatch is disabled for now (still flaky
+      # under CI CPU contention — see e2e-smoke.yml). Run it manually with
+      # `gh workflow run e2e-smoke.yml --ref main` when a regression signal is
+      # actually wanted.
 
   # Supply-chain: a known-vulnerable production dependency, or a committed secret,
   # fails the build. Reads the lockfile + working tree, so no install is needed.

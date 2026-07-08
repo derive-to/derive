@@ -40,9 +40,8 @@ export const sessionRoutes = (ctx: AppContext) => {
       profession: z.string().nullable().optional(),
       about: z.string().nullable().optional(),
       github_login: z.string().nullable().optional(),
-      stats: z
-        .object({ works: z.number(), followers: z.number(), following: z.number() })
-        .optional(),
+      teammate: z.boolean().optional(),
+      stats: z.object({ works: z.number() }).optional(),
       followed_by_me: z.boolean().optional(),
     })
     .openapi("PublicProfile")
@@ -247,13 +246,18 @@ export const sessionRoutes = (ctx: AppContext) => {
     },
   )
 
-  // The People directory — browse opted-in people (or search with ?query=).
+  // The People page's data — the people you actually work with (any shared
+  // workspace), discoverable or not: membership already implies you can see each
+  // other. There is deliberately no global directory here — People is work
+  // awareness, not a social network (addressing a stranger to SHARE with them
+  // still works via /v1/users/search, which never enumerates). `?query=` filters
+  // within your workmates. Signed-in only; public fields only — never email.
   app.openapi(
     createRoute({
       method: "get",
       path: "/v1/people",
       tags: ["Session"],
-      summary: "Browse (or search) the discoverable people directory.",
+      summary: "Browse the people you work with (optionally filtered by ?query=).",
       responses: {
         200: {
           description: "Public profiles (public fields only).",
@@ -264,13 +268,16 @@ export const sessionRoutes = (ctx: AppContext) => {
     async (c) => {
       const me = await currentUser(c)
       if (!me) return bail(fail(c, 401, "unauthenticated"))
-      const q = (c.req.query("query") ?? "").trim()
-      const found =
-        c.req.query("scope") === "workspace"
-          ? await meta.listWorkspaceMates(me.id, 60)
-          : q
-            ? await meta.searchDiscoverableUsers(q, 60)
-            : await meta.listDiscoverableUsers(60)
+      const q = (c.req.query("query") ?? "").trim().toLowerCase()
+      const mates = await meta.listWorkspaceMates(me.id, 60)
+      const found = q
+        ? mates.filter(
+            (u) =>
+              u.username?.toLowerCase().includes(q) ||
+              u.name?.toLowerCase().includes(q) ||
+              u.profession?.toLowerCase().includes(q),
+          )
+        : mates
       return c.json({
         users: found.map((u) => ({
           username: u.username,
@@ -316,14 +323,16 @@ export const sessionRoutes = (ctx: AppContext) => {
       if (!(await profileVisibleTo(c, p)))
         return bail(fail(c, 404, "no profile with that username"))
       const me = await currentUser(c)
-      const ghIds = await meta.githubIdsForUser(p.id)
+      // sharedOrgIds(x, x) is all of x's workspaces — self is trivially a teammate.
       const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
-      const [works, followers, following, githubLogin] = await Promise.all([
-        meta.countUserWorks(p.id, ghIds, { visibleOrgIds: sharedOrgs }),
-        meta.countFollowers(p.id),
-        meta.countFollowing(p.id),
+      const teammate = !!me && (me.id === p.id || sharedOrgs.length > 0)
+      const ghIds = await meta.githubIdsForUser(p.id)
+      const [works, githubLogin] = await Promise.all([
+        teammate ? meta.countUserWorks(p.id, ghIds, { visibleOrgIds: sharedOrgs }) : 0,
         meta.githubLoginForUser(p.id, ghIds),
       ])
+      // Already following? People-follows are global, so listFollows (which folds in the
+      // org "*" rows) carries them regardless of the viewer's active workspace.
       let followedByMe = false
       if (me && me.id !== p.id) {
         const mine = await meta.listFollows(me.id, await activeWorkspace(c))
@@ -337,7 +346,8 @@ export const sessionRoutes = (ctx: AppContext) => {
           profession: p.profession ?? null,
           about: p.about ?? null,
           github_login: githubLogin,
-          stats: { works, followers, following },
+          teammate,
+          ...(teammate ? { stats: { works } } : {}),
           followed_by_me: followedByMe,
         },
       })
@@ -373,8 +383,11 @@ export const sessionRoutes = (ctx: AppContext) => {
       if (!(await profileVisibleTo(c, p)))
         return bail(fail(c, 404, "no profile with that username"))
       const me = await currentUser(c)
-      const ghIds = await meta.githubIdsForUser(p.id)
+      // sharedOrgIds(x, x) is all of x's workspaces — self always sees their own work.
       const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
+      if (!me || (me.id !== p.id && sharedOrgs.length === 0))
+        return c.json({ artifacts: [], next_cursor: null })
+      const ghIds = await meta.githubIdsForUser(p.id)
       const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 24))
       const rawCursor = c.req.query("cursor")
       const sep = rawCursor?.indexOf("|") ?? -1
@@ -394,6 +407,7 @@ export const sessionRoutes = (ctx: AppContext) => {
       const pageIds = page.map((a) => a.id)
       const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
       const tags = await meta.tagsForArtifacts(pageIds)
+      const previews = await meta.previewReady(pageIds)
       const handleByGhId = await resolveHandles(meta, [
         ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
       ])
@@ -402,6 +416,7 @@ export const sessionRoutes = (ctx: AppContext) => {
           ...toJson(deps.baseUrl, a, []),
           views: counts[a.id] ?? 0,
           tags: tags[a.id] ?? [],
+          has_preview: previews[a.id] === true,
           author: authorProfile(a, handleByGhId),
         })),
         next_cursor,
@@ -409,59 +424,8 @@ export const sessionRoutes = (ctx: AppContext) => {
     },
   )
 
-  // The people who follow / are followed by this user, as public profiles.
-  const publicCard = (u: {
-    username: string
-    name: string | null
-    image: string | null
-    profession?: string | null
-  }) => ({ username: u.username, name: u.name, image: u.image, profession: u.profession ?? null })
-  app.openapi(
-    createRoute({
-      method: "get",
-      path: "/v1/users/{handle}/followers",
-      tags: ["Session"],
-      summary: "Who follows this user (signed-in only).",
-      request: { params: z.object({ handle: z.string() }) },
-      responses: {
-        200: {
-          description: "Followers as public profiles.",
-          content: { "application/json": { schema: z.object({ users: z.array(PublicProfile) }) } },
-        },
-      },
-    }),
-    async (c) => {
-      if (!(await currentUser(c))) return bail(fail(c, 401, "unauthenticated"))
-      const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
-      if (!p) return bail(fail(c, 404, "no profile with that username"))
-      if (!(await profileVisibleTo(c, p)))
-        return bail(fail(c, 404, "no profile with that username"))
-      return c.json({ users: (await meta.listFollowers(p.id, 100)).map(publicCard) })
-    },
-  )
-  app.openapi(
-    createRoute({
-      method: "get",
-      path: "/v1/users/{handle}/following",
-      tags: ["Session"],
-      summary: "Who this user follows (signed-in only).",
-      request: { params: z.object({ handle: z.string() }) },
-      responses: {
-        200: {
-          description: "Following as public profiles.",
-          content: { "application/json": { schema: z.object({ users: z.array(PublicProfile) }) } },
-        },
-      },
-    }),
-    async (c) => {
-      if (!(await currentUser(c))) return bail(fail(c, 401, "unauthenticated"))
-      const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
-      if (!p) return bail(fail(c, 404, "no profile with that username"))
-      if (!(await profileVisibleTo(c, p)))
-        return bail(fail(c, 404, "no profile with that username"))
-      return c.json({ users: (await meta.listFollowing(p.id, 100)).map(publicCard) })
-    },
-  )
+  // (The followers/following list routes were removed with the launch social cut —
+  // the follow graph is deliberately not a browsable surface, for anyone.)
 
   // Upload your profile picture (raster only, identified by magic bytes).
   app.openapi(

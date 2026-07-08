@@ -33,6 +33,7 @@ import {
   SCHEMA_STATEMENTS,
   sessionMessage,
   version,
+  webhook,
 } from "./schema"
 
 const VIEW_WINDOW_MS = 30 * 86400_000
@@ -158,6 +159,19 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       })()
     },
 
+    // Atomic move: org_id flips, collection membership and any artifact-targeted
+    // webhook detach, all in one commit.
+    moveArtifactOrg: async (artifactId: string, targetOrgId: string): Promise<void> => {
+      raw.transaction(() => {
+        db.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId)).run()
+        db.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId)).run()
+        db.update(webhook)
+          .set({ artifact_id: null })
+          .where(eq(webhook.artifact_id, artifactId))
+          .run()
+      })()
+    },
+
     // Atomic takedown: the tombstone, the bulk open-report resolution, and the
     // audit entry commit together (or not at all), so a crash mid-takedown can't
     // leave an artifact removed with its reports still open or no audit trail.
@@ -255,6 +269,20 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         .all(...artifactIds) as { artifact_id: string; c: number }[]
       const out: Record<string, number> = {}
       for (const r of rows) out[r.artifact_id] = r.c
+      return out
+    },
+    previewReady: async (artifactIds): Promise<Record<string, boolean>> => {
+      if (artifactIds.length === 0) return {}
+      const ph = artifactIds.map(() => "?").join(",")
+      const rows = raw
+        .prepare(
+          `SELECT a.id artifact_id FROM artifact a
+           JOIN version v ON v.artifact_id = a.id AND v.n = a.current_version
+           WHERE v.preview_status = 'ready' AND a.id IN (${ph})`,
+        )
+        .all(...artifactIds) as { artifact_id: string }[]
+      const out: Record<string, boolean> = {}
+      for (const r of rows) out[r.artifact_id] = true
       return out
     },
 

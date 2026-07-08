@@ -23,6 +23,8 @@ const NON_CONFIG = new Set([
   "SEND_EMAIL",
   "WEBHOOK_OUTBOX",
   "SYNC_RUNNER",
+  "PREVIEW_RENDERER",
+  "BROWSER",
   "RL_AUTH",
   "RL_WRITE",
   "RL_PUBLISH",

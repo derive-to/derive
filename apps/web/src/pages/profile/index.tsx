@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
-import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
+import { getRouteApi, useNavigate } from "@tanstack/react-router"
 import { LayoutGrid, List } from "lucide-react"
 import { type RefObject, useEffect, useRef, useState } from "react"
 import { ApiError } from "@/api"
@@ -14,29 +14,23 @@ import { StatusPanel } from "@/components/shared/status-panel"
 import { UsernameForm } from "@/components/shared/username-form"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
-import { profileArtifactsQuery, profilePeopleQuery, profileQuery } from "@/lib/queries"
+import { profileArtifactsQuery, profileQuery } from "@/lib/queries"
 import { ProfilePending, ProfileWorkSkeleton } from "./skeleton"
 import { ProfileWorkCard, ProfileWorkRow } from "./work-card"
 
 const route = getRouteApi("/users/$handle")
 
-// The rich public profile: an identity header (avatar, name, @handle, role, bio, GitHub
-// link), a stats row (works / followers / following), a Follow button, and the person's
-// work — everything the viewer is allowed to see, as a grid of live previews or a compact
-// list. Header-first: the identity is preloaded in the route loader, so it paints with
-// real data on the first frame (and a profile A→B nav never shows A's details while B
-// loads); only the work grid carries its own load state.
+// A profile. For a teammate (shared workspace) or yourself: the identity header
+// (avatar, name, @handle, role, bio, GitHub link), a work count, Follow, and the
+// person's work the viewer can see. For anyone else it's the identity card alone —
+// enough for an author chip to resolve; profiles aren't a broadcast surface at
+// launch. Header-first: the identity is preloaded in the route loader, so it
+// paints with real data on the first frame; only the work grid carries its own
+// load state.
 export function Profile() {
   const { handle } = route.useParams()
   const { me, setMe } = useAuth()
@@ -98,7 +92,9 @@ export function Profile() {
 
   const isMe = !!me?.username && me.username === data.username
   const initials = getInitials(data.name ?? data.username)
-  const stats = data.stats ?? { works: 0, followers: 0, following: 0 }
+  // Work + follow render for teammates only (the server enforces the same rule —
+  // a stranger's work list comes back empty and a stranger follow 403s).
+  const teammate = isMe || !!data.teammate
 
   return (
     <PageShell scrollRef={scrollRef} className="flex flex-col gap-8">
@@ -134,7 +130,7 @@ export function Profile() {
                   @{data.username}
                 </p>
               </div>
-              <FollowButton username={data.username} className="shrink-0" />
+              {teammate && <FollowButton username={data.username} className="shrink-0" />}
             </div>
 
             {data.profession && (
@@ -162,21 +158,11 @@ export function Profile() {
               </a>
             )}
 
-            <div className="mt-4 flex items-center gap-5 text-sm" data-testid="profile-stats">
-              <Stat label="works" value={stats.works} />
-              <PeopleStat
-                label="followers"
-                value={stats.followers}
-                handle={data.username}
-                kind="followers"
-              />
-              <PeopleStat
-                label="following"
-                value={stats.following}
-                handle={data.username}
-                kind="following"
-              />
-            </div>
+            {teammate && data.stats && (
+              <div className="mt-4 flex items-center gap-5 text-sm" data-testid="profile-stats">
+                <Stat label="works" value={data.stats.works} />
+              </div>
+            )}
 
             {isMe && (
               <div className="mt-4">
@@ -208,12 +194,14 @@ export function Profile() {
         </div>
       </section>
 
-      <ProfileWork
-        handle={data.username}
-        isMe={isMe}
-        name={data.name ?? data.username}
-        scrollRef={scrollRef}
-      />
+      {teammate && (
+        <ProfileWork
+          handle={data.username}
+          isMe={isMe}
+          name={data.name ?? data.username}
+          scrollRef={scrollRef}
+        />
+      )}
     </PageShell>
   )
 }
@@ -225,83 +213,6 @@ function Stat({ label, value }: { label: string; value: number }) {
       <span className="font-mono font-medium tabular-nums text-foreground">{value}</span>
       <span className="text-muted-foreground">{label}</span>
     </span>
-  )
-}
-
-// A clickable stat that opens a dialog listing the people, fetched lazily on open. The
-// dialog's own header count reflects the LOADED list (not the profile's cached stat), so
-// a just-changed follow can't show "12 followers" and open to an empty list.
-function PeopleStat({
-  label,
-  value,
-  handle,
-  kind,
-}: {
-  label: string
-  value: number
-  handle: string
-  kind: "followers" | "following"
-}) {
-  const [open, setOpen] = useState(false)
-  const { data: people, isPending } = useQuery({
-    ...profilePeopleQuery(handle, kind),
-    enabled: open,
-  })
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <button
-          type="button"
-          disabled={value === 0}
-          data-testid={`profile-stat-${label}`}
-          className="inline-flex items-baseline gap-1 rounded-sm underline-offset-4 outline-none enabled:hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-default"
-        >
-          <span className="font-mono font-medium tabular-nums text-foreground">{value}</span>
-          <span className="text-muted-foreground">{label}</span>
-        </button>
-      </DialogTrigger>
-      <DialogContent className="max-w-sm" aria-describedby={undefined}>
-        <DialogHeader>
-          <DialogTitle className="capitalize">{label}</DialogTitle>
-        </DialogHeader>
-        {isPending ? (
-          <div className="flex justify-center py-6">
-            <Spinner />
-          </div>
-        ) : people && people.length > 0 ? (
-          <ul role="list" className="flex max-h-80 flex-col gap-1 overflow-y-auto">
-            {people.map((p) => (
-              <li key={p.username}>
-                <Link
-                  to="/users/$handle"
-                  params={{ handle: p.username }}
-                  onClick={() => setOpen(false)}
-                  className="flex items-center gap-3 rounded-md p-2 outline-none hover:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-                >
-                  <Avatar className="size-8">
-                    {p.image && <AvatarImage src={p.image} alt={p.name ?? p.username} />}
-                    <AvatarFallback
-                      className="text-scrim-foreground outline-1 -outline-offset-1 outline-foreground/10"
-                      style={{ backgroundColor: colorForName(p.name ?? p.username) }}
-                    >
-                      {getInitials(p.name ?? p.username)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className="min-w-0">
-                    {p.name && <span className="block truncate text-sm font-medium">{p.name}</span>}
-                    <span className="block truncate font-mono text-2xs text-muted-foreground">
-                      @{p.username}
-                    </span>
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="py-6 text-center text-sm text-muted-foreground">No one yet.</p>
-        )}
-      </DialogContent>
-    </Dialog>
   )
 }
 

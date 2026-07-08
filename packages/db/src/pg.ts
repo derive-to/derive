@@ -42,6 +42,7 @@ import type {
   NewMembership,
   NewNotification,
   NewProposal,
+  NewRenderJob,
   NewReport,
   NewRepoSource,
   NewReviewRound,
@@ -54,8 +55,11 @@ import type {
   OAuthGrant,
   OAuthGrantSummary,
   OrgSettings,
+  PreviewStatus,
   ProposalRecord,
   ProposalState,
+  RenderJobRecord,
+  RenderJobStatus,
   ReportRecord,
   ReportState,
   RepoSourceRecord,
@@ -76,7 +80,7 @@ import type {
   WebhookRecord,
   WorkspaceRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@derive/core"
+import { GLOBAL_FOLLOW_ORG } from "@derive/core"
 import {
   and,
   asc,
@@ -120,6 +124,7 @@ import {
   orgSettings,
   PG_SCHEMA_STATEMENTS,
   proposal,
+  renderJob,
   report,
   repoSource,
   reviewRound,
@@ -131,7 +136,12 @@ import {
   webhookDelivery,
   workspace,
 } from "./pg-schema"
-import { artifactListConditions, collectManagedIds, parseOAuthScopes } from "./repos"
+import {
+  artifactListConditions,
+  collectManagedIds,
+  parseOAuthScopes,
+  parseOrgSettings,
+} from "./repos"
 
 const one = <T>(rows: T[]): T => {
   const r = rows[0]
@@ -147,6 +157,7 @@ export const schema = {
   comment,
   webhook,
   webhookDelivery,
+  renderJob,
   membership,
   workspace,
   artifactMember,
@@ -184,6 +195,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   comment: true,
   webhook: true,
   webhookDelivery: true,
+  renderJob: true,
   membership: true,
   workspace: true,
   artifactMember: true,
@@ -363,6 +375,21 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, n)))
   }
 
+  async setVersionPreview(
+    artifactId: string,
+    n: number,
+    fields: {
+      preview_key?: string | null
+      preview_status?: PreviewStatus | null
+      preview_error?: string | null
+    },
+  ): Promise<void> {
+    await this.db
+      .update(version)
+      .set(fields)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+  }
+
   async createComment(c: NewComment): Promise<CommentRecord> {
     const rows = await this.db.insert(comment).values(c).returning()
     return one(rows)
@@ -511,21 +538,38 @@ export class PgMetaStore implements MetaStore {
       )
     return rows.map((r) => r.id)
   }
+  // "Created by me" — every artifact this user holds an OWNER member row on in the
+  // workspace, any visibility. Roster-keyed, not author_id-keyed (mirrors the
+  // SQLite path — see repos.ts for why the denorm can't anchor "yours").
+  private ownerRowJoin(userId: string) {
+    return and(
+      eq(artifactMember.artifact_id, artifact.id),
+      eq(artifactMember.user_id, userId),
+      eq(artifactMember.role, "owner"),
+    )
+  }
+  async artifactIdsOwnedBy(orgId: string, userId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .innerJoin(artifactMember, this.ownerRowJoin(userId))
+      .where(eq(artifact.org_id, orgId))
+    return rows.map((r) => r.id)
+  }
   async countArtifacts(orgId?: string): Promise<number> {
     const q = this.db.select({ c: count() }).from(artifact)
     const rows = await (orgId ? q.where(eq(artifact.org_id, orgId)) : q)
     return Number(rows[0]?.c ?? 0)
   }
-  async countUnlistedFor(orgId: string, userId: string): Promise<number> {
+  async countOwnedBy(orgId: string, userId: string, visibility?: Visibility): Promise<number> {
     const rows = await this.db
       .select({ c: count() })
       .from(artifact)
+      .innerJoin(artifactMember, this.ownerRowJoin(userId))
       .where(
         and(
           eq(artifact.org_id, orgId),
-          eq(artifact.visibility, "unlisted"),
-          sql`EXISTS (SELECT 1 FROM artifact_member am
-            WHERE am.artifact_id = ${artifact.id} AND am.user_id = ${userId})`,
+          visibility ? eq(artifact.visibility, visibility) : undefined,
         ),
       )
     return Number(rows[0]?.c ?? 0)
@@ -710,6 +754,36 @@ export class PgMetaStore implements MetaStore {
       .where(eq(webhookDelivery.webhook_id, webhookId))
       .orderBy(desc(webhookDelivery.created_at))
       .limit(limit)
+  }
+
+  // ---- Render-job queue --------------------------------------------------
+  async enqueueRenderJob(j: NewRenderJob): Promise<void> {
+    await this.db.insert(renderJob).values(j)
+  }
+  claimDueRenderJobs(now: string, limit: number, leaseUntil: string): Promise<RenderJobRecord[]> {
+    const due = this.db
+      .select({ id: renderJob.id })
+      .from(renderJob)
+      .where(and(eq(renderJob.status, "pending"), lte(renderJob.next_attempt_at, now)))
+      .orderBy(asc(renderJob.next_attempt_at))
+      .limit(limit)
+      .for("update", { skipLocked: true })
+    return this.db
+      .update(renderJob)
+      .set({ attempts: sql`${renderJob.attempts} + 1`, next_attempt_at: leaseUntil })
+      .where(inArray(renderJob.id, due))
+      .returning()
+  }
+  async updateRenderJob(
+    id: string,
+    fields: {
+      status: RenderJobStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
+  ): Promise<void> {
+    await this.db.update(renderJob).set(fields).where(eq(renderJob.id, id))
   }
 
   // ---- Permissions: membership + per-artifact shares ---------------------
@@ -1014,17 +1088,12 @@ export class PgMetaStore implements MetaStore {
     } else {
       conds.push(eq(artifact.author_id, userId))
     }
-    // Private and unlisted drafts never ride a profile, shared workspace or not
-    // (see repos.ts).
+    // Private work never rides a profile, shared workspace or not (see repos.ts).
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
       const v = or(
         eq(artifact.visibility, "public"),
-        and(
-          inArray(artifact.org_id, orgs),
-          ne(artifact.visibility, "private"),
-          ne(artifact.visibility, "unlisted"),
-        ),
+        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
       )
       if (v) conds.push(v)
     } else {
@@ -1107,6 +1176,19 @@ export class PgMetaStore implements MetaStore {
       out[r.artifact_id]?.push(r.tag)
     }
     for (const k in out) out[k]?.sort()
+    return out
+  }
+  async previewReady(artifactIds: string[]): Promise<Record<string, boolean>> {
+    if (artifactIds.length === 0) return {}
+    const ph = artifactIds.map((_, i) => `$${i + 1}`).join(",")
+    const { rows } = await this.pool.query(
+      `SELECT a.id artifact_id FROM artifact a
+       JOIN version v ON v.artifact_id = a.id AND v.n = a.current_version
+       WHERE v.preview_status = 'ready' AND a.id IN (${ph})`,
+      artifactIds,
+    )
+    const out: Record<string, boolean> = {}
+    for (const r of rows) out[r.artifact_id] = true
     return out
   }
   async setArtifactTags(artifactId: string, tags: string[]): Promise<void> {
@@ -1291,11 +1373,7 @@ export class PgMetaStore implements MetaStore {
   }
   async getOrgSettings(orgId: string): Promise<OrgSettings> {
     const rows = await this.db.select().from(orgSettings).where(eq(orgSettings.org_id, orgId))
-    let parsed: Partial<OrgSettings> = {}
-    try {
-      if (rows[0]?.settings) parsed = JSON.parse(rows[0].settings) as Partial<OrgSettings>
-    } catch {}
-    return { ...DEFAULT_ORG_SETTINGS, ...parsed }
+    return parseOrgSettings(rows[0]?.settings ?? null)
   }
   async setOrgSettings(orgId: string, settings: OrgSettings): Promise<void> {
     await this.db
@@ -1870,6 +1948,17 @@ export class PgMetaStore implements MetaStore {
       return null
     }
   }
+  async oauthClientExists(clientId: string): Promise<boolean> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT 1 FROM "oauthClient" WHERE "clientId" = $1 LIMIT 1`,
+        [clientId],
+      )
+      return rows.length > 0
+    } catch {
+      return false
+    }
+  }
   async setOAuthClientWorkspace(userId: string, clientId: string, orgId: string): Promise<void> {
     await this.db
       .insert(oauthClientWorkspace)
@@ -2131,6 +2220,16 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(notification).where(eq(notification.artifact_id, id))
       await tx.delete(agentMention).where(eq(agentMention.artifact_id, id))
       await tx.delete(artifact).where(eq(artifact.id, id))
+    })
+  }
+
+  // Atomic move: org_id flips, collection membership and any artifact-targeted
+  // webhook detach, all in one commit.
+  async moveArtifactOrg(artifactId: string, targetOrgId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId))
+      await tx.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId))
+      await tx.update(webhook).set({ artifact_id: null }).where(eq(webhook.artifact_id, artifactId))
     })
   }
 

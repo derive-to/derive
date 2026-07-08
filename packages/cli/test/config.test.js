@@ -1,19 +1,35 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   CONFIG_FILE,
   defaultConfig,
+  describeWorkspace,
+  entryFor,
+  findAccountWorkspace,
+  forgetWorkspace,
   formatComments,
+  freshToken,
+  getAccount,
+  getClientId,
+  getDefault,
+  listAccounts,
   loadConfig,
-  loadCredentials,
+  mergeChosenWorkspaces,
+  removeAccount,
+  resolveAccountRef,
   resolvePublish,
-  saveToken,
+  resolveWorkspaceRef,
+  saveAccount,
+  saveClientId,
   scaffold,
   scaffoldFiles,
+  setDefaultAccount,
+  setDefaultWorkspace,
+  setWorkspaces,
   TEMPLATES,
-  tokenFor,
+  writeContextConfig,
   writeId,
 } from "../src/config.js"
 
@@ -100,11 +116,11 @@ describe("scaffold", () => {
     const cfg = JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8"))
     expect(cfg.$schema).toBe("./derive.schema.json")
     const schema = JSON.parse(readFileSync(join(d, "derive.schema.json"), "utf8"))
-    expect(schema.properties.visibility.enum).toContain("link")
+    expect(schema.properties.visibility.enum).toEqual(["public", "org", "private"])
   })
 
   it("exposes the templates", () => {
-    expect(TEMPLATES).toEqual(["md", "html", "slides", "site", "skill"])
+    expect(TEMPLATES).toEqual(["md", "html", "slides", "site", "skill", "context"])
     expect(Object.keys(scaffoldFiles("T", "slides"))).toContain("slides.html")
   })
 
@@ -117,6 +133,41 @@ describe("scaffold", () => {
     const md = files["skill/SKILL.md"]
     expect(md).toMatch(/^---\nname: my-cool-skill\n/) // title slugified to a skill name
     expect(md).toContain("description:")
+  })
+
+  it("scaffolds a context: manifest + references + tools + env hygiene", () => {
+    const files = scaffoldFiles("Analytics", "context")
+    const names = Object.keys(files)
+    expect(names).toContain("context/MANIFEST.md")
+    expect(names).toContain("context/references/example.md")
+    expect(names).toContain("context/.mcp.json")
+    expect(names).toContain("context/.env.example")
+    // .env, the minted agent token, and the clone workspace must never reach git.
+    expect(files[".gitignore"]).toContain("context/.env")
+    expect(files[".gitignore"]).toContain(".derive/")
+    expect(files[".gitignore"]).toContain("context/repos/")
+    // The repo-pointer example ships commented out — scaffolds must parse to zero repos.
+    expect(files["context/MANIFEST.md"]).toContain("# repos:")
+    const cfg = JSON.parse(files[CONFIG_FILE])
+    expect(cfg.entry).toBe("context")
+    expect(cfg.context).toEqual({ id: null, agent_id: null, name: "Analytics" })
+  })
+})
+
+describe("writeContextConfig", () => {
+  it("merges wiring ids into the context block, preserving everything else", () => {
+    const d = tmp()
+    writeFileSync(
+      join(d, CONFIG_FILE),
+      JSON.stringify({ title: "T", entry: "context", id: "abc", context: { id: null, name: "T" } }),
+    )
+    writeContextConfig(d, { agent_id: "ag_1" })
+    const cfg = writeContextConfig(d, { id: "ctx_1" })
+    expect(cfg).toMatchObject({
+      title: "T",
+      id: "abc",
+      context: { id: "ctx_1", agent_id: "ag_1", name: "T" },
+    })
   })
 })
 
@@ -237,36 +288,446 @@ describe("credentials (derive login)", () => {
   afterEach(() => {
     restore("DERIVE_CONFIG_DIR", prevDir)
     restore("DERIVE_TOKEN", prevToken)
+    vi.unstubAllGlobals()
   })
 
-  it("saves and reads a token per server origin", () => {
-    expect(tokenFor("https://derive.example.com")).toBeNull()
-    saveToken("https://derive.example.com/some/path", "tok_abc")
-    // Stored + read by origin, so a path on the same host resolves the same token.
-    expect(tokenFor("https://derive.example.com")).toBe("tok_abc")
-    expect(tokenFor("https://derive.example.com/other")).toBe("tok_abc")
-    expect(loadCredentials()["https://derive.example.com"].token).toBe("tok_abc")
+  const SERVER = "https://derive.example.com"
+
+  describe("saveAccount / setWorkspaces", () => {
+    it("the first account saved on a server becomes its default", () => {
+      expect(getDefault(SERVER)).toBeNull()
+      saveAccount(SERVER, "u1", { handle: "ava", grant: { token: "tok1" } })
+      expect(getDefault(SERVER)).toEqual({ account: "u1", workspace: null })
+      expect(getAccount(SERVER, "u1").handle).toBe("ava")
+      expect(getAccount(SERVER, "u1").auth.token).toBe("tok1")
+    })
+
+    it("a second account does not steal the default", () => {
+      saveAccount(SERVER, "u1", { grant: { token: "tok1" } })
+      saveAccount(SERVER, "u2", { grant: { token: "tok2" } })
+      expect(getDefault(SERVER).account).toBe("u1")
+      expect(
+        listAccounts(SERVER)
+          .map((a) => a.id)
+          .sort(),
+      ).toEqual(["u1", "u2"])
+    })
+
+    it("setWorkspaces auto-picks an owner-role default over the first entry", () => {
+      saveAccount(SERVER, "u1", { grant: { token: "tok1" } })
+      setWorkspaces(SERVER, "u1", {
+        ws_a: { name: "A", role: "editor" },
+        ws_b: { name: "B", role: "owner" },
+      })
+      expect(getDefault(SERVER).workspace).toBe("ws_b")
+    })
+
+    it("falls back to the first entry when no workspace is owner-role", () => {
+      saveAccount(SERVER, "u1", { grant: { token: "tok1" } })
+      setWorkspaces(SERVER, "u1", { ws_a: { name: "A", role: "viewer" } })
+      expect(getDefault(SERVER).workspace).toBe("ws_a")
+    })
+
+    it("reports added/renamed/removed against the previous roster", () => {
+      saveAccount(SERVER, "u1", { grant: { token: "tok1" } })
+      setWorkspaces(SERVER, "u1", {
+        ws_a: { name: "A", role: "owner" },
+        ws_b: { name: "B", role: "editor" },
+      })
+      const diff = setWorkspaces(SERVER, "u1", {
+        ws_a: { name: "A Renamed", role: "owner" },
+        ws_c: { name: "C", role: "editor" },
+      })
+      expect(diff.added).toEqual([{ id: "ws_c", name: "C" }])
+      expect(diff.renamed).toEqual([{ id: "ws_a", from: "A", to: "A Renamed" }])
+      expect(diff.removed).toEqual([{ id: "ws_b", name: "B" }])
+    })
+
+    it("re-picks the default when it drops out of a re-synced roster", () => {
+      saveAccount(SERVER, "u1", { grant: { token: "tok1" } })
+      setWorkspaces(SERVER, "u1", { ws_a: { name: "A", role: "owner" } })
+      setDefaultWorkspace(SERVER, "u1", "ws_a")
+      setWorkspaces(SERVER, "u1", { ws_b: { name: "B", role: "editor" } })
+      expect(getDefault(SERVER).workspace).toBe("ws_b")
+    })
   })
 
-  it("keeps separate tokens for different servers", () => {
-    saveToken("https://a.derive.com", "tok_a")
-    saveToken("https://b.derive.com", "tok_b")
-    expect(tokenFor("https://a.derive.com")).toBe("tok_a")
-    expect(tokenFor("https://b.derive.com")).toBe("tok_b")
+  describe("mergeChosenWorkspaces (derive login --workspace/--pick vs. an already-synced account)", () => {
+    it("merges a narrowed selection into an existing roster instead of replacing it", () => {
+      const existing = {
+        ws_a: { name: "A", role: "owner" },
+        ws_b: { name: "B", role: "editor" },
+        ws_c: { name: "C", role: "viewer" },
+      }
+      const chosen = { ws_b: { name: "B", role: "owner" } } // e.g. --workspace "B", role refreshed
+      const merged = mergeChosenWorkspaces(existing, chosen, true)
+      expect(merged).toEqual({
+        ws_a: { name: "A", role: "owner" },
+        ws_b: { name: "B", role: "owner" }, // refreshed, not stale
+        ws_c: { name: "C", role: "viewer" },
+      })
+    })
+
+    it("uses chosen as-is when there's no existing roster to protect (a fresh account)", () => {
+      const chosen = { ws_b: { name: "B", role: "owner" } }
+      expect(mergeChosenWorkspaces({}, chosen, true)).toBe(chosen)
+    })
+
+    it("uses chosen as-is when not narrowing (a full discovery legitimately replaces/diffs the roster)", () => {
+      const existing = { ws_a: { name: "A", role: "owner" }, ws_b: { name: "B", role: "editor" } }
+      const chosen = { ws_a: { name: "A", role: "owner" } } // e.g. the account left ws_b server-side
+      expect(mergeChosenWorkspaces(existing, chosen, false)).toBe(chosen)
+    })
+
+    it("end to end: derive login --workspace on an already-synced account keeps the others", () => {
+      saveAccount(SERVER, "u1", { grant: { token: "tok1" } })
+      setWorkspaces(SERVER, "u1", {
+        ws_a: { name: "A", role: "owner" },
+        ws_b: { name: "B", role: "editor" },
+        ws_c: { name: "C", role: "viewer" },
+      })
+      const chosen = { ws_b: { name: "B", role: "editor" } } // re-login narrowed to just B
+      const toSave = mergeChosenWorkspaces(getAccount(SERVER, "u1").workspaces, chosen, true)
+      setWorkspaces(SERVER, "u1", toSave)
+      expect(Object.keys(getAccount(SERVER, "u1").workspaces).sort()).toEqual([
+        "ws_a",
+        "ws_b",
+        "ws_c",
+      ])
+    })
   })
 
-  it("resolvePublish uses the saved token for the resolved server", () => {
-    saveToken("https://derive.example.com", "tok_login")
-    const r = resolvePublish({ server: "https://derive.example.com" }, null)
-    expect(r.token).toBe("tok_login")
+  describe("legacy migration", () => {
+    it("reads a pre-multi-workspace flat grant as a synthetic default account", () => {
+      // The on-disk shape this store used before accounts existed.
+      writeFileSync(
+        join(process.env.DERIVE_CONFIG_DIR, "credentials.json"),
+        JSON.stringify({
+          [SERVER]: {
+            token: "old_tok",
+            refresh_token: "old_refresh",
+            client_id: "old_client",
+            expires_at: null,
+            saved_at: "2020-01-01T00:00:00.000Z",
+          },
+        }),
+      )
+      expect(getDefault(SERVER)).toEqual({ account: "legacy", workspace: null })
+      const account = getAccount(SERVER, "legacy")
+      expect(account.auth.token).toBe("old_tok")
+      expect(account.auth.refresh_token).toBe("old_refresh")
+      expect(resolvePublish({ server: SERVER }, null).token).toBe("old_tok")
+    })
+
+    it("is idempotent — reading twice does not change what's on disk", () => {
+      writeFileSync(
+        join(process.env.DERIVE_CONFIG_DIR, "credentials.json"),
+        JSON.stringify({ [SERVER]: { token: "old_tok" } }),
+      )
+      const before = readFileSync(join(process.env.DERIVE_CONFIG_DIR, "credentials.json"), "utf8")
+      getDefault(SERVER)
+      entryFor(SERVER)
+      const after = readFileSync(join(process.env.DERIVE_CONFIG_DIR, "credentials.json"), "utf8")
+      expect(after).toBe(before)
+    })
   })
 
-  it("explicit --token and DERIVE_TOKEN win over the saved token", () => {
-    saveToken("https://derive.example.com", "tok_login")
-    expect(
-      resolvePublish({ server: "https://derive.example.com", token: "tok_flag" }, null).token,
-    ).toBe("tok_flag")
-    process.env.DERIVE_TOKEN = "tok_env"
-    expect(resolvePublish({ server: "https://derive.example.com" }, null).token).toBe("tok_env")
+  describe("resolveAccountRef / findAccountWorkspace", () => {
+    beforeEach(() => {
+      saveAccount(SERVER, "u1", { handle: "ava", grant: { token: "tok1" } })
+      setWorkspaces(SERVER, "u1", { ws_a: { name: "Acme Co", role: "owner" } })
+    })
+    it("resolves by id", () => {
+      expect(resolveAccountRef(SERVER, "u1")).toBe("u1")
+    })
+    it("resolves by handle, case-insensitively, with or without @", () => {
+      expect(resolveAccountRef(SERVER, "ava")).toBe("u1")
+      expect(resolveAccountRef(SERVER, "@ava")).toBe("u1")
+      expect(resolveAccountRef(SERVER, "@AVA")).toBe("u1")
+    })
+    it("returns null for an unknown ref", () => {
+      expect(resolveAccountRef(SERVER, "nobody")).toBeNull()
+    })
+    it("finds a workspace by id or case-insensitive name within an account", () => {
+      expect(findAccountWorkspace(SERVER, "u1", "ws_a")).toEqual({ id: "ws_a", name: "Acme Co" })
+      expect(findAccountWorkspace(SERVER, "u1", "acme co")).toEqual({ id: "ws_a", name: "Acme Co" })
+      expect(findAccountWorkspace(SERVER, "u1", "nope")).toBeNull()
+    })
+  })
+
+  describe("setDefaultAccount / setDefaultWorkspace / forgetWorkspace / removeAccount", () => {
+    beforeEach(() => {
+      saveAccount(SERVER, "u1", { handle: "ava", grant: { token: "tok1" } })
+      saveAccount(SERVER, "u2", { handle: "bo", grant: { token: "tok2" } })
+      setWorkspaces(SERVER, "u1", {
+        ws_a: { name: "Personal", role: "owner" },
+        ws_b: { name: "Acme Co", role: "editor" },
+      })
+    })
+
+    it("setDefaultAccount switches which account resolves by default", () => {
+      setDefaultAccount(SERVER, "u2")
+      expect(getDefault(SERVER).account).toBe("u2")
+    })
+    it("setDefaultAccount throws on an unknown account", () => {
+      expect(() => setDefaultAccount(SERVER, "ghost")).toThrow(/no such account/)
+    })
+
+    it("setDefaultWorkspace resolves by name and persists", () => {
+      const w = setDefaultWorkspace(SERVER, "u1", "Acme Co")
+      expect(w).toEqual({ id: "ws_b", name: "Acme Co" })
+      expect(getDefault(SERVER).workspace).toBe("ws_b")
+    })
+    it("setDefaultWorkspace throws a clear error and does not partially apply", () => {
+      expect(() => setDefaultWorkspace(SERVER, "u1", "Nope")).toThrow(/no workspace/)
+      expect(getDefault(SERVER).workspace).toBe("ws_a") // unchanged
+    })
+
+    it("forgetWorkspace drops it locally and re-picks the default if needed", () => {
+      const removed = forgetWorkspace(SERVER, "u1", "ws_a")
+      expect(removed).toEqual({ id: "ws_a", name: "Personal" })
+      expect(getAccount(SERVER, "u1").workspaces.ws_a).toBeUndefined()
+      expect(getDefault(SERVER).workspace).toBe("ws_b") // re-picked
+    })
+    it("forgetWorkspace returns null for an unknown ref", () => {
+      expect(forgetWorkspace(SERVER, "u1", "nope")).toBeNull()
+    })
+
+    it("removeAccount falls back the default to a remaining account", () => {
+      expect(removeAccount(SERVER, "u1")).toBe(true)
+      expect(getDefault(SERVER).account).toBe("u2")
+      expect(listAccounts(SERVER)).toEqual([
+        { id: "u2", handle: "bo", workspaceCount: 0, isDefault: true },
+      ])
+    })
+    it("removeAccount returns false for an account that was never there", () => {
+      expect(removeAccount(SERVER, "ghost")).toBe(false)
+    })
+  })
+
+  describe("describeWorkspace", () => {
+    beforeEach(() => {
+      saveAccount(SERVER, "u1", { handle: "ava", grant: { token: "tok1" } })
+      setWorkspaces(SERVER, "u1", {
+        ws_a: { name: "Personal", role: "owner" },
+        ws_b: { name: "Acme Co", role: "editor" },
+      })
+    })
+
+    it("sets a local description, resolvable by name or id", () => {
+      const w = describeWorkspace(SERVER, "u1", "Acme Co", "Client work — never internal drafts.")
+      expect(w).toEqual({ id: "ws_b", name: "Acme Co" })
+      expect(getAccount(SERVER, "u1").workspaces.ws_b.description).toBe(
+        "Client work — never internal drafts.",
+      )
+      // untouched workspace has no description key at all
+      expect(getAccount(SERVER, "u1").workspaces.ws_a.description).toBeUndefined()
+    })
+
+    it("clearing with null removes the description key", () => {
+      describeWorkspace(SERVER, "u1", "ws_a", "Scratch space")
+      describeWorkspace(SERVER, "u1", "ws_a", null)
+      expect(getAccount(SERVER, "u1").workspaces.ws_a.description).toBeUndefined()
+    })
+
+    it("throws for an unknown workspace, without partially applying", () => {
+      expect(() => describeWorkspace(SERVER, "u1", "Nope", "x")).toThrow(/no workspace/)
+    })
+    it("throws for an unknown account", () => {
+      expect(() => describeWorkspace(SERVER, "ghost", "ws_a", "x")).toThrow(/no such account/)
+    })
+
+    it("survives a re-sync for a workspace that's still a member", () => {
+      describeWorkspace(SERVER, "u1", "Acme Co", "Client work.")
+      setWorkspaces(SERVER, "u1", {
+        ws_a: { name: "Personal", role: "owner" },
+        ws_b: { name: "Acme Co", role: "owner" }, // role changed server-side, still present
+      })
+      expect(getAccount(SERVER, "u1").workspaces.ws_b).toEqual({
+        name: "Acme Co",
+        role: "owner",
+        description: "Client work.",
+      })
+    })
+
+    it("is dropped when the workspace is no longer in the synced roster", () => {
+      describeWorkspace(SERVER, "u1", "Acme Co", "Client work.")
+      setWorkspaces(SERVER, "u1", { ws_a: { name: "Personal", role: "owner" } }) // ws_b gone
+      const diff = setWorkspaces(SERVER, "u1", {
+        ws_a: { name: "Personal", role: "owner" },
+        ws_b: { name: "Acme Co", role: "owner" }, // rejoins later, as a NEW membership
+      })
+      expect(diff.added).toEqual([{ id: "ws_b", name: "Acme Co" }])
+      expect(getAccount(SERVER, "u1").workspaces.ws_b.description).toBeUndefined()
+    })
+  })
+
+  describe("resolveWorkspaceRef (cross-account, for --workspace with no --account)", () => {
+    beforeEach(() => {
+      saveAccount(SERVER, "u1", { handle: "ava", grant: { token: "tok1" } })
+      saveAccount(SERVER, "u2", { handle: "ava-work", grant: { token: "tok2" } })
+      setWorkspaces(SERVER, "u1", { ws_a: { name: "Personal", role: "owner" } })
+      setWorkspaces(SERVER, "u2", { ws_b: { name: "Client Org", role: "editor" } })
+    })
+
+    it("resolves an id match to the right account", () => {
+      expect(resolveWorkspaceRef(SERVER, "ws_b")).toEqual({
+        accountId: "u2",
+        workspaceId: "ws_b",
+        workspaceName: "Client Org",
+      })
+    })
+    it("resolves a unique name match across accounts", () => {
+      expect(resolveWorkspaceRef(SERVER, "client org")).toEqual({
+        accountId: "u2",
+        workspaceId: "ws_b",
+        workspaceName: "Client Org",
+      })
+    })
+    it("a shared workspace id under two accounts is not ambiguous — same workspace", () => {
+      setWorkspaces(SERVER, "u2", {
+        ws_b: { name: "Client Org", role: "editor" },
+        ws_a: { name: "Personal", role: "viewer" }, // u2 also happens to share ws_a
+      })
+      const r = resolveWorkspaceRef(SERVER, "ws_a")
+      expect(r.workspaceId).toBe("ws_a")
+      expect(r.accountId).toBe("u1") // prefers the default account among the matches
+    })
+    it("flags a genuine name collision across two DIFFERENT workspaces as ambiguous", () => {
+      setWorkspaces(SERVER, "u2", { ws_c: { name: "Personal", role: "owner" } }) // different id, same name as u1's
+      const r = resolveWorkspaceRef(SERVER, "personal")
+      expect(r.ambiguous).toEqual(
+        expect.arrayContaining([
+          { accountId: "u1", handle: "ava" },
+          { accountId: "u2", handle: "ava-work" },
+        ]),
+      )
+    })
+    it("returns null when nothing matches", () => {
+      expect(resolveWorkspaceRef(SERVER, "nope")).toBeNull()
+    })
+  })
+
+  describe("resolvePublish target resolution", () => {
+    beforeEach(() => {
+      saveAccount(SERVER, "u1", { handle: "ava", grant: { token: "tok1" } })
+      saveAccount(SERVER, "u2", { handle: "ava-work", grant: { token: "tok2" } })
+      setWorkspaces(SERVER, "u1", {
+        ws_a: { name: "Personal", role: "owner" },
+        ws_b: { name: "Acme Co", role: "editor" },
+      })
+      setWorkspaces(SERVER, "u2", { ws_c: { name: "Client Org", role: "editor" } })
+    })
+
+    it("with no flags, resolves the stored default", () => {
+      const r = resolvePublish({ server: SERVER }, null)
+      expect(r).toMatchObject({
+        accountId: "u1",
+        accountHandle: "ava",
+        workspaceId: "ws_a",
+        workspaceName: "Personal",
+        token: "tok1",
+        workspaceError: null,
+      })
+    })
+
+    it("--workspace alone resolves across accounts", () => {
+      const r = resolvePublish({ server: SERVER, workspace: "Client Org" }, null)
+      expect(r).toMatchObject({ accountId: "u2", workspaceId: "ws_c", token: "tok2" })
+    })
+
+    it("--account alone uses that account's own default workspace", () => {
+      const r = resolvePublish({ server: SERVER, account: "ava-work" }, null)
+      expect(r).toMatchObject({ accountId: "u2", workspaceId: "ws_c", token: "tok2" })
+    })
+
+    it("--workspace + --account together look up within that account only", () => {
+      const r = resolvePublish({ server: SERVER, workspace: "Acme Co", account: "ava" }, null)
+      expect(r).toMatchObject({ accountId: "u1", workspaceId: "ws_b" })
+    })
+
+    it("derive.json's workspace/account fields apply when no flag overrides them", () => {
+      const r = resolvePublish({ server: SERVER }, { workspace: "ws_b", account: "ava" })
+      expect(r).toMatchObject({ accountId: "u1", workspaceId: "ws_b" })
+    })
+
+    it("a flag wins over derive.json", () => {
+      const r = resolvePublish({ server: SERVER, workspace: "ws_c" }, { workspace: "ws_b" })
+      expect(r.workspaceId).toBe("ws_c")
+    })
+
+    it("an unknown --workspace surfaces workspaceError instead of throwing", () => {
+      const r = resolvePublish({ server: SERVER, workspace: "Nope" }, null)
+      expect(r.workspaceError).toEqual({ type: "not_found", ref: "Nope" })
+      expect(r.workspaceId).toBeNull()
+    })
+
+    it("an unknown --account surfaces workspaceError", () => {
+      const r = resolvePublish({ server: SERVER, account: "ghost" }, null)
+      expect(r.workspaceError).toEqual({ type: "no_account", ref: "ghost" })
+    })
+
+    it("a name colliding across accounts surfaces an ambiguous workspaceError", () => {
+      setWorkspaces(SERVER, "u2", { ws_d: { name: "Personal", role: "owner" } })
+      const r = resolvePublish({ server: SERVER, workspace: "Personal" }, null)
+      expect(r.workspaceError.type).toBe("ambiguous")
+    })
+
+    it("explicit --token and DERIVE_TOKEN still win over the resolved account token", () => {
+      expect(resolvePublish({ server: SERVER, token: "tok_flag" }, null).token).toBe("tok_flag")
+      process.env.DERIVE_TOKEN = "tok_env"
+      expect(resolvePublish({ server: SERVER }, null).token).toBe("tok_env")
+    })
+  })
+
+  describe("client id reuse", () => {
+    it("is null until saved, then reused across logins", () => {
+      expect(getClientId(SERVER)).toBeNull()
+      saveClientId(SERVER, "client_123")
+      expect(getClientId(SERVER)).toBe("client_123")
+    })
+  })
+
+  describe("freshToken", () => {
+    it("returns the saved token without a network call when still valid", async () => {
+      saveAccount(SERVER, "u1", {
+        grant: { token: "tok1", refresh_token: "r1", client_id: "c1", expires_in: 3600 },
+      })
+      const fetchSpy = vi.fn()
+      vi.stubGlobal("fetch", fetchSpy)
+      expect(await freshToken(SERVER, "u1")).toBe("tok1")
+      expect(fetchSpy).not.toHaveBeenCalled()
+    })
+
+    it("refreshes and rotates when expired, persisting the new grant", async () => {
+      saveAccount(SERVER, "u1", {
+        grant: { token: "tok_old", refresh_token: "r_old", client_id: "c1", expires_in: -10 },
+      })
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({ access_token: "tok_new", refresh_token: "r_new", expires_in: 3600 }),
+        }),
+      )
+      const token = await freshToken(SERVER, "u1")
+      expect(token).toBe("tok_new")
+      const account = getAccount(SERVER, "u1")
+      expect(account.auth.token).toBe("tok_new")
+      expect(account.auth.refresh_token).toBe("r_new")
+    })
+
+    it("falls back to the stale token if the refresh call fails", async () => {
+      saveAccount(SERVER, "u1", {
+        grant: { token: "tok_old", refresh_token: "r_old", client_id: "c1", expires_in: -10 },
+      })
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")))
+      expect(await freshToken(SERVER, "u1")).toBe("tok_old")
+    })
+
+    it("returns null for an unknown account", async () => {
+      expect(await freshToken(SERVER, "ghost")).toBeNull()
+      expect(await freshToken(SERVER, null)).toBeNull()
+    })
   })
 })

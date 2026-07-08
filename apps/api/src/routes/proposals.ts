@@ -2,6 +2,7 @@ import {
   type ArtifactRecord,
   approveProposal,
   diffLines,
+  EditError,
   type ProposalRecord,
   PublishError,
   propose,
@@ -12,6 +13,12 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { markAddressed, releaseAddressed } from "../lib/addressed"
 import { publishSweepEvents } from "../lib/anchor-sweep"
+import {
+  EditConflictError,
+  type MaterializedEdits,
+  materializeEdits,
+  parseBaseVersion,
+} from "../lib/edits"
 import { bail, fail, MAX_UPLOAD_BYTES, readJson, str } from "../lib/http"
 import { DiffOp } from "../schemas"
 
@@ -32,6 +39,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     deps,
     bus,
     notify,
+    notifyRender,
     currentUser,
     actingUser,
     privateOwnerId,
@@ -151,19 +159,63 @@ export const proposalRoutes = (ctx: AppContext) => {
       if (len > MAX_UPLOAD_BYTES) return bail(fail(c, 413, "upload too large"))
 
       const body = await c.req.parseBody()
-      const file = body.file
-      if (!(file instanceof File)) return bail(fail(c, 400, "multipart field 'file' required"))
-      const bytes = new Uint8Array(await file.arrayBuffer())
-      // content-length is advisory; re-check the actual buffered size (hard cap).
-      if (bytes.length > MAX_UPLOAD_BYTES) return bail(fail(c, 413, "upload too large"))
-      // Proposals store a blob immediately, so they count toward the storage cap
-      // of the artifact's workspace.
-      if (await overStorage(artifact.org_id, bytes.length))
-        return bail(fail(c, 413, "storage quota exceeded"))
-      const isBundle =
-        /\.zip$/i.test(file.name) ||
-        body.kind === "bundle" ||
-        (bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5))
+
+      // `edits` — exact-match search/replace against the current stored source,
+      // same contract and helper as a direct-publish `edits` revision (parity with
+      // the MCP publish tool). Materializes full content, then flows into the same
+      // propose() call as a `file` upload would.
+      const editsField = body.edits
+      let bytes: Uint8Array
+      let filename: string
+      let isBundle: boolean
+      if (typeof editsField === "string") {
+        let edits: { old_str: string; new_str: string }[]
+        try {
+          edits = JSON.parse(editsField)
+        } catch {
+          return bail(fail(c, 400, "edits must be a JSON array of {old_str,new_str}"))
+        }
+        let materialized: MaterializedEdits
+        try {
+          const baseVersion = parseBaseVersion(str(body.base_version))
+          materialized = await materializeEdits(
+            { getVersion: meta.getVersion.bind(meta), sourceText },
+            artifact,
+            edits,
+            baseVersion,
+          )
+        } catch (e) {
+          if (e instanceof EditConflictError) return bail(fail(c, 409, e.message))
+          return bail(
+            fail(
+              c,
+              e instanceof EditError ? 400 : 500,
+              e instanceof Error ? e.message : "edit failed",
+            ),
+          )
+        }
+        bytes = new TextEncoder().encode(materialized.content)
+        if (bytes.length > MAX_UPLOAD_BYTES) return bail(fail(c, 413, "upload too large"))
+        if (await overStorage(artifact.org_id, bytes.length))
+          return bail(fail(c, 413, "storage quota exceeded"))
+        filename = materialized.filename
+        isBundle = false
+      } else {
+        const file = body.file
+        if (!(file instanceof File)) return bail(fail(c, 400, "multipart field 'file' required"))
+        bytes = new Uint8Array(await file.arrayBuffer())
+        // content-length is advisory; re-check the actual buffered size (hard cap).
+        if (bytes.length > MAX_UPLOAD_BYTES) return bail(fail(c, 413, "upload too large"))
+        // Proposals store a blob immediately, so they count toward the storage cap
+        // of the artifact's workspace.
+        if (await overStorage(artifact.org_id, bytes.length))
+          return bail(fail(c, 413, "storage quota exceeded"))
+        filename = file.name
+        isBundle =
+          /\.zip$/i.test(file.name) ||
+          body.kind === "bundle" ||
+          (bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5))
+      }
 
       const acting = await actingUser(c)
       const author = acting ? acting.name : str(body.author) || "anonymous"
@@ -175,7 +227,7 @@ export const proposalRoutes = (ctx: AppContext) => {
       try {
         const { proposal } = await propose(meta, blobs, artifact.short_id, {
           bytes,
-          filename: file.name,
+          filename,
           isBundle,
           spa: body.spa === "true" || body.spa === "1",
           message: str(body.message),
@@ -334,6 +386,7 @@ export const proposalRoutes = (ctx: AppContext) => {
           version: version.n,
           approver,
         })
+        notifyRender(artifact, version.n)
         const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
         return c.json({ ...(await proposalJson(artifact, fresh)), published: version.n })
       } catch (err) {

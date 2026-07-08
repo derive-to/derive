@@ -54,8 +54,9 @@ export type LibraryParams = {
   // The named-feed scopes, each its own route (see LibraryView):
   // "following" → the activity feed (followed authors + repo path prefixes);
   // "shared" → artifacts explicitly shared with you (can span workspaces);
-  // "needs_feedback" → artifacts with an open thread you're tagged in or commented on.
-  scope?: "following" | "shared" | "needs_feedback" | "unlisted"
+  // "needs_feedback" → artifacts with an open thread you're tagged in or commented on;
+  // "mine" → everything you've published by hand, any visibility included.
+  scope?: "following" | "shared" | "needs_feedback" | "mine"
 }
 export const libraryArtifactsQuery = (params: LibraryParams) =>
   infiniteQueryOptions({
@@ -122,17 +123,6 @@ export const profileArtifactsQuery = (handle: string) =>
     queryFn: ({ pageParam }) => api.profileArtifacts(handle, pageParam || undefined, PROFILE_PAGE),
     initialPageParam: "",
     getNextPageParam: (last) => last.next_cursor ?? undefined,
-  })
-
-// The follower / following list behind a profile's stat, fetched lazily when its
-// dialog opens. Keyed by (handle, kind) so followers and following cache apart.
-export const profilePeopleQuery = (handle: string, kind: "followers" | "following") =>
-  queryOptions({
-    queryKey: ["profile-people", handle, kind] as const,
-    queryFn: () =>
-      (kind === "followers" ? api.profileFollowers(handle) : api.profileFollowing(handle)).then(
-        (r) => r.users,
-      ),
   })
 
 // The People directory search. Empty query browses everyone discoverable; a term

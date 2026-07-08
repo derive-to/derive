@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS version (
   author_id TEXT,
   message TEXT,
   name TEXT,
+  preview_key TEXT,
+  preview_status TEXT,
+  preview_error TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (artifact_id, n),
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
@@ -85,6 +88,17 @@ CREATE TABLE IF NOT EXISTS webhook_delivery (
   kind TEXT NOT NULL,
   event_type TEXT NOT NULL,
   payload TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  next_attempt_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS render_job (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL,
+  version_n INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
   attempts INTEGER NOT NULL DEFAULT 0,
   last_error TEXT,
@@ -444,11 +458,15 @@ CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at);
 
 CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at);
 
+CREATE INDEX IF NOT EXISTS render_job_due ON render_job (status, next_attempt_at);
+
 CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at);
 
 CREATE INDEX IF NOT EXISTS agent_mention_inbox ON agent_mention (agent_id, state, created_at);
 
 CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id);
+
+CREATE INDEX IF NOT EXISTS artifact_member_by_user ON artifact_member (user_id);
 
 CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag);
 

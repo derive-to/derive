@@ -11,14 +11,18 @@ export interface BlobStore {
 }
 
 export type ArtifactKind = "file" | "bundle"
-// `password`: world-reachable by URL like `link`, but the bytes stay gated until
-// the visitor enters the password (then a viewer; members/owners see it by role).
+// Three audiences, each answering one question: who can open the link.
 // `private`: only per-artifact members (the publisher becomes the owner-member at
-// creation) — workspace membership grants nothing, unlike `org`.
-// `unlisted`: the agent-draft state — hidden from every listing, but a workspace
-// member WITH THE LINK gets the general role (view or comment, the workspace's
-// default). Between `private` (explicit shares only) and `org` (listed for all).
-export type Visibility = "public" | "link" | "org" | "password" | "private" | "unlisted"
+// creation) — workspace membership grants nothing. The agent-draft default.
+// `org`: the team — any workspace member, at their membership role, listed in
+// the workspace library.
+// `public`: anyone with the URL. A `password_hash` on a public artifact is a
+// LOCK, not a visibility: the reach floor stays gated until unlocked, while
+// members and explicit shares pass by role. There is no listing axis —
+// broadcast is not a per-artifact state.
+// (Pre-collapse rows migrate at boot: unlisted→private, link→public,
+// password→public with the hash kept. See docs/plans/visibility-collapse.md.)
+export type Visibility = "public" | "org" | "private"
 
 /** A platform subdomain (`name.derived.app`) or a customer's own domain. */
 export type DomainKind = "subdomain" | "custom"
@@ -98,17 +102,30 @@ export interface ListArtifactsOpts {
    *  members, so the query needs the viewer to check membership against. Omitted ⇒
    *  a trusted caller (the operator token / internal jobs) that sees everything. */
   viewerId?: string
-  /** How `unlisted` rows behave for a viewer-scoped listing. Default (omitted) =
-   *  exclude: unlisted is hidden from every ordinary listing, even the owner's —
-   *  they have the dedicated filter. "include" folds the viewer's own unlisted
-   *  drafts in (MCP list_artifacts, so an agent always finds its work); "only" is
-   *  the library's Unlisted filter. Ignored without `viewerId` except "only". */
-  unlisted?: "exclude" | "include" | "only"
   /** Profile work-list visibility gate: a row is included when it is `public` OR its
    *  `org_id` is in this set (the workspaces the viewer shares with the profile owner).
    *  An empty/omitted set with a profile query ⇒ public-only. Used by `listUserWorks`
    *  so a person's profile never leaks non-public work the viewer can't open. */
   visibleOrgIds?: string[]
+}
+
+export type PreviewStatus = "pending" | "ready" | "failed"
+
+export type RenderJobStatus = "pending" | "done" | "dead"
+export interface RenderJobRecord {
+  id: string
+  artifact_id: string
+  version_n: number
+  status: RenderJobStatus
+  attempts: number
+  last_error: string | null
+  next_attempt_at: string
+  created_at: string
+}
+export interface NewRenderJob {
+  id: string
+  artifact_id: string
+  version_n: number
 }
 
 export interface VersionRecord {
@@ -131,6 +148,12 @@ export interface VersionRecord {
   message: string | null
   /** A named checkpoint (Docs-style). Null = an ordinary auto-saved revision. */
   name: string | null
+  /** Blob key of the rendered PNG preview of this version; null until generated. */
+  preview_key: string | null
+  /** Lifecycle of the preview render; null = never queued. */
+  preview_status: PreviewStatus | null
+  /** Short failure reason when preview_status === "failed". */
+  preview_error: string | null
   created_at: string
 }
 
@@ -167,8 +190,9 @@ export interface NewVersion {
 
 export interface ArtifactStore {
   createArtifact(a: NewArtifact): Promise<ArtifactRecord>
-  /** Change an artifact's general access: visibility, the unlock password hash (null for
-   *  any non-`password` visibility), and the general-access role (view vs comment). */
+  /** Change an artifact's general access: visibility, the password hash locking a
+   *  public link (null clears; meaningless off `public`), and the general-access
+   *  role (view vs comment). */
   setVisibility(
     artifactId: string,
     visibility: Visibility,
@@ -196,6 +220,35 @@ export interface ArtifactStore {
    *  updates the artifact's current_content_type when n is the current version.
    *  Used to repair mis-classified content (e.g. HTML that was tagged markdown). */
   reclassifyVersion(artifactId: string, n: number, contentType: string): Promise<void>
+  /** Set a version's preview render result (blob key + status + error). Partial;
+   *  only given fields are written. */
+  setVersionPreview(
+    artifactId: string,
+    n: number,
+    fields: {
+      preview_key?: string | null
+      preview_status?: PreviewStatus | null
+      preview_error?: string | null
+    },
+  ): Promise<void>
+  // ---- Render-job queue (screenshot rendering outbox) --------------------
+  /** Enqueue a new render job (status defaults to "pending", attempts to 0). */
+  enqueueRenderJob(j: NewRenderJob): Promise<void>
+  /**
+   * Atomically claim up to `limit` pending render jobs whose next_attempt_at has
+   * passed: increments their attempt count and leases them (sets next_attempt_at
+   * to `leaseUntil`), then returns the claimed rows.
+   */
+  claimDueRenderJobs(now: string, limit: number, leaseUntil: string): Promise<RenderJobRecord[]>
+  updateRenderJob(
+    id: string,
+    fields: {
+      status: RenderJobStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
+  ): Promise<void>
 }
 
 export interface CommentStore {
@@ -238,11 +291,17 @@ export interface ArtifactQueryStore {
   /** Artifact ids in a workspace whose current author_login matches `login`
    *  (case-insensitive) — the author list-filter. Empty when nothing matches. */
   artifactIdsByAuthor(orgId: string, login: string): Promise<string[]>
+  /** Artifact ids in a workspace this user holds an OWNER member row on — the
+   *  library's "Created by me" filter, any visibility. Keyed on the roster (one
+   *  row, written at creation for the human behind the publish), NOT the
+   *  `author_id` denorm: every republish rewrites that to the newest version's
+   *  author — null for a token publish — so it can't anchor "yours". */
+  artifactIdsOwnedBy(orgId: string, userId: string): Promise<string[]>
   /** Total artifact count, scoped to a workspace when orgId is given. */
   countArtifacts(orgId?: string): Promise<number>
-  /** The viewer's own `unlisted` drafts in a workspace (explicit-member rows) —
-   *  the badge count for the library's Unlisted filter. */
-  countUnlistedFor(orgId: string, userId: string): Promise<number>
+  /** Count of the artifacts `artifactIdsOwnedBy` would return — the "Created by
+   *  me" badge. `visibility` narrows to one rung (the link-only pending count). */
+  countOwnedBy(orgId: string, userId: string, visibility?: Visibility): Promise<number>
   /**
    * The storage-quota meter for one workspace: bytes counted once per distinct
    * blob (content is content-addressed, so republishes/restores of identical
@@ -272,6 +331,9 @@ export interface ArtifactQueryStore {
   viewStats(artifactId: string): Promise<ViewStats>
   /** Total view counts for many artifacts at once (no N+1). */
   viewCounts(artifactIds: string[]): Promise<Record<string, number>>
+  /** For each artifact id, true iff its CURRENT version has a ready preview render.
+   *  Batched (one query); missing ids may be omitted. */
+  previewReady(artifactIds: string[]): Promise<Record<string, boolean>>
 }
 
 export interface WebhookStore {
@@ -639,6 +701,10 @@ export interface AgentStore {
   getOAuthGrant(tokenHash: string): Promise<OAuthGrant | null>
   /** The display name of a registered OAuth client (for the consent screen). */
   getOAuthClientName(clientId: string): Promise<string | null>
+  /** Does this client_id still have a row? Backs the /authorize self-heal: a client_id an
+   *  agent is holding can go stale (reaped by pruneStaleOAuthClients, or any other loss of
+   *  the row) without the agent knowing, so /authorize checks this before trusting it. */
+  oauthClientExists(clientId: string): Promise<boolean>
   /** The agents a USER has authorized via the browser consent (one per client), so they can
    *  review + revoke what may act on their behalf. Reads Better Auth's oauth-provider tables;
    *  empty when they aren't present. */
@@ -694,6 +760,11 @@ export interface ModerationStore {
    *  Ownership check is the caller's responsibility. For moderation takedowns
    *  use setArtifactRemoved() instead — that tombstones without deleting. */
   deleteArtifact(id: string, orgId: string): Promise<void>
+  /** Move an artifact to a different workspace: updates org_id, drops it from any
+   *  collections (org-scoped groupings), and detaches any org-scoped webhook that
+   *  targeted it specifically (falls back to org-wide). Ownership + destination
+   *  membership checks are the caller's responsibility. */
+  moveArtifactOrg(artifactId: string, targetOrgId: string): Promise<void>
   /** Set or clear an artifact's takedown tombstone (the record is never deleted). */
   setArtifactRemoved(id: string, removedAt: string | null): Promise<void>
   /** Take an artifact down atomically: tombstone the artifact, resolve every open
@@ -1352,13 +1423,9 @@ export interface OrgSettings {
   githubPreviewLink: boolean
   /** Post Derive activity to the connected Slack workspace. */
   slackPost: boolean
-  /** What a workspace member reaching an `unlisted` artifact via its link may do:
-   *  view or also comment. Seeded onto the artifact's general_role when it turns
-   *  unlisted without an explicit choice; the share dialog can override per doc. */
-  defaultUnlistedRole: GeneralRole
   /** The visibility a NEW agent (MCP) publish lands with when the agent doesn't
-   *  say. Unlisted by default: drafts stay out of the team library but stay one
-   *  link away for the human — sharing wider is the deliberate act. */
+   *  say. Private by default: an agent's draft is the human's until they promote
+   *  it — sharing wider is the deliberate act (the blessing gesture). */
   defaultAgentVisibility: Visibility
 }
 
@@ -1368,8 +1435,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   githubMirrorComments: true,
   githubPreviewLink: true,
   slackPost: true,
-  defaultUnlistedRole: "viewer",
-  defaultAgentVisibility: "unlisted",
+  defaultAgentVisibility: "private",
 }
 
 /** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot

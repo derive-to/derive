@@ -17,8 +17,9 @@ describe("usernames + public profiles", () => {
     expect(claim.status).toBe(200)
     expect((await claim.json()).username).toBe("nia")
 
-    // Anyone (even anonymous — no header) can read the public profile by handle,
-    // and it carries name + avatar + role (null until set) but never the email.
+    // Anyone (even anonymous — no header) can read the identity card by handle —
+    // an author chip must resolve — but a stranger gets no stats and no work
+    // grid (profiles aren't a broadcast surface at launch), and never the email.
     const prof = await app.request("/v1/users/nia")
     expect(prof.status).toBe(200)
     const { user } = await prof.json()
@@ -28,12 +29,17 @@ describe("usernames + public profiles", () => {
       image: "x.png",
       profession: null,
       about: null,
-      // Enriched profile: GitHub link (none here), stats, and viewer follow state.
       github_login: null,
-      stats: { works: 0, followers: 0, following: 0 },
+      teammate: false,
       followed_by_me: false,
     })
     expect(user).not.toHaveProperty("email")
+    expect(user).not.toHaveProperty("stats")
+
+    // Nia herself is trivially a teammate: full card, work count included.
+    const own = await (await app.request("/v1/users/nia", { headers: as(nia.email) })).json()
+    expect(own.user.teammate).toBe(true)
+    expect(own.user.stats).toEqual({ works: 0 })
 
     // The route normalizes the handle, so an upper-cased URL resolves too.
     expect((await app.request("/v1/users/NIA")).status).toBe(200)
@@ -220,7 +226,7 @@ describe("profile work-list (visibility-scoped)", () => {
   const { app, meta } = makeAuthedApp("profile-works", [amy, carl])
 
   // A hand-published artifact authored by `userId` (stamps author_id), at a visibility.
-  const work = async (title: string, userId: string, visibility: "public" | "link") => {
+  const work = async (title: string, userId: string, visibility: "public" | "org") => {
     const a = await meta.createArtifact({
       id: newId("a"),
       short_id: newId("s"),
@@ -243,17 +249,17 @@ describe("profile work-list (visibility-scoped)", () => {
     return a.short_id
   }
 
-  it("shows public work to anyone; non-public only to a shared-workspace viewer", async () => {
+  it("shows work to teammates only — a stranger (or anon) gets an empty page", async () => {
     const pub = await work("Amy public", amy.id, "public")
-    const priv = await work("Amy link-only", amy.id, "link")
+    const priv = await work("Amy workspace-only", amy.id, "org")
 
-    // Anonymous viewer: public work only (the link-only title never leaks).
+    // Anonymous viewer: no work grid at all — a profile is not a broadcast
+    // surface, even for public docs (the docs themselves stay URL-reachable).
     const anon = await (await app.request("/v1/users/amyw/artifacts")).json()
-    const anonIds = anon.artifacts.map((a: { short_id: string }) => a.short_id)
-    expect(anonIds).toContain(pub)
-    expect(anonIds).not.toContain(priv)
+    expect(anon.artifacts).toEqual([])
+    expect(anon.next_cursor).toBeNull()
 
-    // Carl shares the workspace with amy → he also sees the link-only work.
+    // Carl shares the workspace with amy → he sees her work, org-visible included.
     const shared = await (
       await app.request("/v1/users/amyw/artifacts", { headers: as(carl.email) })
     ).json()
@@ -261,34 +267,31 @@ describe("profile work-list (visibility-scoped)", () => {
     expect(sharedIds).toContain(pub)
     expect(sharedIds).toContain(priv)
 
-    // Stats track the same gate: 1 public work for anon, 2 for the shared viewer.
+    // Stats track the same gate: absent for the stranger, counted for the teammate.
     const anonProfile = await (await app.request("/v1/users/amyw")).json()
-    expect(anonProfile.user.stats.works).toBe(1)
+    expect(anonProfile.user).not.toHaveProperty("stats")
     const carlProfile = await (
       await app.request("/v1/users/amyw", { headers: as(carl.email) })
     ).json()
     expect(carlProfile.user.stats.works).toBe(2)
   })
 
-  it("exposes follower/following lists to signed-in viewers (no ids/email); anon gets 401", async () => {
-    // carl follows amy.
-    await app.request("/v1/follows", {
+  it("the follower/following list routes are gone (the launch social cut)", async () => {
+    // carl can still follow amy — they share a workspace.
+    const follow = await app.request("/v1/follows", {
       method: "POST",
       headers: { "content-type": "application/json", ...as(carl.email) },
       body: JSON.stringify({ kind: "user", target: "amyw" }),
     })
-    // The follow graph is for participants — an anonymous crawler can't read it.
-    expect((await app.request("/v1/users/amyw/followers")).status).toBe(401)
-    const followers = await (
-      await app.request("/v1/users/amyw/followers", { headers: as(carl.email) })
-    ).json()
-    expect(followers.users.map((u: { username: string }) => u.username)).toContain("carlw")
-    expect(followers.users[0]).not.toHaveProperty("email")
-    expect(followers.users[0]).not.toHaveProperty("id")
-    const following = await (
-      await app.request("/v1/users/carlw/following", { headers: as(carl.email) })
-    ).json()
-    expect(following.users.map((u: { username: string }) => u.username)).toContain("amyw")
+    expect(follow.status).toBe(201)
+    // But the graph is not a browsable surface — for anyone.
+    expect((await app.request("/v1/users/amyw/followers")).status).toBe(404)
+    expect(
+      (await app.request("/v1/users/amyw/followers", { headers: as(carl.email) })).status,
+    ).toBe(404)
+    expect(
+      (await app.request("/v1/users/carlw/following", { headers: as(carl.email) })).status,
+    ).toBe(404)
   })
 })
 
@@ -322,14 +325,19 @@ describe("profile work-list pagination (keyset)", () => {
       })
     }
 
-    // Page 1: exactly the default page size, with a cursor to continue.
-    const p1 = await (await app.request("/v1/users/peg/artifacts")).json()
+    // Page 1 (as peg — a work list is teammates-only now): exactly the default
+    // page size, with a cursor to continue.
+    const p1 = await (
+      await app.request("/v1/users/peg/artifacts", { headers: as(peg.email) })
+    ).json()
     expect(p1.artifacts.length).toBe(24)
     expect(p1.next_cursor).toBeTruthy()
 
     // Page 2: the remainder, and no further cursor.
     const p2 = await (
-      await app.request(`/v1/users/peg/artifacts?cursor=${encodeURIComponent(p1.next_cursor)}`)
+      await app.request(`/v1/users/peg/artifacts?cursor=${encodeURIComponent(p1.next_cursor)}`, {
+        headers: as(peg.email),
+      })
     ).json()
     expect(p2.artifacts.length).toBe(N - 24)
     expect(p2.next_cursor).toBeNull()
@@ -341,7 +349,9 @@ describe("profile work-list pagination (keyset)", () => {
     expect(ids.size).toBe(N)
 
     // An explicit limit is honored (and yields a cursor when more remain).
-    const small = await (await app.request("/v1/users/peg/artifacts?limit=5")).json()
+    const small = await (
+      await app.request("/v1/users/peg/artifacts?limit=5", { headers: as(peg.email) })
+    ).json()
     expect(small.artifacts.length).toBe(5)
     expect(small.next_cursor).toBeTruthy()
   })
@@ -393,9 +403,10 @@ describe("discoverability (on by default) + people search", () => {
   })
 })
 
-describe("people directory (/v1/people)", () => {
+describe("people (/v1/people) — your workmates, not a directory", () => {
+  // ivy and jay share the default workspace; jay's discoverable opt-out doesn't
+  // hide him from a TEAMMATE (membership already implies you can see each other).
   const ivy: TestUser = { id: "u_ivy", email: "ivy@d.test", name: "Ivy", username: "ivy" }
-  // Jay opted out — should never appear in browse or search.
   const jay: TestUser = {
     id: "u_jay",
     email: "jay@d.test",
@@ -406,19 +417,21 @@ describe("people directory (/v1/people)", () => {
   const { app } = makeAuthedApp("people-dir", [ivy, jay])
   const handles = (r: { users: { username: string }[] }) => r.users.map((u) => u.username)
 
-  it("browses discoverable people (empty q), searches, hides opt-outs, requires auth", async () => {
-    // Browse (no query) lists discoverable people — the difference from /v1/users/search,
-    // which returns nothing on an empty query.
+  it("lists workmates (opt-out included), filters with ?query=, requires auth", async () => {
     const browse = await (await app.request("/v1/people", { headers: as(ivy.email) })).json()
-    expect(handles(browse)).toContain("ivy")
-    expect(handles(browse)).not.toContain("jay") // opted out
+    expect(handles(browse)).toContain("jay") // a teammate, discoverable or not
+    expect(handles(browse)).not.toContain("ivy") // never yourself
     expect(browse.users[0]).not.toHaveProperty("email") // public fields only
 
-    // With a query it searches within the discoverable set.
+    // ?query= filters WITHIN workmates — there is no global directory to search.
     const searched = await (
-      await app.request("/v1/people?query=iv", { headers: as(ivy.email) })
+      await app.request("/v1/people?query=ja", { headers: as(ivy.email) })
     ).json()
-    expect(handles(searched)).toEqual(["ivy"])
+    expect(handles(searched)).toEqual(["jay"])
+    const miss = await (
+      await app.request("/v1/people?query=nobody", { headers: as(ivy.email) })
+    ).json()
+    expect(miss.users).toEqual([])
 
     // Signed-in only — anonymous is refused.
     expect((await app.request("/v1/people")).status).toBe(401)

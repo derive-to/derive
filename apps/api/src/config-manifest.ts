@@ -289,6 +289,12 @@ const CONFIG_VARS: ConfigVar[] = [
     doc: "The bootstrap workspace id. Auto-generated + persisted beside the data on first run;\nset only to pin a specific id (e.g. to match an existing deployment).",
     example: "ws_...",
   },
+  {
+    name: "DERIVE_PREVIEWS",
+    group: "advanced",
+    doc: "Render artifact preview screenshots on this Node deploy (needs a Playwright Chromium —\nbundled in the Docker image; on a bare Node host run\n`pnpm --filter @derive/api exec playwright install chromium`). Unset = previews off.",
+    example: "true",
+  },
 ]
 
 // ---- Capabilities (features gated on config) ------------------------------

@@ -83,6 +83,7 @@ const makeMeta = (): MetaStore => {
       if (p) Object.assign(p, f)
       return p ?? null
     },
+    setVersionPreview: async () => {},
   }
   return meta as unknown as MetaStore
 }
@@ -262,6 +263,20 @@ describe("publish: bundles (zip)", () => {
       new TextDecoder().decode((await blobs.get(c.version.blob_key)) ?? undefined),
     )
     expect(mc.entry).toBe("/top.md")
+  })
+
+  it("a context source dir enters at MANIFEST.md even when a README sits beside it", async () => {
+    // The entry is the runner's system prompt — a docs README must not hijack it.
+    const blobs = makeBlobs()
+    const a = await publish(
+      makeMeta(),
+      blobs,
+      bundle({ "MANIFEST.md": "# m", "README.md": "# r", "references/schema.md": "# s" }),
+    )
+    const ma = JSON.parse(
+      new TextDecoder().decode((await blobs.get(a.version.blob_key)) ?? undefined),
+    )
+    expect(ma.entry).toBe("/MANIFEST.md")
   })
 })
 

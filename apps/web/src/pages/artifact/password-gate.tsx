@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
 /**
- * Shown when an artifact is `password` visibility and the visitor hasn't unlocked
+ * Shown when an artifact's public link carries a password and the visitor hasn't unlocked
  * it yet (getArtifact returned 401). On success the server sets the unlock cookie;
  * `onUnlocked` refetches so the real artifact view renders.
  */
