@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { anonApp, app } from "./helpers"
+import { anonApp, app, bearer, quotaApp, TEST_TOKEN } from "./helpers"
 
 // The operator-gated config-introspection endpoint behind `derive doctor`. The gate is
 // the security-sensitive part: config posture (which features are wired, which vars are
@@ -24,5 +24,15 @@ describe("GET /v1/system/capabilities", () => {
   it("forbids a non-operator (anonymous)", async () => {
     const res = await anonApp.request("/v1/system/capabilities")
     expect(res.status).toBe(403)
+  })
+
+  it("reports email 'on' from the app's emailEnabled, not the env transport", async () => {
+    // The edge sends email via the Cloudflare Email Service binding, not RESEND_API_KEY,
+    // so the report must trust emailEnabled rather than guess from process.env.
+    const { app: emailApp } = quotaApp("cap-email", { emailEnabled: true })
+    const res = await emailApp.request("/v1/system/capabilities", { headers: bearer(TEST_TOKEN) })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { capabilities: { id: string; status: string }[] }
+    expect(body.capabilities.find((c) => c.id === "email")?.status).toBe("on")
   })
 })

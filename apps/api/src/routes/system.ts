@@ -39,7 +39,16 @@ export const systemRoutes = (ctx: AppContext) => {
   app.get("/v1/system/capabilities", async (c) => {
     if (!isToken(c) && !(await isSuperAdmin(c)))
       return fail(c, 403, "operator access required (DERIVE_TOKEN or a super-admin account)")
-    return c.json({ capabilities: capabilityReport(process.env) })
+    // Email's transport is runtime-specific: Resend on Node, but the Cloudflare Email
+    // Service binding (NOT a process.env var) on the edge. So its true on/off is the app's
+    // already-resolved `emailEnabled`, not a guess from RESEND_API_KEY (unset on the edge).
+    // The other capabilities are gated on secrets that populate_process_env mirrors on both.
+    const capabilities = capabilityReport(process.env).map((cap) =>
+      cap.id === "email" && deps.emailEnabled
+        ? { ...cap, status: "on" as const, missing: [] }
+        : cap,
+    )
+    return c.json({ capabilities })
   })
 
   // A minimal API-origin landing. Skipped when the SPA is bundled in-process
