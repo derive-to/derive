@@ -53,9 +53,18 @@ export function consentHTML(props: {
   // choice keeps the grant from migrating when the user later joins a workspace
   // that sorts ahead of it in listWorkspaces. Without a clientId there is
   // nothing to bind, so no picker — a choice we couldn't persist would be lies.
+  //
+  // Labeled "Default workspace", not "Workspace this agent acts in": the bound
+  // choice is a FALLBACK a request resolves to absent an X-Derive-Workspace
+  // header, not a hard scope. Most callers (a plain OAuth app like a claude.ai
+  // connector) never send that header, so in practice they only ever act here —
+  // but a header-aware caller (the Derive CLI, `derive login`) can act in ANY
+  // workspace this account belongs to with the very same token. "Acts in"
+  // would overclaim a restriction that doesn't actually exist at the token
+  // level for every caller.
   const picker =
     workspaces.length > 0 && props.clientId
-      ? `<label class="ws-label" for="ws">Workspace this agent acts in</label>
+      ? `<label class="ws-label" for="ws">Default workspace</label>
     <select id="ws" class="ws">${workspaces
       .map(
         (w) =>
