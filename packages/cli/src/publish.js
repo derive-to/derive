@@ -61,9 +61,15 @@ export async function uploadArtifact(p, bytes, filename, extra = {}) {
   if (p.spa) form.append("spa", "true")
   if (p.message) form.append("message", p.message)
   if (p.name) form.append("name", p.name)
+  // The canonical v2 access fields; an explicit field wins over the legacy
+  // `visibility` alias server-side. Send only what's set (all-absent = the
+  // workspace default).
+  if (p.workspaceAccess) form.append("workspace_access", p.workspaceAccess)
+  if (p.linkRole) form.append("link_role", p.linkRole)
+  if (p.listed) form.append("listed", p.listed)
   if (p.visibility) form.append("visibility", p.visibility)
-  // --password gates a public publish behind a passphrase (the server hashes it;
-  // the legacy `--visibility password` spelling still maps). Never put it in
+  // --password gates a world-linked publish behind a passphrase (the server hashes
+  // it; the legacy `--visibility password` spelling still maps). Never put it in
   // derive.json (it isn't a config field), only pass it on the command line.
   if (p.password) form.append("password", p.password)
   for (const [k, v] of Object.entries(extra)) form.append(k, v)

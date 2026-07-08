@@ -118,7 +118,13 @@ describe("scaffold", () => {
     const cfg = JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8"))
     expect(cfg.$schema).toBe("./derive.schema.json")
     const schema = JSON.parse(readFileSync(join(d, "derive.schema.json"), "utf8"))
+    // Canonical v2 access fields are the documented interface…
+    expect(schema.properties.workspace_access.enum).toEqual(["none", "member"])
+    expect(schema.properties.link_role.enum).toEqual(["none", "viewer", "commenter", "editor"])
+    expect(schema.properties.listed.enum).toEqual(["none", "workspace", "public"])
+    // …and `visibility` stays as a deprecated alias for old files.
     expect(schema.properties.visibility.enum).toEqual(["public", "org", "private"])
+    expect(schema.properties.visibility.deprecated).toBe(true)
   })
 
   it("exposes the templates", () => {
@@ -243,6 +249,25 @@ describe("resolvePublish", () => {
     expect(r.id).toBeNull()
     expect(r.target).toBe("x.md")
     expect(r.server).toBe("https://derive.to")
+  })
+  it("resolves the v2 access fields: flag (hyphenated) > derive.json; else undefined", () => {
+    // derive.json carries the canonical keys…
+    const fromCfg = resolvePublish({}, { workspace_access: "none", link_role: "viewer" })
+    expect(fromCfg.workspaceAccess).toBe("none")
+    expect(fromCfg.linkRole).toBe("viewer")
+    expect(fromCfg.listed).toBeUndefined()
+    // …and a --link-role/--listed flag wins over it.
+    const withFlags = resolvePublish(
+      { "link-role": "editor", listed: "public" },
+      { link_role: "viewer" },
+    )
+    expect(withFlags.linkRole).toBe("editor")
+    expect(withFlags.listed).toBe("public")
+    // Nothing set ⇒ all undefined, so the publish inherits the workspace default.
+    const bare = resolvePublish({ target: "x.md" }, null)
+    expect(bare.workspaceAccess).toBeUndefined()
+    expect(bare.linkRole).toBeUndefined()
+    expect(bare.listed).toBeUndefined()
   })
   it("--local targets a dev server; --server overrides", () => {
     expect(resolvePublish({ local: true }, null).server).toBe("http://localhost:8080")
