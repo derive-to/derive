@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
-import { api } from "@/api"
+import { api, workspaceDisplayName } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import {
@@ -168,14 +168,19 @@ export function MoveToWorkspaceDialog({
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: open })
   const [target, setTarget] = useState<string>("")
   const [busy, setBusy] = useState(false)
-  const options = (workspaces?.workspaces ?? []).filter((w) => w.id !== currentOrgId)
+  // Personal renders under its display name (the one rule in workspaceDisplayName),
+  // pinned first — same order as the switcher.
+  const options = (workspaces?.workspaces ?? [])
+    .filter((w) => w.id !== currentOrgId)
+    .map((w) => ({ ...w, display: workspaceDisplayName(w) }))
+    .sort((a, b) => Number(b.personal) - Number(a.personal))
   const move = async () => {
     if (!target || busy) return
     setBusy(true)
     try {
       await api.moveArtifact(shortId, target)
       await qc.invalidateQueries({ queryKey: artifactQuery(shortId).queryKey })
-      const name = options.find((w) => w.id === target)?.name ?? "the workspace"
+      const name = options.find((w) => w.id === target)?.display ?? "the workspace"
       toast.success(`Moved to ${name}`)
       onOpenChange(false)
     } catch (e) {
@@ -206,7 +211,7 @@ export function MoveToWorkspaceDialog({
             <SelectContent>
               {options.map((w) => (
                 <SelectItem key={w.id} value={w.id}>
-                  {w.name}
+                  {w.display}
                 </SelectItem>
               ))}
             </SelectContent>

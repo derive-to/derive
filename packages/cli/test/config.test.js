@@ -101,7 +101,7 @@ describe("scaffold", () => {
     const cfg = JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8"))
     expect(cfg.$schema).toBe("./derive.schema.json")
     const schema = JSON.parse(readFileSync(join(d, "derive.schema.json"), "utf8"))
-    expect(schema.properties.visibility.enum).toContain("link")
+    expect(schema.properties.visibility.enum).toEqual(["public", "org", "private"])
   })
 
   it("exposes the templates", () => {

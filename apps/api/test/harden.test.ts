@@ -70,7 +70,7 @@ describe("read-path exposure hardening", () => {
   it("share echoes the handle, never the email (no handle->email oracle)", async () => {
     const { app } = makeAuthedApp("harden-share", [owner, outsider])
     const { short_id } = await (
-      await publishAs(app, "<h1>p</h1>", { visibility: "link" }, as(owner.email))
+      await publishAs(app, "<h1>p</h1>", { visibility: "public" }, as(owner.email))
     ).json()
     // Share by email (still accepted as an input ref) — the response must NOT echo it back.
     const res = await app.request(`/v1/artifacts/${short_id}/members`, {
@@ -160,10 +160,15 @@ describe("B-018: publish rejects an unknown visibility", () => {
       as(owner.email),
     )
     expect(bad.status).toBe(400)
-    const link = await (
-      await publishAs(app, "<h1>x</h1>", { title: "v2", visibility: "link" }, as(owner.email))
+    const pub = await (
+      await publishAs(app, "<h1>x</h1>", { title: "v2", visibility: "public" }, as(owner.email))
     ).json()
-    expect(link.visibility).toBe("link")
+    expect(pub.visibility).toBe("public")
+    // Legacy client vocabulary maps instead of 400ing (link → public).
+    const legacy = await (
+      await publishAs(app, "<h1>x</h1>", { title: "v4", visibility: "link" }, as(owner.email))
+    ).json()
+    expect(legacy.visibility).toBe("public")
     const def = await (await publishAs(app, "<h1>x</h1>", { title: "v3" }, as(owner.email))).json()
     expect(def.visibility).toBe("private")
   })

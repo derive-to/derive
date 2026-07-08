@@ -267,7 +267,9 @@ export const DERIVE_SCHEMA = {
     title: { type: "string", description: "Artifact title." },
     entry: { type: "string", description: "File or directory `derive publish` targets." },
     visibility: {
-      enum: ["public", "link", "org", "password", "private", "unlisted"],
+      // Three audiences. (The server still maps the retired vocabulary —
+      // link/password → public, unlisted → private — so old files publish.)
+      enum: ["public", "org", "private"],
       default: "private",
     },
     spa: {

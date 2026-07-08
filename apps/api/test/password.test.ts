@@ -83,23 +83,38 @@ describe("permissions: changing general access (visibility)", () => {
     })
   let shortId = ""
 
-  it("turns a link artifact into a password one (a password is required)", async () => {
+  it("locks a public artifact (a password is required)", async () => {
     const form = new FormData()
     form.append("file", new Blob([new TextEncoder().encode("<h1>x</h1>")]), "x.html")
-    form.append("visibility", "link")
+    form.append("visibility", "public")
     shortId = (
       await (
         await app.request("/v1/artifacts", { method: "POST", body: form, headers: owner })
       ).json()
     ).short_id
-    expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(200) // link: anon reads
-    expect((await patch(shortId, { visibility: "password" })).status).toBe(400) // needs a password
-    expect((await patch(shortId, { visibility: "password", password: "sesame" })).status).toBe(200)
+    expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(200) // public: anon reads
+    // The legacy vocabulary still refuses to lock without a password…
+    expect((await patch(shortId, { visibility: "password" })).status).toBe(400)
+    // …and locking is now public + a password.
+    expect((await patch(shortId, { visibility: "public", password: "sesame" })).status).toBe(200)
     expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(401) // now locked
   })
 
-  it("turning access back to link clears the password", async () => {
-    expect((await patch(shortId, { visibility: "link" })).status).toBe(200)
+  it("re-patching public without a password keeps the lock; an empty password clears it", async () => {
+    // Flipping view/comment (a bare public PATCH) must not silently drop the lock.
+    expect((await patch(shortId, { visibility: "public", generalRole: "commenter" })).status).toBe(
+      200,
+    )
+    expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(401) // still locked
+    // Clearing is explicit: an empty password removes the lock.
+    expect((await patch(shortId, { visibility: "public", password: "" })).status).toBe(200)
     expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(200)
+  })
+
+  it("leaving public clears the lock — it cannot resurrect on a later re-share", async () => {
+    expect((await patch(shortId, { visibility: "public", password: "sesame" })).status).toBe(200)
+    expect((await patch(shortId, { visibility: "private" })).status).toBe(200)
+    expect((await patch(shortId, { visibility: "public" })).status).toBe(200)
+    expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(200) // unlocked
   })
 })

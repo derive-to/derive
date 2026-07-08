@@ -256,11 +256,10 @@ export function GeneralSection() {
   )
 }
 
-// Sharing defaults — what a workspace member with an unlisted link may do, and
-// where an agent (MCP) publish lands when it doesn't say. Selects apply
-// instantly with an optimistic cache write (the toggle contract from
-// Integrations), reverting on error. Admin-gated by the server; the caller
-// renders this only for admins.
+// Sharing defaults — where an agent (MCP) publish lands when it doesn't say.
+// The select applies instantly with an optimistic cache write (the toggle
+// contract from Integrations), reverting on error. Admin-gated by the server;
+// the caller renders this only for admins.
 function SharingDefaults() {
   const qc = useQueryClient()
   const { data: settings } = useQuery(workspaceSettingsQuery())
@@ -283,28 +282,8 @@ function SharingDefaults() {
   return (
     <SettingsGroup>
       <SettingRow
-        label="Workspace link permission"
-        description="What a workspace member opening a link-only doc can do. Each doc can override this in its share dialog."
-      >
-        <SelectMenu
-          value={settings.defaultUnlistedRole}
-          onValueChange={(v) => set("defaultUnlistedRole", v as OrgSettings["defaultUnlistedRole"])}
-        >
-          <SelectMenuTrigger
-            aria-label="Unlisted link permission"
-            data-testid="default-unlisted-role"
-          >
-            {settings.defaultUnlistedRole === "commenter" ? "Can comment" : "Can view"}
-          </SelectMenuTrigger>
-          <SelectMenuContent>
-            <SelectMenuItem value="viewer">Can view</SelectMenuItem>
-            <SelectMenuItem value="commenter">Can comment</SelectMenuItem>
-          </SelectMenuContent>
-        </SelectMenu>
-      </SettingRow>
-      <SettingRow
         label="Agent publishes as"
-        description="Where a new artifact published by a connected agent lands. Workspace — link only keeps it out of the shared library until you decide to surface it."
+        description="Where a new artifact published by a connected agent lands. Private keeps its drafts yours until you share them."
       >
         <SelectMenu
           value={settings.defaultAgentVisibility}
@@ -319,7 +298,6 @@ function SharingDefaults() {
             {AGENT_VIS_LABELS[settings.defaultAgentVisibility] ?? settings.defaultAgentVisibility}
           </SelectMenuTrigger>
           <SelectMenuContent>
-            <SelectMenuItem value="unlisted">Workspace — link only</SelectMenuItem>
             <SelectMenuItem value="private">Private</SelectMenuItem>
             <SelectMenuItem value="org">Workspace</SelectMenuItem>
           </SelectMenuContent>
@@ -330,9 +308,6 @@ function SharingDefaults() {
 }
 
 const AGENT_VIS_LABELS: Record<string, string> = {
-  unlisted: "Workspace — link only",
   private: "Private",
   org: "Workspace",
-  link: "Public — link only",
-  public: "Public",
 }

@@ -59,8 +59,11 @@ export interface PublicProfile {
   about?: string | null
   /** GitHub login, when known (the full /users/:handle profile only); null otherwise. */
   github_login?: string | null
-  /** Work / follower / following counts (the full /users/:handle profile only). */
-  stats?: { works: number; followers: number; following: number }
+  /** The viewer shares a workspace with this person (or is them) — gates the work
+   *  grid and Follow. A stranger's profile is the identity card alone. */
+  teammate?: boolean
+  /** Work count, present for teammates only (/users/:handle). */
+  stats?: { works: number }
   /** Whether the signed-in viewer already follows this person (full profile only). */
   followed_by_me?: boolean
 }
@@ -87,6 +90,8 @@ export interface Artifact {
   /** The role the general-access link grants (view vs comment). Anonymous reachers are
    *  always clamped to view regardless; commenting requires signing in. */
   general_role?: GeneralRole
+  /** The public link carries a password (the lock). Never the password itself. */
+  password_protected?: boolean
   current_version: number
   versions: {
     n: number
@@ -309,10 +314,8 @@ export interface OrgSettings {
   githubMirrorComments: boolean
   githubPreviewLink: boolean
   slackPost: boolean
-  /** What a member opening an unlisted link may do (per-doc override in Share). */
-  defaultUnlistedRole: "viewer" | "commenter"
   /** Where a NEW agent (MCP) publish lands when the agent doesn't say. */
-  defaultAgentVisibility: "unlisted" | "private" | "org" | "link" | "public"
+  defaultAgentVisibility: "private" | "org"
 }
 /** Slack connection status for the Settings UI. */
 export interface SlackStatus {
@@ -699,10 +702,6 @@ export const api = {
     }).then(j)
   },
   // People who follow / are followed by this user (public profiles; no ids or email).
-  profileFollowers: (handle: string): Promise<{ users: PublicProfile[] }> =>
-    f(`/v1/users/${encodeURIComponent(handle)}/followers`, { credentials: "include" }).then(j),
-  profileFollowing: (handle: string): Promise<{ users: PublicProfile[] }> =>
-    f(`/v1/users/${encodeURIComponent(handle)}/following`, { credentials: "include" }).then(j),
   // Set your team role + "what you do" blurb (onboarding + Settings → Profile).
   // Omitted fields are left untouched; "" clears a field.
   setProfile: (fields: {
@@ -833,8 +832,8 @@ export const api = {
     favorites: number
     /** The caller's owned artifacts — badges the library's "Created by me" filter. */
     mine: number
-    /** How many of those are still link-only (unlisted) — the pending signal. */
-    mine_link_only: number
+    /** How many of those are still private — the pending signal. */
+    mine_private: number
     tags: { tag: string; count: number }[]
     workspace: string
   }> => f("/v1/tags", opts()).then(j),
@@ -859,8 +858,9 @@ export const api = {
     id: string,
     visibility: string,
     generalRole?: GeneralRole,
+    // A string (re)sets the lock on a public link; "" clears it; undefined keeps it.
     password?: string,
-  ): Promise<{ visibility: string; general_role: GeneralRole }> =>
+  ): Promise<{ visibility: string; general_role: GeneralRole; locked: boolean }> =>
     f(`/v1/artifacts/${id}/visibility`, {
       ...opts({ visibility, generalRole, password }),
       method: "PATCH",
