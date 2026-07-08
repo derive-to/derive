@@ -373,21 +373,9 @@ export interface DirUser {
   /** Role/profession, surfaced by the directory so the picker shows who's who. */
   profession?: string | null
 }
-export interface Notification {
-  id: string
-  user_id: string
-  /** Who triggered it. For `follow`/`publish` this is the person's @handle. */
-  actor: string
-  kind: "mention" | "comment" | "share" | "follow" | "publish" | "review"
-  artifact_id: string
-  artifact_short_id: string
-  artifact_title: string | null
-  thread_id: string
-  comment_id: string
-  preview: string
-  read: 0 | 1
-  created_at: string
-}
+/** An in-app notification (the header bell). Generated from the API's OpenAPI spec
+ *  (apps/api/openapi.json) — a backend shape change surfaces here at `tsc`. */
+export type Notification = components["schemas"]["Notification"]
 export interface Webhook {
   id: string
   artifact_id: string | null

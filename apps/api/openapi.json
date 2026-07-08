@@ -53,6 +53,83 @@
           "target",
           "created_at"
         ]
+      },
+      "Notification": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "mention",
+              "comment",
+              "share",
+              "follow",
+              "publish",
+              "review"
+            ]
+          },
+          "artifact_id": {
+            "type": "string"
+          },
+          "artifact_short_id": {
+            "type": "string"
+          },
+          "artifact_title": {
+            "type": "string",
+            "nullable": true
+          },
+          "thread_id": {
+            "type": "string"
+          },
+          "comment_id": {
+            "type": "string"
+          },
+          "preview": {
+            "type": "string"
+          },
+          "read": {
+            "anyOf": [
+              {
+                "type": "number",
+                "enum": [
+                  0
+                ]
+              },
+              {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "actor",
+          "kind",
+          "artifact_id",
+          "artifact_short_id",
+          "artifact_title",
+          "thread_id",
+          "comment_id",
+          "preview",
+          "read",
+          "created_at"
+        ]
       }
     },
     "parameters": {}
@@ -122,6 +199,69 @@
         "responses": {
           "204": {
             "description": "The follow was removed."
+          }
+        }
+      }
+    },
+    "/v1/notifications": {
+      "get": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "List the signed-in user's recent notifications and unread count.",
+        "responses": {
+          "200": {
+            "description": "The 50 most recent notifications and the current unread count.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "notifications": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Notification"
+                      }
+                    },
+                    "unread": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "notifications",
+                    "unread"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/notifications/read": {
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Mark notifications read (all, or a set of ids); returns the new unread count.",
+        "responses": {
+          "200": {
+            "description": "The unread count after marking.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "unread": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "unread"
+                  ]
+                }
+              }
+            }
           }
         }
       }
