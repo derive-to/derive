@@ -43,7 +43,10 @@ export default {
     },
   ],
   options: {
-    tsConfig: { fileName: "tsconfig.base.json" },
+    // A resolution-only tsconfig with @derive/* path aliases (see the file) — so a
+    // forbidden cross-package import resolves and the rules below can actually fire,
+    // even though pnpm wouldn't symlink the package where it isn't a declared dep.
+    tsConfig: { fileName: ".dependency-cruiser.tsconfig.json" },
     tsPreCompilationDeps: true,
     doNotFollow: { path: "node_modules" },
     // Source only: skip build output, generated route tree, and .d.ts — their
