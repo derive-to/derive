@@ -1178,6 +1178,19 @@ export class PgMetaStore implements MetaStore {
     for (const k in out) out[k]?.sort()
     return out
   }
+  async previewReady(artifactIds: string[]): Promise<Record<string, boolean>> {
+    if (artifactIds.length === 0) return {}
+    const ph = artifactIds.map((_, i) => `$${i + 1}`).join(",")
+    const { rows } = await this.pool.query(
+      `SELECT a.id artifact_id FROM artifact a
+       JOIN version v ON v.artifact_id = a.id AND v.n = a.current_version
+       WHERE v.preview_status = 'ready' AND a.id IN (${ph})`,
+      artifactIds,
+    )
+    const out: Record<string, boolean> = {}
+    for (const r of rows) out[r.artifact_id] = true
+    return out
+  }
   async setArtifactTags(artifactId: string, tags: string[]): Promise<void> {
     await this.db.transaction(async (tx) => {
       await tx.delete(artifactTag).where(eq(artifactTag.artifact_id, artifactId))

@@ -89,6 +89,7 @@ export function ArtifactCard({
           v={a.current_version}
           typeLabel={artifactTypeLabel(a)}
           version={versionDepth > 1 ? a.current_version : undefined}
+          hasPreview={a.has_preview}
         />
         {/* Action cluster — one top-right corner above the stretched link (z-20).
             Revealed on hover/focus for fine pointers, ALWAYS shown on coarse (touch)

@@ -1265,6 +1265,22 @@ export function makeRepos(db: SqliteDb) {
     for (const k in out) out[k]?.sort()
     return out
   }
+
+  const previewReady = async (artifactIds: string[]): Promise<Record<string, boolean>> => {
+    if (artifactIds.length === 0) return {}
+    const rows = await db
+      .select({ artifact_id: artifact.id })
+      .from(artifact)
+      .innerJoin(
+        version,
+        and(eq(version.artifact_id, artifact.id), eq(version.n, artifact.current_version)),
+      )
+      .where(and(inArray(artifact.id, artifactIds), eq(version.preview_status, "ready")))
+      .all()
+    const out: Record<string, boolean> = {}
+    for (const r of rows) out[r.artifact_id] = true
+    return out
+  }
   // Sequential replace (used by D1). better-sqlite3 overrides with a transaction.
   const setArtifactTags = async (artifactId: string, tags: string[]): Promise<void> => {
     await db.delete(artifactTag).where(eq(artifactTag.artifact_id, artifactId)).run()
@@ -2266,6 +2282,7 @@ export function makeRepos(db: SqliteDb) {
     listUserWorks,
     countUserWorks,
     tagsForArtifacts,
+    previewReady,
     setArtifactTags,
     createCollection,
     getCollection,

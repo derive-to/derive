@@ -309,6 +309,9 @@ export interface MetaStore {
   viewStats(artifactId: string): Promise<ViewStats>
   /** Total view counts for many artifacts at once (no N+1). */
   viewCounts(artifactIds: string[]): Promise<Record<string, number>>
+  /** For each artifact id, true iff its CURRENT version has a ready preview render.
+   *  Batched (one query); missing ids may be omitted. */
+  previewReady(artifactIds: string[]): Promise<Record<string, boolean>>
 
   // ---- Webhooks + outbox -------------------------------------------------
   createWebhook(w: NewWebhook): Promise<WebhookRecord>
