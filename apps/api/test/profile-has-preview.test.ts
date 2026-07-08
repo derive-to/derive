@@ -26,7 +26,9 @@ describe("has_preview on the profile work-list", () => {
     )
     const created = await res.json()
 
-    const list = await (await app.request("/v1/users/php-handle/artifacts")).json()
+    const list = await (
+      await app.request("/v1/users/php-handle/artifacts", { headers: as("php-owner@x.test") })
+    ).json()
     const row = list.artifacts.find((a: { short_id: string }) => a.short_id === created.short_id)
     expect(row).toBeDefined()
     expect(row.has_preview).toBe(false)
@@ -49,7 +51,9 @@ describe("has_preview on the profile work-list", () => {
       preview_status: "ready",
     })
 
-    const list = await (await app.request("/v1/users/php-handle/artifacts")).json()
+    const list = await (
+      await app.request("/v1/users/php-handle/artifacts", { headers: as("php-owner@x.test") })
+    ).json()
     const row = list.artifacts.find((a: { short_id: string }) => a.short_id === created.short_id)
     expect(row).toBeDefined()
     expect(row.has_preview).toBe(true)
@@ -72,7 +76,9 @@ describe("has_preview on the profile work-list", () => {
     // Publish v2 (no preview)
     await publishAs(app, "<h1>v2</h1>", {}, as("php-owner@x.test"), created.short_id)
 
-    const list = await (await app.request("/v1/users/php-handle/artifacts")).json()
+    const list = await (
+      await app.request("/v1/users/php-handle/artifacts", { headers: as("php-owner@x.test") })
+    ).json()
     const row = list.artifacts.find((a: { short_id: string }) => a.short_id === created.short_id)
     expect(row).toBeDefined()
     // v1 was ready but v2 (current) is not
