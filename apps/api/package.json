@@ -27,32 +27,32 @@
   },
   "dependencies": {
     "@better-auth/oauth-provider": "1.6.19",
-    "@better-auth/passkey": "1.6.19",
+    "@better-auth/passkey": "1.6.23",
     "@derive/core": "workspace:*",
     "@derive/db": "workspace:*",
     "@derive/storage": "workspace:*",
     "@hono/mcp": "^0.3.0",
-    "@hono/node-server": "^2.0.5",
+    "@hono/node-server": "^2.0.8",
     "@modelcontextprotocol/sdk": "^1.25.1",
-    "better-auth": "^1.6.19",
+    "better-auth": "^1.6.23",
     "better-sqlite3": "^12.11.1",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.6.0",
+    "hono": "^4.12.28",
     "hono-rate-limiter": "^0.5.3",
     "jose": "^6.1.0",
-    "kysely": "^0.29.2",
-    "pg": "^8.13.1",
+    "kysely": "^0.29.3",
+    "pg": "^8.22.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260615.1",
+    "@cloudflare/workers-types": "^5.20260708.1",
     "@types/better-sqlite3": "^7.6.11",
-    "@types/node": "^25.9.3",
+    "@types/node": "^26.1.0",
     "@types/pg": "^8.11.10",
     "fflate": "^0.8.2",
-    "tsx": "^4.19.0",
+    "tsx": "^4.23.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.9",
-    "wrangler": "^4.40.0"
+    "vitest": "^4.1.10",
+    "wrangler": "^4.108.0"
   }
 }
