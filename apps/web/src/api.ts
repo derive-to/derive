@@ -251,11 +251,7 @@ export type SessionState = Session["state"]
 /** A live viewer of an artifact (presence). Identified by a handle-style `name`
  *  (never email — presence is broadcast to anonymous co-viewers); `role` is their
  *  effective role here. */
-export interface Viewer {
-  id: string
-  name: string
-  role: string | null
-}
+export type Viewer = components["schemas"]["Viewer"]
 /** A webhook delivery attempt. Generated from the OpenAPI spec. */
 export type Delivery = components["schemas"]["Delivery"]
 /** A GitHub repo mirrored into a collection (token redacted, file map collapsed

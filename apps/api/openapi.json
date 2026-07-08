@@ -804,6 +804,26 @@
           }
         }
       },
+      "Viewer": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role"
+        ]
+      },
       "Analytics": {
         "type": "object",
         "properties": {
@@ -3675,6 +3695,70 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/presence": {
+      "post": {
+        "tags": [
+          "Realtime"
+        ],
+        "summary": "Presence heartbeat — keep this viewer on the artifact's roster.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The current viewers on this artifact.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "viewers": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Viewer"
+                      }
+                    }
+                  },
+                  "required": [
+                    "viewers"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/cursor": {
+      "post": {
+        "tags": [
+          "Realtime"
+        ],
+        "summary": "Broadcast a live cursor frame to the artifact's other viewers.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Fanned out (ephemeral; nothing stored)."
           }
         }
       }
