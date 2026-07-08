@@ -83,6 +83,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     versionWindowMs,
     bus,
     notify,
+    notifyRender,
     background,
     isMember,
     isToken,
@@ -511,6 +512,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         message: version.message,
         author: version.author,
       })
+      notifyRender(artifact, version.n)
       // Fan out to the publisher's followers: "someone you follow published X". Gated
       // to a known HUMAN behind the publish (their followers are who care — an agent
       // publish fans out to the followers of the person it acts for), a publicly-
@@ -930,6 +932,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       message: version.message,
       author: version.author,
     })
+    notifyRender(artifact, version.n)
     bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
     // Restoring an old blob is a content change too — re-anchor threads against it.
     await publishSweepEvents(meta, blobs, bus, artifact.id, version)

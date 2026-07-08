@@ -36,6 +36,7 @@ import {
   rateLimited,
 } from "./lib/rate-limit"
 import { log } from "./log"
+import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
 
@@ -194,6 +195,10 @@ export interface AppDeps {
    * the sync inline to completion, so a "Sync now" still finishes within the request.
    */
   startSync?: (sourceId: string) => void
+  /** Enqueue + drain preview renders (true when a renderer is configured). */
+  renderPreviews?: boolean
+  /** Wake the preview worker after enqueuing (Workers: poke the PreviewRenderer DO). */
+  pokePreviews?: () => void
 }
 
 /**
@@ -250,6 +255,22 @@ export function buildContext(deps: AppDeps) {
           error: err instanceof Error ? err.message : String(err),
         }),
       )
+
+  // Enqueue a screenshot render for a newly-published version. Fire-and-forget,
+  // mirroring `notify` above: non-fatal (logged on error), never awaited in the
+  // request path. Gated by deps.renderPreviews so self-hosted deployments without
+  // a renderer configured never attempt to enqueue.
+  const notifyRender = (a: ArtifactRecord, n: number): void => {
+    if (!deps.renderPreviews) return
+    enqueueRender(meta, a.id, n)
+      .then(() => deps.pokePreviews?.())
+      .catch((err) =>
+        log.error("preview enqueue failed", {
+          artifact: a.short_id,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      )
+  }
 
   // Run after-the-response work without blocking the reply. On Workers the request
   // executionCtx keeps the isolate alive past the sent response via waitUntil; on
@@ -721,6 +742,7 @@ export function buildContext(deps: AppDeps) {
     commentLimiter,
     unlockLimiter,
     notify,
+    notifyRender,
     background,
     currentUser,
     agentFor,

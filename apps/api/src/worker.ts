@@ -1,3 +1,4 @@
+import type { BrowserWorker } from "@cloudflare/puppeteer"
 import type {
   D1Database,
   DurableObjectNamespace,
@@ -28,6 +29,7 @@ import { liveD1, requestD1 } from "./lib/request-d1"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
 import { enqueueChannelDelivery } from "./webhooks"
 
+export { PreviewRenderer } from "./preview-do"
 // The bound Durable Object classes — the realtime room (one per channel), the webhook
 // outbox drainer (a single named instance), and the GitHub-sync runner (one per source)
 // — re-exported so the Workers runtime can instantiate them (see wrangler.toml
@@ -39,6 +41,10 @@ export { WebhookOutbox } from "./webhook-do"
 // The webhook outbox DO is a singleton: every isolate pokes the same instance by a
 // fixed name, so one alarm loop drains the shared outbox.
 const OUTBOX_NAME = "outbox"
+
+// The preview renderer DO is a singleton: one fixed name → one DO instance →
+// one browser at a time (no parallel-browser billing).
+const PREVIEW_NAME = "previews"
 
 /**
  * Cloudflare Workers entry (experimental edge tier). The same runtime-agnostic
@@ -77,6 +83,12 @@ export interface Env {
   // wrangler.toml. Drives a triggered sync to completion server-side so it survives
   // the user navigating away — the edge counterpart to the Node detached loop.
   SYNC_RUNNER: DurableObjectNamespace
+  // The preview renderer DO (a single named instance). Declared in wrangler.toml.
+  // Drives sequential screenshot rendering via Cloudflare Browser Rendering.
+  // Unbound (local / D1-only deploys) → renderPreviews is false, no jobs enqueue.
+  PREVIEW_RENDERER?: DurableObjectNamespace
+  // Cloudflare Browser Rendering binding. Unbound ⇒ preview rendering is disabled.
+  BROWSER?: BrowserWorker
   // Native per-colo rate-limit bindings (limit + 60s window declared in wrangler.toml
   // [[ratelimits]]). The edge counts against these instead of an in-process Map so a cap
   // holds across isolates within a location. RL_STRICT is shared by the two tight 3/60
@@ -91,6 +103,7 @@ export interface Env {
   ASSETS: Fetcher
   BASE_URL?: string
   DERIVE_AUTH_SECRET?: string
+  DERIVE_SANDBOX_URL?: string
   DERIVE_SUPERADMIN_EMAILS?: string
   // Base domain for vanity subdomains (domain mode); unset = off.
   DERIVE_SUBDOMAIN_BASE?: string
@@ -113,6 +126,14 @@ export interface Env {
 function pokeOutbox(env: Env): Promise<unknown> {
   const stub = env.WEBHOOK_OUTBOX.get(env.WEBHOOK_OUTBOX.idFromName(OUTBOX_NAME))
   return stub.fetch("https://outbox/poke", { method: "POST" }).catch(() => {})
+}
+
+/** Poke the singleton preview renderer DO so it renders now (a fresh publish) or
+ *  self-heals (cron). No-op when PREVIEW_RENDERER is unbound (previews off). */
+function pokePreviewRenderer(env: Env): Promise<unknown> {
+  if (!env.PREVIEW_RENDERER) return Promise.resolve()
+  const stub = env.PREVIEW_RENDERER.get(env.PREVIEW_RENDERER.idFromName(PREVIEW_NAME))
+  return stub.fetch("https://previews/poke", { method: "POST" }).catch(() => {})
 }
 
 /** Poke the per-source sync runner DO so it starts (or resumes) mirroring on our
@@ -214,6 +235,12 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // it mirrors to completion on our servers (tab-independent). waitUntil keeps
         // the poke subrequest alive past the 202 response.
         startSync: (sourceId) => edgeWaitUntil(pokeSync(env, sourceId)),
+        // Enable preview rendering only when the Browser Rendering binding is present
+        // (hosted Workers). When BROWSER is unbound (self-host / D1-only / local dev),
+        // renderPreviews is false so no jobs are enqueued.
+        renderPreviews: !!env.BROWSER,
+        pokePreviews: () => void edgeWaitUntil(pokePreviewRenderer(env)),
+        sandboxOrigin: env.DERIVE_SANDBOX_URL,
         // Read the SPA shell from static assets so /artifacts/:ref can carry unfurl meta.
         // Cached per isolate; null on any miss leaves the shell untouched.
         shellFetch: async () => {
@@ -253,8 +280,10 @@ export default {
   // drains, so a retry scheduled during an idle gap (or a missed poke) would wait. This
   // wakes the DO every minute to pick those up — the durable outbox is the source of
   // truth, so this only ever bounds worst-case retry latency; it never double-delivers
-  // (the leased claim guarantees that).
+  // (the leased claim guarantees that). Similarly, the preview renderer DO is woken so
+  // a failed render that scheduled a retry during an idle gap still fires on time.
   scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): void {
     ctx.waitUntil(pokeOutbox(env))
+    ctx.waitUntil(pokePreviewRenderer(env))
   },
 }
