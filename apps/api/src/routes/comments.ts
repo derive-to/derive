@@ -307,9 +307,10 @@ export const commentRoutes = (ctx: AppContext) => {
       // see them, even on a public link. Authenticated readers — including a plain
       // viewer — do, the Google-Docs way. So the gate is "has an account", not the role.
       if (await anonLocked(c, artifact)) return bail(fail(c, 404, "not found"))
-      const q = c.req.query("state")
-      const state =
-        q === "open" || q === "resolved" || q === "outdated" || q === "addressed" ? q : undefined
+      // state is validated by the route's query contract (the enum above): an
+      // out-of-enum ?state= is rejected with a 400 before we reach here, so consume
+      // the typed value directly rather than re-coercing. Absent ⇒ undefined ⇒ all.
+      const { state } = c.req.valid("query")
       const comments = await meta.listComments(artifact.id, { state })
       // Flag whether each anchor still resolves against the current version. Build the
       // anchor content once (tag-stripping HTML for text-quote matching) and reuse it.

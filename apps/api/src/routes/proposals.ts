@@ -236,14 +236,10 @@ export const proposalRoutes = (ctx: AppContext) => {
       const artifact = await requireArtifact(c, "read")
       if (artifact instanceof Response) return bail(artifact)
       if (await anonLocked(c, artifact)) return bail(fail(c, 404, "not found"))
-      const stateQ = c.req.query("state")
-      const state =
-        stateQ === "open" ||
-        stateQ === "approved" ||
-        stateQ === "changes_requested" ||
-        stateQ === "withdrawn"
-          ? stateQ
-          : undefined
+      // state is validated by the route's query contract (the enum above): an
+      // out-of-enum ?state= is rejected with a 400 before we reach here, so consume
+      // the typed value directly rather than re-coercing. Absent ⇒ undefined ⇒ all.
+      const { state } = c.req.valid("query")
       const proposals = await meta.listProposals(artifact.id, state ? { state } : undefined)
       return c.json({
         proposals: await Promise.all(proposals.map((p) => proposalJson(artifact, p))),
