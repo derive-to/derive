@@ -1829,6 +1829,121 @@
         }
       }
     },
+    "/v1/artifacts/{shortId}/favorite": {
+      "put": {
+        "tags": [
+          "Favorites"
+        ],
+        "summary": "Star an artifact.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Starred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "favorite": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "favorite"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Favorites"
+        ],
+        "summary": "Unstar an artifact.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Unstarred.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "favorite": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "favorite"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/tags": {
+      "put": {
+        "tags": [
+          "Favorites"
+        ],
+        "summary": "Set an artifact's browse tags (editors).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The normalized tags.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "tags"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/follows": {
       "get": {
         "tags": [
@@ -2230,6 +2345,19 @@
         "responses": {
           "204": {
             "description": "Slack was disconnected."
+          }
+        }
+      }
+    },
+    "/v1/vitals": {
+      "post": {
+        "tags": [
+          "Vitals"
+        ],
+        "summary": "Report a Core Web Vitals field metric (anonymous telemetry).",
+        "responses": {
+          "204": {
+            "description": "Accepted (sendBeacon can't read the response)."
           }
         }
       }
