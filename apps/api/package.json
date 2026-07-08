@@ -24,7 +24,8 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "gen:env": "vitest run test/config-manifest.test.ts -u"
+    "gen:env": "vitest run test/config-manifest.test.ts -u",
+    "gen:openapi": "vitest run test/openapi.test.ts -u"
   },
   "dependencies": {
     "@better-auth/oauth-provider": "1.6.19",

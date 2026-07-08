@@ -30,6 +30,19 @@ export const readJson = async <T>(c: Context, schema: z.ZodType<T>): Promise<T |
   return parsed.data
 }
 
+/**
+ * Pass a guard's early-return `Response` through an `@hono/zod-openapi` handler.
+ * That library types a handler's return as ONLY the route's declared responses, but
+ * our shared guards (`requireUser`, `readJson`, per-route `resolve`) return a plain
+ * `Response` for the error paths — already-correct HTTP replies. `bail` relaxes just
+ * the compile-time return type (to `never`, which unions away, leaving the checked
+ * success shape intact); it changes nothing at runtime. Contract-first routes only:
+ *
+ *   const me = await requireUser(c)
+ *   if (me instanceof Response) return bail(me)
+ */
+export const bail = (r: Response): never => r as never
+
 export const DEFAULT_WORKSPACE_NAME = "My Workspace"
 /** Cookie holding the active workspace id (multi-workspace mode). */
 export const WS_COOKIE = "derive_ws"

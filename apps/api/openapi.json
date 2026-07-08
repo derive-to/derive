@@ -1,0 +1,130 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Derive API",
+    "version": "1.0.0"
+  },
+  "components": {
+    "schemas": {
+      "Follow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "author",
+              "path",
+              "user"
+            ]
+          },
+          "target": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "image": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "user_id",
+          "kind",
+          "target",
+          "created_at"
+        ]
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/v1/follows": {
+      "get": {
+        "tags": [
+          "Follows"
+        ],
+        "summary": "List the signed-in user's follows in their active workspace.",
+        "responses": {
+          "200": {
+            "description": "The caller's follows. People-follows carry the followed person's public handle/name/avatar.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "follows": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Follow"
+                      }
+                    }
+                  },
+                  "required": [
+                    "follows"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Follows"
+        ],
+        "summary": "Follow a GitHub author, a repo path prefix, or a person.",
+        "responses": {
+          "201": {
+            "description": "The created follow.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "follow": {
+                      "$ref": "#/components/schemas/Follow"
+                    }
+                  },
+                  "required": [
+                    "follow"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Follows"
+        ],
+        "summary": "Remove a follow (idempotent).",
+        "responses": {
+          "204": {
+            "description": "The follow was removed."
+          }
+        }
+      }
+    }
+  }
+}
