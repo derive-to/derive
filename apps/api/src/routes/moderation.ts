@@ -29,7 +29,7 @@ export const moderationRoutes = (ctx: AppContext) => {
     .object({
       id: z.string(),
       org_id: z.string(),
-      action: z.string(),
+      action: z.enum(["report", "takedown", "reinstate", "dismiss"]),
       artifact_id: z.string().nullable(),
       actor: z.string(),
       detail: z.string().nullable(),

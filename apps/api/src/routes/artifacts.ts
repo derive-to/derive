@@ -772,7 +772,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           content: {
             "application/json": {
               schema: z.object({
-                visibility: z.string(),
+                visibility: z.enum(["public", "link", "org", "password", "private", "unlisted"]),
                 general_role: z.enum(["viewer", "commenter"]),
               }),
             },

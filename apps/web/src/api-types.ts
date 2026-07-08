@@ -1350,7 +1350,8 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
-                            visibility: string;
+                            /** @enum {string} */
+                            visibility: "public" | "link" | "org" | "password" | "private" | "unlisted";
                             /** @enum {string} */
                             general_role: "viewer" | "commenter";
                         };
@@ -4547,7 +4548,8 @@ export interface components {
             kind: "file" | "bundle";
             current_content_type?: string | null;
             locked?: boolean;
-            visibility: string;
+            /** @enum {string} */
+            visibility: "public" | "link" | "org" | "password" | "private" | "unlisted";
             spa?: boolean;
             /** @enum {string} */
             general_role?: "viewer" | "commenter";
@@ -4723,7 +4725,8 @@ export interface components {
         AuditEntry: {
             id: string;
             org_id: string;
-            action: string;
+            /** @enum {string} */
+            action: "report" | "takedown" | "reinstate" | "dismiss";
             artifact_id: string | null;
             actor: string;
             detail: string | null;
@@ -4894,13 +4897,16 @@ export interface components {
         ArtifactDomain: {
             host: string;
             url: string;
-            kind: string;
-            status: string;
+            /** @enum {string} */
+            kind: "subdomain" | "custom";
+            /** @enum {string} */
+            status: "active" | "pending" | "error";
             created_at: string;
         };
         WorkspaceDomain: {
             host: string;
-            status: string;
+            /** @enum {string} */
+            status: "active" | "pending" | "error";
             records?: components["schemas"]["DomainDnsRecord"][];
             created_at: string;
         };

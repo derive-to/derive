@@ -45,7 +45,7 @@ export const workspaceDomainRoutes = (ctx: AppContext) => {
   const WorkspaceDomain = z
     .object({
       host: z.string(),
-      status: z.string(),
+      status: z.enum(["active", "pending", "error"]),
       /** DNS records to add while pending (absent once active). */
       records: z.array(DomainDnsRecord).optional(),
       created_at: z.string(),

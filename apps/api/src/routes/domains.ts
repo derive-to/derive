@@ -56,14 +56,15 @@ export const domainRoutes = (ctx: AppContext) => {
     created_at: d.created_at,
   })
 
-  // kind/status stay loose strings here, matching how the client reads them (display
-  // only) — the exact DomainKind/DomainStatus unions live in core.
+  // kind/status mirror core's DomainKind/DomainStatus unions, so the generated web type
+  // carries the closed set (not a bare string). app.openapi type-checks the handler's
+  // DomainRecord values against these enums, so they can't drift from core silently.
   const ArtifactDomain = z
     .object({
       host: z.string(),
       url: z.string(),
-      kind: z.string(),
-      status: z.string(),
+      kind: z.enum(["subdomain", "custom"]),
+      status: z.enum(["active", "pending", "error"]),
       created_at: z.string(),
     })
     .openapi("ArtifactDomain")

@@ -443,7 +443,15 @@
             "type": "boolean"
           },
           "visibility": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "public",
+              "link",
+              "org",
+              "password",
+              "private",
+              "unlisted"
+            ]
           },
           "spa": {
             "type": "boolean"
@@ -1164,7 +1172,13 @@
             "type": "string"
           },
           "action": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "report",
+              "takedown",
+              "reinstate",
+              "dismiss"
+            ]
           },
           "artifact_id": {
             "type": "string",
@@ -1902,10 +1916,19 @@
             "type": "string"
           },
           "kind": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "subdomain",
+              "custom"
+            ]
           },
           "status": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "active",
+              "pending",
+              "error"
+            ]
           },
           "created_at": {
             "type": "string"
@@ -1926,7 +1949,12 @@
             "type": "string"
           },
           "status": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "active",
+              "pending",
+              "error"
+            ]
           },
           "records": {
             "type": "array",
@@ -3229,7 +3257,15 @@
                   "type": "object",
                   "properties": {
                     "visibility": {
-                      "type": "string"
+                      "type": "string",
+                      "enum": [
+                        "public",
+                        "link",
+                        "org",
+                        "password",
+                        "private",
+                        "unlisted"
+                      ]
                     },
                     "general_role": {
                       "type": "string",

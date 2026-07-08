@@ -54,7 +54,7 @@ export const Artifact = z
     kind: z.enum(["file", "bundle"]),
     current_content_type: z.string().nullable().optional(),
     locked: z.boolean().optional(),
-    visibility: z.string(),
+    visibility: z.enum(["public", "link", "org", "password", "private", "unlisted"]),
     /** Single-page app bundle flag (present on the tombstone branch of the detail view). */
     spa: z.boolean().optional(),
     general_role: z.enum(["viewer", "commenter"]).optional(),
