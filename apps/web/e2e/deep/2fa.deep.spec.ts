@@ -36,8 +36,8 @@ function totp(secret: string, at = Date.now()): string {
   return (bin % 1_000_000).toString().padStart(6, "0")
 }
 
-test("[deep] TOTP two-factor: enable via the QR-backed secret, end to end", async ({ page }) => {
-  await signUp(page)
+test("[deep] TOTP two-factor: enable, then sign in through the challenge", async ({ page }) => {
+  const email = await signUp(page)
   await page.goto("/settings")
   await page.getByTestId("settings-tab-security").click()
 
@@ -52,10 +52,29 @@ test("[deep] TOTP two-factor: enable via the QR-backed secret, end to end", asyn
   const secret = ((await page.getByTestId("2fa-secret").textContent()) ?? "").trim()
   expect(secret).toMatch(/^[A-Z2-7]{16,}$/)
 
-  await page.getByTestId("2fa-confirm-code").fill(totp(secret))
-  await page.getByTestId("2fa-confirm").click()
+  // Backup codes download as a real file.
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByTestId("2fa-download-backup").click(),
+  ])
+  expect(download.suggestedFilename()).toBe("derive-backup-codes.txt")
 
-  // The server accepted a code generated from the displayed secret ⇒ 2FA is genuinely on:
-  // the row flips from Enable to Disable.
+  // The segmented OTP input auto-submits on the sixth digit — no button click needed. The
+  // server accepting the generated code (row flips Enable → Disable) proves 2FA is on.
+  await page.getByTestId("2fa-confirm-code").fill(totp(secret))
   await expect(page.getByTestId("2fa-disable")).toBeVisible()
+
+  // Sign out and back in — the account now demands the second factor. The login challenge
+  // uses the same segmented OTP; a fresh code lands us back in the app shell.
+  await page.getByTestId("user-menu-trigger").click()
+  await page.getByTestId("menu-signout").click()
+  await expect(page).toHaveURL(/\/login/)
+
+  await page.getByTestId("login-email").fill(email)
+  await page.getByTestId("login-password").fill("e2e-pass-1234")
+  await page.getByTestId("login-submit").click()
+
+  await expect(page.getByTestId("login-2fa")).toBeVisible()
+  await page.getByTestId("login-2fa").fill(totp(secret))
+  await expect(page.getByTestId("library-menu")).toBeVisible()
 })

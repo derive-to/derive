@@ -21,6 +21,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import {
+  InputOTP,
+  InputOTPGroup,
+  InputOTPSlot,
+  REGEXP_ONLY_DIGITS,
+} from "@/components/ui/input-otp"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { authClient } from "@/lib/auth-client"
@@ -318,6 +324,11 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
       reset()
     },
   })
+  // Both the OTP's auto-submit (on the sixth digit) and the form (Enter / Turn on) land here;
+  // the in-flight guard stops a stray Enter right after auto-submit from firing verifyTotp twice.
+  const submitConfirm = () => {
+    if (!confirm.isPending) confirm.mutate()
+  }
 
   // Clear the wizard + both mutations' errors when the dialog closes or a round completes.
   // A function declaration (hoisted) so confirm's onSuccess above can call it.
@@ -396,7 +407,7 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
             className="flex flex-col gap-4"
             onSubmit={(e) => {
               e.preventDefault()
-              confirm.mutate()
+              submitConfirm()
             }}
           >
             <div className="flex flex-col items-center gap-3">
@@ -452,37 +463,65 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
                     <span key={c}>{c}</span>
                   ))}
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="self-start"
-                  data-testid="2fa-copy-backup"
-                  onClick={() => {
-                    navigator.clipboard?.writeText(backup.join("\n"))
-                    toast.success("Backup codes copied")
-                  }}
-                >
-                  Copy codes
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    data-testid="2fa-copy-backup"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(backup.join("\n"))
+                      toast.success("Backup codes copied")
+                    }}
+                  >
+                    Copy codes
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    data-testid="2fa-download-backup"
+                    onClick={() => {
+                      const blob = new Blob([`${backup.join("\n")}\n`], { type: "text/plain" })
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement("a")
+                      a.href = url
+                      a.download = "derive-backup-codes.txt"
+                      a.click()
+                      URL.revokeObjectURL(url)
+                    }}
+                  >
+                    Download
+                  </Button>
+                </div>
               </div>
             )}
             <FormField label="Confirm a code from your app" htmlFor="tfa-code">
-              <Input
+              <InputOTP
                 id="tfa-code"
                 data-testid="2fa-confirm-code"
+                maxLength={6}
+                pattern={REGEXP_ONLY_DIGITS}
                 inputMode="numeric"
-                autoComplete="one-time-code"
+                autoFocus
                 value={code}
-                onChange={(e) => setCode(e.target.value)}
-                placeholder="123456"
-              />
+                onChange={setCode}
+                // Auto-submit the moment all six digits land (typed or pasted) — no reaching
+                // for the button. The mutation guards against a double-fire.
+                onComplete={submitConfirm}
+              >
+                <InputOTPGroup>
+                  {[0, 1, 2, 3, 4, 5].map((i) => (
+                    <InputOTPSlot key={i} index={i} />
+                  ))}
+                </InputOTPGroup>
+              </InputOTP>
             </FormField>
             <DialogFooter>
               <Button
                 type="submit"
                 loading={confirm.isPending}
-                disabled={!code}
+                disabled={code.length !== 6}
                 data-testid="2fa-confirm"
               >
                 {confirm.isPending ? "Verifying…" : "Turn on"}
