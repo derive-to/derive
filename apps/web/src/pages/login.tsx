@@ -74,7 +74,7 @@ export function Login() {
   // user) with no /login left to re-trigger it. The one-shot latch guards the brief
   // pre-navigation window where the effect below can fire more than once.
   const redirected = useRef(false)
-  const afterAuth = () => {
+  const afterAuth = (who?: { onboarded?: boolean } | null) => {
     if (redirected.current) return
     redirected.current = true
     const search = typeof window !== "undefined" ? window.location.search : ""
@@ -84,6 +84,12 @@ export function Login() {
       // Back to where sign-in was prompted (e.g. a shared artifact's "sign in to
       // comment"). Validated same-origin relative by the route, so this is safe.
       window.location.href = returnTo
+    } else if (who && who.onboarded === false) {
+      // A brand-new account goes straight to onboarding. Routing to "/" first boots the
+      // whole app shell (rail skeleton + a blank pane) only to redirect here — so the user's
+      // very first post-signup frame is a loading flash. Skip the detour. (The app-shell
+      // onboarding gate still covers any path that doesn't come through here.)
+      window.location.href = "/welcome"
     } else {
       window.location.href = "/"
     }
@@ -91,7 +97,7 @@ export function Login() {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: afterAuth reads window.location + returnTo (stable from search); keyed to the auth state.
   useEffect(() => {
-    if (!loading && me) afterAuth()
+    if (!loading && me) afterAuth(me)
   }, [loading, me])
 
   const submit = async (e: FormEvent) => {
@@ -112,8 +118,9 @@ export function Login() {
         }
       }
       // Seed the auth cache from the one identity read (session cookie is set now).
-      setMe(await api.session())
-      afterAuth()
+      const session = await api.session()
+      setMe(session)
+      afterAuth(session)
     } catch (e) {
       setErr((e as Error).message)
       setBusy(false)
@@ -131,8 +138,9 @@ export function Login() {
         ? await authClient.twoFactor.verifyBackupCode({ code })
         : await authClient.twoFactor.verifyTotp({ code })
       if (res?.error) throw new Error(res.error.message ?? "That code didn't work.")
-      setMe(await api.session())
-      afterAuth()
+      const session = await api.session()
+      setMe(session)
+      afterAuth(session)
     } catch (e) {
       setErr((e as Error).message)
       setBusy(false)
@@ -153,8 +161,9 @@ export function Login() {
     try {
       const res = await authClient.signIn.passkey({ autoFill })
       if (res?.data) {
-        setMe(await api.session())
-        afterAuth()
+        const session = await api.session()
+        setMe(session)
+        afterAuth(session)
       } else if (res?.error && !autoFill) {
         setErr(res.error.message ?? "Passkey sign-in failed.")
       }
