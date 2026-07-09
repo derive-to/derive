@@ -30,8 +30,8 @@
   | test files / describe names `*house-style*` | `*brandprint*` |
   | user-facing copy "House Style" | "Brandprint" |
 
-- **No em dashes** in any copy, comment, or commit message. Use commas, colons, or periods. En dashes in numeric ranges are fine.
-- **Package manager is `corepack pnpm`** (bare `pnpm` is not on PATH). Every command below uses it.
+- **No em dashes in authored prose:** commit messages, user-facing product copy, and this plan/spec. Use commas, colons, or periods. En dashes in numeric ranges are fine. This does NOT apply to ported or new code comments, which match the existing Derive codebase idiom (it uses em dashes pervasively). Port Anir's comments verbatim.
+- **Package manager is `corepack pnpm`** (bare `pnpm` may not be on PATH). Every command below uses it. Toolchain fallback: if your shell lacks pnpm/corepack, run tests with `npx vitest run <pattern>` and lint with `npx biome check`, and commit with `git commit --no-verify` (the pre-commit hook shells to bare `pnpm`). Report the exact commands you ran and their output either way.
 - **Commit trailer:** end each commit message with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`. The repo pre-commit hook runs `pnpm check:fix`; run `corepack pnpm check:fix` before committing so the hook passes.
 - **Visual theme application is out of scope** (Anir's Phase B). Port the `BrandprintTheme` type and let it round-trip through storage, but do not render it anywhere.
 
@@ -82,7 +82,7 @@ git show c614971:packages/core/test/house-style.test.ts > packages/core/test/bra
 
 - [ ] **Step 2: Run the test, expect failure.**
 
-Run: `corepack pnpm --filter @dock/core test brandprint`
+Run: `corepack pnpm --filter @derive/core test brandprint`
 Expected: FAIL (`Cannot find module '../src/brandprint'`).
 
 - [ ] **Step 3: Create `brandprint.ts` from the original, renamed.** Source is `git show c614971:packages/core/src/house-style.ts`. Apply the rename map. The pointer helper's copy becomes:
@@ -123,12 +123,12 @@ Add `brandprint?: Brandprint` to `interface OrgSettings`. Extend `setUserProfile
 
 - [ ] **Step 6: Run the test, expect pass.**
 
-Run: `corepack pnpm --filter @dock/core test brandprint`
+Run: `corepack pnpm --filter @derive/core test brandprint`
 Expected: PASS (all brandprint cases green).
 
 - [ ] **Step 7: Typecheck core.**
 
-Run: `corepack pnpm --filter @dock/core typecheck`
+Run: `corepack pnpm --filter @derive/core typecheck`
 Expected: no errors. (`MetaStore` now declares `getUserBrandprint`; the DB adapters implement it in Task 0.2, so if core typecheck references the adapters it may flag until then. Core alone should pass because it only declares the interface.)
 
 - [ ] **Step 8: Commit.**
@@ -173,7 +173,7 @@ If the test file has no `seedUser` helper, insert a user row the same way the ne
 
 - [ ] **Step 2: Run it, expect failure.**
 
-Run: `corepack pnpm --filter @dock/db test sqlite`
+Run: `corepack pnpm --filter @derive/db test sqlite`
 Expected: FAIL (`getUserBrandprint is not a function`).
 
 - [ ] **Step 3: Port the sqlite adapter.** Source: the `sqlite.ts` hunk of `c614971`. In `createSqliteStore`, add to `setUserProfile`:
@@ -248,7 +248,7 @@ getUserBrandprint: async (userId: string): Promise<string | null> => {
 
 - [ ] **Step 7: Run the db tests, expect pass.**
 
-Run: `corepack pnpm --filter @dock/db test`
+Run: `corepack pnpm --filter @derive/db test`
 Expected: PASS (sqlite green; pg green if the pg lane is configured in this environment. If pg is not available locally, note it and rely on CI for the pg lane.)
 
 - [ ] **Step 8: Commit.**
@@ -293,7 +293,7 @@ Add `brandprint?: string | null` to the `su` cast object, and `brandprint: su.br
 
 - [ ] **Step 3: Typecheck the api app.**
 
-Run: `corepack pnpm --filter @dock/api typecheck`
+Run: `corepack pnpm --filter @derive/api typecheck`
 Expected: no errors from these two files. (Route/MCP consumers land in Tasks 0.4-0.5.)
 
 - [ ] **Step 4: Commit.**
@@ -349,7 +349,7 @@ Match the actual request/response helper this file already uses; the assertion s
 
 - [ ] **Step 2: Run it, expect failure.**
 
-Run: `corepack pnpm --filter @dock/api test profiles`
+Run: `corepack pnpm --filter @derive/api test profiles`
 Expected: FAIL (response has no `brandprint`).
 
 - [ ] **Step 3: Extend `/v1/me/profile` in `session.ts`.** In the `createRoute` for `path: "/v1/me/profile"`:
@@ -391,12 +391,12 @@ return c.json(next)
 
 - [ ] **Step 5: Run the API test, expect pass.**
 
-Run: `corepack pnpm --filter @dock/api test profiles`
+Run: `corepack pnpm --filter @derive/api test profiles`
 Expected: PASS.
 
 - [ ] **Step 6: Typecheck the api app.**
 
-Run: `corepack pnpm --filter @dock/api typecheck`
+Run: `corepack pnpm --filter @derive/api typecheck`
 Expected: no errors.
 
 - [ ] **Step 7: Commit.**
@@ -427,10 +427,10 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 - [ ] **Step 2: Run it, expect failure.**
 
-Run: `corepack pnpm --filter @dock/api test mcp`
+Run: `corepack pnpm --filter @derive/api test mcp`
 Expected: FAIL (no brandprint resource; pointer absent).
 
-- [ ] **Step 3: Make `buildServer` async and resolve brandprint.** Change the signature return type to `): Promise<McpServer> {`. Import the three helpers from core (next to the existing `@dock/core` imports). After the `writeGuidance` block and before `const server = new McpServer(`, add:
+- [ ] **Step 3: Make `buildServer` async and resolve brandprint.** Change the signature return type to `): Promise<McpServer> {`. Import the three helpers from core (next to the existing `@derive/core` imports). After the `writeGuidance` block and before `const server = new McpServer(`, add:
 
 ```ts
 // Resolve the Brandprint for this actor: the workspace's conventions merged with the
@@ -452,7 +452,7 @@ for (const collectionId of resolved.collectionIds) {
 }
 ```
 
-(If `ArtifactRecord` is not already imported in this file, add it to the `@dock/core` import.)
+(If `ArtifactRecord` is not already imported in this file, add it to the `@derive/core` import.)
 
 - [ ] **Step 4: Append the pointer to `instructions`.** The current `instructions` string ends with `...so you never need to switch just to open a doc.` immediately before the closing backtick. Append the helper call there:
 
@@ -490,7 +490,7 @@ for (const doc of conventionDocs) {
 
 - [ ] **Step 7: Run the MCP test, expect pass.**
 
-Run: `corepack pnpm --filter @dock/api test mcp`
+Run: `corepack pnpm --filter @derive/api test mcp`
 Expected: PASS.
 
 - [ ] **Step 8: Commit.**
@@ -532,12 +532,12 @@ Open `apps/web/src/api.ts` and `apps/web/src/pages/settings/general-section.tsx`
 
 - [ ] **Step 4: Typecheck + build web.**
 
-Run: `corepack pnpm --filter @dock/web typecheck && corepack pnpm --filter @dock/web build`
+Run: `corepack pnpm --filter @derive/web typecheck && corepack pnpm --filter @derive/web build`
 Expected: no type errors; build succeeds.
 
 - [ ] **Step 5: If the web suite has a settings test, extend it; otherwise add a light render test.** Add a test that renders `BrandprintSection` with a mocked settings response and asserts the current collection shows and a change fires the mutation. Match the web test harness already in `apps/web` (Vitest + Testing Library).
 
-Run: `corepack pnpm --filter @dock/web test brandprint`
+Run: `corepack pnpm --filter @derive/web test brandprint`
 Expected: PASS.
 
 - [ ] **Step 6: Commit.**
