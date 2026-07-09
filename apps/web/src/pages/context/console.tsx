@@ -3,21 +3,22 @@ import { Link, useParams } from "@tanstack/react-router"
 import { Copy as CopyIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { ApiError, api, type Session, type SessionMessage, type SessionMeta } from "@/api"
-import { Icon } from "@/components/icons"
+import { Icon, type IconName } from "@/components/icons"
+import { AccessSegmentToggle } from "@/components/shared/access-segment-toggle"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageShell } from "@/components/shared/page-shell"
 import { PersonSearchInput } from "@/components/shared/person-search-input"
+import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
-  Popover,
-  PopoverContent,
-  PopoverDescription,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger,
-} from "@/components/ui/popover"
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { toast } from "@/components/ui/sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
@@ -98,7 +99,7 @@ function Console({ id }: { id: string }) {
         </h1>
         <RunnerLiveness seenAt={context.runner_seen_at} />
         <div className="ml-auto flex items-center gap-3">
-          {isOwner && <ContextAccess id={id} policy={context.ask_policy} />}
+          {isOwner && <ContextAccess id={id} name={context.name} policy={context.ask_policy} />}
           {isOwner && context.manifest_short_id && (
             <Link
               to="/artifacts/$ref"
@@ -188,11 +189,25 @@ function Console({ id }: { id: string }) {
   )
 }
 
-// Who may ASK — the context's own workspace-scoped grant, deliberately NOT the
-// manifest's artifact sharing (which could carry a world link or public listing).
-// There is no "anyone"/public option here BY DESIGN: a context is a data-access
-// grant, not a document, and must never be reachable outside its workspace.
-function ContextAccess({ id, policy }: { id: string; policy: "workspace" | "invited" }) {
+// Who may ASK — the context's own workspace-scoped grant, built to feel like the
+// artifact Share dialog (same modal, segment toggle, roster, PersonSearchInput)
+// with the "Anyone"/world-link segment REMOVED by design: a context is a
+// data-access grant, not a document, and must never be reachable outside its
+// workspace. Two segments, both workspace-bounded.
+const CONTEXT_SEGMENTS: { value: "invited" | "workspace"; label: string; icon: IconName }[] = [
+  { value: "invited", label: "Invited", icon: "lock" },
+  { value: "workspace", label: "Workspace", icon: "workspace" },
+]
+
+function ContextAccess({
+  id,
+  name,
+  policy,
+}: {
+  id: string
+  name: string
+  policy: "workspace" | "invited"
+}) {
   const [open, setOpen] = useState(false)
   const [email, setEmail] = useState("")
   const rosterKey = ["context-askers", id] as const
@@ -217,93 +232,105 @@ function ContextAccess({ id, policy }: { id: string; policy: "workspace" | "invi
     mutationFn: (userId: string) => api.removeContextAsker(id, userId),
     invalidate: [rosterKey],
   })
-  const busy = policyMut.isPending || addMut.isPending || removeMut.isPending
+  const busy = policyMut.isPending || addMut.isPending
 
-  const setPolicy = (next: "workspace" | "invited") => {
-    if (next !== policy) policyMut.mutate(next)
-  }
-  const add = () => {
+  const add = (e?: { preventDefault: () => void }) => {
+    e?.preventDefault()
     const v = email.trim()
     if (v) addMut.mutate(v)
   }
-  const remove = (userId: string) => removeMut.mutate(userId)
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        {/* Ghost, like the artifact toolbar's non-primary actions; the glyph
+            carries the state — lock = invited, people = whole workspace. */}
         <Button variant="ghost" size="sm" data-testid="context-access" className="gap-1.5">
-          <Icon name="lock" className="text-muted-foreground" />
+          <Icon name={policy === "workspace" ? "workspace" : "lock"} />
           {policy === "workspace" ? "Workspace can ask" : "Invited only"}
         </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-80">
-        <PopoverHeader>
-          <PopoverTitle>Who can ask</PopoverTitle>
-          <PopoverDescription>
-            Only workspace members — a context is never reachable outside the workspace.
-          </PopoverDescription>
-        </PopoverHeader>
-        <div className="mt-3 grid grid-cols-2 gap-1.5">
-          {(["workspace", "invited"] as const).map((p) => (
-            <Button
-              key={p}
-              variant={policy === p ? "secondary" : "outline"}
-              size="sm"
-              disabled={busy}
-              data-testid={`context-access-${p}`}
-              onClick={() => setPolicy(p)}
-            >
-              {p === "workspace" ? "Any member" : "Invited only"}
-            </Button>
-          ))}
-        </div>
-        {policy === "invited" && (
-          <div className="mt-4 flex flex-col gap-2">
-            <div className="flex items-center gap-1.5">
-              <PersonSearchInput
-                value={email}
-                onChange={setEmail}
-                placeholder="Invite a member by email…"
-                testId="context-asker-add"
-                className="flex-1"
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
+        <DialogHeader>
+          <DialogTitle className="line-clamp-1 pr-6">Share “{name}”</DialogTitle>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-6">
+          <div>
+            <SectionEyebrow action={policyMut.isPending && <Spinner className="size-3" />}>
+              Who can ask
+            </SectionEyebrow>
+            <div className="mt-2 flex flex-col">
+              <AccessSegmentToggle
+                segments={CONTEXT_SEGMENTS}
+                value={policy}
+                onChange={(next) => next !== policy && policyMut.mutate(next)}
+                disabled={busy}
+                testId="context-access-segment"
               />
-              <Button
-                size="sm"
-                data-testid="context-asker-add-submit"
-                disabled={busy || !email.trim()}
-                onClick={add}
-              >
-                Add
-              </Button>
-            </div>
-            <div className="flex flex-col gap-1">
-              {(roster ?? []).map((a) => (
-                <div
-                  key={a.user_id}
-                  className="flex items-center justify-between rounded-md px-2 py-1 text-sm hover:bg-muted"
-                >
-                  <span className="text-foreground">{a.username ?? a.user_id}</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    data-testid="context-asker-remove"
-                    onClick={() => remove(a.user_id)}
-                    className="text-muted-foreground"
-                  >
-                    Remove
-                  </Button>
-                </div>
-              ))}
-              {roster?.length === 0 && (
-                <p className="px-2 py-1 text-xs text-muted-foreground">
-                  No one invited yet — only you can ask.
-                </p>
-              )}
+              <p className="mt-3 text-sm text-muted-foreground">
+                {policy === "invited"
+                  ? "Only the workspace members you add below can ask."
+                  : "Everyone in the workspace can ask. Removing someone from the workspace revokes it automatically."}
+              </p>
             </div>
           </div>
-        )}
-      </PopoverContent>
-    </Popover>
+
+          {policy === "invited" && (
+            <div>
+              <SectionEyebrow count={roster?.length}>Invited to ask</SectionEyebrow>
+              <form onSubmit={add} className="mt-2 flex items-center gap-2">
+                <PersonSearchInput
+                  value={email}
+                  onChange={setEmail}
+                  placeholder="Add a member by @handle or email…"
+                  testId="context-asker-add"
+                  className="flex-1"
+                />
+                <Button
+                  type="submit"
+                  data-testid="context-asker-add-submit"
+                  disabled={busy || !email.trim()}
+                >
+                  Add
+                </Button>
+              </form>
+              <div className="mt-2 flex flex-col">
+                {(roster ?? []).map((a) => (
+                  <div
+                    key={a.user_id}
+                    className="flex items-center gap-3 border-t border-border-soft py-2 first:border-t-0"
+                  >
+                    <span className="truncate text-sm text-foreground">
+                      {a.username ? `@${a.username}` : a.user_id}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      data-testid="context-asker-remove"
+                      onClick={() => removeMut.mutate(a.user_id)}
+                      className="ml-auto text-muted-foreground"
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+                {roster?.length === 0 && (
+                  <p className="py-2 text-sm text-muted-foreground">
+                    No one invited yet — only you can ask.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 border-t border-border-soft pt-3 text-xs text-muted-foreground">
+            <Icon name="lock" className="size-3.5" />
+            Workspace members only — a context is never reachable outside the workspace.
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
