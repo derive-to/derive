@@ -146,6 +146,16 @@ export function useArtifactActions(p: {
       )
       refetchComments()
     },
+    // A failed post rolls the optimistic row back — and the just-typed text would vanish with
+    // it, leaving only a generic toast and a retype. Opt out of that toast and raise one that
+    // carries a Retry: the rejected vars still hold the exact text, mentions, and anchor, so a
+    // single tap re-sends it. (submitNew closes the composer optimistically, so the draft only
+    // lives here now.)
+    errorToast: false,
+    onError: (_err, vars) =>
+      toast.error("Couldn't post your comment. Check your connection and try again.", {
+        action: { label: "Retry", onClick: () => comment.mutate(vars) },
+      }),
   })
   const addComment = (
     text: string,
