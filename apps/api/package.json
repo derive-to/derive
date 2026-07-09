@@ -25,6 +25,7 @@
     "typecheck:tsc": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:merge": "vitest run --merge-reports --coverage",
     "gen:env": "vitest run test/config-manifest.test.ts -u",
     "gen:openapi": "vitest run test/openapi.test.ts -u"
   },

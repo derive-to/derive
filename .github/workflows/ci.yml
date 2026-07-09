@@ -19,7 +19,7 @@ concurrency:
 jobs:
   # Which areas a change touches — lets the peripheral build jobs (bundle,
   # runner-image) skip when a PR can't affect them. The core gates
-  # (check/pg/d1/security) always run. No branch protection on this repo,
+  # (lint/typecheck/test-*/pg/d1/security) always run. No branch protection here,
   # so a skipped job can't wedge a required check — it just reports success.
   changes:
     runs-on: ubuntu-24.04-arm
@@ -54,36 +54,96 @@ jobs:
   # vitest, tsgo) is arm-native. The org's Ubicloud integration vanished
   # 2026-07-02 and every ubicloud-* job queued forever; GitHub-hosted keeps
   # deploys vendor-independent.
-  check:
+  lint:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
-
       - name: Lint + format + guardrails (biome + custom checks)
         run: pnpm run ci
 
-      - name: Typecheck
-        run: pnpm typecheck
-
-      # Runs every package's suite once WITH coverage. Thresholds live in each
-      # vitest.config.ts (ratchet floors) — a regression fails here, and since
-      # deploy needs `check`, it blocks the ship. Replaces the old separate,
-      # redundant `coverage` job (which re-ran the whole suite a third time).
-      - name: Test + coverage gate
-        run: pnpm test:coverage
-
-  # Runs the SAME apps/api suite against a real Postgres (ephemeral Docker
-  # container, via scripts/test-pg.sh) so the hosted-tier driver is covered by
-  # the full behavioral suite, not just typecheck + parity guards.
-  pg:
+  typecheck:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
+      - name: Typecheck (tsgo)
+        run: pnpm typecheck
 
-      - name: Test against Postgres
-        run: pnpm test:pg
+  # The 6 non-api packages, each with its own coverage gate. Fast + unsharded.
+  test-rest:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+      - name: Test + coverage (non-api packages)
+        run: pnpm --filter='!@derive/api' -r test:coverage
+
+  # The api suite (~60% of all tests) sharded across runners. Each shard collects
+  # coverage into a blob with thresholds DISABLED (a partial shard can't meet them);
+  # test-api-merge combines the blobs and enforces the real thresholds on the MERGED
+  # coverage — exact gate, ~1/N wall-clock.
+  test-api:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+      - name: Test api (shard ${{ matrix.shard }}/4)
+        run: >-
+          pnpm --filter @derive/api exec vitest run
+          --shard=${{ matrix.shard }}/4 --coverage --reporter=blob
+          --coverage.thresholds.statements=0 --coverage.thresholds.branches=0
+          --coverage.thresholds.functions=0 --coverage.thresholds.lines=0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: api-coverage-blob-${{ matrix.shard }}
+          path: apps/api/.vitest-reports
+          retention-days: 1
+
+  # Merge the shards' coverage blobs and enforce the api thresholds on the total.
+  # This is the api coverage GATE (deploy needs it).
+  test-api-merge:
+    needs: test-api
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          path: apps/api/.vitest-reports
+          pattern: api-coverage-blob-*
+          merge-multiple: true
+      - name: Merge coverage + enforce thresholds
+        run: pnpm --filter @derive/api test:merge
+
+  # The api suite against a real Postgres (the hosted-tier driver), sharded across
+  # runners — each shard spins its own ephemeral container (test-pg.sh) and runs one
+  # --shard of the api files. No coverage here, so no merge; all shards must pass.
+  pg:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+      - name: Test api vs Postgres (shard ${{ matrix.shard }}/3)
+        run: bash scripts/test-pg.sh --shard=${{ matrix.shard }}/3
+
+  # The @derive/db store contract vs Postgres (its own container) — the only place
+  # pg.ts, the hosted-tier driver, is gated by the db package's own suite.
+  pg-db:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+      - name: DB store contract vs Postgres
+        run: bash scripts/test-pg.sh --db-only
 
   # Runs the SAME @derive/db store contract against a real Cloudflare D1, inside
   # workerd via Miniflare (the `pnpm test:d1` lane). The default (Node) lane can't
@@ -150,7 +210,7 @@ jobs:
   # worker's data path).
   deploy:
     if: github.repository == 'derive-to/derive' && github.event_name == 'push' # never PRs, never forks
-    needs: [check, pg, d1, security]
+    needs: [lint, typecheck, test-rest, test-api-merge, pg, pg-db, d1, security]
     runs-on: ubuntu-latest
     # A running deploy is never cancelled — a schema applied for a worker that
     # then didn't ship is the state to avoid. Queued runs are NOT ordered:

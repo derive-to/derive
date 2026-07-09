@@ -27,3 +27,7 @@ apps/api/.e2e-data/
 .local-run-data/
 apps/api/.local-run-data/
 RUNNER.md
+
+# Vitest coverage + sharding blob reports (generated, never committed)
+**/coverage/
+**/.vitest-reports/

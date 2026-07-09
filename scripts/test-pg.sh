@@ -45,26 +45,36 @@ done
 export DERIVE_TEST_DB=pg
 export TEST_DATABASE_URL="$URL"
 
-echo "→ running apps/api suite against Postgres"
-cd "$ROOT/apps/api"
-# The first test in each file pays the Postgres schema bootstrap (DROP SCHEMA
-# CASCADE + full DDL replay via the helpers' deferred store) — on a CI runner
-# that alone can cross vitest's default 5s testTimeout as the schema grows.
-# Relax the timeout for this lane only; the SQLite lane keeps the 5s default.
-#
-# File parallelism is ON (previously --no-file-parallelism): helpers.ts keys each
-# schema on VITEST_POOL_ID, so concurrent files land in distinct schemas and can't
-# collide. --maxWorkers=4 bounds the live per-store pools (node-postgres default
-# max=10) so their connections stay well under max_connections. Note vitest does
-# NOT clamp an explicit maxWorkers to core count, so this runs 4 forks even on a
-# 2-vCPU box — fine here because pg tests are I/O-bound (waiting on Postgres).
-pnpm exec vitest run --maxWorkers=4 --testTimeout=15000 "$@"
-
-# Also run @derive/db's store contract against the same Postgres — the only place
-# pg.ts (the hosted-tier driver) is covered + gated by the db package's own suite.
-# Skipped when a specific api file was requested (debugging one spec).
-if [ "$#" -eq 0 ]; then
+# Modes:
+#   test-pg.sh              → api suite + @derive/db store contract (local, full run)
+#   test-pg.sh --shard=i/N  → one shard of the api suite (a CI matrix leg)
+#   test-pg.sh --db-only    → just the @derive/db store contract (its own CI leg)
+if [ "${1:-}" = "--db-only" ]; then
   echo "→ running @derive/db store contract against Postgres"
   cd "$ROOT"
   pnpm --filter @derive/db test:pg
+else
+  echo "→ running apps/api suite against Postgres"
+  cd "$ROOT/apps/api"
+  # The first test in each file pays the Postgres schema bootstrap (DROP SCHEMA
+  # CASCADE + full DDL replay via the helpers' deferred store) — on a CI runner
+  # that alone can cross vitest's default 5s testTimeout as the schema grows.
+  # Relax the timeout for this lane only; the SQLite lane keeps the 5s default.
+  #
+  # File parallelism is ON (previously --no-file-parallelism): helpers.ts keys each
+  # schema on VITEST_POOL_ID, so concurrent files land in distinct schemas and can't
+  # collide. --maxWorkers=4 bounds the live per-store pools (node-postgres default
+  # max=10) so their connections stay well under max_connections. Note vitest does
+  # NOT clamp an explicit maxWorkers to core count, so this runs 4 forks even on a
+  # 2-vCPU box — fine here because pg tests are I/O-bound (waiting on Postgres). A
+  # CI shard passes --shard=i/N through "$@".
+  pnpm exec vitest run --maxWorkers=4 --testTimeout=15000 "$@"
+
+  # Also run @derive/db's store contract when running the whole suite locally
+  # (skipped for a specific file or a CI shard, which pass args).
+  if [ "$#" -eq 0 ]; then
+    echo "→ running @derive/db store contract against Postgres"
+    cd "$ROOT"
+    pnpm --filter @derive/db test:pg
+  fi
 fi
