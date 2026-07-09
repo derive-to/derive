@@ -136,6 +136,10 @@ describe("remote MCP endpoint (/mcp)", () => {
     // Identity rides in the server instructions, not a whoami tool.
     expect(result.instructions).toContain("Claude")
     expect(result.instructions).toContain("editor")
+    // The workspace announces itself by NAME (the id alone is line noise to the
+    // model). This grant has no memberships, so it landed in the provisioned
+    // personal workspace — "Owner's Workspace".
+    expect(result.instructions).toContain(`workspace "Owner's Workspace" (ws_`)
     // The instructions teach the switcher: one login reaches every workspace.
     expect(result.instructions).toContain("list_workspaces")
 

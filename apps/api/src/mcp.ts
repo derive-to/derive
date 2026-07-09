@@ -227,6 +227,10 @@ function buildServer(
   ctx: AppContext,
   agent: AgentRecord,
   actingFor: { id: string; name: string | null } | null,
+  // The bound workspace's display name — the id alone reads as line noise in the
+  // model's one-shot identity brief, and "which workspace am I in?" is the first
+  // question an agent asks itself before writing anywhere.
+  workspaceName: string | null,
   // The granting user (OAuth grantor, or a dk_agt_ token's creator) whose
   // memberships bound which workspaces this connection can roam — null for a
   // legacy token with no known owner, which stays pinned to its one workspace.
@@ -254,7 +258,9 @@ function buildServer(
       instructions:
         `You are connected to Derive as "${agent.name}"${
           actingFor ? ` on behalf of ${actingFor.name ?? "your user"}` : ""
-        }, acting in workspace ${agent.org_id} ` +
+        }, acting in workspace ${
+          workspaceName ? `"${workspaceName}" (${agent.org_id})` : agent.org_id
+        } ` +
         `with ${agent.role} permissions. Derive hosts living documents and plans with versioned ` +
         `history, text-anchored review comments, and a publish → review → revise loop. ` +
         `Start a session with catch_up to re-sync on what changed and what feedback is open; use ` +
@@ -1508,7 +1514,16 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
     const grant = await ctx.oauthGrant(c)
     const scopeForCap = grant?.scopeRole ?? agent.role
     const boundWorkspaces = grant?.boundWorkspaces ?? []
-    const server = buildServer(ctx, agent, actingFor, ownerId, scopeForCap, boundWorkspaces)
+    const workspaceName = (await ctx.meta.getWorkspace(agent.org_id))?.name ?? null
+    const server = buildServer(
+      ctx,
+      agent,
+      actingFor,
+      workspaceName,
+      ownerId,
+      scopeForCap,
+      boundWorkspaces,
+    )
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
     return transport.handleRequest(c)
