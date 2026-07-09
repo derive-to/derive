@@ -289,10 +289,12 @@ export function repoCatalogBlock(catalog) {
 // can't accidentally break the parse contract by editing their manifest.
 export const OUTPUT_CONTRACT = `
 
-## Output format — required
+## Output format — REQUIRED, no matter what you did
 
-End your FINAL message with a single <answer> block containing JSON (no other
-JSON in the final message):
+However much work you do — queries, building a page, running checks — your
+FINAL message MUST END with a single <answer> block of JSON. This is the ONLY
+channel your answer reaches the asker through; a reply without it is discarded.
+Do not end with prose like "this looks good" — end with the block.
 
 <answer>
 {
@@ -312,8 +314,10 @@ rules say so — still produce your best draft in body_md.
 When the asker wants a chart, visual, or report page, set "artifact" to
 {"title": "...", "html": "<!doctype html>..."} — ONE fully self-contained HTML
 document (inline CSS/JS/SVG, no external requests; it renders in a sandbox).
-It is published for you and linked under your answer; keep body_md as the
-prose summary. Otherwise leave artifact null.`
+Put the artifact's FULL HTML INLINE in that field — do NOT write it to a file
+and do NOT reference a path; a file on disk never reaches the asker. It is
+published for you and linked under your answer; keep body_md as the prose
+summary. Otherwise leave artifact null.`
 
 /** The prompt for one run: the session transcript, then the standing question.
  *  "Latest message" is the latest ASKER message — on a stale re-serve the
@@ -373,31 +377,20 @@ export function parseAnswer(text) {
   }
 }
 
-/** One `claude -p` run. stream-json events are logged as they arrive; the final
- *  `result` event carries the assistant's last message for parseAnswer. */
-export function runClaude(opts) {
-  const args = [
-    "-p",
-    opts.prompt,
-    "--model",
-    opts.model,
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--append-system-prompt",
-    opts.systemPrompt + OUTPUT_CONTRACT,
-    // Headless: an interactive permission prompt would hang the subprocess.
-    // The safety boundary is the credentials the MCP config carries — read-only.
-    "--dangerously-skip-permissions",
-  ]
+// The nudge for a run that ended without the <answer> block. Sent as a follow-up
+// turn on the SAME claude session (--resume), so the model still holds everything
+// it just built — cheap to reformat, and it can re-emit an inline artifact it had
+// only written to a file.
+const NUDGE_PROMPT = `Your previous reply was NOT accepted — it did not end with the required <answer> block, so it never reached the asker. Reply now with ONLY that block and nothing else: <answer>{"body_md":"…","query":…,"confidence":…,"caveats":[…],"escalate":false,"escalation_reason":null,"artifact":…}</answer>. If you built a chart or page, put its FULL HTML inline in "artifact".html — never a file path.`
+
+/** One `claude -p` run (or resume). Streams events (logged as they arrive),
+ *  captures the session id (first system event) and the final `result` text. */
+function spawnClaude({ bin, cwd, args, timeoutMs }) {
   return new Promise((resolve) => {
-    const child = spawn(opts.bin, args, {
-      cwd: opts.cwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    })
+    const child = spawn(bin, args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] })
     let buffer = ""
     let resultText = ""
+    let sessionId = null
     let stderr = ""
     let timedOut = false
     let killTimer
@@ -405,8 +398,17 @@ export function runClaude(opts) {
       timedOut = true
       child.kill("SIGTERM")
       killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000)
-    }, opts.timeoutMs)
-
+    }, timeoutMs)
+    const take = (line) => {
+      try {
+        const event = JSON.parse(line)
+        logEvent(event)
+        if (!sessionId && typeof event.session_id === "string") sessionId = event.session_id
+        if (event.type === "result" && typeof event.result === "string") resultText = event.result
+      } catch {
+        // partial line / non-JSON noise
+      }
+    }
     child.stdout.on("data", (b) => {
       buffer += b.toString()
       let nl = buffer.indexOf("\n")
@@ -414,14 +416,7 @@ export function runClaude(opts) {
         const line = buffer.slice(0, nl).trim()
         buffer = buffer.slice(nl + 1)
         nl = buffer.indexOf("\n")
-        if (!line) continue
-        try {
-          const event = JSON.parse(line)
-          logEvent(event)
-          if (event.type === "result" && typeof event.result === "string") resultText = event.result
-        } catch {
-          // partial line / non-JSON noise
-        }
+        if (line) take(line)
       }
     })
     child.stderr.on("data", (b) => {
@@ -432,28 +427,90 @@ export function runClaude(opts) {
       clearTimeout(killTimer)
       // The stream can end without a trailing newline; the unterminated line may
       // be the `result` event itself.
-      const tail = buffer.trim()
-      if (tail) {
-        try {
-          const event = JSON.parse(tail)
-          if (event.type === "result" && typeof event.result === "string") resultText = event.result
-        } catch {
-          // not JSON — nothing to salvage
-        }
-      }
-      if (timedOut) return resolve({ ok: false, error: "timed out" })
-      if (code !== 0) return resolve({ ok: false, error: `exit ${code}: ${stderr.slice(0, 500)}` })
-      const parsed = parseAnswer(resultText)
-      resolve(
-        parsed.answer ? { ok: true, answer: parsed.answer } : { ok: false, error: parsed.error },
-      )
+      if (buffer.trim()) take(buffer.trim())
+      resolve({ timedOut, code, resultText, sessionId, stderr })
     })
     child.on("error", (err) => {
       clearTimeout(timer)
       clearTimeout(killTimer)
-      resolve({ ok: false, error: String(err) })
+      resolve({ timedOut: false, code: -1, resultText: "", sessionId: null, stderr: String(err) })
     })
   })
+}
+
+/** Produce a validated answer from a claude run, robustly:
+ *   1. run → parse the <answer> block
+ *   2. no block? nudge-retry on the SAME session (--resume) — a model deep in a
+ *      build often just forgets the block; reformatting is cheap and recovers a
+ *      built-but-file-only artifact.
+ *   3. still no block, but there IS substantive output? SALVAGE it — post the raw
+ *      reply as the answer with a caveat rather than hard-fail a run that did the
+ *      work. A real crash (timeout / nonzero exit / empty output) still fails.
+ *  Fresh process per run is unchanged — the resume is one follow-up turn within
+ *  the same run, never across Derive sessions. */
+export async function runClaude(opts) {
+  const baseArgs = [
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    // Headless: an interactive permission prompt would hang the subprocess.
+    // The safety boundary is the credentials the MCP config carries — read-only.
+    "--dangerously-skip-permissions",
+    "--model",
+    opts.model,
+  ]
+  const r = await spawnClaude({
+    bin: opts.bin,
+    cwd: opts.cwd,
+    timeoutMs: opts.timeoutMs,
+    args: [
+      "-p",
+      opts.prompt,
+      "--append-system-prompt",
+      opts.systemPrompt + OUTPUT_CONTRACT,
+      ...baseArgs,
+    ],
+  })
+  if (r.timedOut) return { ok: false, error: "timed out" }
+  if (r.code !== 0) return { ok: false, error: `exit ${r.code}: ${r.stderr.slice(0, 500)}` }
+
+  const parsed = parseAnswer(r.resultText)
+  if (parsed.answer) return { ok: true, answer: parsed.answer }
+
+  // Nudge-retry on the same session (bounded — this is a reformat, not new work).
+  if (r.sessionId) {
+    console.log(`[runner] no <answer> block; nudging (resume ${r.sessionId.slice(0, 8)})`)
+    const r2 = await spawnClaude({
+      bin: opts.bin,
+      cwd: opts.cwd,
+      timeoutMs: Math.min(opts.timeoutMs, 180_000),
+      args: ["-p", NUDGE_PROMPT, "--resume", r.sessionId, ...baseArgs],
+    })
+    const p2 = parseAnswer(r2.resultText)
+    if (p2.answer) return { ok: true, answer: p2.answer }
+  }
+
+  // Salvage: the run produced real output but never the block. Post the raw reply
+  // rather than lose the work — flagged so the number/prose is read with care.
+  const raw = r.resultText.trim()
+  if (raw) {
+    console.log("[runner] salvaging unstructured reply (no <answer> block after nudge)")
+    return {
+      ok: true,
+      answer: {
+        body_md: raw.slice(0, 20_000),
+        query: null,
+        confidence: null,
+        caveats: [
+          "The runner couldn't parse a structured answer, so this is the model's raw reply — treat any figures and confidence with extra care.",
+        ],
+        escalate: false,
+        escalation_reason: null,
+        artifact: null,
+      },
+    }
+  }
+  return { ok: false, error: parsed.error }
 }
 
 function logEvent(event) {

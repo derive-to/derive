@@ -237,6 +237,12 @@ describe("output contract + service units", () => {
     expect(OUTPUT_CONTRACT).toContain("body_md")
   })
 
+  it("the contract hammers the two things that failed in the field", () => {
+    // A model deep in a build forgot the block and wrote the artifact to a file.
+    expect(OUTPUT_CONTRACT).toMatch(/FINAL message MUST END/i)
+    expect(OUTPUT_CONTRACT).toMatch(/do NOT write it to a file/i)
+  })
+
   it("renders units that reproduce the FULL running config (nothing silently dropped)", () => {
     const cfg = loadRunnerConfig(
       { RUNNER_TIMEOUT_MS: "2400000" },
