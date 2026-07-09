@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import {
+  CLOUD_SERVER,
   findAccountWorkspace,
   freshToken,
   getAccount,
@@ -14,8 +15,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { createClient } from "./client"
 
-// Stdio MCP server for self-hosters: `npx @derive-to/mcp` talks to a Derive instance over
-// the /v1 HTTP API (DERIVE_SERVER). It exposes the SAME tools as the remote /mcp
+// Stdio MCP server: `npx @derive-to/mcp` talks to a Derive instance over
+// the /v1 HTTP API (DERIVE_SERVER, default the hosted cloud). It exposes the SAME tools as the remote /mcp
 // server — list_workspaces, list_artifacts, read, catch_up, comment, publish — so the
 // vocabulary is identical whether an agent connects over OAuth or a static token.
 //
@@ -29,7 +30,9 @@ import { createClient } from "./client"
 // changing that pin. DERIVE_TOKEN remains an escape hatch for a static bearer (CI,
 // no local login) — DERIVE_WORKSPACE has no effect there, since a static token
 // already acts as every workspace's owner.
-const server_ = process.env.DERIVE_SERVER ?? "http://localhost:8080"
+// Cloud by default, like the CLI: `npx @derive-to/mcp` from npm is a hosted-tier
+// user until DERIVE_SERVER says otherwise. (The localhost default predated launch.)
+const server_ = process.env.DERIVE_SERVER ?? CLOUD_SERVER
 
 /** {token, workspace} for the client below — see the module doc comment for the
  *  precedence. Kept out of `createClient` itself so a resolution failure fails

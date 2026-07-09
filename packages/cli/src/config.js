@@ -617,7 +617,12 @@ const STARTERS = {
     files: (t) => ({
       "context/MANIFEST.md": starterManifest(t),
       "context/references/example.md": STARTER_CONTEXT_REFERENCE,
-      "context/.mcp.json": `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`,
+      // Born able to read the library it serves: the derive MCP ships in every
+      // context's toolset (a runner's DERIVE_TOKEN rides the same env ref), so
+      // "some context exists here: derive.to/…" is followable from day one —
+      // the pilot Companion shipped without this and couldn't read a linked
+      // scope doc it had standing for. Add the context's own data sources here.
+      "context/.mcp.json": `${JSON.stringify(MCP_CONFIG, null, 2)}\n`,
       "context/.env.example": STARTER_CONTEXT_ENV,
       ".gitignore": CONTEXT_GITIGNORE,
     }),
@@ -666,7 +671,9 @@ const MCP_CONFIG = {
       command: "npx",
       args: ["-y", "@derive-to/mcp"],
       env: {
-        DERIVE_SERVER: envRef("DERIVE_SERVER", "http://localhost:8080"),
+        // Cloud by default: a scaffolded project talks to derive.to unless the
+        // env says otherwise. (The localhost fallback predated launch.)
+        DERIVE_SERVER: envRef("DERIVE_SERVER", CLOUD_SERVER),
         DERIVE_ACCOUNT: envRef("DERIVE_ACCOUNT"),
         DERIVE_WORKSPACE: envRef("DERIVE_WORKSPACE"),
         DERIVE_TOKEN: envRef("DERIVE_TOKEN"),

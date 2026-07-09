@@ -65,9 +65,10 @@ describe("scaffold", () => {
     // (workspace access, unlisted), not invite-only.
     expect(cfg.visibility).toBeUndefined()
     // The MCP config + skill are present and reference the published server.
-    expect(JSON.parse(readFileSync(join(d, ".mcp.json"), "utf8")).mcpServers.derive.args).toContain(
-      "@derive-to/mcp",
-    )
+    const mcp = JSON.parse(readFileSync(join(d, ".mcp.json"), "utf8")).mcpServers.derive
+    expect(mcp.args).toContain("@derive-to/mcp")
+    // Cloud by default — the localhost fallback predated launch.
+    expect(mcp.env.DERIVE_SERVER).toContain("https://derive.to")
     expect(readFileSync(join(d, ".claude/skills/derive/SKILL.md"), "utf8")).toContain(
       "name: derive-publish",
     )
@@ -150,6 +151,12 @@ describe("scaffold", () => {
     expect(names).toContain("context/references/example.md")
     expect(names).toContain("context/.mcp.json")
     expect(names).toContain("context/.env.example")
+    // Born able to read the library it serves: the derive MCP ships in every
+    // context's toolset (field lesson — the pilot Companion had standing to
+    // read a linked scope doc and no tool to do it with).
+    const ctxMcp = JSON.parse(files["context/.mcp.json"]).mcpServers
+    expect(ctxMcp.derive.args).toContain("@derive-to/mcp")
+    expect(ctxMcp.derive.env.DERIVE_SERVER).toContain("https://derive.to")
     // .env, the minted agent token, and the clone workspace must never reach git.
     expect(files[".gitignore"]).toContain("context/.env")
     expect(files[".gitignore"]).toContain(".derive/")
