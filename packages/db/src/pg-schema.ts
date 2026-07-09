@@ -510,7 +510,7 @@ export const context = pgTable(
     runner_seen_at: text("runner_seen_at"),
     // Who may ASK — workspace-scoped only, never the manifest's artifact access.
     // See schema.ts for the design notes (a context can't leak outside its org).
-    ask_policy: text("ask_policy").$type<"workspace" | "invited">().notNull().default("workspace"),
+    ask_policy: text("ask_policy").$type<"workspace" | "invited">().notNull().default("invited"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
 )

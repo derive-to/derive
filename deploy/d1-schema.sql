@@ -388,7 +388,7 @@ CREATE TABLE IF NOT EXISTS context (
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   runner_seen_at TEXT,
-  ask_policy TEXT NOT NULL DEFAULT 'workspace',
+  ask_policy TEXT NOT NULL DEFAULT 'invited',
   UNIQUE (org_id, name),
   FOREIGN KEY (manifest_artifact_id) REFERENCES artifact(id)
 );

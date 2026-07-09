@@ -1191,7 +1191,7 @@ export interface NewContext {
   agent_id: string
   manifest_artifact_id: string
   created_by: string
-  /** Defaults to `workspace` when omitted (the store default). */
+  /** Defaults to `invited` (creator-only) when omitted (the store default). */
   ask_policy?: "workspace" | "invited"
 }
 export interface ContextAskerRecord {

@@ -1379,11 +1379,11 @@ export function runStoreContract(
       await expect(store.touchContextSeen(uuid(), at)).resolves.toBeUndefined()
     })
 
-    it("ask_policy defaults to workspace and is settable; the asker roster is idempotent", async () => {
+    it("ask_policy defaults to invited and is settable; the asker roster is idempotent", async () => {
       const ctx = await newContext()
-      expect(ctx.ask_policy).toBe("workspace")
-      await store.setContextAskPolicy(ctx.id, "invited")
-      expect((await store.getContext(ctx.id))?.ask_policy).toBe("invited")
+      expect(ctx.ask_policy).toBe("invited")
+      await store.setContextAskPolicy(ctx.id, "workspace")
+      expect((await store.getContext(ctx.id))?.ask_policy).toBe("workspace")
 
       expect(await store.getContextAsker(ctx.id, "u_daniel")).toBeNull()
       await store.addContextAsker({

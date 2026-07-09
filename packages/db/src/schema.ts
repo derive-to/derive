@@ -612,10 +612,12 @@ export const context = sqliteTable(
     // Who in the workspace may ASK this context — DELIBERATELY not the manifest's
     // artifact access. A context is a data-access grant, not a document: it must
     // never be reachable outside its workspace, so its access model has no
-    // world-link or public concept to leak one. `workspace` = any member;
-    // `invited` = the context_asker roster (+ the creator). Membership in org_id
-    // is the hard floor either way (enforced in the ask gate, not here).
-    ask_policy: text("ask_policy").$type<"workspace" | "invited">().notNull().default("workspace"),
+    // world-link or public concept to leak one. `invited` = the context_asker
+    // roster (+ the creator); `workspace` = any member. Membership in org_id is
+    // the hard floor either way (enforced in the ask gate, not here). Defaults to
+    // `invited` (least privilege): a data grant opens to nobody until the owner
+    // widens it — the migration keeps existing contexts closed, not opened.
+    ask_policy: text("ask_policy").$type<"workspace" | "invited">().notNull().default("invited"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
 )

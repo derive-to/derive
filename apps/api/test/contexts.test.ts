@@ -131,15 +131,10 @@ describe("sessions: the ask → answer → follow-up loop", () => {
       )
     ).json()
     contextId = x.id
-    // The default is `workspace`: every member can ask, no manifest share needed.
-    expect(x.ask_policy).toBe("workspace")
-
-    // Lock it to `invited` to exercise the roster gate — Daniel is a workspace
-    // member but not (yet) an invited asker, so he's denied and can't tell it exists.
-    await app.request(
-      `/v1/contexts/${contextId}/access`,
-      jsonAs(as(owner.email), { ask_policy: "invited" }),
-    )
+    // Least-privilege default: `invited`, so a data grant opens to nobody but the
+    // creator until widened. Daniel is a workspace member but not an invited
+    // asker, so he's denied and can't even tell it exists.
+    expect(x.ask_policy).toBe("invited")
     const denied = await app.request(
       `/v1/contexts/${contextId}/sessions`,
       jsonAs(as(daniel.email), { body_md: "churn for March?" }),
@@ -399,7 +394,12 @@ describe("sessions: revoking ask-access cuts off an existing session", () => {
       )
     ).json()
 
-    // Daniel (a member, default workspace policy) opens a session.
+    // Open the context to the workspace so Daniel (a member) can ask, then he
+    // opens a session.
+    await app.request(
+      `/v1/contexts/${ctx.id}/access`,
+      jsonAs(as(owner.email), { ask_policy: "workspace" }),
+    )
     const asked = await app.request(
       `/v1/contexts/${ctx.id}/sessions`,
       jsonAs(as(daniel.email), { body_md: "churn?" }),
