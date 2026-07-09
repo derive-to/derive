@@ -23,6 +23,8 @@ export function FormField({
   htmlFor,
   hint,
   error,
+  count,
+  maxLength,
   children,
   className,
 }: {
@@ -30,6 +32,10 @@ export function FormField({
   htmlFor?: string
   hint?: ReactNode
   error?: ReactNode
+  /** With `maxLength`, renders a live `count/maxLength` meter by the label that warns as
+   *  the field nears its cap — so a `maxLength` truncation is never silent. */
+  count?: number
+  maxLength?: number
   children: ReactNode
   className?: string
 }) {
@@ -46,9 +52,35 @@ export function FormField({
     })
   }
 
+  // A live length meter for capped fields: muted, warns in the last 10%, destructive at
+  // the cap — decorative (aria-hidden), so it doesn't announce on every keystroke.
+  const counter =
+    typeof count === "number" && typeof maxLength === "number" ? (
+      <span
+        aria-hidden
+        className={cn(
+          "text-xs tabular-nums",
+          count >= maxLength
+            ? "text-destructive"
+            : count >= maxLength * 0.9
+              ? "text-warning"
+              : "text-muted-foreground",
+        )}
+      >
+        {count}/{maxLength}
+      </span>
+    ) : null
+
   return (
     <div className={cn("grid gap-2", className)}>
-      <Label htmlFor={htmlFor}>{label}</Label>
+      {counter ? (
+        <div className="flex items-baseline justify-between gap-2">
+          <Label htmlFor={htmlFor}>{label}</Label>
+          {counter}
+        </div>
+      ) : (
+        <Label htmlFor={htmlFor}>{label}</Label>
+      )}
       {control}
       {error ? (
         <p id={messageId} className="text-sm text-destructive">

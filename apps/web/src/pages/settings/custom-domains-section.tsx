@@ -4,6 +4,7 @@ import { api, type WorkspaceDomain } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { SettingsGroup } from "@/components/shared/settings-group"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,7 +15,7 @@ import { SettingsSection } from "./settings-section"
 
 export function CustomDomainsSection() {
   const qc = useQueryClient()
-  const { data: state, isPending } = useQuery(customDomainsQuery())
+  const { data: state, isPending, isError, refetch } = useQuery(customDomainsQuery())
   const reload = () => qc.invalidateQueries({ queryKey: customDomainsQuery().queryKey })
 
   const description =
@@ -24,6 +25,27 @@ export function CustomDomainsSection() {
     return (
       <SettingsSection title="Domains" description={description}>
         <SettingsListSkeleton />
+      </SettingsSection>
+    )
+
+  if (isError)
+    return (
+      <SettingsSection title="Domains" description={description}>
+        <StatusPanel
+          tone="danger"
+          title="Couldn't load domains"
+          description="This is usually temporary."
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="custom-domains-retry"
+              onClick={() => refetch()}
+            >
+              Try again
+            </Button>
+          }
+        />
       </SettingsSection>
     )
 

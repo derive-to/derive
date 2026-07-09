@@ -77,7 +77,13 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
           </Select>
         </FormField>
         {preset === OTHER && (
-          <FormField label="Role name" htmlFor="profile-role-other" className="min-w-37.5 flex-1">
+          <FormField
+            label="Role name"
+            htmlFor="profile-role-other"
+            count={custom.length}
+            maxLength={40}
+            className="min-w-37.5 flex-1"
+          >
             <Input
               id="profile-role-other"
               data-testid="profile-role-other"
@@ -89,7 +95,7 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
           </FormField>
         )}
       </div>
-      <FormField label="What you do" htmlFor="profile-about">
+      <FormField label="What you do" htmlFor="profile-about" count={about.length} maxLength={280}>
         <Textarea
           id="profile-about"
           data-testid="profile-about"

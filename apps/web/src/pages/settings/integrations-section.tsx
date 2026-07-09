@@ -5,6 +5,7 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { FormField } from "@/components/shared/form-field"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -18,7 +19,7 @@ import { SettingsSection } from "./settings-section"
 // with no save (the toggle contract); the Slack channel id is an explicit save.
 export function IntegrationsSection() {
   const qc = useQueryClient()
-  const { data: settings } = useQuery(workspaceSettingsQuery())
+  const { data: settings, isPending, isError, refetch } = useQuery(workspaceSettingsQuery())
   const { data: slack } = useQuery(slackQuery())
   const [channel, setChannel] = useState("")
   const [disconnecting, setDisconnecting] = useState(false)
@@ -77,7 +78,25 @@ export function IntegrationsSection() {
       title="Integrations"
       description="Route comment and PR activity to the tools your team already uses. Each switch applies instantly."
     >
-      {settings ? (
+      {isPending ? (
+        <SettingsListSkeleton />
+      ) : isError ? (
+        <StatusPanel
+          tone="danger"
+          title="Couldn't load integration settings"
+          description="This is usually temporary."
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="integrations-retry"
+              onClick={() => refetch()}
+            >
+              Try again
+            </Button>
+          }
+        />
+      ) : settings ? (
         <SettingsGroup>
           <SettingRow
             htmlFor="toggle-email"
@@ -140,9 +159,7 @@ export function IntegrationsSection() {
             />
           </SettingRow>
         </SettingsGroup>
-      ) : (
-        <SettingsListSkeleton />
-      )}
+      ) : null}
 
       <SettingsGroup title="Slack">
         {slack && !slack.available ? (

@@ -7,6 +7,7 @@ import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageShell } from "@/components/shared/page-shell"
 import { Spinner } from "@/components/shared/spinner"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { toast } from "@/components/ui/sonner"
@@ -19,6 +20,7 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
 import { ShareButton } from "../artifact/share-dialog"
+import { ConsolePending } from "./context-skeleton"
 import { answerMdToHtml } from "./lib/answer-md"
 
 // The context console: ask, read the answer (with the query/confidence/caveats the
@@ -80,12 +82,7 @@ function Console({ id }: { id: string }) {
       </PageShell>
     )
   }
-  if (!context || isLoading)
-    return (
-      <PageShell className="flex justify-center pt-16">
-        <Spinner />
-      </PageShell>
-    )
+  if (!context || isLoading) return <ConsolePending />
 
   return (
     <PageShell className="flex flex-col gap-5">
@@ -303,7 +300,7 @@ function SessionThread({
 }) {
   const { me } = useAuth()
   const qc = useQueryClient()
-  const { data } = useQuery(sessionQuery(sessionId))
+  const { data, isError } = useQuery(sessionQuery(sessionId))
   const [text, setText] = useState("")
   // The picker pills read the sessions LIST; the transcript polls its own key.
   // Sync the list whenever this session's state settles, so a pill never keeps
@@ -332,6 +329,21 @@ function SessionThread({
       onClosed()
     },
   })
+  if (isError)
+    return (
+      <StatusPanel
+        layout="inline"
+        tone="danger"
+        title="Couldn't load this conversation"
+        description="Try again in a moment."
+        action={
+          <Button variant="outline" size="sm" data-testid="console-retry" onClick={refresh}>
+            Try again
+          </Button>
+        }
+        className="mt-8"
+      />
+    )
   if (!data) return <Spinner className="mx-auto mt-8" />
   const { session, messages } = data
   // Only the asker may post (the server 404s anyone else) — the owner reads

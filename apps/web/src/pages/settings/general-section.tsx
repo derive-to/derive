@@ -33,7 +33,7 @@ import { SettingsSection } from "./settings-section"
 export function GeneralSection() {
   const { createWorkspace } = useShell()
   const qc = useQueryClient()
-  const { data: ws } = useQuery(workspaceQuery())
+  const { data: ws, isError, refetch } = useQuery(workspaceQuery())
   const [name, setName] = useState("")
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState("")
@@ -167,33 +167,51 @@ export function GeneralSection() {
         </Dialog>
       }
     >
-      <FormField label="Workspace name" htmlFor="workspace-name" className="max-w-sm">
-        <div className="flex gap-2">
-          <Input
-            id="workspace-name"
-            data-testid="workspace-name"
-            aria-label="Workspace name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={!isAdmin || !ws}
-            maxLength={80}
-            placeholder="My Workspace"
-            className="flex-1"
-          />
-          {isAdmin && (
+      {isError ? (
+        <StatusPanel
+          tone="danger"
+          title="Couldn't load workspace settings"
+          description="This is usually temporary."
+          action={
             <Button
-              data-testid="workspace-save"
-              variant="default"
+              variant="outline"
               size="sm"
-              onClick={saveName}
-              loading={rename.isPending}
-              disabled={rename.isPending || !name.trim() || name.trim() === ws?.name}
+              data-testid="workspace-retry"
+              onClick={() => refetch()}
             >
-              {rename.isPending ? "Saving…" : "Save"}
+              Try again
             </Button>
-          )}
-        </div>
-      </FormField>
+          }
+        />
+      ) : (
+        <FormField label="Workspace name" htmlFor="workspace-name" className="max-w-sm">
+          <div className="flex gap-2">
+            <Input
+              id="workspace-name"
+              data-testid="workspace-name"
+              aria-label="Workspace name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              disabled={!isAdmin || !ws}
+              maxLength={80}
+              placeholder="My Workspace"
+              className="flex-1"
+            />
+            {isAdmin && (
+              <Button
+                data-testid="workspace-save"
+                variant="default"
+                size="sm"
+                onClick={saveName}
+                loading={rename.isPending}
+                disabled={rename.isPending || !name.trim() || name.trim() === ws?.name}
+              >
+                {rename.isPending ? "Saving…" : "Save"}
+              </Button>
+            )}
+          </div>
+        </FormField>
+      )}
 
       {isAdmin && <SharingDefaults />}
 
@@ -251,7 +269,7 @@ export function GeneralSection() {
 // the caller renders this only for admins.
 function SharingDefaults() {
   const qc = useQueryClient()
-  const { data: settings } = useQuery(workspaceSettingsQuery())
+  const { data: settings, isError, refetch } = useQuery(workspaceSettingsQuery())
 
   const update = useApiMutation({
     mutationFn: (patch: Partial<OrgSettings>) => api.updateWorkspaceSettings(patch),
@@ -267,6 +285,24 @@ function SharingDefaults() {
     update.mutate({ [key]: next } as Partial<OrgSettings>)
   }
 
+  if (isError)
+    return (
+      <StatusPanel
+        layout="inline"
+        tone="danger"
+        title="Couldn't load sharing defaults"
+        action={
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="sharing-defaults-retry"
+            onClick={() => refetch()}
+          >
+            Try again
+          </Button>
+        }
+      />
+    )
   if (!settings) return null
   return (
     <SettingsGroup>

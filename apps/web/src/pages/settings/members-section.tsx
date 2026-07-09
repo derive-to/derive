@@ -4,6 +4,7 @@ import { type ArtifactMember, api, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { SettingsGroup } from "@/components/shared/settings-group"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -27,7 +28,7 @@ import { SettingsSection } from "./settings-section"
 // roles inline, and remove people; everyone else sees a read-only roster.
 export function MembersSection({ meId }: { meId: string }) {
   const qc = useQueryClient()
-  const { data: ws } = useQuery(workspaceQuery())
+  const { data: ws, isPending, isError, refetch } = useQuery(workspaceQuery())
   const [email, setEmail] = useState("")
   const [addRole, setAddRole] = useState<Role>("commenter")
   // A ref, not just the mutation's isPending: state updates are batched/async, so a
@@ -140,9 +141,25 @@ export function MembersSection({ meId }: { meId: string }) {
         </form>
       )}
 
-      {!ws ? (
+      {isPending ? (
         <SettingsListSkeleton />
-      ) : (
+      ) : isError ? (
+        <StatusPanel
+          tone="danger"
+          title="Couldn't load members"
+          description="This is usually temporary."
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="members-retry"
+              onClick={() => refetch()}
+            >
+              Try again
+            </Button>
+          }
+        />
+      ) : ws ? (
         <SettingsGroup>
           {ws.members.map((m) => (
             <div
@@ -203,7 +220,7 @@ export function MembersSection({ meId }: { meId: string }) {
             </div>
           ))}
         </SettingsGroup>
-      )}
+      ) : null}
 
       {isAdmin && <PendingInvites />}
 

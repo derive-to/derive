@@ -266,7 +266,12 @@ function Onboarding({ me }: { me: Account }) {
                 />
               )}
 
-              <FormField label="What you do" htmlFor="welcome-about">
+              <FormField
+                label="What you do"
+                htmlFor="welcome-about"
+                count={about.length}
+                maxLength={280}
+              >
                 <Textarea
                   id="welcome-about"
                   data-testid="welcome-about"

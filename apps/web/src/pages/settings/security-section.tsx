@@ -80,7 +80,12 @@ const SCOPE_LABEL: Record<string, string> = {
 // always see what may act as you, and cut it off. The moat's human-facing trust surface.
 function ConnectedAgents() {
   const qc = useQueryClient()
-  const { data: agents, isPending } = useQuery({
+  const {
+    data: agents,
+    isPending,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ["connected-agents"],
     queryFn: () => api.connectedAgents().then((r) => r.agents),
   })
@@ -99,7 +104,7 @@ function ConnectedAgents() {
 
   // No connected agents (and not loading) → keep the surface quiet; this is an advanced,
   // opt-in area that only appears once you've actually authorized an agent.
-  if (!isPending && (!agents || agents.length === 0)) return null
+  if (!isPending && !isError && (!agents || agents.length === 0)) return null
 
   return (
     <div className="flex flex-col gap-3">
@@ -111,6 +116,22 @@ function ConnectedAgents() {
       </div>
       {isPending ? (
         <SettingsListSkeleton />
+      ) : isError ? (
+        <StatusPanel
+          tone="danger"
+          title="Couldn't load connected agents"
+          description="This is usually temporary."
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="security-agents-retry"
+              onClick={() => refetch()}
+            >
+              Try again
+            </Button>
+          }
+        />
       ) : (
         <SettingsGroup>
           {agents?.map((a) => {
