@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/input-otp"
 import { useAuth } from "@/ctx"
 import { authClient } from "@/lib/auth-client"
+import { needsOnboarding } from "@/lib/route-guards"
 
 const loginRoute = getRouteApi("/login")
 
@@ -74,7 +75,7 @@ export function Login() {
   // user) with no /login left to re-trigger it. The one-shot latch guards the brief
   // pre-navigation window where the effect below can fire more than once.
   const redirected = useRef(false)
-  const afterAuth = (who?: { onboarded?: boolean } | null) => {
+  const afterAuth = (who?: Parameters<typeof needsOnboarding>[0] | null) => {
     if (redirected.current) return
     redirected.current = true
     const search = typeof window !== "undefined" ? window.location.search : ""
@@ -84,11 +85,13 @@ export function Login() {
       // Back to where sign-in was prompted (e.g. a shared artifact's "sign in to
       // comment"). Validated same-origin relative by the route, so this is safe.
       window.location.href = returnTo
-    } else if (who && who.onboarded === false) {
-      // A brand-new account goes straight to onboarding. Routing to "/" first boots the
-      // whole app shell (rail skeleton + a blank pane) only to redirect here — so the user's
-      // very first post-signup frame is a loading flash. Skip the detour. (The app-shell
-      // onboarding gate still covers any path that doesn't come through here.)
+    } else if (who && needsOnboarding(who)) {
+      // A user who still needs onboarding goes straight to /welcome. Routing to "/" first
+      // boots the whole app shell (rail skeleton + a blank pane) only for the same gate to
+      // redirect here — so the user's very first post-signup frame is a loading flash. Skip
+      // the detour by reusing the app-shell gate's exact predicate (needsOnboarding), so a
+      // returning pre-flag user is never wrongly sent to /welcome. The gate still covers any
+      // path that doesn't come through here.
       window.location.href = "/welcome"
     } else {
       window.location.href = "/"
