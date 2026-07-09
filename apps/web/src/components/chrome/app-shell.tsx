@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { useAuth } from "@/ctx"
+import { readAuthHint } from "@/lib/auth-hint"
 import { collectionsQuery, summaryQuery, workspacesQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useIsMobile } from "@/lib/use-is-mobile"
@@ -31,8 +32,11 @@ const COLLAPSE_KEY = STORAGE_KEYS.navCollapsed
 // navbar's hamburger. Fetches the nav data (summary, collections, workspaces)
 // once, so the rail + pod behave identically on every page.
 export function AppShell({ children }: { children: ReactNode }) {
-  const { me } = useAuth()
+  const { me, loading } = useAuth()
   const isMobile = useIsMobile()
+  // Read once — steers only the me()-loading window (the `bare` calc below), so a
+  // returning user's cold load matches the rail the boot frame already reserved.
+  const [authedHint] = useState(readAuthHint)
 
   // The provider is controlled so the state round-trips through the app's
   // storage contract ("1" = collapsed, "0" = expanded; expanded by default)
@@ -61,13 +65,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   // session so an anon visitor never fires the authed endpoints.
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
 
-  // An anonymous visitor on a shared artifact gets the chrome-light PublicViewer
-  // (its own slim public header) — drop the app nav rail entirely so the render is
-  // the whole page (the viral view; research: the render is the hero). Auth +
-  // onboarding redirects for every other route now live in the routes' beforeLoad
-  // guards (lib/route-guards), so an anon never renders authed chrome.
+  // An anonymous visitor in the shell is always on a public view — a shared artifact
+  // (its own PublicViewer) or a public profile (PublicFrame) — so drop the app rail
+  // entirely and let the page's own chrome-light frame be the whole render (the viral
+  // view; the render is the hero). Every non-public route redirects an anon to /login
+  // via the routes' beforeLoad guards, so `me` is the signal. During the session's load
+  // window defer to the boot hint, so a returning user keeps the rail (and an anon keeps
+  // chrome-light) instead of popping when me() resolves.
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const bareArtifact = !me && pathname.startsWith("/artifacts/")
+  const bare = !me && !(loading && authedHint)
 
   // ⌘K / Ctrl+K opens the command palette from anywhere. "/" (outside inputs)
   // focuses the page's primary SearchField when one is registered
@@ -162,21 +168,22 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   // No full-screen hold: the known chrome renders immediately (the __root
-  // AppFrame hydration gate covers the pre-hydration frame with AppBoot). The
+  // AppFrame hydration gate covers the pre-hydration frame with BootShell). The
   // rail's identity/nav atoms skeleton in during the me()/summary latency (see
   // NavRail's 3-state); a signed-out user on an auth-only route is bounced by the
-  // route beforeLoad guards before this renders. `bareArtifact` keeps a
-  // pending/anon `me` on the chrome-light artifact view — the rail enhances in
-  // only once `me` resolves truthy (in-app navs have it cached, so no shift).
+  // route beforeLoad guards before this renders. During the load window `bare` (above)
+  // defers to the boot hint, so a returning user keeps the rail rather than flashing
+  // the anon chrome-light view (in-app navs have `me` cached, so no shift either way).
 
   // Note: profile setup isn't gated *inside* the shell — the onboarding effect
   // above redirects a new user to the dedicated /welcome step (handle + role +
   // connect-your-tools) instead, so the shell only ever renders for onboarded or
   // skipped users.
 
-  // Chrome-light shell for an anon shared artifact: no rail, no mobile top bar —
-  // the PublicViewer owns its own header/footer and the render fills the frame.
-  if (bareArtifact)
+  // Chrome-light shell for any anon public view: no rail, no mobile top bar — the
+  // page's own frame (PublicViewer for an artifact, PublicFrame for a profile) owns
+  // the header/footer and the render fills the frame.
+  if (bare)
     return (
       <ShellCtx.Provider value={value}>
         <TooltipProvider>

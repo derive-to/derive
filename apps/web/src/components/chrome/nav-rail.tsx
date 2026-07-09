@@ -4,7 +4,6 @@ import { useState } from "react"
 import { api } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
 import { Logo } from "@/components/shared/logo"
-import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
 import {
@@ -26,7 +25,6 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarTrigger,
-  useIconRail,
   useSidebar,
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -149,6 +147,11 @@ function RailHeader({ showSearch }: { showSearch: boolean }) {
       <div className="flex items-center gap-1 group-data-[collapsible=icon]:flex-col">
         <Link
           to="/"
+          // The prerendered SPA shell bakes this rail (via BootShell) at "/", so the
+          // brand link is baked active; a cold load at any other route hydrates it
+          // inactive. The diff is visually inert (the brand carries no active styling),
+          // so suppress it — the route-agnostic boot frame hydrates without a warning.
+          suppressHydrationWarning
           onClick={() => setOpenMobile(false)}
           aria-label="Derive — home"
           className="flex h-8 min-w-0 flex-1 items-center gap-2.5 rounded-md px-1.5 text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:flex-none group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
@@ -223,8 +226,9 @@ const RAIL_SKELETON_COLLECTIONS = [
 // never guesses anon-vs-authed and flashes the wrong one. The real Sidebar +
 // RailHeader (both data-free) render exactly, with silhouette rows for the nav +
 // collections and a skeleton pod at the foot. In-app navs have `me` cached, so
-// this only ever appears on a genuine cold load.
-function RailSkeleton() {
+// this only ever appears on a genuine cold load. Exported so BootShell can render
+// the identical silhouette in the pre-hydration frame (see chrome/boot-shell).
+export function RailSkeleton() {
   return (
     <Sidebar collapsible="icon" variant="inset">
       <RailHeader showSearch />
@@ -309,9 +313,6 @@ export function NavRail() {
   const onContexts = loc.pathname.startsWith("/contexts")
   const onSettings = loc.pathname.startsWith("/settings")
   const tags = summary?.tags ?? []
-  // The icon strip shows only glyph rows; content that has no icon form (the
-  // collections/tags lists, the anon conversion card) hides behind this.
-  const iconMode = useIconRail()
 
   // Picking a destination on mobile closes the drawer (no-op on desktop).
   const closeMobile = () => setOpenMobile(false)
@@ -361,84 +362,6 @@ export function NavRail() {
   // Session still resolving → the neutral rail silhouette, so we never flash the
   // anon rail before an authed user's data lands (in-app navs have `me` cached).
   if (loading) return <RailSkeleton />
-
-  // Anonymous visitor on a shared public artifact. There's no workspace to
-  // navigate, so the rail becomes the conversion surface — a single path to
-  // making their own (Figma/Notion-style viral loop). The artifact itself stays
-  // fully view-only; this is the only nav an anon ever sees.
-  if (!me)
-    return (
-      <Sidebar collapsible="icon" variant="inset">
-        <RailHeader showSearch={false} />
-        <SidebarContent>
-          {iconMode ? (
-            <SidebarGroup>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild tooltip="Sign up for Derive">
-                      {/* The rail's rows mute their icons; this one is the
-                          conversion moment, so it keeps the brand ink. */}
-                      <Link
-                        to="/login"
-                        search={{ signup: true }}
-                        aria-label="Sign up for Derive"
-                        data-testid="anon-signup"
-                        className="text-primary [&_svg]:text-primary"
-                      >
-                        <Icon name="plus" />
-                        <span>Sign up free</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          ) : (
-            <SidebarGroup>
-              <SidebarGroupContent className="flex flex-col gap-3">
-                {/* The one card in the rail — a conversion moment that must lift off
-                    the flush canvas; its headline is a voice moment (Geist). */}
-                <div className="rounded-xl border border-border bg-card p-3.5">
-                  <div className="flex items-center gap-2">
-                    <Logo size={22} />
-                    <span className="font-serif text-base font-medium tracking-tight text-foreground">
-                      Create your own
-                    </span>
-                  </div>
-                  <p className="mt-2 text-pretty text-sm text-muted-foreground">
-                    Give your AI artifacts a permanent home: versions, comments, and one link to
-                    share.
-                  </p>
-                  <Button
-                    asChild
-                    variant="default"
-                    size="sm"
-                    className="mt-3 w-full"
-                    data-testid="anon-signup"
-                  >
-                    <Link to="/login" search={{ signup: true }} onClick={closeMobile}>
-                      Sign up free
-                    </Link>
-                  </Button>
-                </div>
-                <p className="px-1 text-sm text-muted-foreground">
-                  Already have an account?{" "}
-                  <Link
-                    to="/login"
-                    onClick={closeMobile}
-                    data-testid="anon-login"
-                    className="font-medium text-primary hover:underline"
-                  >
-                    Log in
-                  </Link>
-                </p>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          )}
-        </SidebarContent>
-      </Sidebar>
-    )
 
   return (
     <Sidebar collapsible="icon" variant="inset">

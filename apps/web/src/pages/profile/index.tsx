@@ -8,6 +8,7 @@ import { CardGrid } from "@/components/shared/card-grid"
 import { EmptyState } from "@/components/shared/empty-state"
 import { FollowButton } from "@/components/shared/follow-button"
 import { PageShell } from "@/components/shared/page-shell"
+import { PublicFrame } from "@/components/shared/public-frame"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -24,6 +25,16 @@ import { ProfileWorkCard, ProfileWorkRow } from "./work-card"
 
 const route = getRouteApi("/users/$handle")
 
+// A signed-in viewer sees the profile inside the app shell (rail); an anonymous visitor
+// gets it chrome-light in the public frame — shareable without a session, the same
+// treatment as a public artifact, minus the app rail (which an anon no longer sees).
+export function Profile() {
+  const { handle } = route.useParams()
+  const { me } = useAuth()
+  const inner = <ProfileInner handle={handle} />
+  return me ? inner : <PublicFrame returnTo={`/users/${handle}`}>{inner}</PublicFrame>
+}
+
 // A profile. For a teammate (shared workspace) or yourself: the identity header
 // (avatar, name, @handle, role, bio, GitHub link), a work count, Follow, and the
 // person's work the viewer can see. For anyone else it's the identity card alone —
@@ -31,8 +42,7 @@ const route = getRouteApi("/users/$handle")
 // launch. Header-first: the identity is preloaded in the route loader, so it
 // paints with real data on the first frame; only the work grid carries its own
 // load state.
-export function Profile() {
-  const { handle } = route.useParams()
+function ProfileInner({ handle }: { handle: string }) {
   const { me, setMe } = useAuth()
   const nav = useNavigate()
   const [editing, setEditing] = useState(false)
