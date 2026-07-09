@@ -131,11 +131,7 @@ function Onboarding({ me }: { me: Account }) {
   const initials = getInitials(me.name ?? me.email)
   const normalized = normalizeUsername(handle)
   const handleErr = normalized ? usernameError(normalized) : null
-  const usernameField = fieldError(
-    "welcome-username-error",
-    handleErr,
-    "Letters, numbers, and single - or _.",
-  )
+  const usernameField = fieldError("welcome-username-error", handleErr)
   const profession = preset === OTHER ? custom.trim() : preset
 
   // Non-blocking (onboarding proceeds regardless) but NOT silent: a failed upload toasts, so
@@ -262,7 +258,11 @@ function Onboarding({ me }: { me: Account }) {
                   </Select>
                 </FormField>
               </div>
-              {usernameField.node}
+              {usernameField.node ?? (
+                <p className="text-sm text-muted-foreground">
+                  Letters, numbers, and single - or _.
+                </p>
+              )}
 
               {preset === OTHER && (
                 <Input
