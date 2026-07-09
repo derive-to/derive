@@ -13,10 +13,11 @@ import { toast } from "@/components/ui/sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
-import { contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
+import { artifactQuery, contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
+import { ShareButton } from "../artifact/share-dialog"
 import { answerMdToHtml } from "./lib/answer-md"
 
 // The context console: ask, read the answer (with the query/confidence/caveats the
@@ -37,7 +38,14 @@ function Console({ id }: { id: string }) {
   // Polled (unlike the one-shot route loader fetch): runner_seen_at only moves
   // when the server re-reads the row, and liveness going STALE is exactly the
   // signal this page exists to show.
-  const { data: context } = useQuery({ ...contextQuery(id), refetchInterval: 60_000 })
+  const {
+    data: context,
+    error,
+    isLoading,
+  } = useQuery({
+    ...contextQuery(id),
+    refetchInterval: 60_000,
+  })
   const { data: sessions } = useQuery(contextSessionsQuery(id))
 
   // The session on screen: sticky once picked; defaults to the most recent.
@@ -49,7 +57,29 @@ function Console({ id }: { id: string }) {
   const active = picked === "new" ? null : (picked ?? mine[0]?.id ?? null)
   const isOwner = !!context && context.created_by === me?.id
 
-  if (!context)
+  // No standing on the context reads as 404 (its existence never leaks). Asking
+  // is granted by SHARING THE MANIFEST — the context has no access of its own —
+  // so a teammate who can't load it needs the owner to share the manifest, not
+  // a bug report. Say that plainly instead of spinning forever (the old
+  // behavior: the loader threw, `context` stayed undefined, the spinner never
+  // resolved — indistinguishable from "still loading").
+  if (error) {
+    const status = error instanceof ApiError ? error.status : undefined
+    return (
+      <PageShell className="flex justify-center pt-16">
+        <EmptyState
+          icon={<Icon name="lock" strokeWidth={1.75} />}
+          title={status === 404 || status === 403 ? "You don't have access" : "Couldn't load"}
+          description={
+            status === 404 || status === 403
+              ? "Ask the owner to share this context with you — access to ask is granted through the context's manifest."
+              : "Something went wrong loading this context. Try again in a moment."
+          }
+        />
+      </PageShell>
+    )
+  }
+  if (!context || isLoading)
     return (
       <PageShell className="flex justify-center pt-16">
         <Spinner />
@@ -64,16 +94,26 @@ function Console({ id }: { id: string }) {
           {context.name}
         </h1>
         <RunnerLiveness seenAt={context.runner_seen_at} />
-        {context.manifest_short_id && (
-          <Link
-            to="/artifacts/$ref"
-            params={{ ref: context.manifest_short_id }}
-            data-testid="console-manifest-link"
-            className="ml-auto text-sm text-muted-foreground underline-offset-4 hover:underline"
-          >
-            Manifest ↗
-          </Link>
-        )}
+        <div className="ml-auto flex items-center gap-3">
+          {/* Who can ASK is who can read the manifest — the context has no access
+              of its own. The owner sets it here so "share to let people ask" is
+              discoverable on the console, not buried on the manifest artifact
+              (its absence is why the pilot sat invite-only, unaskable by anyone
+              but its owner). */}
+          {isOwner && context.manifest_short_id && (
+            <ContextAccess shortId={context.manifest_short_id} />
+          )}
+          {context.manifest_short_id && (
+            <Link
+              to="/artifacts/$ref"
+              params={{ ref: context.manifest_short_id }}
+              data-testid="console-manifest-link"
+              className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+            >
+              Manifest ↗
+            </Link>
+          )}
+        </div>
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -149,6 +189,29 @@ function Console({ id }: { id: string }) {
         )}
       </Tabs>
     </PageShell>
+  )
+}
+
+// The context's ask-grant, surfaced and set on the console: it IS the manifest's
+// share state (read the manifest ⇒ can ask). Reuses the artifact ShareButton on
+// the manifest, plus a plain-language nudge when nobody but the owner can ask —
+// the state that reads as "the app is broken" when a teammate opens the console.
+function ContextAccess({ shortId }: { shortId: string }) {
+  const { data: manifest } = useQuery(artifactQuery(shortId))
+  if (!manifest) return null
+  const askable = manifest.workspace_access === "member" || manifest.link_role !== "none"
+  return (
+    <div className="flex items-center gap-2" data-testid="context-access">
+      {!askable && <span className="text-xs text-muted-foreground">Only you can ask</span>}
+      <ShareButton
+        shortId={shortId}
+        myRole={manifest.my_role}
+        workspaceAccess={manifest.workspace_access}
+        linkRole={manifest.link_role}
+        listed={manifest.listed}
+        passwordProtected={manifest.password_protected}
+      />
+    </div>
   )
 }
 

@@ -6,9 +6,12 @@ import { ContextConsole } from "../pages/context/console"
 // One context's console: /contexts/$id — ask, read answers, follow up.
 export const Route = createFileRoute("/contexts/$id")({
   beforeLoad: requireOnboarded,
+  // Best-effort warm: the console owns the no-access + load-error states (a
+  // teammate without an ask grant gets a 404), so a failed fetch here must NOT
+  // surface as a route error — it would blank the page instead of explaining.
   loader: ({ context, params }) =>
     Promise.all([
-      context.queryClient.ensureQueryData(contextQuery(params.id)),
+      context.queryClient.prefetchQuery(contextQuery(params.id)),
       context.queryClient.prefetchQuery(contextSessionsQuery(params.id)),
     ]),
   component: ContextConsole,
