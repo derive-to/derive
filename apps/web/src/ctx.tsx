@@ -49,15 +49,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 export const THEMES = [
   { id: "light", label: "Light" },
   { id: "dark", label: "Dark" },
+  { id: "system", label: "System" },
 ] as const
 
 // next-themes owns the theme: it toggles the `.dark`/`.light` class the shadcn tokens
 // key off, persists to STORAGE_KEYS.theme, and — with the head boot script in
-// __root — paints the right theme before hydration. Stock <Toaster/> (sonner) reads
-// this same next-themes context, so it follows the app with zero derive glue.
+// __root — paints the right theme before hydration. "system" (the default) follows
+// the OS preference live via next-themes' media-query listener. Stock <Toaster/>
+// (sonner) reads this same next-themes context, so it follows the app with zero
+// derive glue.
 export function useTheme() {
   const { theme, setTheme } = useNextTheme()
-  return { theme: theme ?? "dark", setTheme }
+  return { theme: theme ?? "system", setTheme }
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -65,8 +68,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     <NextThemesProvider
       attribute="class"
       themes={["light", "dark"]}
-      defaultTheme="dark"
-      enableSystem={false}
+      defaultTheme="system"
+      enableSystem
       storageKey={STORAGE_KEYS.theme}
       disableTransitionOnChange
     >

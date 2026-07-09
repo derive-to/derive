@@ -18,13 +18,23 @@ import { useLiveCursors } from "./cursors/use-live-cursors"
 export function useArtifactLive(opts: {
   shortId: string
   onComment: () => void
-  onVersion: () => void
+  /** A new version landed live, with its number when the event carried one — the
+   *  page refetches AND may cue the user (toast / mid-edit warning). */
+  onVersion: (n?: number) => void
   /** A review round changed (requested / sent back / approved) — the review card
    *  refetches, so an agent's re-request appears live instead of on reload. */
   onReview?: () => void
+  /** The stream (re)connected after a coverage gap — a hidden tab returning (its
+   *  stream was closed) or an EventSource auto-reconnect. Events during the gap
+   *  were never replayed, so refetch silently instead of trusting the cache. */
+  onResync?: () => void
 }) {
-  const { shortId, onComment, onVersion, onReview } = opts
+  const { shortId, onComment, onVersion, onReview, onResync } = opts
   const [viewers, setViewers] = useState<Viewer[]>([])
+  // Whether ANY stream for this page has connected before — the first "ready" of
+  // the first stream is the mount itself (the loader/query just fetched; nothing
+  // to catch up on); every later "ready" means a gap just closed.
+  const everConnected = useRef(false)
   const cursors = useLiveCursors(shortId)
   const { paintFrame } = cursors
   const visible = usePageVisible()
@@ -44,7 +54,20 @@ export function useArtifactLive(opts: {
     ev.addEventListener("comment.addressed", onComment)
     ev.addEventListener("comment.reacted", onComment)
     ev.addEventListener("comment.updated", onComment)
-    ev.addEventListener("version.published", onVersion)
+    ev.addEventListener("version.published", (e) => {
+      let n: number | undefined
+      try {
+        n = JSON.parse((e as MessageEvent).data).n
+      } catch {
+        /* the refetch doesn't need the number */
+      }
+      onVersion(n)
+    })
+    // "ready" is the server's hello on every (re)connect — see onResync.
+    ev.addEventListener("ready", () => {
+      if (everConnected.current) onResync?.()
+      everConnected.current = true
+    })
     if (onReview) {
       ev.addEventListener("review.requested", onReview)
       ev.addEventListener("review.sent_back", onReview)
@@ -65,7 +88,7 @@ export function useArtifactLive(opts: {
       }
     })
     return () => ev.close()
-  }, [shortId, onComment, onVersion, onReview, paintFrame, visible])
+  }, [shortId, onComment, onVersion, onReview, onResync, paintFrame, visible])
 
   // Announce we're viewing (anon shows up by their server handle — Google-Docs
   // style) and keep the heartbeat alive (TTL 45s). Paused while the tab is

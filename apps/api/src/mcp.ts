@@ -1429,6 +1429,11 @@ function buildServer(
         let openedInTab = false
         if (actingFor) {
           const channel = `u:${actingFor.id}`
+          // Same service flag as the /v1 publish path: a context-bound agent's
+          // push is routinely someone ELSE's ask — the client toasts instead of
+          // auto-opening the owner's tab.
+          const contexts = await ctx.meta.listContexts(artifact.org_id)
+          const service = contexts.some((x) => x.agent_id === agent.id)
           const pushed = {
             type: "artifact.pushed" as const,
             event_id: newId("ev"),
@@ -1440,6 +1445,7 @@ function buildServer(
             url,
             agent: agent.name,
             review_requested: !!review_round,
+            service,
           }
           if (ctx.bus.publishWithReceipt) {
             openedInTab =

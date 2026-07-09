@@ -27,3 +27,14 @@ test("creating an account signs in and leaves the login page", async ({ page }) 
   await signUp(page) // drives login-toggle / login-name / login-email / login-password / login-submit
   await expect(page).not.toHaveURL(/\/login/)
 })
+
+test("password managers are invited on credentials and suppressed elsewhere", async ({ page }) => {
+  // Credential fields declare autocomplete/type and must NOT carry the ignore
+  // attr — 1Password filling your login is the point.
+  await page.goto("/login")
+  await expect(page.getByTestId("login-email")).not.toHaveAttribute("data-1p-ignore")
+
+  // Any other field (here: the library filter) suppresses the manager popup.
+  await signUp(page)
+  await expect(page.getByTestId("library-search")).toHaveAttribute("data-1p-ignore", "true")
+})

@@ -2,11 +2,32 @@ import type * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+// Password managers (1Password, LastPass, Bitwarden, Dashlane) decorate any field
+// that smells like a login — email-shaped inputs, name fields, the invite box —
+// with their fill popup, which is noise everywhere except real credential fields.
+// So every Input opts OUT by default via the vendor ignore attributes, EXCEPT
+// fields that declare themselves credential-shaped: a password input, or an
+// autocomplete token managers legitimately fill (login identifiers, OTP,
+// passkeys, identity). Declare `autoComplete` to invite the manager in; the
+// ignore attrs also stay overridable per call site (they spread before props).
+const FILLABLE_AUTOCOMPLETE =
+  /(?:^|\s)(username|email|name|current-password|new-password|one-time-code|webauthn)(?:\s|$)/
+const pwManagerIgnore = (type?: string, autoComplete?: string) =>
+  type === "password" || (autoComplete && FILLABLE_AUTOCOMPLETE.test(autoComplete))
+    ? undefined
+    : ({
+        "data-1p-ignore": "true",
+        "data-lpignore": "true",
+        "data-bwignore": "true",
+        "data-form-type": "other",
+      } as const)
+
 function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (
     <input
       type={type}
       data-slot="input"
+      {...pwManagerIgnore(type, props.autoComplete)}
       className={cn(
         // Quiet well: hairline border-input; transparent on light (the themed shadow
         // var adds depth there and zeroes in dark, where the well fill does the work).

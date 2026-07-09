@@ -10,6 +10,13 @@ import { createContext, useContext } from "react"
 export interface ShellValue {
   paletteOpen: boolean
   setPaletteOpen: (open: boolean) => void
+  /** Immersive page state (the artifact's focus mode): the shell unmounts the nav
+   *  rail and mobile top bar entirely — not the icon-strip collapse — and, with no
+   *  sidebar peer, the inset mat drops so the page runs edge-to-edge. Page-scoped:
+   *  the setter is called on enter/exit and cleaned up on unmount, and the rail's
+   *  own open/collapsed preference is never touched. */
+  immersive: boolean
+  setImmersive: (on: boolean) => void
   switchWorkspace: (id: string) => void
   /** Create + switch; optional invite emails go out before the reload (one flow —
    *  naming a workspace and bringing the team are the same gesture). */

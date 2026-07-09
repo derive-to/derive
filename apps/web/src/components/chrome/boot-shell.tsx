@@ -9,6 +9,8 @@ import { ShellCtx, type ShellValue } from "./shell-context"
 const NOOP_SHELL: ShellValue = {
   paletteOpen: false,
   setPaletteOpen: () => {},
+  immersive: false,
+  setImmersive: () => {},
   switchWorkspace: () => {},
   createWorkspace: () => Promise.resolve(),
   deleteWorkspace: () => {},

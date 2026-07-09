@@ -18,6 +18,21 @@ test("the user menu switches between themes and the choice persists", async ({ o
   await expect(html).toHaveClass(/dark/)
 })
 
+test("the System theme follows the OS preference, live", async ({ owner }) => {
+  const html = owner.locator("html")
+  await owner.emulateMedia({ colorScheme: "dark" })
+  await owner.getByTestId("user-menu-trigger").click()
+  await owner.getByTestId("theme-option-system").click()
+  await expect(html).toHaveClass(/dark/)
+  // Flipping the OS preference retints the app without a reload (next-themes'
+  // media-query listener) — and the resolved theme survives one, via the
+  // pre-paint boot script's matchMedia fallback.
+  await owner.emulateMedia({ colorScheme: "light" })
+  await expect(html).toHaveClass(/light/)
+  await owner.reload()
+  await expect(html).toHaveClass(/light/)
+})
+
 test("the notification bell opens an empty panel", async ({ owner }) => {
   await owner.getByTestId("notif-bell").click()
   // Scoped to the popover: the bell row on the rail also carries a "Notifications"

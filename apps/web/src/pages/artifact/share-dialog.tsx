@@ -667,11 +667,14 @@ export function ShareButton({
                       </div>
                     </div>
                     {/* Collection sharing is owner-managed (matches ShareCollectionDialog's
-                        bar); everyone else gets attribution — who to ask. */}
+                        bar); everyone else gets attribution — who to ask. Muted at rest
+                        (this section is disclosure, not control — the row's content
+                        carries the weight); hover re-inks. */}
                     {g.my_role === "owner" ? (
                       <Button
                         variant="ghost"
-                        size="sm"
+                        size="xs"
+                        className="text-muted-foreground hover:text-foreground"
                         data-testid={`share-collection-manage-${g.id}`}
                         onClick={() => setManageCol(g)}
                       >

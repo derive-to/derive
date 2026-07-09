@@ -20,14 +20,14 @@ import { reportWebVitals } from "../lib/vitals"
 import "@/styles/globals.css"
 
 // Resolve the theme before first paint so there's no flash: a stored light/dark
-// choice wins, otherwise follow the OS preference. Mirrors resolveTheme() in ctx
-// so the pre-paint attribute matches what ThemeProvider settles on post-hydration.
-// Runs synchronously in <head>, ahead of body render. Keyed off STORAGE_KEYS.theme
-// (not a literal) so it tracks the one key definition and stays out of the
-// storage-key linter's way.
+// choice wins; "system" (or nothing stored) follows the OS preference. Mirrors the
+// ThemeProvider config in ctx (defaultTheme system + enableSystem) so the pre-paint
+// class matches what next-themes settles on post-hydration. Runs synchronously in
+// <head>, ahead of body render. Keyed off STORAGE_KEYS.theme (not a literal) so it
+// tracks the one key definition and stays out of the storage-key linter's way.
 const THEME_BOOT = `(function(){try{var t=localStorage.getItem(${JSON.stringify(
   STORAGE_KEYS.theme,
-)});if(t!=="light"&&t!=="dark")t="dark";var e=document.documentElement;e.classList.remove("light","dark");e.classList.add(t)}catch(e){}})()`
+)});if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";var e=document.documentElement;e.classList.remove("light","dark");e.classList.add(t)}catch(e){}})()`
 
 // Pre-paint sibling to THEME_BOOT: tag <html> with which boot frame to reserve —
 // before the shell paints — from the persisted auth hint AND the entry path. A

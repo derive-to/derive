@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useNavigate, useSearch } from "@tanstack/react-router"
+import { Link, useNavigate, useSearch } from "@tanstack/react-router"
 import { FolderTree, List } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
@@ -249,8 +249,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
   const collectionTitle =
     activeCollection?.title ?? feed.data?.pages?.[0]?.collection?.title ?? "Collection"
 
-  // The home greeting + the quiet triage line only exist on the unfiltered "/" view.
-  const homeView = filter.kind === "all" && !isSearching
+  // The home greeting + publish launcher + the quiet triage line span BOTH home tabs
+  // ("All artifacts" / "Created by me") — the tab only filters the grid, it doesn't
+  // leave home. Searching or a tag/collection filter drops the home chrome.
+  const homeView = (filter.kind === "all" || filter.kind === "mine") && !isSearching
   const { data: feedbackData } = useQuery({ ...needsFeedbackArtifactsQuery(), enabled: homeView })
   const feedbackCount = feedbackData?.length ?? 0
 
@@ -303,13 +305,17 @@ function LibraryBody({ view }: { view: LibraryView }) {
               : undefined
 
   const showPublish =
-    !isSearching && (filter.kind === "all" || filter.kind === "tag" || filter.kind === "favorites")
+    !isSearching &&
+    (filter.kind === "all" ||
+      filter.kind === "mine" ||
+      filter.kind === "tag" ||
+      filter.kind === "favorites")
 
   const emptyProps = emptyStateFor(filter, isSearching, debouncedQ, nav)
   // The first-run guide is for a genuinely blank home (your work is empty and you're not
-  // mid-search). With the promoted strips gone from home, "all + empty" simply means
-  // first-run — no more racing three queries to decide.
-  const emptyHome = homeView && items.length === 0
+  // mid-search). Keyed to the "All artifacts" tab only — an empty "Created by me" tab
+  // keeps its own empty state (the workspace may hold plenty you didn't create).
+  const emptyHome = homeView && filter.kind === "all" && items.length === 0
 
   return (
     <PageShell scrollRef={scrollRef} width="wide">
@@ -330,9 +336,16 @@ function LibraryBody({ view }: { view: LibraryView }) {
           subtitle={
             <>
               Your artifacts live here — most recently updated first. Publish one below, or run{" "}
-              <code className="inline-flex h-5 items-center rounded-sm bg-muted px-1 font-mono text-2xs font-medium text-foreground/70">
+              {/* Links to /welcome — reachable any time; its "Connect an agent" step
+                  is the in-app guide to publishing over the CLI/MCP. */}
+              <Link
+                to="/welcome"
+                data-testid="library-cli-guide"
+                title="How to publish from the CLI or an agent (MCP)"
+                className="inline-flex h-5 items-center rounded-sm bg-muted px-1 font-mono text-2xs font-medium text-foreground/70 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              >
                 derive publish
-              </code>
+              </Link>
               .
             </>
           }
@@ -436,7 +449,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
           active={filter.kind === "mine" ? "mine" : "all"}
           total={summary?.total}
           mine={summary?.mine}
-          pending={summary?.mine_private}
         />
       ) : (
         // Hide the heading on a brand-new empty home — the visual guide carries it.
@@ -653,15 +665,13 @@ function LibraryTabs({
   active,
   total,
   mine,
-  pending,
 }: {
   active: "all" | "mine"
   total?: number
   mine?: number
-  pending?: number
 }) {
   const nav = useNavigate()
-  const tab = (id: "all" | "mine", label: string, count?: number, accent?: number) => (
+  const tab = (id: "all" | "mine", label: string, count?: number) => (
     <button
       type="button"
       data-testid={`library-tab-${id}`}
@@ -680,20 +690,12 @@ function LibraryTabs({
       {count != null && (
         <span className="font-mono text-2xs tabular-nums text-muted-foreground">{count}</span>
       )}
-      {accent != null && accent > 0 && (
-        <span
-          title={`${accent} link-only — hidden from the shared library until shared wider`}
-          className="rounded-full bg-primary/10 px-1.5 font-mono text-2xs tabular-nums text-primary"
-        >
-          {accent}
-        </span>
-      )}
     </button>
   )
   return (
     <div className="mb-3.5 flex items-center gap-5 border-b border-border-soft">
       {tab("all", "All artifacts", total)}
-      {tab("mine", "Created by me", mine, pending)}
+      {tab("mine", "Created by me", mine)}
     </div>
   )
 }

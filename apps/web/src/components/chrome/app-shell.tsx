@@ -59,6 +59,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   const [paletteOpen, setPaletteOpen] = useState(false)
+  // Immersive (the artifact's focus mode): the rail + mobile top bar unmount and
+  // the inset mat drops (see ShellValue.immersive). Ephemeral — never persisted.
+  const [immersive, setImmersive] = useState(false)
   const qc = useQueryClient()
   // Workspaces power the switcher's no-op check below; the rail + command palette
   // read their own copies of the nav queries (deduped by key). enabled on a
@@ -162,6 +165,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const value: ShellValue = {
     paletteOpen,
     setPaletteOpen,
+    immersive,
+    setImmersive,
     switchWorkspace,
     createWorkspace,
     deleteWorkspace,
@@ -214,7 +219,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           >
             Skip to content
           </a>
-          <NavRail />
+          {/* Immersive (focus mode) unmounts the rail rather than collapsing it —
+              with no sidebar peer, SidebarInset's mat (margins/rounding/ring) drops
+              too, so the page runs edge-to-edge. The rail's open state lives above
+              in this component, so it survives and restores untouched on exit. */}
+          {!immersive && <NavRail />}
           {/* The page region. Viewport-locked scroll model: the inset never
               scrolls itself (overflow-hidden); pages own their scroll areas
               (library virtualizer, artifact iframe). */}
@@ -227,7 +236,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 sticky bar answers "where am I" (current-page label) and keeps
                 navigation + search reachable mid-scroll. Desktop has no top bar
                 at all — the sidebar is the only persistent chrome. */}
-            {isMobile && (
+            {isMobile && !immersive && (
               <MobileTopBar pathname={pathname} onOpenPalette={() => setPaletteOpen(true)} />
             )}
             {children}
