@@ -198,3 +198,155 @@ describe("a collection's own workspace access", () => {
     expect((await meta.getCollectionMember(col.id, ana.id))?.role).toBe("owner")
   })
 })
+
+// The detail response's `collection_access` — the share dialog's disclosure rows. The
+// artifact's own fields can't express a collection grant (it folds into the explicit
+// slot), so the detail payload must carry which collections' sharing reaches the doc,
+// or the dialog renders "Invited · 1 person" on a doc the whole workspace can open.
+describe("collection_access disclosure on the artifact detail", () => {
+  const dana: TestUser = { id: "u_cad_ana", email: "ana@cad.test", name: "Ana" }
+  const dben: TestUser = { id: "u_cad_ben", email: "ben@cad.test", name: "Ben" }
+  const dcara: TestUser = { id: "u_cad_cara", email: "cara@cad.test", name: "Cara" }
+  const dave: TestUser = { id: "u_cad_dave", email: "dave@cad.test", name: "Dave" }
+  const { app, meta } = makeAuthedApp("cad", [dana, dben, dcara, dave], "editor")
+
+  const detail = async (shortId: string, headers?: Record<string, string>) =>
+    (await app.request(`/v1/artifacts/${shortId}`, headers ? { headers } : undefined)).json()
+  const create = async (title: string, actor: Record<string, string>) =>
+    (await app.request("/v1/collections", jsonAs(actor, { title }))).json()
+  const addItem = (colId: string, shortId: string, actor: Record<string, string>) =>
+    app.request(`/v1/collections/${colId}/items/${shortId}`, { method: "PUT", headers: actor })
+
+  it("discloses a workspace-open collection, with each viewer's own collection role", async () => {
+    const { short_id } = await (
+      await publishAs(
+        app,
+        "<p>enablement</p>",
+        { title: "Custom Offers", workspace_access: "none", listed: "none", link_role: "none" },
+        as(dana.email),
+      )
+    ).json()
+    // Outside any collection: nothing to disclose.
+    expect((await detail(short_id, as(dana.email))).collection_access).toEqual([])
+
+    const col = await create("Product Training", as(dana.email)) // workspace-open by default
+    await addItem(col.id, short_id, as(dana.email))
+
+    // The owner sees the grant with her role on the COLLECTION (owner ⇒ Manage).
+    const forAna = (await detail(short_id, as(dana.email))).collection_access
+    expect(forAna).toEqual([
+      {
+        id: col.id,
+        title: "Product Training",
+        workspace_access: "member",
+        my_role: "owner",
+        member_count: 1,
+        created_by: dana.id,
+        owner_name: "Ana",
+      },
+    ])
+
+    // A seat-only member reaches the doc THROUGH the collection and sees the same
+    // row at his seat role (editor — no Manage, just attribution).
+    const forBen = (await detail(short_id, as(dben.email))).collection_access
+    expect(forBen).toHaveLength(1)
+    expect(forBen[0]).toMatchObject({ id: col.id, my_role: "editor", owner_name: "Ana" })
+  })
+
+  it("someone else's invite-only collection is disclosed to the artifact's manager, but never to a roleless caller", async () => {
+    const { short_id } = await (
+      await publishAs(
+        app,
+        "<p>open</p>",
+        { title: "Open doc", workspace_access: "member", listed: "none", link_role: "viewer" },
+        as(dana.email),
+      )
+    ).json()
+    // Cara (workspace editor ⇒ share on the artifact) files it into her own
+    // invite-only collection — a grant Ana neither made nor can see as a collection.
+    const col = await create("Cara's picks", as(dcara.email))
+    await app.request(`/v1/collections/${col.id}/access`, {
+      ...jsonAs(as(dcara.email), { workspaceAccess: "none" }),
+      method: "PATCH",
+    })
+    await addItem(col.id, short_id, as(dcara.email))
+
+    // Ana manages the artifact, so she sees WHAT grants access to her doc even though
+    // she has no role on the collection itself (my_role null ⇒ "Managed by Cara").
+    const forAna = (await detail(short_id, as(dana.email))).collection_access
+    expect(forAna).toHaveLength(1)
+    expect(forAna[0]).toMatchObject({
+      id: col.id,
+      title: "Cara's picks",
+      workspace_access: "none",
+      my_role: null,
+      owner_name: "Cara",
+    })
+
+    // An anonymous link viewer can open the doc but has no role on the collection and
+    // doesn't manage the artifact — the private collection's existence (and title)
+    // doesn't leak to them.
+    expect((await detail(short_id)).collection_access).toEqual([])
+  })
+
+  // Manager standing is computed WITHOUT the world link: a signed-in stranger holding
+  // an editor URL gets editor on the DOC, but must not unlock other people's private
+  // collections' titles/rosters — the same class of caller the members-roster route
+  // refuses (sharing's cross-workspace gate).
+  it("an editor world link never unlocks other people's private collection metadata", async () => {
+    const { short_id } = await (
+      await publishAs(
+        app,
+        "<p>linked</p>",
+        { title: "Linked doc", workspace_access: "member", listed: "none", link_role: "editor" },
+        as(dana.email),
+      )
+    ).json()
+    const col = await create("Cara's private list", as(dcara.email))
+    await app.request(`/v1/collections/${col.id}/access`, {
+      ...jsonAs(as(dcara.email), { workspaceAccess: "none" }),
+      method: "PATCH",
+    })
+    await addItem(col.id, short_id, as(dcara.email))
+
+    // Dave is signed in but holds NO seat anywhere — pure link-holder.
+    await meta.removeMembership("default", dave.id)
+    const forDave = await detail(short_id, as(dave.email))
+    expect(forDave.my_role).toBe("editor") // the link grants him the doc…
+    expect(forDave.collection_access).toEqual([]) // …never Cara's private collection
+
+    // Ana (explicit owner — real standing) still sees what grants access to her doc.
+    const forAna = (await detail(short_id, as(dana.email))).collection_access
+    expect(forAna.map((g: { id: string }) => g.id)).toContain(col.id)
+  })
+
+  // The response contract: collection_access lists only collections that ADD reach.
+  // Your own invite-only collection with just you in it reaches nobody new — the
+  // server excludes it, so every consumer (MCP, CLI, web) can render the field verbatim.
+  it("your own solo invite-only collection adds no reach — excluded server-side", async () => {
+    const { short_id } = await (
+      await publishAs(
+        app,
+        "<p>solo</p>",
+        { title: "Solo doc", workspace_access: "none", listed: "none", link_role: "none" },
+        as(dana.email),
+      )
+    ).json()
+    const col = await create("Ana's own shelf", as(dana.email))
+    await app.request(`/v1/collections/${col.id}/access`, {
+      ...jsonAs(as(dana.email), { workspaceAccess: "none" }),
+      method: "PATCH",
+    })
+    await addItem(col.id, short_id, as(dana.email))
+    expect((await detail(short_id, as(dana.email))).collection_access).toEqual([])
+
+    // Inviting one person makes it a real grant — the row appears.
+    await app.request(`/v1/collections/${col.id}/members`, {
+      ...jsonAs(as(dana.email), { user: dben.email, role: "viewer" }),
+      method: "PUT",
+    })
+    const after = (await detail(short_id, as(dana.email))).collection_access
+    expect(after).toHaveLength(1)
+    expect(after[0]).toMatchObject({ id: col.id, member_count: 2 })
+  })
+})

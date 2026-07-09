@@ -6,6 +6,7 @@ import {
   type ArtifactDomain,
   type ArtifactMember,
   api,
+  type CollectionGrant,
   type LinkRole,
   type Listed,
   type Role,
@@ -40,6 +41,7 @@ import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
 import { artifactQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { ShareCollectionDialog } from "@/pages/library/share-collection-dialog"
 
 // Access is ONE primary question — who can open this — projected from the v2
 // triple (workspace_access, link_role, listed; see access-model.md). Each segment
@@ -55,22 +57,35 @@ const SEGMENTS: { value: Segment; label: string; icon: IconName }[] = [
 
 // The state glyph the Share trigger carries so exposure is legible without opening
 // the dialog: a globe when the URL alone reads, the share glyph for the workspace,
-// a lock for invite-only.
-const accessIcon = (linkRole: LinkRole, workspaceAccess: WorkspaceAccess): IconName =>
-  linkRole !== "none" ? "globe" : workspaceAccess === "member" ? "share" : "lock"
+// a lock for invite-only. A workspace-open collection makes the artifact workspace-
+// reachable even when its own fields say Invited (see access-model.md) — the lock is
+// a promise ("nobody but the roster"), so it must account for that grant too.
+export const accessIcon = (
+  linkRole: LinkRole,
+  workspaceAccess: WorkspaceAccess,
+  collectionOpen = false,
+): IconName =>
+  linkRole !== "none" ? "globe" : workspaceAccess === "member" || collectionOpen ? "share" : "lock"
 
 const LINK_ROLE_LABEL: Record<Exclude<LinkRole, "none">, string> = {
   viewer: "Can view",
   commenter: "Can comment",
   editor: "Can edit",
 }
-// The read-only one-liner for someone who can't manage access.
-const accessSummary = (linkRole: LinkRole, workspaceAccess: WorkspaceAccess): string => {
+// The read-only one-liner for someone who can't manage access. Mirrors accessIcon:
+// a workspace-open collection makes "everyone in the workspace" true regardless of
+// the artifact's own fields, so the summary must fold it in too.
+export const accessSummary = (
+  linkRole: LinkRole,
+  workspaceAccess: WorkspaceAccess,
+  collectionOpen = false,
+): string => {
   if (linkRole !== "none") {
     const what = linkRole === "viewer" ? "view" : linkRole === "editor" ? "edit" : "comment"
     return `Anyone with the link can ${what}.`
   }
-  if (workspaceAccess === "member") return "Everyone in the workspace can open this."
+  if (workspaceAccess === "member" || collectionOpen)
+    return "Everyone in the workspace can open this."
   return "Only invited people can open this."
 }
 
@@ -96,6 +111,7 @@ export function ShareButton({
   linkRole,
   listed,
   passwordProtected = false,
+  collectionAccess,
 }: {
   shortId: string
   myRole?: Role | null
@@ -105,6 +121,10 @@ export function ShareButton({
   listed?: Listed
   /** The world link carries a password (the lock). */
   passwordProtected?: boolean
+  /** Collections whose sharing reaches this artifact (detail response) — rendered as
+   *  disclosure rows so the dialog never claims "Invited" while a collection grants
+   *  the workspace access. */
+  collectionAccess?: CollectionGrant[]
 }) {
   const qc = useQueryClient()
   const { me } = useAuth()
@@ -146,6 +166,13 @@ export function ShareButton({
 
   // GDocs model: owners and editors manage access; everyone else gets view-only.
   const canManage = myRole === "owner" || myRole === "editor"
+
+  // The server sends only collections whose sharing ADDS reach, pre-scoped to what
+  // this caller may see (the collection_access contract) — render verbatim.
+  const grants = collectionAccess ?? []
+  const collectionOpen = grants.some((g) => g.workspace_access === "member")
+  // The collection being managed in the stacked ShareCollectionDialog (null = closed).
+  const [manageCol, setManageCol] = useState<CollectionGrant | null>(null)
 
   // The canonical share URL — the server-built artifact URL when the detail is
   // cached (it is, on the artifact page), else reconstructed from the short id.
@@ -403,7 +430,9 @@ export function ShareButton({
             eye lands). Everything else in the bar is ghost. The glyph carries the
             exposure state: globe = the URL alone reads, lock = invite-only. */}
         <Button data-testid="share-trigger" variant="default" size="sm">
-          <Icon name={accessIcon(linkRole ?? "none", workspaceAccess ?? "member")} />
+          <Icon
+            name={accessIcon(linkRole ?? "none", workspaceAccess ?? "member", collectionOpen)}
+          />
           Share
         </Button>
       </DialogTrigger>
@@ -438,7 +467,10 @@ export function ShareButton({
 
                 {segment === "invite" && (
                   <p className="mt-3 text-sm text-muted-foreground">
-                    Only the people you add below can open this.
+                    {grants.length > 0
+                      ? // Invited must not read as a promise the collections below break.
+                        "Only the people you add below — plus everyone reached through its collections."
+                      : "Only the people you add below can open this."}
                   </p>
                 )}
 
@@ -594,11 +626,68 @@ export function ShareButton({
               </div>
             ) : (
               <p className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
-                <Icon name={accessIcon(linkRole ?? "none", workspaceAccess ?? "member")} />
-                {accessSummary(linkRole ?? "none", workspaceAccess ?? "member")}
+                <Icon
+                  name={accessIcon(linkRole ?? "none", workspaceAccess ?? "member", collectionOpen)}
+                />
+                {accessSummary(linkRole ?? "none", workspaceAccess ?? "member", collectionOpen)}
               </p>
             )}
           </div>
+
+          {/* Disclosure, not control: each row is a collection whose sharing reaches
+              this artifact — the one access source the fields above can't express
+              (a collection grant folds into the explicit slot; see access-model.md).
+              Rendered for every viewer, managers or not — reach is never a secret
+              from someone who can already open the doc. The revocable unit is the
+              collection relationship, so the affordance is Manage (its share dialog),
+              not per-person rows. */}
+          {grants.length > 0 && (
+            <div>
+              <SectionEyebrow count={grants.length > 1 ? grants.length : undefined}>
+                Reachable through collections
+              </SectionEyebrow>
+              <div className="-mx-2 mt-1 flex flex-col">
+                {grants.map((g) => (
+                  <div
+                    key={g.id}
+                    data-testid={`share-collection-row-${g.id}`}
+                    className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-secondary"
+                  >
+                    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-secondary">
+                      <Icon name="collections" size={16} className="text-muted-foreground" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-foreground">{g.title}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {g.workspace_access === "member"
+                          ? "Everyone in the workspace opens this at their role"
+                          : // member_count includes the creator's own row, so "members",
+                            // not "invited" — the creator wasn't invited, but reaches it.
+                            `${g.member_count} collection ${g.member_count === 1 ? "member opens" : "members open"} this at their role`}
+                      </div>
+                    </div>
+                    {/* Collection sharing is owner-managed (matches ShareCollectionDialog's
+                        bar); everyone else gets attribution — who to ask. */}
+                    {g.my_role === "owner" ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        data-testid={`share-collection-manage-${g.id}`}
+                        onClick={() => setManageCol(g)}
+                      >
+                        Manage
+                        <Icon name="chevron-right" />
+                      </Button>
+                    ) : (
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {g.owner_name ? `Managed by ${g.owner_name}` : "Shared collection"}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div>
             <SectionEyebrow count={members.length || undefined}>People with access</SectionEyebrow>
@@ -868,6 +957,18 @@ export function ShareButton({
           </div>
         )}
       </DialogContent>
+
+      {/* Manage a granting collection without leaving the share dialog — the stacked
+          collection dialog portals above this one. The refetch rides onChanged (fired
+          when each write LANDS), never onClose: an Escape mid-flight must not race the
+          PATCH and repaint the disclosure rows from the pre-change state. */}
+      {manageCol && (
+        <ShareCollectionDialog
+          collection={manageCol}
+          onChanged={() => qc.invalidateQueries({ queryKey: artifactQuery(shortId).queryKey })}
+          onClose={() => setManageCol(null)}
+        />
+      )}
     </Dialog>
   )
 }

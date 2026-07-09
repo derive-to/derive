@@ -84,7 +84,7 @@ import type {
   WorkspaceAccess,
   WorkspaceRecord,
 } from "@derive/core"
-import { GLOBAL_FOLLOW_ORG } from "@derive/core"
+import { GLOBAL_FOLLOW_ORG, maxRole } from "@derive/core"
 import {
   and,
   asc,
@@ -1317,6 +1317,15 @@ export class PgMetaStore implements MetaStore {
       .from(collectionMember)
       .where(eq(collectionMember.collection_id, collectionId))
   }
+  async collectionMemberCounts(collectionIds: string[]): Promise<Record<string, number>> {
+    if (collectionIds.length === 0) return {}
+    const rows = await this.db
+      .select({ id: collectionMember.collection_id, c: count() })
+      .from(collectionMember)
+      .where(inArray(collectionMember.collection_id, collectionIds))
+      .groupBy(collectionMember.collection_id)
+    return Object.fromEntries(rows.map((r) => [r.id, Number(r.c)]))
+  }
   async setCollectionMember(m: NewCollectionMember): Promise<CollectionMemberRecord> {
     const rows = await this.db
       .insert(collectionMember)
@@ -1359,6 +1368,37 @@ export class PgMetaStore implements MetaStore {
         ),
       )
     return [...explicit, ...seat].map((r) => r.role)
+  }
+  async collectionRolesForUser(
+    collectionIds: string[],
+    userId: string,
+  ): Promise<Record<string, Role>> {
+    if (collectionIds.length === 0) return {}
+    // Same two sources as collectionRolesForArtifact, keyed per collection: the
+    // user's explicit member rows, and their SEAT on each workspace-open collection.
+    const explicit = await this.db
+      .select({ id: collectionMember.collection_id, role: collectionMember.role })
+      .from(collectionMember)
+      .where(
+        and(
+          inArray(collectionMember.collection_id, collectionIds),
+          eq(collectionMember.user_id, userId),
+        ),
+      )
+    const seat = await this.db
+      .select({ id: collection.id, role: membership.role })
+      .from(collection)
+      .innerJoin(membership, eq(membership.org_id, collection.org_id))
+      .where(
+        and(
+          inArray(collection.id, collectionIds),
+          eq(collection.workspace_access, "member"),
+          eq(membership.user_id, userId),
+        ),
+      )
+    const out: Record<string, Role> = {}
+    for (const r of [...explicit, ...seat]) out[r.id] = maxRole(out[r.id] ?? null, r.role) as Role
+    return out
   }
 
   // ---- GitHub sync sources -----------------------------------------------

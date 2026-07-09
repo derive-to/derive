@@ -1,6 +1,6 @@
 import { Maximize2 } from "lucide-react"
 import { useState } from "react"
-import type { LinkRole, Listed, Role, WorkspaceAccess } from "@/api"
+import type { CollectionGrant, LinkRole, Listed, Role, WorkspaceAccess } from "@/api"
 import { Icon } from "@/components/icons"
 import { CollectionsDialog, TagsDialog } from "@/components/shared/organize-dialogs"
 import { Button } from "@/components/ui/button"
@@ -40,6 +40,8 @@ export function ArtifactTopBar(props: {
   favorite: boolean
   tags: string[]
   collections: string[]
+  /** Collections whose sharing reaches this artifact — the share dialog's disclosure rows. */
+  collectionAccess: CollectionGrant[]
   canEditTags: boolean
   openProposals: number
   proposalsTotal: number
@@ -92,6 +94,7 @@ export function ArtifactTopBar(props: {
           linkRole={props.linkRole}
           listed={props.listed}
           passwordProtected={props.passwordProtected}
+          collectionAccess={props.collectionAccess}
         />
         <StarButton shortId={shortId} favorite={props.favorite} onChange={props.onFavorite} />
         <DropdownMenu>

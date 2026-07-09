@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { artifactQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 
@@ -45,7 +46,10 @@ export function CollectionsDialog({
   }, [open])
   const inSet = new Set(inCollections)
   // Toggle membership optimistically (via onChange); the primitive rolls it back and
-  // toasts if the write fails.
+  // toasts if the write fails. The settle-time invalidation reconciles the artifact
+  // detail (`collections` AND the server-computed `collection_access` disclosure rows)
+  // against the server once the write lands — never during the optimistic phase, where
+  // a refetch would race the in-flight PUT and repaint pre-mutation state.
   const toggleCol = useApiMutation({
     mutationFn: ({ col, isIn }: { col: Collection; isIn: boolean }) =>
       isIn ? api.removeFromCollection(col.id, shortId) : api.addToCollection(col.id, shortId),
@@ -54,6 +58,7 @@ export function CollectionsDialog({
       onChange(isIn ? inCollections.filter((id) => id !== col.id) : [...inCollections, col.id])
       return () => onChange(prev)
     },
+    invalidate: [artifactQuery(shortId).queryKey],
   })
   const toggle = (col: Collection) => toggleCol.mutate({ col, isIn: inSet.has(col.id) })
   // Create a collection and drop this artifact into it in one gesture.
@@ -67,6 +72,7 @@ export function CollectionsDialog({
       setAll((a) => [col, ...a])
       onChange([...inCollections, col.id])
     },
+    invalidate: [artifactQuery(shortId).queryKey],
   })
   const create = () => {
     const t = draft.trim()

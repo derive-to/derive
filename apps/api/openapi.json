@@ -360,6 +360,13 @@
             },
             "description": "Ids of the collections that include this artifact."
           },
+          "collection_access": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CollectionGrant"
+            },
+            "description": "Collections whose sharing ADDS reach to this artifact — the share dialog's disclosure rows, renderable verbatim (the caller's own solo invite-only collection is already excluded). Detail responses only; scoped to collections the caller can see, except the artifact's managers (explicit or seat standing — never mere link-holders), who see every granting collection."
+          },
           "removed": {
             "type": "boolean",
             "description": "true when the artifact has been taken down (tombstone)."
@@ -527,6 +534,59 @@
           "author",
           "name",
           "created_at"
+        ]
+      },
+      "CollectionGrant": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "workspace_access": {
+            "type": "string",
+            "enum": [
+              "none",
+              "member"
+            ],
+            "description": "\"member\" = every workspace seat opens the artifact at their role."
+          },
+          "my_role": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner",
+              null
+            ],
+            "description": "Caller's role on the COLLECTION (owner ⇒ can manage its sharing); null if none."
+          },
+          "member_count": {
+            "type": "number",
+            "description": "Explicit collection-member rows (the creator always holds one)."
+          },
+          "created_by": {
+            "type": "string",
+            "description": "Creator's user id — permanently owner of the collection."
+          },
+          "owner_name": {
+            "type": "string",
+            "nullable": true,
+            "description": "Creator's display name for attribution (\"Managed by …\"); null when unknown."
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "workspace_access",
+          "my_role",
+          "member_count",
+          "created_by",
+          "owner_name"
         ]
       },
       "DirUser": {
