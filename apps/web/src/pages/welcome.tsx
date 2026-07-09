@@ -32,6 +32,7 @@ import { getInitials } from "@/lib/initials"
 import { OTHER, PROFESSIONS, presetFor } from "@/lib/professions"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { useDocumentTitle } from "@/lib/use-document-title"
 import { normalizeUsername, usernameError } from "@/lib/username"
 
 // A present account — the stateful onboarding body only mounts once `me` resolves
@@ -100,6 +101,7 @@ Then you can publish, read review comments, and run the propose -> review -> rev
 // Gate on the session BEFORE the stateful body so the profile fields initialize from
 // a resolved account (a direct visit to /welcome renders once with me=null first).
 export function Welcome() {
+  useDocumentTitle("Welcome")
   const { me } = useAuth()
   if (!me) return null
   return <Onboarding me={me} />

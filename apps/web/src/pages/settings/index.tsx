@@ -5,6 +5,7 @@ import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/ctx"
 import { reportsQuery } from "@/lib/queries"
+import { useDocumentTitle } from "@/lib/use-document-title"
 import { AgentsSection } from "./agents-section"
 import { AppearanceSection } from "./appearance-section"
 import { CustomDomainsSection } from "./custom-domains-section"
@@ -23,6 +24,21 @@ import { WebhooksSection } from "./webhooks-section"
 // useParams/useNavigate.
 const route = getRouteApi("/settings/$section")
 
+// Tab titles per section — keep in step with the nav `groups` in Settings below.
+const SECTION_TITLES: Record<string, string> = {
+  profile: "Profile",
+  security: "Security",
+  appearance: "Appearance",
+  general: "General",
+  members: "Members",
+  integrations: "Integrations",
+  github: "GitHub",
+  webhooks: "Webhooks",
+  agents: "Agents",
+  domains: "Domains",
+  reports: "Reports",
+}
+
 // Settings, reconceived as a scope-grouped two-pane: a sticky category rail
 // (Account · Workspace · Developer · Moderation) beside a readable detail column,
 // reflowing to a horizontal strip on a narrow pane. The active section is a path
@@ -36,6 +52,10 @@ export function Settings() {
   const { data: reports } = useQuery({ ...reportsQuery(), enabled: !!me })
   const { section } = route.useParams()
   const nav = route.useNavigate()
+
+  // Before the early return (hooks). Labels mirror the groups below — a static
+  // map because the groups themselves are gated on data (`reports`).
+  useDocumentTitle(SECTION_TITLES[section] ? `${SECTION_TITLES[section]} · Settings` : "Settings")
 
   if (!me) return null
 

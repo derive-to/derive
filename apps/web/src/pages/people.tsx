@@ -25,6 +25,7 @@ import {
 } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
+import { useDocumentTitle } from "@/lib/use-document-title"
 import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
 
@@ -34,6 +35,7 @@ import { refFor } from "@/pages/artifact/parse-ref"
 // to your workspaces — there is deliberately no global directory at launch);
 // results stay put (dimmed) while the next set loads — never a flash.
 export function People() {
+  useDocumentTitle("People")
   const [q, setQ] = useState("")
   const [debounced, setDebounced] = useState("")
   useEffect(() => {

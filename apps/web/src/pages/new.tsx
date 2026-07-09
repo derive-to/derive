@@ -5,6 +5,7 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { toast } from "@/components/ui/sonner"
 import { collectionsQuery, summaryQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { useDocumentTitle } from "@/lib/use-document-title"
 import { refFor } from "./artifact/parse-ref"
 import { SourceEditor } from "./artifact/source-editor"
 
@@ -29,6 +30,7 @@ const detectFormat = (t: string): "md" | "html" => {
 // title. Publishing creates the artifact (private by default; widen
 // access from its Share menu) and opens it.
 export function NewArtifact() {
+  useDocumentTitle("New artifact")
   const nav = useNavigate()
   const [src, setSrc] = useState("")
   const [title, setTitle] = useState("")
