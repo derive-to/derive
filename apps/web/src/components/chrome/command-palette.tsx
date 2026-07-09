@@ -17,6 +17,7 @@ import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 import { collectionsQuery, workspacesQuery } from "@/lib/queries"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
+import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
 import { useShell } from "./shell-context"
 
@@ -36,11 +37,13 @@ export function CommandPalette() {
   const [results, setResults] = useState<Artifact[]>([])
   const [people, setPeople] = useState<PublicProfile[]>([])
   const [loading, setLoading] = useState(false)
+  const [peopleLoading, setPeopleLoading] = useState(false)
 
   // Fresh query each open.
   useEffect(() => {
     if (paletteOpen) {
       setQuery("")
+      setResults([])
       setPeople([])
     }
   }, [paletteOpen])
@@ -70,14 +73,17 @@ export function CommandPalette() {
     const term = query.trim()
     if (!term) {
       setPeople([])
+      setPeopleLoading(false)
       return
     }
     let alive = true
+    setPeopleLoading(true)
     const t = setTimeout(() => {
       api
         .searchPeople(term)
         .then((r) => alive && setPeople(r.users))
         .catch(() => alive && setPeople([]))
+        .finally(() => alive && setPeopleLoading(false))
     }, 180)
     return () => {
       alive = false
@@ -147,7 +153,11 @@ export function CommandPalette() {
           )}
 
           {results.length > 0 && (
-            <CommandGroup heading="Artifacts">
+            // Dim while a new search is in flight — the prior matches are stale, not the answer.
+            <CommandGroup
+              heading="Artifacts"
+              className={cn(loading && "opacity-60 transition-opacity")}
+            >
               {results.map((a) => (
                 <CommandItem
                   key={a.short_id}
@@ -169,7 +179,10 @@ export function CommandPalette() {
           )}
 
           {people.length > 0 && (
-            <CommandGroup heading="People">
+            <CommandGroup
+              heading="People"
+              className={cn(peopleLoading && "opacity-60 transition-opacity")}
+            >
               {people.map((u) => (
                 <CommandItem
                   key={u.username}
