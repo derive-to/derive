@@ -3,6 +3,7 @@ import { useState } from "react"
 import { api, type Webhook } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { fieldError } from "@/components/shared/field-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -86,6 +87,10 @@ function NewWebhook({ onCreated }: { onCreated: () => void }) {
   const [kind, setKind] = useState<"generic" | "slack">("generic")
   const [events, setEvents] = useState<string[]>([...ALL_EVENTS])
   const valid = /^https?:\/\//.test(url)
+  const urlField = fieldError(
+    "webhook-url-error",
+    url.trim() && !valid ? "Enter a full https:// URL." : null,
+  )
   const toggle = (e: string) =>
     setEvents((cur) => (cur.includes(e) ? cur.filter((x) => x !== e) : [...cur, e]))
   const create = useApiMutation({
@@ -119,6 +124,7 @@ function NewWebhook({ onCreated }: { onCreated: () => void }) {
         <Input
           data-testid="webhook-url"
           aria-label="Endpoint URL"
+          {...urlField.aria}
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && add()}
@@ -140,6 +146,7 @@ function NewWebhook({ onCreated }: { onCreated: () => void }) {
           {create.isPending ? "Adding…" : "Add"}
         </Button>
       </div>
+      {urlField.node}
       <div className="flex flex-wrap gap-3.5">
         {ALL_EVENTS.map((e) => (
           <label

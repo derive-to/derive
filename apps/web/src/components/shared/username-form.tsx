@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState } from "react"
 import { ApiError, api } from "@/api"
+import { fieldError } from "@/components/shared/field-error"
 import { Button } from "@/components/ui/button"
 import {
   InputGroup,
@@ -31,6 +32,7 @@ export function UsernameForm({
   const handle = normalizeUsername(value)
   const localErr = handle ? usernameError(handle) : null
   const err = serverErr || (handle ? localErr : null)
+  const errField = fieldError("username-error", err)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -56,8 +58,7 @@ export function UsernameForm({
           ref={inputRef}
           data-testid="username-input"
           aria-label="Username"
-          aria-invalid={!!err}
-          aria-describedby={err ? "username-error" : undefined}
+          {...errField.aria}
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
@@ -69,16 +70,7 @@ export function UsernameForm({
           placeholder="yourname"
         />
       </InputGroup>
-      {err && (
-        <p
-          id="username-error"
-          data-testid="username-error"
-          role="alert"
-          className="text-sm text-destructive"
-        >
-          {err}
-        </p>
-      )}
+      {errField.node}
       <Button
         data-testid="username-submit"
         type="submit"
