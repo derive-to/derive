@@ -3,6 +3,7 @@ import { api } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { useApiMutation } from "@/lib/use-api-mutation"
 
 // "owner/name", tolerating a github.com URL or a trailing .git (mirrors the
 // server's parseRepo) — gates the Connect button so we don't POST junk.
@@ -17,40 +18,32 @@ const validRepo = (raw: string): boolean =>
 
 // Advanced: paste a read-only PAT (or connect a public repo) without the App.
 // Collapsed by default so it doesn't compete with the App flow.
-export function AdvancedPat({
-  onCreated,
-  onError,
-}: {
-  onCreated: () => void
-  onError: (m: string) => void
-}) {
+export function AdvancedPat({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false)
   const [repo, setRepo] = useState("")
   const [ref, setRef] = useState("")
   const [includes, setIncludes] = useState("")
   const [token, setToken] = useState("")
-  const [busy, setBusy] = useState(false)
   const valid = validRepo(repo)
-  const add = async () => {
-    if (!valid) return
-    setBusy(true)
-    try {
-      await api.connectRepoSource({
+  const connect = useApiMutation({
+    mutationFn: () =>
+      api.connectRepoSource({
         repo: repo.trim(),
         ref: ref.trim() || undefined,
         includes: includes.trim() || undefined,
         token: token.trim() || undefined,
-      })
+      }),
+    success: "Repo connected — syncing",
+    onSuccess: () => {
       setRepo("")
       setRef("")
       setIncludes("")
       setToken("")
       onCreated()
-    } catch (e) {
-      onError((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
+    },
+  })
+  const add = () => {
+    if (valid) connect.mutate()
   }
   return (
     <div>
@@ -90,9 +83,10 @@ export function AdvancedPat({
               variant="secondary"
               size="sm"
               onClick={add}
-              disabled={busy || !valid}
+              loading={connect.isPending}
+              disabled={connect.isPending || !valid}
             >
-              {busy ? "Connecting…" : "Connect"}
+              {connect.isPending ? "Connecting…" : "Connect"}
             </Button>
           </div>
           <div className="flex flex-wrap items-center gap-2">

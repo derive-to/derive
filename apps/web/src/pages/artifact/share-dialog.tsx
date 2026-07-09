@@ -39,6 +39,7 @@ import { Switch } from "@/components/ui/switch"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
 import { artifactQuery, workspaceQuery } from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
 
 // Access is ONE primary question — who can open this — projected from the v2
 // triple (workspace_access, link_role, listed; see access-model.md). Each segment
@@ -137,7 +138,6 @@ export function ShareButton({
   const [domainBase, setDomainBase] = useState<string | null>(null)
   const [workspaceDomains, setWorkspaceDomains] = useState<{ host: string; url: string }[]>([])
   const [label, setLabel] = useState("")
-  const [claiming, setClaiming] = useState(false)
 
   // GDocs model: owners and editors manage access; everyone else gets view-only.
   const canManage = myRole === "owner" || myRole === "editor"
@@ -282,6 +282,7 @@ export function ShareButton({
     try {
       await navigator.clipboard.writeText(shareUrl)
       setCopiedLink(true)
+      toast.success("Link copied")
       window.setTimeout(() => setCopiedLink(false), 1500)
     } catch {
       toast.error("Couldn't copy to clipboard")
@@ -322,25 +323,21 @@ export function ShareButton({
       setBusy(false)
     }
   }
-  const change = async (m: ArtifactMember, next: Role) => {
-    if (next === m.role || !m.handle) return
-    // Surface a failed role change instead of swallowing it (transient-failure
-    // recovery), now keyed on the handle-based identity.
-    try {
-      await api.setMember(shortId, m.handle, next)
-    } catch (x) {
-      toast.error(x instanceof Error ? x.message : "Couldn't update access")
-    }
-    await synced()
+  // Role change / removal — a failed one surfaces via the global safety net; the member
+  // list + shared caches reconcile on success.
+  const changeMut = useApiMutation({
+    mutationFn: ({ handle, next }: { handle: string; next: Role }) =>
+      api.setMember(shortId, handle, next),
+    onSuccess: () => synced(),
+  })
+  const change = (m: ArtifactMember, next: Role) => {
+    if (next !== m.role && m.handle) changeMut.mutate({ handle: m.handle, next })
   }
-  const remove = async (m: ArtifactMember) => {
-    try {
-      await api.removeMember(shortId, m.user_id)
-    } catch (x) {
-      toast.error(x instanceof Error ? x.message : "Couldn't remove member")
-    }
-    await synced()
-  }
+  const removeMut = useApiMutation({
+    mutationFn: (m: ArtifactMember) => api.removeMember(shortId, m.user_id),
+    onSuccess: () => synced(),
+  })
+  const remove = (m: ArtifactMember) => removeMut.mutate(m)
 
   const loadDomains = () =>
     api
@@ -351,26 +348,25 @@ export function ShareButton({
         setWorkspaceDomains(r.workspace_domains)
       })
       .catch(() => {})
-  const claimDomain = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const l = label.trim().toLowerCase()
-    if (!l) return
-    setClaiming(true)
-    try {
-      await api.setDomain(shortId, l)
+  const claim = useApiMutation({
+    mutationFn: () => api.setDomain(shortId, label.trim().toLowerCase()),
+    success: "Custom URL claimed",
+    onSuccess: () => {
       setLabel("")
-      await loadDomains()
-      toast.success("Custom URL claimed")
-    } catch (x) {
-      toast.error(x instanceof Error ? x.message : "Couldn't claim that URL")
-    } finally {
-      setClaiming(false)
-    }
+      loadDomains()
+    },
+  })
+  const claimDomain = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (label.trim().toLowerCase()) claim.mutate()
   }
-  const dropDomain = async (host: string) => {
-    await api.removeDomain(shortId, host).catch(() => {})
-    await loadDomains()
-  }
+  // Best-effort drop: a failure just leaves the row (stay quiet), then reconcile.
+  const dropMut = useApiMutation({
+    mutationFn: (host: string) => api.removeDomain(shortId, host),
+    errorToast: false,
+    onSuccess: () => loadDomains(),
+  })
+  const dropDomain = (host: string) => dropMut.mutate(host)
   const copyUrl = async (url: string) => {
     try {
       await navigator.clipboard.writeText(url)
@@ -832,10 +828,10 @@ export function ShareButton({
                       variant="secondary"
                       size="sm"
                       type="submit"
-                      loading={claiming}
+                      loading={claim.isPending}
                       disabled={!label.trim()}
                     >
-                      {claiming ? "Claiming…" : "Claim"}
+                      {claim.isPending ? "Claiming…" : "Claim"}
                     </Button>
                   </form>
                 ) : (

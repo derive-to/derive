@@ -7,9 +7,9 @@ import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 import { slackQuery, workspaceSettingsQuery } from "@/lib/queries"
+import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
@@ -28,55 +28,49 @@ export function IntegrationsSection() {
     if (slack) setChannel(slack.default_channel ?? "")
   }, [slack])
 
-  // Optimistically flip a toggle in the cache, persisting the single key; revert on
-  // error. Reads/writes the shared settings cache entry so the switch stays live.
-  const flip = (key: keyof OrgSettings) => (next: boolean) => {
-    const qk = workspaceSettingsQuery().queryKey
-    const prev = qc.getQueryData(qk)
-    if (!prev) return
-    qc.setQueryData(qk, { ...prev, [key]: next })
-    api
-      .updateWorkspaceSettings({ [key]: next })
-      .then((s) => qc.setQueryData(qk, s))
-      .catch((e) => {
-        qc.setQueryData(qk, prev)
-        toast.error(e?.message ?? "Could not save")
-      })
-  }
+  // Toggle a single settings key, optimistically flipping the shared cache entry so the
+  // switch stays live; the primitive rolls back + toasts on failure, and the server's
+  // echoed settings replace the optimistic value on success.
+  const update = useApiMutation({
+    mutationFn: (patch: Partial<OrgSettings>) => api.updateWorkspaceSettings(patch),
+    optimistic: (patch, client) => {
+      const qk = workspaceSettingsQuery().queryKey
+      const rollback = snapshot(client, qk)
+      client.setQueryData(qk, (prev) => (prev ? { ...prev, ...patch } : prev))
+      return rollback
+    },
+    onSuccess: (s) => qc.setQueryData(workspaceSettingsQuery().queryKey, s),
+  })
+  const flip = (key: keyof OrgSettings) => (next: boolean) =>
+    update.mutate({ [key]: next } as Partial<OrgSettings>)
 
-  const saveChannel = () => {
-    api
-      .setSlackChannel(channel.trim() || null)
-      .then(() => toast.success("Slack channel saved"))
-      .catch((e) => toast.error(e?.message ?? "Could not save"))
-  }
-  const disconnectSlack = () =>
-    api
-      .disconnectSlack()
-      .then(() => {
-        toast.success("Slack disconnected")
-        qc.invalidateQueries({ queryKey: slackQuery().queryKey })
-        qc.invalidateQueries({ queryKey: workspaceSettingsQuery().queryKey })
-      })
-      .catch((e) => {
-        toast.error(e?.message ?? "Could not disconnect")
-      })
+  const saveCh = useApiMutation({
+    mutationFn: () => api.setSlackChannel(channel.trim() || null),
+    success: "Slack channel saved",
+  })
+  const saveChannel = () => saveCh.mutate()
+  const disconnect = useApiMutation({
+    mutationFn: () => api.disconnectSlack(),
+    success: "Slack disconnected",
+    invalidate: [slackQuery().queryKey, workspaceSettingsQuery().queryKey],
+  })
+  const disconnectSlack = () => disconnect.mutate()
   // Optimistically flip the caller's Slack-DM preference in the slack cache.
-  const toggleSlackDm = (next: boolean) => {
-    const qk = slackQuery().queryKey
-    const prev = qc.getQueryData(qk)
-    if (!prev) return
-    qc.setQueryData(qk, { ...prev, slack_dm: next })
-    api.setSlackDm(next).catch((e) => {
-      qc.setQueryData(qk, prev)
-      toast.error(e?.message ?? "Could not save")
-    })
-  }
-  const sendTestDm = () =>
-    api
-      .sendSlackTestDm()
-      .then(() => toast.success("Test DM sent"))
-      .catch((e) => toast.error(e?.message ?? "Could not send"))
+  const slackDm = useApiMutation({
+    mutationFn: (next: boolean) => api.setSlackDm(next),
+    optimistic: (next, client) => {
+      const qk = slackQuery().queryKey
+      const rollback = snapshot(client, qk)
+      client.setQueryData(qk, (prev) => (prev ? { ...prev, slack_dm: next } : prev))
+      return rollback
+    },
+  })
+  const toggleSlackDm = (next: boolean) => slackDm.mutate(next)
+  const testDm = useApiMutation({
+    mutationFn: () => api.sendSlackTestDm(),
+    success: "Test DM sent",
+  })
+  const sendTestDm = () => testDm.mutate()
 
   return (
     <SettingsSection
@@ -192,6 +186,7 @@ export function IntegrationsSection() {
                   variant="outline"
                   size="sm"
                   onClick={sendTestDm}
+                  loading={testDm.isPending}
                 >
                   Send test DM
                 </Button>
@@ -218,6 +213,7 @@ export function IntegrationsSection() {
                   variant="default"
                   size="sm"
                   onClick={saveChannel}
+                  loading={saveCh.isPending}
                 >
                   Save
                 </Button>

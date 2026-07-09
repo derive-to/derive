@@ -10,6 +10,7 @@ import { UsernameForm } from "@/components/shared/username-form"
 import { Switch } from "@/components/ui/switch"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsSection } from "./settings-section"
 
 // Your personal profile (vs. the Workspace sections): photo, handle, role +
@@ -18,33 +19,36 @@ import { SettingsSection } from "./settings-section"
 // toggle, on the page surface (no card stack).
 export function ProfileSection() {
   const { me, setMe } = useAuth()
-  const [uploading, setUploading] = useState(false)
   const [discoverable, setDiscoverable] = useState(!!me?.discoverable)
+  // Avatar upload is deliberately non-blocking — a failure leaves the current photo as-is,
+  // so it opts out of the global error toast (errorToast:false).
+  const avatar = useApiMutation({
+    mutationFn: (f: File) => api.uploadAvatar(f),
+    errorToast: false,
+    onSuccess: ({ image }) => {
+      if (me) setMe({ ...me, image })
+    },
+  })
+  // Discoverability toggle: optimistic, and its own visual revert IS the failure signal —
+  // so it stays quiet (errorToast:false), matching the original.
+  const discoverableMut = useApiMutation({
+    mutationFn: (next: boolean) => api.setDiscoverable(next),
+    errorToast: false,
+    optimistic: (next) => {
+      setDiscoverable(next)
+      return () => setDiscoverable(!next)
+    },
+    onSuccess: (_data, next) => {
+      if (me) setMe({ ...me, discoverable: next })
+    },
+  })
   if (!me) return null
 
   const initials = getInitials(me.name ?? me.email)
-  const pickPhoto = async (f: File | null) => {
-    if (!f) return
-    setUploading(true)
-    try {
-      const { image } = await api.uploadAvatar(f)
-      setMe({ ...me, image })
-    } catch {
-      /* non-blocking; the avatar simply stays as-is */
-    } finally {
-      setUploading(false)
-    }
+  const pickPhoto = (f: File | null) => {
+    if (f) avatar.mutate(f)
   }
-
-  const toggleDiscoverable = async (next: boolean) => {
-    setDiscoverable(next) // optimistic
-    try {
-      await api.setDiscoverable(next)
-      setMe({ ...me, discoverable: next })
-    } catch {
-      setDiscoverable(!next)
-    }
-  }
+  const toggleDiscoverable = (next: boolean) => discoverableMut.mutate(next)
 
   return (
     <SettingsSection
@@ -56,7 +60,7 @@ export function ProfileSection() {
         <AvatarPicker
           image={me.image}
           initials={me.name ? initials : null}
-          uploading={uploading}
+          uploading={avatar.isPending}
           onPick={pickPhoto}
           ariaLabel="Change your profile photo"
           testId="profile-avatar"

@@ -6,6 +6,7 @@ import { Logo } from "@/components/shared/logo"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { useApiMutation } from "@/lib/use-api-mutation"
 
 const route = getRouteApi("/reset-password")
 
@@ -70,22 +71,18 @@ export function ResetPassword() {
 // we always show the same neutral "check your email" confirmation.
 function Request({ expired }: { expired: boolean }) {
   const [email, setEmail] = useState("")
-  const [busy, setBusy] = useState(false)
   const [sent, setSent] = useState(false)
-  const [err, setErr] = useState("")
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    setErr("")
-    setBusy(true)
-    try {
+  const request = useApiMutation({
+    mutationFn: () => {
       const origin = typeof window !== "undefined" ? window.location.origin : ""
-      await api.requestPasswordReset(email, `${origin}/reset-password`)
-      setSent(true)
-    } catch (e) {
-      setErr((e as Error).message)
-      setBusy(false)
-    }
+      return api.requestPasswordReset(email, `${origin}/reset-password`)
+    },
+    errorToast: false,
+    onSuccess: () => setSent(true),
+  })
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    request.mutate()
   }
 
   if (sent)
@@ -121,9 +118,9 @@ function Request({ expired }: { expired: boolean }) {
               description="Request a fresh one below."
             />
           )}
-          {err && (
+          {request.error && (
             <div data-testid="reset-error">
-              <StatusPanel tone="danger" layout="inline" title={err} />
+              <StatusPanel tone="danger" layout="inline" title={request.error.message} />
             </div>
           )}
           <FormField label="Email" htmlFor="reset-email">
@@ -145,11 +142,11 @@ function Request({ expired }: { expired: boolean }) {
             variant="default"
             size="lg"
             type="submit"
-            loading={busy}
+            loading={request.isPending}
             disabled={!email}
             className="w-full"
           >
-            {busy ? "Sending…" : "Send reset link"}
+            {request.isPending ? "Sending…" : "Send reset link"}
           </Button>
         </div>
         <BackToSignIn />
@@ -163,30 +160,24 @@ function Request({ expired }: { expired: boolean }) {
 function Complete({ token }: { token: string }) {
   const nav = useNavigate()
   const [password, setPassword] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState("")
-
-  const submit = async (e: FormEvent) => {
+  const complete = useApiMutation({
+    mutationFn: () => api.resetPassword(token, password),
+    errorToast: false,
+    // Password changed + other sessions revoked — sign in with the new one.
+    onSuccess: () => nav({ to: "/login", search: { reset: true } }),
+  })
+  const submit = (e: FormEvent) => {
     e.preventDefault()
-    setErr("")
-    setBusy(true)
-    try {
-      await api.resetPassword(token, password)
-      // Password changed + other sessions revoked — sign in with the new one.
-      nav({ to: "/login", search: { reset: true } })
-    } catch (e) {
-      setErr((e as Error).message)
-      setBusy(false)
-    }
+    complete.mutate()
   }
 
   return (
     <Shell title="Choose a new password" subtitle="Pick something you haven't used before.">
       <form onSubmit={submit} className="flex flex-col gap-6">
         <div className="flex flex-col gap-4">
-          {err && (
+          {complete.error && (
             <div data-testid="reset-error">
-              <StatusPanel tone="danger" layout="inline" title={err} />
+              <StatusPanel tone="danger" layout="inline" title={complete.error.message} />
             </div>
           )}
           <FormField label="New password" htmlFor="reset-password">
@@ -209,11 +200,11 @@ function Complete({ token }: { token: string }) {
             variant="default"
             size="lg"
             type="submit"
-            loading={busy}
+            loading={complete.isPending}
             disabled={password.length < 8}
             className="w-full"
           >
-            {busy ? "Saving…" : "Set new password"}
+            {complete.isPending ? "Saving…" : "Set new password"}
           </Button>
         </div>
         <BackToSignIn />

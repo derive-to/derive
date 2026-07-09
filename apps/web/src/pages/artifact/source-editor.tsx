@@ -36,6 +36,7 @@ export function SourceEditor({
   onPropose,
   onTitle,
   placeholder,
+  publishing,
 }: {
   canPublish: boolean
   title: string
@@ -54,6 +55,9 @@ export function SourceEditor({
   onTitle?: (v: string) => void
   // First-use hint for the empty editor (the /new flow); omitted when editing.
   placeholder?: string
+  // True while the parent's publish/propose mutation is in flight — disables the toolbar
+  // buttons and shows a spinner, so a double-click can't duplicate a version.
+  publishing?: boolean
 }) {
   const [pane, setPane] = useState<"edit" | "preview">("edit")
   // Desktop preview-pane visibility (mobile uses the Edit/Preview tabs instead).
@@ -170,7 +174,13 @@ export function SourceEditor({
               </TabsTrigger>
             </TabsList>
           </Tabs>
-          <Button variant="outline" size="sm" data-testid="artifact-edit-cancel" onClick={onCancel}>
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="artifact-edit-cancel"
+            onClick={onCancel}
+            disabled={publishing}
+          >
             Cancel
           </Button>
           {canPublish ? (
@@ -178,6 +188,7 @@ export function SourceEditor({
               variant="default"
               size="sm"
               data-testid="artifact-publish-version"
+              loading={publishing}
               onClick={onPublish}
             >
               Publish
@@ -187,6 +198,7 @@ export function SourceEditor({
               variant="default"
               size="sm"
               data-testid="artifact-propose-submit"
+              loading={publishing}
               onClick={onPropose}
             >
               Propose

@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import { artifactQuery, contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
 import { ShareButton } from "../artifact/share-dialog"
@@ -252,18 +253,15 @@ function RunnerLiveness({ seenAt }: { seenAt: string | null }) {
 // Ask the first question — the empty-conversation state.
 function AskComposer({ contextId, onAsked }: { contextId: string; onAsked: (s: Session) => void }) {
   const [text, setText] = useState("")
-  const [busy, setBusy] = useState(false)
-  const ask = async () => {
-    if (!text.trim()) return
-    setBusy(true)
-    try {
-      const r = await api.askContext(contextId, text.trim())
+  const ask = useApiMutation({
+    mutationFn: () => api.askContext(contextId, text.trim()),
+    onSuccess: (r) => {
       setText("")
       onAsked(r.session)
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Could not send the question")
-      setBusy(false)
-    }
+    },
+  })
+  const submit = () => {
+    if (text.trim()) ask.mutate()
   }
   return (
     <div className="flex flex-col gap-2">
@@ -275,14 +273,14 @@ function AskComposer({ contextId, onAsked }: { contextId: string; onAsked: (s: S
         rows={3}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) ask()
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit()
         }}
       />
       <Button
         data-testid="console-ask-submit"
-        onClick={ask}
-        loading={busy}
-        disabled={busy || !text.trim()}
+        onClick={submit}
+        loading={ask.isPending}
+        disabled={ask.isPending || !text.trim()}
         className="self-end"
       >
         Ask
@@ -307,7 +305,6 @@ function SessionThread({
   const qc = useQueryClient()
   const { data } = useQuery(sessionQuery(sessionId))
   const [text, setText] = useState("")
-  const [busy, setBusy] = useState(false)
   // The picker pills read the sessions LIST; the transcript polls its own key.
   // Sync the list whenever this session's state settles, so a pill never keeps
   // saying "open" after the answer has already rendered below it.
@@ -316,38 +313,36 @@ function SessionThread({
     if (state && state !== "open")
       qc.invalidateQueries({ queryKey: contextSessionsQuery(contextId).queryKey })
   }, [state, contextId, qc])
+  const refresh = () => qc.invalidateQueries({ queryKey: sessionQuery(sessionId).queryKey })
+  // Post a follow-up / close the conversation. Defined ABOVE the `!data` guard so the
+  // hooks run unconditionally (a hook can't sit below an early return). Closing swallows
+  // its error — an already-closed session is fine — so it opts out of the error toast.
+  const post = useApiMutation({
+    mutationFn: () => api.postSessionMessage(sessionId, text.trim()),
+    onSuccess: () => {
+      setText("")
+      refresh()
+    },
+  })
+  const closeMut = useApiMutation({
+    mutationFn: () => api.closeSession(sessionId),
+    errorToast: false,
+    onSuccess: () => {
+      refresh()
+      onClosed()
+    },
+  })
   if (!data) return <Spinner className="mx-auto mt-8" />
   const { session, messages } = data
   // Only the asker may post (the server 404s anyone else) — the owner reads
   // someone else's session from Activity and can close it, nothing more.
   const isMine = session.asker_id === me?.id
-  const refresh = () => qc.invalidateQueries({ queryKey: sessionQuery(sessionId).queryKey })
-
-  const send = async () => {
-    // Guards the keyboard path too — Cmd+Enter must respect the same turn gate
-    // as the disabled Send button.
-    if (!text.trim() || busy || session.state === "open") return
-    setBusy(true)
-    try {
-      await api.postSessionMessage(sessionId, text.trim())
-      setText("")
-      refresh()
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Could not send")
-    } finally {
-      setBusy(false)
-    }
+  const send = () => {
+    // Guards the keyboard path too — Cmd+Enter must respect the same turn gate as the
+    // disabled Send button.
+    if (text.trim() && !post.isPending && session.state !== "open") post.mutate()
   }
-
-  const close = async () => {
-    try {
-      await api.closeSession(sessionId)
-      refresh()
-      onClosed()
-    } catch {
-      /* already closed is fine */
-    }
-  }
+  const close = () => closeMut.mutate()
 
   return (
     <div className="flex flex-col gap-3">
@@ -396,8 +391,8 @@ function SessionThread({
             <Button
               data-testid="console-followup-submit"
               onClick={send}
-              loading={busy}
-              disabled={busy || !text.trim() || session.state === "open"}
+              loading={post.isPending}
+              disabled={post.isPending || !text.trim() || session.state === "open"}
             >
               Send
             </Button>

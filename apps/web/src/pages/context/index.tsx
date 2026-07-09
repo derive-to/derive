@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
-import { ApiError, api } from "@/api"
+import { api } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageShell } from "@/components/shared/page-shell"
@@ -14,8 +14,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { toast } from "@/components/ui/sonner"
 import { agentsQuery, contextsQuery } from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
 
 // The contexts directory: the workspace's askable agent setups. Creation wires an
 // existing agent (Settings → Agents) to a manifest artifact by its short id — the
@@ -83,26 +83,23 @@ function NewContext({
   const [name, setName] = useState("")
   const [agentId, setAgentId] = useState(agents[0]?.id ?? "")
   const [manifest, setManifest] = useState("")
-  const [busy, setBusy] = useState(false)
 
-  const create = async () => {
-    if (!name.trim() || !agentId || !manifest.trim()) return
-    setBusy(true)
-    try {
-      await api.createContext({
+  const create = useApiMutation({
+    mutationFn: () =>
+      api.createContext({
         name: name.trim(),
         agent_id: agentId,
         manifest_short_id: manifest.trim(),
-      })
+      }),
+    success: "Context created",
+    onSuccess: () => {
       setName("")
       setManifest("")
-      toast.success("Context created")
       onCreated()
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Could not create the context")
-    } finally {
-      setBusy(false)
-    }
+    },
+  })
+  const submit = () => {
+    if (name.trim() && agentId && manifest.trim()) create.mutate()
   }
 
   return (
@@ -137,9 +134,9 @@ function NewContext({
       />
       <Button
         data-testid="context-create-submit"
-        onClick={create}
-        loading={busy}
-        disabled={busy || !name.trim() || !agentId || !manifest.trim()}
+        onClick={submit}
+        loading={create.isPending}
+        disabled={create.isPending || !name.trim() || !agentId || !manifest.trim()}
       >
         Create
       </Button>

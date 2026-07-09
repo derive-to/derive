@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router"
-import { api, type Workspaces, workspaceDisplayName } from "@/api"
+import { ApiError, api, type Workspaces, workspaceDisplayName } from "@/api"
 import { Icon } from "@/components/icons"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { SidebarMenuButton } from "@/components/ui/sidebar"
+import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
 import { ThemeSwitch } from "./theme-switch"
@@ -65,7 +66,16 @@ export function UserPod({
       search: { "new-workspace": "1" },
     })
   const signOut = async () => {
-    await api.logout().catch(() => {})
+    try {
+      await api.logout()
+    } catch (e) {
+      // A 401/403 just means the session was already gone — that IS signed out, so
+      // stay quiet. Only a transport or server (5xx) failure can leave the session
+      // alive; surface that instead of swallowing it. Either way we sign out locally.
+      if (!(e instanceof ApiError) || e.status >= 500) {
+        toast.error("Signed out on this device, but the server couldn't be reached.")
+      }
+    }
     setMe(null)
     nav({ to: "/login" })
   }

@@ -14,7 +14,9 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { toast } from "@/components/ui/sonner"
 import { ago } from "@/lib/time"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 
 // Build the include-globs string from the content-type toggle + optional folder.
@@ -32,12 +34,10 @@ export function RepoPicker({
   installationId,
   onClose,
   onConnected,
-  onError,
 }: {
   installationId: string
   onClose: () => void
   onConnected: () => void
-  onError: (m: string) => void
 }) {
   const [repos, setRepos] = useState<InstallationRepo[] | null>(null)
   const [repo, setRepo] = useState<string | null>(null)
@@ -46,7 +46,6 @@ export function RepoPicker({
   const [html, setHtml] = useState(true)
   const [folder, setFolder] = useState("")
   const [preview, setPreview] = useState<SyncPreview | "loading" | null>(null)
-  const [busy, setBusy] = useState(false)
   const includes = buildIncludes(md, html, folder)
 
   useEffect(() => {
@@ -54,10 +53,12 @@ export function RepoPicker({
       .listInstallationRepos(installationId)
       .then((r) => setRepos(r.repos))
       .catch((e) => {
-        onError((e as Error).message)
+        // Loading the installation's repo list is a read, not a mutation; surface a
+        // failure so the empty state below isn't misread as "no repos".
+        toast.error((e as Error).message) // mutation-ignore: repo-list load error, not a mutation
         setRepos([])
       })
-  }, [installationId, onError])
+  }, [installationId])
 
   // Filter the (already most-recent-first) list by a case-insensitive substring.
   const q = query.trim().toLowerCase()
@@ -79,17 +80,15 @@ export function RepoPicker({
     return () => clearTimeout(t)
   }, [installationId, repo, includes])
 
-  const connect = async () => {
-    if (!repo || !includes) return
-    setBusy(true)
-    try {
-      // Connect only — the row auto-syncs in batches with a progress bar.
-      await api.connectRepoSource({ repo, installation_id: installationId, includes })
-      onConnected()
-    } catch (e) {
-      onError((e as Error).message)
-      setBusy(false)
-    }
+  const connect = useApiMutation({
+    // Connect only — the row auto-syncs in batches with a progress bar.
+    mutationFn: (repoName: string) =>
+      api.connectRepoSource({ repo: repoName, installation_id: installationId, includes }),
+    success: "Repo connected — syncing",
+    onSuccess: () => onConnected(),
+  })
+  const doConnect = () => {
+    if (repo && includes) connect.mutate(repo)
   }
 
   return (
@@ -192,16 +191,22 @@ export function RepoPicker({
         )}
 
         <div className="mt-2 flex justify-end gap-2">
-          <Button variant="ghost" data-testid="github-cancel" onClick={onClose} disabled={busy}>
+          <Button
+            variant="ghost"
+            data-testid="github-cancel"
+            onClick={onClose}
+            disabled={connect.isPending}
+          >
             Cancel
           </Button>
           <Button
             variant="default"
-            onClick={connect}
-            disabled={busy || !repo || !includes}
+            onClick={doConnect}
+            loading={connect.isPending}
+            disabled={connect.isPending || !repo || !includes}
             data-testid="github-picker-connect"
           >
-            {busy ? "Connecting…" : "Connect & sync"}
+            {connect.isPending ? "Connecting…" : "Connect & sync"}
           </Button>
         </div>
       </DialogContent>

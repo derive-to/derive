@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { api, workspaceDisplayName } from "@/api"
 import { Icon } from "@/components/icons"
@@ -18,9 +18,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { toast } from "@/components/ui/sonner"
 import { Textarea } from "@/components/ui/textarea"
 import { artifactQuery, workspacesQuery } from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
 
 // Favorite is the one property kept VISIBLE in the header — the filled star is a
 // glanceable state (you see at a glance that this artifact is starred), and a
@@ -36,25 +36,19 @@ export function StarButton({
   favorite: boolean
   onChange: (f: boolean) => void
 }) {
-  const [busy, setBusy] = useState(false)
-  const toggle = async () => {
-    const next = !favorite
-    onChange(next)
-    setBusy(true)
-    try {
-      await api.favorite(shortId, next)
-    } catch {
-      onChange(!next)
-    } finally {
-      setBusy(false)
-    }
-  }
+  const star = useApiMutation({
+    mutationFn: (next: boolean) => api.favorite(shortId, next),
+    optimistic: (next) => {
+      onChange(next)
+      return () => onChange(!next)
+    },
+  })
   return (
     <Button
       variant="ghost"
       size="sm"
-      onClick={toggle}
-      disabled={busy}
+      onClick={() => star.mutate(!favorite)}
+      disabled={star.isPending}
       // Icon-only chrome carries its label via aria-label + aria-pressed, not a
       // `title` (invisible to keyboard + touch) — the house chrome pattern.
       aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
@@ -85,20 +79,13 @@ export function ReportDialog({
 }) {
   const [reason, setReason] = useState("")
   const [sent, setSent] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const submit = async () => {
-    const r = reason.trim()
-    if (!r || busy) return
-    setBusy(true)
-    try {
-      await api.report(shortId, r)
-      setSent(true)
-      toast.success("Reported — thanks for flagging this")
-    } catch (e) {
-      toast.error((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
+  const report = useApiMutation({
+    mutationFn: () => api.report(shortId, reason.trim()),
+    success: "Reported — thanks for flagging this",
+    onSuccess: () => setSent(true),
+  })
+  const submit = () => {
+    if (reason.trim()) report.mutate()
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -136,11 +123,11 @@ export function ReportDialog({
                 variant="default"
                 size="sm"
                 onClick={submit}
-                loading={busy}
+                loading={report.isPending}
                 disabled={!reason.trim()}
                 data-testid="report-submit"
               >
-                {busy ? "Sending…" : "Report"}
+                {report.isPending ? "Sending…" : "Report"}
               </Button>
             </div>
           </>
@@ -164,30 +151,22 @@ export function MoveToWorkspaceDialog({
   open: boolean
   onOpenChange: (o: boolean) => void
 }) {
-  const qc = useQueryClient()
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: open })
   const [target, setTarget] = useState<string>("")
-  const [busy, setBusy] = useState(false)
   // Personal renders under its display name (the one rule in workspaceDisplayName),
   // pinned first — same order as the switcher.
   const options = (workspaces?.workspaces ?? [])
     .filter((w) => w.id !== currentOrgId)
     .map((w) => ({ ...w, display: workspaceDisplayName(w) }))
     .sort((a, b) => Number(b.personal) - Number(a.personal))
-  const move = async () => {
-    if (!target || busy) return
-    setBusy(true)
-    try {
-      await api.moveArtifact(shortId, target)
-      await qc.invalidateQueries({ queryKey: artifactQuery(shortId).queryKey })
-      const name = options.find((w) => w.id === target)?.display ?? "the workspace"
-      toast.success(`Moved to ${name}`)
-      onOpenChange(false)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't move this artifact")
-    } finally {
-      setBusy(false)
-    }
+  const move = useApiMutation({
+    mutationFn: () => api.moveArtifact(shortId, target),
+    success: () => `Moved to ${options.find((w) => w.id === target)?.display ?? "the workspace"}`,
+    invalidate: [artifactQuery(shortId).queryKey],
+    onSuccess: () => onOpenChange(false),
+  })
+  const doMove = () => {
+    if (target) move.mutate()
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -230,12 +209,12 @@ export function MoveToWorkspaceDialog({
             <Button
               variant="default"
               size="sm"
-              onClick={move}
-              loading={busy}
+              onClick={doMove}
+              loading={move.isPending}
               disabled={!target}
               data-testid="move-workspace-submit"
             >
-              {busy ? "Moving…" : "Move"}
+              {move.isPending ? "Moving…" : "Move"}
             </Button>
           </DialogFooter>
         )}

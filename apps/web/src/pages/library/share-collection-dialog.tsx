@@ -15,7 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { toast } from "@/components/ui/sonner"
+import { useApiMutation } from "@/lib/use-api-mutation"
 
 // Same share experience as an artifact (docs/plans/access-model.md), minus the
 // Anyone segment — a collection isn't individually link-servable content, it's a
@@ -40,15 +40,12 @@ export function ShareCollectionDialog({
   const [members, setMembers] = useState<ArtifactMember[]>([])
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<Role>("editor")
-  const [busy, setBusy] = useState(false)
-  // A ref, not just the `busy` state: state updates are batched/async, so a burst
-  // of synchronous native submit events (Enter held down, or auto-repeating —
-  // see PersonSearchInput's documented submit-fallthrough) can all read the SAME
-  // stale `busy=false` closure before the first call's setBusy(true) re-renders.
-  // The ref flips synchronously, so only the first of a burst gets through.
+  // A ref, not just the mutation's async `isPending`: a burst of synchronous native
+  // submit events (Enter held down, or auto-repeating — see PersonSearchInput's
+  // documented submit-fallthrough) can all read the SAME stale pending=false before the
+  // first mutate re-renders. The ref flips synchronously, so only the first gets through.
   const adding = useRef(false)
   const [wsAccess, setWsAccess] = useState<WorkspaceAccess>(collection.workspace_access ?? "member")
-  const [savingAccess, setSavingAccess] = useState(false)
 
   // Unlike an artifact (editors can share — GDocs model), a collection's access
   // and membership routes are owner-only on the backend (same bar as delete —
@@ -68,59 +65,55 @@ export function ShareCollectionDialog({
     load()
   }, [collection.id])
 
-  // Applies immediately — a Save button between a toggle and its effect is
-  // friction with no safety benefit (same call the artifact dialog makes).
-  const applyAccess = async (next: WorkspaceAccess) => {
-    const prev = wsAccess
-    setWsAccess(next)
-    setSavingAccess(true)
-    try {
-      const r = await api.setCollectionAccess(collection.id, next)
-      setWsAccess(r.workspace_access)
-    } catch (x) {
-      setWsAccess(prev)
-      toast.error(x instanceof Error ? x.message : "Couldn't update access")
-    } finally {
-      setSavingAccess(false)
-    }
-  }
+  // Access applies immediately (a Save button between a toggle and its effect is friction
+  // with no safety benefit). Optimistic via setWsAccess; the primitive rolls it back +
+  // toasts on failure. Membership add/remove/re-role reconcile the roster on success.
+  const accessMut = useApiMutation({
+    mutationFn: (next: WorkspaceAccess) => api.setCollectionAccess(collection.id, next),
+    optimistic: (next) => {
+      const prev = wsAccess
+      setWsAccess(next)
+      return () => setWsAccess(prev)
+    },
+    onSuccess: (r) => setWsAccess(r.workspace_access),
+  })
+  const applyAccess = (next: WorkspaceAccess) => accessMut.mutate(next)
 
-  const add = async (e: React.FormEvent) => {
+  const addMut = useApiMutation({
+    mutationFn: (addr: string) => api.setCollectionMember(collection.id, addr, role),
+    onSuccess: () => {
+      setEmail("")
+      load()
+    },
+  })
+  const add = (e: React.FormEvent) => {
     e.preventDefault()
     if (adding.current) return
     const addr = email.trim()
     if (!addr) return
     adding.current = true
-    setBusy(true)
-    try {
-      await api.setCollectionMember(collection.id, addr, role)
-      setEmail("")
-      load()
-    } catch (x) {
-      toast.error(x instanceof Error ? x.message : "Couldn't share")
-    } finally {
-      adding.current = false
-      setBusy(false)
-    }
+    addMut.mutate(addr, {
+      onSettled: () => {
+        adding.current = false
+      },
+    })
   }
-  const remove = async (m: ArtifactMember) => {
-    try {
-      await api.removeCollectionMember(collection.id, m.user_id)
-    } catch (x) {
-      toast.error(x instanceof Error ? x.message : "Couldn't remove member")
-    }
-    load()
-  }
-  // Re-role an existing member in place — setCollectionMember upserts server-side,
-  // so this is the same call the Add form makes, just keyed by their handle.
-  const change = async (m: ArtifactMember, next: Role) => {
+
+  const removeMut = useApiMutation({
+    mutationFn: (m: ArtifactMember) => api.removeCollectionMember(collection.id, m.user_id),
+    onSuccess: () => load(),
+  })
+  const remove = (m: ArtifactMember) => removeMut.mutate(m)
+
+  // Re-role in place — setCollectionMember upserts, so it's the Add call keyed by handle.
+  const changeMut = useApiMutation({
+    mutationFn: ({ handle, next }: { handle: string; next: Role }) =>
+      api.setCollectionMember(collection.id, handle, next),
+    onSuccess: () => load(),
+  })
+  const change = (m: ArtifactMember, next: Role) => {
     if (next === m.role || !m.handle) return
-    try {
-      await api.setCollectionMember(collection.id, m.handle, next)
-    } catch (x) {
-      toast.error(x instanceof Error ? x.message : "Couldn't update their role")
-    }
-    load()
+    changeMut.mutate({ handle: m.handle, next })
   }
 
   return (
@@ -141,7 +134,7 @@ export function ShareCollectionDialog({
 
         <div className="flex flex-col gap-6">
           <div>
-            <SectionEyebrow action={savingAccess && <Spinner className="size-3" />}>
+            <SectionEyebrow action={accessMut.isPending && <Spinner className="size-3" />}>
               Who can open this
             </SectionEyebrow>
             {canManage ? (
@@ -150,7 +143,7 @@ export function ShareCollectionDialog({
                   segments={SEGMENTS}
                   value={wsAccess === "member" ? "workspace" : "invite"}
                   onChange={(v) => applyAccess(v === "workspace" ? "member" : "none")}
-                  disabled={savingAccess}
+                  disabled={accessMut.isPending}
                   testId="collection-share-access"
                 />
                 {wsAccess === "none" ? (
@@ -195,9 +188,9 @@ export function ShareCollectionDialog({
                   variant="default"
                   type="submit"
                   data-testid="collection-share-add"
-                  loading={busy}
+                  loading={addMut.isPending}
                 >
-                  {busy ? "Adding…" : "Add"}
+                  {addMut.isPending ? "Adding…" : "Add"}
                 </Button>
               </form>
             )}

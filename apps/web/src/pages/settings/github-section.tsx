@@ -44,7 +44,7 @@ export function GithubSection() {
   // After the GitHub redirect (?gh_install / ?gh_error), open the picker or toast.
   useEffect(() => {
     const { install, error } = takeInstallParams()
-    if (error) toast.error(error === "install_expired" ? "Install link expired" : "Install failed")
+    if (error) toast.error(error === "install_expired" ? "Install link expired" : "Install failed") // mutation-ignore: OAuth ?gh_error redirect param, not a mutation
     if (install) setPickerInstall(install)
   }, [])
 
@@ -70,12 +70,7 @@ export function GithubSection() {
       {status === null ? (
         <SettingsListSkeleton />
       ) : appConfigured ? (
-        <ConnectViaApp
-          status={status}
-          onPick={setPickerInstall}
-          onError={(m) => toast.error(m)}
-          onRefresh={load}
-        />
+        <ConnectViaApp status={status} onPick={setPickerInstall} onRefresh={load} />
       ) : (
         <SetUpApp />
       )}
@@ -87,15 +82,7 @@ export function GithubSection() {
         ) : (
           <SettingsGroup title="Mirrored repositories">
             {status.sources.map((s) => (
-              <RepoSourceRow
-                key={s.id}
-                source={s}
-                onChanged={(m) => {
-                  toast.success(m)
-                  refresh()
-                }}
-                onError={(m) => toast.error(m)}
-              />
+              <RepoSourceRow key={s.id} source={s} onDone={refresh} />
             ))}
           </SettingsGroup>
         ))}
@@ -116,13 +103,7 @@ export function GithubSection() {
 
       {/* The PAT path stays available as an advanced fallback (self-host without a
           GitHub App, or a one-off public repo). */}
-      <AdvancedPat
-        onCreated={() => {
-          toast.success("Repo connected — syncing")
-          refresh()
-        }}
-        onError={(m) => toast.error(m)}
-      />
+      <AdvancedPat onCreated={refresh} />
 
       {pickerInstall && (
         <RepoPicker
@@ -130,10 +111,8 @@ export function GithubSection() {
           onClose={() => setPickerInstall(null)}
           onConnected={() => {
             setPickerInstall(null)
-            toast.success("Repo connected — syncing")
             refresh()
           }}
-          onError={(m) => toast.error(m)}
         />
       )}
     </SettingsSection>

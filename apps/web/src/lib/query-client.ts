@@ -1,4 +1,5 @@
-import { QueryClient } from "@tanstack/react-query"
+import { MutationCache, QueryClient } from "@tanstack/react-query"
+import { toast } from "@/components/ui/sonner"
 
 // One client for the app: route loaders warm it via ensureQueryData / prefetch,
 // components read it via useQuery, so an intent-preloaded route serves its data
@@ -24,6 +25,24 @@ export const isTransient = (err: unknown): boolean => {
 export const retryQuery = (failureCount: number, err: unknown): boolean =>
   failureCount < 3 && isTransient(err)
 
+// Mutation meta the app understands. `errorToast: false` opts a single mutation OUT
+// of the global error toast — for the few sites that render the failure inline (the
+// login form, the share-access panel) from `mutation.error` instead of a toast.
+// Augmenting react-query's Register makes `meta` typed everywhere a mutation is
+// declared, so a typo like `errorTost` is a compile error, not a silent no-op.
+export type AppMutationMeta = { errorToast?: boolean }
+
+declare module "@tanstack/react-query" {
+  interface Register {
+    mutationMeta: AppMutationMeta
+  }
+}
+
+/** The single rule the mutation safety-net follows: toast every mutation error UNLESS
+ *  it opted out to handle the failure inline. Pure + exported so it's unit-tested. */
+export const shouldToastError = (meta: AppMutationMeta | undefined): boolean =>
+  meta?.errorToast !== false
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -32,5 +51,17 @@ export const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
       staleTime: 30_000,
     },
+    // Writes are never auto-retried: many are non-idempotent (publishing a version,
+    // posting a comment), and a failed write must surface at once rather than
+    // silently re-fire. Reads self-heal (retryQuery); writes stay explicit.
+    mutations: { retry: false },
   },
+  // The safety net. Every mutation that rejects raises a toast BY DEFAULT, so a
+  // forgotten catch can never again fail silently the way the hand-rolled sites did.
+  // A mutation opts out with `meta.errorToast: false` when it renders the error inline.
+  mutationCache: new MutationCache({
+    onError: (err, _vars, _ctx, mutation) => {
+      if (shouldToastError(mutation.meta)) toast.error((err as Error).message)
+    },
+  }),
 })
