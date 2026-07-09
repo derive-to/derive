@@ -391,6 +391,22 @@
   animation: derive-skeleton-breath 1.6s ease-in-out infinite;
 }
 
+/* Indeterminate top-progress sweep — the global "something is loading" cue (GlobalProgress).
+   A 1/3-width segment sweeps across a faint full-width track. Under prefers-reduced-motion the
+   sweep freezes off-screen (the global reduce block below), leaving just the static faint track
+   — still a legible, non-animated "busy" line. */
+@keyframes derive-progress-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+@utility animate-progress {
+  animation: derive-progress-sweep 1.1s ease-in-out infinite;
+}
+
 /* Honor prefers-reduced-motion (unlayered → wins over utilities without !important). */
 @media (prefers-reduced-motion: reduce) {
   *,
