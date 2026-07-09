@@ -11,7 +11,13 @@ name: e2e smoke
 # just bump workers.
 on:
   workflow_dispatch:
+  # Scope to changes that can affect a user flow — skip docs/CI-only PRs so the
+  # (uncached-browser + build + serial specs) minutes don't burn on every PR.
   pull_request:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "pnpm-lock.yaml"
 
 permissions:
   contents: read

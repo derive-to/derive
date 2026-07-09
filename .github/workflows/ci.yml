@@ -19,7 +19,7 @@ concurrency:
 jobs:
   # Which areas a change touches — lets the peripheral build jobs (bundle,
   # runner-image) skip when a PR can't affect them. The core gates
-  # (check/pg/d1/coverage/security) always run. No branch protection on this repo,
+  # (check/pg/d1/security) always run. No branch protection on this repo,
   # so a skipped job can't wedge a required check — it just reports success.
   changes:
     runs-on: ubuntu-24.04-arm
@@ -40,8 +40,11 @@ jobs:
             web:
               - 'apps/web/**'
               - 'packages/**'
+              - 'pnpm-lock.yaml'
+              - 'package.json'
             docker:
               - 'packages/cli/**'
+              - 'pnpm-lock.yaml'
               - 'deploy/runner.Dockerfile'
               - 'deploy/runner.Dockerfile.dockerignore'
               - 'deploy/runner-entrypoint.sh'
@@ -224,10 +227,9 @@ jobs:
           echo "prod not healthy after deploy (last /v1/artifacts status: $db)" >&2
           exit 1
 
-      # e2e smoke's post-deploy auto-dispatch is disabled for now (still flaky
-      # under CI CPU contention — see e2e-smoke.yml). Run it manually with
-      # `gh workflow run e2e-smoke.yml --ref main` when a regression signal is
-      # actually wanted.
+      # e2e smoke now runs on PRs (see e2e-smoke.yml). Its post-DEPLOY auto-dispatch
+      # stays off — a post-ship prod check is separate from the PR gate; trigger it
+      # manually with `gh workflow run e2e-smoke.yml --ref main` if wanted.
 
   # Supply-chain: a known-vulnerable production dependency, or a committed secret,
   # fails the build. Reads the lockfile + working tree, so no install is needed.
