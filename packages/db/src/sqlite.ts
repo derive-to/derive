@@ -8,7 +8,7 @@ import type {
   ViewStats,
 } from "@derive/core"
 import Database from "better-sqlite3"
-import { and, eq } from "drizzle-orm"
+import { and, eq, inArray } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import { makeRepos, schema } from "./repos"
 import {
@@ -22,13 +22,18 @@ import {
   collectionItem,
   collectionMember,
   comment,
+  context,
+  contextSession,
   domain,
   MIGRATION_STATEMENTS,
   notification,
   proposal,
   report,
+  reviewRound,
   SCHEMA_STATEMENTS,
+  sessionMessage,
   version,
+  webhook,
 } from "./schema"
 
 const VIEW_WINDOW_MS = 30 * 86400_000
@@ -118,6 +123,27 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     // Atomic delete: all FK-dependent rows and the artifact itself commit together.
     deleteArtifact: async (id: string): Promise<void> => {
       raw.transaction(() => {
+        // A context's manifest FK means deleting a manifest deletes its context
+        // (and sessions) — a context cannot outlive its definition, by design.
+        // Subqueries, matching the shared query layer (D1 bound-parameter cap).
+        const ctxIds = db
+          .select({ id: context.id })
+          .from(context)
+          .where(eq(context.manifest_artifact_id, id))
+        db.delete(sessionMessage)
+          .where(
+            inArray(
+              sessionMessage.session_id,
+              db
+                .select({ id: contextSession.id })
+                .from(contextSession)
+                .where(inArray(contextSession.context_id, ctxIds)),
+            ),
+          )
+          .run()
+        db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
+        db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
+        db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
         db.delete(version).where(eq(version.artifact_id, id)).run()
         db.delete(comment).where(eq(comment.artifact_id, id)).run()
         db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()
@@ -130,6 +156,19 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(notification).where(eq(notification.artifact_id, id)).run()
         db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
         db.delete(artifact).where(eq(artifact.id, id)).run()
+      })()
+    },
+
+    // Atomic move: org_id flips, collection membership and any artifact-targeted
+    // webhook detach, all in one commit.
+    moveArtifactOrg: async (artifactId: string, targetOrgId: string): Promise<void> => {
+      raw.transaction(() => {
+        db.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId)).run()
+        db.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId)).run()
+        db.update(webhook)
+          .set({ artifact_id: null })
+          .where(eq(webhook.artifact_id, artifactId))
+          .run()
       })()
     },
 
@@ -232,6 +271,20 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       for (const r of rows) out[r.artifact_id] = r.c
       return out
     },
+    previewReady: async (artifactIds): Promise<Record<string, boolean>> => {
+      if (artifactIds.length === 0) return {}
+      const ph = artifactIds.map(() => "?").join(",")
+      const rows = raw
+        .prepare(
+          `SELECT a.id artifact_id FROM artifact a
+           JOIN version v ON v.artifact_id = a.id AND v.n = a.current_version
+           WHERE v.preview_status = 'ready' AND a.id IN (${ph})`,
+        )
+        .all(...artifactIds) as { artifact_id: string }[]
+      const out: Record<string, boolean> = {}
+      for (const r of rows) out[r.artifact_id] = true
+      return out
+    },
 
     // ---- User directory (Better Auth's `user` table; raw, may be absent) -
     findUserByEmail: async (email): Promise<UserDir | null> => {
@@ -328,6 +381,9 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     },
     setUserDiscoverable: async (userId, discoverable): Promise<void> => {
       raw.prepare(`UPDATE user SET discoverable = ? WHERE id = ?`).run(discoverable ? 1 : 0, userId)
+    },
+    setUserOnboarded: async (userId, onboarded): Promise<void> => {
+      raw.prepare(`UPDATE user SET onboarded = ? WHERE id = ?`).run(onboarded ? 1 : 0, userId)
     },
     setUserProfile: async (userId, fields): Promise<void> => {
       // Patch only the fields provided (undefined = leave as-is; null = clear).

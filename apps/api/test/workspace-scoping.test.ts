@@ -23,7 +23,9 @@ describe("workspace scoping: collections + favorites", () => {
       org_id: "wsB",
       slug: null,
       title: "Doc in B",
-      visibility: "link",
+      workspace_access: "member",
+      link_role: "none",
+      listed: "workspace",
       kind: "file",
       spa: 0,
     })
@@ -64,7 +66,7 @@ describe("workspace scoping: collections + favorites", () => {
     )
 
     // outsider isn't a member of wsB and holds no collection share → no non-public
-    // artifacts (the "link"-visibility doc is hidden).
+    // artifacts (the workspace-visibility doc is hidden).
     const res3 = await app.request(`/v1/artifacts?collection=${colId}`, {
       headers: as(outsider.email),
     })

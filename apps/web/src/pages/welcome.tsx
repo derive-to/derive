@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router"
 import { Copy } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ApiError, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { AvatarPicker } from "@/components/shared/avatar-picker"
@@ -26,6 +26,7 @@ import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
+import { authClient } from "@/lib/auth-client"
 import { getInitials } from "@/lib/initials"
 import { OTHER, PROFESSIONS, presetFor } from "@/lib/professions"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
@@ -38,6 +39,11 @@ type Account = NonNullable<ReturnType<typeof useAuth>["me"]>
 // Set once the user finishes (or skips) onboarding, so the post-signup redirect
 // (app-shell.tsx) doesn't bounce them back here on every visit.
 export const markOnboarded = () => {
+  // Persist server-side (authoritative + cross-device) and cache locally for an instant
+  // guard on the very next nav. Fire-and-forget: the localStorage cache covers the gap
+  // while the request is in flight, and the flag is one-way, so a dropped write just
+  // re-shows /welcome once rather than corrupting anything.
+  api.setOnboarded().catch(() => {})
   try {
     localStorage.setItem(STORAGE_KEYS.onboarded, "1")
   } catch {
@@ -162,7 +168,7 @@ function Onboarding({ me }: { me: Account }) {
         username = r.username
       }
       const res = await api.setProfile({ profession, about: about.trim() })
-      setMe({ ...me, username, profession: res.profession, about: res.about })
+      setMe({ ...me, username, profession: res.profession, about: res.about, onboarded: true })
       markOnboarded()
       nav({ to: "/" })
     } catch (caught) {
@@ -284,6 +290,10 @@ function Onboarding({ me }: { me: Account }) {
           </div>
         </section>
 
+        {/* An optional, quiet passkey nudge between the two steps — set up the
+            phishing-resistant one-tap sign-in now, or skip and do it later in Settings. */}
+        <PasskeyNudge />
+
         {/* Step 2 — Connect an agent: the activation moment (paste-into-an-agent). */}
         <section className="flex flex-col gap-4">
           <SectionEyebrow as="h2">Step 2 · Connect an agent</SectionEyebrow>
@@ -333,7 +343,67 @@ function Onboarding({ me }: { me: Account }) {
             {saving ? "Finishing…" : "Continue to Derive"}
           </Button>
         </div>
+
+        {/* Deliberately a line, not a step: teams are created at first need
+            (Settings, or the share dialog's hint), never chosen at signup. */}
+        <p className="text-center text-sm text-muted-foreground">
+          Working with a team? Create a workspace and invite them anytime from Settings.
+        </p>
       </div>
+    </div>
+  )
+}
+
+// A quiet, skippable passkey affordance — shown only where passkeys are supported and only
+// until one is added. Runs the browser create-credential ceremony via the auth client; a
+// cancel is silent, a success swaps to a "you're set" line.
+function PasskeyNudge() {
+  const [supported, setSupported] = useState(false)
+  const [added, setAdded] = useState(false)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    api
+      .capabilities()
+      .then((c) => setSupported(c.passkey))
+      .catch(() => setSupported(false))
+  }, [])
+  if (!supported || added) {
+    if (!added) return null
+    return (
+      <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+        <Icon name="check" className="text-success" /> Passkey added — you can sign in with one tap.
+      </p>
+    )
+  }
+  const add = async () => {
+    setBusy(true)
+    try {
+      const res = await authClient.passkey.addPasskey()
+      if (res?.error) throw new Error(res.error.message ?? "")
+      setAdded(true)
+      toast.success("Passkey added")
+    } catch (e) {
+      const msg = (e as Error).message
+      if (msg && !/cancel|abort|NotAllowed/i.test(msg)) toast.error(msg)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-3">
+      <p className="text-sm text-pretty text-muted-foreground">
+        <span className="font-medium text-foreground">Add a passkey</span> for a phishing-resistant,
+        one-tap sign-in. Optional — you can also do this later in Settings.
+      </p>
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={add}
+        loading={busy}
+        data-testid="welcome-add-passkey"
+      >
+        {busy ? "Waiting…" : "Add passkey"}
+      </Button>
     </div>
   )
 }

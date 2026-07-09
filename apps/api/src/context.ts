@@ -9,16 +9,20 @@ import {
   can,
   capRole,
   DEFAULT_VERSION_WINDOW_MS,
+  isAuthenticated,
   isBundleContentType,
   type MetaStore,
   maxRole,
   newId,
+  type Principal,
+  principalActor,
+  principalOwnerId,
   type Role,
   roleAllows,
 } from "@derive/core"
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
-import type { Auth } from "./auth-config"
+import { type Auth, mcpAudiences } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
@@ -33,6 +37,7 @@ import {
 } from "./lib/rate-limit"
 import { enqueueSlackEvent } from "./lib/slack-events"
 import { log } from "./log"
+import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
 
@@ -48,6 +53,11 @@ export interface SessionUser {
   profession: string | null
   /** One-line "what you do" blurb shown on the profile + member directory. */
   about: string | null
+  /** Finished/skipped first-run onboarding? Server-authoritative (syncs across devices). */
+  onboarded: boolean
+  /** Has the account's email been verified? Better Auth native field; soft-nudge only
+   *  (never gates sign-in), surfaced as a dismissible banner in the app. */
+  emailVerified: boolean
 }
 
 export interface AppDeps {
@@ -78,6 +88,11 @@ export interface AppDeps {
   webOrigins?: string[]
   /** Record + serve view analytics. Default on; set false to disable entirely. */
   analytics?: boolean
+  /** A real transactional email transport is configured (Resend on Node, the Cloudflare
+   *  Email binding on the edge) rather than the log-only fallback. Gates the mail-dependent
+   *  capabilities (password reset, email verification) in /v1/auth/capabilities, so the SPA
+   *  surfaces only the self-serve flows that can actually deliver. */
+  emailEnabled?: boolean
   /** Revisions within this window (ms) collapse into one displayed version. */
   versionWindowMs?: number
   /** Workspace role granted to a member who isn't the first user. Default "editor". */
@@ -181,6 +196,10 @@ export interface AppDeps {
    * the sync inline to completion, so a "Sync now" still finishes within the request.
    */
   startSync?: (sourceId: string) => void
+  /** Enqueue + drain preview renders (true when a renderer is configured). */
+  renderPreviews?: boolean
+  /** Wake the preview worker after enqueuing (Workers: poke the PreviewRenderer DO). */
+  pokePreviews?: () => void
 }
 
 /**
@@ -244,6 +263,22 @@ export function buildContext(deps: AppDeps) {
         }),
       )
 
+  // Enqueue a screenshot render for a newly-published version. Fire-and-forget,
+  // mirroring `notify` above: non-fatal (logged on error), never awaited in the
+  // request path. Gated by deps.renderPreviews so self-hosted deployments without
+  // a renderer configured never attempt to enqueue.
+  const notifyRender = (a: ArtifactRecord, n: number): void => {
+    if (!deps.renderPreviews) return
+    enqueueRender(meta, a.id, n)
+      .then(() => deps.pokePreviews?.())
+      .catch((err) =>
+        log.error("preview enqueue failed", {
+          artifact: a.short_id,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      )
+  }
+
   // Run after-the-response work without blocking the reply. On Workers the request
   // executionCtx keeps the isolate alive past the sent response via waitUntil; on
   // Node (and tests) there is no such context, so we await inline — local DBs are
@@ -283,6 +318,8 @@ export function buildContext(deps: AppDeps) {
           discoverable?: boolean | number | null
           profession?: string | null
           about?: string | null
+          onboarded?: boolean | number | null
+          emailVerified?: boolean | number | null
         }
       | undefined
     const u: SessionUser | null = su
@@ -295,6 +332,9 @@ export function buildContext(deps: AppDeps) {
           discoverable: su.discoverable !== false,
           profession: su.profession ?? null,
           about: su.about ?? null,
+          // Onboarded only when explicitly set (off by default; unset/null = not yet).
+          onboarded: su.onboarded === true || su.onboarded === 1,
+          emailVerified: su.emailVerified === true || su.emailVerified === 1,
         }
       : null
     userCache.set(c, u)
@@ -314,13 +354,50 @@ export function buildContext(deps: AppDeps) {
     return !!me && superAdminEmails.has(me.email.toLowerCase())
   }
 
+  // The one identity resolution for a request (memoized): a typed `Principal` that folds
+  // the signed-in user, the agent, and the agent's on-behalf human into a single value —
+  // delegation as DATA (the agent Principal carries `onBehalfOf`), not a heuristic split
+  // across resolvers + a loose cache. Precedence matches actorFor's authz path: the static
+  // token wins, then an agent bearer, then a session, else anonymous. currentUser/agentFor
+  // remain the memoized building blocks (and direct route accessors); this composes them.
+  const principalCache = new WeakMap<Context, Principal>()
+  const resolvePrincipal = async (c: Context): Promise<Principal> => {
+    const cached = principalCache.get(c)
+    if (cached) return cached
+    let p: Principal
+    if (isToken(c)) {
+      p = { kind: "token" }
+    } else {
+      const ag = await agentFor(c)
+      if (ag) p = { kind: "agent", agent: ag, onBehalfOf: onBehalfOfCache.get(c) ?? null }
+      else {
+        const me = await currentUser(c)
+        p = me
+          ? {
+              kind: "human",
+              user: { id: me.id, email: me.email, name: me.name, username: me.username },
+            }
+          : { kind: "anonymous" }
+      }
+    }
+    principalCache.set(c, p)
+    return p
+  }
+
   // A registered agent acting via its bearer token (memoized per request). An
   // agent is a workspace principal: same authorization path as a member, with
-  // its own identity and (default commenter) role.
+  // its own identity and (default commenter) role. `onBehalfOfCache` records the
+  // human the agent acts for, resolved in lockstep and surfaced on the agent Principal.
   const agentCache = new WeakMap<Context, AgentRecord | null>()
-  // The human an OAuth agent acts on behalf of (the user who consented). Null for a
-  // registered workspace agent (no granting user) — kept in lockstep with agentCache.
-  const onBehalfCache = new WeakMap<Context, string | null>()
+  const onBehalfOfCache = new WeakMap<Context, string | null>()
+  // The OAuth grant behind an agent principal, when there is one — registered
+  // dk_agt_ tokens leave this unset. Managemently-scoped routes read it to tell
+  // the two apart: a grant carries the consenting user's scopes; a registered
+  // token carries only a runtime role.
+  const oauthGrantCache = new WeakMap<
+    Context,
+    { ownerId: string; scopeRole: Role; clientId: string; boundWorkspaces: string[] }
+  >()
   const agentFor = async (c: Context): Promise<AgentRecord | null> => {
     if (agentCache.has(c)) return agentCache.get(c) ?? null
     const b = bearer(c)
@@ -340,43 +417,99 @@ export function buildContext(deps: AppDeps) {
         if (o) {
           a = o.rec
           owner = o.ownerId
-          // An OAuth agent may act in any workspace its granting user belongs to:
-          // an explicit X-Derive-Workspace header, validated against the OWNER's
-          // membership, re-homes the agent record itself — so activeWorkspace AND
-          // every authorize() comparison agree on the target. Fail-closed: an
-          // unknown or foreign id keeps the grant's default workspace. Registered
-          // workspace agents (no granting user) never roam.
+          oauthGrantCache.set(c, {
+            ownerId: o.ownerId,
+            scopeRole: o.scopeRole,
+            clientId: o.clientId,
+            boundWorkspaces: o.boundWorkspaces,
+          })
+          // An OAuth agent may act in any workspace WITHIN ITS GRANT: an explicit
+          // X-Derive-Workspace header, validated against the OWNER's membership,
+          // re-homes the agent record itself — so activeWorkspace AND every
+          // authorize() comparison agree on the target. Clamped to the grant's
+          // scoped set (the consent multi-select): an empty set means all the
+          // owner's workspaces, a non-empty one restricts to exactly those. Fail-
+          // closed: an unknown, foreign, or out-of-grant id keeps the default
+          // workspace. Registered workspace agents (no granting user) never roam.
+          // The role is re-capped from the uncapped scope role against the
+          // TARGET's membership.
           const want = c.req.header("x-derive-workspace")
-          if (want && want !== a.org_id && (await meta.getMembership(want, owner)))
-            a = { ...a, org_id: want }
+          const inGrant = o.boundWorkspaces.length === 0 || o.boundWorkspaces.includes(want ?? "")
+          if (want && want !== a.org_id && inGrant) {
+            const m = await meta.getMembership(want, owner)
+            if (m) a = { ...a, org_id: want, role: capRole(o.scopeRole, m.role) }
+          }
         }
       }
     }
     agentCache.set(c, a)
-    onBehalfCache.set(c, owner)
+    onBehalfOfCache.set(c, owner)
     if (a) c.set("actorId", a.id)
     return a
   }
 
-  // The human identity behind this request: a signed-in user is themselves; an
-  // agent (OAuth or registered) is the user it acts on behalf of, when known.
-  // Keys `personal` comments, and publish attribution + ownership.
-  const privateOwnerId = async (c: Context): Promise<string | null> => {
-    const ag = await agentFor(c)
-    if (ag) return onBehalfCache.get(c) ?? null
-    return (await currentUser(c))?.id ?? null
+  // The human identity behind this request (agent's on-behalf human, or the user
+  // themselves; null for anon/token). Keys `personal` comments + publish attribution.
+  // A thin read of the one Principal, so the delegation rule lives in exactly one place.
+  const privateOwnerId = async (c: Context): Promise<string | null> =>
+    principalOwnerId(await resolvePrincipal(c))
+
+  // The human allowed to MANAGE through this request: a signed-in user, or an
+  // OAuth grant whose scopes reach manage-grade (scopeRole owner — only
+  // derive:manage maps there), acting as its grantor. Registered dk_agt_ tokens
+  // are runtime principals (answer sessions, publish charts) and never
+  // management ones — a stolen runner token must not be able to rewire or tear
+  // down the surfaces it serves. Capability gates still apply on top: the
+  // grant's role stays capped by the grantor's actual membership.
+  const managementPrincipal = async (c: Context): Promise<string | null> => {
+    const me = await currentUser(c)
+    if (me) return me.id
+    await agentFor(c) // resolves the bearer and fills the grant cache
+    const grant = oauthGrantCache.get(c)
+    return grant && grant.scopeRole === "owner" ? grant.ownerId : null
   }
 
-  // The acting identity (agent or signed-in user) for authorship; null when
-  // anonymous. Agents author as their name, never spoofing a person.
-  const actingUser = async (c: Context): Promise<{ id: string; name: string } | null> => {
-    const ag = await agentFor(c)
-    if (ag) return { id: ag.id, name: ag.name }
-    const me = await currentUser(c)
-    // Display identity feeds the comment/version author byline shown to others, so
-    // fall back to the public handle, never the email (the email→handle migration).
-    // Every account has a username post-migration; email is only a last-ditch guard.
-    return me ? { id: me.id, name: me.name ?? me.username ?? me.email } : null
+  // The OAuth grant behind this request — the consenting user and their UNCAPPED
+  // scope role — or null for a registered dk_agt_ token. The MCP layer uses the
+  // scope role to re-cap a roamed workspace's role (mirrors agentFor's header
+  // re-home), so a single connection can act across every workspace the grantor
+  // belongs to. Also carries the grant's scoped workspace SET (the consent
+  // multi-select; empty = all) so the MCP layer clamps list_workspaces + switching
+  // to it. Resolves the bearer first so the grant cache is filled.
+  const oauthGrant = async (
+    c: Context,
+  ): Promise<{
+    ownerId: string
+    scopeRole: Role
+    clientId: string
+    boundWorkspaces: string[]
+  } | null> => {
+    await agentFor(c)
+    return oauthGrantCache.get(c) ?? null
+  }
+
+  // The acting identity (agent or signed-in user) for authorship bylines; null when
+  // anonymous. Agents author as their name, never spoofing a person. Also a Principal read.
+  const actingUser = async (c: Context): Promise<{ id: string; name: string } | null> =>
+    principalActor(await resolvePrincipal(c))
+
+  // The HUMAN byline behind a request, for attributing authored work: a signed-in user is
+  // themselves; an agent (the `derive login` CLI, a remote MCP client, or a registered
+  // dk_agt_ token) attributes to the human it acts on behalf of — the OAuth grantor or the
+  // registrant. Authored work is always the person's, so a byline must NEVER read as the
+  // agent's own name: which model/client drove a publish ("Derive CLI", "Claude", an
+  // OpenAI-backed tool) is an implementation detail, not the author. Null only when no
+  // human is known — anonymous, the static token, or an ownerless agent — and the caller
+  // then falls back to actingUser. The agent Principal carries only the human's id, so the
+  // display name is resolved here.
+  const actingHuman = async (c: Context): Promise<{ id: string; name: string } | null> => {
+    const p = await resolvePrincipal(c)
+    if (p.kind === "human")
+      return { id: p.user.id, name: p.user.name ?? p.user.username ?? p.user.email }
+    const owner = principalOwnerId(p)
+    if (!owner) return null
+    const u = (await meta.getUsers([owner]))[0]
+    return { id: owner, name: u?.name ?? u?.username ?? u?.email ?? owner }
   }
 
   // A stable rate-limit key for the caller: the signed-in user / agent if known,
@@ -431,6 +564,9 @@ export function buildContext(deps: AppDeps) {
     meta,
     auth: deps.auth,
     baseUrl: deps.baseUrl,
+    // The accepted token audiences (RFC 8707) — the RS-side check that a JWT was issued for
+    // THIS server, mirroring the AS-side validAudiences. Same helper, so they can't drift.
+    audiences: mcpAudiences(deps.baseUrl),
     provisionPersonal,
   })
 
@@ -495,15 +631,19 @@ export function buildContext(deps: AppDeps) {
   }
 
   const actorFor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
-    // For a `password` artifact, has this visitor entered the password? The unlock
-    // cookie's value is derived from the server-only hash, so it can't be forged.
+    // A password on the artifact is a lock on its public link. Has this visitor
+    // entered it? The unlock cookie's value is derived from the server-only
+    // hash, so it can't be forged.
+    const hash = a.password_hash
+    const locked = !!hash
     const unlocked =
-      a.visibility === "password" &&
-      !!a.password_hash &&
-      safeEqual(getCookie(c, unlockCookie(a.short_id)) ?? "", unlockToken(a.id, a.password_hash))
-    if (isToken(c)) return { kind: "token" }
-    const ag = await agentFor(c)
-    if (ag) {
+      !!hash && safeEqual(getCookie(c, unlockCookie(a.short_id)) ?? "", unlockToken(a.id, hash))
+    // Narrow the one Principal to this artifact's Actor (the can() input).
+    const p = await resolvePrincipal(c)
+    if (p.kind === "token") return { kind: "token" }
+    if (p.kind === "anonymous") return { kind: "anon", locked, unlocked }
+    if (p.kind === "agent") {
+      const ag = p.agent
       // An agent acts AS ITS REGISTRANT, capped at its registered role and bound
       // to its home workspace. Its per-artifact standing DERIVES from the human's
       // member rows — agents hold no rows of their own (an agent in a share
@@ -514,7 +654,7 @@ export function buildContext(deps: AppDeps) {
       // they were explicit grants.
       const own = await meta.getArtifactMember(a.id, ag.id)
       let derived: Role | null = null
-      const ownerId = onBehalfCache.get(c) ?? null
+      const ownerId = p.onBehalfOf
       if (ownerId && ag.org_id === a.org_id) {
         const m = await meta.getArtifactMember(a.id, ownerId)
         const cRoles = await meta.collectionRolesForArtifact(a.id, ownerId)
@@ -526,27 +666,36 @@ export function buildContext(deps: AppDeps) {
         userId: ag.id,
         artifactRole: maxRole(own?.role ?? null, derived),
         orgRole,
+        locked,
       }
     }
-    const me = await currentUser(c)
-    if (!me) return { kind: "anon", unlocked }
-    // Baseline role = membership in the ARTIFACT's workspace. Opening a shared
-    // link never auto-joins you into someone else's workspace; you only carry an
-    // org role where you're explicitly a member.
+    // A signed-in human. Baseline role = membership in the ARTIFACT's workspace. Opening a
+    // shared link never auto-joins you into someone else's workspace; you only carry an org
+    // role where you're explicitly a member.
+    const me = p.user
     const orgRole = (await meta.getMembership(a.org_id, me.id))?.role ?? null
     const am = await meta.getArtifactMember(a.id, me.id)
     // A collection share grants its role on every artifact in the collection,
     // folded in alongside any per-artifact share (the higher wins).
     const cRoles = await meta.collectionRolesForArtifact(a.id, me.id)
     const artifactRole = maxRole(am?.role ?? null, ...cRoles)
-    return { kind: "user", userId: me.id, artifactRole, orgRole, unlocked }
+    return { kind: "user", userId: me.id, artifactRole, orgRole, locked, unlocked }
   }
 
-  /** Authorize an action against a specific artifact. The artifact's general-access role
-   *  is threaded in so an authenticated link-reacher can earn `comment` while an anonymous
-   *  one stays clamped to view (see effectiveRole). */
+  /** Authorize an action against a specific artifact. Access is the max of three
+   *  grants: an explicit share, the workspace seat (when workspace_access=member),
+   *  and the world link (link_role, clamped to view for anonymous holders and gated
+   *  by unlock when the link is password-locked). See effectiveRole. */
   const authorize = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
-    actorFor(c, a).then((actor) => can(actor, action, a.visibility, a.general_role))
+    actorFor(c, a).then((actor) => can(actor, action, a.workspace_access, a.link_role))
+
+  /** Authorize using STANDING only — an explicit share or the workspace seat, NOT
+   *  the world link (link_role forced to `none`). The reach controls (change access,
+   *  toggle the lock) gate on this so the link's own grant can't bootstrap widening
+   *  the link/listing or clearing the password: a random signed-in URL holder with an
+   *  editor link edits content, but only a member or an explicit sharee re-shares. */
+  const authorizeStanding = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
+    actorFor(c, a).then((actor) => can(actor, action, a.workspace_access, "none"))
 
   /** Build the Actor for a specific Derive user (no request context) — the same standing
    *  a signed-in user has: workspace membership role folded with per-artifact and
@@ -564,7 +713,7 @@ export function buildContext(deps: AppDeps) {
   /** Authorize an action for a specific Derive user against an artifact — the context-free
    *  twin of `authorize`, going through the same `can` decision. */
   const authorizeUser = (userId: string, action: Action, a: ArtifactRecord): Promise<boolean> =>
-    actorForUser(userId, a).then((actor) => can(actor, action, a.visibility, a.general_role))
+    actorForUser(userId, a).then((actor) => can(actor, action, a.workspace_access, a.link_role))
 
   /**
    * True when the caller is an anonymous visitor — they may view public content
@@ -584,10 +733,8 @@ export function buildContext(deps: AppDeps) {
    * source of truth for "not anonymous", used by the global anonymous-write
    * lockdown so a new mutating route can never accidentally be exposed to anon.
    */
-  const isPrincipal = async (c: Context): Promise<boolean> => {
-    if (isToken(c)) return true
-    return !!(await actingUser(c))
-  }
+  const isPrincipal = async (c: Context): Promise<boolean> =>
+    isAuthenticated(await resolvePrincipal(c))
 
   /** The caller's role in their active workspace (creating artifacts, settings). */
   const workspaceRole = async (c: Context): Promise<Role | null> => {
@@ -626,14 +773,30 @@ export function buildContext(deps: AppDeps) {
   }
 
   // A caller's role on a collection: the static token is owner; otherwise the
-  // creator, else their explicit collection-member role, else null (no access).
-  // Shared by the collections routes and the artifact listing (collection scoping).
+  // creator, else their explicit collection-member role, else — when the
+  // collection's own workspace_access is `member` — their workspace SEAT role,
+  // else null (no access). Shared by the collections routes and the artifact
+  // listing (collection scoping).
   const collectionRole = async (c: Context, col: CollectionRecord): Promise<Role | null> => {
     if (isToken(c)) return "owner"
     const me = await currentUser(c)
     if (!me) return null
     if (col.created_by === me.id) return "owner"
-    return (await meta.getCollectionMember(col.id, me.id))?.role ?? null
+    // A collection lives in a workspace, so — same share experience as an
+    // artifact's workspace_access — its members reach it at their SEAT role when
+    // it's workspace-open; an invite-only collection (workspace_access=none)
+    // grants nothing from mere membership, matching Invited. An explicit
+    // collection share (which can cross workspaces) folds in alongside either
+    // way, higher wins. This governs who can view/manage the COLLECTION only;
+    // artifact access still propagates purely from explicit collection
+    // membership (collectionRolesForArtifact), so a seat here never hands out
+    // access to the artifacts inside.
+    const explicit = (await meta.getCollectionMember(col.id, me.id))?.role ?? null
+    const seat =
+      col.workspace_access === "member"
+        ? ((await meta.getMembership(col.org_id, me.id))?.role ?? null)
+        : null
+    return maxRole(explicit, seat)
   }
 
   // ---- Route guard helpers: the return-or-Response idiom (mirrors `limited`), so a
@@ -678,11 +841,16 @@ export function buildContext(deps: AppDeps) {
     commentLimiter,
     unlockLimiter,
     notify,
+    notifyRender,
     background,
     currentUser,
     agentFor,
+    resolvePrincipal,
     actingUser,
+    actingHuman,
     privateOwnerId,
+    managementPrincipal,
+    oauthGrant,
     limited,
     overStorage,
     ensureMembership,
@@ -692,6 +860,7 @@ export function buildContext(deps: AppDeps) {
     actorFor,
     authorize,
     authorizeUser,
+    authorizeStanding,
     anonLocked,
     isPrincipal,
     isSuperAdmin,

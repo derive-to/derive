@@ -40,10 +40,13 @@ boot tasks (auth migrate, legacy-org rekey), starts the webhook worker, and serv
 the bundled SPA when present.
 
 - **Auth** is [Better Auth](https://better-auth.com) under `/api/auth/*`; a static
-  `DERIVE_TOKEN` authorizes CI/agents. `packages/core/src/permissions.ts` is the one
-  authorization gate (`can(actor, action, visibility, generalRole)`); every route
-  resolves an `Actor` and asks it. `effectiveRole` there is the source of truth for the
-  access matrix (anonymous is always view-only; see SECURITY.md).
+  `DERIVE_TOKEN` authorizes CI/agents. Every request resolves to one typed **`Principal`**
+  (`packages/core/src/principal.ts`: `anonymous | token | human | agent`) — `buildContext`'s
+  `resolvePrincipal` is the single identity resolution, and an agent Principal carries the
+  human it acts `onBehalfOf` (delegation as data, not a heuristic). `permissions.ts` is the
+  one authorization gate (`can(actor, action, visibility, generalRole)`): `actorFor`
+  *narrows* the Principal to a per-artifact `Actor` and asks `can`. `effectiveRole` there is
+  the source of truth for the access matrix (anonymous is always view-only; see SECURITY.md).
 - **Workspaces** are keyed by a real `org_id` (never a magic constant). Every
   signed-in user owns a personal workspace (provisioned on first login) and can
   create/switch; the active workspace is resolved per request (cookie → membership

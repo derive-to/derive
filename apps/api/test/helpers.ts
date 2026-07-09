@@ -49,7 +49,7 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
         pgSchemas.add(schema)
       }
       await boot.query(
-        `CREATE TABLE IF NOT EXISTS ${schema}."user" (id text primary key, email text, name text, image text, username text, discoverable boolean, profession text, about text)`,
+        `CREATE TABLE IF NOT EXISTS ${schema}."user" (id text primary key, email text, name text, image text, username text, discoverable boolean, profession text, about text, onboarded boolean)`,
       )
       // Unique handle, mirroring Better Auth's additionalFields(username, unique).
       await boot.query(
@@ -104,7 +104,7 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
 const seedSqliteUsers = (path: string, users: TestUser[]): void => {
   const raw = new Database(path)
   raw.exec(
-    `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT)`,
+    `CREATE TABLE IF NOT EXISTS user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT, onboarded INTEGER)`,
   )
   // Unique handle, mirroring Better Auth's additionalFields(username, unique).
   raw.exec(`CREATE UNIQUE INDEX IF NOT EXISTS user_username ON user (username)`)

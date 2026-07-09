@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { createBus, Presence, type Viewer } from "../src/bus"
+import { createBus, createInProcessBackplane, Presence, type Viewer } from "../src/bus"
 
 describe("event bus", () => {
   it("delivers published events to subscribers of that artifact only", () => {
@@ -21,6 +21,36 @@ describe("event bus", () => {
     off()
     bus.publish("x", { type: "presence", viewers: [] })
     expect(seen).toHaveLength(1)
+  })
+})
+
+describe("in-process backplane: receipt + long-poll", () => {
+  it("publishWithReceipt reports how many live subscribers caught the event", async () => {
+    const bp = createInProcessBackplane()
+    expect(await bp.publishWithReceipt?.("ch", { type: "artifact.pushed" })).toBe(0)
+    const seen: unknown[] = []
+    const off1 = bp.subscribe("ch", (e) => seen.push(e))
+    bp.subscribe("ch", () => {})
+    expect(await bp.publishWithReceipt?.("ch", { type: "artifact.pushed" })).toBe(2)
+    expect(seen).toHaveLength(1) // the receipt path still delivers
+    off1()
+    expect(await bp.publishWithReceipt?.("ch", { type: "artifact.pushed" })).toBe(1)
+  })
+
+  it("waitFor wakes on the first matching event and ignores other types", async () => {
+    const bp = createInProcessBackplane()
+    const woke = bp.waitFor?.("art_1", ["review.sent_back", "review.approved"], 5_000)
+    bp.publish("art_1", { type: "comment.reacted" }) // not a wake type
+    bp.publish("art_1", { type: "review.sent_back", round_id: "rr_1" })
+    const e = await woke
+    expect(e).toMatchObject({ type: "review.sent_back", round_id: "rr_1" })
+  })
+
+  it("waitFor resolves null on timeout with the subscription cleaned up", async () => {
+    const bp = createInProcessBackplane()
+    expect(await bp.waitFor?.("art_2", ["review.approved"], 20)).toBeNull()
+    // The temporary subscription is gone: a later publish reaches nobody.
+    expect(await bp.publishWithReceipt?.("art_2", { type: "review.approved" })).toBe(0)
   })
 })
 

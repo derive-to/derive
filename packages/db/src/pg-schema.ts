@@ -9,13 +9,20 @@ import type {
   DomainStatus,
   FollowKind,
   GeneralRole,
+  LinkRole,
+  Listed,
   NotificationKind,
+  PreviewStatus,
   ProposalState,
+  RenderJobStatus,
   ReportState,
   ReviewRoundState,
   Role,
+  SessionMessageAuthor,
+  SessionState,
   Visibility,
   WebhookKind,
+  WorkspaceAccess,
 } from "@derive/core"
 import { getTableConfig, index, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
 import { generateDdl, PERF_INDEXES, placeholderTables } from "./ddl"
@@ -32,8 +39,14 @@ export const artifact = pgTable("artifact", {
   org_id: text("org_id").notNull().default("local"),
   slug: text("slug"),
   title: text("title"),
-  visibility: text("visibility").$type<Visibility>().notNull().default("private"),
+  // The access model (mirrors schema.ts — see the comment there). Three fields:
+  // workspace_access (seat access), link_role (the world link), listed (discovery).
+  workspace_access: text("workspace_access").$type<WorkspaceAccess>().notNull().default("none"),
+  link_role: text("link_role").$type<LinkRole>().notNull().default("none"),
+  listed: text("listed").$type<Listed>().notNull().default("none"),
   password_hash: text("password_hash"),
+  // Orphaned, backfilled once into the fields above; read by nothing (mirrors schema.ts).
+  visibility: text("visibility").$type<Visibility>().notNull().default("private"),
   general_role: text("general_role").$type<GeneralRole>().notNull().default("viewer"),
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
@@ -79,6 +92,9 @@ export const version = pgTable(
     author_id: text("author_id"),
     message: text("message"),
     name: text("name"),
+    preview_key: text("preview_key"),
+    preview_status: text("preview_status").$type<PreviewStatus>(),
+    preview_error: text("preview_error"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   // (artifact_id, n) is unique — addVersion relies on it to turn a concurrent
@@ -128,6 +144,17 @@ export const webhookDelivery = pgTable("webhook_delivery", {
   event_type: text("event_type").notNull(),
   payload: text("payload").notNull(),
   status: text("status").$type<DeliveryStatus>().notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  last_error: text("last_error"),
+  next_attempt_at: text("next_attempt_at").notNull().$defaultFn(isoNow),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+
+export const renderJob = pgTable("render_job", {
+  id: text("id").primaryKey(),
+  artifact_id: text("artifact_id").notNull(),
+  version_n: integer("version_n").notNull(),
+  status: text("status").$type<RenderJobStatus>().notNull().default("pending"),
   attempts: integer("attempts").notNull().default(0),
   last_error: text("last_error"),
   next_attempt_at: text("next_attempt_at").notNull().$defaultFn(isoNow),
@@ -200,6 +227,26 @@ export const agent = pgTable(
   ],
 )
 
+// A pending workspace invitation (see schema.ts) — invite-by-email → accept.
+export const invitation = pgTable(
+  "invitation",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    email: text("email").notNull(),
+    role: text("role").$type<Role>().notNull().default("editor"),
+    token: text("token").notNull(),
+    invited_by: text("invited_by"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    expires_at: text("expires_at").notNull(),
+    accepted_at: text("accepted_at"),
+  },
+  (t) => [
+    uniqueIndex("invitation_token").on(t.token),
+    index("invitation_org_email").on(t.org_id, t.email),
+  ],
+)
+
 export const agentMention = pgTable("agent_mention", {
   id: text("id").primaryKey(),
   agent_id: text("agent_id").notNull(),
@@ -212,6 +259,25 @@ export const agentMention = pgTable("agent_mention", {
   state: text("state").$type<AgentMentionState>().notNull().default("pending"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
+
+// The SET of workspaces an OAuth client's grants are scoped to for one user — the
+// workspaces ticked on the consent screen. ONE ROW PER GRANTED WORKSPACE
+// (composite-unique on user+client+org). An EMPTY set (no rows) means "all
+// workspaces"; a non-empty set restricts the grant to exactly those. Re-consent
+// replaces the set. See the sqlite mirror in schema.ts for the full rationale.
+export const oauthClientWorkspace = pgTable(
+  "oauth_client_workspace",
+  {
+    id: text("id").primaryKey(),
+    user_id: text("user_id").notNull(),
+    client_id: text("client_id").notNull(),
+    org_id: text("org_id").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [
+    uniqueIndex("oauth_client_workspace_user_client_org").on(t.user_id, t.client_id, t.org_id),
+  ],
+)
 
 export const artifactFavorite = pgTable(
   "artifact_favorite",
@@ -258,6 +324,9 @@ export const collection = pgTable("collection", {
   title: text("title").notNull(),
   created_by: text("created_by").notNull(),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
+  // See the sqlite dialect's schema.ts for the full comment. Defaults to `member`
+  // (not artifact's fail-closed `none`) to match collections' existing behavior.
+  workspace_access: text("workspace_access").$type<WorkspaceAccess>().notNull().default("member"),
 })
 export const collectionItem = pgTable(
   "collection_item",
@@ -419,6 +488,8 @@ export const proposal = pgTable("proposal", {
   // Stable identity of the proposer (user or agent id). Withdraw authorization
   // keys on this, never the mutable display `author` name. Nullable for legacy.
   author_id: text("author_id"),
+  // When an agent proposed this, the human it acted on behalf of (delegation provenance).
+  on_behalf_of: text("on_behalf_of"),
   base_version: integer("base_version").notNull(),
   state: text("state").$type<ProposalState>().notNull().default("open"),
   decided_by: text("decided_by"),
@@ -447,6 +518,61 @@ export const reviewRound = pgTable(
     resolved_at: text("resolved_at"),
   },
   (t) => [index("review_round_artifact").on(t.artifact_id, t.requested_for)],
+)
+
+// A context: an askable agent setup — agent + manifest artifact. Mirror of the
+// sqlite def; see schema.ts for the design notes (loose agent_id, hard manifest FK,
+// context_session naming vs Better Auth's `session` table).
+export const context = pgTable(
+  "context",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    name: text("name").notNull(),
+    agent_id: text("agent_id").notNull(),
+    manifest_artifact_id: text("manifest_artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    created_by: text("created_by").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
+)
+
+export const contextSession = pgTable(
+  "context_session",
+  {
+    id: text("id").primaryKey(),
+    context_id: text("context_id")
+      .notNull()
+      .references(() => context.id),
+    org_id: text("org_id").notNull(),
+    asker_id: text("asker_id").notNull(),
+    context_version: integer("context_version").notNull(),
+    state: text("state").$type<SessionState>().notNull().default("open"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    updated_at: text("updated_at"),
+  },
+  (t) => [
+    index("context_session_queue").on(t.context_id, t.state, t.created_at),
+    index("context_session_asker").on(t.asker_id, t.created_at),
+  ],
+)
+
+export const sessionMessage = pgTable(
+  "session_message",
+  {
+    id: text("id").primaryKey(),
+    session_id: text("session_id")
+      .notNull()
+      .references(() => contextSession.id),
+    author_kind: text("author_kind").$type<SessionMessageAuthor>().notNull(),
+    author_id: text("author_id").notNull(),
+    body_md: text("body_md").notNull(),
+    meta: text("meta"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [index("session_message_session").on(t.session_id, t.created_at)],
 )
 
 export const report = pgTable("report", {
@@ -489,12 +615,15 @@ const TABLES = [
   comment,
   webhook,
   webhookDelivery,
+  renderJob,
   membership,
   workspace,
   artifactMember,
   notification,
   agent,
   agentMention,
+  invitation,
+  oauthClientWorkspace,
   artifactFavorite,
   follow,
   artifactTag,
@@ -513,6 +642,9 @@ const TABLES = [
   domain,
   proposal,
   reviewRound,
+  context,
+  contextSession,
+  sessionMessage,
   report,
   auditLog,
 ]

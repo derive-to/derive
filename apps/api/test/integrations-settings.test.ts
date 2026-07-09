@@ -17,6 +17,10 @@ describe("workspace integration settings", () => {
       githubPreviewLink: true,
       slackPost: true,
       slackEvents: {},
+      // The access NEW publishes land with — the team draft (see access-model.md).
+      defaultWorkspaceAccess: "member",
+      defaultLinkRole: "none",
+      defaultListed: "none",
     })
   })
 

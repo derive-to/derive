@@ -1,52 +1,180 @@
-# Derive
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/wordmark-on-dark.png">
+    <img alt="Derive" src="docs/assets/readme/wordmark-on-light.png" width="200">
+  </picture>
+</p>
 
-**Manage and share AI artifacts. Self-hostable. CLI first.**
+<h1 align="center">Publish, review, and own your AI artifacts.</h1>
 
-Derive gives any static artifact — an HTML page, a Markdown doc, or a whole built
-site — a permanent URL with version history. Publish from the CLI or the HTTP
-API; view it rendered and sandboxed. Self-host it, or use the hosted tier.
+<p align="center">
+Permanent versioned URLs and a review loop your team and its agents share, on infrastructure you control. Hosted, or one self-hosted container.
+</p>
 
-## Quickstart (dev)
+<p align="center">
+  <a href="https://derive.to"><b>Try free</b></a>
+  &nbsp;·&nbsp;
+  <a href="#get-started">Self-host</a>
+  &nbsp;·&nbsp;
+  <a href="STANDARD.md">Docs</a>
+</p>
 
-The dev stack is two servers — the API and the web UI:
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-FSL--1.1--ALv2-blue" alt="License: FSL-1.1-ALv2"></a>
+  <a href="https://www.npmjs.com/package/@derive-to/cli"><img src="https://img.shields.io/npm/v/@derive-to/cli?label=%40derive-to%2Fcli&color=6b46ff" alt="npm @derive-to/cli"></a>
+  <a href="https://www.npmjs.com/package/@derive-to/mcp"><img src="https://img.shields.io/npm/v/@derive-to/mcp?label=%40derive-to%2Fmcp&color=6b46ff" alt="npm @derive-to/mcp"></a>
+</p>
 
-```bash
-pnpm install
-pnpm dev:all                              # both servers → open http://localhost:3090
+<p align="center">
+  <img src="docs/assets/readme/hero.png" alt="The Derive library: published artifacts with live previews" width="900">
+</p>
 
-# or run them in separate terminals:
-#   pnpm dev       # API    → http://localhost:8090
-#   pnpm dev:web   # web UI → http://localhost:3090  ← open this
+## What is Derive
 
-# scaffold a project (templates: md · html · slides)
-node packages/cli/bin/derive.js init my-doc --template slides
-cd my-doc
+Derive gives any static artifact, an HTML page, a Markdown doc, or a whole built site, a permanent URL with version history. Publish it from the CLI, the HTTP API, or an agent over MCP. View it rendered inside a sandboxed iframe. Share it with your team, gather comments pinned to the exact text, and approve revisions in a review loop that people and agents run together.
 
-# publish — reads derive.json, so no flags; the id is saved for next time
-node packages/cli/bin/derive.js publish
-# edit, then publish again → new version, same URL, same artifact
-node packages/cli/bin/derive.js publish --name "First draft"
-```
+And the context travels with the work. Every artifact carries its content, its versions, and every review comment, so the context stays alive as it moves between people and tools. That kept context is what makes Derive model-agnostic: keep collaborating by hand or with your model of choice, and hand off without losing the thread, because the source of truth lives with the document, not inside any one AI chat.
 
-`derive init` writes a `derive.json` (artifact id, title, visibility, spa, entry) and
-an `AGENTS.md` describing the publish → review → revise loop. Without a project
-you can still `derive publish <file|dir> [--title --spa --id …]` directly.
-Authoring + the anchor-client protocol are documented in [STANDARD.md](STANDARD.md).
+The point is ownership. Unlike hosted-only tools for sharing AI output, Derive is fair source and self-hostable: run the whole product as one container on your own infrastructure, or use the hosted app. Your artifacts, your data, your URL.
 
-## Self-host
+## Features
+
+<table>
+<tr>
+<td width="52%" valign="top">
+  <img src="docs/assets/readme/feature-publish.png" alt="A published artifact rendered at its permanent URL" width="100%">
+</td>
+<td valign="top">
+
+### Publish anything, get a permanent URL
+
+HTML, Markdown, or a whole built site. Every revision is a new version at the same URL, so a link you shared last week still resolves, and still shows its history.
+
+</td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td valign="top">
+
+### A review loop your team and its agents share
+
+Share an artifact and @mention the people who should weigh in. Comments pin to the exact text; approve a version or request changes. Agents drive the same loop over MCP: publish a draft, read the feedback, revise, resolve.
+
+</td>
+<td width="52%" valign="top">
+  <img src="docs/assets/readme/feature-review.png" alt="An artifact with its comment and review panel open" width="100%">
+</td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="52%" valign="top">
+  <img src="docs/assets/readme/hero.png" alt="The Derive library: every published artifact with a live preview" width="100%">
+</td>
+<td valign="top">
+
+### One library for everything you've shipped
+
+Every artifact you publish lands in one library with a live preview, sorted the way you work: favorites, shared with you, and collections. It lives on your own infrastructure or the hosted app, so the work you own stays in one place, not scattered across chat threads.
+
+</td>
+</tr>
+</table>
+
+Also included:
+
+- ✅ **Kept context, model-agnostic.** Content, versions, and feedback travel with the artifact (not locked in one AI chat), so any teammate or model can pick the work up.
+- ✅ **Sandboxed viewer.** Every artifact runs on an opaque origin, isolated from cookies and other artifacts.
+- ✅ **Self-host your way.** SQLite and local disk by default, or Postgres and S3/R2 at scale.
+- ✅ **Real-time collaboration.** Comments, approvals, and who-else-is-here presence stream live over Server-Sent Events.
+- ✅ **Rich share unfurls.** Every share link unfurls as a card in Slack, Discord, X, and Notion, showing the artifact itself, not a generic placeholder.
+- ✅ **CLI-first.** Scaffold and publish from the terminal.
+- ✅ **Remote MCP server.** Connect any agent with one command.
+- ✅ **Visibility controls.** Private, org, or public, with an optional password to lock public links.
+
+## Get started
+
+<a id="get-started"></a>
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### ☁️ Hosted (free)
+
+The fastest path. No install.
+
+1. Go to [derive.to](https://derive.to)
+2. Create an account
+3. Publish your first artifact
+
+You get a library, in-browser publishing, and the comment loop in about a minute.
+
+</td>
+<td width="50%" valign="top">
+
+### 🖥️ Self-host
+
+One container is the whole product.
 
 ```bash
 docker compose -f deploy/compose.yml up -d
-# → http://localhost:8080 · the whole app (API + web), SQLite + blobs in one volume
+# → http://localhost:8080
 ```
 
-The image bundles the web app and serves it same-origin, so one container is the
-complete product — sign-in, publish, comments, reviews, the sandboxed viewer — at
-one URL. Optional env vars (nothing is required):
-`DATABASE_URL` → Postgres · `OBJECT_STORE_URL` → S3/R2 · `DERIVE_TOKEN` → require a
-bearer token for publishing and for reading gated artifacts · `BASE_URL`, `PORT`, `DATA_DIR`.
+API and web, sign-in, publishing, comments, and the sandboxed viewer, with SQLite and blobs in one volume. See [DEPLOY.md](DEPLOY.md) for Postgres, S3/R2, and cloud hosts.
 
-### Deploy to the cloud
+</td>
+</tr>
+</table>
+
+### From the terminal
+
+```bash
+npm i -g @derive-to/cli
+derive init my-doc --template slides   # templates: md · html · slides
+cd my-doc
+derive publish                         # versioned URL; the id is saved to derive.json
+```
+
+### Connect an agent (MCP)
+
+```bash
+# Derive is a remote MCP server (OAuth). One line to connect Claude Code:
+claude mcp add --transport http derive https://derive.to/mcp
+
+# or run a local stdio server (set DERIVE_SERVER; DERIVE_TOKEN for a static bearer):
+npx -y @derive-to/mcp
+```
+
+The agent acts at the role you grant: publish access publishes directly; a lower scope reads and proposes. Full loop in [packages/mcp/SKILL.md](packages/mcp/SKILL.md).
+
+## Agents: ship a page, get the review comments back
+
+Derive is built for the loop where an agent publishes and a human (or another agent) reviews. `derive init` scaffolds the on-ramp straight into your project: a Claude Code skill (`.claude/skills/derive`) plus a project MCP config (`.mcp.json`), so an agent can publish, read comments, revise, and resolve with no extra wiring.
+
+The five MCP tools: `list_artifacts` (find), `read` (content), `catch_up` (what changed, plus open feedback and version history), `comment` (leave, reply, resolve), and `publish` (save a revision). `publish` goes live if your role can publish; otherwise, or with `for_review: true`, it files a proposal a human approves.
+
+## How it works
+
+One Node container is the whole product; storage is pluggable behind interfaces. The same image self-hosts on SQLite and local disk, scales on Postgres and S3/R2, or runs on Cloudflare Workers.
+
+```
+apps/api          HTTP API, sandboxed artifact serving, viewer
+apps/web          web UI (TanStack Start, SPA mode, static bundle)
+packages/core     domain: ports, publish, markdown render, viewer shell
+packages/db       MetaStore: sqlite (default) · postgres · d1
+packages/storage  BlobStore: fs (default) · s3/r2
+packages/cli      derive init (md/html/slides) · derive publish <file|dir>
+packages/mcp      MCP server: the five agent tools
+```
+
+Every artifact ships OG and Twitter meta plus an oEmbed document, serves a live Server-Sent Events stream, and renders under a strict sandbox CSP on an opaque origin. See [STANDARD.md](STANDARD.md) for the authoring and embed details.
+
+## Deploy
 
 The single-container image runs on any host with a persistent volume.
 
@@ -54,133 +182,11 @@ The single-container image runs on any host with a persistent volume.
 &nbsp;&nbsp;
 [![Deploy to Fly.io](https://img.shields.io/badge/Deploy%20to-Fly.io-8B5CF6)](DEPLOY.md)
 
-- **Railway** — New Project → *Deploy from GitHub repo* → this repo. `railway.json`
-  builds `deploy/Dockerfile`; add a **Volume mounted at `/data`** so SQLite + blobs
-  persist (or attach Railway Postgres and set `DATABASE_URL`).
-- **Fly.io** — `fly launch --config deploy/fly.toml --dockerfile deploy/Dockerfile`,
-  then `fly deploy`. The bundled volume keeps `/data`.
+- **Railway:** New Project → Deploy from GitHub repo → this repo. Add a Volume mounted at `/data` so SQLite and blobs persist, or attach Railway Postgres and set `DATABASE_URL`.
+- **Fly.io:** `fly launch --config deploy/fly.toml --dockerfile deploy/Dockerfile`, then `fly deploy`.
 
-Both auto-detect their assigned URL for auth cookies + share links; set `BASE_URL`
-only when you put a custom domain in front. Full guide: [DEPLOY.md](DEPLOY.md).
-
-### The app & accounts
-
-Open the web app and sign in at **`/login`**. Once signed in you get a library,
-in-browser publishing, and the comment loop — comments are authored as you, and
-Markdown/HTML artifacts can be edited inline to publish a new version.
-
-Accounts are handled by [Better Auth](https://better-auth.com): email + password
-works with zero config. Add social sign-in by setting a provider's OAuth
-credentials; the matching "Continue with…" button then appears on `/login`
-automatically:
-
-- **GitHub** (a natural fit, since Derive mirrors GitHub repos): create an OAuth app
-  at GitHub → Settings → Developer settings → OAuth Apps → New, set the callback to
-  `<BASE_URL>/api/auth/callback/github`, then set `GITHUB_LOGIN_CLIENT_ID` and
-  `GITHUB_LOGIN_CLIENT_SECRET`. This is a plain OAuth app, separate from the
-  repo-sync GitHub App you register in Settings → GitHub.
-- **Google**: create an OAuth client (Web) in Google Cloud Console, set the
-  redirect to `<BASE_URL>/api/auth/callback/google`, then set `GOOGLE_CLIENT_ID`
-  and `GOOGLE_CLIENT_SECRET`.
-- **Enterprise SSO**: set `OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET`
-  (Okta, Entra, Auth0, Keycloak, anything OIDC).
-
-Provide these as environment variables for the Node/Docker deploy, or as secrets
-for the Worker deploy (`wrangler secret put GITHUB_LOGIN_CLIENT_ID`, and so on).
-The user/session tables are created automatically on first boot; see
-`.env.example` for the full list.
-
-Writes are authorized by a login session **or** a static `DERIVE_TOKEN` (for
-CI/agents). Publish with `--visibility public|link|org|password|private` — the
-default is `private` (you and the people you invite; for an agent publish, the
-user the agent acts on behalf of owns it), so nothing is visible to anyone else
-unless you say so. When `DERIVE_TOKEN` is set, gated artifacts 404 for anyone
-without a session or the token.
-
-## Architecture
-
-One Node container is the whole product; storage is pluggable behind interfaces.
-
-```
-apps/api          HTTP API, sandboxed artifact serving, viewer
-apps/web          web UI (TanStack Start, SPA mode — static bundle)
-packages/core     domain: ports, publish, markdown render, viewer shell
-packages/db       MetaStore: sqlite (default) · postgres · d1
-packages/storage  BlobStore: fs (default) · s3/r2
-packages/cli      derive init (md/html/slides) · derive publish <file|dir>
-packages/mcp      MCP server: the 5 agent tools (list_artifacts, read, catch_up, comment, publish)
-```
-
-## Deploy
-
-Single container (SQLite + local disk) or a hosted split (CDN web + API container +
-Postgres + S3/R2). Both run the same image; everything is env driven. See
-[DEPLOY.md](DEPLOY.md).
-
-## Agents: ship a page, get the review comments back
-
-Derive is built for the loop where an agent publishes and a human (or another agent)
-reviews. `derive init` scaffolds the on-ramp straight into your project: a Claude Code
-skill (`.claude/skills/derive`) plus a project MCP config (`.mcp.json`), so an agent
-can publish, read comments, revise, and resolve with no extra wiring.
-
-One line to connect over MCP — Derive is itself a remote MCP server, OAuth-authenticated
-(no static token):
-
-```bash
-claude mcp add --transport http derive <your-derive-server>/mcp
-```
-
-The first call opens a browser consent; the scope you grant maps to a role. The agent
-then acts **at that role** — an agent granted publish access publishes directly, exactly
-as you would; a lower-scoped one reads and proposes.
-
-Or drive it from the CLI:
-
-```bash
-node packages/cli/bin/derive.js login      # OAuth sign-in
-node packages/cli/bin/derive.js publish    # share a versioned URL
-node packages/cli/bin/derive.js comments   # read the review threads, then revise and publish again
-```
-
-MCP tools (five): `list_artifacts` (find), `read` (content), `catch_up` (what changed
-plus the open feedback and version history), `comment` (leave/reply/resolve), and
-`publish` (save a revision). `publish` goes live if your role can publish (Creator/Admin),
-otherwise (or with `for_review:true`) it files a proposal a human approves. Full loop in
-[packages/mcp/SKILL.md](packages/mcp/SKILL.md).
-
-> The `@derive/cli` / `@derive/mcp` npm packages aren't published yet — run the CLI from the
-> repo (`node packages/cli/bin/derive.js`) and connect agents to the remote `/mcp` endpoint
-> above until they land.
-
-## Embeds and unfurls
-
-Every share link (`/artifacts/:ref`) unfurls as a rich card in Slack, Discord, X, and
-Notion, and can be dropped into any page. The server adds OG/Twitter meta to the
-artifact's `/artifacts/:ref` HTML and exposes:
-
-- `GET /v1/og/:ref` — the card image (1200×630 SVG; private artifacts get a
-  no-leak locked card)
-- `GET /v1/oembed?url=…` — an oEmbed `rich` document (a sandboxed iframe)
-- `GET /v1/embed/:ref` — the embeddable view; copy a ready iframe snippet from the
-  Share dialog
-
-All honor visibility against the requester, so a crawler never sees a gated title.
-
-## Live updates
-
-`GET /v1/artifacts/:id/events` is a Server-Sent Events stream emitting
-`comment.created`, `comment.resolved`, `version.published`, and `presence`.
-`POST /v1/artifacts/:id/presence {name}` records a heartbeat. Plain HTTP — no
-WebSockets, no sticky sessions.
-
-Every artifact is served with `Content-Security-Policy: sandbox` on an opaque
-origin and rendered inside a sandboxed iframe — scripts run, but cannot reach
-cookies, storage, or other artifacts.
+Both auto-detect their assigned URL for auth cookies and share links; set `BASE_URL` only for a custom domain. Full guide: [DEPLOY.md](DEPLOY.md).
 
 ## License
 
-[Functional Source License (FSL-1.1-ALv2)](LICENSE) — fair-code / source-available.
-Run, modify, and self-host Derive freely for any purpose **except** offering it as a
-competing commercial product or service. Each release automatically converts to
-Apache-2.0 two years after it ships.
+[Functional Source License (FSL-1.1-ALv2)](LICENSE), fair source. Run, modify, and self-host Derive freely for any purpose except offering it as a competing commercial product or service. Each release automatically converts to Apache-2.0 two years after it ships.

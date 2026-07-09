@@ -66,6 +66,12 @@ export interface Config {
   webDir: string
   webShell: string
   serveWeb: boolean
+  /** Opt-in Node/Playwright preview rendering. When true, startPreviewWorker is
+   *  started in node.ts and render jobs are enqueued on publish. Requires a
+   *  locally-installed Playwright Chromium (bundled in the Docker image; bare Node
+   *  hosts run `pnpm --filter @derive/api exec playwright install chromium`).
+   *  Default false — no rendering on self-host unless explicitly enabled. */
+  previews: boolean
   /** From-address for notification emails (e.g. "Derive <notifications@derive.to>").
    *  Unset ⇒ email notifications are logged, not sent (the zero-config default). */
   emailFrom?: string
@@ -129,6 +135,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // Comma-separated operator emails (case-insensitive). More than one person
     // can run + host a deployment, so this is a list, not a single owner.
     superAdmins: superAdminsFromEnv(env),
+    previews: env.DERIVE_PREVIEWS === "true",
     analytics: env.DERIVE_ANALYTICS !== "false",
     rateLimit: env.DERIVE_RATE_LIMIT !== "false",
     sandboxOrigin: env.DERIVE_SANDBOX_URL,

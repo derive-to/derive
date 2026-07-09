@@ -2,13 +2,13 @@ import { Buffer } from "node:buffer"
 import type { Page } from "@playwright/test"
 import { expect, test } from "../fixtures"
 
-// The sharing & visibility model through the real UI: the private
-// default, the general-access picker (the share dialog's Google-Docs ladder),
-// private (invite-only), and profile privacy. Server-side authz is pinned in
+// The sharing & access model through the real UI: the team-draft default, the
+// access segments (the share dialog's Invited / Workspace / Anyone ladder),
+// invite-only, and profile privacy. Server-side authz is pinned in
 // apps/api/test/visibility.test.ts; this drives the surfaces.
 
-// Publish WITHOUT a visibility — the spec subject is the default itself, so
-// this deliberately bypasses the helper (which pins visibility: link).
+// Publish WITHOUT any access fields — the spec subject is the default itself, so
+// this deliberately bypasses the helper (which pins access).
 async function publishDefault(page: Page, name = "draft.md"): Promise<string> {
   let shortId = ""
   await expect(async () => {
@@ -21,26 +21,25 @@ async function publishDefault(page: Page, name = "draft.md"): Promise<string> {
   return shortId
 }
 
-test("a default publish is private: invisible to another user until the link is opened up", async ({
+test("a default publish stays inside the workspace: invisible to an outsider until it gets a link", async ({
   owner,
   secondUser,
 }) => {
   const id = await publishDefault(owner)
 
-  // The other user (their own workspace) can't open it.
+  // The other user (their own workspace, not a member here) can't open it.
   await secondUser.page.goto(`/artifacts/${id}`)
   await expect(secondUser.page.getByText("Draft")).toBeHidden()
 
-  // The owner widens access to "Anyone with the link" from the share dialog —
-  // the pick applies instantly (no Save button); wait for the PATCH to land.
+  // The owner opens access to "Anyone" from the share dialog — the pick applies
+  // instantly (no Save button); wait for the PATCH to land.
   await owner.goto(`/artifacts/${id}`)
   await owner.getByTestId("share-trigger").click()
-  const saved = owner.waitForResponse((r) => r.url().includes("/visibility") && r.ok())
-  await owner.getByTestId("share-visibility").click()
-  await owner.getByRole("menuitemradio", { name: "Anyone with the link" }).click()
+  const saved = owner.waitForResponse((r) => r.url().includes("/access") && r.ok())
+  await owner.getByTestId("share-access-anyone").click()
   await saved
 
-  // Now the second user can read it.
+  // Now the second user can read it via the world link.
   await secondUser.page.reload()
   await expect(secondUser.page.getByText("Draft").first()).toBeVisible()
 })
@@ -80,11 +79,11 @@ test("private hides an artifact from a workspace member until they're invited", 
   await secondUser.page.goto(`/artifacts/${id}`)
   await expect(secondUser.page.getByText("Secret")).toBeHidden()
 
-  // The owner's share dialog shows Private as the current access and them as
+  // The owner's share dialog shows Invited as the current access and them as
   // the owner-member; inviting the teammate opens it up.
   await owner.goto(`/artifacts/${id}`)
   await owner.getByTestId("share-trigger").click()
-  await expect(owner.getByTestId("share-visibility")).toContainText("Private")
+  await expect(owner.getByTestId("share-access-invite")).toHaveAttribute("data-state", "on")
   await expect(owner.locator('[data-testid^="share-member-row-"]').first()).toContainText("(you)")
   await owner.getByTestId("share-email").fill(secondUser.email)
   await owner.getByTestId("share-add").click()

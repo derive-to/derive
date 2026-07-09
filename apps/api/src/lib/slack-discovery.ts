@@ -23,10 +23,10 @@ export interface DiscoveryDeps {
   encryptionKey: string | undefined
 }
 
-// Only preview/share visibilities a workspace is entitled to see. Private + password stay
-// opaque (Q-E1: suppress) — even the title could be sensitive, and a channel post is public
-// to everyone in the channel.
-const SHAREABLE = new Set(["public", "link", "org"])
+// Only artifacts the world link already exposes. Invite-only (link_role "none") and
+// password-locked stay opaque (Q-E1: suppress) — even the title could be sensitive, and a
+// channel post is public to everyone in the channel. Same gate as routes/embeds.ts.
+const isShareable = (a: ArtifactRecord): boolean => a.link_role !== "none" && !a.password_hash
 
 const summarize = (baseUrl: string, a: ArtifactRecord): ArtifactSummary => ({
   short_id: a.short_id,
@@ -66,7 +66,7 @@ export const handleLinkShared = async (
     const shortId = l.url ? refFromUrl(l.url) : null
     if (!shortId || !l.url) continue
     const a = await deps.meta.getByShortId(shortId)
-    if (!a || a.org_id !== install.org_id || !SHAREABLE.has(a.visibility)) continue
+    if (!a || a.org_id !== install.org_id || !isShareable(a)) continue
     unfurls[l.url] = unfurlCard(summarize(deps.baseUrl, a))
   }
   if (Object.keys(unfurls).length)
@@ -93,7 +93,7 @@ export const handleAppHomeOpened = async (
   const recent = await deps.meta.listArtifacts({ orgId: install.org_id, limit: 5 })
   const view = homeView({
     linkedName,
-    items: recent.filter((a) => SHAREABLE.has(a.visibility)).map((a) => summarize(deps.baseUrl, a)),
+    items: recent.filter((a) => isShareable(a)).map((a) => summarize(deps.baseUrl, a)),
     baseUrl: deps.baseUrl,
   })
   await publishSlackHomeView(token, event.user, view)
@@ -109,7 +109,7 @@ export const shareArtifact = async (
 ): Promise<boolean> => {
   const token = tokenFor(install, deps.encryptionKey)
   const a = await deps.meta.getByShortId(shortId)
-  if (!token || !a || a.org_id !== install.org_id || !SHAREABLE.has(a.visibility)) return false
+  if (!token || !a || a.org_id !== install.org_id || !isShareable(a)) return false
   const card = shareCard(summarize(deps.baseUrl, a))
   const res = await postWithRecovery(
     deps.meta,
@@ -157,7 +157,7 @@ export const handleSlashCommand = async (
     q: query || undefined,
     limit: 20,
   })
-  const shareable = results.filter((a) => SHAREABLE.has(a.visibility)).slice(0, 5)
+  const shareable = results.filter((a) => isShareable(a)).slice(0, 5)
   return {
     response_type: "ephemeral",
     blocks: searchResultBlocks(

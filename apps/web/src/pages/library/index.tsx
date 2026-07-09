@@ -26,6 +26,7 @@ import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { useFollows } from "@/lib/use-follows"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
+import { cn } from "@/lib/utils"
 import { refFor } from "../artifact/parse-ref"
 import { ArtifactGrid } from "./artifact-grid"
 import { ArtifactRow, byRecency } from "./artifact-row"
@@ -78,6 +79,7 @@ function deriveFilter(
   if (view === "following") return { kind: "following" }
   if (view === "shared") return { kind: "shared" }
   if (view === "feedback") return { kind: "feedback" }
+  if (search.tab === "mine") return { kind: "mine" }
   if (search.tag) return { kind: "tag", tag: search.tag }
   if (search.collection)
     return {
@@ -123,7 +125,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
     collection: search.collection,
     favorite: view === "favorites" || undefined,
     author: search.author,
-    scope: scopeFor(view),
+    scope: filter.kind === "mine" ? ("mine" as const) : scopeFor(view),
   }
   const { query: feed, items, listQuery, toggleFavorite, deleteArtifact } = useLibraryFeed(params)
   const { isPending, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = feed
@@ -273,9 +275,11 @@ function LibraryBody({ view }: { view: LibraryView }) {
             ? "Shared with you"
             : filter.kind === "feedback"
               ? "Needs your feedback"
-              : filter.kind === "tag"
-                ? `#${filter.tag}`
-                : collectionTitle
+              : filter.kind === "mine"
+                ? "Created by me"
+                : filter.kind === "tag"
+                  ? `#${filter.tag}`
+                  : collectionTitle
   // Only the counts the server can state authoritatively (preloaded summary / the
   // collection's own count) get a number; the follow/shared/feedback feeds show none
   // rather than a misleading "loaded-so-far" count that grows as you scroll.
@@ -285,11 +289,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
       ? summary?.total
       : filter.kind === "favorites"
         ? summary?.favorites
-        : filter.kind === "tag"
-          ? summary?.tags.find((t) => t.tag === filter.tag)?.count
-          : filter.kind === "collection"
-            ? activeCollection?.count
-            : undefined
+        : filter.kind === "mine"
+          ? summary?.mine
+          : filter.kind === "tag"
+            ? summary?.tags.find((t) => t.tag === filter.tag)?.count
+            : filter.kind === "collection"
+              ? activeCollection?.count
+              : undefined
 
   const showPublish =
     !isSearching && (filter.kind === "all" || filter.kind === "tag" || filter.kind === "favorites")
@@ -302,6 +308,15 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
   return (
     <PageShell scrollRef={scrollRef} width="wide">
+      {/* The full "Activity" feed, reached from the People tab's Recent-activity peek
+          ("View all"). The People page itself shows who you follow + a preview of this. */}
+      {view === "following" && (
+        <PageHeader
+          className="mb-5"
+          title="Activity"
+          subtitle="Recent work from the people you follow."
+        />
+      )}
       {homeView && (
         <PageHeader
           className="mb-4"
@@ -409,6 +424,15 @@ function LibraryBody({ view }: { view: LibraryView }) {
           />
           <RepoPullRequests prs={repoPrs} repo={activeCollection?.repo} activeId={filter.id} />
         </>
+      ) : view === "all" && !isSearching ? (
+        // Always both tabs, even over the first-run guide — an empty "Created
+        // by me" tab is a fine place to land before you've published anything.
+        <LibraryTabs
+          active={filter.kind === "mine" ? "mine" : "all"}
+          total={summary?.total}
+          mine={summary?.mine}
+          pending={summary?.mine_private}
+        />
       ) : (
         // Hide the heading on a brand-new empty home — the visual guide carries it.
         !emptyHome && (
@@ -614,6 +638,59 @@ function SyncedCollection({
   )
 }
 
+// The home library's two tabs: everything, and just what you created. Route
+// stays "/", the tab rides ?tab=mine. `pending` counts your still-link-only
+// docs — the "waiting on you to surface it" signal the old Drafts badge
+// carried — shown as an accent pill beside the neutral total.
+function LibraryTabs({
+  active,
+  total,
+  mine,
+  pending,
+}: {
+  active: "all" | "mine"
+  total?: number
+  mine?: number
+  pending?: number
+}) {
+  const nav = useNavigate()
+  const tab = (id: "all" | "mine", label: string, count?: number, accent?: number) => (
+    <button
+      type="button"
+      data-testid={`library-tab-${id}`}
+      aria-current={active === id ? "page" : undefined}
+      onClick={() =>
+        nav({ to: "/", search: (s) => ({ ...s, tab: id === "mine" ? "mine" : undefined }) })
+      }
+      className={cn(
+        "flex items-center gap-1.5 border-b-2 pb-2 text-sm font-medium transition-colors",
+        active === id
+          ? "border-foreground text-foreground"
+          : "border-transparent text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {label}
+      {count != null && (
+        <span className="font-mono text-2xs tabular-nums text-muted-foreground">{count}</span>
+      )}
+      {accent != null && accent > 0 && (
+        <span
+          title={`${accent} link-only — hidden from the shared library until shared wider`}
+          className="rounded-full bg-primary/10 px-1.5 font-mono text-2xs tabular-nums text-primary"
+        >
+          {accent}
+        </span>
+      )}
+    </button>
+  )
+  return (
+    <div className="mb-3.5 flex items-center gap-5 border-b border-border-soft">
+      {tab("all", "All artifacts", total)}
+      {tab("mine", "Created by me", mine, pending)}
+    </div>
+  )
+}
+
 // The empty state for each view/filter — three tones, never reused (research): searching
 // = corrective ("no match, try another"); a named feed = an explanatory nudge; the
 // inbox-zero /feedback = a positive "all caught up" with no CTA. The unfiltered empty
@@ -658,6 +735,23 @@ function emptyStateFor(
         icon: <Icon name="share" strokeWidth={1.75} />,
         title: "Nothing shared with you yet.",
         description: "When someone shares an artifact with you, it shows up here.",
+      }
+    case "mine":
+      return {
+        icon: <Icon name="sparkles" strokeWidth={1.75} />,
+        title: "Nothing you've created yet.",
+        description:
+          "Publish something, or connect an agent — everything you or your agents create shows up here, whatever its audience.",
+        action: (
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="library-empty-connect-agent"
+            onClick={() => nav({ to: "/settings/$section", params: { section: "agents" } })}
+          >
+            Connect an agent
+          </Button>
+        ),
       }
     case "feedback":
       // Inbox-zero: a positive tone, no action — you're done, not stuck.

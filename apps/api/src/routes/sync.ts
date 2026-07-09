@@ -1,7 +1,7 @@
 import type { GitHubAppRecord, RepoSourceRecord, SyncProgress } from "@derive/core"
 import { newId } from "@derive/core"
-import { Hono } from "hono"
-import { z } from "zod"
+import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
+import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { REQUIRED_EVENTS, REQUIRED_PERMISSIONS } from "../github-app-setup"
 import { decryptSecret, encryptSecret, signState, verifyState } from "../lib/crypto"
@@ -14,7 +14,7 @@ import {
   verifyWebhookSignature,
 } from "../lib/github-app"
 import { ingestGithubPrComment, upsertPreviewComment } from "../lib/github-comments"
-import { fail, readJson } from "../lib/http"
+import { bail, fail, readJson } from "../lib/http"
 import { makePrPreview } from "../lib/pr-preview"
 import { effectiveToken, isSyncing, runToCompletion } from "../lib/sync-runner"
 import { log } from "../log"
@@ -80,11 +80,98 @@ interface GitHubWebhookPayload {
  * Two ways in — a GitHub App (install → pick repos → push auto-sync, no stored
  * secret) or a pasted read-only PAT (self-host without an App). Synced artifacts
  * are read-only (the gate lives in the publish/propose routes); this manages the
- * connection, the App install handshake, and drives the engine (lib/sync).
+ * connection, the App install handshake, and drives the engine (lib/sync). The
+ * RepoSource / PrPreview / GithubSyncStatus / … schemas are the single source for
+ * the web client's types. The install callback (a browser redirect) and the webhook
+ * (a GitHub server-to-server callback) stay plain routes.
  */
 export const syncRoutes = (ctx: AppContext) => {
   const { meta, deps, bus, currentUser, activeWorkspace, workspaceCan, background } = ctx
-  const app = new Hono()
+  const app = new OpenAPIHono<BlankEnv>()
+
+  const RepoSource = z
+    .object({
+      id: z.string(),
+      collection_id: z.string(),
+      repo: z.string(),
+      ref: z.string(),
+      includes: z.string(),
+      token: z.string().nullable(),
+      installation_id: z.string().nullable(),
+      last_synced_at: z.string().nullable(),
+      last_status: z.string().nullable(),
+      created_by: z.string(),
+      created_at: z.string(),
+      file_count: z.number(),
+      progress: z.string().nullable(),
+    })
+    .openapi("RepoSource")
+
+  const PrPreview = z
+    .object({
+      id: z.string(),
+      collection_id: z.string(),
+      repo: z.string(),
+      pr_number: z.number(),
+      title: z.string(),
+      last_status: z.string().nullable(),
+      last_synced_at: z.string().nullable(),
+      file_count: z.number(),
+      progress: z.string().nullable(),
+    })
+    .openapi("PrPreview")
+
+  const GithubInstallation = z
+    .object({ installation_id: z.string(), account_login: z.string().nullable() })
+    .openapi("GithubInstallation")
+
+  const InstallationRepo = z
+    .object({
+      full_name: z.string(),
+      private: z.boolean(),
+      default_branch: z.string(),
+      pushed_at: z.string().nullable(),
+    })
+    .openapi("InstallationRepo")
+
+  const SyncPreview = z
+    .object({
+      total: z.number(),
+      md: z.number(),
+      html: z.number(),
+      other: z.number(),
+      truncated: z.boolean(),
+    })
+    .openapi("SyncPreview")
+
+  const SyncStatus = z
+    .object({
+      id: z.string(),
+      repo: z.string(),
+      progress: z.string().nullable(),
+      last_status: z.string().nullable(),
+      last_synced_at: z.string().nullable(),
+      file_count: z.number(),
+    })
+    .openapi("SyncStatus")
+
+  const GithubSyncStatus = z
+    .object({
+      sources: z.array(RepoSource),
+      prs: z.array(PrPreview),
+      app: z.object({
+        configured: z.boolean(),
+        slug: z.string().optional(),
+        upToDate: z.boolean().optional(),
+        missing: z
+          .object({ permissions: z.record(z.string(), z.string()), events: z.array(z.string()) })
+          .optional(),
+        permissionsUrl: z.string().optional(),
+        approveUrl: z.string().optional(),
+      }),
+      installations: z.array(GithubInstallation),
+    })
+    .openapi("GithubSyncStatus")
 
   // The instance App, with its three secret columns decrypted for use. Null when
   // setup hasn't run (the UI then offers the PAT path). The App flow needs an
@@ -187,95 +274,145 @@ export const syncRoutes = (ctx: AppContext) => {
   // Fetches all installations of this App from GitHub and upserts them into the
   // current workspace. Useful for recovery when the `github_installation` table
   // loses rows (e.g. after a DB wipe) without needing to re-click through GitHub.
-  app.post("/v1/sync/github/resync-installations", async (c) => {
-    if (!(await workspaceCan(c, "publish"))) return fail(c, 403, "forbidden")
-    const loaded = await loadApp()
-    if (!loaded) return fail(c, 409, "GitHub App is not set up yet")
-    const org = await activeWorkspace(c)
-    const uid = (await currentUser(c))?.id ?? "anon"
-    try {
-      const installs = await listAppInstallations(loaded.app.app_id, loaded.pem)
-      for (const inst of installs) {
-        await meta.upsertGithubInstallation({
-          installation_id: String(inst.id),
-          org_id: org,
-          account_login: inst.account?.login ?? null,
-          created_by: uid,
-          created_at: new Date().toISOString(),
-        })
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/sync/github/resync-installations",
+      tags: ["Sync"],
+      summary: "Re-import this App's installations from GitHub (Admin only).",
+      responses: {
+        200: {
+          description: "How many installations were re-imported.",
+          content: { "application/json": { schema: z.object({ synced: z.number() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const loaded = await loadApp()
+      if (!loaded) return bail(fail(c, 409, "GitHub App is not set up yet"))
+      const org = await activeWorkspace(c)
+      const uid = (await currentUser(c))?.id ?? "anon"
+      try {
+        const installs = await listAppInstallations(loaded.app.app_id, loaded.pem)
+        for (const inst of installs) {
+          await meta.upsertGithubInstallation({
+            installation_id: String(inst.id),
+            org_id: org,
+            account_login: inst.account?.login ?? null,
+            created_by: uid,
+            created_at: new Date().toISOString(),
+          })
+        }
+        return c.json({ synced: installs.length })
+      } catch (err) {
+        return bail(fail(c, 502, err instanceof Error ? err.message : "resync failed"))
       }
-      return c.json({ synced: installs.length })
-    } catch (err) {
-      return fail(c, 502, err instanceof Error ? err.message : "resync failed")
-    }
-  })
+    },
+  )
 
   // ---- List + connection status -----------------------------------------
-  app.get("/v1/sync/github", async (c) => {
-    if (!(await workspaceCan(c, "comment"))) return fail(c, 403, "forbidden")
-    const org = await activeWorkspace(c)
-    const [sources, installs, loaded] = await Promise.all([
-      meta.listRepoSources(org),
-      meta.listGithubInstallations(org),
-      loadApp(),
-    ])
-    // A configured App that GitHub no longer knows about (deleted) reports as
-    // unconfigured, so the UI shows "Set up" again instead of a dead Install link.
-    const live = loaded ? await appIsLive(loaded) : { ok: false }
-    // Split branch mirrors from PR previews — the UI lists them in separate groups.
-    // A preview carries its PR number; its collection title ("PR #<n>: <title>") names it.
-    const branchSources = sources.filter((s) => s.pr_number == null)
-    const previews = sources.filter((s) => s.pr_number != null)
-    const previewCols = await Promise.all(previews.map((s) => meta.getCollection(s.collection_id)))
-    return c.json({
-      sources: branchSources.map(toJson),
-      prs: previews.map((s, i) => ({
-        ...toJson(s),
-        pr_number: s.pr_number,
-        title: previewCols[i]?.title ?? `PR #${s.pr_number}`,
-      })),
-      // What the UI needs to pick its entry point: is a live App set up (→ Connect
-      // button + slug for the install link), which permissions still need granting
-      // (→ the update-permissions banner), and which installations this workspace
-      // already has (→ jump straight to the repo picker).
-      app:
-        loaded && live.ok
-          ? (() => {
-              const missing = diffAppSpec(live)
-              const upToDate =
-                Object.keys(missing.permissions).length === 0 && missing.events.length === 0
-              return {
-                configured: true,
-                slug: loaded.app.slug,
-                upToDate,
-                missing,
-                permissionsUrl: `https://github.com/settings/apps/${loaded.app.slug}/permissions`,
-                approveUrl: `https://github.com/apps/${loaded.app.slug}/installations/new`,
-              }
-            })()
-          : { configured: false },
-      installations: installs.map((i) => ({
-        installation_id: i.installation_id,
-        account_login: i.account_login,
-      })),
-    })
-  })
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/sync/github",
+      tags: ["Sync"],
+      summary: "The workspace's synced repos, PR previews, App status, and installations.",
+      responses: {
+        200: {
+          description: "Branch sources, PR previews, the App's setup/permissions, installations.",
+          content: { "application/json": { schema: GithubSyncStatus } },
+        },
+      },
+    }),
+    async (c) => {
+      if (!(await workspaceCan(c, "comment"))) return bail(fail(c, 403, "forbidden"))
+      const org = await activeWorkspace(c)
+      const [sources, installs, loaded] = await Promise.all([
+        meta.listRepoSources(org),
+        meta.listGithubInstallations(org),
+        loadApp(),
+      ])
+      // A configured App that GitHub no longer knows about (deleted) reports as
+      // unconfigured, so the UI shows "Set up" again instead of a dead Install link.
+      const live = loaded ? await appIsLive(loaded) : { ok: false }
+      // Split branch mirrors from PR previews — the UI lists them in separate groups.
+      // A preview carries its PR number; its collection title ("PR #<n>: <title>") names it.
+      const branchSources = sources.filter((s) => s.pr_number == null)
+      const previews = sources.filter(
+        (s): s is RepoSourceRecord & { pr_number: number } => s.pr_number != null,
+      )
+      // One query for every preview's collection, keyed by id — not a getCollection per row.
+      const colById = new Map(
+        (await meta.getCollections(previews.map((s) => s.collection_id))).map((col) => [
+          col.id,
+          col,
+        ]),
+      )
+      return c.json({
+        sources: branchSources.map(toJson),
+        prs: previews.map((s) => ({
+          ...toJson(s),
+          pr_number: s.pr_number,
+          title: colById.get(s.collection_id)?.title ?? `PR #${s.pr_number}`,
+        })),
+        // What the UI needs to pick its entry point: is a live App set up (→ Connect
+        // button + slug for the install link), which permissions still need granting
+        // (→ the update-permissions banner), and which installations this workspace
+        // already has (→ jump straight to the repo picker).
+        app:
+          loaded && live.ok
+            ? (() => {
+                const missing = diffAppSpec(live)
+                const upToDate =
+                  Object.keys(missing.permissions).length === 0 && missing.events.length === 0
+                return {
+                  configured: true,
+                  slug: loaded.app.slug,
+                  upToDate,
+                  missing,
+                  permissionsUrl: `https://github.com/settings/apps/${loaded.app.slug}/permissions`,
+                  approveUrl: `https://github.com/apps/${loaded.app.slug}/installations/new`,
+                }
+              })()
+            : { configured: false },
+        installations: installs.map((i) => ({
+          installation_id: i.installation_id,
+          account_login: i.account_login,
+        })),
+      })
+    },
+  )
 
   // ---- App install: hand back the GitHub install URL --------------------
   // The SPA navigates the browser to this URL; GitHub walks the user through
   // picking repos, then redirects to /v1/sync/github/callback with our state.
-  app.post("/v1/sync/github/install", async (c) => {
-    if (!(await workspaceCan(c, "publish"))) return fail(c, 403, "forbidden")
-    const loaded = await loadApp()
-    if (!loaded) return fail(c, 409, "GitHub App is not set up yet")
-    const org = await activeWorkspace(c)
-    const uid = (await currentUser(c))?.id ?? "anon"
-    const state = signState({ org, uid }, deps.encryptionKey as string)
-    const url = `https://github.com/apps/${encodeURIComponent(
-      loaded.app.slug,
-    )}/installations/new?state=${encodeURIComponent(state)}`
-    return c.json({ url })
-  })
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/sync/github/install",
+      tags: ["Sync"],
+      summary: "Get the GitHub App install URL for this workspace (Admin only).",
+      responses: {
+        200: {
+          description: "The GitHub install URL to navigate the browser to.",
+          content: { "application/json": { schema: z.object({ url: z.string() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const loaded = await loadApp()
+      if (!loaded) return bail(fail(c, 409, "GitHub App is not set up yet"))
+      const org = await activeWorkspace(c)
+      const uid = (await currentUser(c))?.id ?? "anon"
+      const state = signState({ org, uid }, deps.encryptionKey as string)
+      const url = `https://github.com/apps/${encodeURIComponent(
+        loaded.app.slug,
+      )}/installations/new?state=${encodeURIComponent(state)}`
+      return c.json({ url })
+    },
+  )
 
   // ---- App install callback (GitHub → browser redirect) -----------------
   // GET, so it passes the anonymous-write lockdown. Primary auth is the signed
@@ -284,6 +421,7 @@ export const syncRoutes = (ctx: AppContext) => {
   // An ABSENT state is the legitimate "installed directly on GitHub" path (the
   // App's setup_url fires with no state); there we fall back to the session's
   // active workspace so the install is recorded rather than silently dropped.
+  // Plain route: a browser redirect, not typed JSON.
   app.get("/v1/sync/github/callback", async (c) => {
     const installationId = c.req.query("installation_id")
     const stateRaw = c.req.query("state") ?? ""
@@ -320,229 +458,343 @@ export const syncRoutes = (ctx: AppContext) => {
   })
 
   // ---- Repos an installation can mirror (drives the picker) -------------
-  app.get("/v1/sync/github/installations/:id/repos", async (c) => {
-    if (!(await workspaceCan(c, "publish"))) return fail(c, 403, "forbidden")
-    const org = await activeWorkspace(c)
-    const installationId = c.req.param("id")
-    const inst = await meta.getGithubInstallation(installationId)
-    // Scope: only an installation owned by the caller's workspace is listable.
-    if (!inst || inst.org_id !== org) return fail(c, 404, "not found")
-    const loaded = await loadApp()
-    if (!loaded) return fail(c, 409, "GitHub App is not set up yet")
-    try {
-      const token = await installationToken(loaded.app.app_id, loaded.pem, installationId)
-      const repos = await listInstallationRepos(token)
-      return c.json({ repos })
-    } catch (err) {
-      const userError = err instanceof GitHubError && err.status < 500
-      return fail(c, userError ? 400 : 502, err instanceof Error ? err.message : "listing failed")
-    }
-  })
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/sync/github/installations/{id}/repos",
+      tags: ["Sync"],
+      summary: "The repos an installation can mirror (Admin only).",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The installation's repos, most-recent-push first.",
+          content: {
+            "application/json": { schema: z.object({ repos: z.array(InstallationRepo) }) },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const org = await activeWorkspace(c)
+      const installationId = c.req.param("id")
+      const inst = await meta.getGithubInstallation(installationId)
+      // Scope: only an installation owned by the caller's workspace is listable.
+      if (!inst || inst.org_id !== org) return bail(fail(c, 404, "not found"))
+      const loaded = await loadApp()
+      if (!loaded) return bail(fail(c, 409, "GitHub App is not set up yet"))
+      try {
+        const token = await installationToken(loaded.app.app_id, loaded.pem, installationId)
+        const repos = await listInstallationRepos(token)
+        return c.json({ repos })
+      } catch (err) {
+        const userError = err instanceof GitHubError && err.status < 500
+        return bail(
+          fail(c, userError ? 400 : 502, err instanceof Error ? err.message : "listing failed"),
+        )
+      }
+    },
+  )
 
   // ---- Preview: how many docs a repo+scope would mirror -----------------
   // Lists the tree (no blob fetches) and counts matching files by type, so the
   // picker can show "~396 files · 360 MD · 36 HTML" before you commit + scope.
-  app.get("/v1/sync/github/installations/:id/preview", async (c) => {
-    if (!(await workspaceCan(c, "publish"))) return fail(c, 403, "forbidden")
-    const org = await activeWorkspace(c)
-    const installationId = c.req.param("id")
-    const inst = await meta.getGithubInstallation(installationId)
-    if (!inst || inst.org_id !== org) return fail(c, 404, "not found")
-    const parsed = parseRepo(c.req.query("repo") ?? "")
-    if (!parsed) return fail(c, 400, "repo must be owner/name")
-    const globs = (c.req.query("includes")?.trim() || DEFAULT_INCLUDES)
-      .split(",")
-      .map((g) => g.trim())
-      .filter(Boolean)
-    const loaded = await loadApp()
-    if (!loaded) return fail(c, 409, "GitHub App is not set up yet")
-    try {
-      const token = await installationToken(loaded.app.app_id, loaded.pem, installationId)
-      const { entries, truncated } = await listTree(
-        parsed,
-        c.req.query("ref")?.trim() || "HEAD",
-        token,
-      )
-      const matched = entries.filter((e) => matchesGlobs(e.path, globs))
-      const md = matched.filter((e) => /\.(md|markdown)$/i.test(e.path)).length
-      const html = matched.filter((e) => /\.html?$/i.test(e.path)).length
-      return c.json({
-        total: matched.length,
-        md,
-        html,
-        other: matched.length - md - html,
-        truncated,
-      })
-    } catch (err) {
-      const userError = err instanceof GitHubError && err.status < 500
-      return fail(c, userError ? 400 : 502, err instanceof Error ? err.message : "preview failed")
-    }
-  })
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/sync/github/installations/{id}/preview",
+      tags: ["Sync"],
+      summary: "How many docs a repo + scope would mirror (Admin only).",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "Matching file counts by type + whether the tree was truncated.",
+          content: { "application/json": { schema: SyncPreview } },
+        },
+      },
+    }),
+    async (c) => {
+      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const org = await activeWorkspace(c)
+      const installationId = c.req.param("id")
+      const inst = await meta.getGithubInstallation(installationId)
+      if (!inst || inst.org_id !== org) return bail(fail(c, 404, "not found"))
+      const parsed = parseRepo(c.req.query("repo") ?? "")
+      if (!parsed) return bail(fail(c, 400, "repo must be owner/name"))
+      const globs = (c.req.query("includes")?.trim() || DEFAULT_INCLUDES)
+        .split(",")
+        .map((g) => g.trim())
+        .filter(Boolean)
+      const loaded = await loadApp()
+      if (!loaded) return bail(fail(c, 409, "GitHub App is not set up yet"))
+      try {
+        const token = await installationToken(loaded.app.app_id, loaded.pem, installationId)
+        const { entries, truncated } = await listTree(
+          parsed,
+          c.req.query("ref")?.trim() || "HEAD",
+          token,
+        )
+        const matched = entries.filter((e) => matchesGlobs(e.path, globs))
+        const md = matched.filter((e) => /\.(md|markdown)$/i.test(e.path)).length
+        const html = matched.filter((e) => /\.html?$/i.test(e.path)).length
+        return c.json({
+          total: matched.length,
+          md,
+          html,
+          other: matched.length - md - html,
+          truncated,
+        })
+      } catch (err) {
+        const userError = err instanceof GitHubError && err.status < 500
+        return bail(
+          fail(c, userError ? 400 : 502, err instanceof Error ? err.message : "preview failed"),
+        )
+      }
+    },
+  )
 
   // ---- Connect a repo (App installation OR a PAT) -----------------------
-  app.post("/v1/sync/github", async (c) => {
-    if (!(await workspaceCan(c, "publish"))) return fail(c, 403, "forbidden")
-    const body = await readJson(
-      c,
-      z.object({
-        repo: z.string(),
-        ref: z.string().optional(),
-        includes: z.string().optional(),
-        token: z.string().optional(),
-        installation_id: z.string().optional(),
-      }),
-    )
-    if (body instanceof Response) return body
-    const parsed = parseRepo(body.repo)
-    if (!parsed) return fail(c, 400, "repo must be owner/name")
-    const repo = `${parsed.owner}/${parsed.name}`
-    const org = await activeWorkspace(c)
-    const createdBy = (await currentUser(c))?.id ?? "anon"
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/sync/github",
+      tags: ["Sync"],
+      summary: "Connect a repo for mirroring (App installation or a PAT).",
+      responses: {
+        200: {
+          description: "The existing source (this repo was already connected).",
+          content: { "application/json": { schema: RepoSource } },
+        },
+        201: {
+          description: "The newly connected source (first sync kicked off).",
+          content: { "application/json": { schema: RepoSource } },
+        },
+      },
+    }),
+    async (c) => {
+      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const body = await readJson(
+        c,
+        z.object({
+          repo: z.string(),
+          ref: z.string().optional(),
+          includes: z.string().optional(),
+          token: z.string().optional(),
+          installation_id: z.string().optional(),
+        }),
+      )
+      if (body instanceof Response) return bail(body)
+      const parsed = parseRepo(body.repo)
+      if (!parsed) return bail(fail(c, 400, "repo must be owner/name"))
+      const repo = `${parsed.owner}/${parsed.name}`
+      const org = await activeWorkspace(c)
+      const createdBy = (await currentUser(c))?.id ?? "anon"
 
-    // Dedup: one BRANCH source (and one collection) per repo in a workspace.
-    // Re-connecting an already-connected repo returns the existing source instead of
-    // spawning a duplicate collection — the bug that produced two "GitHub: <repo>"
-    // collections. PR previews (`pr_number` set) are excluded — they're per-PR, not
-    // the repo's canonical mirror.
-    const existing = (await meta.listRepoSources(org)).find(
-      (s) => s.repo === repo && s.pr_number == null,
-    )
-    if (existing) return c.json(toJson(existing))
+      // Dedup: one BRANCH source (and one collection) per repo in a workspace.
+      // Re-connecting an already-connected repo returns the existing source instead of
+      // spawning a duplicate collection — the bug that produced two "GitHub: <repo>"
+      // collections. PR previews (`pr_number` set) are excluded — they're per-PR, not
+      // the repo's canonical mirror.
+      const existing = (await meta.listRepoSources(org)).find(
+        (s) => s.repo === repo && s.pr_number == null,
+      )
+      if (existing) return c.json(toJson(existing))
 
-    // An installation-backed source: validate the installation belongs to this
-    // workspace so a source can't be pinned to someone else's install.
-    let installationId: string | null = null
-    if (body.installation_id) {
-      const inst = await meta.getGithubInstallation(body.installation_id)
-      if (!inst || inst.org_id !== org) return fail(c, 400, "unknown installation")
-      installationId = body.installation_id
-    }
+      // An installation-backed source: validate the installation belongs to this
+      // workspace so a source can't be pinned to someone else's install.
+      let installationId: string | null = null
+      if (body.installation_id) {
+        const inst = await meta.getGithubInstallation(body.installation_id)
+        if (!inst || inst.org_id !== org) return bail(fail(c, 400, "unknown installation"))
+        installationId = body.installation_id
+      }
 
-    // One collection per repo, created up front so the first sync has a home.
-    const col = await meta.createCollection({
-      id: newId("col"),
-      org_id: org,
-      title: `GitHub: ${repo}`,
-      created_by: createdBy,
-    })
-    await meta.setCollectionMember({
-      id: newId("cm"),
-      collection_id: col.id,
-      user_id: createdBy,
-      role: "owner",
-    })
-    // Encrypt a PAT at rest when one is given and a server key is configured;
-    // never store or return it in the clear. Installation-backed sources carry no
-    // token (they mint short-lived ones at sync time).
-    const raw = installationId ? undefined : body.token?.trim()
-    const token = raw ? (deps.encryptionKey ? encryptSecret(raw, deps.encryptionKey) : raw) : null
-    const source = await meta.createRepoSource({
-      id: newId("rs"),
-      org_id: org,
-      collection_id: col.id,
-      repo,
-      ref: body.ref?.trim() || "HEAD",
-      includes: body.includes?.trim() || DEFAULT_INCLUDES,
-      token,
-      installation_id: installationId,
-      created_by: createdBy,
-    })
-    // Kick the first sync server-side right away, so connecting a repo immediately
-    // shows the live bar (no separate "Sync now" needed). No inline fallback here —
-    // a no-runner env starts mirroring on the explicit /run instead.
-    await launch(source, false)
-    const fresh = (await meta.getRepoSource(source.id, org)) ?? source
-    return c.json(toJson(fresh), 201)
-  })
+      // One collection per repo, created up front so the first sync has a home.
+      const col = await meta.createCollection({
+        id: newId("col"),
+        org_id: org,
+        title: `GitHub: ${repo}`,
+        created_by: createdBy,
+      })
+      await meta.setCollectionMember({
+        id: newId("cm"),
+        collection_id: col.id,
+        user_id: createdBy,
+        role: "owner",
+      })
+      // Encrypt a PAT at rest when one is given and a server key is configured;
+      // never store or return it in the clear. Installation-backed sources carry no
+      // token (they mint short-lived ones at sync time).
+      const raw = installationId ? undefined : body.token?.trim()
+      const token = raw ? (deps.encryptionKey ? encryptSecret(raw, deps.encryptionKey) : raw) : null
+      const source = await meta.createRepoSource({
+        id: newId("rs"),
+        org_id: org,
+        collection_id: col.id,
+        repo,
+        ref: body.ref?.trim() || "HEAD",
+        includes: body.includes?.trim() || DEFAULT_INCLUDES,
+        token,
+        installation_id: installationId,
+        created_by: createdBy,
+      })
+      // Kick the first sync server-side right away, so connecting a repo immediately
+      // shows the live bar (no separate "Sync now" needed). No inline fallback here —
+      // a no-runner env starts mirroring on the explicit /run instead.
+      await launch(source, false)
+      const fresh = (await meta.getRepoSource(source.id, org)) ?? source
+      return c.json(toJson(fresh), 201)
+    },
+  )
 
   // ---- Manual "Sync now" ------------------------------------------------
   // Triggers a server-side sync and returns at once (202) — the work runs on our
   // servers (DO / Node loop), so the user can close the tab. The UI polls /status for
   // the live bar. Without a runner wired (tests/dev), runs inline to completion and
   // returns the finished source instead, so a self-host still mirrors synchronously.
-  app.post("/v1/sync/github/:id/run", async (c) => {
-    if (!(await workspaceCan(c, "publish"))) return fail(c, 403, "forbidden")
-    const org = await activeWorkspace(c)
-    const source = await meta.getRepoSource(c.req.param("id"), org)
-    if (!source) return fail(c, 404, "not found")
-    if (deps.maxArtifacts && (await meta.countArtifacts(org)) >= deps.maxArtifacts)
-      return fail(c, 409, "artifact quota reached")
-    if (deps.startSync) {
-      await launch(source, false)
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/sync/github/{id}/run",
+      tags: ["Sync"],
+      summary: "Trigger a server-side sync (Admin only).",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The finished source (ran inline; no runner wired).",
+          content: { "application/json": { schema: RepoSource } },
+        },
+        202: {
+          description: "The source, queued (sync runs on the server; poll /status).",
+          content: { "application/json": { schema: RepoSource } },
+        },
+      },
+    }),
+    async (c) => {
+      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const org = await activeWorkspace(c)
+      const source = await meta.getRepoSource(c.req.param("id"), org)
+      if (!source) return bail(fail(c, 404, "not found"))
+      if (deps.maxArtifacts && (await meta.countArtifacts(org)) >= deps.maxArtifacts)
+        return bail(fail(c, 409, "artifact quota reached"))
+      if (deps.startSync) {
+        await launch(source, false)
+        const fresh = (await meta.getRepoSource(source.id, org)) ?? source
+        return c.json(toJson(fresh), 202)
+      }
+      try {
+        // A GitHub <500 is a bad repo/token/install (the caller's to fix → 400); else 502.
+        await meta.setRepoSourceProgress(source.id, queuedProgress(new Date().toISOString()))
+        await runToCompletion(meta, deps.blobs, deps.encryptionKey, source.id)
+      } catch (err) {
+        const userError = err instanceof GitHubError && err.status < 500
+        return bail(
+          fail(c, userError ? 400 : 502, err instanceof Error ? err.message : "sync failed"),
+        )
+      }
       const fresh = (await meta.getRepoSource(source.id, org)) ?? source
-      return c.json(toJson(fresh), 202)
-    }
-    try {
-      // A GitHub <500 is a bad repo/token/install (the caller's to fix → 400); else 502.
-      await meta.setRepoSourceProgress(source.id, queuedProgress(new Date().toISOString()))
-      await runToCompletion(meta, deps.blobs, deps.encryptionKey, source.id)
-    } catch (err) {
-      const userError = err instanceof GitHubError && err.status < 500
-      return fail(c, userError ? 400 : 502, err instanceof Error ? err.message : "sync failed")
-    }
-    const fresh = (await meta.getRepoSource(source.id, org)) ?? source
-    return c.json(toJson(fresh))
-  })
+      return c.json(toJson(fresh))
+    },
+  )
 
   // ---- Status poll (drives the big progress bar) ------------------------
   // Deliberately cheap: no GitHub round-trip (unlike the list endpoint's appIsLive
   // check), just the persisted progress + status + count — so the UI polls it every
   // ~1.5s while a sync runs without hammering GitHub.
-  app.get("/v1/sync/github/:id/status", async (c) => {
-    if (!(await workspaceCan(c, "comment"))) return fail(c, 403, "forbidden")
-    const org = await activeWorkspace(c)
-    const source = await meta.getRepoSource(c.req.param("id"), org)
-    if (!source) return fail(c, 404, "not found")
-    const view = toJson(source)
-    return c.json({
-      id: source.id,
-      repo: source.repo,
-      progress: view.progress ?? null,
-      last_status: source.last_status,
-      last_synced_at: source.last_synced_at,
-      file_count: view.file_count,
-    })
-  })
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/sync/github/{id}/status",
+      tags: ["Sync"],
+      summary: "Cheap status poll for a source's live progress bar.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The source's persisted progress + last status + file count.",
+          content: { "application/json": { schema: SyncStatus } },
+        },
+      },
+    }),
+    async (c) => {
+      if (!(await workspaceCan(c, "comment"))) return bail(fail(c, 403, "forbidden"))
+      const org = await activeWorkspace(c)
+      const source = await meta.getRepoSource(c.req.param("id"), org)
+      if (!source) return bail(fail(c, 404, "not found"))
+      const view = toJson(source)
+      return c.json({
+        id: source.id,
+        repo: source.repo,
+        progress: view.progress ?? null,
+        last_status: source.last_status,
+        last_synced_at: source.last_synced_at,
+        file_count: view.file_count,
+      })
+    },
+  )
 
   // ---- Active syncs in this workspace (drives the global chip) ----------
   // Every source mid-sync (progress phase queued/listing/mirroring), so the app-shell
   // chip can show "Syncing <repo> · 47/190" from any page. Static path, so it never
   // collides with the `:id` routes above.
-  app.get("/v1/sync/github/active", async (c) => {
-    if (!(await workspaceCan(c, "comment"))) return fail(c, 403, "forbidden")
-    const org = await activeWorkspace(c)
-    const active = (await meta.listRepoSources(org)).filter(isSyncing).map(toJson)
-    return c.json({ active })
-  })
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/sync/github/active",
+      tags: ["Sync"],
+      summary: "Sources mid-sync in this workspace (drives the global syncing chip).",
+      responses: {
+        200: {
+          description: "The sources currently syncing.",
+          content: { "application/json": { schema: z.object({ active: z.array(RepoSource) }) } },
+        },
+      },
+    }),
+    async (c) => {
+      if (!(await workspaceCan(c, "comment"))) return bail(fail(c, 403, "forbidden"))
+      const org = await activeWorkspace(c)
+      const active = (await meta.listRepoSources(org)).filter(isSyncing).map(toJson)
+      return c.json({ active })
+    },
+  )
 
   // ---- Disconnect -------------------------------------------------------
-  app.delete("/v1/sync/github/:id", async (c) => {
-    if (!(await workspaceCan(c, "publish"))) return fail(c, 403, "forbidden")
-    const org = await activeWorkspace(c)
-    const source = await meta.getRepoSource(c.req.param("id"), org)
-    if (!source) return fail(c, 404, "not found")
-    if (c.req.query("wipe") === "true") {
-      // Delete every artifact this source manages, then its collection.
-      try {
-        const map = JSON.parse(source.files || "{}") as Record<string, { artifact_id?: string }>
-        for (const entry of Object.values(map)) {
-          if (entry.artifact_id) await meta.deleteArtifact(entry.artifact_id, org)
+  app.openapi(
+    createRoute({
+      method: "delete",
+      path: "/v1/sync/github/{id}",
+      tags: ["Sync"],
+      summary: "Disconnect a source (?wipe=true also deletes its artifacts).",
+      request: { params: z.object({ id: z.string() }) },
+      responses: { 204: { description: "The source was disconnected." } },
+    }),
+    async (c) => {
+      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const org = await activeWorkspace(c)
+      const source = await meta.getRepoSource(c.req.param("id"), org)
+      if (!source) return bail(fail(c, 404, "not found"))
+      if (c.req.query("wipe") === "true") {
+        // Delete every artifact this source manages, then its collection.
+        try {
+          const map = JSON.parse(source.files || "{}") as Record<string, { artifact_id?: string }>
+          for (const entry of Object.values(map)) {
+            if (entry.artifact_id) await meta.deleteArtifact(entry.artifact_id, org)
+          }
+        } catch {
+          /* malformed files map — skip */
         }
-      } catch {
-        /* malformed files map — skip */
+        await meta.deleteCollection(source.collection_id)
       }
-      await meta.deleteCollection(source.collection_id)
-    }
-    // Default: keep the collection + artifacts so the docs stay readable.
-    await meta.deleteRepoSource(source.id, org)
-    return c.body(null, 204)
-  })
+      // Default: keep the collection + artifacts so the docs stay readable.
+      await meta.deleteRepoSource(source.id, org)
+      return c.body(null, 204)
+    },
+  )
 
   // ---- Webhook (push auto-sync + install lifecycle) ---------------------
   // GitHub posts here (no session), so it's allow-listed past the anonymous
   // lockdown and authenticated instead by the App's webhook secret over the raw
   // body. A push to a tracked repo/branch re-mirrors it; install events keep the
-  // connection state honest.
+  // connection state honest. Plain route: a GitHub server-to-server callback.
   // authz-exempt: GitHub server-to-server callback — the App webhook-secret HMAC over the raw body is the gate, not a session.
   app.post("/v1/sync/github/webhook", async (c) => {
     const loaded = await loadApp()

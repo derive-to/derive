@@ -8,6 +8,7 @@ import {
   useRouterState,
 } from "@tanstack/react-router"
 import { type ReactNode, useEffect, useState } from "react"
+import { AgentPushListener } from "../components/chrome/agent-push"
 import { AppShell } from "../components/chrome/app-shell"
 import { AppBoot } from "../components/shared/app-boot"
 import { Toaster } from "../components/ui/sonner"
@@ -71,6 +72,10 @@ function RootComponent() {
             <CursorPrefProvider>
               <AppFrame />
             </CursorPrefProvider>
+            {/* Auto-open on agent push: one app-wide listener on the shared
+                per-user stream (renders nothing). Inside AuthProvider for `me`,
+                inside the router tree for navigation. */}
+            <AgentPushListener />
           </AuthProvider>
           {/* Inside ThemeProvider so sonner's useTheme() tracks the app's forced
               theme rather than falling back to the OS preference. */}
@@ -94,13 +99,15 @@ function AppFrame() {
   const [hydrated, setHydrated] = useState(false)
   useEffect(() => setHydrated(true), [])
 
-  // /login and /welcome (first-run onboarding) render chrome-less — no rail/top bar.
-  // /showcase is the design canvas and renders chrome-less too.
+  // /login, /reset-password, and /welcome (first-run onboarding) render chrome-less — no
+  // rail/top bar. /showcase is the design canvas and renders chrome-less too.
   const chromeless = useRouterState({
     select: (s) =>
       s.location.pathname === "/login" ||
+      s.location.pathname === "/reset-password" ||
       s.location.pathname === "/welcome" ||
-      s.location.pathname === "/showcase",
+      s.location.pathname === "/showcase" ||
+      s.location.pathname.startsWith("/invite/"),
   })
 
   if (!hydrated) return <AppBoot />

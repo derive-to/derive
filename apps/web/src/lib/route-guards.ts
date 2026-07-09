@@ -27,11 +27,15 @@ export const requireAuth = async ({ context, location }: GuardArgs) => {
 // itself uses requireAuth ONLY, so it never redirects to itself — no loop.
 export const requireOnboarded = async (args: GuardArgs) => {
   const { me } = await requireAuth(args)
-  let onboarded = false
+  // Server-authoritative flag (syncs across devices, survives a cleared cache) wins.
+  if (me.onboarded) return
+  // Fall back to the legacy signals so accounts from before the flag are never bounced
+  // back to /welcome: a claimed profession, or the per-browser localStorage cache.
+  let cached = false
   try {
-    onboarded = localStorage.getItem(STORAGE_KEYS.onboarded) === "1"
+    cached = localStorage.getItem(STORAGE_KEYS.onboarded) === "1"
   } catch {
     /* private mode — the profession check still gates it */
   }
-  if (!me.profession && !onboarded) throw redirect({ to: "/welcome" })
+  if (!me.profession && !cached) throw redirect({ to: "/welcome" })
 }

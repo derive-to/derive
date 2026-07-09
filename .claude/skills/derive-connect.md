@@ -26,7 +26,7 @@ Add to `.claude/mcp.json` in your project root:
   "mcpServers": {
     "derive": {
       "command": "npx",
-      "args": ["-y", "@derive/mcp"],
+      "args": ["-y", "@derive-to/mcp"],
       "env": {
         "DERIVE_SERVER": "https://derive.to",
         "DERIVE_TOKEN": "dk_agt_..."
@@ -39,7 +39,7 @@ Add to `.claude/mcp.json` in your project root:
 Or globally via the CLI:
 
 ```bash
-claude mcp add derive npx -- -y @derive/mcp
+claude mcp add derive npx -- -y @derive-to/mcp
 export DERIVE_SERVER=https://derive.to
 export DERIVE_TOKEN=dk_agt_...
 ```
@@ -53,7 +53,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "derive": {
       "command": "npx",
-      "args": ["-y", "@derive/mcp"],
+      "args": ["-y", "@derive-to/mcp"],
       "env": {
         "DERIVE_SERVER": "https://derive.to",
         "DERIVE_TOKEN": "dk_agt_..."

@@ -45,7 +45,11 @@ export TEST_DATABASE_URL="$URL"
 
 echo "→ running apps/api suite against Postgres"
 cd "$ROOT/apps/api"
-pnpm exec vitest run --no-file-parallelism "$@"
+# The first test in each file pays the Postgres schema bootstrap (DROP SCHEMA
+# CASCADE + full DDL replay via the helpers' deferred store) — on a CI runner
+# that alone can cross vitest's default 5s testTimeout as the schema grows.
+# Relax the timeout for this lane only; the SQLite lane keeps the 5s default.
+pnpm exec vitest run --no-file-parallelism --testTimeout=15000 "$@"
 
 # Also run @derive/db's store contract against the same Postgres — the only place
 # pg.ts (the hosted-tier driver) is covered + gated by the db package's own suite.

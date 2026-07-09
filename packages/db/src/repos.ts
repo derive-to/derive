@@ -10,17 +10,20 @@ import type {
   CommentRecord,
   CommentSignals,
   CommentState,
+  ContextRecord,
   DeliveryRecord,
   DeliveryStatus,
   DomainRecord,
   DomainStatus,
   FollowKind,
   FollowRecord,
-  GeneralRole,
   GitHubAppRecord,
   GitHubInstallationRecord,
   GithubAuthor,
+  InvitationRecord,
+  LinkRole,
   ListArtifactsOpts,
+  Listed,
   MembershipRecord,
   NewAgent,
   NewAgentMention,
@@ -30,28 +33,40 @@ import type {
   NewCollection,
   NewCollectionMember,
   NewComment,
+  NewContext,
   NewDelivery,
   NewDomain,
   NewFollow,
+  NewInvitation,
   NewMembership,
   NewNotification,
   NewProposal,
+  NewRenderJob,
   NewReport,
   NewRepoSource,
   NewReviewRound,
+  NewSession,
+  NewSessionMessage,
   NewVersion,
   NewWebhook,
   NotificationRecord,
   OAuthGrant,
+  OAuthGrantSummary,
   OrgSettings,
+  PreviewStatus,
   ProposalRecord,
   ProposalState,
+  RenderJobRecord,
+  RenderJobStatus,
   ReportRecord,
   ReportState,
   RepoSourceRecord,
   ReviewRoundRecord,
   ReviewRoundState,
   Role,
+  SessionMessageRecord,
+  SessionRecord,
+  SessionState,
   SlackChannelRouteRecord,
   SlackInstallRecord,
   SlackThreadLinkRecord,
@@ -60,8 +75,8 @@ import type {
   UserNotificationPrefRecord,
   UserProfile,
   VersionRecord,
-  Visibility,
   WebhookRecord,
+  WorkspaceAccess,
   WorkspaceRecord,
 } from "@derive/core"
 import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@derive/core"
@@ -98,17 +113,23 @@ import {
   collectionItem,
   collectionMember,
   comment,
+  context,
+  contextSession,
   domain,
   follow,
   githubApp,
   githubInstallation,
+  invitation,
   membership,
   notification,
+  oauthClientWorkspace,
   orgSettings,
   proposal,
+  renderJob,
   report,
   repoSource,
   reviewRound,
+  sessionMessage,
   slackChannelRoute,
   slackInstall,
   slackThreadLink,
@@ -128,23 +149,26 @@ import {
  * once, not in two places (the listArtifacts the review flagged as duplicated).
  */
 export function artifactListConditions(
-  art: { title: Column; created_at: Column; id: Column; org_id: Column; visibility: Column },
+  art: { title: Column; created_at: Column; id: Column; org_id: Column; listed: Column },
   opts?: ListArtifactsOpts,
 ): SQL[] {
   const conds: SQL[] = []
-  // Anonymous / non-member callers only ever see public artifacts in a listing — an
-  // org/link/password title must not leak to someone who can't open it.
-  if (opts?.publicOnly) conds.push(eq(art.visibility, "public"))
-  // `private` artifacts are invisible even to workspace members unless they're an
-  // explicit artifact member. The subquery names the table literally — sqlite, D1,
-  // and pg all call it artifact_member, and this function serves all three.
-  else if (opts?.viewerId)
-    conds.push(
-      sql`(${art.visibility} != 'private' OR EXISTS (
+  // Anonymous / non-member callers only ever see the public directory — a
+  // workspace-listed title must not leak to someone outside the workspace.
+  if (opts?.publicOnly) conds.push(eq(art.listed, "public"))
+  // A listing surfaces feed-listed rows (`workspace`/`public`) to members, plus any
+  // row the viewer is an explicit member of (their own drafts, shares, collections)
+  // — an UNlisted row (listed='none') never appears in a feed by access alone. The
+  // subquery names the table literally — sqlite, D1, and pg all call it
+  // artifact_member, and this function serves all three.
+  else if (opts?.viewerId) {
+    const isMember = sql`EXISTS (
         SELECT 1 FROM artifact_member am
         WHERE am.artifact_id = ${art.id} AND am.user_id = ${opts.viewerId}
-      ))`,
-    )
+      )`
+    conds.push(sql`(${art.listed} != 'none' OR ${isMember})`)
+  }
+  // A trusted caller (operator token / internal jobs, no viewerId) sees everything.
   if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
   if (opts?.cursor) {
     const cursor = or(
@@ -165,6 +189,7 @@ export const schema = {
   comment,
   webhook,
   webhookDelivery,
+  renderJob,
   membership,
   workspace,
   artifactMember,
@@ -176,6 +201,11 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  invitation,
+  oauthClientWorkspace,
+  context,
+  contextSession,
+  sessionMessage,
   collection,
   collectionItem,
   collectionMember,
@@ -197,6 +227,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   comment: true,
   webhook: true,
   webhookDelivery: true,
+  renderJob: true,
   membership: true,
   workspace: true,
   artifactMember: true,
@@ -206,6 +237,10 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
+  invitation: true,
+  context: true,
+  contextSession: true,
+  sessionMessage: true,
   collection: true,
   collectionMember: true,
   repoSource: true,
@@ -250,6 +285,48 @@ export const parseOAuthScopes = (s: string | string[] | null): string[] => {
   return s.split(/\s+/).filter(Boolean)
 }
 
+/** Parse a stored org-settings JSON blob over the defaults, normalizing the v2
+ *  access defaults (defaultWorkspaceAccess/defaultLinkRole/defaultListed) and
+ *  dropping the retired keys (defaultUnlistedRole, defaultAgentVisibility,
+ *  defaultLinkAudience). An unknown or missing value reads as the factory default
+ *  (the team draft: `member` / `none` / `none` — see DEFAULT_ORG_SETTINGS), so a
+ *  stale or malformed blob can never silently widen a workspace's defaults. Shared
+ *  by both drivers so old blobs read identically everywhere. */
+export const parseOrgSettings = (raw: string | null): OrgSettings => {
+  let parsed: Partial<OrgSettings> & { defaultUnlistedRole?: unknown } = {}
+  try {
+    if (raw) parsed = JSON.parse(raw) as Partial<OrgSettings>
+  } catch {}
+  const {
+    defaultUnlistedRole: _retiredA,
+    defaultAgentVisibility: _retiredB,
+    defaultLinkAudience: _retiredC,
+    ...rest
+  } = parsed as Partial<OrgSettings> & {
+    defaultUnlistedRole?: unknown
+    defaultAgentVisibility?: unknown
+    defaultLinkAudience?: unknown
+  }
+  const wa = rest.defaultWorkspaceAccess as string | undefined
+  const defaultWorkspaceAccess: OrgSettings["defaultWorkspaceAccess"] =
+    wa === "none" || wa === "member" ? wa : DEFAULT_ORG_SETTINGS.defaultWorkspaceAccess
+  const lr = rest.defaultLinkRole as string | undefined
+  const defaultLinkRole: OrgSettings["defaultLinkRole"] =
+    lr === "none" || lr === "viewer" || lr === "commenter" || lr === "editor"
+      ? lr
+      : DEFAULT_ORG_SETTINGS.defaultLinkRole
+  const li = rest.defaultListed as string | undefined
+  const defaultListed: OrgSettings["defaultListed"] =
+    li === "none" || li === "workspace" || li === "public" ? li : DEFAULT_ORG_SETTINGS.defaultListed
+  return {
+    ...DEFAULT_ORG_SETTINGS,
+    ...rest,
+    defaultWorkspaceAccess,
+    defaultLinkRole,
+    defaultListed,
+  }
+}
+
 export const collectManagedIds = (rows: { files: string }[]): string[] => {
   const ids = new Set<string>()
   for (const r of rows) {
@@ -280,6 +357,8 @@ export function makeRepos(db: SqliteDb) {
     (await db.select().from(artifact).where(eq(artifact.short_id, shortId)).get()) ?? null
   const getArtifactById = async (id: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.id, id)).get()) ?? null
+  const getArtifactsByIds = async (ids: string[]): Promise<ArtifactRecord[]> =>
+    ids.length === 0 ? [] : db.select().from(artifact).where(inArray(artifact.id, ids)).all()
 
   const siblingsBySourcePaths = async (
     orgId: string,
@@ -309,17 +388,42 @@ export function makeRepos(db: SqliteDb) {
     return (await getByShortId(a.short_id)) as ArtifactRecord
   }
 
-  const setVisibility = async (
+  const setAccess = async (
     artifactId: string,
-    visibility: Visibility,
+    workspaceAccess: WorkspaceAccess,
+    listed: Listed,
+    linkRole: LinkRole,
     passwordHash: string | null,
-    generalRole: GeneralRole,
   ): Promise<void> => {
     await db
       .update(artifact)
-      .set({ visibility, password_hash: passwordHash, general_role: generalRole })
+      .set({
+        workspace_access: workspaceAccess,
+        listed,
+        link_role: linkRole,
+        password_hash: passwordHash,
+      })
       .where(eq(artifact.id, artifactId))
       .run()
+  }
+
+  // One-time boot backfill from the pre-v2 shape (visibility + general_role) into
+  // the access fields. Idempotent: it CONSUMES `visibility` (resets it to the
+  // orphaned default 'private'), and only touches rows where it's still non-default
+  // — so a second boot, and every row created after (born visibility='private'),
+  // is a no-op. setAccess never writes visibility, so a later access change is
+  // never re-clobbered. See docs/plans/access-model.md.
+  // Self-sufficient: it also folds in the pre-collapse vocabulary (`link`/`password`
+  // → public, `unlisted` → private) so it maps correctly on ANY caller — the hosted
+  // deploy path (apply-pg-schema.ts) runs it without node.ts's separate collapse.
+  const backfillAccess = async (): Promise<void> => {
+    await db.run(sql`UPDATE artifact SET
+      workspace_access = CASE WHEN visibility IN ('org','public','link','password') THEN 'member' ELSE 'none' END,
+      listed = CASE WHEN visibility IN ('public','link','password') THEN 'public' WHEN visibility = 'org' THEN 'workspace' ELSE 'none' END,
+      link_role = CASE WHEN visibility IN ('public','link','password') THEN general_role ELSE 'none' END,
+      visibility = 'private',
+      general_role = 'viewer'
+      WHERE visibility != 'private'`)
   }
 
   const setLocked = async (artifactId: string, locked: 0 | 1): Promise<void> => {
@@ -395,6 +499,22 @@ export function makeRepos(db: SqliteDb) {
       .run()
   }
 
+  const setVersionPreview = async (
+    artifactId: string,
+    n: number,
+    fields: {
+      preview_key?: string | null
+      preview_status?: PreviewStatus | null
+      preview_error?: string | null
+    },
+  ): Promise<void> => {
+    await db
+      .update(version)
+      .set(fields)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+      .run()
+  }
+
   const listArtifacts = async (opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> => {
     if (opts?.ids && opts.ids.length === 0) return []
     const conds = artifactListConditions(artifact, opts)
@@ -443,10 +563,44 @@ export function makeRepos(db: SqliteDb) {
         .all()
     ).map((r) => r.id)
 
+  // "Created by me" for the list — every artifact this user holds an OWNER member
+  // row on in the workspace, any visibility. The roster row is written once at
+  // creation for the human behind the publish (agents included), so the filter
+  // survives republishes; the author_id denorm doesn't (addVersion rewrites it to
+  // the newest version's author — null for a token publish). The author-login
+  // filter above stays byline-based deliberately: it's GitHub-commit attribution.
+  const ownedBy = (userId: string) =>
+    and(eq(artifactMember.user_id, userId), eq(artifactMember.role, "owner"))
+  const artifactIdsOwnedBy = async (orgId: string, userId: string): Promise<string[]> =>
+    (
+      await db
+        .select({ id: artifact.id })
+        .from(artifact)
+        .innerJoin(
+          artifactMember,
+          and(eq(artifactMember.artifact_id, artifact.id), ownedBy(userId)),
+        )
+        .where(eq(artifact.org_id, orgId))
+        .all()
+    ).map((r) => r.id)
+
   const countArtifacts = async (orgId?: string): Promise<number> => {
     const q = db.select({ c: count() }).from(artifact)
     return (await (orgId ? q.where(eq(artifact.org_id, orgId)) : q).get())?.c ?? 0
   }
+
+  const countOwnedBy = async (orgId: string, userId: string, listed?: Listed): Promise<number> =>
+    (
+      await db
+        .select({ c: count() })
+        .from(artifact)
+        .innerJoin(
+          artifactMember,
+          and(eq(artifactMember.artifact_id, artifact.id), ownedBy(userId)),
+        )
+        .where(and(eq(artifact.org_id, orgId), listed ? eq(artifact.listed, listed) : undefined))
+        .get()
+    )?.c ?? 0
 
   const storageBytes = async (orgId: string): Promise<number> => {
     // One row per distinct blob in the org (max size_bytes guards a stale 0 on a
@@ -478,6 +632,10 @@ export function makeRepos(db: SqliteDb) {
 
   const setArtifactRemoved = async (id: string, removedAt: string | null): Promise<void> => {
     await db.update(artifact).set({ removed_at: removedAt }).where(eq(artifact.id, id)).run()
+  }
+  const setArtifactsRemoved = async (ids: string[], removedAt: string | null): Promise<void> => {
+    if (ids.length === 0) return
+    await db.update(artifact).set({ removed_at: removedAt }).where(inArray(artifact.id, ids)).run()
   }
   const setArtifactTitle = async (id: string, title: string): Promise<void> => {
     await db.update(artifact).set({ title }).where(eq(artifact.id, id)).run()
@@ -662,6 +820,10 @@ export function makeRepos(db: SqliteDb) {
   const enqueueDelivery = async (d: NewDelivery): Promise<void> => {
     await db.insert(webhookDelivery).values(d).run()
   }
+  const enqueueDeliveries = async (rows: NewDelivery[]): Promise<void> => {
+    if (rows.length === 0) return
+    await db.insert(webhookDelivery).values(rows).run()
+  }
   const claimDueDeliveries = async (
     now: string,
     limit: number,
@@ -702,6 +864,39 @@ export function makeRepos(db: SqliteDb) {
       .limit(limit)
       .all()
 
+  // ---- Render-job queue --------------------------------------------------
+  const enqueueRenderJob = async (j: NewRenderJob): Promise<void> => {
+    await db.insert(renderJob).values(j).run()
+  }
+  const claimDueRenderJobs = async (
+    now: string,
+    limit: number,
+    leaseUntil: string,
+  ): Promise<RenderJobRecord[]> => {
+    const due = db
+      .select({ id: renderJob.id })
+      .from(renderJob)
+      .where(and(eq(renderJob.status, "pending"), lte(renderJob.next_attempt_at, now)))
+      .orderBy(asc(renderJob.next_attempt_at))
+      .limit(limit)
+    return (await db
+      .update(renderJob)
+      .set({ attempts: sql`${renderJob.attempts} + 1`, next_attempt_at: leaseUntil })
+      .where(inArray(renderJob.id, due))
+      .returning()) as RenderJobRecord[]
+  }
+  const updateRenderJob = async (
+    id: string,
+    fields: {
+      status: RenderJobStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
+  ): Promise<void> => {
+    await db.update(renderJob).set(fields).where(eq(renderJob.id, id)).run()
+  }
+
   // ---- Workspace membership ----------------------------------------------
   const getMembership = async (orgId: string, userId: string): Promise<MembershipRecord | null> =>
     (await db
@@ -711,6 +906,10 @@ export function makeRepos(db: SqliteDb) {
       .get()) ?? null
   const listMemberships = async (orgId: string): Promise<MembershipRecord[]> =>
     db.select().from(membership).where(eq(membership.org_id, orgId)).all()
+  const listMembershipsForOrgs = async (orgIds: string[]): Promise<MembershipRecord[]> =>
+    orgIds.length === 0
+      ? []
+      : db.select().from(membership).where(inArray(membership.org_id, orgIds)).all()
   const countMemberships = async (orgId: string): Promise<number> =>
     (await db.select({ n: count() }).from(membership).where(eq(membership.org_id, orgId)).get())
       ?.n ?? 0
@@ -966,7 +1165,7 @@ export function makeRepos(db: SqliteDb) {
       const ghIds = (await githubIdsForUsers(people)).map((g) => g.toLowerCase())
       if (ghIds.length > 0) authorConds.push(inArray(sql`lower(${artifact.author_gh_id})`, ghIds))
       const authored = authorConds.length === 1 ? authorConds[0] : or(...authorConds)
-      if (authored) branches.push(and(eq(artifact.visibility, "public"), authored) as SQL)
+      if (authored) branches.push(and(eq(artifact.listed, "public"), authored) as SQL)
     }
     if (branches.length === 0) return []
     const match = branches.length === 1 ? branches[0] : or(...branches)
@@ -1031,18 +1230,19 @@ export function makeRepos(db: SqliteDb) {
     } else {
       conds.push(eq(artifact.author_id, userId))
     }
-    // Visible to the viewer: public OR in a workspace they share with the profile
-    // owner. Private drafts never ride a profile, shared workspace or not — the
-    // owner finds them in their library, not on their public face.
+    // Visible to the viewer on a profile: publicly listed, OR listed in a workspace
+    // they share with the profile owner. UNlisted work (listed='none') never rides
+    // a profile, shared workspace or not — the owner finds it in their library, not
+    // on their public face.
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
       const v = or(
-        eq(artifact.visibility, "public"),
-        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
+        eq(artifact.listed, "public"),
+        and(inArray(artifact.org_id, orgs), ne(artifact.listed, "none")),
       )
       if (v) conds.push(v)
     } else {
-      conds.push(eq(artifact.visibility, "public"))
+      conds.push(eq(artifact.listed, "public"))
     }
     return conds
   }
@@ -1129,6 +1329,22 @@ export function makeRepos(db: SqliteDb) {
     for (const k in out) out[k]?.sort()
     return out
   }
+
+  const previewReady = async (artifactIds: string[]): Promise<Record<string, boolean>> => {
+    if (artifactIds.length === 0) return {}
+    const rows = await db
+      .select({ artifact_id: artifact.id })
+      .from(artifact)
+      .innerJoin(
+        version,
+        and(eq(version.artifact_id, artifact.id), eq(version.n, artifact.current_version)),
+      )
+      .where(and(inArray(artifact.id, artifactIds), eq(version.preview_status, "ready")))
+      .all()
+    const out: Record<string, boolean> = {}
+    for (const r of rows) out[r.artifact_id] = true
+    return out
+  }
   // Sequential replace (used by D1). better-sqlite3 overrides with a transaction.
   const setArtifactTags = async (artifactId: string, tags: string[]): Promise<void> => {
     await db.delete(artifactTag).where(eq(artifactTag.artifact_id, artifactId)).run()
@@ -1144,6 +1360,8 @@ export function makeRepos(db: SqliteDb) {
     (await db.insert(collection).values(c).returning().get()) as CollectionRecord
   const getCollection = async (id: string): Promise<CollectionRecord | null> =>
     (await db.select().from(collection).where(eq(collection.id, id)).get()) ?? null
+  const getCollections = async (ids: string[]): Promise<CollectionRecord[]> =>
+    ids.length === 0 ? [] : db.select().from(collection).where(inArray(collection.id, ids)).all()
   const updateCollection = async (
     id: string,
     fields: { title?: string },
@@ -1157,6 +1375,16 @@ export function makeRepos(db: SqliteDb) {
         .returning()
         .get()) ?? null
     )
+  }
+  const setCollectionAccess = async (
+    id: string,
+    workspaceAccess: WorkspaceAccess,
+  ): Promise<void> => {
+    await db
+      .update(collection)
+      .set({ workspace_access: workspaceAccess })
+      .where(eq(collection.id, id))
+      .run()
   }
   // Sequential cascade (used by D1). better-sqlite3 overrides with a transaction.
   const deleteCollection = async (id: string): Promise<void> => {
@@ -1318,11 +1546,7 @@ export function makeRepos(db: SqliteDb) {
   // ---- Workspace integration settings -------------------------------------
   const getOrgSettings = async (orgId: string): Promise<OrgSettings> => {
     const row = await db.select().from(orgSettings).where(eq(orgSettings.org_id, orgId)).get()
-    let parsed: Partial<OrgSettings> = {}
-    try {
-      if (row?.settings) parsed = JSON.parse(row.settings) as Partial<OrgSettings>
-    } catch {}
-    return { ...DEFAULT_ORG_SETTINGS, ...parsed }
+    return parseOrgSettings(row?.settings ?? null)
   }
   const setOrgSettings = async (orgId: string, settings: OrgSettings): Promise<void> => {
     await db
@@ -1612,9 +1836,124 @@ export function makeRepos(db: SqliteDb) {
       .returning()
       .get()) ?? null
 
+  // ---- Contexts + sessions -------------------------------------------------
+  const createContext = async (x: NewContext): Promise<ContextRecord> =>
+    (await db.insert(context).values(x).returning().get()) as ContextRecord
+  const getContext = async (id: string): Promise<ContextRecord | null> =>
+    (await db.select().from(context).where(eq(context.id, id)).get()) ?? null
+  const listContexts = async (orgId: string): Promise<ContextRecord[]> =>
+    db
+      .select()
+      .from(context)
+      .where(eq(context.org_id, orgId))
+      .orderBy(desc(context.created_at))
+      .all()
+  // Sequential cascade (messages → sessions → context), like deleteCollection.
+  // The org scope gates the WHOLE cascade, not just the context row — otherwise a
+  // wrong-workspace call would wipe another tenant's sessions and leave the context.
+  const deleteContext = async (id: string, orgId: string): Promise<void> => {
+    const owned = await db
+      .select({ id: context.id })
+      .from(context)
+      .where(and(eq(context.id, id), eq(context.org_id, orgId)))
+      .get()
+    if (!owned) return
+    // Subqueries, never materialized id lists: a long-lived context accumulates
+    // one session per ask, and an expanded IN (...) would blow D1's
+    // 100-bound-parameter cap (the same constraint listArtifacts documents).
+    await db
+      .delete(sessionMessage)
+      .where(
+        inArray(
+          sessionMessage.session_id,
+          db
+            .select({ id: contextSession.id })
+            .from(contextSession)
+            .where(eq(contextSession.context_id, id)),
+        ),
+      )
+      .run()
+    await db.delete(contextSession).where(eq(contextSession.context_id, id)).run()
+    await db.delete(context).where(eq(context.id, id)).run()
+  }
+  const createSession = async (s: NewSession): Promise<SessionRecord> =>
+    (await db.insert(contextSession).values(s).returning().get()) as SessionRecord
+  const getSession = async (id: string): Promise<SessionRecord | null> =>
+    (await db.select().from(contextSession).where(eq(contextSession.id, id)).get()) ?? null
+  const listSessions = async (
+    contextId: string,
+    opts?: { askerId?: string; limit?: number },
+  ): Promise<SessionRecord[]> => {
+    const where = opts?.askerId
+      ? and(eq(contextSession.context_id, contextId), eq(contextSession.asker_id, opts.askerId))
+      : eq(contextSession.context_id, contextId)
+    return db
+      .select()
+      .from(contextSession)
+      .where(where)
+      .orderBy(desc(contextSession.created_at))
+      .limit(opts?.limit ?? 50)
+      .all()
+  }
+  const pendingSessions = async (contextId: string, limit: number): Promise<SessionRecord[]> =>
+    db
+      .select()
+      .from(contextSession)
+      .where(and(eq(contextSession.context_id, contextId), eq(contextSession.state, "open")))
+      .orderBy(asc(contextSession.created_at))
+      .limit(limit)
+      .all()
+  const setSessionState = async (id: string, state: SessionState): Promise<SessionRecord | null> =>
+    (await db
+      .update(contextSession)
+      .set({ state, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, id))
+      .returning()
+      .get()) ?? null
+  // Two writes, no transaction (the createReviewRound pattern; D1 has no txn in
+  // this driver). A crash between them leaves state stale: an unsettled agent
+  // turn is caught by the runner's last-turn guard; a lost asker `open` waits
+  // for the asker's next message. Both windows are milliseconds.
+  const addSessionMessage = async (
+    m: NewSessionMessage,
+    state: SessionState,
+  ): Promise<SessionMessageRecord> => {
+    const row = (await db
+      .insert(sessionMessage)
+      .values(m)
+      .returning()
+      .get()) as SessionMessageRecord
+    await db
+      .update(contextSession)
+      .set({ state, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, m.session_id))
+      .run()
+    return row
+  }
+  const listSessionMessages = async (sessionId: string): Promise<SessionMessageRecord[]> =>
+    db
+      .select()
+      .from(sessionMessage)
+      .where(eq(sessionMessage.session_id, sessionId))
+      .orderBy(asc(sessionMessage.created_at))
+      .all()
+  const listSessionMessagesFor = async (sessionIds: string[]): Promise<SessionMessageRecord[]> =>
+    sessionIds.length === 0
+      ? []
+      : db
+          .select()
+          .from(sessionMessage)
+          .where(inArray(sessionMessage.session_id, sessionIds))
+          .orderBy(asc(sessionMessage.created_at))
+          .all()
+
   // ---- Notifications -----------------------------------------------------
   const createNotification = async (n: NewNotification): Promise<void> => {
     await db.insert(notification).values(n).run()
+  }
+  const createNotifications = async (rows: NewNotification[]): Promise<void> => {
+    if (rows.length === 0) return
+    await db.insert(notification).values(rows).run()
   }
   const listNotifications = async (userId: string, limit: number): Promise<NotificationRecord[]> =>
     db
@@ -1706,6 +2045,48 @@ export function makeRepos(db: SqliteDb) {
       return null
     }
   }
+  const oauthClientExists = async (clientId: string): Promise<boolean> => {
+    try {
+      const r = await db.get(
+        sql`select 1 as one from "oauthClient" where "clientId" = ${clientId} limit 1`,
+      )
+      return !!r
+    } catch {
+      return false
+    }
+  }
+  // Replace the whole granted-workspace SET for (user, client): clear, then insert
+  // one row per ticked workspace. An EMPTY array clears it → the grant reverts to
+  // "all workspaces". This is what the consent screen's multi-select persists.
+  const setOAuthClientWorkspaces = async (
+    userId: string,
+    clientId: string,
+    orgIds: string[],
+  ): Promise<void> => {
+    await db
+      .delete(oauthClientWorkspace)
+      .where(
+        and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
+      )
+      .run()
+    for (const orgId of orgIds) {
+      await db
+        .insert(oauthClientWorkspace)
+        .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
+        .onConflictDoNothing()
+        .run()
+    }
+  }
+  // The grant's scoped workspaces. Empty array = "all workspaces" (unscoped).
+  const getOAuthClientWorkspaces = async (userId: string, clientId: string): Promise<string[]> => {
+    const rows = await db
+      .select({ org_id: oauthClientWorkspace.org_id })
+      .from(oauthClientWorkspace)
+      .where(
+        and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
+      )
+    return rows.map((r) => r.org_id)
+  }
   const pruneStaleOAuthClients = async (cutoffIso: string): Promise<number> => {
     try {
       const r = (await db.run(sql`
@@ -1715,10 +2096,66 @@ export function makeRepos(db: SqliteDb) {
           and "clientId" not in (select "clientId" from "oauthConsent")
           and "clientId" not in (select "clientId" from "oauthAccessToken")
       `)) as RunResult
+      // Workspace bindings for clients that no longer exist (pruned above, or
+      // any earlier sweep) have nothing left to resolve against — sweep them too.
+      await db.run(sql`
+        delete from oauth_client_workspace
+        where client_id not in (select "clientId" from "oauthClient")
+      `)
       return r.changes ?? r.meta?.changes ?? 0
     } catch {
       // OAuth tables absent → nothing to reap.
       return 0
+    }
+  }
+  // The agents a user has authorized (one row per consented client): join oauthConsent to
+  // oauthClient for the display name. `scopes` is stored as a JSON array string by Better
+  // Auth; parse defensively. Empty when the oauth-provider tables aren't present.
+  const listUserGrants = async (userId: string): Promise<OAuthGrantSummary[]> => {
+    try {
+      const rows = (await db.all(sql`
+        select k."clientId" as client_id, c."name" as client_name,
+               k."scopes" as scopes, k."updatedAt" as granted_at
+        from "oauthConsent" k
+        join "oauthClient" c on c."clientId" = k."clientId"
+        where k."userId" = ${userId}
+        order by k."updatedAt" desc
+      `)) as {
+        client_id: string
+        client_name: string | null
+        scopes: string | null
+        granted_at: string | number | null
+      }[]
+      return rows.map((r) => {
+        // updatedAt may be an ISO string or an epoch (s or ms), like getOAuthGrant's expiry.
+        const ms =
+          typeof r.granted_at === "number"
+            ? r.granted_at < 1e12
+              ? r.granted_at * 1000
+              : r.granted_at
+            : Date.parse(r.granted_at ?? "")
+        return {
+          clientId: r.client_id,
+          clientName: r.client_name || r.client_id,
+          scopes: parseOAuthScopes(r.scopes),
+          grantedAt: new Date(Number.isFinite(ms) ? ms : Date.now()).toISOString(),
+        }
+      })
+    } catch {
+      return []
+    }
+  }
+  // Revoke a user's grant to a client: drop the consent + every live token so access ends
+  // now and a fresh consent is required. Best-effort per table (a table may not exist).
+  const revokeUserGrant = async (userId: string, clientId: string): Promise<void> => {
+    for (const table of ["oauthAccessToken", "oauthRefreshToken", "oauthConsent"]) {
+      try {
+        await db.run(
+          sql`delete from ${sql.raw(`"${table}"`)} where "userId" = ${userId} and "clientId" = ${clientId}`,
+        )
+      } catch {
+        // Table absent or column mismatch on this dialect → skip; the others still run.
+      }
     }
   }
   const deleteAgent = async (id: string, orgId: string): Promise<void> => {
@@ -1729,6 +2166,71 @@ export function makeRepos(db: SqliteDb) {
   }
   const createAgentMention = async (m: NewAgentMention): Promise<void> => {
     await db.insert(agentMention).values(m).run()
+  }
+
+  // ---- Workspace invitations ---------------------------------------------
+  const createInvitation = async (i: NewInvitation): Promise<InvitationRecord> =>
+    (await db.insert(invitation).values(i).returning().get()) as InvitationRecord
+  const getInvitationByToken = async (tokenHash: string): Promise<InvitationRecord | null> =>
+    (await db.select().from(invitation).where(eq(invitation.token, tokenHash)).get()) ?? null
+  const listPendingInvitations = async (orgId: string): Promise<InvitationRecord[]> =>
+    db
+      .select()
+      .from(invitation)
+      .where(and(eq(invitation.org_id, orgId), isNull(invitation.accepted_at)))
+      .orderBy(desc(invitation.created_at))
+      .all()
+  const deletePendingInvitationsFor = async (orgId: string, email: string): Promise<void> => {
+    await db
+      .delete(invitation)
+      .where(
+        and(
+          eq(invitation.org_id, orgId),
+          eq(invitation.email, email),
+          isNull(invitation.accepted_at),
+        ),
+      )
+      .run()
+  }
+  const deleteInvitation = async (id: string, orgId: string): Promise<void> => {
+    await db
+      .delete(invitation)
+      .where(and(eq(invitation.id, id), eq(invitation.org_id, orgId)))
+      .run()
+  }
+  const markInvitationAccepted = async (id: string): Promise<void> => {
+    await db
+      .update(invitation)
+      .set({ accepted_at: new Date().toISOString() })
+      .where(eq(invitation.id, id))
+      .run()
+  }
+
+  // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
+  const deleteUserData = async (userId: string): Promise<void> => {
+    // The user's own association rows go entirely.
+    await db.delete(membership).where(eq(membership.user_id, userId)).run()
+    await db.delete(artifactMember).where(eq(artifactMember.user_id, userId)).run()
+    await db.delete(collectionMember).where(eq(collectionMember.user_id, userId)).run()
+    await db.delete(follow).where(eq(follow.user_id, userId)).run()
+    await db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId)).run()
+    await db.delete(notification).where(eq(notification.user_id, userId)).run()
+    // Authorship is anonymized (nullable), so others' artifacts/threads survive intact.
+    await db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId)).run()
+    await db.update(version).set({ author_id: null }).where(eq(version.author_id, userId)).run()
+    await db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId)).run()
+    await db.update(proposal).set({ author_id: null }).where(eq(proposal.author_id, userId)).run()
+    await db.update(agent).set({ created_by: null }).where(eq(agent.created_by, userId)).run()
+    await db
+      .update(invitation)
+      .set({ invited_by: null })
+      .where(eq(invitation.invited_by, userId))
+      .run()
+    // Drop the personal workspace row (removes the "<name>'s Workspace" label).
+    await db
+      .delete(workspace)
+      .where(eq(workspace.id, `ws_p_${userId}`))
+      .run()
   }
   const listPendingAgentMentions = async (
     agentId: string,
@@ -1795,7 +2297,29 @@ export function makeRepos(db: SqliteDb) {
   }
   // Sequential cascade (used by D1). better-sqlite3 + pg override with a transaction.
   const deleteArtifact = async (id: string): Promise<void> => {
-    // Delete FK-referencing tables before the artifact row itself.
+    // Delete FK-referencing tables before the artifact row itself. A context's
+    // manifest FK means deleting a manifest deletes its context (and sessions) —
+    // a context cannot outlive its definition, by design. Subqueries throughout
+    // (D1's 100-bound-parameter cap; see deleteContext).
+    const ctxIds = db
+      .select({ id: context.id })
+      .from(context)
+      .where(eq(context.manifest_artifact_id, id))
+    await db
+      .delete(sessionMessage)
+      .where(
+        inArray(
+          sessionMessage.session_id,
+          db
+            .select({ id: contextSession.id })
+            .from(contextSession)
+            .where(inArray(contextSession.context_id, ctxIds)),
+        ),
+      )
+      .run()
+    await db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
+    await db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
+    await db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
     await db.delete(version).where(eq(version.artifact_id, id)).run()
     await db.delete(comment).where(eq(comment.artifact_id, id)).run()
     await db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()
@@ -1808,6 +2332,20 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(notification).where(eq(notification.artifact_id, id)).run()
     await db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
     await db.delete(artifact).where(eq(artifact.id, id)).run()
+  }
+
+  // Sequential move (used by D1). better-sqlite3 + pg override with a transaction.
+  const moveArtifactOrg = async (artifactId: string, targetOrgId: string): Promise<void> => {
+    await db.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId)).run()
+    // Collections are org-scoped groupings; the artifact leaves all of them.
+    await db.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId)).run()
+    // An org-scoped webhook that targeted this one artifact falls back to org-wide
+    // rather than keep firing across a workspace boundary.
+    await db
+      .update(webhook)
+      .set({ artifact_id: null })
+      .where(eq(webhook.artifact_id, artifactId))
+      .run()
   }
 
   // Sequential takedown (used by D1, which has no multi-statement transaction in
@@ -1851,23 +2389,30 @@ export function makeRepos(db: SqliteDb) {
 
   return {
     createArtifact,
-    setVisibility,
+    setAccess,
+    backfillAccess,
     setLocked,
     getByShortId,
     getArtifactById,
+    getArtifactsByIds,
     siblingsBySourcePaths,
     addVersion,
     listVersions,
     getVersion,
     reclassifyVersion,
+    setVersionPreview,
     listArtifacts,
     artifactIdsByTag,
     artifactIdsByAuthor,
+    artifactIdsOwnedBy,
     countArtifacts,
+    countOwnedBy,
     storageBytes,
     tagCounts,
     deleteArtifact,
+    moveArtifactOrg,
     setArtifactRemoved,
+    setArtifactsRemoved,
     setArtifactTitle,
     setArtifactSourcePath,
     setArtifactUpdatedAt,
@@ -1885,11 +2430,16 @@ export function makeRepos(db: SqliteDb) {
     deleteWebhook,
     activeWebhooks,
     enqueueDelivery,
+    enqueueDeliveries,
     claimDueDeliveries,
     updateDelivery,
     recentDeliveries,
+    enqueueRenderJob,
+    claimDueRenderJobs,
+    updateRenderJob,
     getMembership,
     listMemberships,
+    listMembershipsForOrgs,
     countMemberships,
     setMembership,
     removeMembership,
@@ -1920,10 +2470,13 @@ export function makeRepos(db: SqliteDb) {
     listUserWorks,
     countUserWorks,
     tagsForArtifacts,
+    previewReady,
     setArtifactTags,
     createCollection,
     getCollection,
+    getCollections,
     updateCollection,
+    setCollectionAccess,
     deleteCollection,
     listCollections,
     collectionArtifactIds,
@@ -1979,10 +2532,23 @@ export function makeRepos(db: SqliteDb) {
     getPendingRound,
     listReviewRounds,
     resolveReviewRound,
+    createContext,
+    getContext,
+    listContexts,
+    deleteContext,
+    createSession,
+    getSession,
+    listSessions,
+    pendingSessions,
+    setSessionState,
+    addSessionMessage,
+    listSessionMessages,
+    listSessionMessagesFor,
     getProposal,
     listProposals,
     decideProposal,
     createNotification,
+    createNotifications,
     listNotifications,
     unreadNotificationCount,
     markNotificationsRead,
@@ -1991,11 +2557,23 @@ export function makeRepos(db: SqliteDb) {
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,
+    oauthClientExists,
+    listUserGrants,
+    revokeUserGrant,
+    setOAuthClientWorkspaces,
+    getOAuthClientWorkspaces,
     pruneStaleOAuthClients,
     deleteAgent,
     createAgentMention,
     listPendingAgentMentions,
     ackAgentMention,
+    createInvitation,
+    getInvitationByToken,
+    listPendingInvitations,
+    deletePendingInvitationsFor,
+    deleteInvitation,
+    markInvitationAccepted,
+    deleteUserData,
     createReport,
     getReport,
     listReports,

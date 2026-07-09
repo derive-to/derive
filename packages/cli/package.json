@@ -1,8 +1,22 @@
 {
-  "name": "@derive/cli",
-  "version": "0.1.0",
+  "name": "@derive-to/cli",
+  "version": "0.3.0",
   "type": "module",
+  "description": "CLI for Derive — init a project, publish versioned artifacts, and run the publish → review → revise loop from the terminal.",
+  "keywords": [
+    "derive",
+    "artifacts",
+    "publish",
+    "cli"
+  ],
   "license": "FSL-1.1-ALv2",
+  "homepage": "https://derive.to",
+  "bugs": {
+    "url": "https://github.com/derive-to/derive/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/derive-to/derive.git",
@@ -10,6 +24,12 @@
   },
   "bin": {
     "derive": "./bin/derive.js"
+  },
+  "exports": {
+    "./config": {
+      "types": "./src/config.d.ts",
+      "default": "./src/config.js"
+    }
   },
   "files": [
     "bin",

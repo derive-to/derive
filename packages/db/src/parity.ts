@@ -21,17 +21,22 @@ import type {
   CollectionMemberRecord,
   CollectionRecord,
   CommentRecord,
+  ContextRecord,
   DeliveryRecord,
   DomainRecord,
   FollowRecord,
   GitHubAppRecord,
   GitHubInstallationRecord,
+  InvitationRecord,
   MembershipRecord,
   NotificationRecord,
   ProposalRecord,
+  RenderJobRecord,
   ReportRecord,
   RepoSourceRecord,
   ReviewRoundRecord,
+  SessionMessageRecord,
+  SessionRecord,
   VersionRecord,
   WebhookRecord,
   WorkspaceRecord,
@@ -47,6 +52,7 @@ export interface TypedTables {
   comment: CommentRecord
   webhook: WebhookRecord
   webhookDelivery: DeliveryRecord
+  renderJob: RenderJobRecord
   membership: MembershipRecord
   workspace: WorkspaceRecord
   artifactMember: ArtifactMemberRecord
@@ -56,6 +62,10 @@ export interface TypedTables {
   reviewRound: ReviewRoundRecord
   agent: AgentRecord
   agentMention: AgentMentionRecord
+  invitation: InvitationRecord
+  context: ContextRecord
+  contextSession: SessionRecord
+  sessionMessage: SessionMessageRecord
   collection: CollectionRecord
   collectionMember: CollectionMemberRecord
   repoSource: RepoSourceRecord
@@ -71,7 +81,11 @@ export interface TypedTables {
  * isn't mirrored in @derive/core). Naming a table here is a deliberate opt-out of
  * shape parity — but it still has to be named, so it can't be forgotten.
  */
-export type JunctionTable = "artifactFavorite" | "artifactTag" | "collectionItem"
+export type JunctionTable =
+  | "artifactFavorite"
+  | "artifactTag"
+  | "collectionItem"
+  | "oauthClientWorkspace"
 
 type ClassifiedKey = keyof TypedTables | JunctionTable
 

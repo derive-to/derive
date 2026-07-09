@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type ArtifactRecord, type DeliveryRecord, newId } from "@derive/core"
+import { type ArtifactRecord, DEFAULT_ORG_SETTINGS, type DeliveryRecord, newId } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
@@ -23,7 +23,7 @@ const makeArtifact = (meta: SqliteMetaStore) =>
     org_id: "default",
     slug: null,
     title: "Doc",
-    visibility: "link",
+    link_role: "viewer",
     kind: "file",
     spa: 0,
   }) as Promise<ArtifactRecord>
@@ -80,11 +80,7 @@ describe("enqueueSlackEvent (gate)", () => {
     const meta = freshStore()
     await connectSlack(meta)
     await meta.setOrgSettings("default", {
-      emailNotifications: true,
-      githubPostComments: true,
-      githubMirrorComments: true,
-      githubPreviewLink: true,
-      slackPost: true,
+      ...DEFAULT_ORG_SETTINGS,
       slackEvents: { "version.published": false },
     })
     const artifact = await makeArtifact(meta)

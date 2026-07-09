@@ -1,3 +1,5 @@
+import type { components } from "./api-types"
+
 export interface Me {
   id: string
   email: string
@@ -13,253 +15,78 @@ export interface Me {
   profession: string | null
   /** One-line "what you do" blurb; null if unset. */
   about: string | null
+  /** Finished/skipped first-run onboarding? Server-authoritative (syncs across devices). */
+  onboarded: boolean
+  /** Has the account's email been verified? Soft-nudge only (never gates anything); drives
+   *  the dismissible "verify your email" banner. */
+  emailVerified: boolean
+  /** Is TOTP two-factor enabled? Drives the Security-hub enable/disable state. */
+  twoFactorEnabled: boolean
 }
-/** A public profile, by handle. Email is private and never returned here. */
-export interface PublicProfile {
-  username: string
-  name: string | null
-  image: string | null
-  /** Coarse team role; null if unset. (People-search results omit `about`.) */
-  profession?: string | null
-  /** One-line "what you do" blurb; only present on the full /users/:handle profile. */
-  about?: string | null
-  /** GitHub login, when known (the full /users/:handle profile only); null otherwise. */
-  github_login?: string | null
-  /** Work / follower / following counts (the full /users/:handle profile only). */
-  stats?: { works: number; followers: number; following: number }
-  /** Whether the signed-in viewer already follows this person (full profile only). */
-  followed_by_me?: boolean
-}
-export interface VersionSession {
-  n: number
-  from_n: number
-  count: number
-  author: string
-  name: string | null
-  created_at: string
-}
+/** What sign-in methods + auth flows THIS instance actually has (capability-adaptive:
+ *  a bare self-host reports fewer than a fully-wired hosted deploy). Drives the login
+ *  page + Security hub. Generated from the OpenAPI spec. */
+export type AuthCapabilities = components["schemas"]["AuthCapabilities"]
+/** An OAuth agent the user authorized to act on their behalf (the "Connected agents"
+ *  list). Generated from the OpenAPI spec. */
+export type ConnectedAgent = components["schemas"]["ConnectedAgent"]
+/** A public profile, by handle. Email is private and never returned here.
+ *  Generated from the OpenAPI spec. */
+export type PublicProfile = components["schemas"]["PublicProfile"]
+/** Time-grouped view of an artifact's versions. Generated from the OpenAPI spec. */
+export type VersionSession = components["schemas"]["VersionSession"]
 export type Role = "viewer" | "commenter" | "editor" | "owner"
-/** What general access (the link) grants a reacher: view-only or comment. */
-export type GeneralRole = "viewer" | "commenter"
-export interface Artifact {
-  short_id: string
-  url: string
-  title: string | null
-  kind: "file" | "bundle"
-  current_content_type?: string | null
-  /** Locked: direct publishes are rejected; even editors must propose changes. */
-  locked?: boolean
-  visibility: string
-  /** The role the general-access link grants (view vs comment). Anonymous reachers are
-   *  always clamped to view regardless; commenting requires signing in. */
-  general_role?: GeneralRole
-  current_version: number
-  versions: {
-    n: number
-    content_type?: string
-    author: string
-    /** The GitHub identity behind this version (sync only): login, avatar URL, numeric
-     *  user id (text). Null for manual/anonymous/unmappable publishes. */
-    author_login?: string | null
-    author_avatar?: string | null
-    author_gh_id?: string | null
-    /** The Derive handle of this version's GitHub author, when they signed in with GitHub
-     *  (single-artifact detail only); null otherwise. */
-    handle?: string | null
-    message: string | null
-    name: string | null
-    created_at: string
-  }[]
-  /** Time-grouped view of versions for display; newest-first. */
-  sessions?: VersionSession[]
-  views?: number
-  /** The current caller's effective role on this artifact (null = no access). */
-  my_role?: Role | null
-  /** Browse tags (workspace-wide). */
-  tags?: string[]
-  /** Whether the current user has starred this artifact. */
-  favorite?: boolean
-  /** Count of proposals awaiting review. */
-  open_proposals?: number
-  /** Count of non-withdrawn proposals (open + decided) — gates the Proposals entry. */
-  proposals_total?: number
-  /** Open comment threads on this artifact (drives the inline comment indicator). */
-  open_threads?: number
-  /** An open thread on this artifact @mentions the current user — "needs your feedback". */
-  mentions_me?: boolean
-  /** The current user authored a comment in an open thread on this artifact. */
-  i_participated?: boolean
-  /** Collection ids this artifact belongs to (detail endpoint). */
-  collections?: string[]
-  /** Taken down by a moderator: the content is gone (410), the record stays. */
-  removed?: boolean
-  /** Mirrored from a GitHub sync source → read-only in Derive (Edit/Propose hidden). */
-  managed?: boolean
-  /** Present when this bundle's entry is markdown — a skill (entry SKILL.md) or a
-   *  plain docs folder. Drives the file tree + (for skills) the identity chrome.
-   *  Detail endpoint only; absent for HTML "site" bundles. */
-  bundle?: {
-    /** True when it's a Claude Code skill (entry SKILL.md) — gates the "Skill" badge. */
-    isSkill: boolean
-    /** Skill frontmatter name/description; null for a plain docs bundle. */
-    name: string | null
-    description: string | null
-    /** Entry document path, sans leading slash (e.g. "SKILL.md", "README.md"). */
-    entry: string
-    files: { path: string; type: string }[]
-  }
-  /** Repo path for a synced artifact (e.g. "docs/plans/foo.md") — drives the folder view. */
-  source_path?: string | null
-  /** First-published time. */
-  created_at?: string
-  /** Last-updated time (set on each new version; null until versioned). Read as
-   *  `updated_at ?? created_at`. Drives the recency sort + the "updated X" label. */
-  updated_at?: string | null
-  /** The CURRENT (last) author, denormalized — for a GitHub-synced artifact these mirror
-   *  the last commit's author. Drives "who last changed this" + the ?author= filter. */
-  author_name?: string | null
-  author_login?: string | null
-  author_avatar?: string | null
-  author_gh_id?: string | null
-  /** The current author resolved to a profile: the raw GitHub identity plus the Derive
-   *  `handle` (username) when the committer signed in with GitHub. Null when there's no
-   *  recorded author. Prefer this over the raw fields for rendering. */
-  author?: {
-    name: string | null
-    login: string | null
-    avatar: string | null
-    handle: string | null
-  } | null
-}
-export interface Report {
-  id: string
-  artifact_id: string
-  artifact_short_id: string
-  reason: string
-  detail: string | null
-  reporter: string | null
-  state: "open" | "actioned" | "dismissed"
-  created_at: string
-}
-export interface Collection {
-  id: string
-  title: string
-  created_by: string
-  created_at: string
-  count: number
-  /** Where the collection came from: "repo" = a GitHub repo mirror, "pr" = a
-   *  read-only PR preview nested under its repo, "manual" = user-created. Absent on
-   *  older responses → treat as "manual". */
-  kind?: "manual" | "repo" | "pr"
-  /** For a PR preview: the repo collection it nests under (when that repo is still
-   *  connected). Drives the sidebar hierarchy. */
-  parentId?: string
-  /** For a PR preview: the pull-request number. */
-  prNumber?: number
-  /** For repo/PR collections: "owner/name". */
-  repo?: string
-}
-export type FollowKind = "author" | "path" | "user"
+/** The v2 access model's three single-purpose fields (see access-model.md), as
+ *  standalone aliases for the share controls — they match the generated Artifact's
+ *  inline enums. */
+export type LinkRole = "none" | "viewer" | "commenter" | "editor"
+export type WorkspaceAccess = "none" | "member"
+export type Listed = "none" | "workspace" | "public"
+/** The artifact view-model — the largest, most-composed shape in the client. Generated
+ *  from the OpenAPI spec (apps/api/openapi.json). `my_role` is `Role | null`;
+ *  workspace_access/link_role/listed are the v2 access enums (see access-model.md). */
+export type Artifact = components["schemas"]["Artifact"]
+/** An abuse report against an artifact. Generated from the OpenAPI spec. */
+export type Report = components["schemas"]["Report"]
+/** A collection: a shareable group of artifacts, tagged with its item count and origin
+ *  (kind = manual / repo / pr). Generated from the OpenAPI spec (apps/api/openapi.json)
+ *  — a backend shape change surfaces here at `tsc`. */
+export type Collection = components["schemas"]["Collection"]
 /** A per-user follow: a GitHub author (kind="author", target=login), a repo path
  *  prefix (kind="path", target=path prefix), or a person (kind="user", target=username
- *  on the wire). Drives the `scope=following` feed. */
-export interface Follow {
-  id: string
-  org_id: string
-  user_id: string
-  kind: FollowKind
-  /** For author/path: the login / path prefix. For user: the followed person's id. */
-  target: string
-  created_at: string
-  /** Present for kind="user": the followed person's public handle/name/avatar, resolved
-   *  server-side so the client renders them (and matches follow-state) without raw ids. */
-  handle?: string | null
-  name?: string | null
-  image?: string | null
-}
-export type ProposalState = "open" | "approved" | "changes_requested" | "withdrawn"
-export interface Proposal {
-  id: string
-  state: ProposalState
-  author: string
-  message: string | null
-  base_version: number
-  kind: "file" | "bundle"
-  decided_by: string | null
-  decided_version: number | null
-  /** The reviewer's feedback when approving or requesting changes. */
-  decision_note: string | null
-  decided_at: string | null
-  created_at: string
-  /** The proposed experience, rendered exactly like a live version. */
-  preview_url: string
-  /** Present on the single-proposal fetch: line diff vs the base version. */
-  diff?: { base_version: number; ops: DiffOp[] }
-}
-export interface ArtifactMember {
-  user_id: string
-  /** Public handle; null only for a legacy account not yet backfilled. No email —
-   *  the member list identifies collaborators by handle, never by address. */
-  handle: string | null
-  name: string | null
-  /** Coarse team role (Product / Engineering / …); null if unset. Shown in member
-   *  lists; absent on artifact/collection member payloads that don't join it. */
-  profession?: string | null
-  role: Role
-}
+ *  on the wire). Drives the `scope=following` feed. Generated from the API's OpenAPI
+ *  spec (apps/api/openapi.json) — a backend shape change surfaces here at `tsc`, so the
+ *  web client and server can't silently drift. */
+export type Follow = components["schemas"]["Follow"]
+export type FollowKind = Follow["kind"]
+/** A proposal: a candidate version awaiting review. Generated from the OpenAPI spec. */
+export type Proposal = components["schemas"]["Proposal"]
+export type ProposalState = Proposal["state"]
+/** A collaborator on an artifact or collection — by public @handle, never email.
+ *  Generated from the OpenAPI spec (one shared schema across sharing + collections). */
+export type ArtifactMember = components["schemas"]["ArtifactMember"]
 /** A DNS record the customer adds to validate a custom domain. */
-export interface DomainDnsRecord {
-  type: string
-  name: string
-  value: string
-}
+/** A DNS record to add when validating a custom domain. Generated from the OpenAPI spec. */
+export type DomainDnsRecord = components["schemas"]["DomainDnsRecord"]
 /** A vanity subdomain bound to one artifact (the per-artifact share section). */
-export interface ArtifactDomain {
-  host: string
-  url: string
-  kind: string
-  status: string
-  created_at: string
-}
+/** A vanity subdomain claimed for an artifact. Generated from the OpenAPI spec. */
+export type ArtifactDomain = components["schemas"]["ArtifactDomain"]
 /** A workspace custom domain (managed in settings; Cloudflare for SaaS). */
-export interface WorkspaceDomain {
-  host: string
-  status: string
-  /** DNS records to add while pending (undefined once active). */
-  records?: DomainDnsRecord[]
-  created_at: string
-}
+/** A workspace custom domain (Cloudflare for SaaS). Generated from the OpenAPI spec. */
+export type WorkspaceDomain = components["schemas"]["WorkspaceDomain"]
 /** The workspace: its name, the caller's role, and the member directory. */
-export interface Workspace {
-  id: string
-  name: string
-  role: Role
-  members: ArtifactMember[]
-}
-/** Per-workspace integration switches (mirrors the server's OrgSettings). */
-export interface OrgSettings {
-  emailNotifications: boolean
-  githubPostComments: boolean
-  githubMirrorComments: boolean
-  githubPreviewLink: boolean
-  slackPost: boolean
-  /** Per-event toggles for the connected Slack app's event cards (publishes, proposals,
-   *  reviews, resolutions). Keyed by event name; an absent key means on. */
-  slackEvents?: Record<string, boolean>
-}
-/** Slack connection status for the Settings UI. */
-export interface SlackStatus {
-  available: boolean
-  connected: boolean
-  team_name: string | null
-  default_channel: string | null
-  /** The stored bot token failed auth/scope checks; prompt a reconnect. */
-  needs_reauth: boolean
-  /** The signed-in user has linked their own Slack account in this workspace. */
-  linked: boolean
-  /** The signed-in user's "DM me when @mentioned" preference (default true). */
-  mention_dm: boolean
-}
+export type Workspace = components["schemas"]["Workspace"]
+/** A pending workspace invitation (Admin view; the token is never exposed). */
+export type Invite = components["schemas"]["Invite"]
+/** The result of inviting by email: either the person was an existing Derive account
+ *  (added straight to the roster) or a pending, emailed invitation was created. */
+export type InviteResult = components["schemas"]["InviteResult"]
+/** What the accept page shows before you join. */
+export type InvitePreview = components["schemas"]["InvitePreview"]
+/** Per-workspace integration switches. Generated from the OpenAPI spec. */
+export type OrgSettings = components["schemas"]["OrgSettings"]
+/** Slack connection status for a workspace. Generated from the OpenAPI spec. */
+export type SlackStatus = components["schemas"]["SlackStatus"]
 /** A Slack channel route: which channel a target's event cards post to. */
 export interface SlackRoute {
   id: string
@@ -268,142 +95,59 @@ export interface SlackRoute {
   channel_id: string
 }
 /** One entry in the workspace switcher. */
-export interface WorkspaceSummary {
-  id: string
-  name: string
-  role: Role
-}
+export type WorkspaceSummary = components["schemas"]["WorkspaceSummary"]
 /** The switcher payload: whether multi-workspace is on, the active id, the list. */
-export interface Workspaces {
-  multi: boolean
-  active: string
-  workspaces: WorkspaceSummary[]
-}
-export interface Analytics {
-  total: number
-  unique: number
-  anonViewers: number
-  perVersion: { version: number; count: number }[]
-  daily: { day: string; count: number }[]
-  recent: { viewer: string; kind: "user" | "anon"; at: string; avatar?: string | null }[]
-}
+export type Workspaces = components["schemas"]["Workspaces"]
+/** The one display rule for workspace names: the personal workspace renders as
+ *  "Personal" everywhere — its stored name is provisioning plumbing, not a name
+ *  the user chose. */
+export const workspaceDisplayName = (w: { name: string; personal: boolean }): string =>
+  w.personal ? "Personal" : w.name
+/** Per-artifact view stats. Generated from the OpenAPI spec. */
+export type Analytics = components["schemas"]["Analytics"]
 /** A resolved @mention: the picked user's id + the display name shown inline. */
-export interface Mention {
-  id: string
-  name: string
-}
+/** A person/agent @mentioned in a comment. Generated from the OpenAPI spec. */
+export type Mention = components["schemas"]["Mention"]
 /** A review round: the agent asked this person to review a version, and polls for
  *  the answer. `pending` = waiting; `sent_back` = they returned answers; `approved`. */
-export interface ReviewRound {
-  id: string
-  artifact_id: string
-  version: number
-  requested_by: string
-  requested_for: string
-  state: "pending" | "sent_back" | "approved"
-  note: string | null
-  created_at: string
-  resolved_at: string | null
-}
+/** A review round on an artifact (the /derive loop). Generated from the OpenAPI spec. */
+export type ReviewRound = components["schemas"]["ReviewRound"]
 
-export interface Comment {
-  id: string
-  thread_id: string
-  base_version: number
-  path: string | null
-  anchor: string | null
-  body_md: string
-  author: string
-  // `addressed` = a proposed revision citing this thread is pending review.
-  // `outdated` = the quoted text this thread anchored to changed in a later
-  // version (set by the server's re-anchor sweep); the feedback may no longer apply.
-  state: "open" | "addressed" | "resolved" | "outdated"
-  created_at: string
-  anchored?: boolean
-  reactions?: Record<string, string[]>
-  edited?: boolean
-  edited_at?: string | null
-  deleted?: boolean
-  mentions?: Mention[]
-}
-/** A person/agent offered by the @mention picker — identified by @handle, never email. */
-export interface DirUser {
-  id: string
-  name: string | null
-  handle: string | null
-  /** "agent" for a registered MCP agent, "user" for a person. The @mention directory
-   *  returns both; the "ask an agent to revise" affordance targets the agents. */
-  kind?: "user" | "agent"
-  /** Role/profession, surfaced by the directory so the picker shows who's who. */
-  profession?: string | null
-}
-export interface Notification {
-  id: string
-  user_id: string
-  /** Who triggered it. For `follow`/`publish` this is the person's @handle. */
-  actor: string
-  kind: "mention" | "comment" | "share" | "follow" | "publish"
-  artifact_id: string
-  artifact_short_id: string
-  artifact_title: string | null
-  thread_id: string
-  comment_id: string
-  preview: string
-  read: 0 | 1
-  created_at: string
-}
-export interface Webhook {
-  id: string
-  artifact_id: string | null
-  url: string
-  kind: "generic" | "slack"
-  events: string
-  label: string | null
-  active: 0 | 1
-  created_at: string
-}
-export interface Agent {
-  id: string
-  name: string
-  role: Role
-  created_at: string
-}
+/** A comment: threaded, anchored to a text quote, with reactions/edits/soft-delete.
+ *  Generated from the OpenAPI spec. */
+export type Comment = components["schemas"]["Comment"]
+/** A person/agent offered by the @mention picker — by @handle, never email.
+ *  Generated from the OpenAPI spec. */
+export type DirUser = components["schemas"]["DirUser"]
+/** An in-app notification (the header bell). Generated from the API's OpenAPI spec
+ *  (apps/api/openapi.json) — a backend shape change surfaces here at `tsc`. */
+export type Notification = components["schemas"]["Notification"]
+/** An outbound webhook, without its signing secret. Generated from the OpenAPI spec. */
+export type Webhook = components["schemas"]["Webhook"]
+/** A workspace-registered agent. Generated from the OpenAPI spec. */
+export type Agent = components["schemas"]["Agent"]
+/** An askable agent setup: a registered agent wired to a manifest artifact.
+ *  Generated from the OpenAPI spec. */
+export type ContextInfo = components["schemas"]["ContextInfo"]
+/** The runner's structured payload on an agent message. Generated from the spec. */
+export type SessionMeta = components["schemas"]["SessionMeta"]
+export type SessionMessage = components["schemas"]["SessionMessage"]
+/** An ask-conversation with a context's agent. Generated from the OpenAPI spec. */
+export type Session = components["schemas"]["Session"]
+export type SessionState = Session["state"]
 /** A live viewer of an artifact (presence). Identified by a handle-style `name`
  *  (never email — presence is broadcast to anonymous co-viewers); `role` is their
  *  effective role here. */
-export interface Viewer {
-  id: string
-  name: string
-  role: string | null
-}
-export interface Delivery {
-  id: string
-  event_type: string
-  status: "pending" | "delivered" | "dead"
-  attempts: number
-  last_error: string | null
-  created_at: string
-}
+export type Viewer = components["schemas"]["Viewer"]
+/** A webhook delivery attempt. Generated from the OpenAPI spec. */
+export type Delivery = components["schemas"]["Delivery"]
 /** A GitHub repo mirrored into a collection (token redacted, file map collapsed
  *  to a count by the API). */
-export interface RepoSource {
-  id: string
-  collection_id: string
-  repo: string
-  ref: string
-  includes: string
-  token: string | null
-  installation_id: string | null
-  last_synced_at: string | null
-  last_status: string | null
-  created_by: string
-  created_at: string
-  file_count: number
-  /** Live sync state as a JSON string (parse with `parseProgress`); null when idle. */
-  progress: string | null
-}
+/** A GitHub repo source (branch mirror), client-safe (token redacted, files→count).
+ *  Generated from the OpenAPI spec. */
+export type RepoSource = components["schemas"]["RepoSource"]
 /** Live, pollable sync progress — the engine writes this every batch; the UI bar +
- *  global chip read it. `done`/`total` are doc counts; `phase` drives the wording. */
+ *  global chip read it. Parsed client-side from the `progress` string. */
 export interface SyncProgress {
   phase: "queued" | "listing" | "mirroring" | "done" | "error"
   done: number
@@ -420,77 +164,21 @@ export const parseProgress = (raw: string | null | undefined): SyncProgress | nu
     return null
   }
 }
-/** The cheap status-poll response (no GitHub round-trip) that drives the progress bar. */
-export interface SyncStatus {
-  id: string
-  repo: string
-  progress: string | null
-  last_status: string | null
-  last_synced_at: string | null
-  file_count: number
-}
-export interface GithubInstallation {
-  installation_id: string
-  account_login: string | null
-}
-/** A read-only preview of an open pull request's changed docs, mirrored into its own
- *  collection ("PR #<n>: <title>"). Links out to the PR and into the Derive collection. */
-export interface PrPreview {
-  id: string
-  collection_id: string
-  repo: string
-  pr_number: number
-  title: string
-  last_status: string | null
-  last_synced_at: string | null
-  file_count: number
-  progress: string | null
-}
-export interface GithubSyncStatus {
-  sources: RepoSource[]
-  prs: PrPreview[]
-  app: {
-    configured: boolean
-    slug?: string
-    /** False when the live App lacks a permission/event Derive now requires. */
-    upToDate?: boolean
-    /** The scopes/events still to grant: { permissions: {scope: level}, events: [] }. */
-    missing?: { permissions: Record<string, string>; events: string[] }
-    /** Deep-link to the App's GitHub permissions editor (owner toggles + saves). */
-    permissionsUrl?: string
-    /** Deep-link that surfaces the pending-approval prompt on an existing install. */
-    approveUrl?: string
-  }
-  installations: GithubInstallation[]
-}
-export interface InstallationRepo {
-  full_name: string
-  private: boolean
-  default_branch: string
-  /** Last push (ISO), or null. Server returns repos sorted most-recent-first. */
-  pushed_at: string | null
-}
-/** A repo+scope preview: how many docs would mirror, split by type. */
-export interface SyncPreview {
-  total: number
-  md: number
-  html: number
-  other: number
-  truncated: boolean
-}
-export interface SyncResult {
-  added: number
-  updated: number
-  removed: number
-  renamed: number
-  skipped: number
-  /** Matching docs still pending after this batch (>0 → call run again). */
-  remaining: number
-}
-export interface DiffOp {
-  t: "ctx" | "add" | "del"
-  line: string
-}
+/** The cheap status-poll response that drives the progress bar. Generated from the spec. */
+export type SyncStatus = components["schemas"]["SyncStatus"]
+/** A GitHub App installation on a workspace. Generated from the OpenAPI spec. */
+export type GithubInstallation = components["schemas"]["GithubInstallation"]
+/** A read-only preview of an open pull request's changed docs. Generated from the spec. */
+export type PrPreview = components["schemas"]["PrPreview"]
+/** GitHub sync connection status (sources + PR previews + App + installations).
+ *  Generated from the OpenAPI spec. */
+export type GithubSyncStatus = components["schemas"]["GithubSyncStatus"]
+/** A repo an installation can mirror (the picker). Generated from the OpenAPI spec. */
+export type InstallationRepo = components["schemas"]["InstallationRepo"]
+/** A repo+scope preview: how many docs would mirror, split by type. Generated from the spec. */
+export type SyncPreview = components["schemas"]["SyncPreview"]
+/** One line of a unified diff. Generated from the OpenAPI spec. */
+export type DiffOp = components["schemas"]["DiffOp"]
 export interface Diff {
   from: number
   to: number
@@ -531,8 +219,8 @@ const authJson = async (r: Response) => {
   return data
 }
 
-// Map Better Auth's session user onto our Me (discoverable defaults on). Shared
-// by session() and me() so the shape is defined once.
+// Map Better Auth's session user onto our Me (discoverable defaults on). Used by
+// session() so the mapping lives in one place.
 type SessionUser = {
   id: string
   email: string
@@ -542,6 +230,9 @@ type SessionUser = {
   discoverable?: boolean
   profession?: string | null
   about?: string | null
+  onboarded?: boolean
+  emailVerified?: boolean
+  twoFactorEnabled?: boolean
 }
 const mapMe = (u: SessionUser): Me => ({
   id: u.id,
@@ -554,15 +245,19 @@ const mapMe = (u: SessionUser): Me => ({
   role: "member",
   profession: u.profession ?? null,
   about: u.about ?? null,
+  // Off by default: onboarded only when explicitly set (unset = not yet).
+  onboarded: u.onboarded === true,
+  emailVerified: u.emailVerified === true,
+  twoFactorEnabled: u.twoFactorEnabled === true,
 })
 
 export const api = {
-  // The session read behind meQuery. Prerender-safe (null at build — no document);
-  // a resolved null for an anon visitor (401, or a 200 with no user); a mapped Me
-  // when signed in; and a THROWN transient ApiError on a 5xx so the query's retry
-  // can self-heal. Distinguishing anon (null) from a blip (throw) is what lets the
-  // auth query resolve cleanly instead of dead-ending — unlike me(), which throws
-  // for both.
+  // The ONE identity read — behind meQuery, and re-read after login/signup to seed the
+  // auth cache. Prerender-safe (null at build — no document); a resolved null for an
+  // anon visitor (401, or a 200 with no user); a mapped Me when signed in; and a THROWN
+  // transient ApiError on a 5xx so the query's retry can self-heal. Distinguishing anon
+  // (null) from a blip (throw) is what lets the auth query resolve cleanly instead of
+  // dead-ending.
   async session(): Promise<Me | null> {
     if (typeof document === "undefined") return null
     const r = await f("/api/auth/get-session", { credentials: "include" })
@@ -570,13 +265,6 @@ export const api = {
     if (!r.ok) throw new ApiError(`HTTP ${r.status}`, r.status)
     const s = await r.json().catch(() => null)
     return s?.user ? mapMe(s.user) : null
-  },
-  async me(): Promise<{ user: Me }> {
-    const s = await f("/api/auth/get-session", { credentials: "include" }).then((r) =>
-      r.ok ? r.json() : null,
-    )
-    if (!s?.user) throw new Error("unauthenticated")
-    return { user: mapMe(s.user) }
   },
   // Claim or change your handle (onboarding + rename). 409 when taken, 400 on a
   // bad shape — both surface their message via ApiError.
@@ -602,10 +290,6 @@ export const api = {
     }).then(j)
   },
   // People who follow / are followed by this user (public profiles; no ids or email).
-  profileFollowers: (handle: string): Promise<{ users: PublicProfile[] }> =>
-    f(`/v1/users/${encodeURIComponent(handle)}/followers`, { credentials: "include" }).then(j),
-  profileFollowing: (handle: string): Promise<{ users: PublicProfile[] }> =>
-    f(`/v1/users/${encodeURIComponent(handle)}/following`, { credentials: "include" }).then(j),
   // Set your team role + "what you do" blurb (onboarding + Settings → Profile).
   // Omitted fields are left untouched; "" clears a field.
   setProfile: (fields: {
@@ -616,6 +300,18 @@ export const api = {
   // Opt in/out of people search.
   setDiscoverable: (discoverable: boolean): Promise<{ discoverable: boolean }> =>
     f("/v1/me/discoverable", opts({ discoverable })).then(j),
+  // Mark first-run onboarding finished/skipped — server-authoritative, so the /welcome
+  // gate stays consistent across devices (the localStorage flag is only a fast-path cache).
+  setOnboarded: (): Promise<{ onboarded: boolean }> => f("/v1/me/onboarded", opts({})).then(j),
+  // Connected agents: the OAuth clients (MCP agents like Claude) you've authorized to act on
+  // your behalf, and one-tap revocation — delegation made legible + reversible.
+  connectedAgents: (): Promise<{ agents: ConnectedAgent[] }> =>
+    f("/v1/me/connected-agents", opts()).then(j),
+  revokeConnectedAgent: (clientId: string): Promise<void> =>
+    f(`/v1/me/connected-agents/${encodeURIComponent(clientId)}`, {
+      method: "DELETE",
+      credentials: "include",
+    }).then(() => undefined),
   // Find opted-in people by @handle or name (signed-in; empty q → []).
   searchPeople: (q: string): Promise<{ users: PublicProfile[] }> =>
     f(`/v1/users/search?query=${encodeURIComponent(q)}`, opts()).then(j),
@@ -643,15 +339,46 @@ export const api = {
   signup: (email: string, password: string, name: string): Promise<unknown> =>
     f("/api/auth/sign-up/email", opts({ email, password, name: name || email })).then(authJson),
   logout: () => f("/api/auth/sign-out", opts({})).then((r) => r.json().catch(() => ({}))),
-  // Which social providers are configured server-side (drives the login buttons).
-  authProviders: (): Promise<{ google: boolean; github: boolean }> =>
-    f("/v1/auth/providers", opts()).then(j),
+  // The auth capabilities of THIS instance — which sign-in methods + flows are live
+  // here (drives the login page + Security hub; capability-adaptive).
+  capabilities: (): Promise<AuthCapabilities> => f("/v1/auth/capabilities", opts()).then(j),
   // Better Auth social sign-in: POST returns the provider authorize URL, then we
-  // navigate there. callbackURL is where the provider lands the user afterwards.
-  async socialSignIn(provider: "google" | "github", callbackURL = "/app/home"): Promise<void> {
+  // navigate there. callbackURL is where the provider lands the user afterwards
+  // (default home; the login page passes the resume/return_to target explicitly).
+  async socialSignIn(provider: "google" | "github", callbackURL = "/"): Promise<void> {
     const data = await f("/api/auth/sign-in/social", opts({ provider, callbackURL })).then(authJson)
     if (data?.url) window.location.href = data.url
   },
+  // Enterprise SSO (generic OIDC) sign-in via Better Auth's genericOAuth plugin — same
+  // navigate-to-authorize-URL shape as social; providerId comes from capabilities().oidc.
+  async ssoSignIn(providerId: string, callbackURL = "/"): Promise<void> {
+    const data = await f("/api/auth/sign-in/oauth2", opts({ providerId, callbackURL })).then(
+      authJson,
+    )
+    if (data?.url) window.location.href = data.url
+  },
+  // "Forgot password" — email a reset link. The reply is a neutral OK even for an unknown
+  // address (the server simulates the work), so it can't be used to probe which emails have
+  // accounts. `redirectTo` is where the emailed link lands (our /reset-password page, which
+  // reads ?token=). Gated by capabilities.passwordReset (hidden with no mail transport).
+  requestPasswordReset: (email: string, redirectTo: string): Promise<unknown> =>
+    f("/api/auth/request-password-reset", opts({ email, redirectTo })).then(authJson),
+  // Complete a reset: the emailed token + the chosen new password.
+  resetPassword: (token: string, newPassword: string): Promise<unknown> =>
+    f("/api/auth/reset-password", opts({ token, newPassword })).then(authJson),
+  // Change your password while signed in (revokes every OTHER session).
+  changePassword: (currentPassword: string, newPassword: string): Promise<unknown> =>
+    f(
+      "/api/auth/change-password",
+      opts({ currentPassword, newPassword, revokeOtherSessions: true }),
+    ).then(authJson),
+  // Change your account email; a confirmation link goes to the NEW address, and the change
+  // only takes effect once it's clicked.
+  changeEmail: (newEmail: string, callbackURL: string): Promise<unknown> =>
+    f("/api/auth/change-email", opts({ newEmail, callbackURL })).then(authJson),
+  // Re-send the verification email to your address (the soft-nudge banner's action).
+  sendVerificationEmail: (email: string, callbackURL: string): Promise<unknown> =>
+    f("/api/auth/send-verification-email", opts({ email, callbackURL })).then(authJson),
 
   listArtifacts: (params?: {
     q?: string
@@ -663,8 +390,10 @@ export const api = {
     /** "shared" → only artifacts explicitly shared with you (across workspaces).
      *  "following" → artifacts in the active workspace matching your follows
      *  (followed GitHub authors + repo path prefixes) — the activity feed.
-     *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on. */
-    scope?: "shared" | "following" | "needs_feedback"
+     *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on.
+     *  "mine" → everything you published by hand in the active workspace, any
+     *  visibility included — the library's "Created by me" filter. */
+    scope?: "shared" | "following" | "needs_feedback" | "mine"
     cursor?: string
     limit?: number
   }): Promise<{
@@ -689,6 +418,10 @@ export const api = {
   browseSummary: (): Promise<{
     total: number
     favorites: number
+    /** The caller's owned artifacts — badges the library's "Created by me" filter. */
+    mine: number
+    /** How many of those are still private — the pending signal. */
+    mine_private: number
     tags: { tag: string; count: number }[]
     workspace: string
   }> => f("/v1/tags", opts()).then(j),
@@ -706,17 +439,26 @@ export const api = {
   // cookie and subsequent reads of this artifact succeed.
   unlock: (id: string, password: string): Promise<{ ok: true }> =>
     f(`/v1/artifacts/${id}/unlock`, opts({ password })).then(j),
-  // Change general access from the Share dialog: visibility + the general-access role
-  // (view vs comment). A password is required when enabling `password` visibility for
-  // the first time. Anonymous reachers stay view-only regardless of generalRole.
-  setVisibility: (
+  // Change access from the Share dialog: the three fields (workspace access, the
+  // world link role, and where it's listed). Omitted fields keep the artifact's
+  // current values. Anonymous reachers stay view-only regardless. A password string
+  // (re)sets the lock on the world link; "" clears it; undefined keeps it.
+  setAccess: (
     id: string,
-    visibility: string,
-    generalRole?: GeneralRole,
-    password?: string,
-  ): Promise<{ visibility: string; general_role: GeneralRole }> =>
-    f(`/v1/artifacts/${id}/visibility`, {
-      ...opts({ visibility, generalRole, password }),
+    access: {
+      workspaceAccess?: WorkspaceAccess
+      linkRole?: LinkRole
+      listed?: Listed
+      password?: string
+    },
+  ): Promise<{
+    workspace_access: WorkspaceAccess
+    link_role: LinkRole
+    listed: Listed
+    locked: boolean
+  }> =>
+    f(`/v1/artifacts/${id}/access`, {
+      ...opts(access),
       method: "PATCH",
     }).then(j),
   setLocked: (id: string, locked: boolean): Promise<{ locked: boolean }> =>
@@ -724,6 +466,9 @@ export const api = {
       ...opts({ locked }),
       method: "PATCH",
     }).then(j),
+  // Move to a different workspace you belong to. Owner-only server-side.
+  moveArtifact: (id: string, targetOrgId: string): Promise<{ org_id: string }> =>
+    f(`/v1/artifacts/${id}/move`, opts({ targetOrgId })).then(j),
   diff: (id: string, from: number, to: number): Promise<Diff> =>
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   restore: (id: string, version: number): Promise<Artifact> =>
@@ -839,6 +584,33 @@ export const api = {
   deleteAgent: (id: string): Promise<void> =>
     f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
 
+  // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
+  listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
+  getContext: (id: string): Promise<ContextInfo> => f(`/v1/contexts/${id}`, opts()).then(j),
+  createContext: (input: {
+    name: string
+    agent_id: string
+    manifest_short_id: string
+  }): Promise<ContextInfo> => f("/v1/contexts", opts(input)).then(j),
+  askContext: (
+    id: string,
+    body_md: string,
+  ): Promise<{ session: Session; messages: SessionMessage[] }> =>
+    f(`/v1/contexts/${id}/sessions`, opts({ body_md })).then(j),
+  listContextSessions: (id: string): Promise<{ sessions: Session[] }> =>
+    f(`/v1/contexts/${id}/sessions`, opts()).then(j),
+  getSession: (
+    id: string,
+  ): Promise<{
+    session: Session
+    context: { id: string; name: string }
+    messages: SessionMessage[]
+  }> => f(`/v1/sessions/${id}`, opts()).then(j),
+  postSessionMessage: (id: string, body_md: string): Promise<{ message: SessionMessage }> =>
+    f(`/v1/sessions/${id}/messages`, opts({ body_md })).then(j),
+  closeSession: (id: string): Promise<{ session: Session }> =>
+    f(`/v1/sessions/${id}`, { ...opts({ state: "closed" }), method: "PATCH" }).then(j),
+
   // GitHub sync: mirror a repo's Markdown/HTML into a collection (one-way).
   // Status carries the connected sources, whether the instance GitHub App is set
   // up, and this workspace's installations (so the UI can jump to the picker).
@@ -916,6 +688,29 @@ export const api = {
     f("/v1/workspace", { ...opts({ name }), method: "PATCH" }).then(j),
   addWorkspaceMember: (user: string, role: Role): Promise<ArtifactMember> =>
     f("/v1/workspace/members", { ...opts({ user, role }), method: "PUT" }).then(j),
+  // Bring someone in by @handle or email: an existing account joins directly, an unknown
+  // email gets a pending, emailed invitation (accept_url returned so it's copyable too).
+  inviteToWorkspace: (email: string, role: Role): Promise<InviteResult> =>
+    f("/v1/workspace/invites", opts({ email, role })).then(j),
+  listWorkspaceInvites: (): Promise<{ invites: Invite[] }> =>
+    f("/v1/workspace/invites", opts()).then(j),
+  revokeWorkspaceInvite: (id: string): Promise<void> =>
+    f(`/v1/workspace/invites/${id}`, { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
+  // The accept page: preview an invite by token, then join.
+  previewInvite: (token: string): Promise<InvitePreview> =>
+    f(`/v1/invites/${encodeURIComponent(token)}`, opts()).then(j),
+  // confirmMismatch: the holder is signed in under a different email than the
+  // invite named — the server 409s until they explicitly accept anyway.
+  acceptInvite: (
+    token: string,
+    confirmMismatch?: boolean,
+  ): Promise<{ org_id: string; role: Role }> =>
+    f(
+      `/v1/invites/${encodeURIComponent(token)}/accept`,
+      opts(confirmMismatch ? { confirm_mismatch: true } : {}),
+    ).then(j),
   setWorkspaceMemberRole: (userId: string, role: Role): Promise<{ user_id: string; role: Role }> =>
     f(`/v1/workspace/members/${userId}`, { ...opts({ role }), method: "PATCH" }).then(j),
   removeWorkspaceMember: (userId: string): Promise<void> =>
@@ -941,6 +736,13 @@ export const api = {
     f(`/v1/collections/${id}`, { ...opts({ title }), method: "PATCH" }).then(j),
   deleteCollection: (id: string): Promise<void> =>
     f(`/v1/collections/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+  // Change a collection's share experience — the Share dialog's Invited/Workspace
+  // toggle. Same one-question shape as an artifact's setAccess, no link_role/listed.
+  setCollectionAccess: (
+    id: string,
+    workspaceAccess: WorkspaceAccess,
+  ): Promise<{ workspace_access: WorkspaceAccess }> =>
+    f(`/v1/collections/${id}/access`, { ...opts({ workspaceAccess }), method: "PATCH" }).then(j),
   addToCollection: (collectionId: string, shortId: string): Promise<void> =>
     f(`/v1/collections/${collectionId}/items/${shortId}`, { ...opts(), method: "PUT" }).then(
       () => undefined,

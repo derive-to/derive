@@ -1,12 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useRef, useState } from "react"
-import { type ArtifactMember, api, type PublicProfile, type Role } from "@/api"
+import { useRef, useState } from "react"
+import { type ArtifactMember, api, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -16,8 +16,7 @@ import {
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
 import { getInitials } from "@/lib/initials"
-import { workspaceQuery } from "@/lib/queries"
-import { cn } from "@/lib/utils"
+import { workspaceInvitesQuery, workspaceQuery } from "@/lib/queries"
 import { roleLabel, roleValue, WS_ROLES } from "./roles"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
@@ -31,88 +30,40 @@ export function MembersSection({ meId }: { meId: string }) {
   const [email, setEmail] = useState("")
   const [addRole, setAddRole] = useState<Role>("commenter")
   const [adding, setAdding] = useState(false)
-  // Discoverable-people typeahead for the add field — find teammates by @handle
-  // or name (only those who left people-search on). Free-text (a full email for
-  // someone not discoverable) still works via the Add button.
-  const [suggest, setSuggest] = useState<PublicProfile[]>([])
-  const [active, setActive] = useState(-1)
-  const picked = useRef("")
+  // A ref, not just the `adding` state: state updates are batched/async, so a
+  // burst of synchronous native submit events (Enter held down, or auto-
+  // repeating — see PersonSearchInput's documented submit-fallthrough) can all
+  // read the SAME stale `false` closure before the first call's setAdding(true)
+  // re-renders. The ref flips synchronously, so only the first gets through.
+  const addingRef = useRef(false)
   const [removing, setRemoving] = useState<ArtifactMember | null>(null)
 
   const isAdmin = ws?.role === "owner"
 
-  // Debounced people-search; skip when empty or when the term is exactly what we
-  // just picked (so a pick doesn't immediately reopen the menu).
-  useEffect(() => {
-    const term = email.trim()
-    if (!term || term === picked.current) {
-      setSuggest([])
-      return
-    }
-    let alive = true
-    const t = setTimeout(() => {
-      api
-        .searchPeople(term)
-        .then((r) => {
-          if (!alive) return
-          setSuggest(r.users)
-          setActive(-1)
-        })
-        .catch(() => {
-          if (alive) setSuggest([])
-        })
-    }, 180)
-    return () => {
-      alive = false
-      clearTimeout(t)
-    }
-  }, [email])
-
-  const pick = (u: PublicProfile) => {
-    picked.current = `@${u.username}`
-    setEmail(`@${u.username}`)
-    setSuggest([])
-    setActive(-1)
-  }
-
-  // ↑/↓ to move, Enter to pick the highlighted suggestion, Esc to close. With no
-  // highlight, Enter falls through to the free-text add.
-  const onAddKeyDown = (e: React.KeyboardEvent) => {
-    if (suggest.length === 0) {
-      if (e.key === "Enter") addMember()
-      return
-    }
-    if (e.key === "ArrowDown") {
-      e.preventDefault()
-      setActive((i) => Math.min(i + 1, suggest.length - 1))
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault()
-      setActive((i) => Math.max(i - 1, -1))
-    } else if (e.key === "Enter" && active >= 0 && suggest[active]) {
-      e.preventDefault()
-      pick(suggest[active])
-    } else if (e.key === "Enter") {
-      addMember()
-    } else if (e.key === "Escape") {
-      e.preventDefault()
-      setSuggest([])
-      setActive(-1)
-    }
-  }
-
-  const addMember = async () => {
+  const addMember = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (addingRef.current) return
     const em = email.trim()
     if (!em) return
+    addingRef.current = true
     setAdding(true)
     try {
-      await api.addWorkspaceMember(em, addRole)
+      const r = await api.inviteToWorkspace(em, addRole)
       setEmail("")
-      setSuggest([])
-      toast.success("Member added")
-      qc.invalidateQueries({ queryKey: workspaceQuery().queryKey })
+      if (r.kind === "member") {
+        toast.success("Member added")
+        qc.invalidateQueries({ queryKey: workspaceQuery().queryKey })
+      } else {
+        // A pending invite — copy the accept link to the clipboard so it works even
+        // where mail isn't configured, and refresh the pending list.
+        await navigator.clipboard?.writeText(r.accept_url).catch(() => {})
+        toast.success(`Invite sent to ${r.invite.email} — link copied`)
+        qc.invalidateQueries({ queryKey: workspaceInvitesQuery().queryKey })
+      }
     } catch (e) {
       toast.error((e as Error).message)
     } finally {
+      addingRef.current = false
       setAdding(false)
     }
   }
@@ -150,58 +101,15 @@ export function MembersSection({ meId }: { meId: string }) {
       description="Who's in this workspace and what they can do. Admins add people, Creators publish artifacts, Viewers read and comment."
     >
       {isAdmin && (
-        <div className="flex flex-wrap gap-2">
-          <div className="relative min-w-50 flex-1">
-            <Input
-              data-testid="member-email"
-              autoCapitalize="none"
-              autoCorrect="off"
-              autoComplete="off"
-              aria-label="Username or email of a Derive user"
-              placeholder="@username or email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={onAddKeyDown}
-              className="w-full"
-            />
-            {suggest.length > 0 && (
-              <div
-                data-testid="member-suggest"
-                className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-56 overflow-y-auto rounded-xl bg-popover p-1 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10"
-              >
-                {suggest.map((u, i) => (
-                  <button
-                    key={u.username}
-                    type="button"
-                    data-testid="member-suggest-item"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => pick(u)}
-                    onMouseEnter={() => setActive(i)}
-                    className={cn(
-                      "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-                      i === active && "bg-accent",
-                    )}
-                  >
-                    <Avatar className="size-6">
-                      {u.image && <AvatarImage src={u.image} alt={u.name ?? u.username} />}
-                      <AvatarFallback>{getInitials(u.name ?? u.username)}</AvatarFallback>
-                    </Avatar>
-                    <span className="min-w-0 flex-1">
-                      {u.name && (
-                        <span className="block truncate text-sm font-medium text-foreground">
-                          {u.name}
-                        </span>
-                      )}
-                      <span className="block truncate font-mono text-2xs text-muted-foreground">
-                        @{u.username}
-                        {u.profession ? ` · ${u.profession}` : ""}
-                      </span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+        <form onSubmit={addMember} className="flex flex-wrap gap-2">
+          <PersonSearchInput
+            value={email}
+            onChange={setEmail}
+            placeholder="@username or email to invite"
+            ariaLabel="Username of a Derive user, or an email to invite"
+            testId="member-email"
+            className="min-w-50"
+          />
           <Select value={addRole} onValueChange={(v) => setAddRole(v as Role)}>
             <SelectTrigger
               data-testid="member-role"
@@ -220,15 +128,15 @@ export function MembersSection({ meId }: { meId: string }) {
           </Select>
           <Button
             data-testid="member-add"
+            type="submit"
             variant="secondary"
             size="sm"
-            onClick={addMember}
             loading={adding}
             disabled={adding || !email.trim()}
           >
             {adding ? "Adding…" : "Add"}
           </Button>
-        </div>
+        </form>
       )}
 
       {!ws ? (
@@ -296,6 +204,8 @@ export function MembersSection({ meId }: { meId: string }) {
         </SettingsGroup>
       )}
 
+      {isAdmin && <PendingInvites />}
+
       {removing && (
         <ConfirmDialog
           open
@@ -308,5 +218,54 @@ export function MembersSection({ meId }: { meId: string }) {
         />
       )}
     </SettingsSection>
+  )
+}
+
+// Outstanding invitations that haven't been accepted yet — shown only to Admins, only
+// when there are any. Each row can copy the accept link again or revoke the invite.
+function PendingInvites() {
+  const qc = useQueryClient()
+  const { data: invites } = useQuery(workspaceInvitesQuery())
+  if (!invites || invites.length === 0) return null
+
+  const revoke = async (id: string) => {
+    try {
+      await api.revokeWorkspaceInvite(id)
+      qc.setQueryData(workspaceInvitesQuery().queryKey, (list) =>
+        list ? list.filter((i) => i.id !== id) : list,
+      )
+      toast.success("Invitation revoked")
+    } catch (e) {
+      toast.error((e as Error).message)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="text-sm font-medium text-muted-foreground">Pending invitations</div>
+      <SettingsGroup>
+        {invites.map((inv) => (
+          <div
+            key={inv.id}
+            data-testid={`invite-row-${inv.id}`}
+            className="flex items-center gap-3 py-3"
+          >
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium text-foreground">{inv.email}</div>
+              <div className="text-2xs text-muted-foreground">Invited as {roleLabel(inv.role)}</div>
+            </div>
+            <Badge variant="outline">Pending</Badge>
+            <Button
+              data-testid={`invite-revoke-${inv.id}`}
+              variant="destructive-ghost"
+              size="sm"
+              onClick={() => revoke(inv.id)}
+            >
+              Revoke
+            </Button>
+          </div>
+        ))}
+      </SettingsGroup>
+    </div>
   )
 }

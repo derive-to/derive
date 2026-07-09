@@ -13,6 +13,8 @@ export interface DeriveEvent {
 export interface EventBus {
   subscribe(artifactId: string, cb: (e: DeriveEvent) => void): () => void
   publish(artifactId: string, e: DeriveEvent): void
+  /** How many live subscribers a channel has right now. */
+  count(artifactId: string): number
 }
 
 export function createBus(): EventBus {
@@ -35,6 +37,9 @@ export function createBus(): EventBus {
       subs.get(artifactId)?.forEach((cb) => {
         cb(e)
       })
+    },
+    count(artifactId) {
+      return subs.get(artifactId)?.size ?? 0
     },
   }
 }
@@ -122,7 +127,7 @@ export class Presence {
   }
 }
 
-/** Presence as a port: in-process is synchronous; a Durable Object / Redis store
+/** Presence as a port: in-process is synchronous; a Durable Object store
  *  resolves asynchronously, so callers await the result either way. */
 export interface PresenceStore {
   heartbeat(channel: string, viewer: Viewer, now: number): Viewer[] | Promise<Viewer[]>
@@ -142,7 +147,7 @@ export interface PresenceStore {
 
 /**
  * The realtime backplane: cross-instance event relay + presence, with an optional
- * connection-owning hook. Relay adapters (in-process, Redis) return null from
+ * connection-owning hook. Relay adapters (the in-process bus) return null from
  * `handleStream` and let the route hold the SSE stream + `subscribe`; a Durable
  * Object adapter owns the stream itself and returns the Response. `publish` stays
  * synchronous (fire-and-forget for remote adapters) so the route call sites don't
@@ -155,6 +160,22 @@ export interface Backplane {
   // `viewer` is present only for the artifact `/events` stream (presence rides its
   // lifecycle); the notification channel (`u:<id>`) has no presence and omits it.
   handleStream?(c: Context, channel: string, viewer?: Viewer): Response | Promise<Response> | null
+  /** Publish and report how many live streams received the event — the "did any
+   *  open tab catch this" receipt behind publish's `opened_in_tab`. Best-effort:
+   *  adapters that can't count resolve 0. */
+  publishWithReceipt?(channel: string, e: DeriveEvent): Promise<number>
+  /** Block until an event of one of `types` lands on `channel`, or `timeoutMs`
+   *  passes — the long-poll primitive behind catch_up's `wait`. The event is only
+   *  a wake signal (callers re-read state from the store), so a missed event is
+   *  never a correctness problem. `release` lets a caller that subscribed early
+   *  (before its state check, to close the check-then-wait gap) let go without
+   *  holding the wait open. */
+  waitFor?(
+    channel: string,
+    types: DomainEvent[],
+    timeoutMs: number,
+    release?: AbortSignal,
+  ): Promise<DeriveEvent | null>
 }
 
 /** Default backplane: in-memory bus + presence, single process. The route owns
@@ -167,5 +188,27 @@ export function createInProcessBackplane(): Backplane {
     subscribe: bus.subscribe,
     presence,
     handleStream: () => null,
+    publishWithReceipt(channel, e) {
+      const delivered = bus.count(channel)
+      bus.publish(channel, e)
+      return Promise.resolve(delivered)
+    },
+    waitFor(channel, types, timeoutMs, release) {
+      return new Promise((resolve) => {
+        let done = false
+        const finish = (e: DeriveEvent | null) => {
+          if (done) return
+          done = true
+          clearTimeout(timer)
+          unsub()
+          resolve(e)
+        }
+        const unsub = bus.subscribe(channel, (e) => {
+          if (types.includes(e.type)) finish(e)
+        })
+        const timer = setTimeout(() => finish(null), timeoutMs)
+        release?.addEventListener("abort", () => finish(null), { once: true })
+      })
+    },
   }
 }

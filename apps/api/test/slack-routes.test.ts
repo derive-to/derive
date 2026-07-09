@@ -136,7 +136,9 @@ describe("slack events endpoint", () => {
       org_id: "default",
       slug: null,
       title: "Doc",
-      visibility: "link",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
       kind: "file",
       spa: 0,
     })
@@ -206,7 +208,7 @@ describe("slack events endpoint", () => {
       org_id: "default",
       slug: null,
       title: "Doc",
-      visibility: "link",
+      link_role: "viewer",
       kind: "file",
       spa: 0,
     })
@@ -279,7 +281,9 @@ describe("slack events endpoint", () => {
       org_id: "default",
       slug: null,
       title: "Doc",
-      visibility: "link",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
       kind: "file",
       spa: 0,
     })
@@ -380,7 +384,9 @@ describe("slack interactivity endpoint", () => {
       body,
     })
     expect(r.status).toBe(200)
-    expect(replies).toHaveLength(1)
+    // The interactivity route backgrounds the reply (fire-and-forget, so Slack's
+    // fast-ack window is never blocked) — wait for it rather than asserting inline.
+    await vi.waitFor(() => expect(replies).toHaveLength(1))
     expect(replies[0]?.url).toBe("https://hooks.slack.com/actions/resp-1")
     const reply = replies[0]?.body as { response_type: string; text: string }
     expect(reply.response_type).toBe("ephemeral")

@@ -24,6 +24,10 @@ const DOMAIN_EVENTS = [
   "presence",
   "cursor",
   "notification",
+  // An agent pushed to the user's workspace — emitted on the user's `u:<id>`
+  // channel so their open tabs can auto-open the artifact. Not webhook-eligible
+  // (it is a per-user UI signal, like `notification`).
+  "artifact.pushed",
 ] as const
 export type DomainEvent = (typeof DOMAIN_EVENTS)[number]
 

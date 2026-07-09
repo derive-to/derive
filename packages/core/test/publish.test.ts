@@ -51,7 +51,17 @@ const makeMeta = (): MetaStore => {
   const proposals = new Map<string, FakeProposal>()
   const meta = {
     createArtifact: async (a: NewArtifact): Promise<FakeArtifact> => {
-      const rec: FakeArtifact = { ...a, current_version: 0, created_at: "t", removed_at: null }
+      // Mirror the store's fail-closed column defaults for omitted access fields
+      // (drizzle omits `undefined` keys on insert, so the DB default applies).
+      const rec: FakeArtifact = {
+        ...a,
+        workspace_access: a.workspace_access ?? "none",
+        link_role: a.link_role ?? "none",
+        listed: a.listed ?? "none",
+        current_version: 0,
+        created_at: "t",
+        removed_at: null,
+      }
       byShort.set(a.short_id, rec)
       byId.set(a.id, rec)
       return rec
@@ -83,6 +93,7 @@ const makeMeta = (): MetaStore => {
       if (p) Object.assign(p, f)
       return p ?? null
     },
+    setVersionPreview: async () => {},
   }
   return meta as unknown as MetaStore
 }
@@ -113,9 +124,12 @@ describe("publish: single file", () => {
     const { artifact, version } = await publish(meta, blobs, file("<h1>hi</h1>"))
     expect(artifact.kind).toBe("file")
     expect(artifact.title).toBe("page") // ".html" stripped
-    // Publishing without a visibility is private — visible to nobody but the
-    // publisher until explicitly widened.
-    expect(artifact.visibility).toBe("private")
+    // Publishing without access fields is fail-closed — nobody but the publisher
+    // (the route writes them as the owner-member) until widened. The route, not
+    // publish(), applies the product default (workspace_access member).
+    expect(artifact.workspace_access).toBe("none")
+    expect(artifact.link_role).toBe("none")
+    expect(artifact.listed).toBe("none")
     expect(version.n).toBe(1)
     expect(version.content_type).toBe("text/html")
     expect(new TextDecoder().decode((await blobs.get(version.blob_key)) ?? undefined)).toBe(
@@ -128,14 +142,22 @@ describe("publish: single file", () => {
     expect(version.content_type).toBe("text/markdown")
   })
 
-  it("honors explicit title, visibility, and author", async () => {
+  it("honors explicit title, access, and author", async () => {
     const { artifact, version } = await publish(
       makeMeta(),
       makeBlobs(),
-      file("x", { title: "Custom", visibility: "public", author: "amy" }),
+      file("x", {
+        title: "Custom",
+        workspaceAccess: "member",
+        linkRole: "viewer",
+        listed: "public",
+        author: "amy",
+      }),
     )
     expect(artifact.title).toBe("Custom")
-    expect(artifact.visibility).toBe("public")
+    expect(artifact.workspace_access).toBe("member")
+    expect(artifact.link_role).toBe("viewer")
+    expect(artifact.listed).toBe("public")
     expect(version.author).toBe("amy")
   })
 })
@@ -263,6 +285,20 @@ describe("publish: bundles (zip)", () => {
     )
     expect(mc.entry).toBe("/top.md")
   })
+
+  it("a context source dir enters at MANIFEST.md even when a README sits beside it", async () => {
+    // The entry is the runner's system prompt — a docs README must not hijack it.
+    const blobs = makeBlobs()
+    const a = await publish(
+      makeMeta(),
+      blobs,
+      bundle({ "MANIFEST.md": "# m", "README.md": "# r", "references/schema.md": "# s" }),
+    )
+    const ma = JSON.parse(
+      new TextDecoder().decode((await blobs.get(a.version.blob_key)) ?? undefined),
+    )
+    expect(ma.entry).toBe("/MANIFEST.md")
+  })
 })
 
 describe("publish: republish an existing artifact", () => {
@@ -338,7 +374,9 @@ describe("publish: URL + JSON helpers", () => {
     slug: "my-doc",
     title: "My Doc",
     kind: "file",
-    visibility: "link",
+    workspace_access: "member",
+    link_role: "none",
+    listed: "none",
     spa: 0,
     current_version: 2,
     created_at: "t",

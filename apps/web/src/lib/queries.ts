@@ -54,8 +54,9 @@ export type LibraryParams = {
   // The named-feed scopes, each its own route (see LibraryView):
   // "following" → the activity feed (followed authors + repo path prefixes);
   // "shared" → artifacts explicitly shared with you (can span workspaces);
-  // "needs_feedback" → artifacts with an open thread you're tagged in or commented on.
-  scope?: "following" | "shared" | "needs_feedback"
+  // "needs_feedback" → artifacts with an open thread you're tagged in or commented on;
+  // "mine" → everything you've published by hand, any visibility included.
+  scope?: "following" | "shared" | "needs_feedback" | "mine"
 }
 export const libraryArtifactsQuery = (params: LibraryParams) =>
   infiniteQueryOptions({
@@ -82,6 +83,15 @@ export const needsFeedbackArtifactsQuery = () =>
     queryKey: ["artifacts", "needs_feedback"] as const,
     queryFn: () =>
       api.listArtifacts({ scope: "needs_feedback", limit: 12 }).then((r) => r.artifacts),
+  })
+
+// A small, flat slice of the Following feed — recent work from the people you follow —
+// for the "Recent activity" preview on the People tab. The full feed lives at /following
+// (the infinite libraryArtifactsQuery({ scope: "following" })); this is the peek.
+export const followingPreviewQuery = () =>
+  queryOptions({
+    queryKey: ["artifacts", "following-preview"] as const,
+    queryFn: () => api.listArtifacts({ scope: "following", limit: 6 }).then((r) => r.artifacts),
   })
 
 // The caller's follows (GitHub authors + repo path prefixes) for the active
@@ -113,17 +123,6 @@ export const profileArtifactsQuery = (handle: string) =>
     queryFn: ({ pageParam }) => api.profileArtifacts(handle, pageParam || undefined, PROFILE_PAGE),
     initialPageParam: "",
     getNextPageParam: (last) => last.next_cursor ?? undefined,
-  })
-
-// The follower / following list behind a profile's stat, fetched lazily when its
-// dialog opens. Keyed by (handle, kind) so followers and following cache apart.
-export const profilePeopleQuery = (handle: string, kind: "followers" | "following") =>
-  queryOptions({
-    queryKey: ["profile-people", handle, kind] as const,
-    queryFn: () =>
-      (kind === "followers" ? api.profileFollowers(handle) : api.profileFollowing(handle)).then(
-        (r) => r.users,
-      ),
   })
 
 // The People directory search. Empty query browses everyone discoverable; a term
@@ -205,6 +204,14 @@ export const workspaceQuery = () =>
     staleTime: Number.POSITIVE_INFINITY,
   })
 
+// Pending workspace invitations (Admin-only view under Members). Refetched on
+// invite/revoke; not preloaded, so it's a plain lazy query gated on being an Admin.
+export const workspaceInvitesQuery = () =>
+  queryOptions({
+    queryKey: ["workspace", "invites"] as const,
+    queryFn: () => api.listWorkspaceInvites().then((r) => r.invites),
+  })
+
 // Per-workspace integration switches (email + GitHub mirroring + Slack posting)
 // behind the Integrations section. The toggles flip this cache entry optimistically
 // and roll it back on error.
@@ -268,6 +275,41 @@ export const artifactAgentsQuery = (shortId: string) =>
       api
         .users(undefined, shortId)
         .then((r) => r.users.filter((u) => u.kind === "agent" && u.name)),
+  })
+
+// ---- Contexts + sessions ------------------------------------------------------
+
+// The workspace's askable contexts. Invalidated on create (deletion is
+// API-only for now — no web surface).
+export const contextsQuery = () =>
+  queryOptions({
+    queryKey: ["contexts"] as const,
+    queryFn: () => api.listContexts().then((r) => r.contexts),
+  })
+
+export const contextQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["context", id] as const,
+    queryFn: () => api.getContext(id),
+  })
+
+// The caller's sessions on a context (the owner sees everyone's). Invalidated
+// when a new session opens.
+export const contextSessionsQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["context-sessions", id] as const,
+    queryFn: () => api.listContextSessions(id).then((r) => r.sessions),
+  })
+
+// One session + transcript, polled the activeSyncsQuery way: fast while the
+// runner owes a reply (`open`), off once the conversation is settled — the
+// composer's send flips it back by invalidating this key.
+export const sessionQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["session", id] as const,
+    queryFn: () => api.getSession(id),
+    refetchInterval: (q) => (q.state.data?.session.state === "open" ? 1500 : false),
+    refetchOnWindowFocus: true,
   })
 
 // Open abuse reports for the active workspace — drives the owner-only Moderation

@@ -9,13 +9,20 @@ import type {
   DomainStatus,
   FollowKind,
   GeneralRole,
+  LinkRole,
+  Listed,
   NotificationKind,
+  PreviewStatus,
   ProposalState,
+  RenderJobStatus,
   ReportState,
   ReviewRoundState,
   Role,
+  SessionMessageAuthor,
+  SessionState,
   Visibility,
   WebhookKind,
+  WorkspaceAccess,
 } from "@derive/core"
 import { sql } from "drizzle-orm"
 import {
@@ -38,11 +45,24 @@ export const artifact = sqliteTable("artifact", {
   org_id: text("org_id").notNull().default("local"),
   slug: text("slug"),
   title: text("title"),
-  visibility: text("visibility").$type<Visibility>().notNull().default("private"),
+  // The access model (docs/plans/access-model.md), three independent fields.
+  // workspace_access: does the artifact's workspace get access at each member's
+  // SEAT role (`member`) or not (`none`). link_role: the WORLD link — what anyone
+  // holding the URL gets (`none` inert / viewer / commenter / editor; anon clamped
+  // to viewer). listed: discovery only (`none` / `workspace` library / `public`
+  // directory), NO access. All fail-closed to `none` so an un-stamped row grants
+  // nothing; publish() resolves real values. See effectiveRole.
+  workspace_access: text("workspace_access").$type<WorkspaceAccess>().notNull().default("none"),
+  link_role: text("link_role").$type<LinkRole>().notNull().default("none"),
+  listed: text("listed").$type<Listed>().notNull().default("none"),
+  // Locks the world link on a public-directory doc until unlocked; members and
+  // explicit shares never need it.
   password_hash: text("password_hash"),
-  // The role general access (the link) grants a reacher with no higher explicit
-  // grant. viewer = view-only (default); commenter = authed reachers may comment
-  // (anonymous reachers are always clamped to viewer — see effectiveRole).
+  // ── Orphaned columns (expand/contract — CONTRIBUTING.md). Backfilled ONCE at
+  // boot into the access fields above (backfillAccess consumes `visibility`, so
+  // it re-runs to a no-op), then read by nothing. Kept so existing rows + the DDL
+  // stay consistent and ArtifactRecord's shape matches this table (see ./parity).
+  visibility: text("visibility").$type<Visibility>().notNull().default("private"),
   general_role: text("general_role").$type<GeneralRole>().notNull().default("viewer"),
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
@@ -97,6 +117,9 @@ export const version = sqliteTable(
     author_id: text("author_id"),
     message: text("message"),
     name: text("name"),
+    preview_key: text("preview_key"),
+    preview_status: text("preview_status").$type<PreviewStatus>(),
+    preview_error: text("preview_error"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [uniqueIndex("artifact_version").on(t.artifact_id, t.n)],
@@ -144,6 +167,17 @@ export const webhookDelivery = sqliteTable("webhook_delivery", {
   event_type: text("event_type").notNull(),
   payload: text("payload").notNull(),
   status: text("status").$type<DeliveryStatus>().notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  last_error: text("last_error"),
+  next_attempt_at: text("next_attempt_at").notNull().default(now),
+  created_at: text("created_at").notNull().default(now),
+})
+
+export const renderJob = sqliteTable("render_job", {
+  id: text("id").primaryKey(),
+  artifact_id: text("artifact_id").notNull(),
+  version_n: integer("version_n").notNull(),
+  status: text("status").$type<RenderJobStatus>().notNull().default("pending"),
   attempts: integer("attempts").notNull().default(0),
   last_error: text("last_error"),
   next_attempt_at: text("next_attempt_at").notNull().default(now),
@@ -220,6 +254,29 @@ export const agent = sqliteTable(
   ],
 )
 
+// A pending workspace invitation: an email invited at a role, redeemable by token.
+// Bringing in someone who has no account yet (a membership needs an existing user).
+export const invitation = sqliteTable(
+  "invitation",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    email: text("email").notNull(),
+    role: text("role").$type<Role>().notNull().default("editor"),
+    token: text("token").notNull(),
+    invited_by: text("invited_by"),
+    created_at: text("created_at").notNull().default(now),
+    expires_at: text("expires_at").notNull(),
+    accepted_at: text("accepted_at"),
+  },
+  (t) => [
+    uniqueIndex("invitation_token").on(t.token),
+    // One live invite per (workspace, email): the route deletes any prior pending row
+    // before inserting, so a re-invite supersedes rather than duplicating.
+    index("invitation_org_email").on(t.org_id, t.email),
+  ],
+)
+
 // An agent's pull inbox: one row per mention directed at the agent.
 export const agentMention = sqliteTable("agent_mention", {
   id: text("id").primaryKey(),
@@ -233,6 +290,26 @@ export const agentMention = sqliteTable("agent_mention", {
   state: text("state").$type<AgentMentionState>().notNull().default("pending"),
   created_at: text("created_at").notNull().default(now),
 })
+
+// The SET of workspaces an OAuth client's grants are scoped to for one user —
+// the workspaces ticked on the consent screen. ONE ROW PER GRANTED WORKSPACE
+// (composite-unique on user+client+org). An EMPTY set (no rows) means "all
+// workspaces" — the grant reaches every workspace the user belongs to, including
+// any added later (also the back-compat state for pre-picker grants). A non-empty
+// set restricts the grant to exactly those workspaces. Re-consent replaces the set.
+export const oauthClientWorkspace = sqliteTable(
+  "oauth_client_workspace",
+  {
+    id: text("id").primaryKey(),
+    user_id: text("user_id").notNull(),
+    client_id: text("client_id").notNull(),
+    org_id: text("org_id").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [
+    uniqueIndex("oauth_client_workspace_user_client_org").on(t.user_id, t.client_id, t.org_id),
+  ],
+)
 
 // Per-user stars. One row per (artifact, user); favorites are personal, never shared.
 export const artifactFavorite = sqliteTable(
@@ -286,6 +363,15 @@ export const collection = sqliteTable("collection", {
   title: text("title").notNull(),
   created_by: text("created_by").notNull(),
   created_at: text("created_at").notNull().default(now),
+  // Same share experience as an artifact's workspace_access, minus link_role/listed —
+  // a collection is a grouping of other artifacts, each with its own access, not
+  // individually link-servable content (see access-model.md). `member` = every
+  // workspace member reaches it at their seat role; `none` = invite-only
+  // (collectionMember rows only). Defaults to `member` (not artifact's fail-closed
+  // `none`) because that's collections' existing behavior today — collectionRole
+  // already folds in the caller's seat unconditionally, so an ADD COLUMN migration
+  // defaulting every existing row to `member` changes nothing for anyone.
+  workspace_access: text("workspace_access").$type<WorkspaceAccess>().notNull().default("member"),
 })
 
 export const collectionItem = sqliteTable(
@@ -498,6 +584,8 @@ export const proposal = sqliteTable("proposal", {
   // Stable identity of the proposer (user or agent id). Withdraw authorization
   // keys on this, never the mutable display `author` name. Nullable for legacy.
   author_id: text("author_id"),
+  // When an agent proposed this, the human it acted on behalf of (delegation provenance).
+  on_behalf_of: text("on_behalf_of"),
   base_version: integer("base_version").notNull(),
   state: text("state").$type<ProposalState>().notNull().default("open"),
   decided_by: text("decided_by"),
@@ -536,6 +624,69 @@ export const reviewRound = sqliteTable(
   // wrongly block a sent_back row from coexisting with a fresh pending one. A plain
   // lookup index covers getPendingRound / listReviewRounds.
   (t) => [index("review_round_artifact").on(t.artifact_id, t.requested_for)],
+)
+
+// A context: a named, askable agent setup — the registered agent that answers it
+// linked to the manifest artifact that defines it. Sharing the manifest IS sharing
+// the context (v1: viewer on the manifest = can ask), so the share machinery is
+// reused wholesale. `agent_id` is a plain column (an agent may be deleted out from
+// under a context); the manifest FK is hard — a context can't outlive its definition.
+export const context = sqliteTable(
+  "context",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    name: text("name").notNull(),
+    agent_id: text("agent_id").notNull(),
+    manifest_artifact_id: text("manifest_artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    created_by: text("created_by").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
+)
+
+// One ask-conversation with a context. Named context_session because Better Auth
+// owns a `session` table in the same database. `state` doubles as the turn signal:
+// `open` = the runner owes a reply, which makes the queue read one indexed predicate
+// instead of a last-message join.
+export const contextSession = sqliteTable(
+  "context_session",
+  {
+    id: text("id").primaryKey(),
+    context_id: text("context_id")
+      .notNull()
+      .references(() => context.id),
+    org_id: text("org_id").notNull(),
+    asker_id: text("asker_id").notNull(),
+    context_version: integer("context_version").notNull(),
+    state: text("state").$type<SessionState>().notNull().default("open"),
+    created_at: text("created_at").notNull().default(now),
+    updated_at: text("updated_at"),
+  },
+  (t) => [
+    index("context_session_queue").on(t.context_id, t.state, t.created_at),
+    index("context_session_asker").on(t.asker_id, t.created_at),
+  ],
+)
+
+// A session's transcript, one row per turn. `meta` is the runner's structured
+// payload (query, confidence, caveats, artifact refs) as TEXT JSON, like comment.meta.
+export const sessionMessage = sqliteTable(
+  "session_message",
+  {
+    id: text("id").primaryKey(),
+    session_id: text("session_id")
+      .notNull()
+      .references(() => contextSession.id),
+    author_kind: text("author_kind").$type<SessionMessageAuthor>().notNull(),
+    author_id: text("author_id").notNull(),
+    body_md: text("body_md").notNull(),
+    meta: text("meta"),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [index("session_message_session").on(t.session_id, t.created_at)],
 )
 
 // Abuse reports against public artifacts; anyone can file one.
@@ -578,12 +729,15 @@ const TABLES = [
   comment,
   webhook,
   webhookDelivery,
+  renderJob,
   membership,
   workspace,
   artifactMember,
   notification,
   agent,
   agentMention,
+  invitation,
+  oauthClientWorkspace,
   artifactFavorite,
   follow,
   artifactTag,
@@ -602,6 +756,9 @@ const TABLES = [
   domain,
   proposal,
   reviewRound,
+  context,
+  contextSession,
+  sessionMessage,
   report,
   auditLog,
 ]

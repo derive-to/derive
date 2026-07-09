@@ -246,7 +246,87 @@ describe("sqlite store: OAuth grants (Better Auth oauth-provider tables)", () =>
     expect(await fresh.getOAuthGrant("deadbeef")).toBeNull()
     expect(await fresh.getOAuthClientName("client_x")).toBeNull()
     expect(await fresh.pruneStaleOAuthClients(new Date().toISOString())).toBe(0)
+    // Connected-agents surface fails open too: no tables → empty list, revoke is a no-op.
+    expect(await fresh.listUserGrants("u1")).toEqual([])
+    await expect(fresh.revokeUserGrant("u1", "client_x")).resolves.toBeUndefined()
     fresh.close()
+  })
+
+  it("lists a user's authorized agents and revokes one (consent + tokens dropped)", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs")
+    const { tmpdir } = await import("node:os")
+    const { join } = await import("node:path")
+    const dir = mkdtempSync(join(tmpdir(), "derive-db-grants-"))
+    const path = join(dir, "store.db")
+    const s = new SqliteMetaStore(path)
+    const raw = new Database(path)
+    raw.exec(`
+      CREATE TABLE IF NOT EXISTS "oauthClient" ("clientId" TEXT PRIMARY KEY, name TEXT, "userId" TEXT, "createdAt" TEXT);
+      CREATE TABLE IF NOT EXISTS "oauthAccessToken" ("token" TEXT PRIMARY KEY, "clientId" TEXT, "userId" TEXT, "scopes" TEXT, "expiresAt" TEXT);
+      CREATE TABLE IF NOT EXISTS "oauthRefreshToken" ("token" TEXT PRIMARY KEY, "clientId" TEXT, "userId" TEXT, "expiresAt" TEXT);
+      CREATE TABLE IF NOT EXISTS "oauthConsent" ("id" TEXT PRIMARY KEY, "clientId" TEXT, "userId" TEXT, "scopes" TEXT, "updatedAt" TEXT);
+    `)
+    raw
+      .prepare(`INSERT INTO "oauthClient" ("clientId",name) VALUES (?,?)`)
+      .run("client_a", "Claude Code")
+    raw
+      .prepare(
+        `INSERT INTO "oauthConsent" ("id","clientId","userId","scopes","updatedAt") VALUES (?,?,?,?,?)`,
+      )
+      .run(
+        "cons1",
+        "client_a",
+        "u1",
+        JSON.stringify(["derive:read", "derive:propose"]),
+        "2026-06-01T00:00:00.000Z",
+      )
+    // A live access + refresh token under that grant, and an unrelated other user's consent.
+    raw
+      .prepare(
+        `INSERT INTO "oauthAccessToken" ("token","clientId","userId","scopes","expiresAt") VALUES (?,?,?,?,?)`,
+      )
+      .run("tok1", "client_a", "u1", JSON.stringify(["derive:read"]), "2099-01-01T00:00:00.000Z")
+    // A refresh token too — the 30-day one that, if not killed, could mint fresh access
+    // tokens for weeks after a "revoke". Revocation MUST drop it.
+    raw
+      .prepare(
+        `INSERT INTO "oauthRefreshToken" ("token","clientId","userId","expiresAt") VALUES (?,?,?,?)`,
+      )
+      .run("rt1", "client_a", "u1", "2099-01-01T00:00:00.000Z")
+    raw
+      .prepare(
+        `INSERT INTO "oauthConsent" ("id","clientId","userId","scopes","updatedAt") VALUES (?,?,?,?,?)`,
+      )
+      .run(
+        "cons2",
+        "client_a",
+        "other",
+        JSON.stringify(["derive:read"]),
+        "2026-06-02T00:00:00.000Z",
+      )
+    raw.close()
+
+    const grants = await s.listUserGrants("u1")
+    expect(grants).toHaveLength(1)
+    expect(grants[0]).toMatchObject({ clientId: "client_a", clientName: "Claude Code" })
+    expect(grants[0]?.scopes).toEqual(["derive:read", "derive:propose"])
+
+    await s.revokeUserGrant("u1", "client_a")
+    // u1's grant + BOTH token kinds are gone; the other user's consent is untouched.
+    expect(await s.listUserGrants("u1")).toEqual([])
+    expect(await s.listUserGrants("other")).toHaveLength(1)
+    const check = new Database(path)
+    const count = (table: string) =>
+      (
+        check.prepare(`SELECT count(*) as n FROM "${table}" WHERE "userId"='u1'`).get() as {
+          n: number
+        }
+      ).n
+    expect(count("oauthAccessToken")).toBe(0)
+    expect(count("oauthRefreshToken")).toBe(0) // the 30-day token really is revoked
+    check.close()
+    s.close()
+    rmSync(dir, { recursive: true, force: true })
   })
 
   it("resolves a seeded grant and reaps only abandoned anonymous clients", async () => {

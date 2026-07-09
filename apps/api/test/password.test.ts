@@ -66,8 +66,9 @@ describe("permissions: password-protected artifacts", () => {
   })
 })
 
-// Changing general access after publish, from the Share dialog (PATCH visibility).
-describe("permissions: changing general access (visibility)", () => {
+// Changing access after publish, from the Share dialog (PATCH /access). The lock
+// is a gate on the world link — it only takes while link_role != none.
+describe("permissions: locking the world link via PATCH /access", () => {
   const app = createApp({
     meta,
     blobs: new FsBlobStore(join(dir, "blobs")),
@@ -76,30 +77,43 @@ describe("permissions: changing general access (visibility)", () => {
   })
   const owner = { authorization: "Bearer s3cret" }
   const patch = (id: string, body: object) =>
-    app.request(`/v1/artifacts/${id}/visibility`, {
+    app.request(`/v1/artifacts/${id}/access`, {
       method: "PATCH",
       headers: { "content-type": "application/json", ...owner },
       body: JSON.stringify(body),
     })
   let shortId = ""
 
-  it("turns a link artifact into a password one (a password is required)", async () => {
+  it("locks a world-linked artifact (a password is required)", async () => {
     const form = new FormData()
     form.append("file", new Blob([new TextEncoder().encode("<h1>x</h1>")]), "x.html")
-    form.append("visibility", "link")
+    form.append("link_role", "viewer")
     shortId = (
       await (
         await app.request("/v1/artifacts", { method: "POST", body: form, headers: owner })
       ).json()
     ).short_id
-    expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(200) // link: anon reads
-    expect((await patch(shortId, { visibility: "password" })).status).toBe(400) // needs a password
-    expect((await patch(shortId, { visibility: "password", password: "sesame" })).status).toBe(200)
+    expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(200) // world link: anon reads
+    // The legacy vocabulary still refuses to lock without a password…
+    expect((await patch(shortId, { visibility: "password" })).status).toBe(400)
+    // …and locking is a password on the live link.
+    expect((await patch(shortId, { password: "sesame" })).status).toBe(200)
     expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(401) // now locked
   })
 
-  it("turning access back to link clears the password", async () => {
-    expect((await patch(shortId, { visibility: "link" })).status).toBe(200)
+  it("re-patching without a password keeps the lock; an empty password clears it", async () => {
+    // Changing the link role (a bare PATCH) must not silently drop the lock.
+    expect((await patch(shortId, { linkRole: "commenter" })).status).toBe(200)
+    expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(401) // still locked
+    // Clearing is explicit: an empty password removes the lock.
+    expect((await patch(shortId, { password: "" })).status).toBe(200)
     expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(200)
+  })
+
+  it("dropping the link clears the lock — it cannot resurrect when a link returns", async () => {
+    expect((await patch(shortId, { password: "sesame" })).status).toBe(200)
+    expect((await patch(shortId, { linkRole: "none" })).status).toBe(200)
+    expect((await patch(shortId, { linkRole: "viewer" })).status).toBe(200)
+    expect((await app.request(`/v1/artifacts/${shortId}`)).status).toBe(200) // unlocked
   })
 })

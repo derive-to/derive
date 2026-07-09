@@ -111,7 +111,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/favorites" | "/following" | "/shared" | "/people"
+  to: "/favorites" | "/following" | "/shared" | "/people" | "/contexts"
   active: boolean
   testId?: string
 }) {
@@ -290,6 +290,10 @@ export function NavRail() {
     enabled: !!me,
   })
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
+  // The pod subtitle: "Personal" for the auto-provisioned workspace (its stored
+  // name is provisioning plumbing), else the summary's workspace name.
+  const activeWs = workspaces?.workspaces.find((w) => w.id === workspaces.active)
+  const workspaceLabel = activeWs?.personal ? "Personal" : (summary?.workspace ?? "")
   const { setOpenMobile } = useSidebar()
   const nav = useNavigate()
   const loc = useLocation()
@@ -299,9 +303,10 @@ export function NavRail() {
   // collection filter narrows it. (A ?query= search doesn't change which feed you're in.)
   const isAll = onLibrary && !search.tag && !search.collection
   const isFav = loc.pathname === "/favorites"
-  const isFollowing = loc.pathname === "/following"
   const onShared = loc.pathname === "/shared"
-  const onPeople = loc.pathname === "/people"
+  // People + its Activity sub-view (the /following feed) are one tab; the row lights for both.
+  const onPeople = loc.pathname === "/people" || loc.pathname === "/following"
+  const onContexts = loc.pathname.startsWith("/contexts")
   const onSettings = loc.pathname.startsWith("/settings")
   const tags = summary?.tags ?? []
   // The icon strip shows only glyph rows; content that has no icon form (the
@@ -461,13 +466,6 @@ export function NavRail() {
                 active={isFav}
                 testId="sidebar-favorites"
               />
-              <NavItem
-                icon="following"
-                label="Following"
-                to="/following"
-                active={isFollowing}
-                testId="nav-following"
-              />
               {/* Shared with you — a durable named feed (things others gave you access to),
                   a peer of the feeds above; not a home strip (that's the whole IA move). */}
               <NavItem
@@ -477,13 +475,22 @@ export function NavRail() {
                 active={onShared}
                 testId="nav-shared"
               />
-              {/* People directory — the other fixed-feed route, a peer of the two feeds. */}
+              {/* People — who you follow, plus a way to find the people you work with.
+                  Folds the old /following feed in as this tab's default (people you
+                  follow); the artifact activity feed lives on at /following, unlinked. */}
               <NavItem
                 icon="user"
                 label="People"
                 to="/people"
                 active={onPeople}
                 testId="nav-people"
+              />
+              <NavItem
+                icon="context"
+                label="Contexts"
+                to="/contexts"
+                active={onContexts}
+                testId="nav-contexts"
               />
             </SidebarMenu>
           </SidebarGroupContent>
@@ -708,7 +715,7 @@ export function NavRail() {
         <SidebarMenu>
           <SidebarMenuItem>
             <UserPod
-              workspaceLabel={summary?.workspace ?? ""}
+              workspaceLabel={workspaceLabel}
               workspaces={workspaces ?? null}
               onSwitchWorkspace={switchWorkspace}
             />

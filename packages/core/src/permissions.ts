@@ -1,20 +1,9 @@
-import type { Visibility } from "./ports"
+import type { LinkRole, Role, WorkspaceAccess } from "./roles"
 
-/**
- * The role vocabulary, in increasing power. A higher role can do everything a
- * lower one can.
- *  - viewer:    read
- *  - commenter: + comment, and propose a candidate version for review
- *               (creates content to be reviewed; cannot publish/approve)
- *  - editor:    + publish versions directly, approve others' proposals, and
- *               share (invite collaborators, change general access)
- *  - owner:     + manage (transfer/settings, delete)
- */
-export type Role = "viewer" | "commenter" | "editor" | "owner"
-
-/** The roles general access (a shared link) can grant a reacher: view-only or comment.
- *  A strict subset of Role — general access never hands out editor/owner. */
-export type GeneralRole = "viewer" | "commenter"
+// The access vocabulary lives in ./roles (a leaf) so ./ports and this module can
+// both use it without forming an import cycle. Re-exported here so the long-standing
+// `@derive/core` surface stays unchanged (roles is not itself in the index barrel).
+export type { GeneralRole, LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
 
 /** What an actor wants to do. Kept coarse on purpose; `can()` is the only gate. */
 export type Action = "read" | "comment" | "propose" | "publish" | "approve" | "share" | "manage"
@@ -52,6 +41,8 @@ export function maxRole(...roles: (Role | null | undefined)[]): Role | null {
  *  never rises above the role it was registered with — a workspace owner's
  *  agent registered as editor acts as editor, so no agent can `manage`
  *  (delete, transfer) regardless of whose authority it borrows. */
+export function capRole(role: Role, cap: Role): Role
+export function capRole(role: Role | null, cap: Role): Role | null
 export function capRole(role: Role | null, cap: Role): Role | null {
   if (!role) return null
   return RANK[role] > RANK[cap] ? cap : role
@@ -68,62 +59,74 @@ export interface Actor {
   artifactRole?: Role | null
   /** Baseline role from membership in the artifact's workspace, if any. */
   orgRole?: Role | null
-  /** The caller has entered the correct password for a `password` artifact. */
+  /** The artifact carries a password (a lock on its public link). */
+  locked?: boolean
+  /** The caller has entered the correct password for a locked artifact. */
   unlocked?: boolean
 }
 
 /**
- * The actor's effective role on an artifact, the max of their explicit standing and
- * the general-access floor:
- *   per-artifact share  →  workspace membership  →  general-access floor (by reach).
- * null means no access at all. This function is the single source of truth for the
- * access matrix; SECURITY.md documents the same table for humans.
+ * The actor's effective role on an artifact — the max of three independent grants
+ * (docs/plans/access-model.md). null means no access at all. The single source of
+ * truth for the access matrix; SECURITY.md documents the same for humans.
  *
- *   General access (the link)    Anonymous              Signed in via link    Member / share
- *   ───────────────────────────  ─────────────────────  ────────────────────  ────────────────
- *   link / public · view         view                   view                  their role (>= view)
- *   link / public · comment      view (sign in to cmt)  view + comment        their role (>= cmt)
- *   password · view|comment      unlock, then as above  unlock, then above    their role (no pw)
- *   workspace only (org)         no access              no access             their role (members)
+ *   access = max( explicit share , workspace seat , world link )
  *
- * Invariant: an anonymous caller is never more than `viewer`. Anything past view
- * (comment, propose, publish, share, manage) needs an authenticated identity — a
- * signed-in user or a `DERIVE_TOKEN`. There is deliberately no "trusted anonymous" path.
+ * EXPLICIT (`artifactRole`) — a per-artifact or collection share. Always counts.
+ *
+ * WORKSPACE SEAT — when `workspaceAccess === "member"`, a signed-in member of the
+ * ARTIFACT's workspace opens at their OWN seat role (`orgRole`): an editor edits,
+ * a commenter comments. When `none`, membership grants nothing (an invite-only or
+ * external-only doc). There is no per-doc workspace role — seats are the role.
+ *
+ * WORLD LINK — what merely holding the URL confers, to anyone (non-member, public,
+ * anonymous):
+ *   - `linkRole === "none"` → the link is inert.
+ *   - a password (the lock) suspends it until unlocked; explicit standing and the
+ *     workspace seat are untouched, so members and shares never need the password.
+ *   - a signed-in holder gets `linkRole`; an anonymous holder is always clamped to
+ *     `viewer` — never elevated to a writing role without an account.
+ *
+ * Note there is NO listing input: discovery (`listed`) carries no access, so it is
+ * not part of this gate.
+ *
+ * Invariant: an anonymous caller is never more than `viewer`, regardless of the
+ * grant. Anything past view (comment, propose, publish, share, manage) needs an
+ * authenticated identity — a signed-in user or a `DERIVE_TOKEN`. There is
+ * deliberately no "trusted anonymous" path.
  */
 export function effectiveRole(
   actor: Actor,
-  visibility: Visibility,
-  generalRole: GeneralRole = "viewer",
+  workspaceAccess: WorkspaceAccess = "none",
+  linkRole: LinkRole = "none",
 ): Role | null {
   if (actor.kind === "token") return "owner"
-  // A per-artifact share or workspace membership — authenticated callers only.
-  // `private` is the exception: workspace membership grants nothing there, so a
-  // team-workspace draft stays invisible to teammates until explicitly shared
-  // (per-artifact and collection shares both ride artifactRole).
-  const explicit =
-    actor.kind === "user"
-      ? visibility === "private"
-        ? actor.artifactRole
-        : (actor.artifactRole ?? actor.orgRole)
-      : null
-  // The general-access floor for a reacher with no higher explicit grant. Only an
-  // authenticated reacher gets the configured general role; an anonymous reacher is
-  // clamped to `viewer` — never elevated to a writing role without an account.
-  const reach: Role = actor.kind === "user" ? generalRole : "viewer"
-  let floor: Role | null = null
-  if (visibility === "public" || visibility === "link") floor = reach
-  else if (visibility === "password") floor = actor.unlocked ? reach : null
-  // org/private grant nothing by reach — only an explicit role opens them.
-  return maxRole(explicit, floor)
+  // A per-artifact / collection share — authenticated callers only.
+  const explicit = actor.kind === "user" ? (actor.artifactRole ?? null) : null
+  // The workspace seat: a member of THIS workspace opens at their own role, but
+  // only when the artifact grants workspace access.
+  const seat: Role | null =
+    workspaceAccess === "member" && actor.kind === "user" ? (actor.orgRole ?? null) : null
+  // The world link: anyone with the URL. A password suspends it until unlocked; an
+  // anonymous holder is clamped to viewer.
+  const world: Role | null =
+    linkRole === "none"
+      ? null
+      : actor.locked && !actor.unlocked
+        ? null
+        : actor.kind === "user"
+          ? linkRole
+          : "viewer"
+  return maxRole(explicit, seat, world)
 }
 
 /** The one authorization gate. */
 export function can(
   actor: Actor,
   action: Action,
-  visibility: Visibility,
-  generalRole: GeneralRole = "viewer",
+  workspaceAccess: WorkspaceAccess = "none",
+  linkRole: LinkRole = "none",
 ): boolean {
-  const role = effectiveRole(actor, visibility, generalRole)
+  const role = effectiveRole(actor, workspaceAccess, linkRole)
   return role !== null && roleAllows(role, action)
 }

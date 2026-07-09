@@ -9,8 +9,11 @@ CREATE TABLE IF NOT EXISTS artifact (
   org_id TEXT NOT NULL DEFAULT 'local',
   slug TEXT,
   title TEXT,
-  visibility TEXT NOT NULL DEFAULT 'private',
+  workspace_access TEXT NOT NULL DEFAULT 'none',
+  link_role TEXT NOT NULL DEFAULT 'none',
+  listed TEXT NOT NULL DEFAULT 'none',
   password_hash TEXT,
+  visibility TEXT NOT NULL DEFAULT 'private',
   general_role TEXT NOT NULL DEFAULT 'viewer',
   kind TEXT NOT NULL,
   spa INTEGER NOT NULL DEFAULT 0,
@@ -42,6 +45,9 @@ CREATE TABLE IF NOT EXISTS version (
   author_id TEXT,
   message TEXT,
   name TEXT,
+  preview_key TEXT,
+  preview_status TEXT,
+  preview_error TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (artifact_id, n),
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
@@ -85,6 +91,17 @@ CREATE TABLE IF NOT EXISTS webhook_delivery (
   kind TEXT NOT NULL,
   event_type TEXT NOT NULL,
   payload TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  next_attempt_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS render_job (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL,
+  version_n INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
   attempts INTEGER NOT NULL DEFAULT 0,
   last_error TEXT,
@@ -157,6 +174,30 @@ CREATE TABLE IF NOT EXISTS agent_mention (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS invitation (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'editor',
+  token TEXT NOT NULL,
+  invited_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  expires_at TEXT NOT NULL,
+  accepted_at TEXT,
+  UNIQUE (token)
+);
+
+CREATE INDEX IF NOT EXISTS invitation_org_email ON invitation (org_id, email);
+
+CREATE TABLE IF NOT EXISTS oauth_client_workspace (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  client_id TEXT NOT NULL,
+  org_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (user_id, client_id, org_id)
+);
+
 CREATE TABLE IF NOT EXISTS artifact_favorite (
   id TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL,
@@ -190,7 +231,8 @@ CREATE TABLE IF NOT EXISTS collection (
   org_id TEXT NOT NULL DEFAULT 'local',
   title TEXT NOT NULL,
   created_by TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  workspace_access TEXT NOT NULL DEFAULT 'member'
 );
 
 CREATE TABLE IF NOT EXISTS collection_item (
@@ -334,6 +376,7 @@ CREATE TABLE IF NOT EXISTS proposal (
   message TEXT,
   author TEXT NOT NULL,
   author_id TEXT,
+  on_behalf_of TEXT,
   base_version INTEGER NOT NULL,
   state TEXT NOT NULL DEFAULT 'open',
   decided_by TEXT,
@@ -358,6 +401,47 @@ CREATE TABLE IF NOT EXISTS review_round (
 );
 
 CREATE INDEX IF NOT EXISTS review_round_artifact ON review_round (artifact_id, requested_for);
+
+CREATE TABLE IF NOT EXISTS context (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  manifest_artifact_id TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (org_id, name),
+  FOREIGN KEY (manifest_artifact_id) REFERENCES artifact(id)
+);
+
+CREATE TABLE IF NOT EXISTS context_session (
+  id TEXT PRIMARY KEY,
+  context_id TEXT NOT NULL,
+  org_id TEXT NOT NULL,
+  asker_id TEXT NOT NULL,
+  context_version INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT,
+  FOREIGN KEY (context_id) REFERENCES context(id)
+);
+
+CREATE INDEX IF NOT EXISTS context_session_queue ON context_session (context_id, state, created_at);
+
+CREATE INDEX IF NOT EXISTS context_session_asker ON context_session (asker_id, created_at);
+
+CREATE TABLE IF NOT EXISTS session_message (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  author_kind TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  body_md TEXT NOT NULL,
+  meta TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  FOREIGN KEY (session_id) REFERENCES context_session(id)
+);
+
+CREATE INDEX IF NOT EXISTS session_message_session ON session_message (session_id, created_at);
 
 CREATE TABLE IF NOT EXISTS report (
   id TEXT PRIMARY KEY,
@@ -411,11 +495,15 @@ CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at);
 
 CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at);
 
+CREATE INDEX IF NOT EXISTS render_job_due ON render_job (status, next_attempt_at);
+
 CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at);
 
 CREATE INDEX IF NOT EXISTS agent_mention_inbox ON agent_mention (agent_id, state, created_at);
 
 CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id);
+
+CREATE INDEX IF NOT EXISTS artifact_member_by_user ON artifact_member (user_id);
 
 CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag);
 

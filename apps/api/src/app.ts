@@ -1,6 +1,10 @@
 import { type ArtifactRecord, parseRef } from "@derive/core"
-import { type Context, Hono } from "hono"
+import { OpenAPIHono } from "@hono/zod-openapi"
+import { Scalar } from "@scalar/hono-api-reference"
+import type { Context, Hono } from "hono"
 import { compress } from "hono/compress"
+import type { BlankEnv } from "hono/types"
+import { OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { type AppDeps, buildContext } from "./context"
 import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
 import { observability } from "./lib/observability"
@@ -14,6 +18,7 @@ import { artifactRoutes } from "./routes/artifacts"
 import { assetRoutes } from "./routes/assets"
 import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
+import { contextRoutes } from "./routes/contexts"
 import { domainRoutes } from "./routes/domains"
 import { embedRoutes } from "./routes/embeds"
 import { favoriteRoutes } from "./routes/favorites"
@@ -52,7 +57,12 @@ export function createApp(deps: AppDeps): Hono {
   // in-process set (authoritative on one container).
   const rateLimiters = deps.rateLimiters ?? inMemoryRateLimiters(deps)
   const ctx = buildContext({ ...deps, rateLimiters })
-  const app = new Hono()
+  // OpenAPIHono is a drop-in extension of Hono: every existing route/middleware works
+  // unchanged, and routers that adopt createRoute() (contract-first) contribute their
+  // schemas to the generated spec below. Untouched routers mount exactly as before.
+  // Pinned to BlankEnv (what the bare `new Hono()` inferred) so the instance stays
+  // assignable to Hono everywhere createApp's result is used (node.ts, worker.ts, tests).
+  const app = new OpenAPIHono<BlankEnv>()
 
   // Outermost: a per-request id + one structured access-log line (method, path,
   // status, duration, actor, org), so a 500 is correlatable to who/what.
@@ -179,7 +189,7 @@ export function createApp(deps: AppDeps): Hono {
         a.title,
         prefix,
         rawPath,
-        cacheControlFor(a.visibility),
+        cacheControlFor(a.link_role, !!a.password_hash),
       )
     }
     app.use("*", async (c, next) => {
@@ -228,6 +238,16 @@ export function createApp(deps: AppDeps): Hono {
   if (deps.rateLimit) {
     // Strict on auth (credential brute-force); lenient on mutating API calls.
     app.use("/api/auth/*", ipRateLimit(rateLimiters.auth))
+    // Mail-triggering auth endpoints get a much tighter cap on top (each request emails an
+    // address, so this bounds inbox-bombing). Registered before the general auth limiter;
+    // Hono runs both, and the tighter one 429s first.
+    const authEmailLimiter = ipRateLimit(rateLimiters.authEmail)
+    for (const p of [
+      "/api/auth/request-password-reset",
+      "/api/auth/send-verification-email",
+      "/api/auth/change-email",
+    ])
+      app.use(p, authEmailLimiter)
     // Anonymous OAuth client registration (open DCR) gets a tighter per-IP cap on
     // top, so no single source can flood the client table.
     app.use("/api/auth/oauth2/register", ipRateLimit(rateLimiters.oauthRegister))
@@ -238,12 +258,13 @@ export function createApp(deps: AppDeps): Hono {
   }
 
   // After an anonymous registration, opportunistically reap abandoned anonymous
-  // clients (never consented, no tokens, > 1 day old). Best-effort and async so it
-  // never delays the response; runs on both the Node and the (cron-less) edge tier.
+  // clients (never consented, no tokens, > OAUTH_ANON_CLIENT_TTL_MS old). Best-effort
+  // and async so it never delays the response; runs on both the Node and the
+  // (cron-less) edge tier.
   app.use("/api/auth/oauth2/register", async (c, next) => {
     await next()
     if (c.req.method === "POST" && c.res.status < 300) {
-      const cutoff = new Date(Date.now() - 24 * 3_600_000).toISOString()
+      const cutoff = new Date(Date.now() - OAUTH_ANON_CLIENT_TTL_MS).toISOString()
       void ctx.meta.pruneStaleOAuthClients(cutoff).catch(() => 0)
     }
   })
@@ -251,6 +272,50 @@ export function createApp(deps: AppDeps): Hono {
   // Better Auth owns /api/auth/* (sign-up/in/out, OAuth, OIDC/SSO, session).
   if (deps.auth) {
     const auth = deps.auth
+    // Self-heal a stale client_id on /authorize instead of dead-ending the human on
+    // the oauth-provider's bare "invalid_client / client_id is required" error page
+    // (that message fires both when client_id is missing AND when it's present but
+    // unresolvable — see getClient in the plugin). The common cause: an agent
+    // (Claude.ai, another MCP client) self-registered via DCR but its human didn't
+    // finish the browser consent before pruneStaleOAuthClients reaped the row — the
+    // agent has no way to know its client_id died and just keeps sending it, and
+    // nothing the human does in the connector UI fixes it without knowing to
+    // disconnect/reconnect. Any other cause of a missing row (a wiped local DB,
+    // manual cleanup) hits the same recovery path. When the client_id on an
+    // /authorize request doesn't resolve, silently register a fresh public client
+    // for the same redirect_uri/scope and continue the flow under the new id — the
+    // human only ever sees the consent screen, never the error.
+    app.use("/api/auth/oauth2/authorize", async (c, next) => {
+      const url = new URL(c.req.url)
+      const clientId = url.searchParams.get("client_id")
+      const redirectUri = url.searchParams.get("redirect_uri")
+      const responseType = url.searchParams.get("response_type")
+      const needsHealing =
+        clientId &&
+        redirectUri &&
+        responseType === "code" &&
+        !(await ctx.meta.oauthClientExists(clientId))
+      if (needsHealing) {
+        try {
+          const registered = await auth.api.registerOAuthClient({
+            body: {
+              redirect_uris: [redirectUri],
+              scope: url.searchParams.get("scope") ?? undefined,
+              client_name: "recovered-client",
+              token_endpoint_auth_method: "none",
+            },
+          })
+          url.searchParams.set("client_id", registered.client_id)
+          return c.redirect(url.toString(), 302)
+        } catch (err) {
+          log.error("oauth self-heal: re-registration failed", {
+            error: err instanceof Error ? err.message : String(err),
+          })
+          // Fall through: the normal authorize handler errors as before.
+        }
+      }
+      await next()
+    })
     app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw))
   }
 
@@ -302,6 +367,7 @@ export function createApp(deps: AppDeps): Hono {
     proposalRoutes,
     reviewRoutes,
     commentRoutes,
+    contextRoutes,
     realtimeRoutes,
     analyticsRoutes,
     notificationRoutes,
@@ -315,6 +381,21 @@ export function createApp(deps: AppDeps): Hono {
     systemRoutes,
   ])
     app.route("/", routes(ctx))
+
+  // The OpenAPI description of the contract-first routes, served for agents and used to
+  // generate the web client's response types (apps/web/src/api-types.ts). Only routers
+  // that adopt createRoute() appear here; the set grows as more migrate. Public + static
+  // (no auth, no per-request state), so it sits outside the /v1 context middleware above.
+  // Snapshot-locked at apps/api/openapi.json — a shape change fails the openapi test.
+  app.doc("/openapi.json", {
+    openapi: "3.0.3",
+    info: { title: "Derive API", version: "1.0.0" },
+  })
+
+  // Interactive API reference (Scalar) rendered from the spec above. Public +
+  // static like /openapi.json — a viewer for the already-public contract, no new
+  // exposure and no per-request state, so it also sits outside the /v1 auth context.
+  app.get("/docs", Scalar({ url: "/openapi.json" }))
 
   // The remote MCP endpoint — Streamable HTTP, bearer-gated by the agent bridge.
   mountMcp(app, ctx)

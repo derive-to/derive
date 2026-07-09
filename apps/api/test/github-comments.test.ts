@@ -57,7 +57,9 @@ describe("github comment mirroring (inbound)", () => {
       org_id: "default",
       slug: null,
       title: "Doc",
-      visibility: "link",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
       kind: "file",
       spa: 0,
     })
@@ -152,7 +154,9 @@ describe("github comment write-back (outbound enqueue)", () => {
       org_id: "default",
       slug: null,
       title: "Doc",
-      visibility: "link",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
       kind: "file",
       spa: 0,
     })

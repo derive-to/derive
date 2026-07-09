@@ -1,9 +1,9 @@
 import { newId, type SlackInstallRecord } from "@derive/core"
-import { Hono } from "hono"
-import { z } from "zod"
+import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
+import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { decryptSecret, encryptSecret, signState, verifyState } from "../lib/crypto"
-import { fail, readJson } from "../lib/http"
+import { bail, fail, readJson } from "../lib/http"
 import { notifyMentions } from "../lib/mentions"
 import { approveProposalAction, requestChangesAction } from "../lib/proposal-actions"
 import {
@@ -31,11 +31,13 @@ import { buildSlackManifest, hostOf, slackSetupHTML } from "../slack-app-setup"
 
 /** Slack App: connect a workspace (OAuth) and receive its Events API (reply-back). The
  *  events endpoint is signature-gated (no session) — it's in the app's anon-write allow
- *  list. The connect endpoints require a signed-in workspace admin. */
+ *  list. The connect endpoints require a signed-in workspace admin. The SlackStatus
+ *  response schema is the single source for the web client's type; the OAuth redirects
+ *  and the Slack Events webhook stay plain routes (not typed JSON). */
 export const slackRoutes = (ctx: AppContext) => {
   const { meta, deps, bus, blobs, notify, background, authorizeUser, requireUser } = ctx
   const { activeWorkspace, workspaceCan } = ctx
-  const app = new Hono()
+  const app = new OpenAPIHono<BlankEnv>()
   const slack = deps.slack
   const redirectUri = new URL("/v1/slack/oauth/callback", deps.baseUrl).toString()
   const linkRedirectUri = new URL("/v1/slack/link/callback", deps.baseUrl).toString()
@@ -121,6 +123,21 @@ export const slackRoutes = (ctx: AppContext) => {
     uid: string
     iat: number
   }
+
+  const SlackStatus = z
+    .object({
+      available: z.boolean(),
+      connected: z.boolean(),
+      team_name: z.string().nullable(),
+      default_channel: z.string().nullable(),
+      /** Whether the stored bot token needs a re-auth (a scope bump or an auth error). */
+      needs_reauth: z.boolean(),
+      /** Whether the signed-in user has linked their own Slack account in this workspace. */
+      linked: z.boolean(),
+      /** The caller's "DM me when I'm @mentioned" preference. */
+      mention_dm: z.boolean(),
+    })
+    .openapi("SlackStatus")
 
   // Start the connect flow: redirect an admin to Slack's OAuth consent, binding the
   // install to this workspace + user via signed state (same pattern as GitHub install).
@@ -338,26 +355,40 @@ export const slackRoutes = (ctx: AppContext) => {
 
   // Connection status for the Settings UI: whether Slack is configured at all, whether
   // this workspace has connected one, and its team + default channel.
-  app.get("/v1/slack", async (c) => {
-    const me = await requireUser(c)
-    if (me instanceof Response) return me
-    const org = await activeWorkspace(c)
-    const install = await meta.getSlackInstall(org)
-    // Whether the signed-in user has linked their own Slack account in this workspace.
-    const link = install ? await meta.getSlackUserLinkByUser(org, me.id) : null
-    // Read the DM preference regardless of connection state so the reported value always
-    // reflects what's stored (the toggle can be set before/after connecting).
-    const pref = await meta.getUserNotificationPref(org, me.id)
-    return c.json({
-      available: !!slack,
-      connected: !!install,
-      team_name: install?.team_name ?? null,
-      default_channel: install?.default_channel ?? null,
-      needs_reauth: install?.needs_reauth === 1,
-      linked: link?.status === "confirmed",
-      mention_dm: wantsMentionDm(pref?.prefs),
-    })
-  })
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/slack",
+      tags: ["Slack"],
+      summary: "Slack connection status for the signed-in user's workspace.",
+      responses: {
+        200: {
+          description: "Whether Slack is available + connected, and the team + default channel.",
+          content: { "application/json": { schema: SlackStatus } },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await requireUser(c)
+      if (me instanceof Response) return bail(me)
+      const org = await activeWorkspace(c)
+      const install = await meta.getSlackInstall(org)
+      // Whether the signed-in user has linked their own Slack account in this workspace.
+      const link = install ? await meta.getSlackUserLinkByUser(org, me.id) : null
+      // Read the DM preference regardless of connection state so the reported value always
+      // reflects what's stored (the toggle can be set before/after connecting).
+      const pref = await meta.getUserNotificationPref(org, me.id)
+      return c.json({
+        available: !!slack,
+        connected: !!install,
+        team_name: install?.team_name ?? null,
+        default_channel: install?.default_channel ?? null,
+        needs_reauth: install?.needs_reauth === 1,
+        linked: link?.status === "confirmed",
+        mention_dm: wantsMentionDm(pref?.prefs),
+      })
+    },
+  )
 
   // Toggle the caller's "DM me when I'm @mentioned" preference.
   app.patch("/v1/slack/prefs", async (c) => {
@@ -459,24 +490,49 @@ export const slackRoutes = (ctx: AppContext) => {
   })
 
   // Set the channel Derive posts to (Slack channel id, e.g. "C0123ABC"). Admin only.
-  app.patch("/v1/slack", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
-    const org = await activeWorkspace(c)
-    const install = await meta.getSlackInstall(org)
-    if (!install) return fail(c, 404, "Slack is not connected")
-    const b = await readJson(c, z.object({ default_channel: z.string().nullable() }))
-    if (b instanceof Response) return b
-    const channel = b.default_channel?.trim() ? b.default_channel.trim() : null
-    await meta.setSlackInstall({ ...install, default_channel: channel })
-    return c.json({ default_channel: channel })
-  })
+  app.openapi(
+    createRoute({
+      method: "patch",
+      path: "/v1/slack",
+      tags: ["Slack"],
+      summary: "Set the channel Derive posts to (Admin only).",
+      responses: {
+        200: {
+          description: "The new default channel (or null to clear it).",
+          content: {
+            "application/json": { schema: z.object({ default_channel: z.string().nullable() }) },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const org = await activeWorkspace(c)
+      const install = await meta.getSlackInstall(org)
+      if (!install) return bail(fail(c, 404, "Slack is not connected"))
+      const b = await readJson(c, z.object({ default_channel: z.string().nullable() }))
+      if (b instanceof Response) return bail(b)
+      const channel = b.default_channel?.trim() ? b.default_channel.trim() : null
+      await meta.setSlackInstall({ ...install, default_channel: channel })
+      return c.json({ default_channel: channel })
+    },
+  )
 
   // Disconnect Slack (admin). Drops the install; thread links are left inert.
-  app.delete("/v1/slack", async (c) => {
-    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
-    await meta.deleteSlackInstall(await activeWorkspace(c))
-    return c.body(null, 204)
-  })
+  app.openapi(
+    createRoute({
+      method: "delete",
+      path: "/v1/slack",
+      tags: ["Slack"],
+      summary: "Disconnect Slack from the workspace (Admin only).",
+      responses: { 204: { description: "Slack was disconnected." } },
+    }),
+    async (c) => {
+      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
+      await meta.deleteSlackInstall(await activeWorkspace(c))
+      return c.body(null, 204)
+    },
+  )
 
   // Channel routing: which channel a workspace's event cards post to, by target (a
   // collection's artifacts, or the workspace default). Admin only.

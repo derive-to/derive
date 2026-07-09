@@ -1,8 +1,22 @@
 {
-  "name": "@derive/mcp",
-  "version": "0.1.0",
+  "name": "@derive-to/mcp",
+  "version": "0.4.1",
   "type": "module",
+  "description": "Stdio MCP server for Derive — list, read, catch up on, comment on, and publish artifacts on a Derive instance.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "derive",
+    "artifacts"
+  ],
   "license": "FSL-1.1-ALv2",
+  "homepage": "https://derive.to",
+  "bugs": {
+    "url": "https://github.com/derive-to/derive/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/derive-to/derive.git",
@@ -30,6 +44,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@derive-to/cli": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "tsx": "^4.19.0",
     "zod": "^4.4.3"

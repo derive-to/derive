@@ -1,96 +1,13 @@
-import { Buffer } from "node:buffer"
 import { expect, test } from "../fixtures"
 
-// The people layer end-to-end: an author's public work shows on their profile, a second
-// person (in their OWN workspace) can follow them, and that follow flows the author's
-// public work into the follower's activity feed — across workspaces. This is the path
-// the cross-workspace feed bug lived on, so it's a smoke-level regression guard.
-test("follow a person → their public work shows on the profile and in the follower's feed", async ({
-  owner,
-  secondUser,
-}) => {
-  const bob = secondUser.page
-
-  // Maya (owner) — read her auto-assigned handle and publish a PUBLIC artifact.
-  const maya = (await (await owner.request.get("/v1/me")).json()).user as { username: string }
-  const published = await owner.request.post("/v1/artifacts", {
-    multipart: {
-      file: { name: "q3-plan.md", mimeType: "text/markdown", buffer: Buffer.from("# Q3 Plan") },
-      title: "Q3 Plan",
-      visibility: "public",
-    },
-  })
-  expect(published.ok()).toBeTruthy()
-  const shortId = ((await published.json()) as { short_id: string }).short_id
-
-  // Bob visits Maya's profile (he's in a different workspace) — her public work is listed.
-  await bob.goto(`/users/${maya.username}`)
-  await expect(bob.getByTestId("profile-card")).toBeVisible()
-  await expect(bob.getByTestId(`profile-work-${shortId}`)).toBeVisible()
-
-  // Follow her — the button flips to the followed state and the follower count ticks up.
-  const followBtn = bob.getByTestId(`follow-${maya.username}`)
-  await expect(followBtn).toHaveAttribute("aria-pressed", "false")
-  await followBtn.click()
-  await expect(followBtn).toHaveAttribute("aria-pressed", "true")
-  await expect(bob.getByTestId("profile-stat-followers")).toContainText("1")
-
-  // Her public work now appears in Bob's Following feed — even though it lives in Maya's
-  // workspace, not Bob's (the cross-workspace people-follow path).
-  await bob.goto("/following")
-  await expect(bob.getByTestId(`artifact-card-open-${shortId}`)).toBeVisible()
-
-  // The follow persists across a reload (it's server state, not just local).
-  await bob.goto(`/users/${maya.username}`)
-  await expect(bob.getByTestId(`follow-${maya.username}`)).toHaveAttribute("aria-pressed", "true")
-})
-
-// Ambient follow: you can follow a person straight from the command-palette people
-// search, without going to their profile first.
-test("follow a person from the command-palette people search", async ({ owner, secondUser }) => {
-  const bob = secondUser.page
-  const maya = (await (await owner.request.get("/v1/me")).json()).user as { username: string }
-
-  await bob.goto("/")
-  await bob.getByTestId("open-command-palette").click()
-  // Search the exact handle: a parallel run holds dozens of "E2E Tester"
-  // fixture accounts, and the people search caps its results — a name search
-  // can't guarantee THIS run's account makes the cut.
-  await bob.getByPlaceholder(/Search artifacts, people/).fill(maya.username)
-
-  const followBtn = bob.getByTestId(`follow-${maya.username}`)
-  await expect(followBtn).toBeVisible()
-  await expect(followBtn).toHaveAttribute("aria-pressed", "false")
-  await followBtn.click()
-  await expect(followBtn).toHaveAttribute("aria-pressed", "true")
-
-  // And the follow really landed: it shows on the person's profile.
-  await bob.goto(`/users/${maya.username}`)
-  await expect(bob.getByTestId(`follow-${maya.username}`)).toHaveAttribute("aria-pressed", "true")
-})
-
-// The People directory: browse discoverable people and follow one without first
-// visiting their profile — the discovery surface for the follow graph.
-test("browse + follow from the People directory", async ({ owner, secondUser }) => {
-  const bob = secondUser.page
-  const maya = (await (await owner.request.get("/v1/me")).json()).user as { username: string }
-
-  await bob.goto("/people")
-  await expect(bob.getByTestId("nav-people")).toBeVisible()
-  // Search for the exact handle rather than relying on the capped browse list —
-  // a parallel run accumulates dozens of same-named fixture accounts, and the
-  // 60-row browse (username-ordered) can't guarantee this run's user is in it.
-  await bob.getByTestId("people-search").fill(maya.username)
-  const followBtn = bob.getByTestId(`follow-${maya.username}`)
-  await expect(followBtn).toBeVisible()
-  await expect(followBtn).toHaveAttribute("aria-pressed", "false")
-  await followBtn.click()
-  await expect(followBtn).toHaveAttribute("aria-pressed", "true") // optimistic flip
-
-  // The follow really landed — it shows on the person's profile.
-  await bob.goto(`/users/${maya.username}`)
-  await expect(bob.getByTestId(`follow-${maya.username}`)).toHaveAttribute("aria-pressed", "true")
-})
+// The people layer, browser side. NOTE: the cross-workspace social surfaces this
+// file once guarded — a stranger browsing another workspace's public work, a global
+// People directory, cross-workspace follow feeds — were removed in the launch social
+// cut. A profile is work-awareness for teammates, not a broadcast surface: the work
+// grid and People directory are workspace-mates-only, and follow feeds are scoped to
+// your active workspace. That teammate-scoped behavior is pinned server-side in
+// apps/api/test/profiles.test.ts ("shows work to teammates only") and follows.test.ts;
+// what remains worth driving through the real UI is the own-profile affordance.
 
 // A person can't follow themselves: the Follow button never renders on your own profile.
 test("the Follow button is absent on your own profile", async ({ owner }) => {

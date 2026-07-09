@@ -1,12 +1,17 @@
 import { can, normalizeUsername, toJson, usernameError } from "@derive/core"
-import { type Context, Hono } from "hono"
-import { z } from "zod"
+import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
+import type { Context } from "hono"
+import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { authorProfile, resolveHandles } from "../lib/author"
-import { fail, IMMUTABLE_CACHE, readJson, toBody } from "../lib/http"
+import { bail, fail, IMMUTABLE_CACHE, readJson, toBody } from "../lib/http"
 import { MAX_AVATAR_BYTES, sniffImageType } from "../lib/image"
+import { Artifact } from "../schemas"
 
-/** Session identity + the workspace member/agent directory for the @mention picker. */
+/** Session identity + the workspace member/agent directory for the @mention picker.
+ *  PublicProfile + DirUser are generated for the web; `Me` stays a web-side mapped type
+ *  (the /v1/me payload is a SessionUser + role that the client's mapMe() folds together
+ *  with Better Auth's session, so it isn't a verbatim backend shape). */
 export const sessionRoutes = (ctx: AppContext) => {
   const {
     meta,
@@ -22,123 +27,269 @@ export const sessionRoutes = (ctx: AppContext) => {
     actorFor,
     analyticsOn,
   } = ctx
-  const app = new Hono()
+  const app = new OpenAPIHono<BlankEnv>()
 
-  app.get("/v1/me", async (c) => {
-    const u = await requireUser(c)
-    if (u instanceof Response) return u
-    const role = await ensureMembership(await activeWorkspace(c), u.id) // provisions on first load
-    return c.json({ user: { ...u, role }, multi: true })
-  })
+  // A public profile by @handle — email is intentionally omitted. The list surfaces
+  // (search/people/followers/following) carry the top fields; the full /users/:handle
+  // profile adds about/github_login/stats/followed_by_me.
+  const PublicProfile = z
+    .object({
+      username: z.string(),
+      name: z.string().nullable(),
+      image: z.string().nullable(),
+      profession: z.string().nullable().optional(),
+      about: z.string().nullable().optional(),
+      github_login: z.string().nullable().optional(),
+      teammate: z.boolean().optional(),
+      stats: z.object({ works: z.number() }).optional(),
+      followed_by_me: z.boolean().optional(),
+    })
+    .openapi("PublicProfile")
+
+  // A person or agent offered by the @mention picker — by @handle, never email.
+  const DirUser = z
+    .object({
+      id: z.string(),
+      name: z.string().nullable(),
+      handle: z.string().nullable(),
+      kind: z.enum(["user", "agent"]).optional(),
+      profession: z.string().nullable().optional(),
+    })
+    .openapi("DirUser")
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/me",
+      tags: ["Session"],
+      summary: "The signed-in user + their active-workspace role.",
+      responses: {
+        200: {
+          description: "The current user (SessionUser + role) and whether multi-workspace is on.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                user: z.object({
+                  id: z.string(),
+                  email: z.string(),
+                  name: z.string().nullable(),
+                  username: z.string().nullable(),
+                  discoverable: z.boolean(),
+                  profession: z.string().nullable(),
+                  about: z.string().nullable(),
+                  onboarded: z.boolean(),
+                  emailVerified: z.boolean(),
+                  role: z.string(),
+                }),
+                multi: z.boolean(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const u = await requireUser(c)
+      if (u instanceof Response) return bail(u)
+      const role = await ensureMembership(await activeWorkspace(c), u.id) // provisions on first load
+      return c.json({ user: { ...u, role }, multi: true })
+    },
+  )
 
   // Claim or change your handle (Profiles & Accounts v1) — the prompt shown at
   // onboarding, and re-runnable to rename later. Server-validated (shape +
   // reserved words) and lowercased before storage; a clash with another account
   // is a 409. Only the signed-in user can set their own (the anon-write lockdown
   // already blocks unauthenticated POSTs).
-  app.post("/v1/me/username", async (c) => {
-    const u = await requireUser(c)
-    if (u instanceof Response) return u
-    const body = await readJson(c, z.object({ username: z.string() }))
-    if (body instanceof Response) return body
-    const username = normalizeUsername(body.username)
-    const err = usernameError(username)
-    if (err) return fail(c, 400, err)
-    const res = await meta.setUsername(u.id, username)
-    if (res === "taken") return fail(c, 409, "That username is taken.")
-    return c.json({ username })
-  })
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/me/username",
+      tags: ["Session"],
+      summary: "Claim or change your @handle.",
+      responses: {
+        200: {
+          description: "The new handle.",
+          content: { "application/json": { schema: z.object({ username: z.string() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const u = await requireUser(c)
+      if (u instanceof Response) return bail(u)
+      const body = await readJson(c, z.object({ username: z.string() }))
+      if (body instanceof Response) return bail(body)
+      const username = normalizeUsername(body.username)
+      const err = usernameError(username)
+      if (err) return bail(fail(c, 400, err))
+      const res = await meta.setUsername(u.id, username)
+      if (res === "taken") return bail(fail(c, 409, "That username is taken."))
+      return c.json({ username })
+    },
+  )
 
   // Set your team role + "what you do" blurb (Settings → Profile, and onboarding).
-  // A coarse role (free string so "Other" can be anything) plus a one-line bio,
-  // both optional. Server-set only (signed-in user edits their own). An omitted
-  // field is left untouched; an empty string clears it.
-  app.post("/v1/me/profile", async (c) => {
-    const u = await requireUser(c)
-    if (u instanceof Response) return u
-    const body = await readJson(
-      c,
-      z.object({
-        profession: z.string().trim().max(40).optional(),
-        about: z.string().trim().max(280).optional(),
-      }),
-    )
-    if (body instanceof Response) return body
-    // Normalize "" → null (clear) so the column is never an empty string.
-    const patch: { profession?: string | null; about?: string | null } = {}
-    if (body.profession !== undefined) patch.profession = body.profession || null
-    if (body.about !== undefined) patch.about = body.about || null
-    await meta.setUserProfile(u.id, patch)
-    return c.json({ profession: patch.profession ?? null, about: patch.about ?? null })
-  })
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/me/profile",
+      tags: ["Session"],
+      summary: "Set your team role + one-line bio.",
+      responses: {
+        200: {
+          description: "The saved profession + about (null clears a field).",
+          content: {
+            "application/json": {
+              schema: z.object({
+                profession: z.string().nullable(),
+                about: z.string().nullable(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const u = await requireUser(c)
+      if (u instanceof Response) return bail(u)
+      const body = await readJson(
+        c,
+        z.object({
+          profession: z.string().trim().max(40).optional(),
+          about: z.string().trim().max(280).optional(),
+        }),
+      )
+      if (body instanceof Response) return bail(body)
+      // Normalize "" → null (clear) so the column is never an empty string.
+      const patch: { profession?: string | null; about?: string | null } = {}
+      if (body.profession !== undefined) patch.profession = body.profession || null
+      if (body.about !== undefined) patch.about = body.about || null
+      await meta.setUserProfile(u.id, patch)
+      return c.json({ profession: patch.profession ?? null, about: patch.about ?? null })
+    },
+  )
 
-  // Opt in/out of being findable. On by default (auth-config sets it at signup and
-  // the queries treat unset as on). Turning it OFF is real privacy, not just
-  // directory removal: the profile page, work list, and follow lists all 404 for
-  // anyone who doesn't share a workspace (see profileVisibleTo below).
-  app.post("/v1/me/discoverable", async (c) => {
-    const u = await requireUser(c)
-    if (u instanceof Response) return u
-    const body = await readJson(c, z.object({ discoverable: z.boolean() }))
-    if (body instanceof Response) return body
-    await meta.setUserDiscoverable(u.id, body.discoverable)
-    return c.json({ discoverable: body.discoverable })
-  })
+  // Opt in/out of being findable.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/me/discoverable",
+      tags: ["Session"],
+      summary: "Opt in/out of being findable in people search.",
+      responses: {
+        200: {
+          description: "The new discoverability.",
+          content: { "application/json": { schema: z.object({ discoverable: z.boolean() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const u = await requireUser(c)
+      if (u instanceof Response) return bail(u)
+      const body = await readJson(c, z.object({ discoverable: z.boolean() }))
+      if (body instanceof Response) return bail(body)
+      await meta.setUserDiscoverable(u.id, body.discoverable)
+      return c.json({ discoverable: body.discoverable })
+    },
+  )
 
-  // People search: find OPTED-IN accounts by handle or name (GitHub-style "add by
-  // username"). Only users who turned on discoverability appear, and only the
-  // public fields (handle, name, avatar) come back — never email. Signed-in only,
-  // and an empty query returns nothing, so it can't be used to enumerate everyone.
-  // Registered before /v1/users/:handle so "search" isn't read as a handle.
-  app.get("/v1/users/search", async (c) => {
-    if (!(await currentUser(c))) return fail(c, 401, "unauthenticated")
-    const q = (c.req.query("query") ?? "").trim()
-    if (!q) return c.json({ users: [] })
-    const found = await meta.searchDiscoverableUsers(q, 20)
-    return c.json({
-      users: found.map((u) => ({
-        username: u.username,
-        name: u.name,
-        image: u.image,
-        profession: u.profession ?? null,
-      })),
-    })
-  })
+  // Mark first-run onboarding finished (server-authoritative). One-way, no body.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/me/onboarded",
+      tags: ["Session"],
+      summary: "Mark first-run onboarding finished (server-authoritative).",
+      responses: {
+        200: {
+          description: "Onboarded.",
+          content: { "application/json": { schema: z.object({ onboarded: z.boolean() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const u = await requireUser(c)
+      if (u instanceof Response) return bail(u)
+      await meta.setUserOnboarded(u.id, true)
+      return c.json({ onboarded: true })
+    },
+  )
 
-  // The People directory — browse opted-in (discoverable) people to find someone to
-  // follow, the home the search backend never got. With `?query=` it searches; without, it
-  // BROWSES (the deliberate difference from /v1/users/search, which never enumerates).
-  // Browsing surfaces discoverable people only (on by default; opting out also
-  // hides the profile — see profileVisibleTo). Signed-in only; public fields only
-  // (handle/name/avatar/role) — never email.
-  app.get("/v1/people", async (c) => {
-    const me = await currentUser(c)
-    if (!me) return fail(c, 401, "unauthenticated")
-    const q = (c.req.query("query") ?? "").trim()
-    // ?scope=workspace → the people you actually work with (any shared workspace),
-    // discoverable or not — membership already implies you can see each other.
-    // Default → the global discoverable directory, as before.
-    const found =
-      c.req.query("scope") === "workspace"
-        ? await meta.listWorkspaceMates(me.id, 60)
-        : q
-          ? await meta.searchDiscoverableUsers(q, 60)
-          : await meta.listDiscoverableUsers(60)
-    return c.json({
-      users: found.map((u) => ({
-        username: u.username,
-        name: u.name,
-        image: u.image,
-        profession: u.profession ?? null,
-      })),
-    })
-  })
+  // People search: find OPTED-IN accounts by handle or name. Registered before
+  // /v1/users/:handle so "search" isn't read as a handle.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/users/search",
+      tags: ["Session"],
+      summary: "Search opted-in accounts by handle or name.",
+      responses: {
+        200: {
+          description: "Matching public profiles (public fields only).",
+          content: { "application/json": { schema: z.object({ users: z.array(PublicProfile) }) } },
+        },
+      },
+    }),
+    async (c) => {
+      if (!(await currentUser(c))) return bail(fail(c, 401, "unauthenticated"))
+      const q = (c.req.query("query") ?? "").trim()
+      if (!q) return c.json({ users: [] })
+      const found = await meta.searchDiscoverableUsers(q, 20)
+      return c.json({
+        users: found.map((u) => ({
+          username: u.username,
+          name: u.name,
+          image: u.image,
+          profession: u.profession ?? null,
+        })),
+      })
+    },
+  )
 
-  // Whether this viewer may see this profile at all. Discoverable (the default) ⇒
-  // yes, anyone — a public artifact's author chip must resolve to a profile.
-  // Discoverable OFF ⇒ only the person themselves and people who share a workspace
-  // with them; everyone else gets the same 404 as an unknown handle, so an opted-out
-  // account can't be confirmed to exist by probing handles.
+  // The People page's data — the people you actually work with (any shared
+  // workspace), discoverable or not: membership already implies you can see each
+  // other. There is deliberately no global directory here — People is work
+  // awareness, not a social network (addressing a stranger to SHARE with them
+  // still works via /v1/users/search, which never enumerates). `?query=` filters
+  // within your workmates. Signed-in only; public fields only — never email.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/people",
+      tags: ["Session"],
+      summary: "Browse the people you work with (optionally filtered by ?query=).",
+      responses: {
+        200: {
+          description: "Public profiles (public fields only).",
+          content: { "application/json": { schema: z.object({ users: z.array(PublicProfile) }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await currentUser(c)
+      if (!me) return bail(fail(c, 401, "unauthenticated"))
+      const q = (c.req.query("query") ?? "").trim().toLowerCase()
+      const mates = await meta.listWorkspaceMates(me.id, 60)
+      const found = q
+        ? mates.filter(
+            (u) =>
+              u.username?.toLowerCase().includes(q) ||
+              u.name?.toLowerCase().includes(q) ||
+              u.profession?.toLowerCase().includes(q),
+          )
+        : mates
+      return c.json({
+        users: found.map((u) => ({
+          username: u.username,
+          name: u.name,
+          image: u.image,
+          profession: u.profession ?? null,
+        })),
+      })
+    },
+  )
+
+  // Whether this viewer may see this profile at all.
   const profileVisibleTo = async (
     c: Context,
     p: { id: string; discoverable?: boolean | number | null },
@@ -150,147 +301,171 @@ export const sessionRoutes = (ctx: AppContext) => {
     return (await meta.sharedOrgIds(me.id, p.id)).length > 0
   }
 
-  // A public profile by handle — the GitHub-style discovery surface. Email is
-  // intentionally omitted (private); the handle, name, avatar, stats, GitHub link, and
-  // (for a signed-in viewer) whether they already follow are public. Readable by anyone
-  // while the account is discoverable; hidden otherwise (profileVisibleTo).
-  app.get("/v1/users/:handle", async (c) => {
-    const handle = normalizeUsername(c.req.param("handle"))
-    const p = await meta.getUserByUsername(handle)
-    if (!p) return fail(c, 404, "no profile with that username")
-    if (!(await profileVisibleTo(c, p))) return fail(c, 404, "no profile with that username")
-    const me = await currentUser(c)
-    const ghIds = await meta.githubIdsForUser(p.id)
-    // A signed-in viewer also sees the owner's non-public work in workspaces they share.
-    const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
-    const [works, followers, following, githubLogin] = await Promise.all([
-      meta.countUserWorks(p.id, ghIds, { visibleOrgIds: sharedOrgs }),
-      meta.countFollowers(p.id),
-      meta.countFollowing(p.id),
-      meta.githubLoginForUser(p.id, ghIds),
-    ])
-    // Already following? People-follows are global, so listFollows (which folds in the
-    // org "*" rows) carries them regardless of the viewer's active workspace.
-    let followedByMe = false
-    if (me && me.id !== p.id) {
-      const mine = await meta.listFollows(me.id, await activeWorkspace(c))
-      followedByMe = mine.some((f) => f.kind === "user" && f.target === p.id)
-    }
-    return c.json({
-      user: {
-        username: p.username,
-        name: p.name,
-        image: p.image,
-        profession: p.profession ?? null,
-        about: p.about ?? null,
-        github_login: githubLogin,
-        stats: { works, followers, following },
-        followed_by_me: followedByMe,
+  // A public profile by handle — the GitHub-style discovery surface.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/users/{handle}",
+      tags: ["Session"],
+      summary: "A public profile by @handle (email never returned).",
+      request: { params: z.object({ handle: z.string() }) },
+      responses: {
+        200: {
+          description: "The public profile with stats + follow state.",
+          content: { "application/json": { schema: z.object({ user: PublicProfile }) } },
+        },
       },
-    })
-  })
+    }),
+    async (c) => {
+      const handle = normalizeUsername(c.req.param("handle"))
+      const p = await meta.getUserByUsername(handle)
+      if (!p) return bail(fail(c, 404, "no profile with that username"))
+      if (!(await profileVisibleTo(c, p)))
+        return bail(fail(c, 404, "no profile with that username"))
+      const me = await currentUser(c)
+      // sharedOrgIds(x, x) is all of x's workspaces — self is trivially a teammate.
+      const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
+      const teammate = !!me && (me.id === p.id || sharedOrgs.length > 0)
+      const ghIds = await meta.githubIdsForUser(p.id)
+      const [works, githubLogin] = await Promise.all([
+        teammate ? meta.countUserWorks(p.id, ghIds, { visibleOrgIds: sharedOrgs }) : 0,
+        meta.githubLoginForUser(p.id, ghIds),
+      ])
+      // Already following? People-follows are global, so listFollows (which folds in the
+      // org "*" rows) carries them regardless of the viewer's active workspace.
+      let followedByMe = false
+      if (me && me.id !== p.id) {
+        const mine = await meta.listFollows(me.id, await activeWorkspace(c))
+        followedByMe = mine.some((f) => f.kind === "user" && f.target === p.id)
+      }
+      return c.json({
+        user: {
+          username: p.username,
+          name: p.name,
+          image: p.image,
+          profession: p.profession ?? null,
+          about: p.about ?? null,
+          github_login: githubLogin,
+          teammate,
+          ...(teammate ? { stats: { works } } : {}),
+          followed_by_me: followedByMe,
+        },
+      })
+    },
+  )
 
-  // A person's work — the artifacts they've authored (hand-published or via a linked
-  // GitHub commit), newest first, keyset-paginated (?cursor=<created_at>|<id>&limit=N).
-  // Visibility-gated IN SQL: an anonymous viewer sees only public work; a signed-in
-  // viewer also sees non-public work in workspaces they share with the owner. Safe to
-  // serve unauthenticated because the gate lives in the query, not the caller.
-  app.get("/v1/users/:handle/artifacts", async (c) => {
-    const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
-    if (!p) return fail(c, 404, "no profile with that username")
-    if (!(await profileVisibleTo(c, p))) return fail(c, 404, "no profile with that username")
-    const me = await currentUser(c)
-    const ghIds = await meta.githubIdsForUser(p.id)
-    const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
-    const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 24))
-    const rawCursor = c.req.query("cursor")
-    const sep = rawCursor?.indexOf("|") ?? -1
-    const cursor =
-      rawCursor && sep > 0
-        ? { created_at: rawCursor.slice(0, sep), id: rawCursor.slice(sep + 1) }
-        : undefined
-    const rows = await meta.listUserWorks(p.id, ghIds, {
-      limit: limit + 1,
-      cursor,
-      visibleOrgIds: sharedOrgs,
-    })
-    const hasMore = rows.length > limit
-    const page = hasMore ? rows.slice(0, limit) : rows
-    const last = page[page.length - 1]
-    const next_cursor = hasMore && last ? `${last.created_at}|${last.id}` : null
-    const pageIds = page.map((a) => a.id)
-    const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
-    const tags = await meta.tagsForArtifacts(pageIds)
-    const handleByGhId = await resolveHandles(meta, [
-      ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
-    ])
-    return c.json({
-      artifacts: page.map((a) => ({
-        ...toJson(deps.baseUrl, a, []),
-        views: counts[a.id] ?? 0,
-        tags: tags[a.id] ?? [],
-        author: authorProfile(a, handleByGhId),
-      })),
-      next_cursor,
-    })
-  })
+  // A person's work — the artifacts they've authored, as the shared Artifact view-model
+  // (the same schema the artifacts router emits; drives their public profile grid).
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/users/{handle}/artifacts",
+      tags: ["Session"],
+      summary: "A user's authored artifacts (keyset-paginated).",
+      request: { params: z.object({ handle: z.string() }) },
+      responses: {
+        200: {
+          description: "A page of the user's artifacts + next cursor.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                artifacts: z.array(Artifact),
+                next_cursor: z.string().nullable(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
+      if (!p) return bail(fail(c, 404, "no profile with that username"))
+      if (!(await profileVisibleTo(c, p)))
+        return bail(fail(c, 404, "no profile with that username"))
+      const me = await currentUser(c)
+      // sharedOrgIds(x, x) is all of x's workspaces — self always sees their own work.
+      const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
+      if (!me || (me.id !== p.id && sharedOrgs.length === 0))
+        return c.json({ artifacts: [], next_cursor: null })
+      const ghIds = await meta.githubIdsForUser(p.id)
+      const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 24))
+      const rawCursor = c.req.query("cursor")
+      const sep = rawCursor?.indexOf("|") ?? -1
+      const cursor =
+        rawCursor && sep > 0
+          ? { created_at: rawCursor.slice(0, sep), id: rawCursor.slice(sep + 1) }
+          : undefined
+      const rows = await meta.listUserWorks(p.id, ghIds, {
+        limit: limit + 1,
+        cursor,
+        visibleOrgIds: sharedOrgs,
+      })
+      const hasMore = rows.length > limit
+      const page = hasMore ? rows.slice(0, limit) : rows
+      const last = page[page.length - 1]
+      const next_cursor = hasMore && last ? `${last.created_at}|${last.id}` : null
+      const pageIds = page.map((a) => a.id)
+      const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
+      const tags = await meta.tagsForArtifacts(pageIds)
+      const previews = await meta.previewReady(pageIds)
+      const handleByGhId = await resolveHandles(meta, [
+        ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
+      ])
+      return c.json({
+        artifacts: page.map((a) => ({
+          ...toJson(deps.baseUrl, a, []),
+          views: counts[a.id] ?? 0,
+          tags: tags[a.id] ?? [],
+          has_preview: previews[a.id] === true,
+          author: authorProfile(a, handleByGhId),
+        })),
+        next_cursor,
+      })
+    },
+  )
 
-  // The people who follow / are followed by this user, as public profiles (handle +
-  // name + avatar + role; never ids or email). Powers the profile's followers/following
-  // dialogs. The internal user id is stripped here so it never reaches a client.
-  const publicCard = (u: {
-    username: string
-    name: string | null
-    image: string | null
-    profession?: string | null
-  }) => ({ username: u.username, name: u.name, image: u.image, profession: u.profession ?? null })
-  // The follow graph is for participants: sign in to read it. (The counts on the
-  // profile stay public; who exactly follows whom does not — that's the part a
-  // crawler could mine.)
-  app.get("/v1/users/:handle/followers", async (c) => {
-    if (!(await currentUser(c))) return fail(c, 401, "unauthenticated")
-    const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
-    if (!p) return fail(c, 404, "no profile with that username")
-    if (!(await profileVisibleTo(c, p))) return fail(c, 404, "no profile with that username")
-    return c.json({ users: (await meta.listFollowers(p.id, 100)).map(publicCard) })
-  })
-  app.get("/v1/users/:handle/following", async (c) => {
-    if (!(await currentUser(c))) return fail(c, 401, "unauthenticated")
-    const p = await meta.getUserByUsername(normalizeUsername(c.req.param("handle")))
-    if (!p) return fail(c, 404, "no profile with that username")
-    if (!(await profileVisibleTo(c, p))) return fail(c, 404, "no profile with that username")
-    return c.json({ users: (await meta.listFollowing(p.id, 100)).map(publicCard) })
-  })
+  // (The followers/following list routes were removed with the launch social cut —
+  // the follow graph is deliberately not a browsable surface, for anyone.)
 
-  // Upload your profile picture. We take only raster images (identified by their
-  // magic bytes, not the client content-type) and store them content-addressed in
-  // the blob store, pointing `user.image` at the served URL. Signed-in only (the
-  // anon write-lockdown already blocks unauthenticated POSTs).
-  app.post("/v1/me/avatar", async (c) => {
-    const u = await requireUser(c)
-    if (u instanceof Response) return u
-    const len = Number(c.req.header("content-length") ?? 0)
-    if (len > MAX_AVATAR_BYTES + 4096) return fail(c, 413, "image too large (max 2MB)")
-    const body = await c.req.parseBody()
-    const file = body.file
-    if (!(file instanceof File)) return fail(c, 400, "multipart field 'file' required")
-    const bytes = new Uint8Array(await file.arrayBuffer())
-    if (bytes.byteLength > MAX_AVATAR_BYTES) return fail(c, 413, "image too large (max 2MB)")
-    // Trust the bytes, not the declared type — and reject anything that isn't a
-    // plain raster image (no SVG: it could carry script served from our origin).
-    if (!sniffImageType(bytes))
-      return fail(c, 400, "unsupported image (use PNG, JPEG, GIF, or WebP)")
-    const key = await blobs.put(bytes)
-    // Absolute URL so it resolves from the API origin even when the SPA is served
-    // from a separate origin (hosted split); the bytes never touch the app cookie.
-    const image = `${deps.baseUrl.replace(/\/$/, "")}/v1/avatars/${key}`
-    await meta.setUserImage(u.id, image)
-    return c.json({ image })
-  })
+  // Upload your profile picture (raster only, identified by magic bytes).
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/me/avatar",
+      tags: ["Session"],
+      summary: "Upload your profile picture (multipart; raster images only).",
+      responses: {
+        200: {
+          description: "The served avatar URL.",
+          content: { "application/json": { schema: z.object({ image: z.string() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const u = await requireUser(c)
+      if (u instanceof Response) return bail(u)
+      const len = Number(c.req.header("content-length") ?? 0)
+      if (len > MAX_AVATAR_BYTES + 4096) return bail(fail(c, 413, "image too large (max 2MB)"))
+      const body = await c.req.parseBody()
+      const file = body.file
+      if (!(file instanceof File)) return bail(fail(c, 400, "multipart field 'file' required"))
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      if (bytes.byteLength > MAX_AVATAR_BYTES)
+        return bail(fail(c, 413, "image too large (max 2MB)"))
+      // Trust the bytes, not the declared type — and reject anything that isn't a
+      // plain raster image (no SVG: it could carry script served from our origin).
+      if (!sniffImageType(bytes))
+        return bail(fail(c, 400, "unsupported image (use PNG, JPEG, GIF, or WebP)"))
+      const key = await blobs.put(bytes)
+      // Absolute URL so it resolves from the API origin even when the SPA is served
+      // from a separate origin (hosted split); the bytes never touch the app cookie.
+      const image = `${deps.baseUrl.replace(/\/$/, "")}/v1/avatars/${key}`
+      await meta.setUserImage(u.id, image)
+      return c.json({ image })
+    },
+  )
 
-  // Serve an avatar blob. Public (avatars show on public profiles) and immutable
-  // (the key is the content hash). Content-type is re-derived from the bytes, so
-  // only the validated raster types we stored can ever come back out.
+  // Serve an avatar blob. Binary + immutable — stays a plain route.
   app.get("/v1/avatars/:key", async (c) => {
     const bytes = await blobs.get(c.req.param("key"))
     if (!bytes) return fail(c, 404, "not found")
@@ -299,80 +474,81 @@ export const sessionRoutes = (ctx: AppContext) => {
     return c.body(toBody(bytes), 200, { "Content-Type": type, "Cache-Control": IMMUTABLE_CACHE })
   })
 
-  // Directory for the @mention picker — people AND agents, so an agent can be
-  // @mentioned like anyone. Authenticated callers only (a signed-in user or the
-  // static token); an anonymous visitor can never enumerate anyone. Optional ?query=
-  // filters by name/email prefix.
-  //
-  // Scope: with ?artifact=<shortId> (and read access to it) the directory is the
-  // people you can actually mention ON THAT THREAD — the artifact's workspace
-  // members, anyone it's directly shared with, AND everyone who has commented on
-  // it — even if they aren't in your active workspace (the @-a-collaborator case).
-  // Without it, the caller's active-workspace members (composing outside a thread).
-  app.get("/v1/users", async (c) => {
-    const me = await currentUser(c)
-    if (!me && !isToken(c)) return fail(c, 401, "unauthenticated")
-    const q = (c.req.query("query") ?? "").trim().toLowerCase()
+  // Directory for the @mention picker — people AND agents. Authenticated callers only.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/users",
+      tags: ["Session"],
+      summary: "The @mention directory: workspace people + agents (auth only).",
+      responses: {
+        200: {
+          description: "Mentionable people + agents (by @handle, never email).",
+          content: { "application/json": { schema: z.object({ users: z.array(DirUser) }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await currentUser(c)
+      if (!me && !isToken(c)) return bail(fail(c, 401, "unauthenticated"))
+      const q = (c.req.query("query") ?? "").trim().toLowerCase()
 
-    const shortId = c.req.query("artifact")
-    const found = shortId ? await meta.getByShortId(shortId) : null
-    const artifact = found && (await authorize(c, "read", found)) ? found : null
-    const org = artifact ? artifact.org_id : await activeWorkspace(c)
+      const shortId = c.req.query("artifact")
+      const found = shortId ? await meta.getByShortId(shortId) : null
+      const artifact = found && (await authorize(c, "read", found)) ? found : null
+      const org = artifact ? artifact.org_id : await activeWorkspace(c)
 
-    const ids = new Set<string>()
-    if (me) ids.add(me.id) // you can always @mention yourself
-    // The full workspace roster is only for MEMBERS of that workspace — not a stranger
-    // who can merely read one of its public artifacts. Without this, anyone could pull
-    // an entire workspace's member list by passing any public artifact's short id.
-    const isOrgMember = await isMember(c, org)
-    if (isOrgMember) for (const m of await meta.listMemberships(org)) ids.add(m.user_id)
-    // Thread participants (the artifact's members + people who've commented) are only
-    // exposed to someone who can actually mention on the thread — i.e. has comment
-    // access. A pure read-only viewer gets just themselves.
-    if (
-      artifact &&
-      (isToken(c) || can(await actorFor(c, artifact), "comment", artifact.visibility))
-    ) {
-      for (const m of await meta.listArtifactMembers(artifact.id)) ids.add(m.user_id)
-      for (const cm of await meta.listComments(artifact.id)) if (cm.author_id) ids.add(cm.author_id)
-    }
+      const ids = new Set<string>()
+      if (me) ids.add(me.id) // you can always @mention yourself
+      const isOrgMember = await isMember(c, org)
+      if (isOrgMember) for (const m of await meta.listMemberships(org)) ids.add(m.user_id)
+      if (
+        artifact &&
+        (isToken(c) ||
+          can(
+            await actorFor(c, artifact),
+            "comment",
+            artifact.workspace_access,
+            artifact.link_role,
+          ))
+      ) {
+        for (const m of await meta.listArtifactMembers(artifact.id)) ids.add(m.user_id)
+        for (const cm of await meta.listComments(artifact.id))
+          if (cm.author_id) ids.add(cm.author_id)
+      }
 
-    const users = await meta.getUsers([...ids])
-    // The picker identifies people by @handle + display name — never email. The
-    // email is still matchable server-side (q) so you can find someone you know by
-    // their address, but it is never returned.
-    const people = (
-      q
-        ? users.filter(
-            (u) =>
-              (u.name ?? "").toLowerCase().includes(q) ||
-              (u.username ?? "").includes(q) ||
-              u.email.toLowerCase().includes(q),
-          )
-        : users
-    ).map((u) => ({
-      id: u.id,
-      handle: u.username,
-      name: u.name,
-      kind: "user" as const,
-      // Role rides the directory so the @mention picker (and agents reading it)
-      // know who's who; the bio is reserved for the full profile, not this list.
-      profession: u.profession ?? null,
-    }))
-    const agents = (await meta.listAgents(org))
-      .filter((ag) => !q || ag.name.toLowerCase().includes(q))
-      .map((ag) => ({
-        id: ag.id,
-        handle: null,
-        name: ag.name,
-        kind: "agent" as const,
-        profession: null,
+      const users = await meta.getUsers([...ids])
+      const people = (
+        q
+          ? users.filter(
+              (u) =>
+                (u.name ?? "").toLowerCase().includes(q) ||
+                (u.username ?? "").includes(q) ||
+                u.email.toLowerCase().includes(q),
+            )
+          : users
+      ).map((u) => ({
+        id: u.id,
+        handle: u.username,
+        name: u.name,
+        kind: "user" as const,
+        profession: u.profession ?? null,
       }))
-    const all = [...people, ...agents].sort((a, b) =>
-      (a.name ?? a.handle ?? "").localeCompare(b.name ?? b.handle ?? ""),
-    )
-    return c.json({ users: all })
-  })
+      const agents = (await meta.listAgents(org))
+        .filter((ag) => !q || ag.name.toLowerCase().includes(q))
+        .map((ag) => ({
+          id: ag.id,
+          handle: null,
+          name: ag.name,
+          kind: "agent" as const,
+          profession: null,
+        }))
+      const all = [...people, ...agents].sort((a, b) =>
+        (a.name ?? a.handle ?? "").localeCompare(b.name ?? b.handle ?? ""),
+      )
+      return c.json({ users: all })
+    },
+  )
 
   return app
 }

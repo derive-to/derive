@@ -52,6 +52,14 @@ class_name = "WebhookOutbox"
 name = "SYNC_RUNNER"
 class_name = "RepoSyncRunner"
 
+# The preview renderer (a single named instance). Its alarm drains the render_job
+# queue sequentially via Cloudflare Browser Rendering — one browser at a time so
+# concurrent-browser billing stays at the floor. Omit this block (and the browser
+# binding below) to disable preview rendering (e.g. D1-only or self-host deploys).
+[[durable_objects.bindings]]
+name = "PREVIEW_RENDERER"
+class_name = "PreviewRenderer"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ArtifactRoom"]
@@ -64,14 +72,28 @@ new_sqlite_classes = ["WebhookOutbox"]
 tag = "v3"
 new_sqlite_classes = ["RepoSyncRunner"]
 
-# Notification email (Cloudflare Email Service). Left commented because the binding only
-# resolves once the account has Email Service enabled and a sending domain verified — an
-# unprovisioned binding fails `wrangler deploy`. The code no-ops email when SEND_EMAIL is
-# unbound, so leaving this off is safe. To turn email on: enable Email Service, verify the
-# derive.to sending domain, uncomment this block, and set EMAIL_FROM under [vars] (e.g.
-# "Derive <notifications@derive.to>").
-# [[send_email]]
-# name = "SEND_EMAIL"
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["PreviewRenderer"]
+
+# Cloudflare Browser Rendering binding — required for the PreviewRenderer DO.
+# Leave commented if Browser Rendering is not enabled on your account; the worker
+# gates renderPreviews on !!env.BROWSER so this can be omitted safely.
+[browser]
+binding = "BROWSER"
+
+# Transactional + notification email (Cloudflare Email Service — the arbitrary-recipient
+# product, NOT the older verified-destinations-only Email Routing binding). Enabled on the
+# DEDICATED sending subdomain send.derive.to, deliberately isolated from the apex derive.to
+# Google Workspace mail: send.derive.to has its own SPF/DKIM/DMARC (p=reject on
+# _dmarc.send.derive.to), so a strict policy there never touches corporate email. The domain
+# is onboarded and DNS-verified. `remote = true` routes the binding to the Email Service
+# (structured send API, see src/email-cf.ts). Arbitrary recipients require Workers Paid
+# (3,000/mo included, then $0.35/1k). Delivery goes live on the next `wrangler deploy`; until
+# then the app no-ops email (self-host/Node uses Resend via EMAIL_FROM instead).
+[[send_email]]
+name = "SEND_EMAIL"
+remote = true
 
 # Native rate limiting (per-colo). One binding per surface; the worker counts each
 # rate-limited request against the matching binding (apps/api/src/worker.ts). The window
@@ -136,7 +158,7 @@ crons = ["* * * * *"]
 [assets]
 directory = "../web/dist/client"
 binding = "ASSETS"
-run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/settings/github/*", "/artifacts/*", "/users/*", "/healthz", "/mcp", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration"]
+run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/settings/github/*", "/settings/slack/*", "/artifacts/*", "/users/*", "/healthz", "/mcp", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration"]
 not_found_handling = "single-page-application"
 
 # Public hosts: the derive.to apex is canonical, app.derive.to an alias. Cloudflare
@@ -165,3 +187,9 @@ custom_domain = true
 #   wrangler secret put SLACK_SIGNING_SECRET
 # Create the app from Settings → Integrations → Set up Slack app (the manifest,
 # pre-filled, is served at /v1/slack/manifest.json); see DEPLOY.md → Slack app.
+#
+# Sender for all transactional + notification mail (reset / verify / invites / comments).
+# Must be an address on the onboarded Email Sending domain (send.derive.to). The CF adapter
+# extracts the bare address; the display-name form is kept for parity with the Resend (Node)
+# transport, which reads the same EMAIL_FROM. Pairs with the [[send_email]] binding above.
+EMAIL_FROM = "Derive <notifications@send.derive.to>"

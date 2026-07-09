@@ -10,9 +10,11 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
+import { Route as UnlistedRouteImport } from './routes/unlisted'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as SharedRouteImport } from './routes/shared'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as NewRouteImport } from './routes/new'
 import { Route as LoginRouteImport } from './routes/login'
@@ -21,13 +23,21 @@ import { Route as FeedbackRouteImport } from './routes/feedback'
 import { Route as FavoritesRouteImport } from './routes/favorites'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
+import { Route as ContextsIndexRouteImport } from './routes/contexts.index'
 import { Route as UsersHandleRouteImport } from './routes/users.$handle'
 import { Route as SettingsSectionRouteImport } from './routes/settings.$section'
+import { Route as InviteTokenRouteImport } from './routes/invite.$token'
+import { Route as ContextsIdRouteImport } from './routes/contexts.$id'
 import { Route as ArtifactsRefRouteImport } from './routes/artifacts.$ref'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
   path: '/welcome',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UnlistedRoute = UnlistedRouteImport.update({
+  id: '/unlisted',
+  path: '/unlisted',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ShowcaseRoute = ShowcaseRouteImport.update({
@@ -43,6 +53,11 @@ const SharedRoute = SharedRouteImport.update({
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PeopleRoute = PeopleRouteImport.update({
@@ -85,6 +100,11 @@ const SettingsIndexRoute = SettingsIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SettingsRoute,
 } as any)
+const ContextsIndexRoute = ContextsIndexRouteImport.update({
+  id: '/contexts/',
+  path: '/contexts/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const UsersHandleRoute = UsersHandleRouteImport.update({
   id: '/users/$handle',
   path: '/users/$handle',
@@ -94,6 +114,16 @@ const SettingsSectionRoute = SettingsSectionRouteImport.update({
   id: '/$section',
   path: '/$section',
   getParentRoute: () => SettingsRoute,
+} as any)
+const InviteTokenRoute = InviteTokenRouteImport.update({
+  id: '/invite/$token',
+  path: '/invite/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContextsIdRoute = ContextsIdRouteImport.update({
+  id: '/contexts/$id',
+  path: '/contexts/$id',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ArtifactsRefRoute = ArtifactsRefRouteImport.update({
   id: '/artifacts/$ref',
@@ -109,13 +139,18 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/settings': typeof SettingsRouteWithChildren
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
+  '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
+  '/contexts/$id': typeof ContextsIdRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/users/$handle': typeof UsersHandleRoute
+  '/contexts/': typeof ContextsIndexRoute
   '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRoutesByTo {
@@ -126,12 +161,17 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
+  '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
+  '/contexts/$id': typeof ContextsIdRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/users/$handle': typeof UsersHandleRoute
+  '/contexts': typeof ContextsIndexRoute
   '/settings': typeof SettingsIndexRoute
 }
 export interface FileRoutesById {
@@ -143,13 +183,18 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/settings': typeof SettingsRouteWithChildren
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
+  '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
+  '/contexts/$id': typeof ContextsIdRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/users/$handle': typeof UsersHandleRoute
+  '/contexts/': typeof ContextsIndexRoute
   '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRouteTypes {
@@ -162,13 +207,18 @@ export interface FileRouteTypes {
     | '/login'
     | '/new'
     | '/people'
+    | '/reset-password'
     | '/settings'
     | '/shared'
     | '/showcase'
+    | '/unlisted'
     | '/welcome'
     | '/artifacts/$ref'
+    | '/contexts/$id'
+    | '/invite/$token'
     | '/settings/$section'
     | '/users/$handle'
+    | '/contexts/'
     | '/settings/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -179,12 +229,17 @@ export interface FileRouteTypes {
     | '/login'
     | '/new'
     | '/people'
+    | '/reset-password'
     | '/shared'
     | '/showcase'
+    | '/unlisted'
     | '/welcome'
     | '/artifacts/$ref'
+    | '/contexts/$id'
+    | '/invite/$token'
     | '/settings/$section'
     | '/users/$handle'
+    | '/contexts'
     | '/settings'
   id:
     | '__root__'
@@ -195,13 +250,18 @@ export interface FileRouteTypes {
     | '/login'
     | '/new'
     | '/people'
+    | '/reset-password'
     | '/settings'
     | '/shared'
     | '/showcase'
+    | '/unlisted'
     | '/welcome'
     | '/artifacts/$ref'
+    | '/contexts/$id'
+    | '/invite/$token'
     | '/settings/$section'
     | '/users/$handle'
+    | '/contexts/'
     | '/settings/'
   fileRoutesById: FileRoutesById
 }
@@ -213,12 +273,17 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   NewRoute: typeof NewRoute
   PeopleRoute: typeof PeopleRoute
+  ResetPasswordRoute: typeof ResetPasswordRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   SharedRoute: typeof SharedRoute
   ShowcaseRoute: typeof ShowcaseRoute
+  UnlistedRoute: typeof UnlistedRoute
   WelcomeRoute: typeof WelcomeRoute
   ArtifactsRefRoute: typeof ArtifactsRefRoute
+  ContextsIdRoute: typeof ContextsIdRoute
+  InviteTokenRoute: typeof InviteTokenRoute
   UsersHandleRoute: typeof UsersHandleRoute
+  ContextsIndexRoute: typeof ContextsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -228,6 +293,13 @@ declare module '@tanstack/react-router' {
       path: '/welcome'
       fullPath: '/welcome'
       preLoaderRoute: typeof WelcomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/unlisted': {
+      id: '/unlisted'
+      path: '/unlisted'
+      fullPath: '/unlisted'
+      preLoaderRoute: typeof UnlistedRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/showcase': {
@@ -249,6 +321,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/people': {
@@ -307,6 +386,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsIndexRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/contexts/': {
+      id: '/contexts/'
+      path: '/contexts'
+      fullPath: '/contexts/'
+      preLoaderRoute: typeof ContextsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/users/$handle': {
       id: '/users/$handle'
       path: '/users/$handle'
@@ -320,6 +406,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/settings/$section'
       preLoaderRoute: typeof SettingsSectionRouteImport
       parentRoute: typeof SettingsRoute
+    }
+    '/invite/$token': {
+      id: '/invite/$token'
+      path: '/invite/$token'
+      fullPath: '/invite/$token'
+      preLoaderRoute: typeof InviteTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/contexts/$id': {
+      id: '/contexts/$id'
+      path: '/contexts/$id'
+      fullPath: '/contexts/$id'
+      preLoaderRoute: typeof ContextsIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/artifacts/$ref': {
       id: '/artifacts/$ref'
@@ -353,12 +453,17 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   NewRoute: NewRoute,
   PeopleRoute: PeopleRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
   SettingsRoute: SettingsRouteWithChildren,
   SharedRoute: SharedRoute,
   ShowcaseRoute: ShowcaseRoute,
+  UnlistedRoute: UnlistedRoute,
   WelcomeRoute: WelcomeRoute,
   ArtifactsRefRoute: ArtifactsRefRoute,
+  ContextsIdRoute: ContextsIdRoute,
+  InviteTokenRoute: InviteTokenRoute,
   UsersHandleRoute: UsersHandleRoute,
+  ContextsIndexRoute: ContextsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

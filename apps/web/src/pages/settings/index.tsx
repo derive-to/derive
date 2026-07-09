@@ -14,6 +14,7 @@ import { IntegrationsSection } from "./integrations-section"
 import { MembersSection } from "./members-section"
 import { ProfileSection } from "./profile-section"
 import { ReportsSection } from "./reports-section"
+import { SecuritySection } from "./security-section"
 import { SettingsNav, type SettingsNavGroup } from "./settings-nav"
 import { WebhooksSection } from "./webhooks-section"
 
@@ -47,6 +48,7 @@ export function Settings() {
       label: "Account",
       items: [
         { id: "profile", label: "Profile", testId: "settings-tab-profile" },
+        { id: "security", label: "Security", testId: "settings-tab-security" },
         { id: "appearance", label: "Appearance", testId: "settings-tab-appearance" },
       ],
     },
@@ -109,6 +111,7 @@ export function Settings() {
 
           <div className="min-w-0">
             {active === "profile" && <ProfileSection />}
+            {active === "security" && <SecuritySection />}
             {active === "appearance" && <AppearanceSection />}
             {active === "general" && <GeneralSection />}
             {active === "members" && <MembersSection meId={me.id} />}

@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type ArtifactRecord, artifactUrl, newId, type Visibility } from "@derive/core"
+import { type ArtifactRecord, artifactUrl, type LinkRole, newId } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { homeView, searchResultBlocks, shareCard, unfurlCard } from "../src/lib/slack-cards"
@@ -36,7 +36,7 @@ const connect = (meta: SqliteMetaStore, team = "T1") =>
 const artifact = (
   meta: SqliteMetaStore,
   title: string,
-  visibility: Visibility = "public",
+  linkRole: LinkRole = "viewer",
 ): Promise<ArtifactRecord> =>
   meta.createArtifact({
     id: newId("a"),
@@ -48,7 +48,7 @@ const artifact = (
     org_id: "default",
     slug: null,
     title,
-    visibility,
+    link_role: linkRole,
     kind: "file",
     spa: 0,
   }) as Promise<ArtifactRecord>
@@ -116,7 +116,7 @@ describe("handleSlashCommand", () => {
     const meta = freshStore()
     await connect(meta)
     const a = await artifact(meta, "Roadmap")
-    await artifact(meta, "Secret", "private") // must be filtered out
+    await artifact(meta, "Secret", "none") // must be filtered out
     const res = await handleSlashCommand(deps(meta), {
       team_id: "T1",
       channel_id: "C9",
@@ -147,7 +147,7 @@ describe("handleSlashCommand", () => {
   it("won't share a private artifact", async () => {
     const meta = freshStore()
     await connect(meta)
-    const a = await artifact(meta, "Confidential", "private")
+    const a = await artifact(meta, "Confidential", "none")
     const calls = stubSlack()
     const res = await handleSlashCommand(deps(meta), {
       team_id: "T1",
@@ -170,7 +170,7 @@ describe("handleLinkShared (unfurls)", () => {
     const meta = freshStore()
     await connect(meta)
     const pub = await artifact(meta, "Public doc")
-    const priv = await artifact(meta, "Private doc", "private")
+    const priv = await artifact(meta, "Private doc", "none")
     const calls = stubSlack()
     const pubUrl = artifactUrl(baseUrl, pub)
     const privUrl = artifactUrl(baseUrl, priv)
@@ -242,7 +242,7 @@ describe("shareArtifact gate", () => {
       org_id: "other-org",
       slug: null,
       title: "Foreign",
-      visibility: "public",
+      link_role: "viewer",
       kind: "file",
       spa: 0,
     })

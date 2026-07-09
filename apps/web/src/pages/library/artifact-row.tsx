@@ -91,6 +91,13 @@ export function ArtifactRow({
         )}
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs tabular-nums text-muted-foreground">
           <Badge shape="pill">{artifactTypeLabel(a)}</Badge>
+          {/* Invite-only work is invisible to everyone but its members — the chip
+              says so wherever the doc DOES surface (your library, Created by me). */}
+          {a.workspace_access === "none" && (a.link_role ?? "none") === "none" && (
+            <Badge shape="pill" variant="outline" title="Only you and people you add">
+              <Icon name="lock" size={12} /> Private
+            </Badge>
+          )}
           {dir && (
             <span className="inline-flex items-center gap-1 truncate" title={a.source_path ?? ""}>
               {/* Neutral metadata — a folder path is not a brand moment. */}

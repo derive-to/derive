@@ -118,8 +118,10 @@ test("capture the remaining surfaces", async ({ page: p }) => {
   await shot("palette-dark-desktop")
   await p.keyboard.press("Escape")
 
-  // People + profile.
+  // People + profile. Browse leads with who you follow; type to surface the wider
+  // directory so the shot shows a populated list (and gives us a profile to drill into).
   await p.goto("/people")
+  await p.getByTestId("people-search").fill("e")
   await settle(p)
   await shot("people-dark-desktop")
   const card = p.locator('[data-testid^="people-card-"]').first()

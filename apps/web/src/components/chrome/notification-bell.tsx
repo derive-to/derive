@@ -15,6 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/ctx"
 import { ago } from "@/lib/time"
 import { usePageVisible } from "@/lib/use-page-visible"
+import { useUserEvent } from "@/lib/use-user-events"
 import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
 
@@ -48,16 +49,15 @@ export function NotificationBell() {
       .finally(() => setLoaded(true))
   }, [])
 
-  // Initial load + live updates. EventSource reconnects on its own. Closed
-  // while the tab is hidden (and reopened + re-loaded on focus) so a
-  // backgrounded tab doesn't keep the per-user room Durable Object active.
+  // Initial load + live updates over the SHARED per-user stream (one EventSource
+  // per tab, refcounted in use-user-events; the agent-push listener rides the same
+  // stream). Gated on visibility so a hidden tab still releases the per-user room
+  // Durable Object; re-loads on focus return.
   useEffect(() => {
     if (!me || !visible) return
     load()
-    const ev = new EventSource(api.notificationsStreamUrl(), { withCredentials: true })
-    ev.addEventListener("notification", load)
-    return () => ev.close()
   }, [me, load, visible])
+  useUserEvent("notification", load, !!me && visible)
 
   // Mirror the unread count into the tab title — "(3) Derive" (the house
   // grammar). Strip any previous prefix first so updates replace, never stack.
@@ -159,8 +159,9 @@ export function NotificationBell() {
                   onClick={() => openItem(n)}
                   className="flex w-full items-start gap-2.5 border-b border-border-soft px-3 py-2.5 text-left last:border-b-0 hover:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                 >
-                  {/* Kind glyph: mentions/replies are about you, so they take the brand
-                    ink; follows/publishes/shares stay neutral — the ink accent is reserved. */}
+                  {/* Kind glyph: mentions/replies/review-asks are about you, so they take
+                    the brand ink; follows/publishes/shares stay neutral — the ink accent
+                    is reserved. */}
                   {n.kind === "mention" ? (
                     <Icon name="at" className="mt-0.5 text-primary" />
                   ) : (
@@ -188,6 +189,11 @@ export function NotificationBell() {
                       <strong>{n.actor}</strong>{" "}
                       {n.kind === "follow" ? (
                         "started following you"
+                      ) : n.kind === "review" ? (
+                        <>
+                          requested your review of{" "}
+                          {n.artifact_title ? <strong>{n.artifact_title}</strong> : "an artifact"}
+                        </>
                       ) : n.kind === "publish" ? (
                         <>
                           published{" "}

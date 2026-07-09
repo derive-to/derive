@@ -24,13 +24,17 @@ export function runStoreContract(
   let store: MetaStore
   let cleanup: () => void | Promise<void>
 
+  // Default: a fully public doc (workspace seats + a world view link + listed in the
+  // public directory) — the access-model v2 analogue of the old `visibility: public`.
   const newArtifact = (over: Partial<NewArtifact> = {}): NewArtifact => ({
     id: uuid(),
     short_id: uuid().slice(0, 8),
     org_id: ORG,
     slug: "doc",
     title: "Doc",
-    visibility: "link",
+    workspace_access: "member",
+    link_role: "viewer",
+    listed: "public",
     kind: "file",
     spa: 0,
     ...over,
@@ -128,20 +132,69 @@ export function runStoreContract(
       expect(await store.listArtifacts({ ids: [] })).toEqual([])
     })
 
-    it("changes visibility + general-access role (sets/clears the password hash)", async () => {
-      const a = await store.createArtifact(newArtifact())
-      expect(a.general_role).toBe("viewer") // defaults to view-only
-      await store.setVisibility(a.id, "password", "hash123", "viewer")
-      expect(await store.getByShortId(a.short_id)).toMatchObject({ visibility: "password" })
-      // Flip to a comment link: visibility + general_role both round-trip.
-      await store.setVisibility(a.id, "link", null, "commenter")
+    it("setAccess changes the access triple (and sets/clears the password lock)", async () => {
+      const a = await store.createArtifact(
+        newArtifact({ workspace_access: "none", link_role: "none", listed: "none" }),
+      )
+      // Fail-closed store defaults when nothing's stamped.
+      expect(a.workspace_access).toBe("none")
+      expect(a.link_role).toBe("none")
+      expect(a.listed).toBe("none")
+      // A locked public doc: listed public + a password hash + a world view link.
+      await store.setAccess(a.id, "member", "public", "viewer", "hash123")
       expect(await store.getByShortId(a.short_id)).toMatchObject({
-        visibility: "link",
-        general_role: "commenter",
+        workspace_access: "member",
+        listed: "public",
+        password_hash: "hash123",
+        link_role: "viewer",
       })
-      // And back to view-only.
-      await store.setVisibility(a.id, "link", null, "viewer")
-      expect((await store.getByShortId(a.short_id))?.general_role).toBe("viewer")
+      // Unlock it and grant comment: hash cleared, the triple round-trips.
+      await store.setAccess(a.id, "member", "public", "commenter", null)
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        listed: "public",
+        password_hash: null,
+        link_role: "commenter",
+      })
+      // Editor — the full range.
+      await store.setAccess(a.id, "member", "public", "editor", null)
+      expect((await store.getByShortId(a.short_id))?.link_role).toBe("editor")
+      // Back to invite-only (all off).
+      await store.setAccess(a.id, "none", "none", "none", null)
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        workspace_access: "none",
+        listed: "none",
+        link_role: "none",
+      })
+    })
+
+    it("the world link is independent of listing — an unlisted artifact carries a live link", async () => {
+      const a = await store.createArtifact(
+        newArtifact({ workspace_access: "member", link_role: "none", listed: "none" }),
+      )
+      expect(a.link_role).toBe("none")
+      // Unlisted, workspace seats + a world comment link (a shareable draft).
+      await store.setAccess(a.id, "member", "none", "commenter", null)
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        listed: "none",
+        workspace_access: "member",
+        link_role: "commenter",
+      })
+      // Unlisted, world view link, no workspace access (external-only).
+      await store.setAccess(a.id, "none", "none", "viewer", null)
+      expect(await store.getByShortId(a.short_id)).toMatchObject({
+        listed: "none",
+        workspace_access: "none",
+        link_role: "viewer",
+      })
+    })
+
+    it("createArtifact stamps an explicit access triple (the publish() path)", async () => {
+      const a = await store.createArtifact(
+        newArtifact({ workspace_access: "member", link_role: "commenter", listed: "none" }),
+      )
+      expect(a.workspace_access).toBe("member")
+      expect(a.link_role).toBe("commenter")
+      expect(a.listed).toBe("none")
     })
 
     it("counts storage bytes once per distinct blob (content-addressed)", async () => {
@@ -151,6 +204,68 @@ export function runStoreContract(
       await store.addVersion(a.id, newVersion({ blob_key: "other", size_bytes: 50 }))
       // 100 (shared, counted once) + 50 (other) = 150
       expect(await store.storageBytes(ORG)).toBeGreaterThanOrEqual(150)
+    })
+  })
+
+  describe(`${label}: unlisted listings (the draft state)`, () => {
+    it("shows unlisted rows to their members only — the owner's drafts stay theirs", async () => {
+      const owner = `u_pv_owner_${uuid()}`
+      const other = `u_pv_other_${uuid()}`
+      const org = `${ORG}_pv_${uuid()}`
+      const draft = await store.createArtifact(
+        newArtifact({
+          org_id: org,
+          listed: "none",
+          link_role: "none",
+          workspace_access: "member",
+          title: "Agent Draft Alpha",
+        }),
+      )
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: draft.id,
+        user_id: owner,
+        role: "owner",
+      })
+      const listed = await store.createArtifact(
+        newArtifact({ org_id: org, listed: "workspace", link_role: "none", title: "Team Doc" }),
+      )
+
+      // The owner sees their draft in an ordinary listing; a teammate never does —
+      // not in the list, not via title search.
+      const ownersView = (await store.listArtifacts({ orgId: org, viewerId: owner })).map(
+        (x) => x.id,
+      )
+      expect(ownersView).toContain(draft.id)
+      expect(ownersView).toContain(listed.id)
+      const othersView = (await store.listArtifacts({ orgId: org, viewerId: other })).map(
+        (x) => x.id,
+      )
+      expect(othersView).not.toContain(draft.id)
+      expect(othersView).toContain(listed.id)
+      expect(
+        (await store.listArtifacts({ orgId: org, viewerId: other, q: "agent draft" })).map(
+          (x) => x.id,
+        ),
+      ).toEqual([])
+
+      // A trusted caller (no viewerId — operator/internal) still sees everything.
+      expect((await store.listArtifacts({ orgId: org })).map((x) => x.id)).toContain(draft.id)
+      // publicOnly (anonymous listings) never shows it.
+      expect(
+        (await store.listArtifacts({ orgId: org, publicOnly: true })).map((x) => x.id),
+      ).not.toContain(draft.id)
+    })
+
+    it("keeps unlisted work off profiles, even across a shared workspace", async () => {
+      const author = `u_pv_author_${uuid()}`
+      const org = `${ORG}_pv_pp_${uuid()}`
+      const draft = await store.createArtifact(
+        newArtifact({ org_id: org, listed: "none", link_role: "none" }),
+      )
+      await store.addVersion(draft.id, newVersion({ author: "Author", author_id: author }))
+      const works = await store.listUserWorks(author, [], { visibleOrgIds: [org] })
+      expect(works.map((a) => a.id)).not.toContain(draft.id)
     })
   })
 
@@ -202,6 +317,75 @@ export function runStoreContract(
       expect(await store.artifactIdsByAuthor(ORG, "ADA")).toContain(mine.id) // case-insensitive
       expect(await store.artifactIdsByAuthor(ORG, "grace")).not.toContain(mine.id) // other login
       expect(await store.artifactIdsByAuthor(`${ORG}_other`, "ada")).not.toContain(mine.id) // other org
+    })
+
+    it("filters + counts artifacts by owner row (the library's Created-by-me filter)", async () => {
+      const me = `u_owned_${uuid()}`
+      const someoneElse = `u_owned_other_${uuid()}`
+      const org = `${ORG}_owned_${uuid()}`
+      const mine = await store.createArtifact(
+        newArtifact({ org_id: org, listed: "none", link_role: "none", author_id: me }),
+      )
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: mine.id,
+        user_id: me,
+        role: "owner",
+      })
+      const theirs = await store.createArtifact(
+        newArtifact({
+          org_id: org,
+          listed: "workspace",
+          link_role: "none",
+          author_id: someoneElse,
+        }),
+      )
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: theirs.id,
+        user_id: someoneElse,
+        role: "owner",
+      })
+      // A non-owner share row must NOT put someone else's doc under "Created by me".
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: theirs.id,
+        user_id: me,
+        role: "editor",
+      })
+      expect(await store.artifactIdsOwnedBy(org, me)).toEqual([mine.id])
+      expect(await store.artifactIdsOwnedBy(org, someoneElse)).toEqual([theirs.id])
+      expect(await store.countOwnedBy(org, me)).toBe(1)
+      expect(await store.countOwnedBy(org, someoneElse)).toBe(1)
+      // The listing narrow (the not-in-a-feed pending badge).
+      expect(await store.countOwnedBy(org, me, "none")).toBe(1)
+      expect(await store.countOwnedBy(org, me, "workspace")).toBe(0)
+      // Scoped to the workspace — an owner row elsewhere doesn't leak in.
+      expect(await store.countOwnedBy(`${org}_other`, me)).toBe(0)
+    })
+
+    it("keeps Created-by-me stable across republishes by others (owner row, not author_id)", async () => {
+      // The exact flows that broke the author_id-keyed filter: a teammate
+      // republishes your doc, then CI republishes with no author at all. The
+      // artifact's denormalized author_id moves (to them, then to null) — the
+      // owner row doesn't, and the filter keys on the row.
+      const me = `u_owned_stable_${uuid()}`
+      const org = `${ORG}_owned_stable_${uuid()}`
+      const a = await store.createArtifact(
+        newArtifact({ org_id: org, listed: "none", link_role: "none", author_id: me }),
+      )
+      await store.setArtifactMember({ id: uuid(), artifact_id: a.id, user_id: me, role: "owner" })
+
+      await store.addVersion(
+        a.id,
+        newVersion({ author: "Teammate", author_id: `u_other_${uuid()}` }),
+      )
+      expect(await store.artifactIdsOwnedBy(org, me)).toEqual([a.id])
+
+      await store.addVersion(a.id, newVersion({ author: "ci", author_id: null }))
+      expect((await store.getArtifactById(a.id))?.author_id).toBeNull() // the denorm moved…
+      expect(await store.artifactIdsOwnedBy(org, me)).toEqual([a.id]) // …the filter didn't
+      expect(await store.countOwnedBy(org, me, "none")).toBe(1)
     })
 
     it("sets and clears the current author directly (the backfill path)", async () => {
@@ -506,14 +690,16 @@ export function runStoreContract(
       const mayaOrg = `${ORG}_maya_ws` // the author publishes in HER workspace
 
       // Maya's PUBLIC work, in her own workspace (author_id stamped on hand-publish).
-      const pub = await store.createArtifact(newArtifact({ org_id: mayaOrg, visibility: "public" }))
+      const pub = await store.createArtifact(newArtifact({ org_id: mayaOrg, listed: "public" }))
       await store.addVersion(pub.id, newVersion({ author: "Maya", author_id: maya }))
-      // Maya's PRIVATE (link) work — must NOT leak into a follower's feed.
-      const priv = await store.createArtifact(newArtifact({ org_id: mayaOrg, visibility: "link" }))
+      // Maya's PRIVATE work — must NOT leak into a follower's feed.
+      const priv = await store.createArtifact(
+        newArtifact({ org_id: mayaOrg, listed: "none", link_role: "none" }),
+      )
       await store.addVersion(priv.id, newVersion({ author: "Maya", author_id: maya }))
       // Someone else's public work in another workspace — not followed, must not appear.
       const other = await store.createArtifact(
-        newArtifact({ org_id: `${ORG}_other_ws`, visibility: "public" }),
+        newArtifact({ org_id: `${ORG}_other_ws`, listed: "public" }),
       )
       await store.addVersion(
         other.id,
@@ -555,7 +741,7 @@ export function runStoreContract(
       await store.addVersion(localElsewhere.id, newVersion({ author: "Ada", author_login: "ada" }))
       // A followed person's public work in a far workspace (person branch, any workspace).
       const personPub = await store.createArtifact(
-        newArtifact({ org_id: farOrg, visibility: "public" }),
+        newArtifact({ org_id: farOrg, listed: "public" }),
       )
       await store.addVersion(personPub.id, newVersion({ author: "Pat", author_id: person }))
 
@@ -587,17 +773,15 @@ export function runStoreContract(
       const homeOrg = `${ORG}_pp_home_${uuid()}`
       const ghId = `gh-${uuid()}` // distinctive, unused by any other test
       // Public work, hand-authored (author_id) in the author's workspace.
-      const pub = await store.createArtifact(newArtifact({ org_id: homeOrg, visibility: "public" }))
+      const pub = await store.createArtifact(newArtifact({ org_id: homeOrg, listed: "public" }))
       await store.addVersion(pub.id, newVersion({ author: "Author", author_id: author }))
       // Org-visible (non-public) work by the same author.
       const orgWork = await store.createArtifact(
-        newArtifact({ org_id: homeOrg, visibility: "org" }),
+        newArtifact({ org_id: homeOrg, listed: "workspace", link_role: "none" }),
       )
       await store.addVersion(orgWork.id, newVersion({ author: "Author", author_id: author }))
       // Public work attributed by a linked GitHub id (no author_id) — matched via ghIds.
-      const ghWork = await store.createArtifact(
-        newArtifact({ org_id: homeOrg, visibility: "public" }),
-      )
+      const ghWork = await store.createArtifact(newArtifact({ org_id: homeOrg, listed: "public" }))
       await store.addVersion(
         ghWork.id,
         newVersion({ author: "Gh", author_login: "gh", author_gh_id: ghId }),
@@ -993,6 +1177,108 @@ export function runStoreContract(
       await store.markNotificationsRead("amy", "all")
       expect(await store.unreadNotificationCount("amy")).toBe(0)
     })
+
+    it("createNotifications inserts a whole fan-out in one call (empty ⇒ no-op)", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const base = {
+        actor: "bob",
+        kind: "publish" as const,
+        artifact_id: a.id,
+        artifact_short_id: a.short_id,
+        artifact_title: "Doc",
+        thread_id: "",
+        comment_id: "",
+        preview: "shipped",
+      }
+      await store.createNotifications([]) // no-op, no throw
+      await store.createNotifications([
+        { id: uuid(), user_id: "cara", ...base },
+        { id: uuid(), user_id: "dave", ...base },
+        { id: uuid(), user_id: "cara", ...base },
+      ])
+      expect(await store.unreadNotificationCount("cara")).toBe(2)
+      expect(await store.unreadNotificationCount("dave")).toBe(1)
+    })
+  })
+
+  describe(`${label}: batched reads (no N+1)`, () => {
+    it("getArtifactsByIds / getCollections load a set in one call (empty ⇒ [])", async () => {
+      const a1 = await store.createArtifact(newArtifact({ title: "One" }))
+      const a2 = await store.createArtifact(newArtifact({ title: "Two" }))
+      expect(await store.getArtifactsByIds([])).toEqual([])
+      const arts = await store.getArtifactsByIds([a1.id, a2.id, "missing"])
+      expect(new Set(arts.map((a) => a.id))).toEqual(new Set([a1.id, a2.id]))
+
+      const c1 = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "C1",
+        created_by: "amy",
+      })
+      const c2 = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "C2",
+        created_by: "amy",
+      })
+      expect(await store.getCollections([])).toEqual([])
+      const cols = await store.getCollections([c1.id, c2.id])
+      expect(new Set(cols.map((c) => c.title))).toEqual(new Set(["C1", "C2"]))
+    })
+
+    it("listMembershipsForOrgs returns memberships across orgs (empty ⇒ [])", async () => {
+      const orgA = `org_${uuid()}`
+      const orgB = `org_${uuid()}`
+      await store.setWorkspace(orgA, "A")
+      await store.setWorkspace(orgB, "B")
+      await store.setMembership({ id: uuid(), org_id: orgA, user_id: "amy", role: "owner" })
+      await store.setMembership({ id: uuid(), org_id: orgB, user_id: "amy", role: "editor" })
+      await store.setMembership({ id: uuid(), org_id: orgB, user_id: "bob", role: "viewer" })
+      expect(await store.listMembershipsForOrgs([])).toEqual([])
+      const rows = await store.listMembershipsForOrgs([orgA, orgB])
+      expect(rows.filter((m) => m.org_id === orgA)).toHaveLength(1)
+      expect(rows.filter((m) => m.org_id === orgB)).toHaveLength(2)
+    })
+
+    it("setArtifactsRemoved tombstones many artifacts in one update (empty ⇒ no-op)", async () => {
+      const a1 = await store.createArtifact(newArtifact())
+      const a2 = await store.createArtifact(newArtifact())
+      await store.setArtifactsRemoved([]) // no-op
+      expect((await store.getArtifactById(a1.id))?.removed_at ?? null).toBeNull()
+      await store.setArtifactsRemoved([a1.id, a2.id], "2026-01-01T00:00:00.000Z")
+      expect((await store.getArtifactById(a1.id))?.removed_at).toBe("2026-01-01T00:00:00.000Z")
+      expect((await store.getArtifactById(a2.id))?.removed_at).toBe("2026-01-01T00:00:00.000Z")
+    })
+
+    it("enqueueDeliveries inserts a whole subscriber fan-out in one call (empty ⇒ no-op)", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const hook = await store.createWebhook({
+        id: uuid(),
+        artifact_id: a.id,
+        org_id: ORG,
+        url: "https://example.test/hook",
+        secret: "s",
+        events: "*",
+        kind: "generic",
+      })
+      const row = (id: string) => ({
+        id,
+        webhook_id: hook.id,
+        url: hook.url,
+        secret: hook.secret,
+        kind: hook.kind,
+        event_type: "version.published",
+        payload: "{}",
+      })
+      await store.enqueueDeliveries([]) // no-op
+      await store.enqueueDeliveries([row(uuid()), row(uuid())])
+      const due = await store.claimDueDeliveries(
+        new Date(Date.now() + 60_000).toISOString(),
+        10,
+        new Date(Date.now() + 120_000).toISOString(),
+      )
+      expect(due.filter((d) => d.webhook_id === hook.id)).toHaveLength(2)
+    })
   })
 
   describe(`${label}: agents`, () => {
@@ -1025,6 +1311,178 @@ export function runStoreContract(
       expect(await store.listPendingAgentMentions(agent.id, 10)).toHaveLength(0)
       await store.deleteAgent(agent.id, ORG)
       expect(await store.getAgentByToken(token)).toBeNull()
+    })
+  })
+
+  describe(`${label}: contexts + sessions`, () => {
+    const newContext = async () => {
+      const manifest = await store.createArtifact(newArtifact({ kind: "bundle" }))
+      return store.createContext({
+        id: uuid(),
+        org_id: ORG,
+        name: `analytics_${uuid().slice(0, 8)}`,
+        agent_id: uuid(),
+        manifest_artifact_id: manifest.id,
+        created_by: "rob",
+      })
+    }
+
+    it("creates a context, lists it by workspace, resolves by id", async () => {
+      const ctx = await newContext()
+      expect(await store.getContext(ctx.id)).toMatchObject({ name: ctx.name })
+      expect((await store.listContexts(ORG)).some((x) => x.id === ctx.id)).toBe(true)
+      expect(await store.listContexts(`other_${uuid()}`)).toHaveLength(0)
+    })
+
+    it("rejects a duplicate context name within a workspace", async () => {
+      const ctx = await newContext()
+      await expect(
+        store.createContext({
+          id: uuid(),
+          org_id: ORG,
+          name: ctx.name,
+          agent_id: uuid(),
+          manifest_artifact_id: ctx.manifest_artifact_id,
+          created_by: "rob",
+        }),
+      ).rejects.toThrow()
+    })
+
+    it("runs a session through the ask → answer → follow-up → close turn cycle", async () => {
+      const ctx = await newContext()
+      const s = await store.createSession({
+        id: uuid(),
+        context_id: ctx.id,
+        org_id: ORG,
+        asker_id: "daniel",
+        context_version: 1,
+      })
+      expect(s.state).toBe("open")
+
+      // The asker's question is already "open"; the agent's answer settles it.
+      await store.addSessionMessage(
+        {
+          id: uuid(),
+          session_id: s.id,
+          author_kind: "asker",
+          author_id: "daniel",
+          body_md: "churn?",
+        },
+        "open",
+      )
+      expect(await store.pendingSessions(ctx.id, 10)).toHaveLength(1)
+      await store.addSessionMessage(
+        {
+          id: uuid(),
+          session_id: s.id,
+          author_kind: "agent",
+          author_id: "ag_x",
+          body_md: "32%",
+          meta: JSON.stringify({ query: "select …", confidence: 0.9 }),
+        },
+        "answered",
+      )
+      expect(await store.pendingSessions(ctx.id, 10)).toHaveLength(0)
+      expect((await store.getSession(s.id))?.state).toBe("answered")
+      expect((await store.getSession(s.id))?.updated_at).not.toBeNull()
+
+      // A follow-up re-opens (back on the queue); closing takes it off for good.
+      await store.addSessionMessage(
+        {
+          id: uuid(),
+          session_id: s.id,
+          author_kind: "asker",
+          author_id: "daniel",
+          body_md: "and Feb?",
+        },
+        "open",
+      )
+      expect(await store.pendingSessions(ctx.id, 10)).toHaveLength(1)
+      expect(await store.setSessionState(s.id, "closed")).toMatchObject({ state: "closed" })
+      expect(await store.pendingSessions(ctx.id, 10)).toHaveLength(0)
+
+      const transcript = await store.listSessionMessages(s.id)
+      expect(transcript.map((m) => m.author_kind)).toEqual(["asker", "agent", "asker"])
+      expect(JSON.parse(transcript[1].meta ?? "{}").confidence).toBe(0.9)
+
+      // Batched form loads several sessions' transcripts in one call, oldest first, so a
+      // caller can group by session_id instead of a listSessionMessages per session.
+      const s2 = await store.createSession({
+        id: uuid(),
+        context_id: ctx.id,
+        org_id: ORG,
+        asker_id: "erin",
+        context_version: 1,
+      })
+      await store.addSessionMessage(
+        { id: uuid(), session_id: s2.id, author_kind: "asker", author_id: "erin", body_md: "hi" },
+        "open",
+      )
+      expect(await store.listSessionMessagesFor([])).toEqual([])
+      const both = await store.listSessionMessagesFor([s.id, s2.id])
+      expect(both.filter((m) => m.session_id === s.id)).toHaveLength(3)
+      expect(both.filter((m) => m.session_id === s2.id)).toHaveLength(1)
+    })
+
+    it("scopes session listings to one asker and orders the queue oldest first", async () => {
+      const ctx = await newContext()
+      const ask = (asker: string) =>
+        store.createSession({
+          id: uuid(),
+          context_id: ctx.id,
+          org_id: ORG,
+          asker_id: asker,
+          context_version: 1,
+        })
+      const first = await ask("daniel")
+      await ask("sarah")
+      expect(await store.listSessions(ctx.id)).toHaveLength(2)
+      expect(await store.listSessions(ctx.id, { askerId: "daniel" })).toHaveLength(1)
+      expect((await store.pendingSessions(ctx.id, 10))[0]?.id).toBe(first.id)
+      expect(await store.pendingSessions(ctx.id, 1)).toHaveLength(1)
+    })
+
+    it("deleteArtifact on a manifest cascades its context, sessions, and messages", async () => {
+      const ctx = await newContext()
+      const s = await store.createSession({
+        id: uuid(),
+        context_id: ctx.id,
+        org_id: ORG,
+        asker_id: "daniel",
+        context_version: 1,
+      })
+      await store.addSessionMessage(
+        { id: uuid(), session_id: s.id, author_kind: "asker", author_id: "daniel", body_md: "q" },
+        "open",
+      )
+      // Without the cascade this FK-throws on pg/D1 (context.manifest_artifact_id).
+      await store.deleteArtifact(ctx.manifest_artifact_id, ORG)
+      expect(await store.getContext(ctx.id)).toBeNull()
+      expect(await store.getSession(s.id)).toBeNull()
+    })
+
+    it("deleteContext cascades sessions and messages, scoped to its workspace", async () => {
+      const ctx = await newContext()
+      const s = await store.createSession({
+        id: uuid(),
+        context_id: ctx.id,
+        org_id: ORG,
+        asker_id: "daniel",
+        context_version: 1,
+      })
+      await store.addSessionMessage(
+        { id: uuid(), session_id: s.id, author_kind: "asker", author_id: "daniel", body_md: "hi" },
+        "open",
+      )
+      // Wrong workspace: a no-op — the scope gates the whole cascade, so another
+      // tenant's delete can't wipe the sessions either.
+      await store.deleteContext(ctx.id, `other_${uuid()}`)
+      expect(await store.getContext(ctx.id)).not.toBeNull()
+      expect(await store.getSession(s.id)).not.toBeNull()
+      await store.deleteContext(ctx.id, ORG)
+      expect(await store.getContext(ctx.id)).toBeNull()
+      expect(await store.getSession(s.id)).toBeNull()
+      expect(await store.listSessionMessages(s.id)).toHaveLength(0)
     })
   })
 
@@ -1231,6 +1689,52 @@ export function runStoreContract(
       // Misses return null on both lookups.
       expect(await store.getSlackThreadLinkByThread(`missing_${uuid()}`)).toBeNull()
       expect(await store.getSlackThreadLinkByTs("C9", "nope")).toBeNull()
+    })
+
+    it("deleteUserData: removes the user's rows, anonymizes authorship, keeps others' content", async () => {
+      const org = `org_del_${uuid()}`
+      const leaver = `leaver_${uuid()}`
+      const other = `other_${uuid()}`
+      // A shared workspace + the leaver's personal one.
+      await store.setWorkspace(org, "Shared")
+      await store.setWorkspace(`ws_p_${leaver}`, "Leaver's Workspace")
+      await store.setMembership({ id: uuid(), org_id: org, user_id: leaver, role: "owner" })
+      await store.setMembership({ id: uuid(), org_id: org, user_id: other, role: "owner" })
+      await store.setMembership({
+        id: uuid(),
+        org_id: `ws_p_${leaver}`,
+        user_id: leaver,
+        role: "owner",
+      })
+      // Two artifacts: one authored by the leaver, one by someone else.
+      const mine = await store.createArtifact(newArtifact({ org_id: org, author_id: leaver }))
+      const theirs = await store.createArtifact(newArtifact({ org_id: org, author_id: other }))
+      // The leaver's associations: a favorite and a follow.
+      await store.setFavorite(theirs.id, leaver)
+      await store.addFollow({
+        id: uuid(),
+        user_id: leaver,
+        org_id: org,
+        kind: "user",
+        target: other,
+      })
+
+      await store.deleteUserData(leaver)
+
+      // Their memberships are gone (both shared + personal); the other member stays.
+      expect(await store.getMembership(org, leaver)).toBeNull()
+      expect(await store.getMembership(`ws_p_${leaver}`, leaver)).toBeNull()
+      expect(await store.getMembership(org, other)).not.toBeNull()
+      // Their personal workspace row is dropped; the shared one survives.
+      expect(await store.getWorkspace(`ws_p_${leaver}`)).toBeNull()
+      expect(await store.getWorkspace(org)).not.toBeNull()
+      // Associations cleared.
+      expect(await store.listUserFavoriteIds(leaver)).toEqual([])
+      expect(await store.listFollows(leaver, org)).toEqual([])
+      // Authorship anonymized on their artifact; the other's is untouched — and BOTH
+      // artifacts still exist (content is never hard-deleted).
+      expect((await store.getArtifactById(mine.id))?.author_id ?? null).toBeNull()
+      expect((await store.getArtifactById(theirs.id))?.author_id).toBe(other)
     })
   })
 }

@@ -1,14 +1,21 @@
-import { type Context, Hono } from "hono"
-import { OAUTH_SCOPES } from "../auth-config"
+import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
+import type { Context } from "hono"
+import type { BlankEnv } from "hono/types"
+import { OAUTH_SCOPES, resolvePasskey } from "../auth-config"
+import { isCapabilityOn } from "../config-manifest"
 import type { AppContext } from "../context"
+import { bail, fail, readJson } from "../lib/http"
 import { cliCallbackHTML } from "../oauth-cli-callback"
 import { consentHTML } from "../oauth-consent"
 
 /** OAuth/OIDC discovery at the well-known root, the branded consent + CLI-callback
- *  screens, and the public list of configured social sign-in providers. All read-only. */
+ *  screens, and the public list of configured social sign-in providers. Read-only,
+ *  except the consent screen's workspace binding (POST /oauth/consent/workspace).
+ *  AuthCapabilities is generated for the web; the well-known discovery + HTML screens
+ *  stay plain routes. */
 export const oauthRoutes = (ctx: AppContext) => {
-  const { meta } = ctx
-  const app = new Hono()
+  const { meta, currentUser } = ctx
+  const app = new OpenAPIHono<BlankEnv>()
 
   // OAuth 2.0 discovery at the well-known root (RFC 8414 + RFC 9728), mirroring
   // what the oidc-provider plugin serves under /api/auth — MCP clients and standard
@@ -31,11 +38,7 @@ export const oauthRoutes = (ctx: AppContext) => {
     }
   }
   app.get("/.well-known/oauth-authorization-server", (c) => c.json(asMeta(c)))
-  // OIDC discovery for standards-compliant OIDC clients. We issue id tokens (jwt
-  // plugin) + advertise the openid scope + a userinfo endpoint, so RPs that probe
-  // /.well-known/openid-configuration must get JSON here — previously this path fell
-  // through to the SPA shell (HTML 200), breaking discovery. Superset of the OAuth AS
-  // metadata with the two OIDC-required fields.
+  // OIDC discovery for standards-compliant OIDC clients.
   app.get("/.well-known/openid-configuration", (c) =>
     c.json({
       ...asMeta(c),
@@ -60,26 +63,130 @@ export const oauthRoutes = (ctx: AppContext) => {
     const clientId = c.req.query("client_id") ?? ""
     const scopes = (c.req.query("scope") ?? "").split(/\s+/).filter(Boolean)
     const clientName = (await meta.getOAuthClientName(clientId)) || clientId || "An application"
-    return c.html(consentHTML({ clientName, scopes, query: new URL(c.req.url).search }))
+    const me = await currentUser(c)
+    const mine = me ? await meta.listWorkspaces(me.id) : []
+    // Re-consent preselect: the workspaces a prior grant was scoped to, kept only
+    // where the user is still a member. Empty → the "All workspaces" default.
+    const bound = me && clientId ? await meta.getOAuthClientWorkspaces(me.id, clientId) : []
+    const selected = bound.filter((id) => mine.some((w) => w.id === id))
+    return c.html(
+      consentHTML({
+        clientName,
+        scopes,
+        query: new URL(c.req.url).search,
+        clientId,
+        workspaces: mine.map((w) => ({ id: w.id, name: w.name })),
+        selected,
+      }),
+    )
   })
 
-  // Hosted callback for the CLI/native OAuth flow (`derive login`). A command-line
-  // client registers this as its redirect_uri instead of localhost; after consent
-  // the browser lands here with the one-time code, which we display for the user to
-  // paste back into the terminal (the PKCE verifier stays on their machine).
+  // Persist the consent screen's workspace choice: this user's grants to this
+  // client act in org_id. The binding is keyed by the session user, so it can
+  // only ever affect the caller's own grants; org_id is membership-checked.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/oauth/consent/workspace",
+      tags: ["OAuth"],
+      summary: "Scope an OAuth client's grants to a set of workspaces (consent screen).",
+      responses: {
+        200: {
+          description: "The workspace scope was saved.",
+          content: { "application/json": { schema: z.object({ ok: z.boolean() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      // Strict same-origin. The consent page is served from this origin, so its
+      // fetch always carries a matching Origin header; a cross-site page never can
+      // — and in DERIVE_CROSS_SITE deployments the session cookie is SameSite=None,
+      // so without this check a text/plain form could smuggle a JSON body here
+      // with the victim's cookie attached.
+      const origin = c.req.header("origin")
+      if (!origin || origin !== new URL(c.req.url).origin)
+        return bail(fail(c, 403, "cross-origin request refused"))
+      const me = await currentUser(c)
+      if (!me) return bail(fail(c, 401, "sign in to continue"))
+      const b = await readJson(
+        c,
+        z.object({ client_id: z.string().min(1), org_ids: z.array(z.string()) }),
+      )
+      if (b instanceof Response) return bail(b)
+      // Every ticked workspace must be one the caller is a member of; an empty array
+      // clears the scope → "All workspaces". Membership is re-checked server-side so
+      // a stale or forged id can never widen the grant past the human's own reach.
+      const valid: string[] = []
+      for (const orgId of b.org_ids) {
+        if (await meta.getMembership(orgId, me.id)) valid.push(orgId)
+      }
+      if (valid.length !== b.org_ids.length) return bail(fail(c, 403, "forbidden"))
+      await meta.setOAuthClientWorkspaces(me.id, b.client_id, valid)
+      return c.json({ ok: true })
+    },
+  )
+
+  // Hosted callback for the CLI/native OAuth flow (`derive login`). HTML — plain route.
   app.get("/oauth/cli-callback", (c) => {
     const code = c.req.query("code")
     const error = c.req.query("error_description") ?? c.req.query("error")
     return c.html(cliCallbackHTML({ code, error }))
   })
 
-  // Which social sign-in providers are configured (env-gated in auth-config), so
-  // the login page only renders buttons that actually work. Public + read-only.
-  app.get("/v1/auth/providers", (c) =>
-    c.json({
-      google: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
-      github: !!(process.env.GITHUB_LOGIN_CLIENT_ID && process.env.GITHUB_LOGIN_CLIENT_SECRET),
+  // The auth capabilities this instance actually has — the single contract that lets
+  // the SPA render only the sign-in methods + flows that really work here. Public +
+  // read-only; everything is env/feature-detected (config-manifest), the SAME gate
+  // `derive doctor` uses, so the two can't disagree.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/auth/capabilities",
+      tags: ["OAuth"],
+      summary: "The sign-in methods + flows this instance actually has (capability-adaptive).",
+      responses: {
+        200: {
+          description: "What the login page + Security hub may render here.",
+          content: {
+            "application/json": {
+              schema: z
+                .object({
+                  password: z.boolean(),
+                  google: z.boolean(),
+                  github: z.boolean(),
+                  oidc: z.object({ providerId: z.string(), label: z.string() }).nullable(),
+                  emailVerification: z.boolean(),
+                  passwordReset: z.boolean(),
+                  passkey: z.boolean(),
+                })
+                .openapi("AuthCapabilities"),
+            },
+          },
+        },
+      },
     }),
+    (c) => {
+      return c.json({
+        // Email+password is enabled unconditionally in auth-config, so it's always here.
+        password: true,
+        // Social / enterprise SSO — provider on/off comes from the shared capability model.
+        google: isCapabilityOn("google", process.env),
+        github: isCapabilityOn("github", process.env),
+        oidc: isCapabilityOn("oidc", process.env)
+          ? {
+              providerId: process.env.OIDC_PROVIDER_ID ?? "sso",
+              label: process.env.OIDC_PROVIDER_LABEL ?? "SSO",
+            }
+          : null,
+        // Mail-dependent flows: live only when a real transport is configured.
+        emailVerification: !!ctx.deps.emailEnabled,
+        passwordReset: !!ctx.deps.emailEnabled,
+        // Passkeys: on wherever the rpID/origin resolves.
+        passkey: resolvePasskey({
+          baseUrl: ctx.deps.baseUrl,
+          webOrigins: [...ctx.allowOrigins],
+        }).enabled,
+      })
+    },
   )
 
   return app

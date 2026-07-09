@@ -103,6 +103,15 @@ describe("config: field mapping", () => {
     expect(off.rateLimit).toBe(false)
   })
 
+  it("previews defaults false and turns on only when DERIVE_PREVIEWS='true'", () => {
+    // Default: unset → false
+    expect(loadConfig({ ...base }).previews).toBe(false)
+    // Explicitly false → still false
+    expect(loadConfig({ ...base, DERIVE_PREVIEWS: "false" }).previews).toBe(false)
+    // Opt-in → true
+    expect(loadConfig({ ...base, DERIVE_PREVIEWS: "true" }).previews).toBe(true)
+  })
+
   it("parses superAdmins as a trimmed, lowercased, comma-separated list", () => {
     const c = loadConfig({ ...base, DERIVE_SUPERADMIN_EMAILS: " Amy@X.com , bob@y.com ,," })
     expect(c.superAdmins).toEqual(["amy@x.com", "bob@y.com"])

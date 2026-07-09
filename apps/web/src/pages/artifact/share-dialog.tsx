@@ -1,20 +1,25 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useRef, useState } from "react"
+import { useNavigate } from "@tanstack/react-router"
+import { useRef, useState } from "react"
 import {
   API_BASE,
   type ArtifactDomain,
   type ArtifactMember,
   api,
-  type GeneralRole,
-  type PublicProfile,
+  type LinkRole,
+  type Listed,
   type Role,
+  type WorkspaceAccess,
 } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
+import { AccessSegmentToggle } from "@/components/shared/access-segment-toggle"
+import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { ROLE_LABELS, RoleSelect } from "@/components/shared/role-select"
 import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -30,56 +35,43 @@ import {
   SelectMenuTrigger,
 } from "@/components/ui/select-menu"
 import { toast } from "@/components/ui/sonner"
+import { Switch } from "@/components/ui/switch"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
-import { artifactQuery } from "@/lib/queries"
-import { cn } from "@/lib/utils"
+import { artifactQuery, workspaceQuery } from "@/lib/queries"
 
-// General access (visibility) options, in order of increasing reach — the ladder
-// reads top-to-bottom from most private to most open, each with the glyph the
-// Share trigger echoes.
-const ACCESS: { value: string; label: string; blurb: string; icon: IconName }[] = [
-  {
-    value: "private",
-    label: "Private",
-    blurb: "Only people added above. Workspace membership grants nothing.",
-    icon: "lock",
-  },
-  {
-    value: "org",
-    label: "Workspace only",
-    blurb: "Only members of this workspace.",
-    icon: "workspace",
-  },
-  {
-    value: "link",
-    label: "Anyone with the link",
-    blurb: "Anyone with the link can view.",
-    icon: "link",
-  },
-  {
-    value: "public",
-    label: "Public — listed",
-    blurb: "In the public directory and indexable.",
-    icon: "globe",
-  },
-  {
-    value: "password",
-    label: "Password protected",
-    blurb: "Anyone with the link and the password.",
-    icon: "lock",
-  },
+// Access is ONE primary question — who can open this — projected from the v2
+// triple (workspace_access, link_role, listed; see access-model.md). Each segment
+// is the WIDEST reach currently granted: a world link is "anyone"; workspace-seat
+// access is "workspace"; neither is "invite". The world link's role and each
+// segment's listing (does it show in a feed) are secondary switches beneath it.
+type Segment = "invite" | "workspace" | "anyone"
+const SEGMENTS: { value: Segment; label: string; icon: IconName }[] = [
+  { value: "invite", label: "Invited", icon: "lock" },
+  { value: "workspace", label: "Workspace", icon: "workspace" },
+  { value: "anyone", label: "Anyone", icon: "globe" },
 ]
 
-// The state glyph the Share trigger carries so exposure is legible without
-// opening the dialog: a globe when the URL alone reads (link/public), a lock
-// for invite-only, the plain share glyph for workspace/password.
-const visibilityIcon = (visibility: string): IconName =>
-  visibility === "public" || visibility === "link"
-    ? "globe"
-    : visibility === "private"
-      ? "lock"
-      : "share"
+// The state glyph the Share trigger carries so exposure is legible without opening
+// the dialog: a globe when the URL alone reads, the share glyph for the workspace,
+// a lock for invite-only.
+const accessIcon = (linkRole: LinkRole, workspaceAccess: WorkspaceAccess): IconName =>
+  linkRole !== "none" ? "globe" : workspaceAccess === "member" ? "share" : "lock"
+
+const LINK_ROLE_LABEL: Record<Exclude<LinkRole, "none">, string> = {
+  viewer: "Can view",
+  commenter: "Can comment",
+  editor: "Can edit",
+}
+// The read-only one-liner for someone who can't manage access.
+const accessSummary = (linkRole: LinkRole, workspaceAccess: WorkspaceAccess): string => {
+  if (linkRole !== "none") {
+    const what = linkRole === "viewer" ? "view" : linkRole === "editor" ? "edit" : "comment"
+    return `Anyone with the link can ${what}.`
+  }
+  if (workspaceAccess === "member") return "Everyone in the workspace can open this."
+  return "Only invited people can open this."
+}
 
 /**
  * Per-artifact sharing, opened from the artifact header. Follows the Google Docs
@@ -91,13 +83,19 @@ const visibilityIcon = (visibility: string): IconName =>
 export function ShareButton({
   shortId,
   myRole,
-  visibility,
-  generalRole,
+  workspaceAccess,
+  linkRole,
+  listed,
+  passwordProtected = false,
 }: {
   shortId: string
   myRole?: Role | null
-  visibility: string
-  generalRole?: GeneralRole
+  /** The v2 access triple (see access-model.md). */
+  workspaceAccess?: WorkspaceAccess
+  linkRole?: LinkRole
+  listed?: Listed
+  /** The world link carries a password (the lock). */
+  passwordProtected?: boolean
 }) {
   const qc = useQueryClient()
   const { me } = useAuth()
@@ -105,27 +103,31 @@ export function ShareButton({
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<Role>("editor")
   const [busy, setBusy] = useState(false)
+  // A ref, not just the `busy` state: state updates are batched/async, so a burst
+  // of synchronous native submit events (Enter held down, or auto-repeating —
+  // see PersonSearchInput's documented submit-fallthrough) can all read the SAME
+  // stale `busy=false` closure before the first call's setBusy(true) re-renders.
+  // The ref flips synchronously, so only the first of a burst gets through.
+  const adding = useRef(false)
   const [err, setErr] = useState<string | null>(null)
-  // GitHub-style handle typeahead for the add-person field. Suggestions come from
-  // the discoverable-people search (handle/name, never email); a non-discoverable
-  // user is still addable by typing their exact @handle/email and clicking Add.
-  const [suggest, setSuggest] = useState<PublicProfile[]>([])
-  const [active, setActive] = useState(-1)
-  // The value we just picked, so the follow-up search for it doesn't reopen the menu.
-  const picked = useRef("")
-  // General access draft: visibility + the link's permission (view vs comment), plus a
-  // password when enabling/changing password.
-  const [vis, setVis] = useState(visibility)
-  const [genRole, setGenRole] = useState<GeneralRole>(generalRole ?? "viewer")
+  // Access draft: the three fields, plus the lock (password) state for the world link.
+  const [wsAccess, setWsAccess] = useState<WorkspaceAccess>(workspaceAccess ?? "member")
+  const [lRole, setLRole] = useState<LinkRole>(linkRole ?? "none")
+  const [lst, setLst] = useState<Listed>(listed ?? "none")
   const [pw, setPw] = useState("")
   const [savingVis, setSavingVis] = useState(false)
+  // The lock as the server knows it, kept locally current as we set/clear it.
+  const [hasLock, setHasLock] = useState(passwordProtected)
+  // The checkbox is checked before a password exists (the input is showing) —
+  // nothing applies until Set password.
+  const [lockDraft, setLockDraft] = useState(false)
 
   const [copied, setCopied] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
   // Embed + domains live behind one quiet disclosure — access is the dialog's
   // job; distribution mechanics shouldn't compete with it.
   const [more, setMore] = useState(false)
-  // Changing the password on an already-password artifact is rare: hidden
+  // Changing the password on an already-locked artifact is rare: hidden
   // behind a ghost reveal instead of a permanently visible input.
   const [pwOpen, setPwOpen] = useState(false)
 
@@ -152,7 +154,7 @@ export function ShareButton({
   // for others when the artifact is link- or world-readable.
   const origin = API_BASE || (typeof window === "undefined" ? "" : window.location.origin)
   const embedSnippet = `<iframe src="${origin}/v1/embed/${shortId}" width="100%" height="480" style="border:0;border-radius:12px" loading="lazy" title="Derive artifact" allowfullscreen></iframe>`
-  const linkAccessible = visibility === "public" || visibility === "link"
+  const linkAccessible = (linkRole ?? "none") !== "none"
   const copyEmbed = async () => {
     try {
       await navigator.clipboard.writeText(embedSnippet)
@@ -164,24 +166,53 @@ export function ShareButton({
     }
   }
 
-  // The ladder entry for the draft pick (editable) and the server's own value
-  // (view-only render) — looked up once and reused, rather than re-scanning
-  // ACCESS at every place the icon/label/blurb is needed.
-  const currentAccess = ACCESS.find((a) => a.value === vis)
-  const visibilityAccess = ACCESS.find((a) => a.value === visibility)
-  // Reach visibilities (anyone with the link / public / password) carry a general-access
-  // permission; private/workspace do not, so the view/comment control hides for them.
-  const reach = vis === "link" || vis === "public" || vis === "password"
-  // Switching TO password can't apply until a password exists; everything else
-  // applies the moment it's picked — a Save button between a select and its
-  // effect is friction with no safety benefit here (the change is one more
-  // select away from undone).
-  const pendingPw = vis === "password" && visibility !== "password"
-  const applyVisibility = async (nextVis: string, nextRole: GeneralRole, password?: string) => {
+  const nav = useNavigate()
+  // Solo drives only the create-a-workspace hint, never the segment itself — the
+  // Workspace segment stays meaningful for a workspace of one (it's what lists a
+  // doc in your own library, and promoting an agent's private draft to Workspace
+  // is the loop's blessing gesture). Managers only, and not-solo while the roster
+  // loads, so nothing flashes.
+  const { data: workspace } = useQuery({ ...workspaceQuery(), enabled: canManage })
+  const solo = workspace ? workspace.members.length <= 1 : false
+
+  // ── The one access question, projected from the (workspace_access, link_role,
+  // listed) draft ──────────────────────────────────────────────────────────────
+  // The segment is the WIDEST reach: a live world link is "anyone"; workspace-seat
+  // access is "workspace"; neither is "invite".
+  const segment: Segment =
+    lRole !== "none" ? "anyone" : wsAccess === "member" ? "workspace" : "invite"
+  // The listing switch per segment — public directory for "anyone", the workspace
+  // library for "workspace". Invited lists nowhere.
+  const isListed =
+    segment === "anyone" ? lst === "public" : segment === "workspace" && lst === "workspace"
+  // The world-link role shown on the "anyone" row (defaults to view before a link).
+  const roleValue: Exclude<LinkRole, "none"> = lRole === "none" ? "viewer" : lRole
+  // Everything applies the moment it's picked — a Save button between a select and
+  // its effect is friction with no safety benefit. The lock is the one exception:
+  // checking the box reveals the input, and nothing applies until Set password.
+  const applyAccess = async (next: {
+    workspaceAccess: WorkspaceAccess
+    linkRole: LinkRole
+    listed: Listed
+    password?: string
+  }) => {
     setSavingVis(true)
     setErr(null)
+    // Optimistically mirror the intent so the controls don't flash the old state.
+    setWsAccess(next.workspaceAccess)
+    setLRole(next.linkRole)
+    setLst(next.listed)
+    if (next.linkRole === "none") {
+      setHasLock(false)
+      setLockDraft(false)
+    }
     try {
-      await api.setVisibility(shortId, nextVis, nextRole, password)
+      const r = await api.setAccess(shortId, next)
+      setWsAccess(r.workspace_access)
+      setLRole(r.link_role)
+      setLst(r.listed)
+      setHasLock(!!r.locked)
+      setLockDraft(false)
       setPw("")
       setPwOpen(false)
       // Refresh the artifact (drives the toolbar glyph) and the library.
@@ -189,22 +220,64 @@ export function ShareButton({
       qc.invalidateQueries({ queryKey: ["artifacts"] })
     } catch (x) {
       setErr(x instanceof Error ? x.message : "Couldn't update access")
-      // The selects reflect the server again, not the failed intent.
-      setVis(visibility)
-      setGenRole(generalRole ?? "viewer")
+      // The controls reflect the server again, not the failed intent.
+      setWsAccess(workspaceAccess ?? "member")
+      setLRole(linkRole ?? "none")
+      setLst(listed ?? "none")
     } finally {
       setSavingVis(false)
     }
   }
-  const pickVisibility = (v: string) => {
-    setVis(v)
-    if (v === "password" && visibility !== "password") return // applies on Set password
-    void applyVisibility(v, genRole)
+  // Picking a segment sets its fields at the safe default: a fresh segment starts
+  // UNLISTED (the switch is how you opt into a feed), the world link at view.
+  const pickSegment = (seg: Segment) => {
+    if (seg === "invite")
+      return void applyAccess({ workspaceAccess: "none", linkRole: "none", listed: "none" })
+    if (seg === "workspace")
+      return void applyAccess({
+        workspaceAccess: "member",
+        linkRole: "none",
+        listed: lst === "workspace" ? "workspace" : "none",
+      })
+    // anyone: keep the current link role (or default to view), keep a public listing.
+    return void applyAccess({
+      workspaceAccess: "member",
+      linkRole: lRole === "none" ? "viewer" : lRole,
+      listed: lst === "public" ? "public" : "none",
+    })
   }
-  const pickGenRole = (r: GeneralRole) => {
-    setGenRole(r)
-    if (!pendingPw) void applyVisibility(vis, r)
+  // The world-link role select (Anyone only).
+  const pickRole = (r: Exclude<LinkRole, "none">) =>
+    void applyAccess({
+      workspaceAccess: "member",
+      linkRole: r,
+      listed: isListed ? "public" : "none",
+    })
+  // The listing switch, per segment.
+  const toggleListed = (on: boolean) => {
+    if (segment === "workspace")
+      void applyAccess({
+        workspaceAccess: "member",
+        linkRole: "none",
+        listed: on ? "workspace" : "none",
+      })
+    else if (segment === "anyone")
+      void applyAccess({
+        workspaceAccess: "member",
+        linkRole: roleValue,
+        listed: on ? "public" : "none",
+      })
   }
+  // The lock checkbox: checking reveals the password input (applies on Set);
+  // unchecking clears the lock immediately (an explicit empty password).
+  const toggleLock = (on: boolean) => {
+    if (on) setLockDraft(true)
+    else if (hasLock)
+      void applyAccess({ workspaceAccess: wsAccess, linkRole: lRole, listed: lst, password: "" })
+    else setLockDraft(false)
+  }
+  const setPassword = (password: string) =>
+    void applyAccess({ workspaceAccess: wsAccess, linkRole: lRole, listed: lst, password })
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(shareUrl)
@@ -230,73 +303,22 @@ export function ShareButton({
     qc.invalidateQueries({ queryKey: ["artifacts"] })
   }
 
-  // Debounced people-search for the add field. Skip when empty or when the term is
-  // exactly what we just picked (so a pick doesn't immediately reopen the menu).
-  useEffect(() => {
-    const term = email.trim()
-    if (!term || term === picked.current) {
-      setSuggest([])
-      return
-    }
-    let alive = true
-    const t = setTimeout(() => {
-      api
-        .searchPeople(term)
-        .then((r) => {
-          if (alive) {
-            setSuggest(r.users)
-            setActive(-1)
-          }
-        })
-        .catch(() => alive && setSuggest([]))
-    }, 180)
-    return () => {
-      alive = false
-      clearTimeout(t)
-    }
-  }, [email])
-
-  const pick = (u: PublicProfile) => {
-    picked.current = `@${u.username}`
-    setEmail(`@${u.username}`)
-    setSuggest([])
-    setActive(-1)
-  }
-  // ↑/↓ to move, Enter to pick the highlighted suggestion, Esc to close the menu.
-  // With no highlight, Enter falls through to the form submit (free-text add).
-  const onAddKeyDown = (e: React.KeyboardEvent) => {
-    if (suggest.length === 0) return
-    if (e.key === "ArrowDown") {
-      e.preventDefault()
-      setActive((i) => Math.min(i + 1, suggest.length - 1))
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault()
-      setActive((i) => Math.max(i - 1, -1))
-    } else if (e.key === "Enter" && active >= 0 && suggest[active]) {
-      e.preventDefault()
-      pick(suggest[active])
-    } else if (e.key === "Escape") {
-      e.preventDefault()
-      e.stopPropagation()
-      setSuggest([])
-    }
-  }
-
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (adding.current) return
     const addr = email.trim()
     if (!addr) return
+    adding.current = true
     setBusy(true)
     setErr(null)
     try {
       await api.setMember(shortId, addr, role)
       setEmail("")
-      picked.current = ""
-      setSuggest([])
       await synced()
     } catch (x) {
       setErr(x instanceof Error ? x.message : "Could not share")
     } finally {
+      adding.current = false
       setBusy(false)
     }
   }
@@ -363,10 +385,15 @@ export function ShareButton({
       onOpenChange={(o) => {
         if (o) {
           setErr(null)
-          setVis(visibility)
-          setGenRole(generalRole ?? "viewer")
+          setWsAccess(workspaceAccess ?? "member")
+          setLRole(linkRole ?? "none")
+          setLst(listed ?? "none")
           setPw("")
           setPwOpen(false)
+          // Re-seed the lock from the server's state and drop any half-typed
+          // draft — an abandoned checkbox must not survive a close/reopen.
+          setHasLock(passwordProtected)
+          setLockDraft(false)
           setMore(false)
           load()
           loadDomains()
@@ -379,7 +406,7 @@ export function ShareButton({
             eye lands). Everything else in the bar is ghost. The glyph carries the
             exposure state: globe = the URL alone reads, lock = invite-only. */}
         <Button data-testid="share-trigger" variant="default" size="sm">
-          <Icon name={visibilityIcon(visibility)} />
+          <Icon name={accessIcon(linkRole ?? "none", workspaceAccess ?? "member")} />
           Share
         </Button>
       </DialogTrigger>
@@ -398,124 +425,180 @@ export function ShareButton({
         <div className="flex flex-col gap-6">
           <div>
             <SectionEyebrow action={savingVis && <Spinner className="size-3" />}>
-              General access
+              Who can open this
             </SectionEyebrow>
             {canManage ? (
-              <div className="mt-2 flex flex-col gap-2 rounded-lg bg-secondary p-3">
-                <div className="flex gap-1.5">
-                  <SelectMenu value={vis} onValueChange={pickVisibility}>
-                    <SelectMenuTrigger
-                      aria-label="General access"
-                      data-testid="share-visibility"
-                      disabled={savingVis}
-                      className="flex-1 bg-card"
-                    >
-                      <Icon
-                        name={currentAccess?.icon ?? "share"}
-                        className="text-muted-foreground"
-                      />
-                      {currentAccess?.label ?? vis}
-                    </SelectMenuTrigger>
-                    <SelectMenuContent>
-                      {ACCESS.map((a) => (
-                        <SelectMenuItem key={a.value} value={a.value}>
-                          <Icon name={a.icon} className="text-muted-foreground" />
-                          {a.label}
-                        </SelectMenuItem>
-                      ))}
-                    </SelectMenuContent>
-                  </SelectMenu>
-                  {reach && (
-                    <SelectMenu
-                      value={genRole}
-                      onValueChange={(v) => pickGenRole(v as GeneralRole)}
-                    >
-                      <SelectMenuTrigger
-                        aria-label="Link permission"
-                        data-testid="share-general-role"
+              <div className="mt-2 flex flex-col">
+                {/* One primary choice — the widest reach. Each segment sets the
+                    (workspace_access, link_role, listed) triple — see pickSegment. */}
+                <AccessSegmentToggle
+                  segments={SEGMENTS}
+                  value={segment}
+                  onChange={pickSegment}
+                  disabled={savingVis}
+                  testId="share-access"
+                />
+
+                {segment === "invite" && (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Only the people you add below can open this.
+                  </p>
+                )}
+
+                {/* Workspace: seats decide the role — no dropdown. Admins manage,
+                    editors edit, commenters comment. Just the library switch. */}
+                {segment === "workspace" && (
+                  <>
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      Everyone in the workspace opens this at their role — admins manage, editors
+                      edit, commenters comment.
+                    </p>
+                    <div className="mt-3 flex items-center justify-between gap-3 border-t border-border-soft pt-3">
+                      <div className="min-w-0">
+                        <div className="text-sm text-foreground">Show in the workspace library</div>
+                        <div className="text-xs text-muted-foreground">
+                          Otherwise it's link-only — out of the team's feed.
+                        </div>
+                      </div>
+                      <Switch
+                        checked={isListed}
                         disabled={savingVis}
-                        className="bg-card"
+                        aria-label="Show in the workspace library"
+                        data-testid="share-listed"
+                        onCheckedChange={toggleListed}
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* Anyone: a world link — its role, its public listing, and the lock. */}
+                {segment === "anyone" && (
+                  <>
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <span className="text-sm text-muted-foreground">Anyone with the link</span>
+                      <SelectMenu
+                        value={roleValue}
+                        onValueChange={(v) => pickRole(v as Exclude<LinkRole, "none">)}
                       >
-                        {genRole === "commenter" ? "Can comment" : "Can view"}
-                      </SelectMenuTrigger>
-                      <SelectMenuContent>
-                        <SelectMenuItem value="viewer">Can view</SelectMenuItem>
-                        <SelectMenuItem value="commenter">Can comment</SelectMenuItem>
-                      </SelectMenuContent>
-                    </SelectMenu>
-                  )}
-                </div>
-                {pendingPw ? (
-                  <div className="flex gap-1.5">
-                    <Input
-                      type="password"
-                      data-testid="share-visibility-password"
-                      placeholder="Set a password"
-                      aria-label="Password"
-                      value={pw}
-                      onChange={(e) => setPw(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && pw) void applyVisibility("password", genRole, pw)
-                      }}
-                      className="flex-1"
-                    />
-                    <Button
-                      data-testid="share-visibility-save"
-                      variant="secondary"
-                      size="sm"
-                      disabled={!pw}
-                      loading={savingVis}
-                      onClick={() => void applyVisibility("password", genRole, pw)}
-                    >
-                      {savingVis ? "Setting…" : "Set password"}
-                    </Button>
-                  </div>
-                ) : vis === "password" && pwOpen ? (
-                  <div className="flex gap-1.5">
-                    <Input
-                      type="password"
-                      data-testid="share-visibility-password"
-                      placeholder="New password"
-                      aria-label="New password"
-                      value={pw}
-                      onChange={(e) => setPw(e.target.value)}
-                      className="flex-1"
-                    />
-                    <Button
-                      data-testid="share-visibility-save"
-                      variant="secondary"
-                      size="sm"
-                      disabled={!pw}
-                      loading={savingVis}
-                      onClick={() => void applyVisibility("password", genRole, pw)}
-                    >
-                      {savingVis ? "Setting…" : "Set"}
-                    </Button>
-                  </div>
-                ) : null}
-                <p className="text-sm text-muted-foreground">
-                  {pendingPw ? "Applies once a password is set." : (currentAccess?.blurb ?? "")}
-                  {!pendingPw &&
-                    reach &&
-                    genRole === "commenter" &&
-                    " Signed-in visitors can comment."}
-                  {!pendingPw && vis === "password" && (
+                        <SelectMenuTrigger
+                          aria-label="What the link grants"
+                          data-testid="share-link-role"
+                          disabled={savingVis}
+                          className="bg-card"
+                        >
+                          {LINK_ROLE_LABEL[roleValue]}
+                        </SelectMenuTrigger>
+                        <SelectMenuContent>
+                          <SelectMenuItem value="viewer">Can view</SelectMenuItem>
+                          <SelectMenuItem value="commenter">Can comment</SelectMenuItem>
+                          <SelectMenuItem value="editor">Can edit</SelectMenuItem>
+                        </SelectMenuContent>
+                      </SelectMenu>
+                    </div>
+
+                    {roleValue === "editor" && (
+                      <p className="mt-2 rounded-lg bg-warning/10 px-2.5 py-2 text-2xs text-warning">
+                        Anyone with the link can edit, publish, and share this.
+                      </p>
+                    )}
+
+                    {/* Listing is a SEPARATE question — its own row, below a rule. */}
+                    <div className="mt-3 flex items-center justify-between gap-3 border-t border-border-soft pt-3">
+                      <div className="min-w-0">
+                        <div className="text-sm text-foreground">List in the public directory</div>
+                        <div className="text-xs text-muted-foreground">
+                          Otherwise the link works, but it stays undiscoverable.
+                        </div>
+                      </div>
+                      <Switch
+                        checked={isListed}
+                        disabled={savingVis}
+                        aria-label="List in the public directory"
+                        data-testid="share-listed"
+                        onCheckedChange={toggleListed}
+                      />
+                    </div>
+
+                    {/* The lock — a modifier on the world link. Members and people
+                        added below never need the password. */}
+                    <label className="mt-3 flex items-center gap-2 text-sm text-foreground">
+                      <Checkbox
+                        checked={hasLock || lockDraft}
+                        disabled={savingVis}
+                        aria-label="Require a password"
+                        data-testid="share-lock-toggle"
+                        onCheckedChange={(v) => toggleLock(v === true)}
+                      />
+                      Require a password
+                    </label>
+                    {(lockDraft || (hasLock && pwOpen)) && (
+                      <div className="mt-2 flex gap-1.5">
+                        <Input
+                          type="password"
+                          data-testid="share-visibility-password"
+                          placeholder={hasLock ? "New password" : "Set a password"}
+                          aria-label="Password"
+                          value={pw}
+                          onChange={(e) => setPw(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && pw) setPassword(pw)
+                          }}
+                          className="flex-1"
+                        />
+                        <Button
+                          data-testid="share-visibility-save"
+                          variant="secondary"
+                          size="sm"
+                          disabled={!pw}
+                          loading={savingVis}
+                          onClick={() => setPassword(pw)}
+                        >
+                          {savingVis ? "Setting…" : "Set password"}
+                        </Button>
+                      </div>
+                    )}
+                    {!lockDraft && hasLock && !pwOpen && (
+                      <Button
+                        variant="link"
+                        size="xs"
+                        data-testid="share-password-change"
+                        className="mt-1 self-start px-0"
+                        onClick={() => setPwOpen(true)}
+                      >
+                        Change password
+                      </Button>
+                    )}
+                  </>
+                )}
+
+                {/* First-need on-ramp: the word "workspace" earns its first
+                    appearance by answering "how do I show this to my team?". */}
+                {solo && (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Working with a team?{" "}
                     <Button
                       variant="link"
                       size="xs"
-                      data-testid="share-password-change"
-                      className="ml-1 px-0"
-                      onClick={() => setPwOpen(true)}
+                      data-testid="share-create-workspace"
+                      className="px-0"
+                      onClick={() =>
+                        nav({
+                          to: "/settings/$section",
+                          params: { section: "general" },
+                          search: { "new-workspace": "1" },
+                        })
+                      }
                     >
-                      Change password
-                    </Button>
-                  )}
-                </p>
+                      Create a workspace
+                    </Button>{" "}
+                    to share with them.
+                  </p>
+                )}
               </div>
             ) : (
               <p className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
-                <Icon name={visibilityAccess?.icon ?? "share"} />
-                {visibilityAccess?.label ?? visibility}
+                <Icon name={accessIcon(linkRole ?? "none", workspaceAccess ?? "member")} />
+                {accessSummary(linkRole ?? "none", workspaceAccess ?? "member")}
               </p>
             )}
           </div>
@@ -524,7 +607,7 @@ export function ShareButton({
             <SectionEyebrow count={members.length || undefined}>People with access</SectionEyebrow>
             {members.length === 0 ? (
               <p data-testid="share-empty" className="px-2 py-2.5 text-sm text-muted-foreground">
-                {canManage ? "No one shared yet." : "Just you and the workspace."}
+                {canManage ? "No one shared yet." : "No one else has been added."}
               </p>
             ) : (
               <div className="-mx-2 mt-1 flex flex-col">
@@ -599,73 +682,12 @@ export function ShareButton({
             <div className="mt-3 flex flex-col gap-2">
               {canManage ? (
                 <form onSubmit={add} className="flex items-center gap-1.5">
-                  <div className="relative flex-1">
-                    {/* WAI-APG combobox wiring: the input announces the popup and the
-                    arrow-key highlight (aria-activedescendant). */}
-                    <Input
-                      data-testid="share-email"
-                      type="text"
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      autoComplete="off"
-                      placeholder="Add people by @username or email…"
-                      aria-label="Username or email"
-                      role="combobox"
-                      aria-expanded={suggest.length > 0}
-                      aria-autocomplete="list"
-                      aria-controls="share-suggest-list"
-                      aria-activedescendant={
-                        active >= 0 && suggest[active] ? `share-suggest-opt-${active}` : undefined
-                      }
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      onKeyDown={onAddKeyDown}
-                      className="w-full"
-                    />
-                    {suggest.length > 0 && (
-                      <div
-                        data-testid="share-suggest"
-                        id="share-suggest-list"
-                        role="listbox"
-                        aria-label="People suggestions"
-                        className="absolute inset-x-0 top-[calc(100%+4px)] z-40 max-h-56 overflow-y-auto rounded-xl bg-popover p-1 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10"
-                      >
-                        {suggest.map((u, i) => (
-                          <button
-                            key={u.username}
-                            type="button"
-                            data-testid="share-suggest-item"
-                            id={`share-suggest-opt-${i}`}
-                            role="option"
-                            aria-selected={i === active}
-                            // Keep the input focused so the click registers without blurring first.
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => pick(u)}
-                            onMouseEnter={() => setActive(i)}
-                            className={cn(
-                              "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-                              i === active ? "bg-accent" : "hover:bg-accent",
-                            )}
-                          >
-                            <Avatar className="size-6">
-                              {u.image && <AvatarImage src={u.image} alt={u.name ?? u.username} />}
-                              <AvatarFallback>{getInitials(u.name ?? u.username)}</AvatarFallback>
-                            </Avatar>
-                            <span className="min-w-0 flex-1">
-                              {u.name && (
-                                <span className="block truncate text-sm font-medium text-foreground">
-                                  {u.name}
-                                </span>
-                              )}
-                              <span className="block truncate font-mono text-2xs text-muted-foreground">
-                                @{u.username}
-                              </span>
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <PersonSearchInput
+                    value={email}
+                    onChange={setEmail}
+                    placeholder="Add people by @username or email…"
+                    testId="share-email"
+                  />
                   <div data-testid="share-role" className="w-28 shrink-0">
                     <RoleSelect
                       value={role}
@@ -749,7 +771,7 @@ export function ShareButton({
               <p className="mt-1.5 text-sm text-muted-foreground">
                 {linkAccessible
                   ? "Paste into any page — live, with a link back to Derive."
-                  : "Set access to “Anyone with the link” or “Public” for the embed to load for others."}
+                  : "Give it a link (set access to “Anyone”) for the embed to load for others."}
               </p>
             </div>
 

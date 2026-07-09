@@ -44,7 +44,7 @@ const artifactAndComment = async (meta: SqliteMetaStore) => {
     org_id: "default",
     slug: null,
     title: "Doc",
-    visibility: "link",
+    link_role: "viewer",
     kind: "file",
     spa: 0,
   })) as ArtifactRecord

@@ -10,18 +10,21 @@ import type {
   CommentRecord,
   CommentSignals,
   CommentState,
+  ContextRecord,
   DeliveryRecord,
   DeliveryStatus,
   DomainRecord,
   DomainStatus,
   FollowKind,
   FollowRecord,
-  GeneralRole,
   GitHubAppRecord,
   GitHubInstallationRecord,
   GithubAuthor,
   GithubUserMapping,
+  InvitationRecord,
+  LinkRole,
   ListArtifactsOpts,
+  Listed,
   MembershipRecord,
   MetaStore,
   NewAgent,
@@ -32,29 +35,41 @@ import type {
   NewCollection,
   NewCollectionMember,
   NewComment,
+  NewContext,
   NewDelivery,
   NewDomain,
   NewFollow,
+  NewInvitation,
   NewMembership,
   NewNotification,
   NewProposal,
+  NewRenderJob,
   NewReport,
   NewRepoSource,
   NewReviewRound,
+  NewSession,
+  NewSessionMessage,
   NewVersion,
   NewView,
   NewWebhook,
   NotificationRecord,
   OAuthGrant,
+  OAuthGrantSummary,
   OrgSettings,
+  PreviewStatus,
   ProposalRecord,
   ProposalState,
+  RenderJobRecord,
+  RenderJobStatus,
   ReportRecord,
   ReportState,
   RepoSourceRecord,
   ReviewRoundRecord,
   ReviewRoundState,
   Role,
+  SessionMessageRecord,
+  SessionRecord,
+  SessionState,
   SlackChannelRouteRecord,
   SlackInstallRecord,
   SlackThreadLinkRecord,
@@ -65,11 +80,11 @@ import type {
   UserProfile,
   VersionRecord,
   ViewStats,
-  Visibility,
   WebhookRecord,
+  WorkspaceAccess,
   WorkspaceRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@derive/core"
+import { GLOBAL_FOLLOW_ORG } from "@derive/core"
 import {
   and,
   asc,
@@ -100,18 +115,24 @@ import {
   collectionItem,
   collectionMember,
   comment,
+  context,
+  contextSession,
   domain,
   follow,
   githubApp,
   githubInstallation,
+  invitation,
   membership,
   notification,
+  oauthClientWorkspace,
   orgSettings,
   PG_SCHEMA_STATEMENTS,
   proposal,
+  renderJob,
   report,
   repoSource,
   reviewRound,
+  sessionMessage,
   slackChannelRoute,
   slackInstall,
   slackThreadLink,
@@ -122,7 +143,12 @@ import {
   webhookDelivery,
   workspace,
 } from "./pg-schema"
-import { artifactListConditions, collectManagedIds, parseOAuthScopes } from "./repos"
+import {
+  artifactListConditions,
+  collectManagedIds,
+  parseOAuthScopes,
+  parseOrgSettings,
+} from "./repos"
 
 const one = <T>(rows: T[]): T => {
   const r = rows[0]
@@ -138,6 +164,7 @@ export const schema = {
   comment,
   webhook,
   webhookDelivery,
+  renderJob,
   membership,
   workspace,
   artifactMember,
@@ -149,6 +176,11 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  invitation,
+  oauthClientWorkspace,
+  context,
+  contextSession,
+  sessionMessage,
   collection,
   collectionItem,
   collectionMember,
@@ -170,6 +202,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   comment: true,
   webhook: true,
   webhookDelivery: true,
+  renderJob: true,
   membership: true,
   workspace: true,
   artifactMember: true,
@@ -179,6 +212,10 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
+  invitation: true,
+  context: true,
+  contextSession: true,
+  sessionMessage: true,
   collection: true,
   collectionMember: true,
   repoSource: true,
@@ -238,15 +275,21 @@ export class PgMetaStore implements MetaStore {
     return (await this.getByShortId(a.short_id)) as ArtifactRecord
   }
 
-  async setVisibility(
+  async setAccess(
     artifactId: string,
-    visibility: Visibility,
+    workspaceAccess: WorkspaceAccess,
+    listed: Listed,
+    linkRole: LinkRole,
     passwordHash: string | null,
-    generalRole: GeneralRole,
   ): Promise<void> {
     await this.db
       .update(artifact)
-      .set({ visibility, password_hash: passwordHash, general_role: generalRole })
+      .set({
+        workspace_access: workspaceAccess,
+        listed,
+        link_role: linkRole,
+        password_hash: passwordHash,
+      })
       .where(eq(artifact.id, artifactId))
   }
 
@@ -261,6 +304,10 @@ export class PgMetaStore implements MetaStore {
   async getArtifactById(id: string): Promise<ArtifactRecord | null> {
     const rows = await this.db.select().from(artifact).where(eq(artifact.id, id))
     return rows[0] ?? null
+  }
+  async getArtifactsByIds(ids: string[]): Promise<ArtifactRecord[]> {
+    if (ids.length === 0) return []
+    return this.db.select().from(artifact).where(inArray(artifact.id, ids))
   }
 
   async siblingsBySourcePaths(
@@ -343,6 +390,21 @@ export class PgMetaStore implements MetaStore {
       .update(artifact)
       .set({ current_content_type: contentType })
       .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, n)))
+  }
+
+  async setVersionPreview(
+    artifactId: string,
+    n: number,
+    fields: {
+      preview_key?: string | null
+      preview_status?: PreviewStatus | null
+      preview_error?: string | null
+    },
+  ): Promise<void> {
+    await this.db
+      .update(version)
+      .set(fields)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
   }
 
   async createComment(c: NewComment): Promise<CommentRecord> {
@@ -493,9 +555,35 @@ export class PgMetaStore implements MetaStore {
       )
     return rows.map((r) => r.id)
   }
+  // "Created by me" — every artifact this user holds an OWNER member row on in the
+  // workspace, any visibility. Roster-keyed, not author_id-keyed (mirrors the
+  // SQLite path — see repos.ts for why the denorm can't anchor "yours").
+  private ownerRowJoin(userId: string) {
+    return and(
+      eq(artifactMember.artifact_id, artifact.id),
+      eq(artifactMember.user_id, userId),
+      eq(artifactMember.role, "owner"),
+    )
+  }
+  async artifactIdsOwnedBy(orgId: string, userId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: artifact.id })
+      .from(artifact)
+      .innerJoin(artifactMember, this.ownerRowJoin(userId))
+      .where(eq(artifact.org_id, orgId))
+    return rows.map((r) => r.id)
+  }
   async countArtifacts(orgId?: string): Promise<number> {
     const q = this.db.select({ c: count() }).from(artifact)
     const rows = await (orgId ? q.where(eq(artifact.org_id, orgId)) : q)
+    return Number(rows[0]?.c ?? 0)
+  }
+  async countOwnedBy(orgId: string, userId: string, listed?: Listed): Promise<number> {
+    const rows = await this.db
+      .select({ c: count() })
+      .from(artifact)
+      .innerJoin(artifactMember, this.ownerRowJoin(userId))
+      .where(and(eq(artifact.org_id, orgId), listed ? eq(artifact.listed, listed) : undefined))
     return Number(rows[0]?.c ?? 0)
   }
   async storageBytes(orgId: string): Promise<number> {
@@ -643,6 +731,10 @@ export class PgMetaStore implements MetaStore {
   async enqueueDelivery(d: NewDelivery): Promise<void> {
     await this.db.insert(webhookDelivery).values(d)
   }
+  async enqueueDeliveries(rows: NewDelivery[]): Promise<void> {
+    if (rows.length === 0) return
+    await this.db.insert(webhookDelivery).values(rows)
+  }
   claimDueDeliveries(now: string, limit: number, leaseUntil: string): Promise<DeliveryRecord[]> {
     // FOR UPDATE SKIP LOCKED so concurrent instances each grab a disjoint set;
     // the UPDATE then leases the rows (next_attempt_at -> future) + counts an
@@ -680,6 +772,36 @@ export class PgMetaStore implements MetaStore {
       .limit(limit)
   }
 
+  // ---- Render-job queue --------------------------------------------------
+  async enqueueRenderJob(j: NewRenderJob): Promise<void> {
+    await this.db.insert(renderJob).values(j)
+  }
+  claimDueRenderJobs(now: string, limit: number, leaseUntil: string): Promise<RenderJobRecord[]> {
+    const due = this.db
+      .select({ id: renderJob.id })
+      .from(renderJob)
+      .where(and(eq(renderJob.status, "pending"), lte(renderJob.next_attempt_at, now)))
+      .orderBy(asc(renderJob.next_attempt_at))
+      .limit(limit)
+      .for("update", { skipLocked: true })
+    return this.db
+      .update(renderJob)
+      .set({ attempts: sql`${renderJob.attempts} + 1`, next_attempt_at: leaseUntil })
+      .where(inArray(renderJob.id, due))
+      .returning()
+  }
+  async updateRenderJob(
+    id: string,
+    fields: {
+      status: RenderJobStatus
+      attempts: number
+      last_error: string | null
+      next_attempt_at: string
+    },
+  ): Promise<void> {
+    await this.db.update(renderJob).set(fields).where(eq(renderJob.id, id))
+  }
+
   // ---- Permissions: membership + per-artifact shares ---------------------
   async getMembership(orgId: string, userId: string): Promise<MembershipRecord | null> {
     const rows = await this.db
@@ -690,6 +812,10 @@ export class PgMetaStore implements MetaStore {
   }
   listMemberships(orgId: string): Promise<MembershipRecord[]> {
     return this.db.select().from(membership).where(eq(membership.org_id, orgId))
+  }
+  async listMembershipsForOrgs(orgIds: string[]): Promise<MembershipRecord[]> {
+    if (orgIds.length === 0) return []
+    return this.db.select().from(membership).where(inArray(membership.org_id, orgIds))
   }
   async countMemberships(orgId: string): Promise<number> {
     const rows = await this.db
@@ -927,7 +1053,7 @@ export class PgMetaStore implements MetaStore {
       const ghIds = (await this.githubIdsForUsers(people)).map((g) => g.toLowerCase())
       if (ghIds.length > 0) authorConds.push(inArray(sql`lower(${artifact.author_gh_id})`, ghIds))
       const authored = authorConds.length === 1 ? authorConds[0] : or(...authorConds)
-      if (authored) branches.push(and(eq(artifact.visibility, "public"), authored))
+      if (authored) branches.push(and(eq(artifact.listed, "public"), authored))
     }
     if (branches.length === 0) return []
     const match = branches.length === 1 ? branches[0] : or(...branches)
@@ -982,16 +1108,16 @@ export class PgMetaStore implements MetaStore {
     } else {
       conds.push(eq(artifact.author_id, userId))
     }
-    // Private drafts never ride a profile, shared workspace or not (see repos.ts).
+    // Private work never rides a profile, shared workspace or not (see repos.ts).
     const orgs = opts.visibleOrgIds ?? []
     if (orgs.length > 0) {
       const v = or(
-        eq(artifact.visibility, "public"),
-        and(inArray(artifact.org_id, orgs), ne(artifact.visibility, "private")),
+        eq(artifact.listed, "public"),
+        and(inArray(artifact.org_id, orgs), ne(artifact.listed, "none")),
       )
       if (v) conds.push(v)
     } else {
-      conds.push(eq(artifact.visibility, "public"))
+      conds.push(eq(artifact.listed, "public"))
     }
     return conds
   }
@@ -1072,6 +1198,19 @@ export class PgMetaStore implements MetaStore {
     for (const k in out) out[k]?.sort()
     return out
   }
+  async previewReady(artifactIds: string[]): Promise<Record<string, boolean>> {
+    if (artifactIds.length === 0) return {}
+    const ph = artifactIds.map((_, i) => `$${i + 1}`).join(",")
+    const { rows } = await this.pool.query(
+      `SELECT a.id artifact_id FROM artifact a
+       JOIN version v ON v.artifact_id = a.id AND v.n = a.current_version
+       WHERE v.preview_status = 'ready' AND a.id IN (${ph})`,
+      artifactIds,
+    )
+    const out: Record<string, boolean> = {}
+    for (const r of rows) out[r.artifact_id] = true
+    return out
+  }
   async setArtifactTags(artifactId: string, tags: string[]): Promise<void> {
     await this.db.transaction(async (tx) => {
       await tx.delete(artifactTag).where(eq(artifactTag.artifact_id, artifactId))
@@ -1091,6 +1230,10 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select().from(collection).where(eq(collection.id, id))
     return rows[0] ?? null
   }
+  async getCollections(ids: string[]): Promise<CollectionRecord[]> {
+    if (ids.length === 0) return []
+    return this.db.select().from(collection).where(inArray(collection.id, ids))
+  }
   async updateCollection(id: string, fields: { title?: string }): Promise<CollectionRecord | null> {
     if (fields.title === undefined) return this.getCollection(id)
     const rows = await this.db
@@ -1099,6 +1242,12 @@ export class PgMetaStore implements MetaStore {
       .where(eq(collection.id, id))
       .returning()
     return rows[0] ?? null
+  }
+  async setCollectionAccess(id: string, workspaceAccess: WorkspaceAccess): Promise<void> {
+    await this.db
+      .update(collection)
+      .set({ workspace_access: workspaceAccess })
+      .where(eq(collection.id, id))
   }
   async deleteCollection(id: string): Promise<void> {
     await this.db.transaction(async (tx) => {
@@ -1254,11 +1403,7 @@ export class PgMetaStore implements MetaStore {
   }
   async getOrgSettings(orgId: string): Promise<OrgSettings> {
     const rows = await this.db.select().from(orgSettings).where(eq(orgSettings.org_id, orgId))
-    let parsed: Partial<OrgSettings> = {}
-    try {
-      if (rows[0]?.settings) parsed = JSON.parse(rows[0].settings) as Partial<OrgSettings>
-    } catch {}
-    return { ...DEFAULT_ORG_SETTINGS, ...parsed }
+    return parseOrgSettings(rows[0]?.settings ?? null)
   }
   async setOrgSettings(orgId: string, settings: OrgSettings): Promise<void> {
     await this.db
@@ -1550,6 +1695,121 @@ export class PgMetaStore implements MetaStore {
     return rows[0] ?? null
   }
 
+  // ---- Contexts + sessions -------------------------------------------------
+  async createContext(x: NewContext): Promise<ContextRecord> {
+    const rows = await this.db.insert(context).values(x).returning()
+    return one(rows)
+  }
+  async getContext(id: string): Promise<ContextRecord | null> {
+    const rows = await this.db.select().from(context).where(eq(context.id, id)).limit(1)
+    return rows[0] ?? null
+  }
+  listContexts(orgId: string): Promise<ContextRecord[]> {
+    return this.db
+      .select()
+      .from(context)
+      .where(eq(context.org_id, orgId))
+      .orderBy(desc(context.created_at))
+  }
+  // Sequential cascade (messages → sessions → context), like deleteCollection.
+  // The org scope gates the WHOLE cascade, not just the context row — otherwise a
+  // wrong-workspace call would wipe another tenant's sessions and leave the context.
+  async deleteContext(id: string, orgId: string): Promise<void> {
+    const owned = await this.db
+      .select({ id: context.id })
+      .from(context)
+      .where(and(eq(context.id, id), eq(context.org_id, orgId)))
+      .limit(1)
+    if (owned.length === 0) return
+    // Subquery, not a materialized id list — kept identical to the sqlite/d1
+    // layer, where an expanded IN (...) would blow D1's bound-parameter cap.
+    await this.db
+      .delete(sessionMessage)
+      .where(
+        inArray(
+          sessionMessage.session_id,
+          this.db
+            .select({ id: contextSession.id })
+            .from(contextSession)
+            .where(eq(contextSession.context_id, id)),
+        ),
+      )
+    await this.db.delete(contextSession).where(eq(contextSession.context_id, id))
+    await this.db.delete(context).where(eq(context.id, id))
+  }
+  async createSession(s: NewSession): Promise<SessionRecord> {
+    const rows = await this.db.insert(contextSession).values(s).returning()
+    return one(rows)
+  }
+  async getSession(id: string): Promise<SessionRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(contextSession)
+      .where(eq(contextSession.id, id))
+      .limit(1)
+    return rows[0] ?? null
+  }
+  listSessions(
+    contextId: string,
+    opts?: { askerId?: string; limit?: number },
+  ): Promise<SessionRecord[]> {
+    const where = opts?.askerId
+      ? and(eq(contextSession.context_id, contextId), eq(contextSession.asker_id, opts.askerId))
+      : eq(contextSession.context_id, contextId)
+    return this.db
+      .select()
+      .from(contextSession)
+      .where(where)
+      .orderBy(desc(contextSession.created_at))
+      .limit(opts?.limit ?? 50)
+  }
+  pendingSessions(contextId: string, limit: number): Promise<SessionRecord[]> {
+    return this.db
+      .select()
+      .from(contextSession)
+      .where(and(eq(contextSession.context_id, contextId), eq(contextSession.state, "open")))
+      .orderBy(asc(contextSession.created_at))
+      .limit(limit)
+  }
+  async setSessionState(id: string, state: SessionState): Promise<SessionRecord | null> {
+    const rows = await this.db
+      .update(contextSession)
+      .set({ state, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, id))
+      .returning()
+    return rows[0] ?? null
+  }
+  // Two writes, no transaction (the createReviewRound pattern, kept identical to
+  // the sqlite/d1 layer). A crash between them leaves state stale: an unsettled
+  // agent turn is caught by the runner's last-turn guard; a lost asker `open`
+  // waits for the asker's next message. Both windows are milliseconds.
+  async addSessionMessage(
+    m: NewSessionMessage,
+    state: SessionState,
+  ): Promise<SessionMessageRecord> {
+    const rows = await this.db.insert(sessionMessage).values(m).returning()
+    await this.db
+      .update(contextSession)
+      .set({ state, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, m.session_id))
+    return one(rows)
+  }
+  listSessionMessages(sessionId: string): Promise<SessionMessageRecord[]> {
+    return this.db
+      .select()
+      .from(sessionMessage)
+      .where(eq(sessionMessage.session_id, sessionId))
+      .orderBy(asc(sessionMessage.created_at))
+  }
+  async listSessionMessagesFor(sessionIds: string[]): Promise<SessionMessageRecord[]> {
+    if (sessionIds.length === 0) return []
+    return this.db
+      .select()
+      .from(sessionMessage)
+      .where(inArray(sessionMessage.session_id, sessionIds))
+      .orderBy(asc(sessionMessage.created_at))
+  }
+
   // ---- User directory (Better Auth's "user" table; raw, may be absent) ---
   async findUserByEmail(email: string): Promise<UserDir | null> {
     try {
@@ -1591,6 +1851,24 @@ export class PgMetaStore implements MetaStore {
     } catch {
       return []
     }
+  }
+  // One-time access backfill from the pre-v2 shape (see repos.ts backfillAccess for
+  // the idempotency argument — it consumes `visibility`, so it re-runs to a no-op).
+  // Self-sufficient: folds in the pre-collapse vocabulary (`link`/`password` → public,
+  // `unlisted` → private) so the hosted deploy path (apply-pg-schema.ts) maps correctly
+  // without node.ts's separate collapse. Errors propagate — the DDL runs first (the
+  // columns always exist), so a failure here is real and must fail the deploy loudly,
+  // not silently ship the Worker against un-backfilled data.
+  async backfillAccess(): Promise<void> {
+    await this.pool.query(
+      `UPDATE "artifact" SET
+         workspace_access = CASE WHEN visibility IN ('org','public','link','password') THEN 'member' ELSE 'none' END,
+         listed = CASE WHEN visibility IN ('public','link','password') THEN 'public' WHEN visibility = 'org' THEN 'workspace' ELSE 'none' END,
+         link_role = CASE WHEN visibility IN ('public','link','password') THEN general_role ELSE 'none' END,
+         visibility = 'private',
+         general_role = 'viewer'
+       WHERE visibility != 'private'`,
+    )
   }
   // Idempotent backfill (see sqlite.ts) — stamp author_id from a known author_gh_id→user mapping.
   async backfillAuthorIds(): Promise<number> {
@@ -1641,6 +1919,9 @@ export class PgMetaStore implements MetaStore {
       discoverable,
       userId,
     ])
+  }
+  async setUserOnboarded(userId: string, onboarded: boolean): Promise<void> {
+    await this.pool.query(`UPDATE "user" SET onboarded = $1 WHERE id = $2`, [onboarded, userId])
   }
   async setUserProfile(
     userId: string,
@@ -1716,6 +1997,10 @@ export class PgMetaStore implements MetaStore {
   // ---- Notifications (in-app, one row per recipient) ---------------------
   async createNotification(n: NewNotification): Promise<void> {
     await this.db.insert(notification).values(n)
+  }
+  async createNotifications(rows: NewNotification[]): Promise<void> {
+    if (rows.length === 0) return
+    await this.db.insert(notification).values(rows)
   }
   listNotifications(userId: string, limit: number): Promise<NotificationRecord[]> {
     return this.db
@@ -1808,6 +2093,46 @@ export class PgMetaStore implements MetaStore {
       return null
     }
   }
+  async oauthClientExists(clientId: string): Promise<boolean> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT 1 FROM "oauthClient" WHERE "clientId" = $1 LIMIT 1`,
+        [clientId],
+      )
+      return rows.length > 0
+    } catch {
+      return false
+    }
+  }
+  // Replace the whole granted-workspace SET for (user, client). Empty array clears
+  // it → the grant reverts to "all workspaces". See schema.ts for the model.
+  async setOAuthClientWorkspaces(
+    userId: string,
+    clientId: string,
+    orgIds: string[],
+  ): Promise<void> {
+    await this.db
+      .delete(oauthClientWorkspace)
+      .where(
+        and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
+      )
+    for (const orgId of orgIds) {
+      await this.db
+        .insert(oauthClientWorkspace)
+        .values({ id: crypto.randomUUID(), user_id: userId, client_id: clientId, org_id: orgId })
+        .onConflictDoNothing()
+    }
+  }
+  // The grant's scoped workspaces. Empty array = "all workspaces" (unscoped).
+  async getOAuthClientWorkspaces(userId: string, clientId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ org_id: oauthClientWorkspace.org_id })
+      .from(oauthClientWorkspace)
+      .where(
+        and(eq(oauthClientWorkspace.user_id, userId), eq(oauthClientWorkspace.client_id, clientId)),
+      )
+    return rows.map((r) => r.org_id)
+  }
   async pruneStaleOAuthClients(cutoffIso: string): Promise<number> {
     try {
       const res = await this.pool.query(
@@ -1816,9 +2141,58 @@ export class PgMetaStore implements MetaStore {
            AND "clientId" NOT IN (SELECT "clientId" FROM "oauthAccessToken")`,
         [cutoffIso],
       )
+      // Workspace bindings for clients that no longer exist (pruned above, or
+      // any earlier sweep) have nothing left to resolve against — sweep them too.
+      await this.pool.query(
+        `DELETE FROM oauth_client_workspace
+          WHERE client_id NOT IN (SELECT "clientId" FROM "oauthClient")`,
+      )
       return res.rowCount ?? 0
     } catch {
       return 0
+    }
+  }
+  async listUserGrants(userId: string): Promise<OAuthGrantSummary[]> {
+    try {
+      const { rows } = await this.pool.query(
+        `SELECT k."clientId" AS client_id, c."name" AS client_name,
+                k."scopes" AS scopes, k."updatedAt" AS granted_at
+           FROM "oauthConsent" k
+           JOIN "oauthClient" c ON c."clientId" = k."clientId"
+          WHERE k."userId" = $1
+          ORDER BY k."updatedAt" DESC`,
+        [userId],
+      )
+      return (
+        rows as {
+          client_id: string
+          client_name: string | null
+          scopes: string | string[] | null
+          granted_at: Date | string | null
+        }[]
+      ).map((r) => ({
+        clientId: r.client_id,
+        clientName: r.client_name || r.client_id,
+        scopes: parseOAuthScopes(r.scopes),
+        grantedAt: (r.granted_at instanceof Date
+          ? r.granted_at
+          : new Date(r.granted_at ?? Date.now())
+        ).toISOString(),
+      }))
+    } catch {
+      return []
+    }
+  }
+  async revokeUserGrant(userId: string, clientId: string): Promise<void> {
+    for (const table of ["oauthAccessToken", "oauthRefreshToken", "oauthConsent"]) {
+      try {
+        await this.pool.query(`DELETE FROM "${table}" WHERE "userId" = $1 AND "clientId" = $2`, [
+          userId,
+          clientId,
+        ])
+      } catch {
+        // Table absent on this deploy → skip; the others still run.
+      }
     }
   }
   async deleteAgent(id: string, orgId: string): Promise<void> {
@@ -1826,6 +2200,61 @@ export class PgMetaStore implements MetaStore {
   }
   async createAgentMention(m: NewAgentMention): Promise<void> {
     await this.db.insert(agentMention).values(m)
+  }
+  // ---- Workspace invitations ---------------------------------------------
+  async createInvitation(i: NewInvitation): Promise<InvitationRecord> {
+    const rows = await this.db.insert(invitation).values(i).returning()
+    return one(rows) as InvitationRecord
+  }
+  async getInvitationByToken(tokenHash: string): Promise<InvitationRecord | null> {
+    const rows = await this.db.select().from(invitation).where(eq(invitation.token, tokenHash))
+    return (rows[0] as InvitationRecord | undefined) ?? null
+  }
+  listPendingInvitations(orgId: string): Promise<InvitationRecord[]> {
+    return this.db
+      .select()
+      .from(invitation)
+      .where(and(eq(invitation.org_id, orgId), isNull(invitation.accepted_at)))
+      .orderBy(desc(invitation.created_at)) as Promise<InvitationRecord[]>
+  }
+  async deletePendingInvitationsFor(orgId: string, email: string): Promise<void> {
+    await this.db
+      .delete(invitation)
+      .where(
+        and(
+          eq(invitation.org_id, orgId),
+          eq(invitation.email, email),
+          isNull(invitation.accepted_at),
+        ),
+      )
+  }
+  async deleteInvitation(id: string, orgId: string): Promise<void> {
+    await this.db.delete(invitation).where(and(eq(invitation.id, id), eq(invitation.org_id, orgId)))
+  }
+  async markInvitationAccepted(id: string): Promise<void> {
+    await this.db
+      .update(invitation)
+      .set({ accepted_at: new Date().toISOString() })
+      .where(eq(invitation.id, id))
+  }
+  // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
+  async deleteUserData(userId: string): Promise<void> {
+    await this.db.delete(membership).where(eq(membership.user_id, userId))
+    await this.db.delete(artifactMember).where(eq(artifactMember.user_id, userId))
+    await this.db.delete(collectionMember).where(eq(collectionMember.user_id, userId))
+    await this.db.delete(follow).where(eq(follow.user_id, userId))
+    await this.db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId))
+    await this.db.delete(notification).where(eq(notification.user_id, userId))
+    await this.db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId))
+    await this.db.update(version).set({ author_id: null }).where(eq(version.author_id, userId))
+    await this.db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId))
+    await this.db.update(proposal).set({ author_id: null }).where(eq(proposal.author_id, userId))
+    await this.db.update(agent).set({ created_by: null }).where(eq(agent.created_by, userId))
+    await this.db
+      .update(invitation)
+      .set({ invited_by: null })
+      .where(eq(invitation.invited_by, userId))
+    await this.db.delete(workspace).where(eq(workspace.id, `ws_p_${userId}`))
   }
   listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]> {
     return this.db
@@ -1888,6 +2317,10 @@ export class PgMetaStore implements MetaStore {
   async setArtifactRemoved(id: string, removedAt: string | null): Promise<void> {
     await this.db.update(artifact).set({ removed_at: removedAt }).where(eq(artifact.id, id))
   }
+  async setArtifactsRemoved(ids: string[], removedAt: string | null): Promise<void> {
+    if (ids.length === 0) return
+    await this.db.update(artifact).set({ removed_at: removedAt }).where(inArray(artifact.id, ids))
+  }
   async setArtifactTitle(id: string, title: string): Promise<void> {
     await this.db.update(artifact).set({ title }).where(eq(artifact.id, id))
   }
@@ -1914,6 +2347,27 @@ export class PgMetaStore implements MetaStore {
   // Atomic delete: all FK-dependent rows and the artifact row commit together.
   async deleteArtifact(id: string): Promise<void> {
     await this.db.transaction(async (tx) => {
+      // A context's manifest FK means deleting a manifest deletes its context
+      // (and sessions) — a context cannot outlive its definition, by design.
+      // Subqueries, matching the sqlite/d1 layer (D1 bound-parameter cap).
+      const ctxIds = tx
+        .select({ id: context.id })
+        .from(context)
+        .where(eq(context.manifest_artifact_id, id))
+      await tx
+        .delete(sessionMessage)
+        .where(
+          inArray(
+            sessionMessage.session_id,
+            tx
+              .select({ id: contextSession.id })
+              .from(contextSession)
+              .where(inArray(contextSession.context_id, ctxIds)),
+          ),
+        )
+      await tx.delete(contextSession).where(inArray(contextSession.context_id, ctxIds))
+      await tx.delete(context).where(eq(context.manifest_artifact_id, id))
+      await tx.delete(reviewRound).where(eq(reviewRound.artifact_id, id))
       await tx.delete(version).where(eq(version.artifact_id, id))
       await tx.delete(comment).where(eq(comment.artifact_id, id))
       await tx.delete(artifactMember).where(eq(artifactMember.artifact_id, id))
@@ -1926,6 +2380,16 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(notification).where(eq(notification.artifact_id, id))
       await tx.delete(agentMention).where(eq(agentMention.artifact_id, id))
       await tx.delete(artifact).where(eq(artifact.id, id))
+    })
+  }
+
+  // Atomic move: org_id flips, collection membership and any artifact-targeted
+  // webhook detach, all in one commit.
+  async moveArtifactOrg(artifactId: string, targetOrgId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId))
+      await tx.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId))
+      await tx.update(webhook).set({ artifact_id: null }).where(eq(webhook.artifact_id, artifactId))
     })
   }
 

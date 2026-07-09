@@ -6,7 +6,8 @@
       "ignoreDependencies": ["cloudflare"]
     },
     "apps/web": {
-      "entry": ["src/components/ui/**", "e2e/**/*.screens.ts"]
+      "entry": ["src/components/ui/**", "e2e/**/*.screens.ts"],
+      "ignoreDependencies": ["openapi-typescript"]
     },
     "packages/core": {
       "entry": ["src/anchor-client.ts"]

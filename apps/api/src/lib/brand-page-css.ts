@@ -3,14 +3,23 @@
 // SPA, so they can't read the app's [data-theme] tokens — this mirrors the Derive
 // palette (neutral, monochrome) and follows the viewer's OS colour scheme: light by
 // default, dark via prefers-color-scheme. Each page appends its own component CSS.
+//
+// Geist (the app's one typeface) is self-hosted inline as a data URI — NO third-party
+// font request. A user authorizing an agent never leaks their IP to Google Fonts at the
+// consent moment, and the pages render identically under a strict CSP / on an air-gapped
+// self-host, all on-brand (Geist, not the old Inter).
+import { GEIST_LATIN_WOFF2 } from "./brand-page-font"
+
 export const BRAND_PAGE_TOKENS = `
+  @font-face{font-family:"Geist";font-style:normal;font-weight:100 900;font-display:swap;
+    src:url("${GEIST_LATIN_WOFF2}") format("woff2")}
   :root{
     --paper:#f7f8fa;--panel:#ffffff;--panel-2:#eef1f4;--ink:#14161a;--ink-soft:#40444c;
     --muted:#6b7079;--line:#e5e7eb;--line-2:#eef0f3;--accent:#14161a;--accent-fg:#f7f8fa;
     --accent-ink:#14161a;--accent-2:#5c616b;--accent-soft:#eceef2;--good:#2f7d4f;
     --good-soft:#e6f1ea;--bad:#b4402c;
-    --display:"Inter",ui-sans-serif,system-ui,sans-serif;
-    --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --display:"Geist",ui-sans-serif,system-ui,sans-serif;
+    --sans:"Geist",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
     --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   }
   @media(prefers-color-scheme:dark){:root{

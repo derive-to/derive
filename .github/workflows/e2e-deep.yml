@@ -4,12 +4,10 @@ name: e2e deep (nightly)
 # review flow, settings tabs, share roles, library search/favorites/collections)
 # plus a responsive/mobile pass. Heavier than smoke; intended to run NIGHTLY.
 #
-# Runs nightly (and on demand). Heavier than smoke, so it's a scheduled
-# regression sweep rather than a per-PR gate.
+# DISABLED on CI for now (no automatic trigger — manual only via
+# workflow_dispatch). Re-add `schedule:` once it's worth the nightly runner time.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 7 * * *" # 07:00 UTC nightly
 
 permissions:
   contents: read

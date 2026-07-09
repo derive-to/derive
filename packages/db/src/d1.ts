@@ -207,6 +207,9 @@ export function createD1Store(d1: D1Database): MetaStore {
     setUserDiscoverable: async (userId: string, discoverable: boolean): Promise<void> => {
       await db.run(sql`UPDATE user SET discoverable = ${discoverable ? 1 : 0} WHERE id = ${userId}`)
     },
+    setUserOnboarded: async (userId: string, onboarded: boolean): Promise<void> => {
+      await db.run(sql`UPDATE user SET onboarded = ${onboarded ? 1 : 0} WHERE id = ${userId}`)
+    },
     setUserProfile: async (userId, fields): Promise<void> => {
       // Patch only the fields provided (undefined = leave as-is; null = clear).
       if (fields.profession !== undefined)

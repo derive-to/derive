@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest"
 import {
   anonName,
   isWorkspaceRole,
+  legacyAccessOf,
   rewriteAbsoluteUrls,
   str,
   toBody,
-  visibilityOf,
 } from "../src/lib/http"
 
 describe("rewriteAbsoluteUrls — keep bundle pages inside their path scope", () => {
@@ -69,7 +69,7 @@ describe("isWorkspaceRole — the Admin/Creator/Viewer workspace roles", () => {
   })
 })
 
-describe("str / visibilityOf — input coercion", () => {
+describe("str / legacyAccessOf — input coercion", () => {
   it("str returns a non-empty string or undefined", () => {
     expect(str("x")).toBe("x")
     expect(str("")).toBeUndefined()
@@ -77,10 +77,35 @@ describe("str / visibilityOf — input coercion", () => {
     expect(str(null)).toBeUndefined()
   })
 
-  it("visibilityOf accepts only the known visibilities", () => {
-    for (const v of ["public", "link", "org", "password", "private"])
-      expect(visibilityOf(v)).toBe(v)
-    for (const bad of ["secret", "", "PUBLIC", null, 3]) expect(visibilityOf(bad)).toBeUndefined()
+  it("legacyAccessOf maps a legacy visibility (+ aliases) onto the v2 access triple", () => {
+    expect(legacyAccessOf("private")).toEqual({
+      workspace_access: "none",
+      link_role: "none",
+      listed: "none",
+    })
+    expect(legacyAccessOf("org")).toEqual({
+      workspace_access: "member",
+      link_role: "none",
+      listed: "workspace",
+    })
+    // public restores the world link at general_role (default viewer).
+    expect(legacyAccessOf("public")).toEqual({
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+    })
+    expect(legacyAccessOf("public", "commenter")).toEqual({
+      workspace_access: "member",
+      link_role: "commenter",
+      listed: "public",
+    })
+    // Pre-collapse client values keep working: link/password → public,
+    // unlisted → private, workspace → org.
+    expect(legacyAccessOf("link")?.listed).toBe("public")
+    expect(legacyAccessOf("password")?.listed).toBe("public")
+    expect(legacyAccessOf("unlisted")?.listed).toBe("none")
+    expect(legacyAccessOf("workspace")?.listed).toBe("workspace")
+    for (const bad of ["secret", "", "PUBLIC"]) expect(legacyAccessOf(bad)).toBeUndefined()
   })
 })
 

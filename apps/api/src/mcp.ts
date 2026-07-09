@@ -24,13 +24,22 @@ import {
   type ArtifactRecord,
   artifactUrl,
   type BundleManifest,
+  capRole,
   diffLines,
+  EditError,
   formatDiff,
+  isHtmlLike,
   newId,
+  type OutlineSection,
+  outlineOf,
   PublishError,
+  pageText,
   propose as proposeChange,
   publish as publishVersion,
+  type Role,
   roleAllows,
+  sectionOf,
+  toMarkdown,
   type VersionRecord,
 } from "@derive/core"
 import { StreamableHTTPTransport } from "@hono/mcp"
@@ -46,9 +55,18 @@ import {
   manifestOf as sharedManifestOf,
   zipBundleFiles,
 } from "./lib/bundle"
-import { quoteOf } from "./lib/comments"
+import { parseMeta, quoteOf, REACTIONS } from "./lib/comments"
+import { type MaterializedEdits, materializeEdits } from "./lib/edits"
+import { buildReviewEmail } from "./lib/email"
+import { MAX_UPLOAD_BYTES } from "./lib/http"
+import { notifyCommentBells } from "./lib/notify-comment"
+import { enqueueChannelDelivery } from "./webhooks"
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
+// Bound a best-effort promise (the tab-delivery receipt) so it can never stall a
+// publish: past `ms`, resolve with the fallback and move on.
+const withTimeout = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+  Promise.race([p, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))])
 const json = (v: unknown) => text(JSON.stringify(v, null, 2))
 // An actionable error the model can recover from (per the MCP spec, isError text is
 // fed back to the agent so it self-corrects), rather than an opaque failure.
@@ -62,15 +80,85 @@ const err = (s: string) => ({
 const MAX_CHARS = 80_000
 const clip = (s: string) =>
   s.length > MAX_CHARS
-    ? `${s.slice(0, MAX_CHARS)}\n\n…[truncated ${s.length - MAX_CHARS} chars — read a specific section]`
+    ? `${s.slice(0, MAX_CHARS)}\n\n…[truncated ${s.length - MAX_CHARS} chars — narrow the range]`
     : s
+
+// Above this, a section-less read of a sectionable doc returns its OUTLINE instead of
+// a blind dump: ~9k tokens leaves room to read on, small enough that most docs still
+// arrive whole. Measured on the formatted body, not the raw source.
+const FULL_DOC_MAX = 30_000
+
+// clip(), but the truncation steer names sections that actually resolve.
+const clipDoc = (s: string, sections: OutlineSection[]) => {
+  if (s.length <= MAX_CHARS) return s
+  const steer = sections.length
+    ? `read a section instead: ${sections
+        .slice(0, 12)
+        .map((x) => x.slug)
+        .join(", ")}${sections.length > 12 ? ", …" : ""}`
+    : "no headings to section by — read a past `version`, or ask for the raw file"
+  return `${s.slice(0, MAX_CHARS)}\n\n…[truncated ${s.length - MAX_CHARS} of ${s.length} chars — ${steer}]`
+}
+
+// A content-bearing response: a frontmatter-style header, a blank line, then the RAW
+// body — one text block, real newlines, never JSON-escaped. When a client spills it
+// to a file, that file is line-oriented and greppable (the old JSON envelope turned a
+// 68k-char document into one escaped line). Receipts and outlines stay `json()`.
+const doc = (meta: Record<string, string | number | null | undefined>, body: string) => {
+  const head = Object.entries(meta)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n")
+  return text(`---\n${head}\n---\n\n${body}`)
+}
+
+// The reading form for stored source at a given format. `markdown` converts HTML;
+// `text` is the flat visible text (exactly what comment quotes anchor against);
+// `html` is the exact source. Markdown/plain sources ARE their own visible text.
+type ReadFormat = "markdown" | "html" | "text"
+const baseType = (t: string) => t.split(";")[0]?.trim() ?? t
+const isTextType = (t: string) => baseType(t) === "text/html" || baseType(t) === "text/markdown"
+const present = (source: string, contentType: string, format: ReadFormat): string => {
+  if (format === "html") return source
+  if (format === "text") return isHtmlLike(contentType) ? pageText(source) : source
+  return toMarkdown(source, contentType)
+}
+const formatLabel = (contentType: string, format: ReadFormat): string => {
+  if (format === "markdown")
+    return isHtmlLike(contentType)
+      ? `markdown (converted from ${baseType(contentType)})`
+      : "markdown (source)"
+  return format === "html" ? "html (source)" : "text (visible text)"
+}
+
+// Images a read can inline as a real MCP image block (vision models see the mockup
+// screenshot instead of PNG bytes decoded as garbage text). Larger ones return
+// metadata + the served URL — open it in a browser instead.
+const IMAGE_INLINE_MAX = 1_000_000
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+// Dependency-free base64 (no Buffer — this file runs on the Workers tier).
+const toBase64 = (bytes: Uint8Array): string => {
+  let out = ""
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i] as number
+    const b = bytes[i + 1]
+    const c = bytes[i + 2]
+    out += B64[a >> 2]
+    out += B64[((a & 3) << 4) | ((b ?? 0) >> 4)]
+    out += b === undefined ? "=" : B64[((b & 15) << 2) | ((c ?? 0) >> 6)]
+    out += c === undefined ? "=" : B64[c & 63]
+  }
+  return out
+}
 
 const summarizeArtifact = (a: ArtifactRecord) => ({
   short_id: a.short_id,
   title: a.title,
   kind: a.kind,
   version: a.current_version,
-  visibility: a.visibility,
+  workspace_access: a.workspace_access,
+  link_role: a.link_role,
+  listed: a.listed,
   removed: !!a.removed_at,
 })
 
@@ -138,6 +226,19 @@ function buildServer(
   ctx: AppContext,
   agent: AgentRecord,
   actingFor: { id: string; name: string | null } | null,
+  // The granting user (OAuth grantor, or a dk_agt_ token's creator) whose
+  // memberships bound which workspaces this connection can roam — null for a
+  // legacy token with no known owner, which stays pinned to its one workspace.
+  ownerId: string | null,
+  // The grant's UNCAPPED scope role (OAuth) or the agent's runtime role (dk_agt_),
+  // re-capped against each roamed workspace's membership — exactly like the
+  // X-Derive-Workspace header re-home in agentFor.
+  scopeForCap: Role,
+  // The workspaces this grant is scoped to (the consent multi-select). EMPTY =
+  // "all workspaces" — every workspace the owner belongs to. A non-empty set
+  // clamps list_workspaces + the `workspace` arg + cross-workspace read to
+  // exactly those: workspaces outside the grant are invisible and unreachable.
+  boundWorkspaces: string[],
 ): McpServer {
   // Steer the write guidance by what this grant can actually do: a publish-capable
   // grant gets the direct-publish path; a lower grant is told its writes go to review.
@@ -156,44 +257,152 @@ function buildServer(
         `with ${agent.role} permissions. Derive hosts living documents and plans with versioned ` +
         `history, text-anchored review comments, and a publish → review → revise loop. ` +
         `Start a session with catch_up to re-sync on what changed and what feedback is open; use ` +
-        `read to view content (outline first for multi-page bundles); use comment to leave or ` +
-        `resolve feedback. ${writeGuidance}When a revision fixes specific feedback, pass those ` +
-        `thread ids as publish's "addresses" so the threads resolve (or show pending on a proposal).`,
+        `read to view content — it returns Markdown by default (HTML is converted) and an outline ` +
+        `first for large documents or bundles, so pull sections by heading slug or page path once ` +
+        `you know what you want; pass format:'html' for the exact source. Use comment to leave or ` +
+        `resolve feedback. ${writeGuidance}To change PART of an artifact, prefer publish's edits ` +
+        `(exact-match search/replace against the stored source) over resending everything. When a ` +
+        `revision fixes specific feedback, pass those thread ids as publish's "addresses" so the ` +
+        `threads resolve (or show pending on a proposal). ` +
+        `This one login reaches the workspaces in your grant — call list_workspaces to see them, ` +
+        `then pass a workspace id or name as the "workspace" argument to act in another one (read, ` +
+        `catch_up, comment, publish, list_artifacts). read/catch_up/comment also find a short_id in ` +
+        `any of them automatically, so you never need to switch just to open a doc.`,
     },
   )
-  const org = agent.org_id
+  const defaultOrg = agent.org_id
+  const defaultRole = agent.role
 
-  // Resolve a short id within the caller's workspace (never another org's
-  // artifact). `private` narrows further: the agent sees it only through its
-  // human's standing (or a legacy row of its own) — a teammate's private draft
-  // is as invisible over MCP as it is over HTTP.
-  const own = async (shortId: string): Promise<ArtifactRecord | null> => {
+  // The owner's workspaces this grant can actually reach: all of them when the
+  // grant is unscoped (empty set), else only the ticked subset. The single source
+  // of truth for what list_workspaces shows and what the `workspace` arg accepts.
+  const grantedWorkspaces = async (): Promise<{ id: string; name: string; role: Role }[]> => {
+    if (!ownerId) return []
+    const all = await ctx.meta.listWorkspaces(ownerId)
+    return boundWorkspaces.length ? all.filter((w) => boundWorkspaces.includes(w.id)) : all
+  }
+  // Is an org within this grant's scope? (An unscoped grant reaches all.)
+  const inGrant = (org: string) => boundWorkspaces.length === 0 || boundWorkspaces.includes(org)
+
+  // Resolve a workspace REFERENCE (id or name) to an org + the role the grant
+  // holds there. No ref → the connection's default workspace. Roaming needs a
+  // known granting user (ownerId); the role is re-capped from the grant's scope
+  // against that workspace's membership — the same rule as agentFor's
+  // X-Derive-Workspace re-home. Returns an actionable error the model recovers from.
+  const resolveWs = async (
+    ref?: string,
+  ): Promise<{ org: string; role: Role } | { error: string }> => {
+    if (!ref) return { org: defaultOrg, role: defaultRole }
+    if (!ownerId)
+      return {
+        error:
+          "This connection is pinned to a single workspace and can't switch. Reconnect it with an OAuth login to reach your other workspaces.",
+      }
+    // Only workspaces WITHIN THE GRANT are resolvable — one outside the ticked set
+    // is as good as non-existent to this connection, even if the owner belongs to it.
+    const mine = await grantedWorkspaces()
+    const w =
+      mine.find((x) => x.id === ref) ??
+      mine.find((x) => x.name.toLowerCase() === ref.trim().toLowerCase())
+    if (!w)
+      return {
+        error: `No workspace "${ref}" in this grant. Call list_workspaces to see the workspaces this connection can act in (match by id or name).`,
+      }
+    return { org: w.id, role: capRole(scopeForCap, w.role) }
+  }
+
+  // Reach an artifact this connection can act on, resolving WHERE it lives.
+  // With `wsRef`: only that workspace. Without: the default workspace, then —
+  // for a bare short_id — ANY workspace the granting user belongs to, so a doc
+  // is found wherever it lives without the model naming the workspace.
+  // `workspace_access = none` narrows further: touchable only through the
+  // agent's human (or a legacy row of the agent's own) — a teammate's
+  // invite-only draft stays invisible over MCP.
+  // Returns the artifact plus the org + re-capped role to act with there.
+  const reach = async (
+    shortId: string,
+    wsRef?: string,
+  ): Promise<{ a: ArtifactRecord; org: string; role: Role } | { error: string } | null> => {
     const a = await ctx.meta.getByShortId(shortId)
-    if (!a || a.org_id !== org) return null
-    if (a.visibility !== "private") return a
-    if (actingFor && (await ctx.meta.getArtifactMember(a.id, actingFor.id))) return a
-    if (await ctx.meta.getArtifactMember(a.id, agent.id)) return a
-    return null
+    if (!a) return null
+    let org = defaultOrg
+    let role = defaultRole
+    if (wsRef) {
+      const t = await resolveWs(wsRef)
+      if ("error" in t) return t
+      if (a.org_id !== t.org) return null // named a workspace this artifact isn't in
+      org = t.org
+      role = t.role
+    } else if (a.org_id !== defaultOrg) {
+      // Auto-roam to the doc's workspace only if it's within this grant and the
+      // owner is a member. A doc in a workspace outside the grant reads as not found.
+      if (!ownerId || !inGrant(a.org_id)) return null
+      const m = await ctx.meta.getMembership(a.org_id, ownerId)
+      if (!m) return null
+      org = a.org_id
+      role = capRole(scopeForCap, m.role)
+    }
+    if (a.workspace_access !== "member") {
+      const ok =
+        (actingFor && (await ctx.meta.getArtifactMember(a.id, actingFor.id))) ||
+        (await ctx.meta.getArtifactMember(a.id, agent.id))
+      if (!ok) return null
+    }
+    return { a, org, role }
   }
   const notFound = (shortId: string) =>
-    err(`No artifact "${shortId}" in your workspace. Call list_artifacts to see what's here.`)
+    err(
+      `No artifact "${shortId}" you can reach in any of your workspaces. Call list_artifacts (optionally with a workspace) to see what's there.`,
+    )
+
+  // The `workspace` argument shared by every workspace-scoped tool.
+  const wsArg = z
+    .string()
+    .optional()
+    .describe(
+      "Workspace to act in — its id or name from list_workspaces. Omit for your default workspace; read/catch_up/comment also find a short_id in ANY of your workspaces automatically.",
+    )
+
+  // WORKSPACES — the switcher: every workspace this one login can reach --------
+  server.registerTool(
+    "list_workspaces",
+    {
+      description:
+        "List every workspace THIS grant can act in — id, name, your role there, and which is your default. This is the set you chose when you connected (all your workspaces, or a subset). Pass a workspace's id or name as the `workspace` argument to list_artifacts / read / catch_up / comment / publish to act there. No reconnect — read/catch_up/comment even find a short_id across these workspaces automatically.",
+      inputSchema: {},
+    },
+    async () => {
+      const mine = await grantedWorkspaces()
+      const rows = mine.length
+        ? mine.map((w) => ({ id: w.id, name: w.name, role: w.role, default: w.id === defaultOrg }))
+        : [{ id: defaultOrg, name: null as string | null, role: agent.role, default: true }]
+      return json({ count: rows.length, workspaces: rows })
+    },
+  )
 
   // FIND ----------------------------------------------------------------------
   server.registerTool(
     "list_artifacts",
     {
       description:
-        "List the artifacts (docs, plans, sites) in your workspace — short id, title, kind, current version, visibility. Start here to find what to work on, then catch_up or read it.",
-      inputSchema: { query: z.string().optional().describe("Optional title search filter.") },
+        "List the artifacts (docs, plans, sites) in a workspace — short id, title, kind, current version, access (workspace_access/link_role/listed). Defaults to your current workspace; pass `workspace` (id or name from list_workspaces) to list another one. Includes your own unlisted publishes — out of the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
+      inputSchema: {
+        query: z.string().optional().describe("Optional title search filter."),
+        workspace: wsArg,
+      },
     },
-    async ({ query }) => {
-      // viewerId keeps private rows scoped to the agent's human (mirrors `own`).
+    async ({ query, workspace }) => {
+      const t = await resolveWs(workspace)
+      if ("error" in t) return err(t.error)
+      // viewerId keeps private rows scoped to the agent's human (mirrors `reach`) —
+      // the owner row written at publish is what lets the agent always find its
+      // own drafts while a teammate's private work stays invisible.
       const arts = await ctx.meta.listArtifacts({
-        orgId: org,
+        orgId: t.org,
         q: query,
         viewerId: actingFor?.id ?? agent.id,
       })
-      return json({ count: arts.length, artifacts: arts.map(summarizeArtifact) })
+      return json({ workspace: t.org, count: arts.length, artifacts: arts.map(summarizeArtifact) })
     },
   )
 
@@ -202,57 +411,268 @@ function buildServer(
     "read",
     {
       description:
-        "Read an artifact's CONTENT by short id. Multi-page bundle: omit `section` to get its outline (the list of pages), then call again with a `section` (a page path) for that page's full text. Single-file artifact: returns the full content. Pass a past `version` to read history. (For what CHANGED, or the comment threads, use catch_up.)",
+        "Read an artifact's CONTENT by short id, as Markdown by default (HTML is converted; the styling noise is dropped). Small docs return whole; a LARGE doc returns its heading OUTLINE first — call again with a `section` slug for just that part. Multi-page bundle: omit `section` for the page outline, then pass a page path (optionally `page.html#slug`). Pass format:'html' for the exact source (required before publish `edits`), or a past `version` for history. (For what CHANGED, or the comment threads, use catch_up.)",
       inputSchema: {
         short_id: z.string().describe("The artifact's short id, e.g. nk0dsral."),
         section: z
           .string()
           .optional()
-          .describe("A bundle page path, e.g. agentic-loop.html. Omit to get the outline first."),
+          .describe(
+            'What to read. Single-file doc: a heading slug from the outline (e.g. rollout-plan). Bundle: a page path (agentic-loop.html), optionally with a slug (agentic-loop.html#risks). Pass "*" (or "page.html#*" for a bundle page) to force the full (clipped) document/page. Omit it: small docs/pages return whole, large ones return their outline.',
+          ),
+        format: z
+          .enum(["markdown", "html", "text"])
+          .optional()
+          .describe(
+            "markdown (default): HTML converted to structured Markdown — headings, lists, tables, code fences; Markdown sources return as-is. html: the exact stored source — read this BEFORE publish `edits` on an HTML artifact (edits match raw source). text: flat visible text, exactly what comment `quote`s anchor against.",
+          ),
         version: z.number().optional().describe("Defaults to the current version."),
+        workspace: wsArg,
       },
     },
-    async ({ short_id, section, version }) => {
-      const a = await own(short_id)
-      if (!a) return notFound(short_id)
+    async ({ short_id, section, format, version, workspace }) => {
+      const fmt: ReadFormat = format ?? "markdown"
+      const r = await reach(short_id, workspace)
+      if (r && "error" in r) return err(r.error)
+      if (!r) return notFound(short_id)
+      const a = r.a
       const n = version ?? a.current_version
       if (n < 1 || n > a.current_version)
         return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
       const v = await ctx.meta.getVersion(a.id, n)
       if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
+      const url = artifactUrl(ctx.deps.baseUrl, a)
       const manifest = await manifestOf(ctx, v)
+
       if (!manifest) {
-        // Single-file artifact — return its content.
-        const body = await ctx.sourceText(v)
-        return json({
+        // Single-file artifact.
+        const src = (await ctx.sourceText(v)) ?? ""
+        const ct = v.content_type
+        const meta = {
           short_id,
           title: a.title,
+          version: `${n}${n === a.current_version ? " (current)" : ""}`,
           kind: a.kind,
-          version: n,
-          content: clip(body ?? ""),
-        })
+          format: formatLabel(ct, fmt),
+          url,
+        }
+        if (section && section !== "*") {
+          const slice = sectionOf(src, ct, section)
+          if (slice === null) {
+            const slugs = outlineOf(src, ct).map((s) => s.slug)
+            return err(
+              slugs.length
+                ? `No section "${section}" in "${short_id}" v${n} — sections: ${slugs.join(", ")}.`
+                : `"${short_id}" has no headings to section by — read it whole (omit \`section\`).`,
+            )
+          }
+          // Also feeds clipDoc's steer below — a single section can itself be huge
+          // (e.g. the last one, which runs to </body>), so it needs the same
+          // MAX_CHARS ceiling the whole-doc path gets, not an unbounded return.
+          const outline = outlineOf(src, ct)
+          const i = outline.findIndex((s) => s.slug === section)
+          const body = present(slice, ct, fmt)
+          return doc(
+            {
+              ...meta,
+              section: `${section} (${i + 1} of ${outline.length})`,
+              chars: body.length,
+            },
+            clipDoc(body, outline),
+          )
+        }
+        const body = present(src, ct, fmt)
+        if (!section && body.length > FULL_DOC_MAX) {
+          const outline = outlineOf(src, ct)
+          if (outline.length)
+            return json({
+              short_id,
+              title: a.title,
+              kind: a.kind,
+              version: n,
+              source: ct,
+              format: fmt,
+              doc_chars: body.length,
+              url,
+              sections: outline,
+              next: 'Large document — call read again with a `section` slug for just that part, or section:"*" for the full clipped text. To revise it, publish with `edits` instead of resending content.',
+            })
+          // No headings to summarize by — fall through to a plain (clipped) return,
+          // reusing the already-computed (empty) outline instead of asking again.
+          return doc({ ...meta, chars: body.length }, clipDoc(body, outline))
+        }
+        // Under FULL_DOC_MAX: clipDoc's MAX_CHARS ceiling is far above this body's
+        // size, so it can never truncate — skip computing an outline it won't use.
+        const outline = body.length > MAX_CHARS ? outlineOf(src, ct) : []
+        return doc({ ...meta, chars: body.length }, clipDoc(body, outline))
       }
+
+      // Bundle.
       const pages = Object.keys(manifest.files).map(cleanPath)
-      if (!section)
+      if (!section) {
+        // Outline: every page, plus sizes + headings for the shallowest text pages
+        // (each costs a blob read — the manifest has no sizes — so cap the sweep).
+        const textPages = pages
+          .filter((p) => isTextType(manifest.files[p]?.type ?? manifest.files[`/${p}`]?.type ?? ""))
+          .sort((x, y) => x.split("/").length - y.split("/").length || x.localeCompare(y))
+        const entry = cleanPath(manifest.entry)
+        const inspect = [entry, ...textPages.filter((p) => p !== entry)].slice(0, 25)
+        // The blob reads are independent — fetch them all at once instead of one
+        // round trip at a time (up to 25 pages, otherwise serialized latency).
+        const detailEntries = await Promise.all(
+          inspect.map(
+            async (p): Promise<[string, { chars: number; headings: OutlineSection[] }] | null> => {
+              const file = manifest.files[p] ?? manifest.files[`/${p}`]
+              if (!file) return null
+              const bytes = await ctx.blobs.get(file.key)
+              if (!bytes) return null
+              const text_ = new TextDecoder().decode(bytes)
+              return [
+                p,
+                {
+                  chars: toMarkdown(text_, file.type).length,
+                  headings: outlineOf(text_, file.type),
+                },
+              ]
+            },
+          ),
+        )
+        const detail = new Map(detailEntries.filter((e) => e !== null))
         return json({
           short_id,
           title: a.title,
           kind: "bundle",
           version: n,
-          entry: cleanPath(manifest.entry),
-          pages,
-          next: "Call read again with a `section` (one of the pages above) for that page's content.",
+          entry,
+          url,
+          pages: pages.map((p) => {
+            const type = manifest.files[p]?.type ?? manifest.files[`/${p}`]?.type
+            const d = detail.get(p)
+            return {
+              path: p,
+              type,
+              ...(d
+                ? {
+                    chars: d.chars,
+                    headings: d.headings.map((h) => ({
+                      slug: h.slug,
+                      level: h.level,
+                      text: h.text,
+                    })),
+                  }
+                : {}),
+            }
+          }),
+          next: "Call read again with a `section` (a page path above, optionally page.html#slug for one heading's part) for content.",
         })
-      const file = manifest.files[section] ?? manifest.files[`/${cleanPath(section)}`]
-      if (!file) return err(`No page "${section}" in "${short_id}". Pages: ${pages.join(", ")}.`)
+      }
+
+      // A page (optionally page#slug — split on the LAST '#'). "#*" forces the
+      // page's full (clipped) content, the same bypass single-file section:"*" is.
+      const hash = section.lastIndexOf("#")
+      const pagePath = hash > 0 ? section.slice(0, hash) : section
+      const rawSlug = hash > 0 ? section.slice(hash + 1) : null
+      const slug = rawSlug === "*" ? null : rawSlug
+      const forceFull = rawSlug === "*"
+      const file = manifest.files[pagePath] ?? manifest.files[`/${cleanPath(pagePath)}`]
+      if (!file) return err(`No page "${pagePath}" in "${short_id}". Pages: ${pages.join(", ")}.`)
       const bytes = await ctx.blobs.get(file.key)
-      return json({
+
+      // An image page is an IMAGE, not text: inline it as a real image block (small
+      // ones), or point at the served URL. Never decode PNG bytes as a string.
+      if (baseType(file.type).startsWith("image/")) {
+        const pageUrl = `${ctx.deps.baseUrl}/raw/${short_id}/v/${n}/${cleanPath(pagePath)}`
+        const size = bytes?.length ?? 0
+        if (!bytes || size > IMAGE_INLINE_MAX)
+          return json({
+            short_id,
+            section: cleanPath(pagePath),
+            type: file.type,
+            bytes: size,
+            url: pageUrl,
+            note: "Too large to inline over MCP — open the url to view it.",
+          })
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `${cleanPath(pagePath)} (${file.type}, ${size} bytes) — served at ${pageUrl}`,
+            },
+            { type: "image" as const, data: toBase64(bytes), mimeType: baseType(file.type) },
+          ],
+        }
+      }
+
+      const raw = bytes ? new TextDecoder().decode(bytes) : ""
+      const isText = isTextType(file.type)
+      const meta = {
         short_id,
-        version: n,
-        section: cleanPath(section),
+        title: a.title,
+        version: `${n}${n === a.current_version ? " (current)" : ""}`,
+        kind: "bundle",
+        url,
         type: file.type,
-        content: clip(bytes ? new TextDecoder().decode(bytes) : ""),
-      })
+      }
+      if (slug) {
+        if (!isText)
+          return err(`"${pagePath}" is ${file.type} — heading sections only apply to text pages.`)
+        const slice = sectionOf(raw, file.type, slug)
+        if (slice === null) {
+          const slugs = outlineOf(raw, file.type).map((s) => s.slug)
+          return err(
+            slugs.length
+              ? `No section "${slug}" in "${pagePath}" — sections: ${slugs.join(", ")}.`
+              : `"${pagePath}" has no headings to section by — read the whole page.`,
+          )
+        }
+        const outline = outlineOf(raw, file.type)
+        const body = present(slice, file.type, fmt)
+        return doc(
+          {
+            ...meta,
+            section: `${cleanPath(pagePath)}#${slug}`,
+            format: formatLabel(file.type, fmt),
+            chars: body.length,
+          },
+          clipDoc(body, outline),
+        )
+      }
+      // css/js/json/etc always return source — conversion only applies to text pages.
+      const body = isText ? present(raw, file.type, fmt) : raw
+      // Same outline-first threshold the single-file path applies: a bundle page can
+      // be just as large as a standalone doc, so it gets the same treatment instead
+      // of only ever cutting at the much higher MAX_CHARS ceiling below.
+      if (isText && !slug && !forceFull && body.length > FULL_DOC_MAX) {
+        const outline = outlineOf(raw, file.type)
+        if (outline.length)
+          return json({
+            short_id,
+            title: a.title,
+            kind: "bundle",
+            version: n,
+            section: cleanPath(pagePath),
+            source: file.type,
+            format: fmt,
+            doc_chars: body.length,
+            url,
+            sections: outline,
+            next: `Large page — call read again with \`section\` set to "${cleanPath(pagePath)}#slug" for just that part, or "${cleanPath(pagePath)}#*" for the full clipped text.`,
+          })
+        return doc(
+          { ...meta, section: cleanPath(pagePath), chars: body.length },
+          clipDoc(body, outline),
+        )
+      }
+      const outline = isText && body.length > MAX_CHARS ? outlineOf(raw, file.type) : []
+      return doc(
+        {
+          ...meta,
+          section: cleanPath(pagePath),
+          format: isText ? formatLabel(file.type, fmt) : file.type,
+          chars: body.length,
+        },
+        clipDoc(body, outline),
+      )
     },
   )
 
@@ -263,7 +683,8 @@ function buildServer(
       description:
         "START HERE on an artifact. The state of it in one call: a one-line summary, the versions that landed since `since_version`, which pages changed, the open (and outdated) comment threads, and the full version history. " +
         "Pass `comments` (open / addressed / resolved / outdated) to instead get that filtered thread list — your feedback to-do queue. " +
-        "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to include the exact line-by-line diff between two versions.",
+        "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to include a line-by-line diff between two versions — of their READABLE Markdown form, not raw HTML, so it shows what changed rather than tag noise. " +
+        "WAITING ON A REVIEW? Pass `wait` (seconds, max 50): the call blocks until the human sends back / approves / comments (or the time runs out), then returns the fresh state. Chain wait calls instead of sleeping between polls — feedback reaches you in seconds.",
       inputSchema: {
         short_id: z.string(),
         since_version: z
@@ -286,11 +707,68 @@ function buildServer(
           .describe(
             "'summary' (default, token-light) omits the line diff; 'detailed' includes it.",
           ),
+        wait: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .describe(
+            "Long-poll: block up to this many seconds for the human's next action (send back, approve, or a new comment) before returning. Returns immediately when something is already actionable.",
+          ),
+        workspace: wsArg,
       },
     },
-    async ({ short_id, since_version, to_version, comments, response_format }) => {
-      const a = await own(short_id)
-      if (!a) return notFound(short_id)
+    async ({ short_id, since_version, to_version, comments, response_format, wait, workspace }) => {
+      const r = await reach(short_id, workspace)
+      if (r && "error" in r) return err(r.error)
+      if (!r) return notFound(short_id)
+      let a = r.a
+
+      // Long-poll: when the agent is waiting on the human, block on the artifact
+      // channel until they act, then fall through and build the response fresh
+      // (composes with the `comments` filter below — wait, then the queue). The
+      // event is only a wake signal — all state below is re-read from the store,
+      // so a missed or raced event can never produce a wrong answer. The
+      // subscription starts BEFORE the state check, so an action landing in that
+      // gap wakes us instead of slipping through; when something is already
+      // actionable the wait is released immediately.
+      if (wait && ctx.bus.waitFor) {
+        const release = new AbortController()
+        const waited = ctx.bus
+          .waitFor(
+            a.id,
+            [
+              "review.sent_back",
+              "review.approved",
+              "comment.created",
+              "comment.updated",
+              "version.published",
+            ],
+            wait * 1000,
+            release.signal,
+          )
+          .catch(() => null)
+        const rounds = await ctx.meta.listReviewRounds(a.id)
+        const round =
+          rounds.find((r) => r.state === "pending") ??
+          rounds.find((r) => r.requested_by === agent.id) ??
+          rounds[0] ??
+          null
+        // Actionable = a settled decision the agent hasn't built on yet (it still
+        // applies to the current head). A stale sent_back/approved from an older
+        // version never disables the long-poll — the agent already consumed it.
+        const actionable = round && round.state !== "pending" && round.version >= a.current_version
+        if (actionable) {
+          release.abort()
+          await waited
+        } else {
+          await waited
+          // Refresh: the head (or the artifact itself) may have moved while waiting.
+          const rr = await reach(short_id, workspace)
+          a = rr && !("error" in rr) ? rr.a : a
+        }
+      }
 
       // `comments` filter → the feedback to-do queue (absorbs the old list_comments).
       if (comments) {
@@ -317,7 +795,14 @@ function buildServer(
         if (ms && mh) pagesChanged = bundleFileChanges(ms, mh)
         if (response_format === "detailed") {
           const [as_, ah] = [await ctx.sourceText(vs), await ctx.sourceText(vh)]
-          if (as_ !== null && ah !== null) entryDiff = clip(formatDiff(diffLines(as_, ah)))
+          if (as_ !== null && ah !== null) {
+            // Diff the READABLE form, not raw source: HTML tag noise drowns a
+            // real change, and minified one-line HTML produces one useless
+            // del/add pair. Markdown conversion re-introduces line structure so
+            // the diff answers what an agent actually asks — what changed.
+            const md = diffLines(toMarkdown(as_, vs.content_type), toMarkdown(ah, vh.content_type))
+            entryDiff = `diff of markdown conversion (semantic view):\n\n${clip(formatDiff(md))}`
+          }
         }
       }
       const open = await ctx.meta.listComments(a.id, { state: "open" })
@@ -346,7 +831,11 @@ function buildServer(
       // it requested most recently. `pending` = still waiting; `sent_back` = the human
       // returned answers — read the open threads and revise; `approved` = the go-signal.
       const rounds = await ctx.meta.listReviewRounds(a.id)
-      const myRound = rounds.find((r) => r.requested_by === agent.id) ?? rounds[0] ?? null
+      const myRound =
+        rounds.find((r) => r.state === "pending") ??
+        rounds.find((r) => r.requested_by === agent.id) ??
+        rounds[0] ??
+        null
       const review = myRound
         ? {
             state: myRound.state,
@@ -395,38 +884,49 @@ function buildServer(
     "comment",
     {
       description:
-        "Leave feedback on an artifact, reply in a thread, and/or resolve or reopen a thread — all in one tool. Anchor a NEW comment to a quoted span of the rendered text with `quote`. Reply by passing the thread id as `reply_to`. Resolve or reopen by passing `set_state` along with the thread's id in `reply_to`. Thread ids come from catch_up.",
+        "Leave feedback on an artifact, reply in a thread, react, and/or resolve or reopen a thread — all in one tool. Anchor a NEW comment to a quoted span of the rendered text with `quote`. Reply by passing the thread id as `reply_to`. Pass `react` (with `reply_to`) to acknowledge the latest human comment in a thread without the noise of a reply — the minimum ack the loop requires. Resolve or reopen by passing `set_state` along with the thread's id in `reply_to`. Thread ids come from catch_up.",
       inputSchema: {
         short_id: z.string(),
         body: z
           .string()
           .optional()
-          .describe("The comment text (Markdown). Omit only when just changing thread state."),
+          .describe("The comment text (Markdown). Omit when just reacting or changing state."),
         reply_to: z
           .string()
           .optional()
           .describe(
-            "A thread id (from catch_up): reply in that thread, and/or the thread to set_state on.",
+            "A thread id (from catch_up): reply in that thread, and/or the thread to react / set_state on.",
           ),
         quote: z
           .string()
           .optional()
           .describe("Exact text in the rendered document to anchor a NEW comment to."),
+        react: z
+          .enum(REACTIONS as [string, ...string[]])
+          .optional()
+          .describe(
+            "React to the thread's latest comment by someone else (with `reply_to`) — the lightweight ack. 👍 is the loop's default.",
+          ),
         set_state: z
           .enum(["resolved", "open"])
           .optional()
           .describe("Resolve the thread, or reopen it (with `reply_to`)."),
+        workspace: wsArg,
       },
     },
-    async ({ short_id, body, reply_to, quote, set_state }) => {
-      const a = await own(short_id)
-      if (!a) return notFound(short_id)
-      if (!roleAllows(agent.role, "comment"))
+    async ({ short_id, body, reply_to, quote, react, set_state, workspace }) => {
+      const r = await reach(short_id, workspace)
+      if (r && "error" in r) return err(r.error)
+      if (!r) return notFound(short_id)
+      const a = r.a
+      if (!roleAllows(r.role, "comment"))
         return err(
           "Your grant is read-only (derive:read). Re-authorize the connector with derive:comment to leave feedback.",
         )
-      if (!body && !set_state)
-        return err("Provide `body` (to comment) or `set_state` (to resolve/reopen a thread).")
+      if (!body && !set_state && !react)
+        return err(
+          "Provide `body` (to comment), `react` (to acknowledge), or `set_state` (to resolve/reopen).",
+        )
       let thread = reply_to
       let commentId: string | undefined
       if (body) {
@@ -445,6 +945,40 @@ function buildServer(
           author_id: agent.id,
         })
         ctx.bus.publish(a.id, { type: "comment.created" })
+        // Same bell fan-out as the HTTP route: thread participants + the
+        // artifact's owners hear the agent's reply even with no tab open.
+        // (Previously this path belled no one.) The MCP tool has no mentions.
+        const created = await ctx.meta.getComment(commentId)
+        if (created)
+          await notifyCommentBells({ meta: ctx.meta, bus: ctx.bus }, a, created, {
+            mentionIds: new Set(),
+            actorId: agent.id,
+          })
+      }
+      // The ack: land the emoji on the thread's newest comment by someone ELSE
+      // (the human being acknowledged), falling back to its newest comment.
+      // Idempotent — re-acking never toggles the reaction off.
+      let reactedTo: string | undefined
+      if (react) {
+        if (!thread) return err("`react` needs `reply_to` (the thread to acknowledge).")
+        const inThread = (await ctx.meta.listComments(a.id)).filter(
+          (c) => c.thread_id === thread && !parseMeta(c.meta).deleted,
+        )
+        if (inThread.length === 0) return err(`No thread "${thread}" on "${short_id}".`)
+        const target =
+          [...inThread].reverse().find((c) => c.author_id !== agent.id) ??
+          inThread[inThread.length - 1]
+        if (target) {
+          const md = parseMeta(target.meta)
+          const reactions = md.reactions ?? {}
+          const arr = reactions[react] ?? []
+          if (!arr.includes(agent.name)) arr.push(agent.name)
+          reactions[react] = arr
+          md.reactions = reactions
+          await ctx.meta.updateComment(target.id, { meta: JSON.stringify(md) })
+          ctx.bus.publish(a.id, { type: "comment.reacted", thread_id: thread })
+          reactedTo = target.id
+        }
       }
       if (set_state) {
         if (!thread) return err("`set_state` needs `reply_to` (the thread id to resolve/reopen).")
@@ -455,12 +989,15 @@ function buildServer(
         short_id,
         thread,
         ...(commentId ? { comment_id: commentId, anchored_to: quote ?? null } : {}),
+        ...(reactedTo ? { reacted: react, reacted_to: reactedTo } : {}),
         ...(set_state ? { state: set_state } : {}),
         note: body
           ? reply_to
             ? "Replied in the thread."
             : "New comment thread created."
-          : `Thread ${set_state}.`,
+          : reactedTo
+            ? `Acknowledged with ${react}.`
+            : `Thread ${set_state}.`,
       })
     },
   )
@@ -470,7 +1007,7 @@ function buildServer(
     "publish",
     {
       description:
-        "Save a revision of an artifact. It goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or whenever you pass for_review:true — it is filed as a PROPOSAL a human approves before it goes live. Provide `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE (a whole site, images and any binary asset). OMIT short_id to create a NEW artifact (`title` required); PASS short_id to add a version to one you own, matching its kind. A bundle republish REPLACES the whole bundle, so include EVERY page and asset (or use `merge`). Pass `addresses` with the thread ids (from catch_up) this revision resolves. Provide the FULL content, not a patch. (Proposals are single-file only; bundles must be published directly.)",
+        "Save a revision of an artifact. It goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or whenever you pass for_review:true — it is filed as a PROPOSAL a human approves before it goes live. To CHANGE PART of a single-file artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything. Otherwise provide the full `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE (a whole site, images and any binary asset). OMIT short_id to create a NEW artifact (`title` required); PASS short_id to add a version to one you own, matching its kind. A bundle republish REPLACES the whole bundle, so include EVERY page and asset (or use `merge`). Pass `addresses` with the thread ids (from catch_up) this revision resolves. (Proposals are single-file only; bundles must be published directly.)",
       inputSchema: {
         content: z
           .string()
@@ -494,11 +1031,23 @@ function buildServer(
           .string()
           .optional()
           .describe("Omit to create a new artifact; pass it to revise one you own."),
-        visibility: z
-          .enum(["private", "workspace", "link", "public"])
+        workspace_access: z
+          .enum(["none", "member"])
           .optional()
           .describe(
-            "Who can see a NEW artifact: private (you and people you invite — the default), workspace (your team), link (anyone with the link), or public (discoverable). Ignored on republish.",
+            "Do THIS workspace's members reach a NEW artifact (each at their seat role — admin/editor/commenter)? member (the usual default — a pasted link opens for a teammate) or none (invite-only, even for the workspace). Omit to use the workspace's default. Ignored on republish.",
+          ),
+        link_role: z
+          .enum(["none", "viewer", "commenter", "editor"])
+          .optional()
+          .describe(
+            "What merely holding a NEW artifact's URL confers on ANYONE (incl. people outside the workspace): none (no world link — the usual default), viewer, commenter, or editor. Anonymous holders are always clamped to viewer. Omit to use the workspace's default. Ignored on republish.",
+          ),
+        listed: z
+          .enum(["none", "workspace", "public"])
+          .optional()
+          .describe(
+            "Where a NEW artifact SURFACES for discovery (no access of its own): none (no feeds/libraries — the usual default; a human promotes it when ready), workspace (the team library — needs workspace_access=member), or public (the public directory — needs a link_role). Omit to use the workspace's default. Ignored on republish — the human promotes via the share dialog.",
           ),
         spa: z
           .boolean()
@@ -537,14 +1086,38 @@ function buildServer(
           .describe(
             "After a LIVE publish, open a review round asking your human to review this version — the /derive loop. They answer inline and hit Send back (or Approve); poll catch_up's `review` for the state. No effect on a proposal (that already IS a review).",
           ),
+        workspace: wsArg,
+        edits: z
+          .array(
+            z.object({
+              old_str: z
+                .string()
+                .describe(
+                  "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once.",
+                ),
+              new_str: z.string().describe("Replacement text. Empty string deletes."),
+            }),
+          )
+          .optional()
+          .describe(
+            "Surgical revision of a SINGLE-FILE artifact without resending it: exact-match search/replace against the current stored source, applied in order (each edit sees the previous one's result). Errors — applying nothing — if any old_str matches zero or multiple times; add surrounding context to disambiguate. Requires `short_id`; use INSTEAD of `content`. Composes with for_review, addresses, message, request_review.",
+          ),
+        base_version: z
+          .number()
+          .optional()
+          .describe(
+            "Safety check for `edits`: pass the version you read; the publish errors instead of applying when the artifact has moved past it.",
+          ),
       },
     },
     async ({
-      content,
+      content: contentIn,
       files,
       title,
       short_id,
-      visibility,
+      workspace_access,
+      link_role,
+      listed,
       spa,
       merge,
       message,
@@ -552,15 +1125,68 @@ function buildServer(
       for_review,
       addresses,
       request_review,
+      workspace,
+      edits,
+      base_version,
     }) => {
-      const existing = short_id ? await own(short_id) : null
-      if (short_id && !existing) return text(`No artifact "${short_id}" in this workspace.`)
+      let content = contentIn
+      // Revise an existing artifact wherever it lives (reach roams to its
+      // workspace, within the grant); create a new one in the targeted (or
+      // default) workspace. The acting role is re-capped to that workspace, so
+      // publish/propose gating is correct there, not just in the default one.
+      const reached = short_id ? await reach(short_id, workspace) : null
+      if (reached && "error" in reached) return text(reached.error)
+      const existing = reached && !("error" in reached) ? reached.a : null
+      if (short_id && !existing) return text(`No artifact "${short_id}" you can reach.`)
+      let targetOrg = defaultOrg
+      let actRole = defaultRole
+      if (existing && reached && !("error" in reached)) {
+        targetOrg = reached.org
+        actRole = reached.role
+      } else if (!short_id) {
+        const t = await resolveWs(workspace)
+        if ("error" in t) return text(t.error)
+        targetOrg = t.org
+        actRole = t.role
+      }
+
+      // `edits` — materialize the full new content up front, then fall through to the
+      // untouched publish/proposal pipeline (sweep, addresses, receipts all inherit).
+      let editsApplied = 0
+      if (edits !== undefined) {
+        if (content !== undefined || files)
+          return err("Provide `edits` OR `content`/`files`, not both.")
+        if (!existing) return err("`edits` revises an EXISTING artifact — pass its `short_id`.")
+        let materialized: MaterializedEdits
+        try {
+          materialized = await materializeEdits(
+            { getVersion: ctx.meta.getVersion.bind(ctx.meta), sourceText: ctx.sourceText },
+            existing,
+            edits,
+            base_version,
+          )
+        } catch (e) {
+          if (e instanceof EditError) return err(e.message)
+          throw e
+        }
+        // Same size/storage ceiling the REST /versions and /proposals routes apply
+        // after materializing edits — without this the MCP tool could write an
+        // over-quota version the HTTP surfaces would have rejected.
+        const editedBytes = new TextEncoder().encode(materialized.content).length
+        if (editedBytes > MAX_UPLOAD_BYTES) return err("Edited content is too large.")
+        if (await ctx.overStorage(targetOrg, editedBytes))
+          return err(`"${short_id}"'s workspace storage quota is exceeded.`)
+        content = materialized.content
+        editsApplied = edits.length
+        if (!filename) filename = materialized.filename
+      }
+
       // Exactly one of content / files. `files` (a page map) means a bundle.
       const isBundle = !!files && Object.keys(files).length > 0
       if (isBundle && content !== undefined)
         return text("Provide `content` (single file) OR `files` (a bundle), not both.")
       if (!isBundle && (content === undefined || content === ""))
-        return text("Provide `content` (single file) or `files` (a multi-page bundle).")
+        return text("Provide `content` (single file), `files` (a multi-page bundle), or `edits`.")
       if (existing) {
         // Kind can't change on republish; steer to the right field instead of the 409.
         if (existing.kind === "bundle" && !isBundle)
@@ -574,9 +1200,9 @@ function buildServer(
       // Direct publish is gated on the agent's role (Creator/Admin). A commenter-level
       // grant — or anyone asking for_review — is routed to a human-reviewed proposal,
       // so a low-privilege agent still can't push live content.
-      const review = for_review === true || !roleAllows(agent.role, "publish")
+      const review = for_review === true || !roleAllows(actRole, "publish")
       if (review) {
-        if (!roleAllows(agent.role, "propose"))
+        if (!roleAllows(actRole, "propose"))
           return text(
             "Your grant is read-only (derive:read). Re-authorize with derive:propose (or a publish scope) to suggest changes.",
           )
@@ -596,6 +1222,9 @@ function buildServer(
             message: message ?? "Proposed revision",
             author: agent.name,
             author_id: agent.id,
+            // Delegation provenance: the agent proposes on behalf of the human that
+            // authorized it, so reviewers see "Agent X on behalf of Alice."
+            on_behalf_of: actingFor?.id ?? null,
           })
           const addressed = addresses?.length
             ? await markAddressed(ctx.meta, existing.id, proposal.id, addresses)
@@ -612,6 +1241,7 @@ function buildServer(
             proposal_id: proposal.id,
             base_version: proposal.base_version,
             addressed,
+            ...(editsApplied ? { edits_applied: editsApplied } : {}),
             note: "Submitted for review — a human approves it or requests changes. It is NOT live yet.",
           })
         } catch (e) {
@@ -647,6 +1277,23 @@ function buildServer(
         } else {
           bytes = await zipBundleFiles(files as Record<string, string>, ctx.blobs)
         }
+        // Access is set-on-create (a republish never re-stamps): each field resolves
+        // explicit arg > the TARGETED workspace's default (the default workspace
+        // unless a `workspace` was named). The factory default is the "team
+        // draft" — workspace_access=member, link_role=none, listed=none: a teammate
+        // can open the link, the world can't, and it stays out of feeds until a human
+        // promotes it. Sharing wider stays a deliberate act.
+        const settings = short_id ? null : await ctx.meta.getOrgSettings(targetOrg)
+        const resolvedWorkspaceAccess = short_id
+          ? undefined
+          : (workspace_access ?? settings?.defaultWorkspaceAccess)
+        const resolvedLinkRole = short_id ? undefined : (link_role ?? settings?.defaultLinkRole)
+        const resolvedListed = short_id ? undefined : (listed ?? settings?.defaultListed)
+        // The only cross-field invariants: a doc can't be listed where it grants no access.
+        if (!short_id && resolvedListed === "workspace" && resolvedWorkspaceAccess !== "member")
+          return text("A workspace-listed artifact must grant workspace access.")
+        if (!short_id && resolvedListed === "public" && resolvedLinkRole === "none")
+          return text("A publicly-listed artifact must grant at least a viewer link.")
         const { artifact, version } = await publishVersion(
           ctx.meta,
           ctx.blobs,
@@ -661,17 +1308,13 @@ function buildServer(
             // Attributed to the human the agent acts for — their profile, their
             // followers' feed (same as the HTTP publish route).
             authorId: actingFor?.id ?? null,
-            // New artifacts land in the granting user's workspace, private by
-            // default like every other publish path (never wider unless asked).
-            orgId: agent.org_id,
-            visibility:
-              visibility === "link"
-                ? "link"
-                : visibility === "public"
-                  ? "public"
-                  : visibility === "workspace"
-                    ? "org"
-                    : "private",
+            // New artifacts land in the TARGETED workspace (the default unless a
+            // `workspace` was named), never wider than asked (the workspace's
+            // default access when unspecified).
+            orgId: targetOrg,
+            workspaceAccess: resolvedWorkspaceAccess,
+            linkRole: resolvedLinkRole,
+            listed: resolvedListed,
           },
           short_id,
         )
@@ -684,6 +1327,19 @@ function buildServer(
             user_id: actingFor?.id ?? agent.id,
             role: "owner",
           })
+        // Event parity with the HTTP publish route: the artifact channel makes a
+        // tab viewing this doc live-reload; the webhook outbox fans out to
+        // integrations. Without these an MCP publish is invisible to open tabs.
+        ctx.bus.publish(artifact.id, {
+          type: "version.published",
+          n: version.n,
+          message: version.message,
+        })
+        await ctx.notify(artifact, "version.published", {
+          version: version.n,
+          message: version.message,
+          author: version.author,
+        })
         // Re-anchor existing threads: feedback whose quoted text changed flips to
         // `outdated` (and back to `open` if the text reappears). Same sweep the
         // HTTP route runs — MCP publish must call it too.
@@ -712,6 +1368,76 @@ function buildServer(
           })
           review_round = round.id
           ctx.bus.publish(artifact.id, { type: "review.requested", round_id: round.id })
+          await ctx.notify(artifact, "review.requested", {
+            version: version.n,
+            requested_by: agent.name,
+          })
+          // The review request is the one event that earns an email: the loop is
+          // blocked on the human, who may have no tab open (same policy as the
+          // HTTP publish path). `settings` is only pre-loaded on a create, so a
+          // republish (where most review rounds happen) fetches the gate here.
+          if ((settings ?? (await ctx.meta.getOrgSettings(targetOrg))).emailNotifications) {
+            const [r] = await ctx.meta.getUsers([actingFor.id])
+            if (r?.email)
+              await enqueueChannelDelivery(ctx.meta, "email", "review.requested", {
+                to: r.email,
+                toName: r.name ?? undefined,
+                ...buildReviewEmail(ctx.deps.baseUrl, artifact, {
+                  requestedBy: agent.name,
+                  version: version.n,
+                }),
+              })
+          }
+        }
+        const url = artifactUrl(ctx.deps.baseUrl, artifact)
+        // Bell entry for the human behind the grant, so a push reaches them even
+        // with no tab open (the on-the-go path). One row per push that warrants
+        // one: a review ask beats a plain "published" (never both).
+        if (actingFor && (review_round || !short_id)) {
+          const row = {
+            id: newId("n"),
+            user_id: actingFor.id,
+            actor: agent.name,
+            kind: review_round ? ("review" as const) : ("publish" as const),
+            artifact_id: artifact.id,
+            artifact_short_id: artifact.short_id,
+            artifact_title: artifact.title,
+            thread_id: "",
+            comment_id: "",
+            preview: review_round
+              ? `requested your review of v${version.n}`
+              : (artifact.title ?? "published something new"),
+          }
+          await ctx.meta.createNotification(row)
+          ctx.bus.publish(`u:${actingFor.id}`, {
+            type: "notification",
+            notification: { ...row, read: 0, created_at: new Date().toISOString() },
+          })
+        }
+        // Auto-open: tell the granting user's open tabs an agent just pushed. The
+        // delivery receipt (how many live streams caught it) becomes
+        // `opened_in_tab`, so the agent knows whether to open the URL locally.
+        let openedInTab = false
+        if (actingFor) {
+          const channel = `u:${actingFor.id}`
+          const pushed = {
+            type: "artifact.pushed" as const,
+            event_id: newId("ev"),
+            short_id: artifact.short_id,
+            artifact_id: artifact.id,
+            title: artifact.title,
+            version: version.n,
+            kind: short_id ? "revised" : "created",
+            url,
+            agent: agent.name,
+            review_requested: !!review_round,
+          }
+          if (ctx.bus.publishWithReceipt) {
+            openedInTab =
+              (await withTimeout(ctx.bus.publishWithReceipt(channel, pushed), 1500, 0)) > 0
+          } else {
+            ctx.bus.publish(channel, pushed)
+          }
         }
         return json({
           published: true,
@@ -719,15 +1445,23 @@ function buildServer(
           ...(review_round ? { review_requested: true } : {}),
           kind: artifact.kind,
           version: version.n,
-          url: artifactUrl(ctx.deps.baseUrl, artifact),
+          url,
           title: artifact.title,
-          visibility: artifact.visibility,
+          workspace_access: artifact.workspace_access,
+          link_role: artifact.link_role,
+          listed: artifact.listed,
+          ...(editsApplied ? { edits_applied: editsApplied } : {}),
           ...(resolved.length ? { resolved } : {}),
-          note: merge
-            ? `Live now — merged ${Object.keys(files as Record<string, string>).length} file(s) into the bundle (new current version).`
-            : short_id
-              ? "Live now — published a new current version."
-              : "Live now — created a new artifact in your workspace.",
+          ...(actingFor ? { opened_in_tab: openedInTab } : {}),
+          note:
+            (merge
+              ? `Live now — merged ${Object.keys(files as Record<string, string>).length} file(s) into the bundle (new current version).`
+              : short_id
+                ? "Live now — published a new current version."
+                : "Live now — created a new artifact in your workspace.") +
+            (actingFor && !openedInTab
+              ? " No open Derive tab caught this push — open the url for the user (e.g. run `open <url>`) if they should see it now."
+              : ""),
         })
       } catch (e) {
         const msg = e instanceof PublishError ? e.message : "could not publish"
@@ -758,7 +1492,14 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
     }
     const ownerId = await ctx.privateOwnerId(c)
     const actingFor = ownerId ? ((await ctx.meta.getUsers([ownerId]))[0] ?? null) : null
-    const server = buildServer(ctx, agent, actingFor)
+    // The grant's uncapped scope role (OAuth) — or the agent's own role for a
+    // registered dk_agt_ token — is what a roamed workspace's role is re-capped
+    // from, mirroring agentFor's X-Derive-Workspace re-home. boundWorkspaces is the
+    // consent multi-select (empty = all): the MCP surface clamps to it.
+    const grant = await ctx.oauthGrant(c)
+    const scopeForCap = grant?.scopeRole ?? agent.role
+    const boundWorkspaces = grant?.boundWorkspaces ?? []
+    const server = buildServer(ctx, agent, actingFor, ownerId, scopeForCap, boundWorkspaces)
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
     return transport.handleRequest(c)

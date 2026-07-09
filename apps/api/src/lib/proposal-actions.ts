@@ -22,6 +22,9 @@ export interface ProposalActionDeps {
   blobs: BlobStore
   bus: Backplane
   notify: (a: ArtifactRecord, event: WebhookEvent, data: Record<string, unknown>) => Promise<void>
+  /** Enqueue a screenshot render for the newly-published version. Fire-and-forget; optional
+   *  so a caller without render access (e.g. a test) can omit it. */
+  notifyRender?: (a: ArtifactRecord, n: number) => void
 }
 
 /** Approve: the proposed content becomes the new live version. Mirrors the approve route. */
@@ -32,7 +35,7 @@ export const approveProposalAction = async (
   approver: string | null,
   note: string | null,
 ): Promise<VersionRecord> => {
-  const { meta, blobs, bus, notify } = deps
+  const { meta, blobs, bus, notify, notifyRender } = deps
   const version = await approveProposal(meta, blobs, proposal, approver, note)
   bus.publish(artifact.id, { type: "proposal.approved", proposal_id: proposal.id, n: version.n })
   bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
@@ -47,6 +50,7 @@ export const approveProposalAction = async (
     version: version.n,
     approver,
   })
+  notifyRender?.(artifact, version.n)
   return version
 }
 

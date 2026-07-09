@@ -6,14 +6,18 @@
 // muted, unfavourited star); pass weight="fill" for a filled state (favorited
 // star, pinned pin) — it fills the glyph with the current ink.
 import {
+  ArrowRightLeft,
   AtSign,
   Ban,
   BarChart3,
   Bell,
   BookOpen,
+  Bot,
   Building2,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   Code,
   Ellipsis,
@@ -61,6 +65,7 @@ const REG = {
   following: Users,
   collections: Folders,
   collection: Folder,
+  context: Bot,
   tag: Tag,
   search: Search,
   settings: Settings,
@@ -84,6 +89,8 @@ const REG = {
   report: Flag,
   caret: ChevronDown,
   "caret-up": ChevronUp,
+  "chevron-left": ChevronLeft,
+  "chevron-right": ChevronRight,
   edit: Code,
   review: GitPullRequest,
   // The agent-revision affordance (ask an agent to revise a selection).
@@ -95,6 +102,7 @@ const REG = {
   present: Maximize,
   lock: Lock,
   unlock: LockOpen,
+  move: ArrowRightLeft,
   globe: Globe,
   // comment toolbar / menu
   react: Smile,

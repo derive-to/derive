@@ -24,7 +24,9 @@ const publish = async (
     org_id: "default",
     slug: null,
     title,
-    visibility: "link",
+    workspace_access: "member",
+    link_role: "viewer",
+    listed: "public",
     kind: "file",
     spa: 0,
   })
@@ -132,7 +134,7 @@ describe("people follow", () => {
   const publishByUser = async (
     title: string,
     userId: string,
-    visibility: "public" | "link" = "public",
+    visibility: "public" | "private" = "public",
     org = "amy_ws",
   ): Promise<string> => {
     const a = await meta.createArtifact({
@@ -141,7 +143,9 @@ describe("people follow", () => {
       org_id: org,
       slug: null,
       title,
-      visibility,
+      workspace_access: visibility === "public" ? "member" : "none",
+      link_role: visibility === "public" ? "viewer" : "none",
+      listed: visibility === "public" ? "public" : "none",
       kind: "file",
       spa: 0,
     })
@@ -165,7 +169,7 @@ describe("people follow", () => {
   it("follows a person; their public work flows into the feed across workspaces, private stays hidden", async () => {
     // Amy publishes in HER OWN workspace ("amy_ws") — NOT bob's active "default".
     const amyPublic = await publishByUser("Amy's plan", amy.id, "public")
-    const amyPrivate = await publishByUser("Amy's secret", amy.id, "link")
+    const amyPrivate = await publishByUser("Amy's secret", amy.id, "private")
 
     // bob follows amy (by username; stored as her id, globally).
     const r = await post(as(bob.email), { kind: "user", target: "Amy" })
@@ -189,9 +193,9 @@ describe("people follow", () => {
     expect(userFollow).toMatchObject({ kind: "user", target: "amy", handle: "amy", name: "Amy" })
     expect(JSON.stringify(bobFollows)).not.toContain(amy.id) // no raw user id on the wire
 
-    // The profile reflects it: amy has 1 follower; bob (the viewer) follows her.
+    // The profile reflects it: bob (the viewer) follows her. (No follower
+    // counts — the follow graph isn't a browsable surface at launch.)
     const amyProfile = await (await app.request("/v1/users/amy", { headers: as(bob.email) })).json()
-    expect(amyProfile.user.stats.followers).toBe(1)
     expect(amyProfile.user.followed_by_me).toBe(true)
 
     // amy sees a "follow" notification from bob (by his handle).
@@ -206,7 +210,6 @@ describe("people follow", () => {
     })
     expect(del.status).toBe(204)
     const after = await (await app.request("/v1/users/amy", { headers: as(bob.email) })).json()
-    expect(after.user.stats.followers).toBe(0)
     expect(after.user.followed_by_me).toBe(false)
   })
 })

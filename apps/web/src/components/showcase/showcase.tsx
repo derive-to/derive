@@ -463,7 +463,7 @@ function ViewToggleDemo() {
 function BadgesDemo() {
   return (
     <div className="flex flex-wrap items-center gap-2.5">
-      <Badge variant="default">Draft</Badge>
+      <Badge variant="default">New</Badge>
       <Badge variant="brand">Shared</Badge>
       <Badge variant="success">Published</Badge>
       <Badge variant="warning">Sync stale</Badge>
@@ -549,7 +549,7 @@ function FormControlsDemo() {
         {(
           [
             ["team", "Your team"],
-            ["link", "Anyone with the link"],
+            ["public", "Anyone with the link"],
           ] as const
         ).map(([v, txt]) => (
           <Label key={v} className="flex items-center gap-2.5 font-normal text-foreground">
@@ -1008,25 +1008,27 @@ function ConfirmDemo() {
   )
 }
 
-/** The share dialog's general-access ladder — the five visibility steps as the
- *  dialog renders them (glyph + label + consequence), most private first. Static
- *  data; the live control is ShareButton's Select in pages/artifact/share-dialog. */
+/** The share dialog's general access — three audiences (glyph + label +
+ *  consequence); a password is a lock on Public, not a fourth row. Static data;
+ *  the live control is ShareButton's Select in pages/artifact/share-dialog. */
 function GeneralAccessDemo() {
   const steps: { icon: IconName; label: string; blurb: string; current?: boolean }[] = [
     {
       icon: "lock",
-      label: "Private",
-      blurb: "Only people added. Workspace membership grants nothing.",
-      current: true,
+      label: "Invited",
+      blurb: "Only people you add. Even the workspace gets nothing.",
     },
     {
       icon: "workspace",
-      label: "Workspace only",
-      blurb: "Only members of this workspace.",
+      label: "Workspace",
+      blurb: "Everyone in the workspace opens it at their role.",
+      current: true,
     },
-    { icon: "link", label: "Anyone with the link", blurb: "Anyone with the link can view." },
-    { icon: "globe", label: "Public — listed", blurb: "In the public directory and indexable." },
-    { icon: "lock", label: "Password protected", blurb: "Anyone with the link and the password." },
+    {
+      icon: "globe",
+      label: "Anyone",
+      blurb: "The link works for anyone. Optionally behind a password.",
+    },
   ]
   return (
     <div className="max-w-md rounded-xl border border-border bg-card p-1.5">
@@ -1315,7 +1317,7 @@ export function Showcase() {
           </Row>
           <Row
             title="General access"
-            note="The share dialog's visibility ladder, most private to most open. Each step is a glyph + label + one-line consequence; the Share trigger echoes the glyph (globe = the URL alone reads, lock = invite-only)."
+            note="The share dialog's access ladder, most closed to most open. Each step is a glyph + label + one-line consequence; the Share trigger echoes the glyph (globe = the URL alone reads, lock = invite-only)."
           >
             <GeneralAccessDemo />
           </Row>

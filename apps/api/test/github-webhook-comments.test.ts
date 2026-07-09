@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto"
+import { DEFAULT_ORG_SETTINGS } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { encryptSecret } from "../src/lib/crypto"
 import { quotaApp } from "./helpers"
@@ -29,7 +30,9 @@ const seedPrSource = async (meta: Awaited<ReturnType<typeof quotaApp>>["meta"]) 
     org_id: "default",
     slug: null,
     title: "Doc",
-    visibility: "link",
+    workspace_access: "member",
+    link_role: "viewer",
+    listed: "public",
     kind: "file",
     spa: 0,
   })
@@ -145,6 +148,7 @@ describe("github → derive comment mirroring (webhook)", () => {
     await seedApp(meta)
     const artifact = await seedPrSource(meta)
     await meta.setOrgSettings("default", {
+      ...DEFAULT_ORG_SETTINGS,
       emailNotifications: true,
       githubPostComments: true,
       githubMirrorComments: false,
