@@ -23,6 +23,11 @@ jobs:
   # so a skipped job can't wedge a required check — it just reports success.
   changes:
     runs-on: ubuntu-24.04-arm
+    # paths-filter lists a PR's changed files via the GitHub API, which needs
+    # pull-requests:read (the workflow default is contents:read only).
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       web: ${{ steps.filter.outputs.web }}
       docker: ${{ steps.filter.outputs.docker }}
