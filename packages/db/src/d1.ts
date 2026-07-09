@@ -216,6 +216,18 @@ export function createD1Store(d1: D1Database): MetaStore {
         await db.run(sql`UPDATE user SET profession = ${fields.profession} WHERE id = ${userId}`)
       if (fields.about !== undefined)
         await db.run(sql`UPDATE user SET about = ${fields.about} WHERE id = ${userId}`)
+      if (fields.brandprint !== undefined)
+        await db.run(sql`UPDATE user SET brandprint = ${fields.brandprint} WHERE id = ${userId}`)
+    },
+    getUserBrandprint: async (userId: string): Promise<string | null> => {
+      try {
+        const row = (await db.get(sql`SELECT brandprint FROM user WHERE id = ${userId}`)) as
+          | { brandprint?: string | null }
+          | undefined
+        return row?.brandprint ?? null
+      } catch {
+        return null // older/minimal user table without the column
+      }
     },
     searchDiscoverableUsers: async (q: string, limit: number): Promise<UserProfile[]> => {
       const s = q.trim().toLowerCase()

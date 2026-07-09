@@ -397,8 +397,22 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         sets.push("about = ?")
         args.push(fields.about)
       }
+      if (fields.brandprint !== undefined) {
+        sets.push("brandprint = ?")
+        args.push(fields.brandprint)
+      }
       if (sets.length === 0) return
       raw.prepare(`UPDATE user SET ${sets.join(", ")} WHERE id = ?`).run(...args, userId)
+    },
+    getUserBrandprint: async (userId): Promise<string | null> => {
+      try {
+        const row = raw.prepare("SELECT brandprint FROM user WHERE id = ?").get(userId) as
+          | { brandprint?: string | null }
+          | undefined
+        return row?.brandprint ?? null
+      } catch {
+        return null // older/minimal user table without the column
+      }
     },
     searchDiscoverableUsers: async (q, limit): Promise<UserProfile[]> => {
       const s = q.trim().toLowerCase()
