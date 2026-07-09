@@ -1912,6 +1912,14 @@
             "type": "string",
             "nullable": true,
             "description": "When the runner last polled the queue (~minutely); null = never. Drives online/offline."
+          },
+          "ask_policy": {
+            "type": "string",
+            "enum": [
+              "workspace",
+              "invited"
+            ],
+            "description": "Who in the workspace may ask: any member, or the invited roster. Never outside the workspace."
           }
         },
         "required": [
@@ -1921,7 +1929,8 @@
           "manifest_short_id",
           "created_by",
           "created_at",
-          "runner_seen_at"
+          "runner_seen_at",
+          "ask_policy"
         ]
       },
       "Session": {
@@ -5957,6 +5966,182 @@
         "responses": {
           "204": {
             "description": "The context was deleted."
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/access": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Set who may ask a context (workspace | invited). Never leaves the workspace.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated ask policy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ask_policy": {
+                      "type": "string",
+                      "enum": [
+                        "workspace",
+                        "invited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ask_policy"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/askers": {
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "The invited-asker roster (manager only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The roster.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "askers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "user_id": {
+                            "type": "string"
+                          },
+                          "username": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "added_at": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "user_id",
+                          "username",
+                          "added_at"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "askers"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Invite a WORKSPACE MEMBER to ask (by email). A non-member is rejected.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The added asker.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user_id": {
+                      "type": "string"
+                    },
+                    "username": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "added_at": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "user_id",
+                    "username",
+                    "added_at"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/askers/{userId}": {
+      "delete": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Remove someone from the asker roster (manager only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "userId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed."
           }
         }
       }

@@ -6,6 +6,7 @@ import {
   type BlobStore,
   type BundleManifest,
   type CollectionRecord,
+  type ContextRecord,
   can,
   capRole,
   DEFAULT_VERSION_WINDOW_MS,
@@ -802,6 +803,22 @@ export function buildContext(deps: AppDeps) {
     return !!me && !!(await meta.getMembership(orgId, me.id))
   }
 
+  // May THIS caller ask this context? A context is a workspace-scoped data-access
+  // grant, NOT a document — so this deliberately does not consult the manifest's
+  // artifact access (which can carry a world link or public listing). The hard
+  // floor is workspace membership: a non-member — however they hold a link — can
+  // never ask. Within the workspace, `workspace` policy admits every member;
+  // `invited` admits the creator and the asker roster. Askers are people (a
+  // session is on-behalf-of a human), so a bare agent/static token can't ask.
+  const canAskContext = async (c: Context, x: ContextRecord): Promise<boolean> => {
+    const me = await currentUser(c)
+    if (!me) return false
+    if (!(await meta.getMembership(x.org_id, me.id))) return false
+    if (x.created_by === me.id) return true
+    if (x.ask_policy === "workspace") return true
+    return !!(await meta.getContextAsker(x.id, me.id))
+  }
+
   return {
     deps,
     meta,
@@ -847,5 +864,6 @@ export function buildContext(deps: AppDeps) {
     requireUser,
     isToken,
     isMember,
+    canAskContext,
   }
 }
