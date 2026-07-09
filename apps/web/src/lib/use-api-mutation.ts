@@ -34,6 +34,10 @@ export function useApiMutation<TData = unknown, TVars = void>(config: {
   pendingKey?: (vars: TVars) => string
   /** Extra success side-effect (navigate, close a dialog) once the write lands. */
   onSuccess?: (data: TData, vars: TVars) => void
+  /** Extra failure side-effect (offer a retry, restore a draft) once the write rejects —
+   *  runs AFTER the optimistic rollback. The symmetric counterpart to onSuccess; the error
+   *  toast stays the MutationCache's job (honoring meta.errorToast), so don't toast here. */
+  onError?: (err: Error, vars: TVars) => void
 }) {
   const qc = useQueryClient()
   // Keys with an in-flight mutation — per-call so one row's toggle doesn't disable
@@ -57,10 +61,12 @@ export function useApiMutation<TData = unknown, TVars = void>(config: {
       const rollback = config.optimistic?.(vars, qc)
       return { rollback, pendingKey }
     },
-    onError: (_err, _vars, ctx) => {
-      // Undo the optimistic edit. The TOAST is the MutationCache's job (it honors
-      // meta.errorToast), so toasting here too would double up.
+    onError: (err, vars, ctx) => {
+      // Undo the optimistic edit first, then run any caller failure side-effect. The TOAST
+      // is the MutationCache's job (it honors meta.errorToast), so toasting here too would
+      // double up.
       ctx?.rollback?.()
+      config.onError?.(err, vars)
     },
     onSuccess: (data, vars) => {
       const msg = typeof config.success === "function" ? config.success(data, vars) : config.success
