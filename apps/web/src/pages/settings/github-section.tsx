@@ -3,6 +3,8 @@ import { useEffect, useState } from "react"
 import { api, type GithubSyncStatus } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
 import { SettingsGroup } from "@/components/shared/settings-group"
+import { StatusPanel } from "@/components/shared/status-panel"
+import { Button } from "@/components/ui/button"
 import { toast } from "@/components/ui/sonner"
 import { AdvancedPat } from "./github-advanced-pat"
 import { ConnectViaApp, SetUpApp, takeInstallParams } from "./github-install-flow"
@@ -21,15 +23,20 @@ const AUTO_PICKER_KEY = "derive:gh-auto-picker"
 export function GithubSection() {
   const qc = useQueryClient()
   const [status, setStatus] = useState<GithubSyncStatus | null>(null)
+  const [loadError, setLoadError] = useState(false)
   const [pickerInstall, setPickerInstall] = useState<string | null>(null)
 
+  // A failed status load used to fake `configured:false` — which renders the "Set up GitHub
+  // App" screen as if nothing were connected. Track the error instead and offer a retry, so a
+  // transient blip doesn't read as "your integration is gone".
   const load = () =>
     api
       .githubSync()
-      .then(setStatus)
-      .catch(() =>
-        setStatus({ sources: [], prs: [], app: { configured: false }, installations: [] }),
-      )
+      .then((s) => {
+        setStatus(s)
+        setLoadError(false)
+      })
+      .catch(() => setLoadError(true))
   // After a sync/connect, the mirrored collection changed → drop the library's
   // artifact caches so a freshly-populated collection isn't shown stale/empty.
   const refresh = () => {
@@ -68,7 +75,21 @@ export function GithubSection() {
       description="Mirror a GitHub repo's Markdown and HTML into a collection. Sync is one-way: GitHub stays the source of truth, so synced docs are read-only here but stay fully commentable."
     >
       {status === null ? (
-        <SettingsListSkeleton />
+        loadError ? (
+          <StatusPanel
+            tone="danger"
+            layout="inline"
+            title="Couldn't load your GitHub status"
+            description="This is usually temporary."
+            action={
+              <Button variant="outline" size="sm" data-testid="github-retry" onClick={load}>
+                Try again
+              </Button>
+            }
+          />
+        ) : (
+          <SettingsListSkeleton />
+        )
       ) : appConfigured ? (
         <ConnectViaApp status={status} onPick={setPickerInstall} onRefresh={load} />
       ) : (

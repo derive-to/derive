@@ -329,6 +329,7 @@ export function ShareButton({
   const changeMut = useApiMutation({
     mutationFn: ({ handle, next }: { handle: string; next: Role }) =>
       api.setMember(shortId, handle, next),
+    success: "Role updated",
     onSuccess: () => synced(),
   })
   const change = (m: ArtifactMember, next: Role) => {

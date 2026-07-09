@@ -223,7 +223,21 @@ function Console({ id }: { id: string }) {
 // the manifest, plus a plain-language nudge when nobody but the owner can ask —
 // the state that reads as "the app is broken" when a teammate opens the console.
 function ContextAccess({ shortId }: { shortId: string }) {
-  const { data: manifest } = useQuery(artifactQuery(shortId))
+  const { data: manifest, isError, refetch } = useQuery(artifactQuery(shortId))
+  // A failed manifest load must not silently drop the owner's Share control (it reads as
+  // "sharing is broken") — offer a retry. A background-refetch error keeps the loaded manifest.
+  if (isError && !manifest)
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        data-testid="context-access-retry"
+        onClick={() => refetch()}
+        className="text-muted-foreground"
+      >
+        Sharing unavailable — retry
+      </Button>
+    )
   if (!manifest) return null
   const askable = manifest.workspace_access === "member" || manifest.link_role !== "none"
   return (

@@ -61,9 +61,16 @@ export function useArtifactActions(p: {
   const commentsKey = commentsQuery(shortId).queryKey
 
   const startEdit = async () => {
-    p.setEditing(true)
-    p.setTitle(p.art?.title ?? "")
-    p.setSrc(await api.getContent(shortId))
+    // Load the source BEFORE opening the editor: if the fetch fails, opening an empty editor
+    // over existing content lets Publish overwrite it with blank. Load first, open on success.
+    try {
+      const src = await api.getContent(shortId)
+      p.setTitle(p.art?.title ?? "")
+      p.setSrc(src)
+      p.setEditing(true)
+    } catch {
+      toast.error("Couldn't load the source to edit. Try again.")
+    }
   }
 
   // Keep the artifact's format: editing an HTML artifact must stay .html (publishing it
