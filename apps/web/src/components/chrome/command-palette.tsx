@@ -37,11 +37,13 @@ export function CommandPalette() {
   const [results, setResults] = useState<Artifact[]>([])
   const [people, setPeople] = useState<PublicProfile[]>([])
   const [loading, setLoading] = useState(false)
+  const [peopleLoading, setPeopleLoading] = useState(false)
 
   // Fresh query each open.
   useEffect(() => {
     if (paletteOpen) {
       setQuery("")
+      setResults([])
       setPeople([])
     }
   }, [paletteOpen])
@@ -71,14 +73,17 @@ export function CommandPalette() {
     const term = query.trim()
     if (!term) {
       setPeople([])
+      setPeopleLoading(false)
       return
     }
     let alive = true
+    setPeopleLoading(true)
     const t = setTimeout(() => {
       api
         .searchPeople(term)
         .then((r) => alive && setPeople(r.users))
         .catch(() => alive && setPeople([]))
+        .finally(() => alive && setPeopleLoading(false))
     }, 180)
     return () => {
       alive = false
@@ -176,7 +181,7 @@ export function CommandPalette() {
           {people.length > 0 && (
             <CommandGroup
               heading="People"
-              className={cn(loading && "opacity-60 transition-opacity")}
+              className={cn(peopleLoading && "opacity-60 transition-opacity")}
             >
               {people.map((u) => (
                 <CommandItem
