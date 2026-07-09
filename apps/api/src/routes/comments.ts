@@ -51,21 +51,52 @@ export const commentRoutes = (ctx: AppContext) => {
   const Comment = z
     .object({
       id: z.string(),
-      thread_id: z.string(),
-      base_version: z.number(),
-      path: z.string().nullable(),
-      anchor: z.string().nullable(),
-      body_md: z.string(),
-      author: z.string(),
-      state: z.enum(["open", "addressed", "resolved", "outdated"]),
+      thread_id: z
+        .string()
+        .describe("The thread this comment belongs to; equals id for the thread's root comment."),
+      base_version: z.number().describe("Artifact version this comment was anchored against."),
+      path: z
+        .string()
+        .nullable()
+        .describe("File within a bundle the comment targets; null if not file-scoped."),
+      anchor: z
+        .string()
+        .nullable()
+        .describe(
+          "Serialized text-quote or element anchor locating the comment; null if unanchored.",
+        ),
+      body_md: z
+        .string()
+        .describe("Comment body in Markdown; blanked when the comment is deleted."),
+      author: z.string().describe('Author\'s display name; "anonymous" for an anonymous poster.'),
+      state: z
+        .enum(["open", "addressed", "resolved", "outdated"])
+        .describe(
+          "Thread state: open, addressed (a proposal in review claims to fix it), resolved, or outdated (the quoted text changed).",
+        ),
       created_at: z.string(),
-      /** Whether the anchor still resolves against the current version (list only). */
-      anchored: z.boolean().optional(),
-      reactions: z.record(z.string(), z.array(z.string())).optional(),
-      edited: z.boolean().optional(),
-      edited_at: z.string().nullable().optional(),
-      deleted: z.boolean().optional(),
-      mentions: z.array(MentionSchema).optional(),
+      anchored: z
+        .boolean()
+        .optional()
+        .describe("Whether the anchor still resolves against the current version (list only)."),
+      reactions: z
+        .record(z.string(), z.array(z.string()))
+        .optional()
+        .describe("Emoji → list of reactor display names."),
+      edited: z.boolean().optional().describe("True if the body was edited after posting."),
+      edited_at: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("When the comment was last edited; null if never."),
+      deleted: z
+        .boolean()
+        .optional()
+        .describe("True if soft-deleted; the row stays but the body is blanked."),
+      mentions: z
+        .array(MentionSchema)
+        .optional()
+        .describe("Users or agents @mentioned in the comment body."),
     })
     .openapi("Comment")
 
@@ -300,8 +331,12 @@ export const commentRoutes = (ctx: AppContext) => {
             "application/json": {
               schema: z.object({
                 thread_id: z.string(),
-                state: z.enum(["open", "resolved"]),
-                updated: z.number(),
+                state: z
+                  .enum(["open", "resolved"])
+                  .describe("The thread's new state: resolved, or open when reopened."),
+                updated: z
+                  .number()
+                  .describe("Number of comments in the thread whose state changed."),
               }),
             },
           },

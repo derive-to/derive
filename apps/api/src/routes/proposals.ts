@@ -55,25 +55,43 @@ export const proposalRoutes = (ctx: AppContext) => {
   const Proposal = z
     .object({
       id: z.string(),
-      state: z.enum(["open", "approved", "changes_requested", "withdrawn"]),
-      author: z.string(),
-      /** When an agent proposed this, the human it acted on behalf of; null for a direct
-       *  human proposal (delegation provenance). */
+      state: z
+        .enum(["open", "approved", "changes_requested", "withdrawn"])
+        .describe("Review state: open, approved (went live), changes_requested, or withdrawn."),
+      author: z.string().describe('Proposer\'s display name; "anonymous" if not signed in.'),
       on_behalf_of: z
         .object({ handle: z.string().nullable(), name: z.string().nullable() })
         .nullable()
-        .optional(),
-      message: z.string().nullable(),
-      base_version: z.number(),
-      kind: z.enum(["file", "bundle"]),
-      decided_by: z.string().nullable(),
-      decided_version: z.number().nullable(),
-      decision_note: z.string().nullable(),
-      decided_at: z.string().nullable(),
+        .optional()
+        .describe(
+          "When an agent proposed, the human it acted on behalf of; null for a direct human proposal.",
+        ),
+      message: z.string().nullable().describe("Proposer's cover message; null if none."),
+      base_version: z.number().describe("Artifact version this proposal was authored against."),
+      kind: z
+        .enum(["file", "bundle"])
+        .describe("Content shape: a single file or a multi-file bundle."),
+      decided_by: z
+        .string()
+        .nullable()
+        .describe("Who approved/requested-changes/withdrew it; null while still open."),
+      decided_version: z
+        .number()
+        .nullable()
+        .describe("The version it went live as when approved; null otherwise."),
+      decision_note: z
+        .string()
+        .nullable()
+        .describe("Reviewer's note on the decision; null while open or if none."),
+      decided_at: z.string().nullable().describe("When it was decided; null while still open."),
       created_at: z.string(),
-      preview_url: z.string(),
-      /** Present on the single-proposal fetch: a line diff vs the base version. */
-      diff: z.object({ base_version: z.number(), ops: z.array(DiffOp) }).optional(),
+      preview_url: z
+        .string()
+        .describe("URL that renders the proposed content like a live version."),
+      diff: z
+        .object({ base_version: z.number(), ops: z.array(DiffOp) })
+        .optional()
+        .describe("Line diff vs the base version; present only on the single-proposal fetch."),
     })
     .openapi("Proposal")
 
@@ -139,7 +157,11 @@ export const proposalRoutes = (ctx: AppContext) => {
           description: "The created proposal, plus the thread ids it marked addressed.",
           content: {
             "application/json": {
-              schema: Proposal.extend({ addressed: z.array(z.string()) }),
+              schema: Proposal.extend({
+                addressed: z
+                  .array(z.string())
+                  .describe("Thread ids this proposal flipped to addressed (pending review)."),
+              }),
             },
           },
         },
@@ -338,7 +360,15 @@ export const proposalRoutes = (ctx: AppContext) => {
       responses: {
         200: {
           description: "The approved proposal + the version number it became.",
-          content: { "application/json": { schema: Proposal.extend({ published: z.number() }) } },
+          content: {
+            "application/json": {
+              schema: Proposal.extend({
+                published: z
+                  .number()
+                  .describe("The version number the approved proposal became live as."),
+              }),
+            },
+          },
         },
       },
     }),

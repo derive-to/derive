@@ -28,10 +28,12 @@ export const assetRoutes = (ctx: AppContext) => {
   // image MIME (the closed ImageType set), `size` the byte length.
   const AssetRef = z
     .object({
-      key: z.string(),
-      ref: z.string(),
-      type: z.enum(["image/png", "image/jpeg", "image/gif", "image/webp"]),
-      size: z.number(),
+      key: z.string().describe("The blob hash (content-addressed storage key)"),
+      ref: z.string().describe('The exact "asset:<hash>" string to drop into a publish files map'),
+      type: z
+        .enum(["image/png", "image/jpeg", "image/gif", "image/webp"])
+        .describe("The sniffed image MIME type (PNG, JPEG, GIF, or WebP)"),
+      size: z.number().describe("The asset's size in bytes"),
     })
     .openapi("AssetRef")
 

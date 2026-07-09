@@ -37,8 +37,12 @@ export const sharingRoutes = (ctx: AppContext) => {
           content: {
             "application/json": {
               schema: z.object({
-                default_role: z.enum(["viewer", "commenter", "editor", "owner"]),
-                members: z.array(ArtifactMember),
+                default_role: z
+                  .enum(["viewer", "commenter", "editor", "owner"])
+                  .describe("Workspace baseline role applied to anyone without an explicit share."),
+                members: z
+                  .array(ArtifactMember)
+                  .describe("Collaborators with an explicit per-artifact role share."),
               }),
             },
           },

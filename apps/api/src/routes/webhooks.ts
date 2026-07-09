@@ -27,12 +27,21 @@ export const webhookRoutes = (ctx: AppContext) => {
   const Webhook = z
     .object({
       id: z.string(),
-      artifact_id: z.string().nullable(),
-      url: z.string(),
-      kind: z.enum(["generic", "slack"]),
-      events: z.string(),
-      label: z.string().nullable(),
-      active: z.union([z.literal(0), z.literal(1)]),
+      artifact_id: z
+        .string()
+        .nullable()
+        .describe(
+          "The artifact this webhook is scoped to, or null to fire on all workspace events",
+        ),
+      url: z.string().describe("The destination endpoint deliveries are POSTed to"),
+      kind: z
+        .enum(["generic", "slack"])
+        .describe("Delivery format: generic posts signed JSON, slack posts a Block Kit message"),
+      events: z.string().describe('Comma-separated event types to deliver, or "*" for all events'),
+      label: z.string().nullable().describe("Optional human-readable label, or null if unnamed"),
+      active: z
+        .union([z.literal(0), z.literal(1)])
+        .describe("Whether deliveries are enabled (1) or paused (0)"),
       created_at: z.string(),
     })
     .openapi("Webhook")
@@ -41,9 +50,16 @@ export const webhookRoutes = (ctx: AppContext) => {
     .object({
       id: z.string(),
       event_type: z.string(),
-      status: z.enum(["pending", "delivered", "dead"]),
-      attempts: z.number(),
-      last_error: z.string().nullable(),
+      status: z
+        .enum(["pending", "delivered", "dead"])
+        .describe(
+          "Delivery state: pending (awaiting/retrying), delivered (succeeded), dead (gave up)",
+        ),
+      attempts: z.number().describe("Number of delivery attempts made so far"),
+      last_error: z
+        .string()
+        .nullable()
+        .describe("The most recent failure message, or null if none"),
       created_at: z.string(),
     })
     .openapi("Delivery")

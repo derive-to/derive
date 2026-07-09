@@ -36,14 +36,30 @@ export const followRoutes = (ctx: AppContext) => {
   const Follow = z
     .object({
       id: z.string(),
-      org_id: z.string(),
-      user_id: z.string(),
-      kind,
-      target: z.string(),
+      org_id: z
+        .string()
+        .describe('The workspace this follow is scoped to; "*" (global) for people-follows'),
+      user_id: z.string().describe("The follower (the signed-in user who owns this follow)"),
+      kind: kind.describe("What's followed: a GitHub author, a repo path prefix, or a person"),
+      target: z
+        .string()
+        .describe("The followed value: author login, path prefix, or (people) public @handle"),
       created_at: z.string(),
-      handle: z.string().nullable().optional(),
-      name: z.string().nullable().optional(),
-      image: z.string().nullable().optional(),
+      handle: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("For people-follows, the followed person's public @handle; absent otherwise"),
+      name: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("For people-follows, the followed person's display name; absent otherwise"),
+      image: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("For people-follows, the followed person's avatar URL; absent otherwise"),
     })
     .openapi("Follow")
 

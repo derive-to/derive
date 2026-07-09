@@ -17,10 +17,15 @@ export const moderationRoutes = (ctx: AppContext) => {
       id: z.string(),
       artifact_id: z.string(),
       artifact_short_id: z.string(),
-      reason: z.string(),
-      detail: z.string().nullable(),
-      reporter: z.string().nullable(),
-      state: z.enum(["open", "actioned", "dismissed"]),
+      reason: z.string().describe("The reporter's stated reason for the report"),
+      detail: z.string().nullable().describe("Optional extra detail from the reporter, or null"),
+      reporter: z
+        .string()
+        .nullable()
+        .describe("The reporter's IP (best-effort), or null; abuse reports are anonymous/public"),
+      state: z
+        .enum(["open", "actioned", "dismissed"])
+        .describe("open (awaiting review), actioned (taken down), or dismissed (no action)"),
       created_at: z.string(),
     })
     .openapi("Report")
@@ -29,10 +34,20 @@ export const moderationRoutes = (ctx: AppContext) => {
     .object({
       id: z.string(),
       org_id: z.string(),
-      action: z.enum(["report", "takedown", "reinstate", "dismiss"]),
-      artifact_id: z.string().nullable(),
-      actor: z.string(),
-      detail: z.string().nullable(),
+      action: z
+        .enum(["report", "takedown", "reinstate", "dismiss"])
+        .describe("What happened: report filed, takedown, reinstate, or dismiss"),
+      artifact_id: z
+        .string()
+        .nullable()
+        .describe("The artifact acted on, or null if not artifact-specific"),
+      actor: z
+        .string()
+        .describe("Who performed it: a user's name, or an IP/'anonymous' for public reports"),
+      detail: z
+        .string()
+        .nullable()
+        .describe("Context such as the report reason or takedown note, or null"),
       created_at: z.string(),
     })
     .openapi("AuditEntry")

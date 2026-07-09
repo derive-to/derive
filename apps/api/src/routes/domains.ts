@@ -61,10 +61,16 @@ export const domainRoutes = (ctx: AppContext) => {
   // DomainRecord values against these enums, so they can't drift from core silently.
   const ArtifactDomain = z
     .object({
-      host: z.string(),
-      url: z.string(),
-      kind: z.enum(["subdomain", "custom"]),
-      status: z.enum(["active", "pending", "error"]),
+      host: z.string().describe("The hostname the artifact is served at."),
+      url: z.string().describe("That host with scheme, ready to link to."),
+      kind: z
+        .enum(["subdomain", "custom"])
+        .describe('"subdomain" = a vanity <label>.<base>; "custom" = a workspace custom domain.'),
+      status: z
+        .enum(["active", "pending", "error"])
+        .describe(
+          '"active" = serving; "pending" = awaiting DNS/cert; "error" = validation failed.',
+        ),
       created_at: z.string(),
     })
     .openapi("ArtifactDomain")
@@ -84,9 +90,23 @@ export const domainRoutes = (ctx: AppContext) => {
           content: {
             "application/json": {
               schema: z.object({
-                base: z.string().nullable(),
-                domains: z.array(ArtifactDomain),
-                workspace_domains: z.array(z.object({ host: z.string(), url: z.string() })),
+                base: z
+                  .string()
+                  .nullable()
+                  .describe("Base host subdomains hang off (e.g. derive.to); null if disabled."),
+                domains: z
+                  .array(ArtifactDomain)
+                  .describe("The artifact's own vanity subdomains, managed here."),
+                workspace_domains: z
+                  .array(
+                    z.object({
+                      host: z.string(),
+                      url: z
+                        .string()
+                        .describe("This artifact's URL on that domain, including its ref."),
+                    }),
+                  )
+                  .describe("Workspace custom domains this artifact is served at (read-only)."),
               }),
             },
           },

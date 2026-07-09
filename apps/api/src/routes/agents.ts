@@ -26,7 +26,11 @@ export const agentRoutes = (ctx: AppContext) => {
     .object({
       id: z.string(),
       name: z.string(),
-      role: z.enum(["viewer", "commenter", "editor", "owner"]),
+      role: z
+        .enum(["viewer", "commenter", "editor", "owner"])
+        .describe(
+          "Permission level; commenter proposes only, editor can write, owner never allowed",
+        ),
       created_at: z.string(),
     })
     .openapi("Agent")
@@ -34,9 +38,11 @@ export const agentRoutes = (ctx: AppContext) => {
   // An OAuth agent the signed-in user authorized to act on their behalf.
   const ConnectedAgent = z
     .object({
-      clientId: z.string(),
+      clientId: z
+        .string()
+        .describe("OAuth client id of the authorized agent (e.g. an MCP client like Claude)"),
       clientName: z.string(),
-      scopes: z.array(z.string()),
+      scopes: z.array(z.string()).describe("The OAuth scopes this agent was granted"),
       grantedAt: z.string(),
     })
     .openapi("ConnectedAgent")

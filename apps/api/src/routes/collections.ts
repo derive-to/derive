@@ -42,27 +42,28 @@ export const collectionRoutes = (ctx: AppContext) => {
     .object({
       id: z.string(),
       title: z.string(),
-      created_by: z.string(),
+      created_by: z.string().describe('Creator\'s user id ("anon" if created anonymously).'),
       created_at: z.string(),
-      count: z.number(),
-      /** The collection's own share experience — same vocabulary and dialog
-       *  pattern as an artifact's workspace_access, no link_role/listed (see
-       *  CollectionRecord.workspace_access). */
-      workspace_access: z.enum(["none", "member"]).optional(),
-      /** The caller's role on the collection itself (creator/explicit share/seat,
-       *  whichever's highest) — drives the Share dialog's manage-vs-read-only
-       *  split. Null if they can't see it at all (never returned in that case,
-       *  since the list already filters those out). */
-      my_role: z.enum(["viewer", "commenter", "editor", "owner"]).nullable().optional(),
-      /** Where it came from: "repo" = a GitHub repo mirror, "pr" = a read-only PR preview
-       *  nested under its repo, "manual" = user-created. */
-      kind: z.enum(["manual", "repo", "pr"]).optional(),
-      /** For a PR preview: the repo collection it nests under (when still connected). */
-      parentId: z.string().optional(),
-      /** For a PR preview: the pull-request number. */
-      prNumber: z.number().optional(),
-      /** For repo/PR collections: "owner/name". */
-      repo: z.string().optional(),
+      count: z.number().describe("Number of artifacts in the collection."),
+      workspace_access: z
+        .enum(["none", "member"])
+        .optional()
+        .describe('Workspace share scope: "member" (all members) or "none" (invite-only).'),
+      my_role: z
+        .enum(["viewer", "commenter", "editor", "owner"])
+        .nullable()
+        .optional()
+        .describe("Caller's own role on the collection; drives the Share dialog. Null if none."),
+      kind: z
+        .enum(["manual", "repo", "pr"])
+        .optional()
+        .describe('Origin: "manual" (user-made), "repo" (GitHub mirror), or "pr" (PR preview).'),
+      parentId: z
+        .string()
+        .optional()
+        .describe("For a PR preview: the repo collection it nests under, when connected."),
+      prNumber: z.number().optional().describe("For a PR preview: the pull-request number."),
+      repo: z.string().optional().describe('For repo/PR collections: the "owner/name" slug.'),
     })
     .openapi("Collection")
 
@@ -243,7 +244,11 @@ export const collectionRoutes = (ctx: AppContext) => {
           description: "The new access.",
           content: {
             "application/json": {
-              schema: z.object({ workspace_access: z.enum(["none", "member"]) }),
+              schema: z.object({
+                workspace_access: z
+                  .enum(["none", "member"])
+                  .describe("The collection's new workspace share scope."),
+              }),
             },
           },
         },
@@ -346,7 +351,10 @@ export const collectionRoutes = (ctx: AppContext) => {
           description: "The collection's creator and its members.",
           content: {
             "application/json": {
-              schema: z.object({ created_by: z.string(), members: z.array(ArtifactMember) }),
+              schema: z.object({
+                created_by: z.string().describe("User id of the collection's creator."),
+                members: z.array(ArtifactMember),
+              }),
             },
           },
         },

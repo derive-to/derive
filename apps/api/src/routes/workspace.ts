@@ -36,35 +36,59 @@ export const workspaceRoutes = (ctx: AppContext) => {
   const roleEnum = z.enum(["viewer", "commenter", "editor", "owner"])
 
   const WorkspaceSummary = z
-    .object({ id: z.string(), name: z.string(), role: roleEnum, personal: z.boolean() })
+    .object({
+      id: z.string(),
+      name: z.string(),
+      role: roleEnum.describe("The caller's role in this workspace (owner = Admin)."),
+      personal: z
+        .boolean()
+        .describe("True for the auto-provisioned personal workspace (id ws_p_<userId>)."),
+    })
     .openapi("WorkspaceSummary")
 
   const AccountSummary = z
-    .object({ id: z.string(), handle: z.string().nullable(), name: z.string().nullable() })
+    .object({
+      id: z.string(),
+      handle: z.string().nullable().describe("The account's @handle; null if unclaimed."),
+      name: z.string().nullable(),
+    })
     .openapi("AccountSummary")
 
   const Workspace = z
     .object({
       id: z.string(),
       name: z.string(),
-      role: roleEnum,
+      role: roleEnum.describe("The caller's role in this workspace (owner = Admin)."),
       members: z.array(ArtifactMember),
     })
     .openapi("Workspace")
 
   const OrgSettings = z
     .object({
-      emailNotifications: z.boolean(),
-      githubPostComments: z.boolean(),
-      githubMirrorComments: z.boolean(),
-      githubPreviewLink: z.boolean(),
-      slackPost: z.boolean(),
-      slackEvents: z.record(z.string(), z.boolean()).optional(),
-      // The access a NEW publish lands with (see access-model.md): the three
-      // single-purpose fields. Factory default is the team draft — member / none / none.
-      defaultWorkspaceAccess: z.enum(["none", "member"]),
-      defaultLinkRole: z.enum(["none", "viewer", "commenter", "editor"]),
-      defaultListed: z.enum(["none", "workspace", "public"]),
+      emailNotifications: z.boolean().describe("When true, send workspace email notifications."),
+      githubPostComments: z
+        .boolean()
+        .describe("When true, post Derive comments onto the linked GitHub PR."),
+      githubMirrorComments: z
+        .boolean()
+        .describe("When true, mirror GitHub PR comments back into Derive."),
+      githubPreviewLink: z
+        .boolean()
+        .describe("When true, add a preview link to the linked GitHub PR."),
+      slackPost: z.boolean().describe("When true, post events to Slack."),
+      slackEvents: z
+        .record(z.string(), z.boolean())
+        .optional()
+        .describe("Per-event Slack toggles keyed by event name; absent if unset."),
+      defaultWorkspaceAccess: z
+        .enum(["none", "member"])
+        .describe("Access a new publish lands with: none, or member (factory default)."),
+      defaultLinkRole: z
+        .enum(["none", "viewer", "commenter", "editor"])
+        .describe("Share-link role a new publish lands with (factory default: none)."),
+      defaultListed: z
+        .enum(["none", "workspace", "public"])
+        .describe("Listing a new publish lands with: none (default), workspace, or public."),
     })
     .openapi("OrgSettings")
 
@@ -72,33 +96,46 @@ export const workspaceRoutes = (ctx: AppContext) => {
     .object({
       id: z.string(),
       email: z.string(),
-      role: roleEnum,
+      role: roleEnum.describe("The role the invitee will receive (owner = Admin)."),
       created_at: z.string(),
-      expires_at: z.string(),
+      expires_at: z.string().describe("When the invite expires (7-day TTL)."),
     })
     .openapi("Invite")
 
   const InvitePreview = z
     .object({
-      workspace: z.string(),
-      role: roleEnum,
-      email: z.string(),
-      inviter: z.string().nullable(),
+      workspace: z.string().describe("Name of the workspace this invite joins."),
+      role: roleEnum.describe("The role this invite grants (owner = Admin)."),
+      email: z.string().describe("The email address the invite was addressed to."),
+      inviter: z.string().nullable().describe("The inviter's display name; null if unknown."),
     })
     .openapi("InvitePreview")
 
   const InviteResult = z
     .union([
-      z.object({ kind: z.literal("member"), member: ArtifactMember }),
-      z.object({ kind: z.literal("invite"), invite: Invite, accept_url: z.string() }),
+      z.object({
+        kind: z
+          .literal("member")
+          .describe("The invitee already had an account and was added directly."),
+        member: ArtifactMember,
+      }),
+      z.object({
+        kind: z
+          .literal("invite")
+          .describe("No account yet — a pending invite was created instead."),
+        invite: Invite,
+        accept_url: z.string().describe("The link the invitee follows to accept."),
+      }),
     ])
     .openapi("InviteResult")
 
   const Workspaces = z
     .object({
-      multi: z.boolean(),
-      active: z.string(),
-      account: AccountSummary.nullable(),
+      multi: z.boolean().describe("Whether multi-workspace mode is enabled."),
+      active: z.string().describe("Id of the workspace this request resolved to."),
+      account: AccountSummary.nullable().describe(
+        "The owner's identity (id + handle); null for anonymous callers.",
+      ),
       workspaces: z.array(WorkspaceSummary),
     })
     .openapi("Workspaces")

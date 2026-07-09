@@ -150,13 +150,27 @@ export const oauthRoutes = (ctx: AppContext) => {
             "application/json": {
               schema: z
                 .object({
-                  password: z.boolean(),
-                  google: z.boolean(),
-                  github: z.boolean(),
-                  oidc: z.object({ providerId: z.string(), label: z.string() }).nullable(),
-                  emailVerification: z.boolean(),
-                  passwordReset: z.boolean(),
-                  passkey: z.boolean(),
+                  password: z
+                    .boolean()
+                    .describe("True if email + password sign-in is available (always on here)"),
+                  google: z.boolean().describe("True if Google sign-in is configured"),
+                  github: z.boolean().describe("True if GitHub sign-in is configured"),
+                  oidc: z
+                    .object({
+                      providerId: z.string().describe("The provider id used to initiate SSO"),
+                      label: z.string().describe("Human-readable label for the SSO button"),
+                    })
+                    .nullable()
+                    .describe("The enterprise OIDC/SSO provider, or null if none is configured"),
+                  emailVerification: z
+                    .boolean()
+                    .describe(
+                      "True if verification emails can be sent (a mail transport is configured)",
+                    ),
+                  passwordReset: z.boolean().describe("True if password-reset emails can be sent"),
+                  passkey: z
+                    .boolean()
+                    .describe("True if passkey (WebAuthn) sign-in works on this instance"),
                 })
                 .openapi("AuthCapabilities"),
             },

@@ -25,7 +25,18 @@ export const realtimeRoutes = (ctx: AppContext) => {
   const app = new OpenAPIHono<BlankEnv>()
 
   const ViewerSchema = z
-    .object({ id: z.string(), name: z.string(), role: z.string().nullable() })
+    .object({
+      id: z
+        .string()
+        .describe("The viewer's id: a signed-in user's id, or a stable anonymous viewer id"),
+      name: z
+        .string()
+        .describe("Display name: a user's @handle, or a friendly handle for anonymous viewers"),
+      role: z
+        .string()
+        .nullable()
+        .describe("The viewer's effective role on this artifact, or null if they have none"),
+    })
     .openapi("Viewer")
 
   // Server-derived presence identity (never client-supplied): a signed-in user by

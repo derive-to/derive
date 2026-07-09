@@ -14,17 +14,29 @@ export const notificationRoutes = (ctx: AppContext) => {
   const Notification = z
     .object({
       id: z.string(),
-      user_id: z.string(),
-      /** Who triggered it. For follow/publish this is the person's @handle. */
-      actor: z.string(),
-      kind: z.enum(["mention", "comment", "share", "follow", "publish", "review"]),
+      user_id: z.string().describe("The recipient this notification belongs to"),
+      actor: z
+        .string()
+        .describe("Who triggered it; for follow/publish this is the person's @handle"),
+      kind: z
+        .enum(["mention", "comment", "share", "follow", "publish", "review"])
+        .describe("What happened: mention, comment, share, follow, publish, or review"),
       artifact_id: z.string(),
-      artifact_short_id: z.string(),
-      artifact_title: z.string().nullable(),
-      thread_id: z.string(),
-      comment_id: z.string(),
-      preview: z.string(),
-      read: z.union([z.literal(0), z.literal(1)]),
+      artifact_short_id: z
+        .string()
+        .describe("The artifact's public short id for links; empty for follows (no anchor)"),
+      artifact_title: z
+        .string()
+        .nullable()
+        .describe("The artifact's title, or null if untitled or not artifact-anchored"),
+      thread_id: z.string().describe("The comment thread anchor; empty when not comment-related"),
+      comment_id: z
+        .string()
+        .describe("The specific comment anchor; empty when not comment-related"),
+      preview: z.string().describe("Short text preview shown in the notification bell"),
+      read: z
+        .union([z.literal(0), z.literal(1)])
+        .describe("Whether the user has read it: 0 unread, 1 read"),
       created_at: z.string(),
     })
     .openapi("Notification")

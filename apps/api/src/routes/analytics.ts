@@ -13,17 +13,37 @@ export const analyticsRoutes = (ctx: AppContext) => {
 
   const Analytics = z
     .object({
-      total: z.number(),
-      unique: z.number(),
-      anonViewers: z.number(),
-      perVersion: z.array(z.object({ version: z.number(), count: z.number() })),
-      daily: z.array(z.object({ day: z.string(), count: z.number() })),
+      total: z.number().describe("Total recorded views across all versions (de-duped opens)"),
+      unique: z
+        .number()
+        .describe("Distinct viewers; a signed-in person or anon cookie counts once"),
+      anonViewers: z.number().describe("How many of the unique viewers are anonymous"),
+      perVersion: z.array(
+        z.object({
+          version: z.number(),
+          count: z.number().describe("Views recorded for that version"),
+        }),
+      ),
+      daily: z.array(
+        z.object({
+          day: z.string().describe("Calendar day bucket (YYYY-MM-DD)"),
+          count: z.number().describe("Views recorded on that day"),
+        }),
+      ),
       recent: z.array(
         z.object({
-          viewer: z.string(),
-          kind: z.enum(["user", "anon"]),
-          at: z.string(),
-          avatar: z.string().nullable().optional(),
+          viewer: z
+            .string()
+            .describe("Display name (resolved @handle for users), or the anon viewer id"),
+          kind: z
+            .enum(["user", "anon"])
+            .describe("Whether the viewer is a signed-in user or anonymous"),
+          at: z.string().describe("When they last viewed (ISO timestamp)"),
+          avatar: z
+            .string()
+            .nullable()
+            .optional()
+            .describe("The user's avatar URL, or null/absent for anonymous viewers"),
         }),
       ),
     })
