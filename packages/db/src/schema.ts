@@ -609,8 +609,36 @@ export const context = sqliteTable(
     // route throttles; the poll is ~5s) so the row isn't churned. Nullable (never
     // polled + clean ALTER ADD COLUMN); the console renders online/offline from it.
     runner_seen_at: text("runner_seen_at"),
+    // Who in the workspace may ASK this context — DELIBERATELY not the manifest's
+    // artifact access. A context is a data-access grant, not a document: it must
+    // never be reachable outside its workspace, so its access model has no
+    // world-link or public concept to leak one. `invited` = the context_asker
+    // roster (+ the creator); `workspace` = any member. Membership in org_id is
+    // the hard floor either way (enforced in the ask gate, not here). Defaults to
+    // `invited` (least privilege): a data grant opens to nobody until the owner
+    // widens it — the migration keeps existing contexts closed, not opened.
+    ask_policy: text("ask_policy").$type<"workspace" | "invited">().notNull().default("invited"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
+)
+
+// The per-context asker roster (only consulted when ask_policy = 'invited'). A
+// row grants ONE workspace member the right to ask; workspace membership is
+// re-checked at ask time, so removing someone from the workspace revokes here
+// too. No non-member can be added (the add route validates membership) — the
+// table structurally can't reference outside the workspace.
+export const contextAsker = sqliteTable(
+  "context_asker",
+  {
+    id: text("id").primaryKey(),
+    context_id: text("context_id")
+      .notNull()
+      .references(() => context.id),
+    user_id: text("user_id").notNull(),
+    added_by: text("added_by").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("context_asker_user").on(t.context_id, t.user_id)],
 )
 
 // One ask-conversation with a context. Named context_session because Better Auth
@@ -721,6 +749,7 @@ const TABLES = [
   proposal,
   reviewRound,
   context,
+  contextAsker,
   contextSession,
   sessionMessage,
   report,

@@ -590,6 +590,20 @@ export const api = {
     body_md: string,
   ): Promise<{ session: Session; messages: SessionMessage[] }> =>
     f(`/v1/contexts/${id}/sessions`, opts({ body_md })).then(j),
+  // Who may ask — workspace-scoped, never the manifest's artifact sharing.
+  setContextAskPolicy: (id: string, ask_policy: "workspace" | "invited"): Promise<void> =>
+    f(`/v1/contexts/${id}/access`, opts({ ask_policy })).then(() => undefined),
+  listContextAskers: (
+    id: string,
+  ): Promise<{ askers: { user_id: string; username: string | null; added_at: string }[] }> =>
+    f(`/v1/contexts/${id}/askers`, opts()).then(j),
+  addContextAsker: (
+    id: string,
+    email: string,
+  ): Promise<{ user_id: string; username: string | null; added_at: string }> =>
+    f(`/v1/contexts/${id}/askers`, opts({ email })).then(j),
+  removeContextAsker: (id: string, userId: string): Promise<void> =>
+    f(`/v1/contexts/${id}/askers/${userId}`, { ...opts(), method: "DELETE" }).then(() => undefined),
   listContextSessions: (id: string): Promise<{ sessions: Session[] }> =>
     f(`/v1/contexts/${id}/sessions`, opts()).then(j),
   getSession: (

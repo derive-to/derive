@@ -1,11 +1,14 @@
 import {
+  type ContextAskerRecord,
   type ContextRecord,
   newId,
   type SessionMessageRecord,
   type SessionRecord,
   type SessionState,
+  type UserDir,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
+import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { bail, fail, readJson } from "../lib/http"
@@ -14,8 +17,10 @@ import { log } from "../log"
 /**
  * Contexts (askable agent setups) + sessions (ask-conversations with one).
  *
- * A context links a registered agent to its manifest artifact; the manifest's
- * share roster is the ask grant (v1: viewer on the manifest = can ask). Sessions
+ * A context links a registered agent to its manifest artifact. Ask-access is a
+ * WORKSPACE-SCOPED grant on the context itself (ask_policy + the asker roster) —
+ * NOT the manifest's artifact sharing: a context is a data grant, not a document,
+ * and must never be reachable outside its workspace (see canAskContext). Sessions
  * are private to the asker and the context owner — 404 to everyone else, so their
  * existence never leaks. The runner drains `open` sessions from the queue endpoint
  * with the agent's own bearer and answers through the messages endpoint. The
@@ -27,6 +32,7 @@ export const contextRoutes = (ctx: AppContext) => {
     activeWorkspace,
     agentFor,
     authorize,
+    canAskContext,
     currentUser,
     managementPrincipal,
     requireUser,
@@ -51,6 +57,11 @@ export const contextRoutes = (ctx: AppContext) => {
         .nullable()
         .describe(
           "When the runner last polled the queue (~minutely); null = never. Drives online/offline.",
+        ),
+      ask_policy: z
+        .enum(["workspace", "invited"])
+        .describe(
+          "Who in the workspace may ask: any member, or the invited roster. Never outside the workspace.",
         ),
     })
     .openapi("ContextInfo")
@@ -127,6 +138,7 @@ export const contextRoutes = (ctx: AppContext) => {
     created_by: x.created_by,
     created_at: x.created_at,
     runner_seen_at: x.runner_seen_at,
+    ask_policy: x.ask_policy,
   })
 
   const messageJson = (m: SessionMessageRecord) => {
@@ -170,8 +182,9 @@ export const contextRoutes = (ctx: AppContext) => {
   }
 
   // Create a context: wire an agent to a manifest artifact. Editor+ in the
-  // workspace, and share-standing on the manifest — creating a context makes the
-  // manifest's roster govern who can ask, which is a sharing decision.
+  // workspace, and share-standing on the manifest (creating a context exposes the
+  // manifest's identity to askers, so it's a sharing decision). Who can ASK is a
+  // separate, workspace-scoped grant on the context — set via /access, not here.
   app.openapi(
     createRoute({
       method: "post",
@@ -281,18 +294,14 @@ export const contextRoutes = (ctx: AppContext) => {
     async (c) => {
       const x = await meta.getContext(c.req.param("id"))
       if (!x) return bail(fail(c, 404, "not found"))
-      // Visible to whoever can read the manifest (users) — or to the context's own
-      // agent, which needs its wiring (name, manifest) to run.
+      // The context's own agent gets its wiring to run; a human gets it only if
+      // they can ASK — workspace-scoped, never via the manifest's artifact access
+      // (see canAskContext). A context is a data grant, not a document: it must
+      // not be reachable outside its workspace, so 404 (not 403) to everyone else
+      // — its existence never leaks.
       const agent = await agentFor(c)
       const manifest = await meta.getArtifactById(x.manifest_artifact_id)
-      // Users need manifest read AND a session: a public manifest makes its
-      // CONTENT world-readable, but the context's wiring (agent id, creator)
-      // stays behind sign-in.
-      const allowed = agent
-        ? agent.id === x.agent_id
-        : manifest !== null &&
-          (await currentUser(c)) !== null &&
-          (await authorize(c, "read", manifest))
+      const allowed = agent ? agent.id === x.agent_id : await canAskContext(c, x)
       if (!allowed) return bail(fail(c, 404, "not found"))
       // The runner's one config fetch: its system prompt is the manifest's current
       // source, so a manifest edit reconfigures the runner with no deploy.
@@ -336,8 +345,159 @@ export const contextRoutes = (ctx: AppContext) => {
     },
   )
 
-  // Ask: open a session with the first question. The ask grant is read on the
-  // manifest, so sharing the manifest is sharing the context.
+  // ---- ask-access management (workspace-scoped only) ------------------------
+  // The context that this caller may MANAGE (set who can ask), or a Response to
+  // return. Management is the creator or a workspace manager — the same gate as
+  // delete, and NOT reachable by a runner's own agent token (managementPrincipal
+  // refuses those). Scoped to the caller's active workspace so a manager of B
+  // can't reach into A; cross-workspace callers get the same 404 as a missing id.
+  const manageableContext = async (c: Context): Promise<ContextRecord | Response> => {
+    const owner = await managementPrincipal(c)
+    if (!owner) return fail(c, 401, "unauthenticated")
+    // The generic hono Context (this helper is route-shared) types params as
+    // possibly-undefined; an empty id just resolves to no context → 404.
+    const x = await meta.getContext(c.req.param("id") ?? "")
+    if (!x || x.org_id !== (await activeWorkspace(c))) return fail(c, 404, "not found")
+    if (x.created_by !== owner && !(await workspaceCan(c, "manage")))
+      return fail(c, 403, "forbidden")
+    return x
+  }
+
+  const askerJson = (a: ContextAskerRecord, u: UserDir | undefined) => ({
+    user_id: a.user_id,
+    username: u?.username ?? null,
+    added_at: a.created_at,
+  })
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/contexts/{id}/access",
+      tags: ["Contexts"],
+      summary: "Set who may ask a context (workspace | invited). Never leaves the workspace.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The updated ask policy.",
+          content: {
+            "application/json": {
+              schema: z.object({ ask_policy: z.enum(["workspace", "invited"]) }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const x = await manageableContext(c)
+      if (x instanceof Response) return bail(x)
+      const b = await readJson(c, z.object({ ask_policy: z.enum(["workspace", "invited"]) }))
+      if (b instanceof Response) return bail(b)
+      await meta.setContextAskPolicy(x.id, b.ask_policy)
+      return c.json({ ask_policy: b.ask_policy })
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/contexts/{id}/askers",
+      tags: ["Contexts"],
+      summary: "The invited-asker roster (manager only).",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The roster.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                askers: z.array(
+                  z.object({
+                    user_id: z.string(),
+                    username: z.string().nullable(),
+                    added_at: z.string(),
+                  }),
+                ),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const x = await manageableContext(c)
+      if (x instanceof Response) return bail(x)
+      const roster = await meta.listContextAskers(x.id)
+      const users = new Map(
+        (await meta.getUsers(roster.map((a) => a.user_id))).map((u) => [u.id, u]),
+      )
+      return c.json({ askers: roster.map((a) => askerJson(a, users.get(a.user_id))) })
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/contexts/{id}/askers",
+      tags: ["Contexts"],
+      summary: "Invite a WORKSPACE MEMBER to ask (by email). A non-member is rejected.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        201: {
+          description: "The added asker.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                user_id: z.string(),
+                username: z.string().nullable(),
+                added_at: z.string(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const x = await manageableContext(c)
+      if (x instanceof Response) return bail(x)
+      const owner = (await managementPrincipal(c)) as string
+      const b = await readJson(c, z.object({ email: z.string().trim().email() }))
+      if (b instanceof Response) return bail(b)
+      const user = await meta.findUserByEmail(b.email)
+      if (!user) return bail(fail(c, 404, "no such user"))
+      // The invariant, enforced at the source: only a member of THIS context's
+      // workspace can be added to the roster. A non-member can never be an asker,
+      // so the roster can't reference outside the workspace.
+      if (!(await meta.getMembership(x.org_id, user.id)))
+        return bail(fail(c, 400, "that person isn't a member of this workspace"))
+      const added = await meta.addContextAsker({
+        id: newId("cask"),
+        context_id: x.id,
+        user_id: user.id,
+        added_by: owner,
+      })
+      return c.json(askerJson(added, user), 201)
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "delete",
+      path: "/v1/contexts/{id}/askers/{userId}",
+      tags: ["Contexts"],
+      summary: "Remove someone from the asker roster (manager only).",
+      request: { params: z.object({ id: z.string(), userId: z.string() }) },
+      responses: { 204: { description: "Removed." } },
+    }),
+    async (c) => {
+      const x = await manageableContext(c)
+      if (x instanceof Response) return bail(x)
+      await meta.removeContextAsker(x.id, c.req.param("userId"))
+      return c.body(null, 204)
+    },
+  )
+
+  // Ask: open a session with the first question. The ask grant is the context's
+  // own workspace-scoped policy (canAskContext) — NOT manifest read-access.
   app.openapi(
     createRoute({
       method: "post",
@@ -360,9 +520,11 @@ export const contextRoutes = (ctx: AppContext) => {
       const me = await requireUser(c)
       if (me instanceof Response) return bail(me)
       const x = await meta.getContext(c.req.param("id"))
-      const manifest = x ? await meta.getArtifactById(x.manifest_artifact_id) : null
-      if (!x || !manifest || !(await authorize(c, "read", manifest)))
-        return bail(fail(c, 404, "not found"))
+      // Asking is a workspace-scoped grant on the CONTEXT, not manifest read —
+      // so a manifest world link can never open a session (query the data).
+      if (!x || !(await canAskContext(c, x))) return bail(fail(c, 404, "not found"))
+      const manifest = await meta.getArtifactById(x.manifest_artifact_id)
+      if (!manifest) return bail(fail(c, 404, "not found"))
       const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
       if (b instanceof Response) return bail(b)
       const session = await meta.createSession({
@@ -406,9 +568,7 @@ export const contextRoutes = (ctx: AppContext) => {
       const me = await requireUser(c)
       if (me instanceof Response) return bail(me)
       const x = await meta.getContext(c.req.param("id"))
-      const manifest = x ? await meta.getArtifactById(x.manifest_artifact_id) : null
-      if (!x || !manifest || !(await authorize(c, "read", manifest)))
-        return bail(fail(c, 404, "not found"))
+      if (!x || !(await canAskContext(c, x))) return bail(fail(c, 404, "not found"))
       const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 50))
       const sessions = await meta.listSessions(x.id, {
         askerId: x.created_by === me.id ? undefined : me.id,
@@ -446,8 +606,17 @@ export const contextRoutes = (ctx: AppContext) => {
       if (me instanceof Response) return bail(me)
       const s = await meta.getSession(c.req.param("id"))
       const linked = s ? await contextOf(s) : null
-      if (!s || !linked || (s.asker_id !== me.id && linked.context.created_by !== me.id))
-        return bail(fail(c, 404, "not found"))
+      // Membership is the floor for BOTH parties: canAskContext requires it even
+      // for the creator, so a removed creator can't keep reading transcripts any
+      // more than a removed asker can (the invariant applies to owners too). The
+      // creator sees ANY session on their context; anyone else sees only their
+      // own — sessions stay private to asker + owner.
+      const allowed =
+        !!s &&
+        !!linked &&
+        (await canAskContext(c, linked.context)) &&
+        (linked.context.created_by === me.id || s.asker_id === me.id)
+      if (!s || !linked || !allowed) return bail(fail(c, 404, "not found"))
       const messages = await meta.listSessionMessages(s.id)
       return c.json({
         session: sessionJson(s),
@@ -532,7 +701,12 @@ export const contextRoutes = (ctx: AppContext) => {
 
       const me = await currentUser(c)
       if (!me) return bail(fail(c, 401, "unauthenticated"))
-      if (s.asker_id !== me.id) return bail(fail(c, 404, "not found"))
+      // Re-gate on ask-access, not just session ownership: a follow-up re-opens
+      // the session and the runner answers it (a fresh query against the data).
+      // A member removed from the workspace/roster after opening a session must
+      // not keep querying through it — canAskContext re-checks membership + policy.
+      if (s.asker_id !== me.id || !(await canAskContext(c, linked.context)))
+        return bail(fail(c, 404, "not found"))
       const gone = closed()
       if (gone) return bail(gone)
       const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
@@ -586,7 +760,12 @@ export const contextRoutes = (ctx: AppContext) => {
 
       const me = await currentUser(c)
       if (!me) return bail(fail(c, 401, "unauthenticated"))
-      if (s.asker_id !== me.id && linked.context.created_by !== me.id)
+      // Same membership floor as the session read: a removed asker/creator can't
+      // touch the session at all (close included) once they're out of the workspace.
+      if (
+        !(await canAskContext(c, linked.context)) ||
+        (s.asker_id !== me.id && linked.context.created_by !== me.id)
+      )
         return bail(fail(c, 404, "not found"))
       const b = await readJson(c, z.object({ state: z.literal("closed") }))
       if (b instanceof Response) return bail(b)

@@ -1379,6 +1379,34 @@ export function runStoreContract(
       await expect(store.touchContextSeen(uuid(), at)).resolves.toBeUndefined()
     })
 
+    it("ask_policy defaults to invited and is settable; the asker roster is idempotent", async () => {
+      const ctx = await newContext()
+      expect(ctx.ask_policy).toBe("invited")
+      await store.setContextAskPolicy(ctx.id, "workspace")
+      expect((await store.getContext(ctx.id))?.ask_policy).toBe("workspace")
+
+      expect(await store.getContextAsker(ctx.id, "u_daniel")).toBeNull()
+      await store.addContextAsker({
+        id: uuid(),
+        context_id: ctx.id,
+        user_id: "u_daniel",
+        added_by: "rob",
+      })
+      // Idempotent on (context, user) — a re-add doesn't duplicate or throw.
+      await store.addContextAsker({
+        id: uuid(),
+        context_id: ctx.id,
+        user_id: "u_daniel",
+        added_by: "rob",
+      })
+      expect(await store.getContextAsker(ctx.id, "u_daniel")).toMatchObject({ user_id: "u_daniel" })
+      expect(await store.listContextAskers(ctx.id)).toHaveLength(1)
+
+      await store.removeContextAsker(ctx.id, "u_daniel")
+      expect(await store.getContextAsker(ctx.id, "u_daniel")).toBeNull()
+      await expect(store.removeContextAsker(ctx.id, "u_nobody")).resolves.toBeUndefined()
+    })
+
     it("rejects a duplicate context name within a workspace", async () => {
       const ctx = await newContext()
       await expect(

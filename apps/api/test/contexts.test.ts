@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // Contexts + sessions: the ask → answer → follow-up loop, its permission edges,
-// and the runner's queue. The ask grant is "viewer on the manifest artifact", so
-// the sharing machinery is exercised here too (a private manifest gates asking).
+// and the runner's queue. Ask-access is WORKSPACE-SCOPED on the context itself
+// (never the manifest's artifact sharing) — a context is a data grant, not a
+// document, and must never be reachable outside its workspace.
 describe("contexts: create + wire an agent to a manifest", () => {
   const owner: TestUser = { id: "u_cx_own", email: "cxown@derive.test", name: "Owner" }
   const dev: TestUser = { id: "u_cx_dev", email: "cxdev@derive.test", name: "Dev" }
@@ -91,14 +92,14 @@ describe("sessions: the ask → answer → follow-up loop", () => {
   const owner: TestUser = { id: "u_ss_own", email: "ssown@derive.test", name: "Owner" }
   const daniel: TestUser = { id: "u_ss_dan", email: "ssdan@derive.test", name: "Daniel" }
   const stranger: TestUser = { id: "u_ss_str", email: "ssstr@derive.test", name: "Stranger" }
-  const { app } = makeAuthedApp("contexts-loop", [owner, daniel, stranger], "commenter")
+  const { app, meta } = makeAuthedApp("contexts-loop", [owner, daniel, stranger], "commenter")
 
   let contextId: string
   let sessionId: string
   let agentToken: string
   let manifestShortId: string
 
-  it("setup: agent + PRIVATE manifest + context; asking is gated on the manifest", async () => {
+  it("setup: ask-access is WORKSPACE-SCOPED on the context, never the manifest", async () => {
     await app.request("/v1/me", { headers: as(owner.email) })
     await app.request("/v1/me", { headers: as(daniel.email) })
     await app.request("/v1/me", { headers: as(stranger.email) })
@@ -106,9 +107,9 @@ describe("sessions: the ask → answer → follow-up loop", () => {
       await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Analyst", role: "editor" }))
     ).json()
     agentToken = ag.token
-    // link_role none = true invite-only: the round-4 workspace-default link would
-    // otherwise admit Daniel (a member) before the explicit share — this test is
-    // about the manifest GATE, so the link stays inert.
+    // The manifest is a PRIVATE artifact — and stays that way. Asking is granted by
+    // the CONTEXT's own policy, not manifest read, so the private manifest doesn't
+    // gate anything for members.
     manifestShortId = (
       await (
         await publishAs(
@@ -130,20 +131,22 @@ describe("sessions: the ask → answer → follow-up loop", () => {
       )
     ).json()
     contextId = x.id
-
-    // Private manifest, no member row: Daniel can't ask (and can't tell it exists).
+    // Least-privilege default: `invited`, so a data grant opens to nobody but the
+    // creator until widened. Daniel is a workspace member but not an invited
+    // asker, so he's denied and can't even tell it exists.
+    expect(x.ask_policy).toBe("invited")
     const denied = await app.request(
       `/v1/contexts/${contextId}/sessions`,
       jsonAs(as(daniel.email), { body_md: "churn for March?" }),
     )
     expect(denied.status).toBe(404)
 
-    // Share the manifest with Daniel → the context becomes askable.
-    await app.request(`/v1/artifacts/${manifestShortId}/members`, {
-      method: "PUT",
-      headers: { ...as(owner.email), "content-type": "application/json" },
-      body: JSON.stringify({ email: daniel.email, role: "viewer" }),
-    })
+    // Invite Daniel (a workspace member) to the asker roster → askable.
+    const invited = await app.request(
+      `/v1/contexts/${contextId}/askers`,
+      jsonAs(as(owner.email), { email: daniel.email }),
+    )
+    expect(invited.status).toBe(201)
     const asked = await app.request(
       `/v1/contexts/${contextId}/sessions`,
       jsonAs(as(daniel.email), { body_md: "churn for March?" }),
@@ -211,14 +214,13 @@ describe("sessions: the ask → answer → follow-up loop", () => {
     ).toBe(409)
   })
 
-  it("sessions are private: asker + context owner only; the roster viewer is not enough", async () => {
-    // The stranger holds no view at all; even sharing the manifest with them
-    // (roster viewer = may ASK) must not expose Daniel's session.
-    await app.request(`/v1/artifacts/${manifestShortId}/members`, {
-      method: "PUT",
-      headers: { ...as(owner.email), "content-type": "application/json" },
-      body: JSON.stringify({ email: stranger.email, role: "viewer" }),
-    })
+  it("sessions are private: asker + context owner only; another invited asker is not enough", async () => {
+    // The stranger is a workspace member; even inviting them to ASK must not
+    // expose Daniel's session — an asker sees only their own conversations.
+    await app.request(
+      `/v1/contexts/${contextId}/askers`,
+      jsonAs(as(owner.email), { email: stranger.email }),
+    )
     expect(
       (await app.request(`/v1/sessions/${sessionId}`, { headers: as(stranger.email) })).status,
     ).toBe(404)
@@ -235,6 +237,37 @@ describe("sessions: the ask → answer → follow-up loop", () => {
       await app.request(`/v1/contexts/${contextId}/sessions`, { headers: as(stranger.email) })
     ).json()
     expect(strangerList.sessions).toHaveLength(0)
+  })
+
+  it("SECURITY: a non-member can't ask — not even with the manifest world-linked + public", async () => {
+    // The exact leak this model closes: open the manifest to the world (viewer
+    // link + public listing) and drop the asker OUT of the workspace. Under the
+    // old "ask = manifest read" rule they could open a session (query the data);
+    // now the context's workspace-membership floor refuses them — 404, no leak.
+    await app.request(`/v1/artifacts/${manifestShortId}/access`, {
+      method: "PATCH",
+      headers: { ...as(owner.email), "content-type": "application/json" },
+      body: JSON.stringify({ linkRole: "viewer", listed: "public" }),
+    })
+    await meta.removeMembership("default", stranger.id)
+
+    // Switch the context back to `workspace` (any member) — the most permissive
+    // policy — to prove even THAT never reaches a non-member.
+    await app.request(
+      `/v1/contexts/${contextId}/access`,
+      jsonAs(as(owner.email), { ask_policy: "workspace" }),
+    )
+    expect(
+      (await app.request(`/v1/contexts/${contextId}`, { headers: as(stranger.email) })).status,
+    ).toBe(404)
+    expect(
+      (
+        await app.request(
+          `/v1/contexts/${contextId}/sessions`,
+          jsonAs(as(stranger.email), { body_md: "let me query your data" }),
+        )
+      ).status,
+    ).toBe(404)
   })
 
   it("a foreign agent can neither read the queue nor answer", async () => {
@@ -331,6 +364,108 @@ describe("sessions: the ask → answer → follow-up loop", () => {
       await app.request(`/v1/sessions/${sid}`, { headers: as(daniel.email) })
     ).json()
     expect(settled.session.state).toBe("answered")
+  })
+})
+
+// Revoking ask-access closes an IN-FLIGHT session too: a member who opened a
+// session and is then removed from the workspace can neither read it nor keep
+// asking — otherwise the session would be a standing query window that outlives
+// their membership (the exact "never outside the workspace" invariant).
+describe("sessions: revoking ask-access cuts off an existing session", () => {
+  const owner: TestUser = { id: "u_rv_own", email: "rvown@derive.test", name: "Owner" }
+  const daniel: TestUser = { id: "u_rv_dan", email: "rvdan@derive.test", name: "Daniel" }
+  const { app, meta } = makeAuthedApp("contexts-revoke", [owner, daniel], "commenter")
+
+  it("a removed member can't read or follow up on their own open session", async () => {
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(daniel.email) })
+    const ag = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Analyst", role: "editor" }))
+    ).json()
+    const manifest = (await (await publishAs(app, "# m", {}, as(owner.email))).json()).short_id
+    const ctx = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "Analytics",
+          agent_id: ag.id,
+          manifest_short_id: manifest,
+        }),
+      )
+    ).json()
+
+    // Open the context to the workspace so Daniel (a member) can ask, then he
+    // opens a session.
+    await app.request(
+      `/v1/contexts/${ctx.id}/access`,
+      jsonAs(as(owner.email), { ask_policy: "workspace" }),
+    )
+    const asked = await app.request(
+      `/v1/contexts/${ctx.id}/sessions`,
+      jsonAs(as(daniel.email), { body_md: "churn?" }),
+    )
+    expect(asked.status).toBe(201)
+    const sid = (await asked.json()).session.id
+    // He can read it while he's a member.
+    expect((await app.request(`/v1/sessions/${sid}`, { headers: as(daniel.email) })).status).toBe(
+      200,
+    )
+
+    // Remove Daniel from the workspace → his in-flight session goes dark.
+    await meta.removeMembership("default", daniel.id)
+    expect((await app.request(`/v1/sessions/${sid}`, { headers: as(daniel.email) })).status).toBe(
+      404,
+    )
+    const followUp = await app.request(
+      `/v1/sessions/${sid}/messages`,
+      jsonAs(as(daniel.email), { body_md: "one more query" }),
+    )
+    expect(followUp.status).toBe(404)
+    // The owner still sees it (they manage the context).
+    expect((await app.request(`/v1/sessions/${sid}`, { headers: as(owner.email) })).status).toBe(
+      200,
+    )
+  })
+
+  it("a removed CREATOR loses transcript access too — the floor applies to owners", async () => {
+    // The creator branch of the session read/patch must also require membership:
+    // offboarding doesn't reassign contexts, so created_by persists — a removed
+    // creator must not keep reading the data answers from outside the workspace.
+    const ag = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "A2", role: "editor" }))
+    ).json()
+    const manifest = (await (await publishAs(app, "# m2", {}, as(owner.email))).json()).short_id
+    const ctx = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "Analytics2",
+          agent_id: ag.id,
+          manifest_short_id: manifest,
+        }),
+      )
+    ).json()
+    const asked = await (
+      await app.request(
+        `/v1/contexts/${ctx.id}/sessions`,
+        jsonAs(as(owner.email), { body_md: "self-ask" }),
+      )
+    ).json()
+    const sid = asked.session.id
+    expect((await app.request(`/v1/sessions/${sid}`, { headers: as(owner.email) })).status).toBe(
+      200,
+    )
+
+    await meta.removeMembership("default", owner.id)
+    expect((await app.request(`/v1/sessions/${sid}`, { headers: as(owner.email) })).status).toBe(
+      404,
+    )
+    const close = await app.request(`/v1/sessions/${sid}`, {
+      method: "PATCH",
+      headers: { ...as(owner.email), "content-type": "application/json" },
+      body: JSON.stringify({ state: "closed" }),
+    })
+    expect(close.status).toBe(404)
   })
 })
 

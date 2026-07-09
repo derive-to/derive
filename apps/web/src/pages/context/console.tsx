@@ -6,19 +6,27 @@ import { ApiError, api, type Session, type SessionMessage, type SessionMeta } fr
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageShell } from "@/components/shared/page-shell"
+import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { Spinner } from "@/components/shared/spinner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { toast } from "@/components/ui/sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
-import { artifactQuery, contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
+import { contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
-import { ShareButton } from "../artifact/share-dialog"
 import { answerMdToHtml } from "./lib/answer-md"
 
 // The context console: ask, read the answer (with the query/confidence/caveats the
@@ -43,10 +51,7 @@ function Console({ id }: { id: string }) {
     data: context,
     error,
     isLoading,
-  } = useQuery({
-    ...contextQuery(id),
-    refetchInterval: 60_000,
-  })
+  } = useQuery({ ...contextQuery(id), refetchInterval: 60_000 })
   const { data: sessions } = useQuery(contextSessionsQuery(id))
 
   // The session on screen: sticky once picked; defaults to the most recent.
@@ -58,12 +63,9 @@ function Console({ id }: { id: string }) {
   const active = picked === "new" ? null : (picked ?? mine[0]?.id ?? null)
   const isOwner = !!context && context.created_by === me?.id
 
-  // No standing on the context reads as 404 (its existence never leaks). Asking
-  // is granted by SHARING THE MANIFEST — the context has no access of its own —
-  // so a teammate who can't load it needs the owner to share the manifest, not
-  // a bug report. Say that plainly instead of spinning forever (the old
-  // behavior: the loader threw, `context` stayed undefined, the spinner never
-  // resolved — indistinguishable from "still loading").
+  // No ask-access reads as 404 (a context's existence never leaks outside its
+  // workspace). Say so instead of spinning forever — the loader prefetches (no
+  // rethrow), so this component owns the state.
   if (error) {
     const status = error instanceof ApiError ? error.status : undefined
     return (
@@ -73,7 +75,7 @@ function Console({ id }: { id: string }) {
           title={status === 404 || status === 403 ? "You don't have access" : "Couldn't load"}
           description={
             status === 404 || status === 403
-              ? "Ask the owner to share this context with you — access to ask is granted through the context's manifest."
+              ? "Ask this context's owner to give you access — only workspace members they invite can ask it."
               : "Something went wrong loading this context. Try again in a moment."
           }
         />
@@ -96,15 +98,8 @@ function Console({ id }: { id: string }) {
         </h1>
         <RunnerLiveness seenAt={context.runner_seen_at} />
         <div className="ml-auto flex items-center gap-3">
-          {/* Who can ASK is who can read the manifest — the context has no access
-              of its own. The owner sets it here so "share to let people ask" is
-              discoverable on the console, not buried on the manifest artifact
-              (its absence is why the pilot sat invite-only, unaskable by anyone
-              but its owner). */}
+          {isOwner && <ContextAccess id={id} policy={context.ask_policy} />}
           {isOwner && context.manifest_short_id && (
-            <ContextAccess shortId={context.manifest_short_id} />
-          )}
-          {context.manifest_short_id && (
             <Link
               to="/artifacts/$ref"
               params={{ ref: context.manifest_short_id }}
@@ -193,26 +188,122 @@ function Console({ id }: { id: string }) {
   )
 }
 
-// The context's ask-grant, surfaced and set on the console: it IS the manifest's
-// share state (read the manifest ⇒ can ask). Reuses the artifact ShareButton on
-// the manifest, plus a plain-language nudge when nobody but the owner can ask —
-// the state that reads as "the app is broken" when a teammate opens the console.
-function ContextAccess({ shortId }: { shortId: string }) {
-  const { data: manifest } = useQuery(artifactQuery(shortId))
-  if (!manifest) return null
-  const askable = manifest.workspace_access === "member" || manifest.link_role !== "none"
+// Who may ASK — the context's own workspace-scoped grant, deliberately NOT the
+// manifest's artifact sharing (which could carry a world link or public listing).
+// There is no "anyone"/public option here BY DESIGN: a context is a data-access
+// grant, not a document, and must never be reachable outside its workspace.
+function ContextAccess({ id, policy }: { id: string; policy: "workspace" | "invited" }) {
+  const [open, setOpen] = useState(false)
+  const [email, setEmail] = useState("")
+  const rosterKey = ["context-askers", id] as const
+  const { data: roster } = useQuery({
+    queryKey: rosterKey,
+    queryFn: () => api.listContextAskers(id).then((r) => r.askers),
+    enabled: open && policy === "invited",
+  })
+
+  // Mutations go through useApiMutation (#361): one place for the error toast +
+  // settle-time invalidation, so these can't drift from the app's write contract.
+  const policyMut = useApiMutation({
+    mutationFn: (next: "workspace" | "invited") => api.setContextAskPolicy(id, next),
+    invalidate: [contextQuery(id).queryKey],
+  })
+  const addMut = useApiMutation({
+    mutationFn: (v: string) => api.addContextAsker(id, v),
+    invalidate: [rosterKey],
+    onSuccess: () => setEmail(""),
+  })
+  const removeMut = useApiMutation({
+    mutationFn: (userId: string) => api.removeContextAsker(id, userId),
+    invalidate: [rosterKey],
+  })
+  const busy = policyMut.isPending || addMut.isPending || removeMut.isPending
+
+  const setPolicy = (next: "workspace" | "invited") => {
+    if (next !== policy) policyMut.mutate(next)
+  }
+  const add = () => {
+    const v = email.trim()
+    if (v) addMut.mutate(v)
+  }
+  const remove = (userId: string) => removeMut.mutate(userId)
+
   return (
-    <div className="flex items-center gap-2" data-testid="context-access">
-      {!askable && <span className="text-xs text-muted-foreground">Only you can ask</span>}
-      <ShareButton
-        shortId={shortId}
-        myRole={manifest.my_role}
-        workspaceAccess={manifest.workspace_access}
-        linkRole={manifest.link_role}
-        listed={manifest.listed}
-        passwordProtected={manifest.password_protected}
-      />
-    </div>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="sm" data-testid="context-access" className="gap-1.5">
+          <Icon name="lock" className="text-muted-foreground" />
+          {policy === "workspace" ? "Workspace can ask" : "Invited only"}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80">
+        <PopoverHeader>
+          <PopoverTitle>Who can ask</PopoverTitle>
+          <PopoverDescription>
+            Only workspace members — a context is never reachable outside the workspace.
+          </PopoverDescription>
+        </PopoverHeader>
+        <div className="mt-3 grid grid-cols-2 gap-1.5">
+          {(["workspace", "invited"] as const).map((p) => (
+            <Button
+              key={p}
+              variant={policy === p ? "secondary" : "outline"}
+              size="sm"
+              disabled={busy}
+              data-testid={`context-access-${p}`}
+              onClick={() => setPolicy(p)}
+            >
+              {p === "workspace" ? "Any member" : "Invited only"}
+            </Button>
+          ))}
+        </div>
+        {policy === "invited" && (
+          <div className="mt-4 flex flex-col gap-2">
+            <div className="flex items-center gap-1.5">
+              <PersonSearchInput
+                value={email}
+                onChange={setEmail}
+                placeholder="Invite a member by email…"
+                testId="context-asker-add"
+                className="flex-1"
+              />
+              <Button
+                size="sm"
+                data-testid="context-asker-add-submit"
+                disabled={busy || !email.trim()}
+                onClick={add}
+              >
+                Add
+              </Button>
+            </div>
+            <div className="flex flex-col gap-1">
+              {(roster ?? []).map((a) => (
+                <div
+                  key={a.user_id}
+                  className="flex items-center justify-between rounded-md px-2 py-1 text-sm hover:bg-muted"
+                >
+                  <span className="text-foreground">{a.username ?? a.user_id}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    data-testid="context-asker-remove"
+                    onClick={() => remove(a.user_id)}
+                    className="text-muted-foreground"
+                  >
+                    Remove
+                  </Button>
+                </div>
+              ))}
+              {roster?.length === 0 && (
+                <p className="px-2 py-1 text-xs text-muted-foreground">
+                  No one invited yet — only you can ask.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   )
 }
 

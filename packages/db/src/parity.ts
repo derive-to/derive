@@ -21,6 +21,7 @@ import type {
   CollectionMemberRecord,
   CollectionRecord,
   CommentRecord,
+  ContextAskerRecord,
   ContextRecord,
   DeliveryRecord,
   DomainRecord,
@@ -64,6 +65,7 @@ export interface TypedTables {
   agentMention: AgentMentionRecord
   invitation: InvitationRecord
   context: ContextRecord
+  contextAsker: ContextAskerRecord
   contextSession: SessionRecord
   sessionMessage: SessionMessageRecord
   collection: CollectionRecord
