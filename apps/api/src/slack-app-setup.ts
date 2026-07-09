@@ -4,17 +4,16 @@
 // (and forget the events URL — the exact gap that leaves reply-back dead), we render
 // the manifest ALREADY FILLED with this instance's URL and walk them through the
 // three clicks: create-from-manifest, paste three secrets, Add to Slack. The manifest
-// is born with the events + interactivity + slash + App Home config, so a fresh
-// "Add to Slack" is two-way from the first message — nothing to toggle by hand.
+// is born with the events config, so a fresh "Add to Slack" is two-way from the first
+// message — nothing to toggle by hand.
 import { esc, brandShell as SHELL } from "./brand-page"
 import { SLACK_BOT_SCOPES } from "./lib/slack"
 
 /** The Slack app manifest, born with everything Derive's Slack integration needs and
  *  every URL pointed at THIS instance. Single source of truth: the setup page renders
  *  it and `GET /v1/slack/manifest.json` serves it, so there is no hand-edited copy to
- *  drift or leave half-filled. `host` names the app and scopes link unfurls to this
- *  deployment's artifact domain. Exported so a test can lock the shape Slack accepts. */
-export const buildSlackManifest = (baseUrl: string, host: string) => {
+ *  drift or leave half-filled. Exported so a test can lock the shape Slack accepts. */
+export const buildSlackManifest = (baseUrl: string) => {
   const u = (path: string): string => new URL(path, baseUrl).toString()
   return {
     display_information: {
@@ -25,41 +24,16 @@ export const buildSlackManifest = (baseUrl: string, host: string) => {
     },
     features: {
       bot_user: { display_name: "Derive", always_online: true },
-      // App Home tab: a per-user landing view (published on app_home_opened).
-      app_home: {
-        home_tab_enabled: true,
-        messages_tab_enabled: false,
-        messages_tab_read_only_enabled: false,
-      },
-      slash_commands: [
-        {
-          command: "/derive",
-          url: u("/v1/slack/command"),
-          description: "Search Derive artifacts and share them into this channel",
-          usage_hint: "find <query>",
-          should_escape: false,
-        },
-      ],
-      // link_shared only fires for domains listed here — this deployment's own origin.
-      unfurl_domains: [host],
     },
     oauth_config: {
-      redirect_urls: [u("/v1/slack/oauth/callback"), u("/v1/slack/link/callback")],
-      scopes: { user: ["openid", "email", "profile"], bot: SLACK_BOT_SCOPES },
+      redirect_urls: [u("/v1/slack/oauth/callback")],
+      scopes: { bot: SLACK_BOT_SCOPES },
     },
     settings: {
       event_subscriptions: {
         request_url: u("/v1/slack/events"),
-        bot_events: [
-          "message.channels",
-          "message.groups",
-          "message.im",
-          "app_mention",
-          "link_shared",
-          "app_home_opened",
-        ],
+        bot_events: ["message.channels", "message.groups", "message.im"],
       },
-      interactivity: { is_enabled: true, request_url: u("/v1/slack/interactivity") },
       org_deploy_enabled: false,
       socket_mode_enabled: false,
       token_rotation_enabled: false,
@@ -80,12 +54,12 @@ export const hostOf = (baseUrl: string): string => {
  *  No auto-POST (Slack can't accept one) — a copy button and a link to the dashboard. */
 export function slackSetupHTML(baseUrl: string): string {
   const host = hostOf(baseUrl)
-  const manifestJson = JSON.stringify(buildSlackManifest(baseUrl, host), null, 2)
+  const manifestJson = JSON.stringify(buildSlackManifest(baseUrl), null, 2)
   return SHELL(
     "Set up Slack",
     "",
     `<h1>Create your Slack app</h1>
-    <p class="sub">This manifest is filled in for <code>${esc(host)}</code>. Creating the app from it wires up event subscriptions, interactivity, the <code>/derive</code> command and the App Home in one shot, so replies and buttons work the moment you connect.</p>
+    <p class="sub">This manifest is filled in for <code>${esc(host)}</code>. Creating the app from it wires up event subscriptions in one shot, so thread replies flow back into Derive the moment you connect.</p>
     <ol class="steps">
       <li>Open <a href="https://api.slack.com/apps" target="_blank" rel="noopener">api.slack.com/apps</a> → <strong>Create New App</strong> → <strong>From a manifest</strong>, and pick your workspace.</li>
       <li>Paste the manifest below (already pointed at this instance) and create the app.</li>

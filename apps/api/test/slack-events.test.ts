@@ -4,11 +4,7 @@ import { join } from "node:path"
 import { type ArtifactRecord, DEFAULT_ORG_SETTINGS, type DeliveryRecord, newId } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import {
-  enqueueSlackEvent,
-  makeSlackEventSender,
-  resolveSlackChannel,
-} from "../src/lib/slack-events"
+import { enqueueSlackEvent, makeSlackEventSender } from "../src/lib/slack-events"
 
 const KEY = "test-encryption-key"
 const baseUrl = "https://derive.test"
@@ -93,43 +89,6 @@ describe("enqueueSlackEvent (gate)", () => {
         proposal_id: "p1",
       }),
     ).toBe(true)
-  })
-})
-
-describe("resolveSlackChannel (routing)", () => {
-  it("falls back to the default channel when no routes exist", async () => {
-    const meta = freshStore()
-    const artifact = await makeArtifact(meta)
-    expect(await resolveSlackChannel(meta, "default", artifact.id, "C-def")).toBe("C-def")
-  })
-
-  it("a collection route the artifact belongs to wins; else the default route", async () => {
-    const meta = freshStore()
-    const artifact = await makeArtifact(meta)
-    await meta.createCollection({ id: "col-1", org_id: "default", title: "Col", created_by: "u-x" })
-    await meta.addCollectionItem("col-1", artifact.id)
-    await meta.setSlackChannelRoute({
-      id: "scr-def",
-      org_id: "default",
-      target_type: "default",
-      target_id: "",
-      channel_id: "C-route-default",
-      created_at: new Date().toISOString(),
-    })
-    // With only a default route, it overrides the install default.
-    expect(await resolveSlackChannel(meta, "default", artifact.id, "C-install")).toBe(
-      "C-route-default",
-    )
-    // A collection route for a collection the artifact is in beats the default route.
-    await meta.setSlackChannelRoute({
-      id: "scr-col",
-      org_id: "default",
-      target_type: "collection",
-      target_id: "col-1",
-      channel_id: "C-col",
-      created_at: new Date().toISOString(),
-    })
-    expect(await resolveSlackChannel(meta, "default", artifact.id, "C-install")).toBe("C-col")
   })
 })
 

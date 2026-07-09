@@ -4821,7 +4821,6 @@ export interface components {
             team_name: string | null;
             default_channel: string | null;
             needs_reauth: boolean;
-            linked: boolean;
             mention_dm: boolean;
         };
         Report: {

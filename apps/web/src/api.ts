@@ -87,13 +87,6 @@ export type InvitePreview = components["schemas"]["InvitePreview"]
 export type OrgSettings = components["schemas"]["OrgSettings"]
 /** Slack connection status for a workspace. Generated from the OpenAPI spec. */
 export type SlackStatus = components["schemas"]["SlackStatus"]
-/** A Slack channel route: which channel a target's event cards post to. */
-export interface SlackRoute {
-  id: string
-  target_type: "collection" | "default"
-  target_id: string
-  channel_id: string
-}
 /** One entry in the workspace switcher. */
 export type WorkspaceSummary = components["schemas"]["WorkspaceSummary"]
 /** The switcher payload: whether multi-workspace is on, the active id, the list. */
@@ -663,24 +656,10 @@ export const api = {
     f("/v1/slack", { ...opts({ default_channel }), method: "PATCH" }).then(j),
   disconnectSlack: (): Promise<void> =>
     f("/v1/slack", { method: "DELETE", credentials: "include" }).then(() => undefined),
-  // Account linking: connect is a redirect to /v1/slack/link (full-page nav); unlink is a fetch.
-  unlinkSlack: (): Promise<void> =>
-    f("/v1/slack/link", { method: "DELETE", credentials: "include" }).then(() => undefined),
   setSlackMentionDm: (mention_dm: boolean): Promise<{ mention_dm: boolean }> =>
     f("/v1/slack/prefs", { ...opts({ mention_dm }), method: "PATCH" }).then(j),
   sendSlackTestDm: (): Promise<{ ok: boolean }> =>
     f("/v1/slack/test-dm", { ...opts({}), method: "POST" }).then(j),
-  // Channel routing (admin): list / upsert / remove.
-  listSlackRoutes: (): Promise<{ routes: SlackRoute[] }> => f("/v1/slack/routes", opts()).then(j),
-  setSlackRoute: (r: {
-    target_type: "collection" | "default"
-    target_id: string
-    channel_id: string
-  }): Promise<{ ok: boolean }> => f("/v1/slack/routes", { ...opts(r), method: "PUT" }).then(j),
-  deleteSlackRoute: (target_type: "collection" | "default", target_id: string): Promise<void> =>
-    f("/v1/slack/routes", { ...opts({ target_type, target_id }), method: "DELETE" }).then(
-      () => undefined,
-    ),
 
   // Workspace name + members (Admin / Creator / Viewer = owner / editor / commenter)
   getWorkspace: (): Promise<Workspace> => f("/v1/workspace", opts()).then(j),

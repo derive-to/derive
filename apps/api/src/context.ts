@@ -697,24 +697,6 @@ export function buildContext(deps: AppDeps) {
   const authorizeStanding = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
     actorFor(c, a).then((actor) => can(actor, action, a.workspace_access, "none"))
 
-  /** Build the Actor for a specific Derive user (no request context) — the same standing
-   *  a signed-in user has: workspace membership role folded with per-artifact and
-   *  collection shares. `unlocked` is false, so a password-gated artifact stays locked
-   *  (a Slack action can't carry the unlock cookie). Used by out-of-band callers that act
-   *  as a known user, e.g. a Slack button clicked by a linked user. */
-  const actorForUser = async (userId: string, a: ArtifactRecord): Promise<Actor> => {
-    const orgRole = (await meta.getMembership(a.org_id, userId))?.role ?? null
-    const am = await meta.getArtifactMember(a.id, userId)
-    const cRoles = await meta.collectionRolesForArtifact(a.id, userId)
-    const artifactRole = maxRole(am?.role ?? null, ...cRoles)
-    return { kind: "user", userId, artifactRole, orgRole, unlocked: false }
-  }
-
-  /** Authorize an action for a specific Derive user against an artifact — the context-free
-   *  twin of `authorize`, going through the same `can` decision. */
-  const authorizeUser = (userId: string, action: Action, a: ArtifactRecord): Promise<boolean> =>
-    actorForUser(userId, a).then((actor) => can(actor, action, a.workspace_access, a.link_role))
-
   /**
    * True when the caller is an anonymous visitor — they may view public content
    * but nothing collaborative (comments, member list, proposals, analytics).
@@ -859,7 +841,6 @@ export function buildContext(deps: AppDeps) {
     anonViewerId,
     actorFor,
     authorize,
-    authorizeUser,
     authorizeStanding,
     anonLocked,
     isPrincipal,

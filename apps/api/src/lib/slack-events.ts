@@ -57,27 +57,6 @@ export const enqueueSlackEvent = async (
   return true
 }
 
-/** Resolve the Slack channel a top-level event card posts to. A per-collection route (for
- *  a collection the artifact belongs to) wins; else a configured `default` route; else the
- *  workspace's install default channel. No routes ⇒ fast path, no artifact→collection query. */
-export const resolveSlackChannel = async (
-  meta: MetaStore,
-  orgId: string,
-  artifactId: string,
-  defaultChannel: string,
-): Promise<string> => {
-  const routes = await meta.listSlackChannelRoutes(orgId)
-  if (routes.length === 0) return defaultChannel
-  const collectionIds = await meta.collectionIdsForArtifact(artifactId)
-  const collectionIdSet = new Set(collectionIds)
-  const collectionRoute = routes.find(
-    (r) => r.target_type === "collection" && collectionIdSet.has(r.target_id),
-  )
-  if (collectionRoute) return collectionRoute.channel_id
-  const defaultRoute = routes.find((r) => r.target_type === "default")
-  return defaultRoute?.channel_id ?? defaultChannel
-}
-
 /** Build the slack_app_event delivery sender: render the card, resolve channel + threading,
  *  post via chat.postMessage. No-ops (delivered) when Slack isn't connected so a row never
  *  dead-letters on a tier/workspace without Slack. */
@@ -93,13 +72,8 @@ export const makeSlackEventSender =
 
     // Threading: comment.resolved posts under the Slack message that mirrors its thread
     // (when one exists); a resolution with no mirrored thread is skipped rather than posted
-    // as context-free noise. Everything else posts top-level to the routed/default channel.
-    let channel = await resolveSlackChannel(
-      meta,
-      p.orgId,
-      p.artifactId,
-      bot.install.default_channel,
-    )
+    // as context-free noise. Everything else posts top-level to the workspace's channel.
+    let channel = bot.install.default_channel
     let threadTs: string | undefined
     if (isThreadedEvent(p.event)) {
       const threadId = typeof p.data.thread_id === "string" ? p.data.thread_id : null

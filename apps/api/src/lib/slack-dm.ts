@@ -1,13 +1,16 @@
-// Per-user Slack DMs: when a comment @mentions a Derive user who has linked their Slack
-// account and left DMs on, the bot direct-messages them. Rides the same durable outbox as
-// the channel posts (a `slack_dm` delivery kind). Self-host clean: no new env, no
-// scheduler — a DM is enqueued inline with the mention fan-out and delivered by the outbox.
+// Per-user Slack DMs: when a comment @mentions a Derive user who has left DMs on, the bot
+// direct-messages them. The Slack user is resolved live from the mentioned user's Derive
+// account email via users.lookupByEmail (see lib/slack.ts resolveSlackUserIdByEmail) — no
+// per-user OAuth or account-linking step, just the workspace's one bot install. Rides the
+// same durable outbox as the channel posts (a `slack_dm` delivery kind). Self-host clean:
+// no new env, no scheduler — a DM is enqueued inline with the mention fan-out and delivered
+// by the outbox.
 
 import type { ArtifactRecord, CommentRecord, DeliveryRecord, MetaStore } from "@derive/core"
 import type { ChannelSendResult } from "../webhooks"
 import { enqueueChannelDelivery } from "../webhooks"
 import { commentDeepLink, type Mention } from "./comments"
-import { openSlackDm } from "./slack"
+import { openSlackDm, resolveSlackUserIdByEmail } from "./slack"
 import { actions, openButton, section } from "./slack-cards"
 import { postWithRecovery, resolveBotToken, slackFailure } from "./slack-delivery"
 import { truncate } from "./text"
@@ -37,10 +40,10 @@ const mentionBlocks = (author: string, title: string, body: string, link: string
   actions([openButton(link)]),
 ]
 
-/** Enqueue a DM to each mentioned Derive user who has a confirmed Slack link, is still a
- *  member of the workspace, and hasn't turned mention DMs off. A confirmed link is only
- *  created by a signed-in member (via the account-link OAuth), so this reaches teammates,
- *  never strangers — the same trust boundary the bell-notification gate enforces. */
+/** Enqueue a DM to each mentioned Derive user who's still a member of the workspace and
+ *  hasn't turned mention DMs off. Resolution to a Slack account happens later, at delivery
+ *  time, by email — so this enqueues for every opted-in member regardless of whether they
+ *  turn out to have a matching Slack account (the sender no-ops cleanly if not). */
 export const enqueueSlackMentionDms = async (
   deps: { meta: MetaStore; baseUrl: string },
   artifact: ArtifactRecord,
@@ -56,8 +59,6 @@ export const enqueueSlackMentionDms = async (
   for (const m of mentions) {
     if (seen.has(m.id)) continue
     seen.add(m.id)
-    const userLink = await meta.getSlackUserLinkByUser(artifact.org_id, m.id)
-    if (userLink?.status !== "confirmed") continue
     if (!(await meta.getMembership(artifact.org_id, m.id))) continue // no longer a member
     const pref = await meta.getUserNotificationPref(artifact.org_id, m.id)
     if (!wantsMentionDm(pref?.prefs)) continue
@@ -87,24 +88,30 @@ export const enqueueSlackDm = async (
   } satisfies SlackDmPayload)
 }
 
-/** Build the slack_dm delivery sender: resolve the user's linked Slack id, open (or reuse)
- *  their DM channel, post. Caches the opened IM channel on the link. No-ops (delivered)
- *  when the user isn't linked or Slack isn't connected, so a row never dead-letters. */
+/** Build the slack_dm delivery sender: resolve the recipient's Slack account by email
+ *  (users.lookupByEmail against the workspace's bot token), open a DM, post. No-ops
+ *  (delivered) when the user has no email on file, no matching Slack account, or Slack
+ *  isn't connected, so a row never dead-letters on an unmatched recipient. */
 export const makeSlackDmSender =
   (meta: MetaStore, encryptionKey: string | undefined) =>
   async (d: DeliveryRecord): Promise<ChannelSendResult> => {
     const p = JSON.parse(d.payload) as SlackDmPayload
     const bot = await resolveBotToken(meta, p.orgId, encryptionKey)
-    const userLink = await meta.getSlackUserLinkByUser(p.orgId, p.userId)
-    if (!bot || userLink?.status !== "confirmed")
-      return { ok: true, status: "skipped: user not linked" }
-    // Resolve the IM channel (cached, or open one and cache it). Then reuse the shared
-    // post-with-recovery path so DMs classify + flag re-auth like every other post.
+    if (!bot) return { ok: true, status: "skipped: slack not connected" }
+    const [user] = await meta.getUsers([p.userId])
+    if (!user?.email) return { ok: true, status: "skipped: no email on file" }
+
+    let slackUserId: string | null
+    try {
+      slackUserId = await resolveSlackUserIdByEmail(bot.token, user.email)
+    } catch (err) {
+      return slackFailure(meta, p.orgId, err)
+    }
+    if (!slackUserId) return { ok: true, status: "skipped: no matching Slack account" }
+
     let channel: string
     try {
-      channel = userLink.dm_channel_id ?? (await openSlackDm(bot.token, userLink.slack_user_id))
-      if (!userLink.dm_channel_id)
-        await meta.setSlackUserLink({ ...userLink, dm_channel_id: channel })
+      channel = await openSlackDm(bot.token, slackUserId)
     } catch (err) {
       return slackFailure(meta, p.orgId, err)
     }

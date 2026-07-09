@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { WebhookEvent } from "../src/events"
-import {
-  type ButtonValue,
-  type CardInput,
-  cardForEvent,
-  markdownToMrkdwn,
-} from "../src/lib/slack-cards"
+import { type CardInput, cardForEvent, markdownToMrkdwn } from "../src/lib/slack-cards"
 
 const artifact = {
   short_id: "abc123",
@@ -14,7 +9,6 @@ const artifact = {
 }
 const input = (event: WebhookEvent, data: Record<string, unknown> = {}): CardInput => ({
   event,
-  orgId: "org_1",
   artifact,
   data,
 })
@@ -77,26 +71,14 @@ describe("cardForEvent", () => {
     })
   }
 
-  it("proposal.created carries approve + request_changes buttons with a valid packed value", () => {
+  it("proposal.created carries only an Open link, no interactive buttons", () => {
     const card = cardForEvent(
       input("proposal.created", { proposal_id: "p1", author: "Ada", message: "hi" }),
     )
     if (!card) throw new Error("expected a card")
     const buttons = findButtons(card.blocks)
-    const acts = buttons.filter(
-      (b) => typeof b.action_id === "string" && String(b.action_id).startsWith("slack_act:"),
-    )
-    expect(acts.map((b) => b.action_id).sort()).toEqual([
-      "slack_act:approve",
-      "slack_act:request_changes",
-    ])
-    for (const b of acts) {
-      const val = JSON.parse(String(b.value)) as ButtonValue
-      expect(val.v).toBe(1)
-      expect(val.org).toBe("org_1")
-      expect(val.id).toBe("p1")
-      expect(String(b.value).length).toBeLessThan(2000) // Slack button value limit
-    }
+    expect(buttons.every((b) => typeof b.action_id !== "string")).toBe(true)
+    expect(buttons.some((b) => b.url === artifact.url)).toBe(true)
   })
 
   it("Open buttons are URL buttons (no action_id, so they don't fire interactivity)", () => {
