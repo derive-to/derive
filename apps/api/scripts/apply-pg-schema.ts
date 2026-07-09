@@ -40,17 +40,10 @@ const url = u.toString()
 const store = await PgMetaStore.create(url, (e) => console.error("pool error:", e.message))
 console.log("app schema applied")
 
-// The one-time data migration the Node tier runs on boot but the Workers entry never
-// gets a chance to (it applies no schema at runtime — see PgMetaStore.fromPool), so
-// migrations run wherever schema does. backfillAccess maps the pre-v2 `visibility`
-// onto workspace_access/link_role/listed — without it every org/public artifact would
-// sit at the fail-closed `none` default (invite-only) after the ADD COLUMN. It's
-// idempotent (consumes `visibility`, so re-runs no-op) and self-contained (folds in
-// the pre-collapse vocabulary itself). Must run AFTER the DDL above (it touches the new
-// columns); deploy:pg runs this step just before the Worker deploy, which keeps the
-// brief "visibility consumed, old Worker still live" window to the deploy duration.
-await store.backfillAccess()
-console.log("access backfill applied")
+// (The one-time pre-v2 access backfill used to run here, after the DDL. Retired
+// with the v1 `visibility`/`general_role` columns — an instance upgrading straight
+// from a pre-v2 build runs deploy/drop-v1-access.sql instead, which folds the old
+// values into the access fields before dropping them.)
 
 // Better Auth schema: derived from the live auth config (the single source of
 // truth), reconciled by Better Auth's own migrator. baseUrl/secret are dummies —

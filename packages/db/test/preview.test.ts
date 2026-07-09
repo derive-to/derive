@@ -10,7 +10,6 @@ describe("version preview fields", () => {
       org_id: "o1",
       slug: null,
       title: "t",
-      visibility: "public",
       kind: "file",
       spa: 0,
     })

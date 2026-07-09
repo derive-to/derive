@@ -13,8 +13,6 @@ CREATE TABLE IF NOT EXISTS artifact (
   link_role TEXT NOT NULL DEFAULT 'none',
   listed TEXT NOT NULL DEFAULT 'none',
   password_hash TEXT,
-  visibility TEXT NOT NULL DEFAULT 'private',
-  general_role TEXT NOT NULL DEFAULT 'viewer',
   kind TEXT NOT NULL,
   spa INTEGER NOT NULL DEFAULT 0,
   locked INTEGER NOT NULL DEFAULT 0,
@@ -460,13 +458,6 @@ CREATE TABLE IF NOT EXISTS principal (
     email TEXT,
     kind TEXT NOT NULL DEFAULT 'human',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  );
-
-CREATE TABLE IF NOT EXISTS acl (
-    artifact_id TEXT PRIMARY KEY REFERENCES artifact(id),
-    visibility TEXT NOT NULL,
-    password_hash TEXT,
-    org_gate TEXT
   );
 
 CREATE TABLE IF NOT EXISTS view (

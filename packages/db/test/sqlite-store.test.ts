@@ -214,7 +214,6 @@ describe("sqlite store: people directory + follower lists + author backfill", ()
       org_id: "o",
       slug: null,
       title: "T",
-      visibility: "public",
       kind: "file",
       spa: 0,
     })

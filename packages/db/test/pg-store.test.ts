@@ -205,7 +205,6 @@ if (PG_URL) {
             org_id: "o",
             slug: null,
             title: "T",
-            visibility: "public",
             kind: "file",
             spa: 0,
           })

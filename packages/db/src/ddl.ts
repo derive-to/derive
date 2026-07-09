@@ -113,12 +113,6 @@ export const placeholderTables = (iso: string): string[] => [
     kind TEXT NOT NULL DEFAULT 'human',
     created_at TEXT NOT NULL DEFAULT ${iso}
   )`,
-  `CREATE TABLE IF NOT EXISTS acl (
-    artifact_id TEXT PRIMARY KEY REFERENCES artifact(id),
-    visibility TEXT NOT NULL,
-    password_hash TEXT,
-    org_gate TEXT
-  )`,
   `CREATE TABLE IF NOT EXISTS view (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),
