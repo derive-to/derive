@@ -37,7 +37,14 @@ RUN cd /opt/derive-cli && npm install --omit=dev && npm install -g /opt/derive-c
 
 # Non-root: the container is the boundary, but the model still runs with
 # --dangerously-skip-permissions inside it — no reason for that to be root.
-RUN useradd -m runner && mkdir -p /work && chown runner:runner /work
+# The cache dirs are pre-created OWNED BY runner so compose named volumes
+# mounted there inherit that ownership — a volume on a nonexistent mountpoint
+# initializes root-owned, npx/uvx die on EACCES the instant they spawn, and
+# every MCP server silently never comes up (found the hard way on the first
+# Hetzner cutover).
+RUN useradd -m runner && mkdir -p /work && chown runner:runner /work \
+    && mkdir -p /home/runner/.npm /home/runner/.cache/uv \
+    && chown -R runner:runner /home/runner/.npm /home/runner/.cache
 COPY --chmod=755 deploy/runner-entrypoint.sh /usr/local/bin/runner-entrypoint.sh
 USER runner
 

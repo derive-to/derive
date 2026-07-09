@@ -21,8 +21,22 @@ services:
       # RUNNER_TIMEOUT_MS: "600000"
     env_file:
       - ./analytics.env
+    # The context dir's own .env (the MCP servers' credentials) — loaded by the
+    # RUNNER so the spawned model inherits it. compose's env_file above only
+    # covers the runner's own config; without this line every data tool is
+    # silently absent and the context escalates everything.
+    command: ["serve", "--env-file", "/work/.env"]
     volumes:
       # The cloned context project's context/ dir: .mcp.json, references/, and
       # the repos/ clone cache (persists across restarts). Optional — without
       # it the manifest + repo pointers still arrive from the server.
       - /srv/contexts/analytics/context:/work
+      # Package caches outlive container recreation: MCP servers spawn via
+      # npx/uvx per answer, and a cold fetch on a small box loses the race
+      # against the MCP connect timeout.
+      - npm-cache-analytics:/home/runner/.npm
+      - uv-cache-analytics:/home/runner/.cache/uv
+
+volumes:
+  npm-cache-analytics:
+  uv-cache-analytics:
