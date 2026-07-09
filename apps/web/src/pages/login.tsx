@@ -8,6 +8,12 @@ import { Eyebrow, LabeledDivider } from "@/components/shared/section-eyebrow"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  InputOTP,
+  InputOTPGroup,
+  InputOTPSlot,
+  REGEXP_ONLY_DIGITS,
+} from "@/components/ui/input-otp"
 import { useAuth } from "@/ctx"
 import { authClient } from "@/lib/auth-client"
 
@@ -115,8 +121,9 @@ export function Login() {
   }
 
   // Complete a 2FA sign-in with the entered TOTP (or backup) code.
-  const verifyCode = async (e: FormEvent) => {
-    e.preventDefault()
+  const verifyCode = async (e?: FormEvent) => {
+    e?.preventDefault()
+    if (busy) return
     setErr("")
     setBusy(true)
     try {
@@ -224,17 +231,39 @@ export function Login() {
                 label={useBackup ? "Backup code" : "Authenticator code"}
                 htmlFor="login-2fa"
               >
-                <Input
-                  id="login-2fa"
-                  data-testid="login-2fa"
-                  name="one-time-code"
-                  inputMode={useBackup ? "text" : "numeric"}
-                  autoComplete="one-time-code"
-                  autoFocus
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder={useBackup ? "xxxxxxxxxx" : "123456"}
-                />
+                {useBackup ? (
+                  <Input
+                    id="login-2fa"
+                    data-testid="login-2fa"
+                    name="one-time-code"
+                    inputMode="text"
+                    autoComplete="one-time-code"
+                    autoFocus
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    placeholder="xxxxxxxxxx"
+                  />
+                ) : (
+                  <InputOTP
+                    id="login-2fa"
+                    data-testid="login-2fa"
+                    maxLength={6}
+                    pattern={REGEXP_ONLY_DIGITS}
+                    inputMode="numeric"
+                    autoFocus
+                    value={code}
+                    onChange={setCode}
+                    // Auto-verify on the sixth digit — verifyCode guards against a re-entrant
+                    // submit while a verify is already in flight.
+                    onComplete={() => verifyCode()}
+                  >
+                    <InputOTPGroup>
+                      {[0, 1, 2, 3, 4, 5].map((i) => (
+                        <InputOTPSlot key={i} index={i} />
+                      ))}
+                    </InputOTPGroup>
+                  </InputOTP>
+                )}
               </FormField>
               <Button
                 data-testid="login-2fa-submit"
@@ -242,7 +271,7 @@ export function Login() {
                 size="lg"
                 type="submit"
                 loading={busy}
-                disabled={!code}
+                disabled={useBackup ? !code : code.length !== 6}
                 className="w-full"
               >
                 {busy ? "Verifying…" : "Verify"}
