@@ -17,6 +17,7 @@ import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 import { collectionsQuery, workspacesQuery } from "@/lib/queries"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
+import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
 import { useShell } from "./shell-context"
 
@@ -147,7 +148,11 @@ export function CommandPalette() {
           )}
 
           {results.length > 0 && (
-            <CommandGroup heading="Artifacts">
+            // Dim while a new search is in flight — the prior matches are stale, not the answer.
+            <CommandGroup
+              heading="Artifacts"
+              className={cn(loading && "opacity-60 transition-opacity")}
+            >
               {results.map((a) => (
                 <CommandItem
                   key={a.short_id}
@@ -169,7 +174,10 @@ export function CommandPalette() {
           )}
 
           {people.length > 0 && (
-            <CommandGroup heading="People">
+            <CommandGroup
+              heading="People"
+              className={cn(loading && "opacity-60 transition-opacity")}
+            >
               {people.map((u) => (
                 <CommandItem
                   key={u.username}
