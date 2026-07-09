@@ -86,7 +86,12 @@ const SCOPE_LABEL: Record<string, string> = {
 // always see what may act as you, and cut it off. The moat's human-facing trust surface.
 function ConnectedAgents() {
   const qc = useQueryClient()
-  const { data: agents, isPending } = useQuery({
+  const {
+    data: agents,
+    isPending,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ["connected-agents"],
     queryFn: () => api.connectedAgents().then((r) => r.agents),
   })
@@ -105,7 +110,7 @@ function ConnectedAgents() {
 
   // No connected agents (and not loading) → keep the surface quiet; this is an advanced,
   // opt-in area that only appears once you've actually authorized an agent.
-  if (!isPending && (!agents || agents.length === 0)) return null
+  if (!isPending && !isError && (!agents || agents.length === 0)) return null
 
   return (
     <div className="flex flex-col gap-3">
@@ -117,6 +122,22 @@ function ConnectedAgents() {
       </div>
       {isPending ? (
         <SettingsListSkeleton />
+      ) : isError ? (
+        <StatusPanel
+          tone="danger"
+          title="Couldn't load connected agents"
+          description="This is usually temporary."
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="security-agents-retry"
+              onClick={() => refetch()}
+            >
+              Try again
+            </Button>
+          }
+        />
       ) : (
         <SettingsGroup>
           {agents?.map((a) => {
@@ -609,9 +630,18 @@ function DisableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
 // named (Better Auth stores only UA + IP), so we show a coarse device line and the headline
 // bulk action rather than a per-row revoke that's hard to attribute confidently.
 function Sessions() {
-  const { data: sessions, isPending } = useQuery({
+  const {
+    data: sessions,
+    isPending,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ["sessions"],
-    queryFn: async () => (await authClient.listSessions()).data ?? [],
+    queryFn: async () => {
+      const r = await authClient.listSessions()
+      if (r.error) throw new Error(r.error.message ?? "Couldn't load your sessions")
+      return r.data ?? []
+    },
   })
 
   const revokeOthers = useApiMutation({
@@ -631,21 +661,34 @@ function Sessions() {
         description={
           isPending
             ? "Loading your signed-in devices…"
-            : count <= 1
-              ? "You're signed in on this device only."
-              : `You're signed in on ${count} devices.`
+            : isError
+              ? "Couldn't load your sessions."
+              : count <= 1
+                ? "You're signed in on this device only."
+                : `You're signed in on ${count} devices.`
         }
       >
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => revokeOthers.mutate()}
-          loading={revokeOthers.isPending}
-          disabled={count <= 1}
-          data-testid="sessions-revoke-others"
-        >
-          Sign out other devices
-        </Button>
+        {isError ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            data-testid="sessions-retry"
+          >
+            Try again
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => revokeOthers.mutate()}
+            loading={revokeOthers.isPending}
+            disabled={count <= 1}
+            data-testid="sessions-revoke-others"
+          >
+            Sign out other devices
+          </Button>
+        )}
       </SettingRow>
     </SettingsGroup>
   )
@@ -656,9 +699,18 @@ function Sessions() {
 // This is the human root of trust the agent-delegation chain ultimately hangs from.
 function Passkeys() {
   const qc = useQueryClient()
-  const { data: passkeys, isPending } = useQuery({
+  const {
+    data: passkeys,
+    isPending,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ["passkeys"],
-    queryFn: async () => (await authClient.passkey.listUserPasskeys()).data ?? [],
+    queryFn: async () => {
+      const r = await authClient.passkey.listUserPasskeys()
+      if (r.error) throw new Error(r.error.message ?? "Couldn't load your passkeys")
+      return r.data ?? []
+    },
   })
   const [adding, setAdding] = useState(false)
 
@@ -710,6 +762,23 @@ function Passkeys() {
       </div>
       {isPending ? (
         <SettingsListSkeleton />
+      ) : isError ? (
+        <StatusPanel
+          tone="danger"
+          layout="inline"
+          title="Couldn't load your passkeys"
+          description="This is usually temporary."
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="passkeys-retry"
+              onClick={() => refetch()}
+            >
+              Try again
+            </Button>
+          }
+        />
       ) : !passkeys || passkeys.length === 0 ? (
         <EmptyState>No passkeys yet. Add one for a phishing-resistant, one-tap sign-in.</EmptyState>
       ) : (

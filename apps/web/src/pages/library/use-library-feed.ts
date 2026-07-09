@@ -5,11 +5,13 @@ import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 
 // The library feed as a hook: the infinite keyset query plus the two optimistic
 // mutations that write across every cached page (star + delete) — now routed through the
-// one governed primitive so their feedback can't drift from the rest of the app. The
-// mutation correctness is preserved verbatim: optimistic write across ALL pages,
-// drop-on-unstar in the Favorites view, rollback + toast on failure, and reconcile the
-// sidebar summary counts on settle. Keyed by the active filter params, so each view
-// caches independently and switching views keeps the current grid (keepPreviousData).
+// one governed primitive so their feedback can't drift from the rest of the app.
+// Optimistic write across ALL pages, drop-on-unstar in the Favorites view, and on failure
+// roll back AND refetch the list: a whole-key snapshot can't be trusted alone, because
+// star + delete write the SAME key, so a concurrent one may have moved the list on since we
+// snapshotted (restoring the stale snapshot would resurrect a just-deleted row). The sidebar
+// counts reconcile on settle. Keyed by the active filter params, so each view caches
+// independently and switching views keeps the current grid (keepPreviousData).
 export function useLibraryFeed(params: LibraryParams) {
   const listQuery = libraryArtifactsQuery(params)
   const query = useInfiniteQuery(listQuery)
@@ -34,7 +36,11 @@ export function useLibraryFeed(params: LibraryParams) {
             }
           : old,
       )
-      return rollback
+      // Roll back, then refetch — a concurrent star/delete may have outdated the snapshot.
+      return () => {
+        rollback()
+        void qc.invalidateQueries({ queryKey: listQuery.queryKey })
+      }
     },
     invalidate: [summaryQuery().queryKey],
   })
@@ -54,7 +60,11 @@ export function useLibraryFeed(params: LibraryParams) {
             }
           : old,
       )
-      return rollback
+      // Roll back, then refetch — a concurrent star/delete may have outdated the snapshot.
+      return () => {
+        rollback()
+        void qc.invalidateQueries({ queryKey: listQuery.queryKey })
+      }
     },
     // The card vanishing is easy to miss, so confirm the delete out loud.
     success: "Artifact deleted",

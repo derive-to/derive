@@ -72,7 +72,10 @@ const scan = (file) => {
       !isLiteralMessage(node.arguments[0])
     ) {
       const { line } = src.getLineAndCharacterOfPosition(node.getStart(src))
-      if (!(lines[line] ?? "").includes("mutation-ignore"))
+      // The escape hatch is a deliberate `// mutation-ignore` COMMENT on the line — not any
+      // substring, so a string arg or an explanatory "…not a mutation-ignore case" can't
+      // accidentally suppress the check.
+      if (!/\/\/\s*mutation-ignore\b/.test(lines[line] ?? ""))
         out.push({ line: line + 1, text: (lines[line] ?? "").trim() })
     }
     ts.forEachChild(node, visit)

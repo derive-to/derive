@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router"
 import { contextQuery, contextSessionsQuery } from "../lib/queries"
 import { requireOnboarded } from "../lib/route-guards"
 import { ContextConsole } from "../pages/context/console"
+import { ConsolePending } from "../pages/context/context-skeleton"
 
 // One context's console: /contexts/$id — ask, read answers, follow up.
 export const Route = createFileRoute("/contexts/$id")({
@@ -14,5 +15,6 @@ export const Route = createFileRoute("/contexts/$id")({
       context.queryClient.prefetchQuery(contextQuery(params.id)),
       context.queryClient.prefetchQuery(contextSessionsQuery(params.id)),
     ]),
+  pendingComponent: ConsolePending,
   component: ContextConsole,
 })

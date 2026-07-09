@@ -10,6 +10,7 @@ import { PageShell } from "@/components/shared/page-shell"
 import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -28,6 +29,7 @@ import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
+import { ConsolePending } from "./context-skeleton"
 import { answerMdToHtml } from "./lib/answer-md"
 
 // The context console: ask, read the answer (with the query/confidence/caveats the
@@ -52,8 +54,15 @@ function Console({ id }: { id: string }) {
     data: context,
     error,
     isLoading,
-  } = useQuery({ ...contextQuery(id), refetchInterval: 60_000 })
-  const { data: sessions } = useQuery(contextSessionsQuery(id))
+  } = useQuery({
+    ...contextQuery(id),
+    refetchInterval: 60_000,
+  })
+  const {
+    data: sessions,
+    isError: sessionsFailed,
+    refetch: refetchSessions,
+  } = useQuery(contextSessionsQuery(id))
 
   // The session on screen: sticky once picked; defaults to the most recent.
   const [picked, setPicked] = useState<string | null>(null)
@@ -66,8 +75,11 @@ function Console({ id }: { id: string }) {
 
   // No ask-access reads as 404 (a context's existence never leaks outside its
   // workspace). Say so instead of spinning forever — the loader prefetches (no
-  // rethrow), so this component owns the state.
-  if (error) {
+  // rethrow), so this component owns the state. Gate on `!context` too: this query
+  // polls every 60s, and a background-poll blip sets `error` while the loaded context
+  // is retained — don't throw a working console (and any half-typed follow-up) to this
+  // screen over a transient blip; it self-heals next poll.
+  if (error && !context) {
     const status = error instanceof ApiError ? error.status : undefined
     return (
       <PageShell className="flex justify-center pt-16">
@@ -83,12 +95,7 @@ function Console({ id }: { id: string }) {
       </PageShell>
     )
   }
-  if (!context || isLoading)
-    return (
-      <PageShell className="flex justify-center pt-16">
-        <Spinner />
-      </PageShell>
-    )
+  if (!context || isLoading) return <ConsolePending />
 
   return (
     <PageShell className="flex flex-col gap-5">
@@ -126,6 +133,26 @@ function Console({ id }: { id: string }) {
         </TabsList>
 
         <TabsContent value="ask" className="flex flex-col gap-4 pt-4">
+          {/* A failed sessions load mustn't masquerade as "no conversations yet" — say so and
+              let them retry (they can still ask a fresh question below). */}
+          {sessionsFailed && !sessions && (
+            <StatusPanel
+              tone="danger"
+              layout="inline"
+              title="Couldn't load your conversations"
+              description="You can still ask below, or try again."
+              action={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="console-sessions-retry"
+                  onClick={() => refetchSessions()}
+                >
+                  Try again
+                </Button>
+              }
+            />
+          )}
           {mine.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
               {/* Recent conversations only — the full history is the owner's
@@ -421,7 +448,7 @@ function SessionThread({
 }) {
   const { me } = useAuth()
   const qc = useQueryClient()
-  const { data } = useQuery(sessionQuery(sessionId))
+  const { data, isError } = useQuery(sessionQuery(sessionId))
   const [text, setText] = useState("")
   // The picker pills read the sessions LIST; the transcript polls its own key.
   // Sync the list whenever this session's state settles, so a pill never keeps
@@ -433,8 +460,7 @@ function SessionThread({
   }, [state, contextId, qc])
   const refresh = () => qc.invalidateQueries({ queryKey: sessionQuery(sessionId).queryKey })
   // Post a follow-up / close the conversation. Defined ABOVE the `!data` guard so the
-  // hooks run unconditionally (a hook can't sit below an early return). Closing swallows
-  // its error — an already-closed session is fine — so it opts out of the error toast.
+  // hooks run unconditionally (a hook can't sit below an early return).
   const post = useApiMutation({
     mutationFn: () => api.postSessionMessage(sessionId, text.trim()),
     onSuccess: () => {
@@ -444,12 +470,31 @@ function SessionThread({
   })
   const closeMut = useApiMutation({
     mutationFn: () => api.closeSession(sessionId),
-    errorToast: false,
+    // A genuine close failure surfaces via the safety net (the old errorToast:false swallowed
+    // real network/500 errors too, not just the benign already-closed race).
     onSuccess: () => {
       refresh()
       onClosed()
     },
   })
+  // `isError && !data`: only when the FIRST load fails (no transcript yet). A background-poll
+  // blip sets isError while `data` is retained — don't replace a live transcript with an error
+  // screen; it self-heals on the next poll.
+  if (isError && !data)
+    return (
+      <StatusPanel
+        layout="inline"
+        tone="danger"
+        title="Couldn't load this conversation"
+        description="Try again in a moment."
+        action={
+          <Button variant="outline" size="sm" data-testid="console-retry" onClick={refresh}>
+            Try again
+          </Button>
+        }
+        className="mt-8"
+      />
+    )
   if (!data) return <Spinner className="mx-auto mt-8" />
   const { session, messages } = data
   // Only the asker may post (the server 404s anyone else) — the owner reads

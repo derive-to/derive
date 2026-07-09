@@ -61,9 +61,16 @@ export function useArtifactActions(p: {
   const commentsKey = commentsQuery(shortId).queryKey
 
   const startEdit = async () => {
-    p.setEditing(true)
-    p.setTitle(p.art?.title ?? "")
-    p.setSrc(await api.getContent(shortId))
+    // Load the source BEFORE opening the editor: if the fetch fails, opening an empty editor
+    // over existing content lets Publish overwrite it with blank. Load first, open on success.
+    try {
+      const src = await api.getContent(shortId)
+      p.setTitle(p.art?.title ?? "")
+      p.setSrc(src)
+      p.setEditing(true)
+    } catch {
+      toast.error("Couldn't load the source to edit. Try again.")
+    }
   }
 
   // Keep the artifact's format: editing an HTML artifact must stay .html (publishing it
@@ -185,7 +192,9 @@ export function useArtifactActions(p: {
       )
       return rollback
     },
-    onSuccess: () => refetchComments(),
+    // Reconcile on settle (success OR failure). On failure the snapshot rollback runs first,
+    // then this refetch restores any concurrent SSE comment a whole-key rollback would drop.
+    invalidate: [commentsKey],
   })
   const toggleResolve = (root: Comment) =>
     resolve.mutate({ root, next: root.state === "resolved" ? "open" : "resolved" })
@@ -208,9 +217,9 @@ export function useArtifactActions(p: {
     p.setActiveThread(null)
   }
 
-  // Reaction: optimistic toggle, rolled back on failure. Edit refetches either way
-  // (server authoritative); delete refetches on success. All three surface a failure via
-  // the global safety net rather than the silent catch these once had.
+  // Reaction: optimistic toggle, rolled back on failure, then reconciled on settle. Edit is
+  // likewise optimistic (below); delete refetches on success. All surface a failure via the
+  // global safety net rather than the silent catch these once had.
   const react = useApiMutation({
     mutationFn: ({ commentId, emoji }: { commentId: string; emoji: string }) =>
       api.react(shortId, commentId, emoji),
@@ -223,11 +232,21 @@ export function useArtifactActions(p: {
       )
       return rollback
     },
-    onSuccess: () => refetchComments(),
+    // Reconcile on settle (see resolve) so a concurrent SSE comment isn't lost on a failed react.
+    invalidate: [commentsKey],
   })
   const editComment = useApiMutation({
     mutationFn: ({ commentId, body }: { commentId: string; body: string }) =>
       api.editComment(shortId, commentId, body),
+    // Optimistic so the edited text shows the instant Save closes the box — not the pre-edit
+    // body until the refetch lands. Rolls back on failure; invalidate then reconciles.
+    optimistic: ({ commentId, body }, client) => {
+      const rollback = snapshot(client, commentsKey)
+      client.setQueryData<Comment[]>(commentsKey, (cs) =>
+        (cs ?? []).map((c) => (c.id === commentId ? { ...c, body_md: body } : c)),
+      )
+      return rollback
+    },
     invalidate: [commentsKey],
   })
   const removeComment = useApiMutation({

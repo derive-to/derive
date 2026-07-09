@@ -109,6 +109,7 @@ export function ShareCollectionDialog({
   const changeMut = useApiMutation({
     mutationFn: ({ handle, next }: { handle: string; next: Role }) =>
       api.setCollectionMember(collection.id, handle, next),
+    success: "Role updated",
     onSuccess: () => load(),
   })
   const change = (m: ArtifactMember, next: Role) => {

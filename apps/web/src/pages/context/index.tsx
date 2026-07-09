@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Link } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
 import { api } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageShell } from "@/components/shared/page-shell"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -16,13 +17,14 @@ import {
 } from "@/components/ui/select"
 import { agentsQuery, contextsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { ContextRowsSkeleton } from "./context-skeleton"
 
 // The contexts directory: the workspace's askable agent setups. Creation wires an
 // existing agent (Settings → Agents) to a manifest artifact by its short id — the
 // two halves already exist as first-class objects; a context is just the joint.
 export function Contexts() {
   const qc = useQueryClient()
-  const { data: contexts, isPending } = useQuery(contextsQuery())
+  const { data: contexts, isPending, isError, refetch } = useQuery(contextsQuery())
   // Agents load lazily for the create form; a 403 (non-admin) just hides it —
   // asking doesn't require admin, only creating does.
   const { data: agents } = useQuery({ ...agentsQuery(), retry: false })
@@ -45,7 +47,25 @@ export function Contexts() {
         />
       )}
 
-      {isPending ? null : !contexts || contexts.length === 0 ? (
+      {isPending ? (
+        <ContextRowsSkeleton />
+      ) : isError ? (
+        <StatusPanel
+          tone="danger"
+          title="Couldn't load contexts"
+          description="This is usually temporary."
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="contexts-retry"
+              onClick={() => refetch()}
+            >
+              Try again
+            </Button>
+          }
+        />
+      ) : !contexts || contexts.length === 0 ? (
         <EmptyState
           icon={<Icon name="context" />}
           title="No contexts yet"
@@ -83,6 +103,7 @@ function NewContext({
   const [name, setName] = useState("")
   const [agentId, setAgentId] = useState(agents[0]?.id ?? "")
   const [manifest, setManifest] = useState("")
+  const nav = useNavigate()
 
   const create = useApiMutation({
     mutationFn: () =>
@@ -92,10 +113,13 @@ function NewContext({
         manifest_short_id: manifest.trim(),
       }),
     success: "Context created",
-    onSuccess: () => {
+    onSuccess: (ctx) => {
       setName("")
       setManifest("")
       onCreated()
+      // Carry the user straight into the console they just made — asking the first
+      // question is the point, not admiring a new row in the directory.
+      nav({ to: "/contexts/$id", params: { id: ctx.id } })
     },
   })
   const submit = () => {

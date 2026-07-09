@@ -1,6 +1,29 @@
 import { QueryClient } from "@tanstack/react-query"
 import { describe, expect, it } from "vitest"
-import { snapshot } from "./use-api-mutation"
+import { invalidateKeys, snapshot } from "./use-api-mutation"
+
+// Which queries reconcile on settle. The array form runs on both outcomes; the function
+// form runs only on success — keyed off the error, NOT `data`, so a void mutation (whose
+// success `data` is undefined) still invalidates. That last case is the regression this locks.
+describe("invalidateKeys", () => {
+  const K = [["a"], ["b"]]
+  it("array form reconciles on success AND failure", () => {
+    expect(invalidateKeys(K, { id: 1 }, null, undefined)).toEqual(K)
+    expect(invalidateKeys(K, undefined, new Error("x"), undefined)).toEqual(K)
+  })
+  it("function form runs on success — including a VOID mutation whose data is undefined", () => {
+    const fn = (_d: unknown, vars: { id: string }) => [["thread", vars.id]]
+    expect(invalidateKeys(fn, { ok: true }, null, { id: "42" })).toEqual([["thread", "42"]])
+    // void success: data undefined but it must STILL invalidate (the old `data===undefined` bug).
+    expect(invalidateKeys(fn, undefined, null, { id: "42" })).toEqual([["thread", "42"]])
+  })
+  it("function form is skipped on failure (no result to key off)", () => {
+    expect(invalidateKeys(() => [["never"]], undefined, new Error("boom"), undefined)).toEqual([])
+  })
+  it("no invalidate config → nothing", () => {
+    expect(invalidateKeys(undefined, {}, null, undefined)).toEqual([])
+  })
+})
 
 // `snapshot` is the heart of the optimistic path: it captures a query's data before
 // the optimistic edit so the primitive can restore it verbatim if the write fails.

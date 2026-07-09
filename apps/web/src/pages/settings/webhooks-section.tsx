@@ -5,6 +5,7 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { Spinner } from "@/components/shared/spinner"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -24,7 +25,7 @@ import { ALL_EVENTS } from "./webhook-events"
 
 export function WebhooksSection() {
   const qc = useQueryClient()
-  const { data: hooks, isPending } = useQuery(webhooksQuery())
+  const { data: hooks, isPending, isError, refetch } = useQuery(webhooksQuery())
   const reload = () => qc.invalidateQueries({ queryKey: webhooksQuery().queryKey })
 
   return (
@@ -51,6 +52,22 @@ export function WebhooksSection() {
 
       {isPending ? (
         <SettingsListSkeleton />
+      ) : isError ? (
+        <StatusPanel
+          tone="danger"
+          title="Couldn't load webhooks"
+          description="This is usually temporary."
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="webhooks-retry"
+              onClick={() => refetch()}
+            >
+              Try again
+            </Button>
+          }
+        />
       ) : !hooks || hooks.length === 0 ? (
         <EmptyState>No webhooks yet. Add one above.</EmptyState>
       ) : (

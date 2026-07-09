@@ -26,8 +26,8 @@ export const retryQuery = (failureCount: number, err: unknown): boolean =>
   failureCount < 3 && isTransient(err)
 
 // Mutation meta the app understands. `errorToast: false` opts a single mutation OUT
-// of the global error toast — for the few sites that render the failure inline (the
-// login form, the share-access panel) from `mutation.error` instead of a toast.
+// of the global error toast — for the few sites that render the failure inline (e.g. the
+// login form) from `mutation.error` instead of a toast.
 // Augmenting react-query's Register makes `meta` typed everywhere a mutation is
 // declared, so a typo like `errorTost` is a compile error, not a silent no-op.
 export type AppMutationMeta = { errorToast?: boolean }
@@ -42,6 +42,17 @@ declare module "@tanstack/react-query" {
  *  it opted out to handle the failure inline. Pure + exported so it's unit-tested. */
 export const shouldToastError = (meta: AppMutationMeta | undefined): boolean =>
   meta?.errorToast !== false
+
+/** The user-facing text for a mutation failure. A server error (ApiError) carries a numeric
+ *  `status` and a human message worth showing; a network/unknown failure throws a raw browser
+ *  string ("Failed to fetch") or a non-Error — fall back to a friendly line rather than leak
+ *  that (or raise a blank toast on an `Error` with no message). Pure + exported so it's tested. */
+export const toastMessageFor = (err: unknown): string => {
+  const status = (err as { status?: unknown })?.status
+  return typeof status === "number" && err instanceof Error && err.message
+    ? err.message
+    : "Something went wrong. Check your connection and try again."
+}
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -61,7 +72,7 @@ export const queryClient = new QueryClient({
   // A mutation opts out with `meta.errorToast: false` when it renders the error inline.
   mutationCache: new MutationCache({
     onError: (err, _vars, _ctx, mutation) => {
-      if (shouldToastError(mutation.meta)) toast.error((err as Error).message)
+      if (shouldToastError(mutation.meta)) toast.error(toastMessageFor(err))
     },
   }),
 })

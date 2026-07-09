@@ -67,15 +67,10 @@ export function useApiMutation<TData = unknown, TVars = void>(config: {
       if (msg) toast.success(msg)
       config.onSuccess?.(data, vars)
     },
-    onSettled: (data, _err, vars, ctx) => {
+    onSettled: (data, err, vars, ctx) => {
       if (ctx?.pendingKey) mark(ctx.pendingKey, false)
-      const keys =
-        typeof config.invalidate === "function"
-          ? data === undefined
-            ? []
-            : config.invalidate(data, vars)
-          : (config.invalidate ?? [])
-      for (const key of keys) void qc.invalidateQueries({ queryKey: key })
+      for (const key of invalidateKeys(config.invalidate, data, err, vars))
+        void qc.invalidateQueries({ queryKey: key })
     },
   })
 
@@ -98,6 +93,24 @@ export function useApiMutation<TData = unknown, TVars = void>(config: {
  * it's the unit-tested heart of the optimistic path. Relies on react-query's immutable
  * updates — the pre-edit value is held by reference and a later update never mutates it.
  */
+/**
+ * Which queries to reconcile once a mutation settles. The ARRAY form runs on success OR
+ * failure (reconcile either way). The FUNCTION form needs the result, so it runs only on
+ * SUCCESS — gated on the error, NOT on `data`: a void mutation resolves `data` to `undefined`
+ * on success too, so a `data === undefined` check would wrongly skip it. Pure + exported so
+ * the discriminator is unit-tested rather than buried in the hook's onSettled closure.
+ */
+export function invalidateKeys<TData, TVars>(
+  invalidate: QueryKey[] | ((data: TData, vars: TVars) => QueryKey[]) | undefined,
+  data: TData | undefined,
+  err: unknown,
+  vars: TVars,
+): QueryKey[] {
+  if (Array.isArray(invalidate)) return invalidate
+  if (typeof invalidate === "function") return err ? [] : invalidate(data as TData, vars)
+  return []
+}
+
 export function snapshot(qc: QueryClient, key: QueryKey): () => void {
   const prev = qc.getQueryData(key)
   // react-query treats setQueryData(key, undefined) as a no-op, so when the key held

@@ -25,7 +25,7 @@ import { SettingsSection } from "./settings-section"
 
 export function AgentsSection() {
   const qc = useQueryClient()
-  const { data: agents, isPending } = useQuery(agentsQuery())
+  const { data: agents, isPending, isError, refetch } = useQuery(agentsQuery())
   const reload = () => qc.invalidateQueries({ queryKey: agentsQuery().queryKey })
 
   return (
@@ -44,6 +44,22 @@ export function AgentsSection() {
 
       {isPending ? (
         <SettingsListSkeleton />
+      ) : isError ? (
+        <StatusPanel
+          tone="danger"
+          title="Couldn't load agents"
+          description="This is usually temporary."
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="agents-retry"
+              onClick={() => refetch()}
+            >
+              Try again
+            </Button>
+          }
+        />
       ) : !agents || agents.length === 0 ? (
         <EmptyState>No agents yet. Add one above.</EmptyState>
       ) : (
