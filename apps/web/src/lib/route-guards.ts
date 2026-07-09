@@ -22,20 +22,28 @@ export const requireAuth = async ({ context, location }: GuardArgs) => {
   return { me }
 }
 
-// requireAuth + the first-run onboarding gate: a signed-in user who hasn't set a
-// profession (and hasn't finished/skipped onboarding) goes to /welcome. /welcome
-// itself uses requireAuth ONLY, so it never redirects to itself — no loop.
-export const requireOnboarded = async (args: GuardArgs) => {
-  const { me } = await requireAuth(args)
-  // Server-authoritative flag (syncs across devices, survives a cleared cache) wins.
-  if (me.onboarded) return
-  // Fall back to the legacy signals so accounts from before the flag are never bounced
-  // back to /welcome: a claimed profession, or the per-browser localStorage cache.
+// The ONE first-run predicate — the single source of truth for "does this signed-in
+// user still need /welcome". The server-authoritative flag (syncs across devices,
+// survives a cleared cache) wins; otherwise fall back to the legacy signals so accounts
+// from before the flag are never bounced back to /welcome — a claimed profession, or the
+// per-browser localStorage cache. Both the route gate and the post-login redirect route
+// off THIS, so they can't drift (a simpler onboarded-only check would send returning
+// pre-flag users to /welcome after sign-in).
+export const needsOnboarding = (me: { onboarded?: boolean; profession?: string | null }) => {
+  if (me.onboarded) return false
   let cached = false
   try {
     cached = localStorage.getItem(STORAGE_KEYS.onboarded) === "1"
   } catch {
     /* private mode — the profession check still gates it */
   }
-  if (!me.profession && !cached) throw redirect({ to: "/welcome" })
+  return !me.profession && !cached
+}
+
+// requireAuth + the first-run onboarding gate: a signed-in user who still needs
+// onboarding goes to /welcome. /welcome itself uses requireAuth ONLY, so it never
+// redirects to itself — no loop.
+export const requireOnboarded = async (args: GuardArgs) => {
+  const { me } = await requireAuth(args)
+  if (needsOnboarding(me)) throw redirect({ to: "/welcome" })
 }
