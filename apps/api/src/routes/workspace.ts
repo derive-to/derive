@@ -59,7 +59,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
       githubMirrorComments: z.boolean(),
       githubPreviewLink: z.boolean(),
       slackPost: z.boolean(),
-      slackEvents: z.record(z.string(), z.boolean()).optional(),
       // The access a NEW publish lands with (see access-model.md): the three
       // single-purpose fields. Factory default is the team draft — member / none / none.
       defaultWorkspaceAccess: z.enum(["none", "member"]),
@@ -555,7 +554,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
             githubMirrorComments: z.boolean(),
             githubPreviewLink: z.boolean(),
             slackPost: z.boolean(),
-            slackEvents: z.record(z.string(), z.boolean()),
             defaultWorkspaceAccess: z.enum(["none", "member"]),
             defaultLinkRole: z.enum(["none", "viewer", "commenter", "editor"]),
             defaultListed: z.enum(["none", "workspace", "public"]),

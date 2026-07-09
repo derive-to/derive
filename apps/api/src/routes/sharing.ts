@@ -6,6 +6,7 @@ import type { AppContext } from "../context"
 import { buildShareEmail } from "../lib/email"
 import { bail, fail, readJson } from "../lib/http"
 import { resolveUserRef } from "../lib/resolve-user"
+import { enqueueSlackShareDm } from "../lib/slack-dm"
 import { ArtifactMember } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
 
@@ -160,6 +161,14 @@ export const sharingRoutes = (ctx: AppContext) => {
               role: b.role,
             }),
           })
+        // Same interrupt, mirrored to Slack (independent of the email gate above —
+        // gated on the recipient's own Slack-DM preference instead).
+        await enqueueSlackShareDm(
+          { meta, baseUrl: deps.baseUrl },
+          artifact,
+          { sharedBy: sharer.name ?? "Someone", role: b.role },
+          user.id,
+        )
       }
       // Echo the public handle, never the email — otherwise sharing by @handle would
       // be a handle→email oracle (resolve anyone's email by sharing an artifact with them).
