@@ -324,6 +324,11 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
       reset()
     },
   })
+  // Both the OTP's auto-submit (on the sixth digit) and the form (Enter / Turn on) land here;
+  // the in-flight guard stops a stray Enter right after auto-submit from firing verifyTotp twice.
+  const submitConfirm = () => {
+    if (!confirm.isPending) confirm.mutate()
+  }
 
   // Clear the wizard + both mutations' errors when the dialog closes or a round completes.
   // A function declaration (hoisted) so confirm's onSuccess above can call it.
@@ -402,7 +407,7 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
             className="flex flex-col gap-4"
             onSubmit={(e) => {
               e.preventDefault()
-              confirm.mutate()
+              submitConfirm()
             }}
           >
             <div className="flex flex-col items-center gap-3">
@@ -503,7 +508,7 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
                 onChange={setCode}
                 // Auto-submit the moment all six digits land (typed or pasted) — no reaching
                 // for the button. The mutation guards against a double-fire.
-                onComplete={() => confirm.mutate()}
+                onComplete={submitConfirm}
               >
                 <InputOTPGroup>
                   {[0, 1, 2, 3, 4, 5].map((i) => (

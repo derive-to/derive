@@ -52,6 +52,13 @@ test("[deep] TOTP two-factor: enable, then sign in through the challenge", async
   const secret = ((await page.getByTestId("2fa-secret").textContent()) ?? "").trim()
   expect(secret).toMatch(/^[A-Z2-7]{16,}$/)
 
+  // Backup codes download as a real file.
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByTestId("2fa-download-backup").click(),
+  ])
+  expect(download.suggestedFilename()).toBe("derive-backup-codes.txt")
+
   // The segmented OTP input auto-submits on the sixth digit — no button click needed. The
   // server accepting the generated code (row flips Enable → Disable) proves 2FA is on.
   await page.getByTestId("2fa-confirm-code").fill(totp(secret))
