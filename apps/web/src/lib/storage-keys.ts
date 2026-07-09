@@ -7,6 +7,10 @@ export const STORAGE_KEYS = {
   cursorPref: "derive.cursor.pref",
   commentsPanel: "derive.comments.panel",
   navCollapsed: "derive.nav.collapsed",
+  // A per-browser, NON-authoritative hint of the last resolved session's signed-in
+  // state — steers only the pre-paint boot frame (rail vs chrome-light) so a returning
+  // user's cold load doesn't pop. Never an access decision (see lib/auth-hint).
+  authed: "derive.authed",
   // Agent pushes auto-open in this tab (absent = on). Per-device on purpose:
   // yanking navigation is fine on your own laptop, hostile on a shared screen.
   autoOpen: "derive.autoopen",

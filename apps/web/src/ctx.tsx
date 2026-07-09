@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { ThemeProvider as NextThemesProvider, useTheme as useNextTheme } from "next-themes"
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react"
 import type { Me } from "./api"
+import { writeAuthHint } from "./lib/auth-hint"
 import { type CursorPref, defaultPrefFor, normalizePref } from "./lib/cursors"
 import { meQuery } from "./lib/queries"
 import { STORAGE_KEYS } from "./lib/storage-keys"
@@ -34,6 +35,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     qc.cancelQueries({ queryKey: meQuery().queryKey })
     qc.setQueryData(meQuery().queryKey, m)
   }
+  // Mirror the resolved session into the per-browser boot hint — but never during the
+  // loading window (so a mid-load reload keeps the last known state). The pre-paint
+  // boot frame reads it to reserve the rail for a returning user and chrome-light for
+  // an anon, so neither pops on a cold load. UI-only; me() stays the authority.
+  useEffect(() => {
+    if (!loading) writeAuthHint(!!me)
+  }, [loading, me])
   return <AuthCtx.Provider value={{ me, loading, setMe }}>{children}</AuthCtx.Provider>
 }
 

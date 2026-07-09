@@ -10,9 +10,10 @@ import {
 import { type ReactNode, useEffect, useState } from "react"
 import { AgentPushListener } from "../components/chrome/agent-push"
 import { AppShell } from "../components/chrome/app-shell"
-import { AppBoot } from "../components/shared/app-boot"
+import { BootShell } from "../components/chrome/boot-shell"
 import { Toaster } from "../components/ui/sonner"
 import { AuthProvider, CursorPrefProvider, ThemeProvider } from "../ctx"
+import { CHROMELESS_EXACT, CHROMELESS_PREFIX, isChromelessPath } from "../lib/chrome-routes"
 import { queryClient } from "../lib/query-client"
 import { STORAGE_KEYS } from "../lib/storage-keys"
 import { reportWebVitals } from "../lib/vitals"
@@ -27,6 +28,19 @@ import "@/styles/globals.css"
 const THEME_BOOT = `(function(){try{var t=localStorage.getItem(${JSON.stringify(
   STORAGE_KEYS.theme,
 )});if(t!=="light"&&t!=="dark")t="dark";var e=document.documentElement;e.classList.remove("light","dark");e.classList.add(t)}catch(e){}})()`
+
+// Pre-paint sibling to THEME_BOOT: tag <html> with which boot frame to reserve —
+// before the shell paints — from the persisted auth hint AND the entry path. A
+// returning signed-in user (hint set) on an app route gets the rail silhouette;
+// everyone else (an anon, or a chromeless auth/onboarding route) gets the neutral
+// mark. globals.css keys the two off data-boot; BootShell renders both. Inlined as a
+// string so it runs before any module loads — kept in lockstep via the shared route
+// lists + STORAGE_KEYS. A stale hint (since-expired session) self-corrects next load.
+const BOOT_FRAME = `(function(){try{var p=location.pathname;var authed=localStorage.getItem(${JSON.stringify(
+  STORAGE_KEYS.authed,
+)})==="1";var e=${JSON.stringify(CHROMELESS_EXACT)};var f=${JSON.stringify(
+  CHROMELESS_PREFIX,
+)};var b=!authed||e.indexOf(p)>=0||f.some(function(x){return p.indexOf(x)===0});document.documentElement.setAttribute("data-boot",b?"bare":"rail")}catch(_){}})()`
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
@@ -90,27 +104,21 @@ function RootComponent() {
 // mounted once here, so navigating between pages morphs only the content — the
 // rail never remounts. /login is the one chrome-less route.
 function AppFrame() {
-  // Hydration gate. Until the client has mounted, render the neutral AppBoot — the
-  // SAME thing the SPA prerender bakes into the static shell — so the first client
-  // paint matches the prerendered HTML exactly (clean hydration, no flash). One
-  // tick later the route-correct chrome renders, INSTANTLY, not gated on the me()
-  // query (identity atoms skeleton in during its latency). This is a one-time
-  // cold-boot frame: in-app navs keep the chrome mounted and never see it again.
+  // Hydration gate. AppShell reads browser-only state (matchMedia, the persisted rail
+  // width), so it can't render identically on the prerendered static shell; until the
+  // client mounts we show BootShell — the SAME shell silhouette the SPA prerender bakes
+  // in — so the first client paint matches the static HTML (clean hydration) AND the
+  // rail is already in place, so the swap to real chrome a tick later is seamless (no
+  // centered-logo → app-layout jump). One-time: in-app navs keep the chrome mounted and
+  // never see it again.
   const [hydrated, setHydrated] = useState(false)
   useEffect(() => setHydrated(true), [])
 
-  // /login, /reset-password, and /welcome (first-run onboarding) render chrome-less — no
-  // rail/top bar. /showcase is the design canvas and renders chrome-less too.
-  const chromeless = useRouterState({
-    select: (s) =>
-      s.location.pathname === "/login" ||
-      s.location.pathname === "/reset-password" ||
-      s.location.pathname === "/welcome" ||
-      s.location.pathname === "/showcase" ||
-      s.location.pathname.startsWith("/invite/"),
-  })
+  // /login, /reset-password, /welcome (onboarding), /showcase, /invite/* render
+  // chrome-less — no rail. The one list, shared with the boot script (lib/chrome-routes).
+  const chromeless = useRouterState({ select: (s) => isChromelessPath(s.location.pathname) })
 
-  if (!hydrated) return <AppBoot />
+  if (!hydrated) return <BootShell />
   return chromeless ? (
     <Outlet />
   ) : (
@@ -128,6 +136,10 @@ function RootDocument({ children }: { children: ReactNode }) {
         <script
           // biome-ignore lint/security/noDangerouslySetInnerHtml: static boot string built from a constant storage key, no user input.
           dangerouslySetInnerHTML={{ __html: THEME_BOOT }}
+        />
+        <script
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: static boot string built from constant route lists, no user input.
+          dangerouslySetInnerHTML={{ __html: BOOT_FRAME }}
         />
         <HeadContent />
       </head>

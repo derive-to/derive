@@ -340,6 +340,25 @@
   }
 }
 
+/* ── Boot frame ─────────────────────────────────────────────────────────────
+   __root's pre-paint BOOT_FRAME script sets data-boot on <html> from the entry path
+   so the static shell reserves the frame AppShell settles into — before hydration, no
+   layout jump. BootShell renders both frames; these rules reveal one. Rail silhouette
+   for app routes (default); the neutral brand mark for chromeless / bare-artifact
+   entries, where AppShell's own first paint is chrome-light. In @layer utilities so
+   the toggle outranks the boot-rail wrapper's `contents` utility. */
+@layer utilities {
+  [data-slot="boot-mark"] {
+    display: none;
+  }
+  [data-boot="bare"] [data-slot="boot-rail"] {
+    display: none;
+  }
+  [data-boot="bare"] [data-slot="boot-mark"] {
+    display: block;
+  }
+}
+
 /* A peer's click ripple on the live-cursor overlay (see cursor-layer.tsx RippleDot). */
 @keyframes derive-cursor-ripple {
   from {

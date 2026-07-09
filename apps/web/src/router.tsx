@@ -19,10 +19,11 @@ export function getRouter() {
     // Debounce intent so a pointer brushing past a link doesn't fire the loader;
     // ~65ms is below the time it takes to settle on a target you actually want.
     defaultPreloadDelay: 65,
-    // Cross-fade route changes. The rail/top bar are mounted once above the
-    // Outlet, so only the content visibly morphs. No-ops where the View
-    // Transitions API is unavailable.
-    defaultViewTransition: true,
+    // View transitions are deliberately OFF. With intent-preloading + shape-matched
+    // skeletons most navs already swap cleanly, but a global cross-fade dissolves the
+    // outgoing page THROUGH the pending skeleton on any cold nav — which reads as a
+    // flash. Opt a specific navigation in per-link (viewTransition) if it ever earns
+    // a deliberate transition.
     // Perceived-perf: hold the current page for delayMs before showing the pending
     // frame (most cache-warm navs resolve first, so nothing flashes), and once shown
     // keep it at least minShownMs so a just-too-slow load doesn't strobe. The same
