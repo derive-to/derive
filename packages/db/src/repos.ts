@@ -1856,14 +1856,15 @@ export function makeRepos(db: SqliteDb) {
       .from(contextAsker)
       .where(and(eq(contextAsker.context_id, contextId), eq(contextAsker.user_id, userId)))
       .get()) ?? null
-  const addContextAsker = async (a: NewContextAsker): Promise<ContextAskerRecord> => (
+  const addContextAsker = async (a: NewContextAsker): Promise<ContextAskerRecord> => {
     await db
       .insert(contextAsker)
       .values(a)
       .onConflictDoNothing({ target: [contextAsker.context_id, contextAsker.user_id] })
-      .run(),
-    (await getContextAsker(a.context_id, a.user_id)) as ContextAskerRecord
-  )
+      .run()
+    // Read back so a re-add returns the EXISTING row (the insert was a no-op).
+    return (await getContextAsker(a.context_id, a.user_id)) as ContextAskerRecord
+  }
   const removeContextAsker = async (contextId: string, userId: string): Promise<void> => {
     await db
       .delete(contextAsker)
