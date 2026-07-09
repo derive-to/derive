@@ -19,7 +19,7 @@
     "typecheck": "tsgo --noEmit",
     "typecheck:tsc": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage --passWithNoTests"
   },
   "dependencies": {
     "@derive/core": "workspace:*"

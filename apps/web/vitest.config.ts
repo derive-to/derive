@@ -24,9 +24,10 @@ export default defineConfig({
         "src/pages/artifact/lib/layout.ts",
       ],
       reporter: ["text-summary"],
-      // Ratchet floors under current (95.5/83/100/97.2). Extra headroom: this gate
-      // is scoped to 7 small pure-logic files, so each function is worth several %.
-      thresholds: { statements: 90, branches: 76, functions: 90, lines: 92 },
+      // Ratchet floors. Only statements + lines gate — this is 7 small pure-logic
+      // files, so functions/branches (22 fns) swing several % per unit and would
+      // false-fail routine additions on a hard gate. (current 95.5/97.2)
+      thresholds: { statements: 90, lines: 92 },
     },
   },
 })

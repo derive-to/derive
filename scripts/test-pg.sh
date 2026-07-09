@@ -54,9 +54,10 @@ cd "$ROOT/apps/api"
 #
 # File parallelism is ON (previously --no-file-parallelism): helpers.ts keys each
 # schema on VITEST_POOL_ID, so concurrent files land in distinct schemas and can't
-# collide. Cap workers so the per-store pools (node-postgres default max=10) stay
-# well under max_connections; a 2-vCPU CI box uses ~2 anyway, so the cap only
-# bounds beefier local machines.
+# collide. --maxWorkers=4 bounds the live per-store pools (node-postgres default
+# max=10) so their connections stay well under max_connections. Note vitest does
+# NOT clamp an explicit maxWorkers to core count, so this runs 4 forks even on a
+# 2-vCPU box — fine here because pg tests are I/O-bound (waiting on Postgres).
 pnpm exec vitest run --maxWorkers=4 --testTimeout=15000 "$@"
 
 # Also run @derive/db's store contract against the same Postgres — the only place
