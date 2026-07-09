@@ -4670,6 +4670,9 @@ export interface components {
             githubMirrorComments: boolean;
             githubPreviewLink: boolean;
             slackPost: boolean;
+            slackEvents?: {
+                [key: string]: boolean;
+            };
             /** @enum {string} */
             defaultWorkspaceAccess: "none" | "member";
             /** @enum {string} */
@@ -4817,6 +4820,9 @@ export interface components {
             connected: boolean;
             team_name: string | null;
             default_channel: string | null;
+            needs_reauth: boolean;
+            linked: boolean;
+            mention_dm: boolean;
         };
         Report: {
             id: string;

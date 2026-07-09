@@ -158,7 +158,7 @@ crons = ["* * * * *"]
 [assets]
 directory = "../web/dist/client"
 binding = "ASSETS"
-run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/settings/github/*", "/artifacts/*", "/users/*", "/healthz", "/mcp", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration"]
+run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/oauth/*", "/settings/github/*", "/settings/slack/*", "/artifacts/*", "/users/*", "/healthz", "/mcp", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration"]
 not_found_handling = "single-page-application"
 
 # Public hosts: the derive.to apex is canonical, app.derive.to an alias. Cloudflare
@@ -180,6 +180,14 @@ custom_domain = true
 [vars]
 # DERIVE_SUPERADMIN_EMAILS (operator allow-list) is optional; BASE_URL optional;
 # DERIVE_AUTH_SECRET is a secret (`wrangler secret put`). Workspaces are always multi.
+#
+# Optional Slack app (all three are secrets; set them to enable Slack, else it stays off):
+#   wrangler secret put SLACK_CLIENT_ID
+#   wrangler secret put SLACK_CLIENT_SECRET
+#   wrangler secret put SLACK_SIGNING_SECRET
+# Create the app from Settings → Integrations → Set up Slack app (the manifest,
+# pre-filled, is served at /v1/slack/manifest.json); see DEPLOY.md → Slack app.
+#
 # Sender for all transactional + notification mail (reset / verify / invites / comments).
 # Must be an address on the onboarded Email Sending domain (send.derive.to). The CF adapter
 # extracts the bare address; the display-name form is kept for parity with the Resend (Node)

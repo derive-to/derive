@@ -337,6 +337,8 @@ export function createApp(deps: AppDeps): Hono {
     /^\/v1\/vitals$/, // anonymous Core Web Vitals beacon (telemetry, no state)
     /^\/v1\/sync\/github\/webhook$/, // GitHub App webhook — HMAC signature is the gate
     /^\/v1\/slack\/events$/, // Slack Events API — signing-secret signature is the gate
+    /^\/v1\/slack\/interactivity$/, // Slack interactive components — signature is the gate
+    /^\/v1\/slack\/command$/, // Slack slash command — signing-secret signature is the gate
   ]
   app.use("/v1/*", async (c, next) => {
     const m = c.req.method

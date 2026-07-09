@@ -31,6 +31,8 @@ export interface SlackOAuthResult {
   teamId: string
   teamName: string | null
   botUserId: string | null
+  /** Comma-separated scopes actually granted to the bot token (from the OAuth response). */
+  scopes: string | null
 }
 
 /** Exchange an OAuth `code` for a bot token via oauth.v2.access. */
@@ -55,6 +57,7 @@ export const exchangeSlackOAuth = async (
     error?: string
     access_token?: string
     bot_user_id?: string
+    scope?: string
     team?: { id?: string; name?: string }
   }
   if (!data.ok || !data.access_token)
@@ -64,6 +67,7 @@ export const exchangeSlackOAuth = async (
     teamId: data.team?.id ?? "",
     teamName: data.team?.name ?? null,
     botUserId: data.bot_user_id ?? null,
+    scopes: data.scope ?? null,
   }
 }
 
@@ -94,6 +98,18 @@ const SLACK_PERMANENT = new Set([
 ])
 export const isPermanentSlackError = (code: string): boolean => SLACK_PERMANENT.has(code)
 
+/** Slack errors that mean the stored bot token needs re-authorizing (revoked, wrong auth,
+ *  or a scope the app now needs but this install never granted). The workspace's install is
+ *  flagged `needs_reauth` so the Settings UI prompts a reconnect. */
+const SLACK_AUTH_ERRORS = new Set([
+  "invalid_auth",
+  "token_revoked",
+  "account_inactive",
+  "not_authed",
+  "missing_scope",
+])
+export const isSlackAuthError = (code: string): boolean => SLACK_AUTH_ERRORS.has(code)
+
 /** Post a message via chat.postMessage. `threadTs` threads it under an existing message.
  *  Throws SlackApiError(code) on a Slack-level failure. */
 export const postSlackMessage = async (
@@ -109,6 +125,11 @@ export const postSlackMessage = async (
     body: JSON.stringify({
       channel: args.channel,
       text: args.text,
+      // The bot's own posts already render the artifact as a card, so don't let Slack
+      // ALSO unfurl a link in the text — that repeats the same card right below it.
+      // (Links a person pastes still unfurl, via the separate link_shared → chat.unfurl.)
+      unfurl_links: false,
+      unfurl_media: false,
       ...(args.blocks ? { blocks: args.blocks } : {}),
       ...(args.threadTs ? { thread_ts: args.threadTs } : {}),
     }),
@@ -136,6 +157,22 @@ export const joinSlackChannel = async (token: string, channel: string): Promise<
   }
 }
 
+/** Open (or fetch) the DM channel with a Slack user, for a bot DM. Returns the IM channel
+ *  id. Throws SlackApiError on a Slack-level failure (e.g. missing im:write scope). */
+export const openSlackDm = async (token: string, userId: string): Promise<string> => {
+  const res = await fetch(`${API}/conversations.open`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({ users: userId }),
+  })
+  const data = (await res.json()) as { ok: boolean; error?: string; channel?: { id?: string } }
+  if (!data.ok || !data.channel?.id) throw new SlackApiError(data.error ?? "unknown")
+  return data.channel.id
+}
+
 /** A Slack user's display name (best-effort; falls back to the raw id on any error). */
 export const slackUserName = async (token: string, userId: string): Promise<string> => {
   try {
@@ -152,14 +189,177 @@ export const slackUserName = async (token: string, userId: string): Promise<stri
   }
 }
 
-/** The OAuth authorize URL for the "Add to Slack" button. Bot scopes cover posting,
- *  channel listing/join, and reading message/user info for reply-back. */
+/** Reply to an interactive action with an ephemeral message (only the clicking user sees
+ *  it), by POSTing to the `response_url` Slack included in the payload. Best-effort. */
+export const respondEphemeral = async (responseUrl: string, text: string): Promise<void> => {
+  try {
+    await fetch(responseUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ response_type: "ephemeral", replace_original: false, text }),
+    })
+  } catch {
+    // The action was still acknowledged (200) — a failed ephemeral reply is non-fatal.
+  }
+}
+
+/** Replace the original message a button lived on (visible to the whole channel), via the
+ *  interaction's `response_url` — used to swap an action card's buttons for a result line
+ *  after the action ran. No bot token needed. Best-effort. */
+export const replaceOriginal = async (
+  responseUrl: string,
+  text: string,
+  blocks?: unknown,
+): Promise<void> => {
+  try {
+    await fetch(responseUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ replace_original: true, text, ...(blocks ? { blocks } : {}) }),
+    })
+  } catch {
+    // Non-fatal — the action already ran; only the message cosmetics failed to update.
+  }
+}
+
+/** Attach rich previews to shared derive.to links in a message (link unfurls). `unfurls`
+ *  maps each shared URL to its Block Kit blocks. Best-effort: a Slack-level failure just
+ *  leaves the link as a plain URL, so this never throws. */
+export const unfurlSlackLink = async (
+  token: string,
+  args: { channel: string; ts: string; unfurls: Record<string, { blocks: unknown }> },
+): Promise<void> => {
+  try {
+    await fetch(`${API}/chat.unfurl`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({ channel: args.channel, ts: args.ts, unfurls: args.unfurls }),
+    })
+  } catch {
+    // Unfurling is decorative; a failure leaves the plain link.
+  }
+}
+
+/** Publish a user's App Home tab view (views.publish). Best-effort — a failure leaves the
+ *  tab showing its previous state, never an error to the user. */
+export const publishSlackHomeView = async (
+  token: string,
+  userId: string,
+  view: unknown,
+): Promise<void> => {
+  try {
+    await fetch(`${API}/views.publish`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({ user_id: userId, view }),
+    })
+  } catch {
+    // A failed home publish is non-fatal.
+  }
+}
+
+/** Bot scopes requested at install — the single source of truth, also what the manifest
+ *  declares (see slack-app-setup buildSlackManifest). One list so "Add to Slack" grants
+ *  exactly what every feature needs: posting + reply-back (chat/channels), email↔member
+ *  matching + DMs (users:read.email, im:*), the slash command (commands), link unfurls
+ *  (links:read/write) and @mention handling (app_mentions:read). Adding a scope here means
+ *  existing installs see the re-auth banner until they reconnect. */
+export const SLACK_BOT_SCOPES = [
+  "chat:write",
+  "chat:write.public",
+  "channels:read",
+  "channels:join",
+  "channels:history",
+  "groups:read",
+  "groups:history",
+  "users:read",
+  "users:read.email",
+  "im:history",
+  "im:write",
+  "app_mentions:read",
+  "links:read",
+  "links:write",
+  "commands",
+]
+
+/** The OAuth authorize URL for the "Add to Slack" button. */
 export const slackAuthorizeUrl = (clientId: string, redirectUri: string, state: string): string => {
-  const scopes = ["chat:write", "channels:read", "channels:join", "users:read", "channels:history"]
   const u = new URL("https://slack.com/oauth/v2/authorize")
   u.searchParams.set("client_id", clientId)
-  u.searchParams.set("scope", scopes.join(","))
+  u.searchParams.set("scope", SLACK_BOT_SCOPES.join(","))
   u.searchParams.set("redirect_uri", redirectUri)
   u.searchParams.set("state", state)
   return u.toString()
+}
+
+/** "Sign in with Slack" (OpenID Connect) authorize URL for account linking. Uses USER
+ *  scopes (openid/email/profile), separate from the bot install — it only proves which
+ *  Slack user the signed-in Derive user is. `teamId` pins the picker to the connected
+ *  workspace so a user can't link an identity from a different team. */
+export const slackOpenIdAuthorizeUrl = (
+  clientId: string,
+  redirectUri: string,
+  state: string,
+  teamId?: string,
+): string => {
+  const u = new URL("https://slack.com/openid/connect/authorize")
+  u.searchParams.set("response_type", "code")
+  u.searchParams.set("scope", "openid email profile")
+  u.searchParams.set("client_id", clientId)
+  u.searchParams.set("redirect_uri", redirectUri)
+  u.searchParams.set("state", state)
+  if (teamId) u.searchParams.set("team", teamId)
+  return u.toString()
+}
+
+export interface SlackOpenIdResult {
+  slackUserId: string
+  teamId: string
+  email: string | null
+}
+
+/** Exchange an OpenID Connect `code` for the linking user's Slack identity (user id + team
+ *  + email), via openid.connect.token then openid.connect.userInfo. */
+export const exchangeSlackOpenId = async (
+  clientId: string,
+  clientSecret: string,
+  code: string,
+  redirectUri: string,
+): Promise<SlackOpenIdResult> => {
+  const tokenRes = await fetch(`${API}/openid.connect.token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      code,
+      redirect_uri: redirectUri,
+      grant_type: "authorization_code",
+    }),
+  })
+  const token = (await tokenRes.json()) as { ok: boolean; error?: string; access_token?: string }
+  if (!token.ok || !token.access_token)
+    throw new Error(`slack openid failed: ${token.error ?? "unknown"}`)
+
+  const infoRes = await fetch(`${API}/openid.connect.userInfo`, {
+    headers: { authorization: `Bearer ${token.access_token}` },
+  })
+  const info = (await infoRes.json()) as {
+    ok: boolean
+    error?: string
+    email?: string
+    "https://slack.com/user_id"?: string
+    "https://slack.com/team_id"?: string
+  }
+  const slackUserId = info["https://slack.com/user_id"]
+  const teamId = info["https://slack.com/team_id"]
+  if (!info.ok || !slackUserId || !teamId)
+    throw new Error(`slack userinfo failed: ${info.error ?? "unknown"}`)
+  return { slackUserId, teamId, email: info.email ?? null }
 }

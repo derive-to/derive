@@ -70,10 +70,13 @@ import type {
   SessionMessageRecord,
   SessionRecord,
   SessionState,
+  SlackChannelRouteRecord,
   SlackInstallRecord,
   SlackThreadLinkRecord,
+  SlackUserLinkRecord,
   TakedownInput,
   UserDir,
+  UserNotificationPrefRecord,
   UserProfile,
   VersionRecord,
   ViewStats,
@@ -130,8 +133,11 @@ import {
   repoSource,
   reviewRound,
   sessionMessage,
+  slackChannelRoute,
   slackInstall,
   slackThreadLink,
+  slackUserLink,
+  userNotificationPref,
   version,
   webhook,
   webhookDelivery,
@@ -1414,6 +1420,10 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select().from(slackInstall).where(eq(slackInstall.org_id, orgId))
     return rows[0] ?? null
   }
+  async getSlackInstallByTeam(teamId: string): Promise<SlackInstallRecord | null> {
+    const rows = await this.db.select().from(slackInstall).where(eq(slackInstall.team_id, teamId))
+    return rows[0] ?? null
+  }
   async setSlackInstall(s: SlackInstallRecord): Promise<void> {
     const { org_id: _o, created_at: _c, ...set } = s
     await this.db
@@ -1444,6 +1454,87 @@ export class PgMetaStore implements MetaStore {
       .insert(slackThreadLink)
       .values(l)
       .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
+  }
+  async getSlackUserLinkBySlackId(
+    orgId: string,
+    slackUserId: string,
+  ): Promise<SlackUserLinkRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(slackUserLink)
+      .where(and(eq(slackUserLink.org_id, orgId), eq(slackUserLink.slack_user_id, slackUserId)))
+    return rows[0] ?? null
+  }
+  async getSlackUserLinkByUser(orgId: string, userId: string): Promise<SlackUserLinkRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(slackUserLink)
+      .where(and(eq(slackUserLink.org_id, orgId), eq(slackUserLink.user_id, userId)))
+    return rows[0] ?? null
+  }
+  async setSlackUserLink(l: SlackUserLinkRecord): Promise<void> {
+    const { id: _i, created_at: _c, ...set } = l
+    await this.db
+      .insert(slackUserLink)
+      .values(l)
+      .onConflictDoUpdate({ target: [slackUserLink.org_id, slackUserLink.slack_user_id], set })
+  }
+  async deleteSlackUserLink(orgId: string, slackUserId: string): Promise<void> {
+    await this.db
+      .delete(slackUserLink)
+      .where(and(eq(slackUserLink.org_id, orgId), eq(slackUserLink.slack_user_id, slackUserId)))
+  }
+  async getUserNotificationPref(
+    orgId: string,
+    userId: string,
+  ): Promise<UserNotificationPrefRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(userNotificationPref)
+      .where(and(eq(userNotificationPref.org_id, orgId), eq(userNotificationPref.user_id, userId)))
+    return rows[0] ?? null
+  }
+  async setUserNotificationPref(p: UserNotificationPrefRecord): Promise<void> {
+    const { id: _i, created_at: _c, ...set } = p
+    await this.db
+      .insert(userNotificationPref)
+      .values(p)
+      .onConflictDoUpdate({
+        target: [userNotificationPref.org_id, userNotificationPref.user_id],
+        set,
+      })
+  }
+  async listSlackChannelRoutes(orgId: string): Promise<SlackChannelRouteRecord[]> {
+    return this.db.select().from(slackChannelRoute).where(eq(slackChannelRoute.org_id, orgId))
+  }
+  async setSlackChannelRoute(r: SlackChannelRouteRecord): Promise<void> {
+    const { id: _i, created_at: _c, ...set } = r
+    await this.db
+      .insert(slackChannelRoute)
+      .values(r)
+      .onConflictDoUpdate({
+        target: [
+          slackChannelRoute.org_id,
+          slackChannelRoute.target_type,
+          slackChannelRoute.target_id,
+        ],
+        set,
+      })
+  }
+  async deleteSlackChannelRoute(
+    orgId: string,
+    targetType: string,
+    targetId: string,
+  ): Promise<void> {
+    await this.db
+      .delete(slackChannelRoute)
+      .where(
+        and(
+          eq(slackChannelRoute.org_id, orgId),
+          eq(slackChannelRoute.target_type, targetType as "collection" | "default"),
+          eq(slackChannelRoute.target_id, targetId),
+        ),
+      )
   }
   async upsertGithubInstallation(i: GitHubInstallationRecord): Promise<GitHubInstallationRecord> {
     const rows = await this.db

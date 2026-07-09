@@ -67,9 +67,12 @@ import type {
   SessionMessageRecord,
   SessionRecord,
   SessionState,
+  SlackChannelRouteRecord,
   SlackInstallRecord,
   SlackThreadLinkRecord,
+  SlackUserLinkRecord,
   TakedownInput,
+  UserNotificationPrefRecord,
   UserProfile,
   VersionRecord,
   WebhookRecord,
@@ -127,8 +130,11 @@ import {
   repoSource,
   reviewRound,
   sessionMessage,
+  slackChannelRoute,
   slackInstall,
   slackThreadLink,
+  slackUserLink,
+  userNotificationPref,
   version,
   webhook,
   webhookDelivery,
@@ -1556,6 +1562,8 @@ export function makeRepos(db: SqliteDb) {
   // ---- Slack App ----------------------------------------------------------
   const getSlackInstall = async (orgId: string): Promise<SlackInstallRecord | null> =>
     (await db.select().from(slackInstall).where(eq(slackInstall.org_id, orgId)).get()) ?? null
+  const getSlackInstallByTeam = async (teamId: string): Promise<SlackInstallRecord | null> =>
+    (await db.select().from(slackInstall).where(eq(slackInstall.team_id, teamId)).get()) ?? null
   const setSlackInstall = async (s: SlackInstallRecord): Promise<void> => {
     const { org_id: _o, created_at: _c, ...set } = s
     await db
@@ -1590,6 +1598,92 @@ export function makeRepos(db: SqliteDb) {
       .insert(slackThreadLink)
       .values(l)
       .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
+      .run()
+  }
+  const getSlackUserLinkBySlackId = async (
+    orgId: string,
+    slackUserId: string,
+  ): Promise<SlackUserLinkRecord | null> =>
+    (await db
+      .select()
+      .from(slackUserLink)
+      .where(and(eq(slackUserLink.org_id, orgId), eq(slackUserLink.slack_user_id, slackUserId)))
+      .get()) ?? null
+  const getSlackUserLinkByUser = async (
+    orgId: string,
+    userId: string,
+  ): Promise<SlackUserLinkRecord | null> =>
+    (await db
+      .select()
+      .from(slackUserLink)
+      .where(and(eq(slackUserLink.org_id, orgId), eq(slackUserLink.user_id, userId)))
+      .get()) ?? null
+  const setSlackUserLink = async (l: SlackUserLinkRecord): Promise<void> => {
+    const { id: _i, created_at: _c, ...set } = l
+    await db
+      .insert(slackUserLink)
+      .values(l)
+      // One link per (org, slack user); reconnecting/confirming updates in place.
+      .onConflictDoUpdate({ target: [slackUserLink.org_id, slackUserLink.slack_user_id], set })
+      .run()
+  }
+  const deleteSlackUserLink = async (orgId: string, slackUserId: string): Promise<void> => {
+    await db
+      .delete(slackUserLink)
+      .where(and(eq(slackUserLink.org_id, orgId), eq(slackUserLink.slack_user_id, slackUserId)))
+      .run()
+  }
+  const getUserNotificationPref = async (
+    orgId: string,
+    userId: string,
+  ): Promise<UserNotificationPrefRecord | null> =>
+    (await db
+      .select()
+      .from(userNotificationPref)
+      .where(and(eq(userNotificationPref.org_id, orgId), eq(userNotificationPref.user_id, userId)))
+      .get()) ?? null
+  const setUserNotificationPref = async (p: UserNotificationPrefRecord): Promise<void> => {
+    const { id: _i, created_at: _c, ...set } = p
+    await db
+      .insert(userNotificationPref)
+      .values(p)
+      .onConflictDoUpdate({
+        target: [userNotificationPref.org_id, userNotificationPref.user_id],
+        set,
+      })
+      .run()
+  }
+  const listSlackChannelRoutes = async (orgId: string): Promise<SlackChannelRouteRecord[]> =>
+    db.select().from(slackChannelRoute).where(eq(slackChannelRoute.org_id, orgId)).all()
+  const setSlackChannelRoute = async (r: SlackChannelRouteRecord): Promise<void> => {
+    const { id: _i, created_at: _c, ...set } = r
+    await db
+      .insert(slackChannelRoute)
+      .values(r)
+      .onConflictDoUpdate({
+        target: [
+          slackChannelRoute.org_id,
+          slackChannelRoute.target_type,
+          slackChannelRoute.target_id,
+        ],
+        set,
+      })
+      .run()
+  }
+  const deleteSlackChannelRoute = async (
+    orgId: string,
+    targetType: string,
+    targetId: string,
+  ): Promise<void> => {
+    await db
+      .delete(slackChannelRoute)
+      .where(
+        and(
+          eq(slackChannelRoute.org_id, orgId),
+          eq(slackChannelRoute.target_type, targetType as "collection" | "default"),
+          eq(slackChannelRoute.target_id, targetId),
+        ),
+      )
       .run()
   }
 
@@ -2413,11 +2507,21 @@ export function makeRepos(db: SqliteDb) {
     getOrgSettings,
     setOrgSettings,
     getSlackInstall,
+    getSlackInstallByTeam,
     setSlackInstall,
     deleteSlackInstall,
     getSlackThreadLinkByThread,
     getSlackThreadLinkByTs,
     setSlackThreadLink,
+    getSlackUserLinkBySlackId,
+    getSlackUserLinkByUser,
+    setSlackUserLink,
+    deleteSlackUserLink,
+    getUserNotificationPref,
+    setUserNotificationPref,
+    listSlackChannelRoutes,
+    setSlackChannelRoute,
+    deleteSlackChannelRoute,
     upsertGithubInstallation,
     getGithubInstallation,
     listGithubInstallations,

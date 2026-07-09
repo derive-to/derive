@@ -543,6 +543,9 @@ export interface IntegrationStore {
   // ---- Slack App (connected workspace + thread links) ---------------------
   /** The Slack workspace connected to this Derive workspace, or null. */
   getSlackInstall(orgId: string): Promise<SlackInstallRecord | null>
+  /** Reverse lookup: the install for a Slack team id. Inbound events + slash commands
+   *  arrive keyed by `team_id`, not our org id, so this resolves which workspace owns it. */
+  getSlackInstallByTeam(teamId: string): Promise<SlackInstallRecord | null>
   /** Upsert (connect / reconnect) the Slack install for a workspace. */
   setSlackInstall(s: SlackInstallRecord): Promise<void>
   /** Disconnect Slack for a workspace. */
@@ -553,6 +556,24 @@ export interface IntegrationStore {
   getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null>
   /** Record the Slack message ↔ Derive thread mapping (idempotent on thread_id). */
   setSlackThreadLink(l: SlackThreadLinkRecord): Promise<void>
+  /** The Derive user a Slack user is linked to in a workspace, or null. */
+  getSlackUserLinkBySlackId(orgId: string, slackUserId: string): Promise<SlackUserLinkRecord | null>
+  /** The Slack link for a Derive user in a workspace, or null. */
+  getSlackUserLinkByUser(orgId: string, userId: string): Promise<SlackUserLinkRecord | null>
+  /** Upsert a Slack↔Derive user link (idempotent on the workspace + slack user). */
+  setSlackUserLink(l: SlackUserLinkRecord): Promise<void>
+  /** Remove a Slack↔Derive user link. */
+  deleteSlackUserLink(orgId: string, slackUserId: string): Promise<void>
+  /** A user's notification preferences in a workspace, or null (⇒ defaults). */
+  getUserNotificationPref(orgId: string, userId: string): Promise<UserNotificationPrefRecord | null>
+  /** Upsert a user's notification preferences (idempotent on workspace + user). */
+  setUserNotificationPref(p: UserNotificationPrefRecord): Promise<void>
+  /** All Slack channel routes for a workspace (artifact/collection → channel). */
+  listSlackChannelRoutes(orgId: string): Promise<SlackChannelRouteRecord[]>
+  /** Upsert a Slack channel route (idempotent on workspace + target). */
+  setSlackChannelRoute(r: SlackChannelRouteRecord): Promise<void>
+  /** Remove a Slack channel route. */
+  deleteSlackChannelRoute(orgId: string, targetType: string, targetId: string): Promise<void>
   // ---- Domain mode: a hostname serving artifact(s) at its own origin ------
   // A domain row is either bound to one artifact (`artifact_id` set: a vanity
   // subdomain today, a per-artifact custom domain later — served at the host root)
@@ -1478,8 +1499,12 @@ export interface OrgSettings {
   /** When a PR opens (and on each push), post + keep updated a single comment on the
    *  pull request linking to the Derive preview of its docs. */
   githubPreviewLink: boolean
-  /** Post Derive activity to the connected Slack workspace. */
+  /** Post Derive comment activity to the connected Slack workspace (the thread mirror). */
   slackPost: boolean
+  /** Per-event toggles for the connected app's richer event cards (version.published,
+   *  proposal.*, review.*). Keyed by webhook event name; an absent key means on. Comment
+   *  posts stay governed by `slackPost`. */
+  slackEvents?: Record<string, boolean>
   /** The access a NEW publish lands with when the publisher doesn't say (see
    *  access-model.md). Factory default is the "team draft": `workspace_access =
    *  member` (a pasted link opens for a teammate or an on-behalf agent at their
@@ -1497,6 +1522,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   githubMirrorComments: true,
   githubPreviewLink: true,
   slackPost: true,
+  slackEvents: {},
   defaultWorkspaceAccess: "member",
   defaultLinkRole: "none",
   defaultListed: "none",
@@ -1512,6 +1538,47 @@ export interface SlackInstallRecord {
   bot_token: string
   bot_user_id: string | null
   default_channel: string | null
+  /** Comma-separated OAuth scopes granted at install; lets the app detect installs that
+   *  predate a newly-required scope. Optional so existing writers need not set it. */
+  granted_scopes?: string | null
+  /** 1 when a Slack call failed for auth/scope reasons (invalid_auth, token_revoked,
+   *  missing_scope); the Settings UI shows a reconnect banner. Cleared on reconnect. */
+  needs_reauth?: 0 | 1
+  created_at: string
+}
+
+/** Links a Slack user to a Derive user within a workspace, so Slack-side actions and DMs
+ *  can act as / reach that Derive user. `status` is `pending` (email-matched, unconfirmed)
+ *  or `confirmed` (proven via account-link OAuth). `dm_channel_id` caches the opened IM. */
+export interface SlackUserLinkRecord {
+  id: string
+  org_id: string
+  slack_user_id: string
+  user_id: string
+  status: "pending" | "confirmed"
+  dm_channel_id: string | null
+  created_at: string
+}
+
+/** A user's per-workspace notification preferences. `prefs` is a JSON blob (an absent key
+ *  means the default is in effect), so new preference types don't need a migration. */
+export interface UserNotificationPrefRecord {
+  id: string
+  org_id: string
+  user_id: string
+  prefs: string
+  created_at: string
+}
+
+/** Routes a workspace's Slack posts to a channel by target: a `collection` (matched to an
+ *  artifact via its collection membership) or the workspace `default`. `target_id` is the
+ *  collection id, or "" for the default route. */
+export interface SlackChannelRouteRecord {
+  id: string
+  org_id: string
+  target_type: "collection" | "default"
+  target_id: string
+  channel_id: string
   created_at: string
 }
 
@@ -1581,6 +1648,8 @@ export type DeliveryStatus = "pending" | "delivered" | "dead"
 export type DeliveryKind =
   | WebhookKind
   | "slack_app"
+  | "slack_app_event"
+  | "slack_dm"
   | "github_review_comment"
   | "github_issue_comment"
   | "email"

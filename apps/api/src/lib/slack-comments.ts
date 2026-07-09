@@ -14,9 +14,9 @@ import {
   type SlackThreadLinkRecord,
 } from "@derive/core"
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
-import { commentDeepLink, parseMeta } from "./comments"
-import { decryptSecret } from "./crypto"
-import { isPermanentSlackError, joinSlackChannel, postSlackMessage, SlackApiError } from "./slack"
+import { commentDeepLink, type Mention, parseMeta } from "./comments"
+import { context, section } from "./slack-cards"
+import { postWithRecovery, resolveBotToken } from "./slack-delivery"
 import { truncate } from "./text"
 
 /** The Slack message payload an enqueued slack_app delivery carries (self-contained). */
@@ -55,17 +55,12 @@ export const enqueueSlackComment = async (
 }
 
 /** Slack Block Kit blocks for a comment post. */
-const blocksFor = (p: SlackCommentPayload): unknown => {
-  const head = `:speech_balloon: *${p.author}* commented on <${p.link}|${p.title}>`
-  const lines = [head, truncate(p.text, 600)]
-  return [
-    { type: "section", text: { type: "mrkdwn", text: lines.join("\n") } },
-    {
-      type: "context",
-      elements: [{ type: "mrkdwn", text: "Derive · reply in this thread to post back" }],
-    },
-  ]
-}
+const blocksFor = (p: SlackCommentPayload): unknown[] => [
+  section(
+    `:speech_balloon: *${p.author}* commented on <${p.link}|${p.title}>\n${truncate(p.text, 600)}`,
+  ),
+  context("Derive · reply in this thread to post back"),
+]
 
 /** Build the slack_app delivery sender for a runtime. Resolves the channel + thread from
  *  the stored install + thread link, posts via chat.postMessage, and records the Slack
@@ -75,46 +70,26 @@ export const makeSlackSender =
   (meta: MetaStore, encryptionKey: string | undefined) =>
   async (d: DeliveryRecord): Promise<ChannelSendResult> => {
     const p = JSON.parse(d.payload) as SlackCommentPayload
-    const install = await meta.getSlackInstall(p.orgId)
-    if (!install?.default_channel || !encryptionKey)
-      return { ok: true, status: "skipped: slack not connected" }
-    const token = decryptSecret(install.bot_token, encryptionKey)
+    const bot = await resolveBotToken(meta, p.orgId, encryptionKey)
+    if (!bot?.install.default_channel) return { ok: true, status: "skipped: slack not connected" }
     const existing = await meta.getSlackThreadLinkByThread(p.threadId)
-    const channel = existing?.channel ?? install.default_channel
-    const post = () =>
-      postSlackMessage(token, {
+    const channel = existing?.channel ?? bot.install.default_channel
+
+    const res = await postWithRecovery(
+      meta,
+      p.orgId,
+      bot.token,
+      {
         channel,
         text: `${p.author} commented on ${p.title}`,
         blocks: blocksFor(p),
         threadTs: existing?.message_ts,
-      })
-
-    let res: Awaited<ReturnType<typeof post>>
-    try {
-      res = await post()
-    } catch (err) {
-      if (!(err instanceof SlackApiError))
-        return { ok: false, status: (err as Error).message.slice(0, 160) }
-      // The bot isn't in the channel yet (common right after connecting): auto-join a
-      // public channel and retry once. Private channels must invite the bot manually.
-      if (err.code === "not_in_channel" && (await joinSlackChannel(token, channel))) {
-        try {
-          res = await post()
-        } catch (err2) {
-          const code = err2 instanceof SlackApiError ? err2.code : "unknown"
-          return { ok: false, status: `slack: ${code}`, permanent: isPermanentSlackError(code) }
-        }
-      } else {
-        // not_in_channel without a successful join is permanent (a private channel the
-        // bot can't self-join) — surface it rather than retrying fruitlessly.
-        const permanent = isPermanentSlackError(err.code) || err.code === "not_in_channel"
-        return { ok: false, status: `slack: ${err.code}`, permanent }
-      }
-    }
-
+      },
+      { autoJoin: true },
+    )
     // First post for this Derive thread → remember the Slack message so replies thread
     // under it (both directions).
-    if (!existing) {
+    if (res.ok && !existing && res.ts && res.channel) {
       await meta.setSlackThreadLink({
         id: newId("stl"),
         org_id: p.orgId,
@@ -125,8 +100,30 @@ export const makeSlackSender =
         created_at: new Date().toISOString(),
       } satisfies SlackThreadLinkRecord)
     }
-    return { ok: true, status: `posted ${res.ts}` }
+    return res
   }
+
+/** Resolve `<@U…>` user mentions in a Slack message to the Derive users they're linked to
+ *  in this workspace (confirmed links only). Returns Mentions the shared notifier can fan
+ *  out — so @mentioning a linked teammate in a Slack thread notifies them in Derive. */
+export const resolveSlackMentions = async (
+  meta: MetaStore,
+  orgId: string,
+  text: string,
+): Promise<Mention[]> => {
+  const seen = new Set<string>()
+  const out: Mention[] = []
+  for (const m of text.matchAll(/<@([A-Z0-9]+)>/g)) {
+    const slackId = m[1]
+    if (!slackId || seen.has(slackId)) continue
+    seen.add(slackId)
+    const link = await meta.getSlackUserLinkBySlackId(orgId, slackId)
+    if (link?.status !== "confirmed") continue
+    const [user] = await meta.getUsers([link.user_id])
+    out.push({ id: link.user_id, name: user?.name ?? user?.username ?? "someone" })
+  }
+  return out
+}
 
 /** Mirror a Slack thread reply into Derive as a comment on the linked thread. Returns the
  *  created comment, or null when it should be skipped (our own bot, or no thread link).

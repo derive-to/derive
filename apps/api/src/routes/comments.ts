@@ -3,7 +3,6 @@ import {
   anchorContentFor,
   type CommentRecord,
   isAnchored,
-  type NewNotification,
   newId,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
@@ -16,15 +15,16 @@ import {
   type Mention,
   parseMentions,
   parseMeta,
-  previewOf,
   quoteOf,
   REACTIONS,
 } from "../lib/comments"
 import { enqueueGithubPrComment } from "../lib/github-comments"
 import { bail, fail, readJson } from "../lib/http"
+import { notifyMentions as notifyMentionsShared } from "../lib/mentions"
 import { notifyCommentBells } from "../lib/notify-comment"
 import { enqueueCommentEmails } from "../lib/notify-email"
 import { enqueueSlackComment } from "../lib/slack-comments"
+import { enqueueSlackMentionDms } from "../lib/slack-dm"
 import { Mention as MentionSchema } from "../schemas"
 
 /** Comments: threaded, anchored to text quotes, with reactions, edits, and soft
@@ -69,75 +69,15 @@ export const commentRoutes = (ctx: AppContext) => {
     })
     .openapi("Comment")
 
-  // Create in-app notification rows for the people a comment @mentions (real
-  // users only, never the author) and push each a live event over their stream.
-  // Returns the display names actually notified (for the Slack webhook).
-  const notifyMentions = async (
+  // Mention fan-out (bell + realtime + agent inbox) lives in ../lib/mentions so the
+  // Slack reply path reuses the same collaborator-gated logic. Bound to this request's
+  // meta + bus here.
+  const notifyMentions = (
     a: ArtifactRecord,
     cm: CommentRecord,
     mentions: Mention[],
     actorId: string | null,
-  ): Promise<string[]> => {
-    const targetIds = mentions.map((m) => m.id).filter((mid) => mid !== actorId)
-    if (targetIds.length === 0) return []
-    const real = new Set((await meta.getUsers(targetIds)).map((u) => u.id))
-    // Registered agents are mentionable too; a mention of an agent lands in its
-    // pull inbox instead of a notification bell.
-    const agentIds = new Set((await meta.listAgents(a.org_id)).map((ag) => ag.id))
-    // A mention only notifies someone who can actually SEE the artifact: a member
-    // of its workspace or an explicit share recipient (the collaborator set, like
-    // the B-012/B-013 roster gate). The `mentions[]` array is client-supplied, so
-    // without this any user could push a notification carrying attacker-controlled
-    // title/preview to ANY other user — cross-workspace spam/phishing into the bell
-    // + SSE. "Could view a public artifact" is intentionally NOT enough; a real
-    // collaboration mention means a member/share, not a stranger.
-    const collaborators = new Set<string>([
-      ...(await meta.listMemberships(a.org_id)).map((m) => m.user_id),
-      ...(await meta.listArtifactMembers(a.id)).map((r) => r.user_id),
-    ])
-    const preview = previewOf(cm.body_md)
-    const notified: string[] = []
-    // Collect the human-mention bell rows so the whole fan-out is ONE bulk insert; agent
-    // mentions land in their own table (a pull inbox), still one row each.
-    const notifRows: NewNotification[] = []
-    for (const m of mentions) {
-      if (m.id === actorId) continue
-      if (real.has(m.id) && collaborators.has(m.id)) {
-        notifRows.push({
-          id: newId("n"),
-          user_id: m.id,
-          actor: cm.author,
-          kind: "mention",
-          artifact_id: a.id,
-          artifact_short_id: a.short_id,
-          artifact_title: a.title,
-          thread_id: cm.thread_id,
-          comment_id: cm.id,
-          preview,
-        })
-        notified.push(m.name)
-      } else if (agentIds.has(m.id)) {
-        await meta.createAgentMention({
-          id: newId("amn"),
-          agent_id: m.id,
-          artifact_id: a.id,
-          artifact_short_id: a.short_id,
-          comment_id: cm.id,
-          thread_id: cm.thread_id,
-          body: cm.body_md,
-          author: cm.author,
-        })
-        notified.push(m.name)
-      }
-    }
-    await meta.createNotifications(notifRows)
-    for (const row of notifRows)
-      bus.publish(`u:${row.user_id}`, {
-        type: "notification",
-        notification: { ...row, read: 0, created_at: new Date().toISOString() },
-      })
-    return notified
-  }
+  ) => notifyMentionsShared({ meta, bus }, a, cm, mentions, actorId)
 
   // Loads (artifact, comment) for a mutation, 404ing on mismatch. Tagged union so
   // the @hono/zod-openapi handler return type narrows cleanly on `!r.ok`.
@@ -260,7 +200,7 @@ export const commentRoutes = (ctx: AppContext) => {
             thread_id: created.thread_id,
           })
           const notified = await notifyMentions(artifact, created, mentions, acting?.id ?? null)
-          if (notified.length)
+          if (notified.length) {
             await notify(artifact, "comment.mention", {
               author: created.author,
               mentioned: notified,
@@ -268,6 +208,14 @@ export const commentRoutes = (ctx: AppContext) => {
               quote: quoteOf(created.anchor),
               thread_id: created.thread_id,
             })
+            // DM linked, opted-in teammates who were mentioned (self-gated on link + membership).
+            await enqueueSlackMentionDms(
+              { meta, baseUrl: deps.baseUrl },
+              artifact,
+              created,
+              mentions.filter((m) => m.id !== acting?.id),
+            )
+          }
           // Bell the comment's natural audience — thread participants + the
           // artifact's owners (your content) — shared with the MCP path.
           await notifyCommentBells({ meta, bus }, artifact, created, {

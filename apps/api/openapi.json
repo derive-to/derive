@@ -597,6 +597,12 @@
           "slackPost": {
             "type": "boolean"
           },
+          "slackEvents": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "boolean"
+            }
+          },
           "defaultWorkspaceAccess": {
             "type": "string",
             "enum": [
@@ -1204,13 +1210,25 @@
           "default_channel": {
             "type": "string",
             "nullable": true
+          },
+          "needs_reauth": {
+            "type": "boolean"
+          },
+          "linked": {
+            "type": "boolean"
+          },
+          "mention_dm": {
+            "type": "boolean"
           }
         },
         "required": [
           "available",
           "connected",
           "team_name",
-          "default_channel"
+          "default_channel",
+          "needs_reauth",
+          "linked",
+          "mention_dm"
         ]
       },
       "Report": {
