@@ -603,15 +603,16 @@ export const contextRoutes = (ctx: AppContext) => {
       if (me instanceof Response) return bail(me)
       const s = await meta.getSession(c.req.param("id"))
       const linked = s ? await contextOf(s) : null
-      // The owner always sees their context's sessions; the asker sees their own
-      // ONLY while they can still ask — losing ask-access (removed from the
-      // workspace/roster, or a tightened policy) closes the window, so a former
-      // member can't keep reading the data answers a context delivered.
+      // Membership is the floor for BOTH parties: canAskContext requires it even
+      // for the creator, so a removed creator can't keep reading transcripts any
+      // more than a removed asker can (the invariant applies to owners too). The
+      // creator sees ANY session on their context; anyone else sees only their
+      // own — sessions stay private to asker + owner.
       const allowed =
         !!s &&
         !!linked &&
-        (linked.context.created_by === me.id ||
-          (s.asker_id === me.id && (await canAskContext(c, linked.context))))
+        (await canAskContext(c, linked.context)) &&
+        (linked.context.created_by === me.id || s.asker_id === me.id)
       if (!s || !linked || !allowed) return bail(fail(c, 404, "not found"))
       const messages = await meta.listSessionMessages(s.id)
       return c.json({
@@ -756,7 +757,12 @@ export const contextRoutes = (ctx: AppContext) => {
 
       const me = await currentUser(c)
       if (!me) return bail(fail(c, 401, "unauthenticated"))
-      if (s.asker_id !== me.id && linked.context.created_by !== me.id)
+      // Same membership floor as the session read: a removed asker/creator can't
+      // touch the session at all (close included) once they're out of the workspace.
+      if (
+        !(await canAskContext(c, linked.context)) ||
+        (s.asker_id !== me.id && linked.context.created_by !== me.id)
+      )
         return bail(fail(c, 404, "not found"))
       const b = await readJson(c, z.object({ state: z.literal("closed") }))
       if (b instanceof Response) return bail(b)

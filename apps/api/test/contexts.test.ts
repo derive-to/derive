@@ -426,6 +426,47 @@ describe("sessions: revoking ask-access cuts off an existing session", () => {
       200,
     )
   })
+
+  it("a removed CREATOR loses transcript access too — the floor applies to owners", async () => {
+    // The creator branch of the session read/patch must also require membership:
+    // offboarding doesn't reassign contexts, so created_by persists — a removed
+    // creator must not keep reading the data answers from outside the workspace.
+    const ag = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "A2", role: "editor" }))
+    ).json()
+    const manifest = (await (await publishAs(app, "# m2", {}, as(owner.email))).json()).short_id
+    const ctx = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "Analytics2",
+          agent_id: ag.id,
+          manifest_short_id: manifest,
+        }),
+      )
+    ).json()
+    const asked = await (
+      await app.request(
+        `/v1/contexts/${ctx.id}/sessions`,
+        jsonAs(as(owner.email), { body_md: "self-ask" }),
+      )
+    ).json()
+    const sid = asked.session.id
+    expect((await app.request(`/v1/sessions/${sid}`, { headers: as(owner.email) })).status).toBe(
+      200,
+    )
+
+    await meta.removeMembership("default", owner.id)
+    expect((await app.request(`/v1/sessions/${sid}`, { headers: as(owner.email) })).status).toBe(
+      404,
+    )
+    const close = await app.request(`/v1/sessions/${sid}`, {
+      method: "PATCH",
+      headers: { ...as(owner.email), "content-type": "application/json" },
+      body: JSON.stringify({ state: "closed" }),
+    })
+    expect(close.status).toBe(404)
+  })
 })
 
 describe("runner liveness: the queue poll stamps runner_seen_at, throttled", () => {
