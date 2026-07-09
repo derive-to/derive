@@ -625,6 +625,17 @@ export interface ContextStore {
   /** Stamp `runner_seen_at` (the queue route's liveness mark). The caller decides
    *  WHEN — the write throttle lives there, next to the poll cadence it paces. */
   touchContextSeen(id: string, at: string): Promise<void>
+  /** Set who may ask (workspace | invited). Does not touch the roster. */
+  setContextAskPolicy(id: string, policy: "workspace" | "invited"): Promise<void>
+  /** The invited-asker roster for a context (only consulted when ask_policy = invited). */
+  listContextAskers(contextId: string): Promise<ContextAskerRecord[]>
+  /** Is this user on the context's asker roster? (Membership is checked separately.) */
+  getContextAsker(contextId: string, userId: string): Promise<ContextAskerRecord | null>
+  /** Add a user to the roster (idempotent on the unique (context, user)). The
+   *  route validates workspace membership before calling — the store does not. */
+  addContextAsker(a: NewContextAsker): Promise<ContextAskerRecord>
+  /** Remove a user from the roster; a no-op if they weren't on it. */
+  removeContextAsker(contextId: string, userId: string): Promise<void>
   createSession(s: NewSession): Promise<SessionRecord>
   getSession(id: string): Promise<SessionRecord | null>
   /** Sessions on a context, newest first; `askerId` narrows to one person's. */
@@ -1167,6 +1178,11 @@ export interface ContextRecord {
   /** When the runner last polled the queue (ISO), throttle-stamped there — the
    *  console's liveness signal. Null = never polled (or a pre-column row). */
   runner_seen_at: string | null
+  /** Who in the workspace may ASK — `workspace` (any member) or `invited` (the
+   *  context_asker roster + the creator). NEVER the manifest's artifact access:
+   *  a context is workspace-scoped by construction, with no world-link/public
+   *  path. Workspace membership is the hard floor regardless (the ask gate). */
+  ask_policy: "workspace" | "invited"
 }
 export interface NewContext {
   id: string
@@ -1175,6 +1191,21 @@ export interface NewContext {
   agent_id: string
   manifest_artifact_id: string
   created_by: string
+  /** Defaults to `workspace` when omitted (the store default). */
+  ask_policy?: "workspace" | "invited"
+}
+export interface ContextAskerRecord {
+  id: string
+  context_id: string
+  user_id: string
+  added_by: string
+  created_at: string
+}
+export interface NewContextAsker {
+  id: string
+  context_id: string
+  user_id: string
+  added_by: string
 }
 
 /** A session's lifecycle. `state` also encodes whose turn it is: `open` means the

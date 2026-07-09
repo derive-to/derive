@@ -508,8 +508,26 @@ export const context = pgTable(
     created_at: text("created_at").notNull().$defaultFn(isoNow),
     // Last runner queue poll, throttle-stamped — see schema.ts for the contract.
     runner_seen_at: text("runner_seen_at"),
+    // Who may ASK — workspace-scoped only, never the manifest's artifact access.
+    // See schema.ts for the design notes (a context can't leak outside its org).
+    ask_policy: text("ask_policy").$type<"workspace" | "invited">().notNull().default("workspace"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
+)
+
+// Per-context asker roster (ask_policy = 'invited'); mirror of the sqlite def.
+export const contextAsker = pgTable(
+  "context_asker",
+  {
+    id: text("id").primaryKey(),
+    context_id: text("context_id")
+      .notNull()
+      .references(() => context.id),
+    user_id: text("user_id").notNull(),
+    added_by: text("added_by").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("context_asker_user").on(t.context_id, t.user_id)],
 )
 
 export const contextSession = pgTable(
@@ -614,6 +632,7 @@ const TABLES = [
   proposal,
   reviewRound,
   context,
+  contextAsker,
   contextSession,
   sessionMessage,
   report,

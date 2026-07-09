@@ -388,8 +388,19 @@ CREATE TABLE IF NOT EXISTS context (
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   runner_seen_at TEXT,
+  ask_policy TEXT NOT NULL DEFAULT 'workspace',
   UNIQUE (org_id, name),
   FOREIGN KEY (manifest_artifact_id) REFERENCES artifact(id)
+);
+
+CREATE TABLE IF NOT EXISTS context_asker (
+  id TEXT PRIMARY KEY,
+  context_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  added_by TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (context_id, user_id),
+  FOREIGN KEY (context_id) REFERENCES context(id)
 );
 
 CREATE TABLE IF NOT EXISTS context_session (

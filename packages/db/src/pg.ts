@@ -10,6 +10,7 @@ import type {
   CommentRecord,
   CommentSignals,
   CommentState,
+  ContextAskerRecord,
   ContextRecord,
   DeliveryRecord,
   DeliveryStatus,
@@ -36,6 +37,7 @@ import type {
   NewCollectionMember,
   NewComment,
   NewContext,
+  NewContextAsker,
   NewDelivery,
   NewDomain,
   NewFollow,
@@ -114,6 +116,7 @@ import {
   collectionMember,
   comment,
   context,
+  contextAsker,
   contextSession,
   domain,
   follow,
@@ -175,6 +178,7 @@ export const schema = {
   invitation,
   oauthClientWorkspace,
   context,
+  contextAsker,
   contextSession,
   sessionMessage,
   collection,
@@ -210,6 +214,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentMention: true,
   invitation: true,
   context: true,
+  contextAsker: true,
   contextSession: true,
   sessionMessage: true,
   collection: true,
@@ -1683,12 +1688,44 @@ export class PgMetaStore implements MetaStore {
         ),
       )
     await this.db.delete(contextSession).where(eq(contextSession.context_id, id))
+    // The asker roster FKs the context — clear it before the parent row.
+    await this.db.delete(contextAsker).where(eq(contextAsker.context_id, id))
     await this.db.delete(context).where(eq(context.id, id))
   }
   // A no-op on an unknown id, deliberately: the caller already 404'd before
   // stamping, and liveness is best-effort — never worth a throw.
   async touchContextSeen(id: string, at: string): Promise<void> {
     await this.db.update(context).set({ runner_seen_at: at }).where(eq(context.id, id))
+  }
+  async setContextAskPolicy(id: string, policy: "workspace" | "invited"): Promise<void> {
+    await this.db.update(context).set({ ask_policy: policy }).where(eq(context.id, id))
+  }
+  async listContextAskers(contextId: string): Promise<ContextAskerRecord[]> {
+    return this.db
+      .select()
+      .from(contextAsker)
+      .where(eq(contextAsker.context_id, contextId))
+      .orderBy(contextAsker.created_at) as Promise<ContextAskerRecord[]>
+  }
+  async getContextAsker(contextId: string, userId: string): Promise<ContextAskerRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(contextAsker)
+      .where(and(eq(contextAsker.context_id, contextId), eq(contextAsker.user_id, userId)))
+      .limit(1)
+    return (rows[0] as ContextAskerRecord) ?? null
+  }
+  async addContextAsker(a: NewContextAsker): Promise<ContextAskerRecord> {
+    await this.db
+      .insert(contextAsker)
+      .values(a)
+      .onConflictDoNothing({ target: [contextAsker.context_id, contextAsker.user_id] })
+    return (await this.getContextAsker(a.context_id, a.user_id)) as ContextAskerRecord
+  }
+  async removeContextAsker(contextId: string, userId: string): Promise<void> {
+    await this.db
+      .delete(contextAsker)
+      .where(and(eq(contextAsker.context_id, contextId), eq(contextAsker.user_id, userId)))
   }
   async createSession(s: NewSession): Promise<SessionRecord> {
     const rows = await this.db.insert(contextSession).values(s).returning()

@@ -10,6 +10,7 @@ import type {
   CommentRecord,
   CommentSignals,
   CommentState,
+  ContextAskerRecord,
   ContextRecord,
   DeliveryRecord,
   DeliveryStatus,
@@ -34,6 +35,7 @@ import type {
   NewCollectionMember,
   NewComment,
   NewContext,
+  NewContextAsker,
   NewDelivery,
   NewDomain,
   NewFollow,
@@ -112,6 +114,7 @@ import {
   collectionMember,
   comment,
   context,
+  contextAsker,
   contextSession,
   domain,
   follow,
@@ -200,6 +203,7 @@ export const schema = {
   invitation,
   oauthClientWorkspace,
   context,
+  contextAsker,
   contextSession,
   sessionMessage,
   collection,
@@ -235,6 +239,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentMention: true,
   invitation: true,
   context: true,
+  contextAsker: true,
   contextSession: true,
   sessionMessage: true,
   collection: true,
@@ -1820,12 +1825,50 @@ export function makeRepos(db: SqliteDb) {
       )
       .run()
     await db.delete(contextSession).where(eq(contextSession.context_id, id)).run()
+    // The asker roster FKs the context — clear it before the parent row.
+    await db.delete(contextAsker).where(eq(contextAsker.context_id, id)).run()
     await db.delete(context).where(eq(context.id, id)).run()
   }
   // A no-op on an unknown id, deliberately: the caller already 404'd before
   // stamping, and liveness is best-effort — never worth a throw.
   const touchContextSeen = async (id: string, at: string): Promise<void> => {
     await db.update(context).set({ runner_seen_at: at }).where(eq(context.id, id)).run()
+  }
+  const setContextAskPolicy = async (
+    id: string,
+    policy: "workspace" | "invited",
+  ): Promise<void> => {
+    await db.update(context).set({ ask_policy: policy }).where(eq(context.id, id)).run()
+  }
+  const listContextAskers = async (contextId: string): Promise<ContextAskerRecord[]> =>
+    db
+      .select()
+      .from(contextAsker)
+      .where(eq(contextAsker.context_id, contextId))
+      .orderBy(contextAsker.created_at)
+      .all() as Promise<ContextAskerRecord[]>
+  const getContextAsker = async (
+    contextId: string,
+    userId: string,
+  ): Promise<ContextAskerRecord | null> =>
+    (await db
+      .select()
+      .from(contextAsker)
+      .where(and(eq(contextAsker.context_id, contextId), eq(contextAsker.user_id, userId)))
+      .get()) ?? null
+  const addContextAsker = async (a: NewContextAsker): Promise<ContextAskerRecord> => (
+    await db
+      .insert(contextAsker)
+      .values(a)
+      .onConflictDoNothing({ target: [contextAsker.context_id, contextAsker.user_id] })
+      .run(),
+    (await getContextAsker(a.context_id, a.user_id)) as ContextAskerRecord
+  )
+  const removeContextAsker = async (contextId: string, userId: string): Promise<void> => {
+    await db
+      .delete(contextAsker)
+      .where(and(eq(contextAsker.context_id, contextId), eq(contextAsker.user_id, userId)))
+      .run()
   }
   const createSession = async (s: NewSession): Promise<SessionRecord> =>
     (await db.insert(contextSession).values(s).returning().get()) as SessionRecord
@@ -2480,6 +2523,11 @@ export function makeRepos(db: SqliteDb) {
     listContexts,
     deleteContext,
     touchContextSeen,
+    setContextAskPolicy,
+    listContextAskers,
+    getContextAsker,
+    addContextAsker,
+    removeContextAsker,
     createSession,
     getSession,
     listSessions,
