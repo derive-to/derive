@@ -40,6 +40,7 @@
   },
   "scripts": {
     "typecheck": "echo 'plain js cli'",
+    "typecheck:tsc": "echo 'plain js cli'",
     "test": "vitest run"
   },
   "dependencies": {

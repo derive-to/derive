@@ -36,6 +36,7 @@
     "dev:all": "pnpm --parallel --filter \"./apps/*\" dev",
     "start": "pnpm --filter @derive/api start",
     "typecheck": "pnpm -r typecheck",
+    "typecheck:tsc": "pnpm -r typecheck:tsc",
     "test": "pnpm -r test",
     "test:pg": "bash scripts/test-pg.sh",
     "lint": "biome lint",
@@ -62,6 +63,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "@vitest/coverage-v8": "^4.1.9",
     "dependency-cruiser": "^18.0.0",
     "esbuild": "0.28.1",

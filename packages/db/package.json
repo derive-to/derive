@@ -17,7 +17,8 @@
     "./schema": "./src/schema.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
+    "typecheck:tsc": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:coverage": "vitest run --coverage",
     "test:pg": "vitest run --config vitest.pg.config.ts --coverage test/pg-store.test.ts test/pg-schema-conformance.test.ts",
