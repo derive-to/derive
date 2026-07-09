@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { api } from "@/api"
+import { fieldError } from "@/components/shared/field-error"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -25,6 +26,10 @@ export function AdvancedPat({ onCreated }: { onCreated: () => void }) {
   const [includes, setIncludes] = useState("")
   const [token, setToken] = useState("")
   const valid = validRepo(repo)
+  const repoField = fieldError(
+    "github-repo-error",
+    repo.trim() && !valid ? "Use owner/repo — e.g. acme/docs (a github.com URL works too)." : null,
+  )
   const connect = useApiMutation({
     mutationFn: () =>
       api.connectRepoSource({
@@ -65,6 +70,7 @@ export function AdvancedPat({ onCreated }: { onCreated: () => void }) {
             <Input
               data-testid="github-repo"
               aria-label="Repository"
+              {...repoField.aria}
               value={repo}
               onChange={(e) => setRepo(e.target.value)}
               placeholder="owner/repo"
@@ -89,6 +95,7 @@ export function AdvancedPat({ onCreated }: { onCreated: () => void }) {
               {connect.isPending ? "Connecting…" : "Connect"}
             </Button>
           </div>
+          {repoField.node}
           <div className="flex flex-wrap items-center gap-2">
             <Input
               data-testid="github-includes"

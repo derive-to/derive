@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { ApiError, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { AvatarPicker } from "@/components/shared/avatar-picker"
+import { fieldError } from "@/components/shared/field-error"
 import { FormField } from "@/components/shared/form-field"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -130,6 +131,7 @@ function Onboarding({ me }: { me: Account }) {
   const initials = getInitials(me.name ?? me.email)
   const normalized = normalizeUsername(handle)
   const handleErr = normalized ? usernameError(normalized) : null
+  const usernameField = fieldError("welcome-username-error", handleErr)
   const profession = preset === OTHER ? custom.trim() : preset
 
   // Non-blocking (onboarding proceeds regardless) but NOT silent: a failed upload toasts, so
@@ -211,15 +213,19 @@ function Onboarding({ me }: { me: Account }) {
 
             <div className="flex min-w-65 flex-1 flex-col gap-3">
               <div className="flex flex-wrap gap-2">
-                <FormField label="Username" className="min-w-37.5 flex-1">
+                <FormField
+                  label="Username"
+                  htmlFor="welcome-username"
+                  className="min-w-37.5 flex-1"
+                >
                   <InputGroup>
                     <InputGroupAddon>
                       <InputGroupText>@</InputGroupText>
                     </InputGroupAddon>
                     <InputGroupInput
+                      id="welcome-username"
                       data-testid="welcome-username"
-                      aria-label="Username"
-                      aria-invalid={!!handleErr}
+                      {...usernameField.aria}
                       name="username"
                       autoCapitalize="none"
                       autoCorrect="off"
@@ -252,6 +258,11 @@ function Onboarding({ me }: { me: Account }) {
                   </Select>
                 </FormField>
               </div>
+              {usernameField.node ?? (
+                <p className="text-sm text-muted-foreground">
+                  Letters, numbers, and single - or _.
+                </p>
+              )}
 
               {preset === OTHER && (
                 <Input
@@ -283,11 +294,11 @@ function Onboarding({ me }: { me: Account }) {
                 />
               </FormField>
 
-              {(saveErr || handleErr) && (
+              {saveErr && (
                 // The house form-error surface (matches Login): StatusPanel inline
                 // danger announces via role="alert"; the wrapper only carries the id.
                 <div data-testid="welcome-profile-error">
-                  <StatusPanel tone="danger" layout="inline" title={saveErr || handleErr} />
+                  <StatusPanel tone="danger" layout="inline" title={saveErr} />
                 </div>
               )}
 

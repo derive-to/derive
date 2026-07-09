@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react"
 import { api } from "@/api"
 import { Icon } from "@/components/icons"
+import { fieldError } from "@/components/shared/field-error"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
@@ -13,6 +14,7 @@ export function PasswordGate({ shortId, onUnlocked }: { shortId: string; onUnloc
   const [password, setPassword] = useState("")
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const errField = fieldError("password-gate-error", err)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -56,14 +58,14 @@ export function PasswordGate({ shortId, onUnlocked }: { shortId: string; onUnloc
             data-testid="password-gate-input"
             placeholder="Password"
             aria-label="Password"
+            {...errField.aria}
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              setPassword(e.target.value)
+              setErr(null)
+            }}
           />
-          {err && (
-            <p data-testid="password-gate-error" role="alert" className="text-sm text-destructive">
-              {err}
-            </p>
-          )}
+          {errField.node}
         </div>
         <Button
           type="submit"
