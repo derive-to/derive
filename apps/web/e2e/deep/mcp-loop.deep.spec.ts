@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer"
 import type { APIRequestContext } from "@playwright/test"
 import { STORAGE_KEYS } from "../../src/lib/storage-keys"
-import { expect, test } from "../fixtures"
+import { expect, publishArtifact, test } from "../fixtures"
 
 // The strong MCP loop, browser side: an agent-credentialed publish auto-opens the
 // owner's tab (a created artifact navigates; a revision live-reloads with the review
@@ -131,4 +131,51 @@ test.describe("the MCP loop — auto-open, live rounds, private drafts", () => {
     await owner.getByTestId("library-tab-mine").click()
     await expect(owner.getByText("Hidden Draft").first()).toBeVisible()
   })
+})
+
+test("a live version bump repaints in place and announces itself", async ({ owner }) => {
+  const agent = await createAgent(owner.request, "Bump Bot")
+  const created = await agentPublish(owner.request, agent.token, {
+    title: "Live Doc",
+    content: "<h1>one</h1>",
+  })
+  await owner.goto(`/artifacts/${created.short_id}`)
+  await expect(owner.frameLocator("iframe").locator("h1")).toHaveText("one")
+
+  // A revision published elsewhere lands live: the quiet toast names the version
+  // (the cue that the repaint is an update, not a glitch) and the render swaps.
+  await agentPublish(owner.request, agent.token, {
+    content: "<h1>two</h1>",
+    shortId: created.short_id,
+  })
+  await expect(owner.getByText("Updated to v2.")).toBeVisible({ timeout: 10_000 })
+  await expect(owner.frameLocator("iframe").locator("h1")).toHaveText("two", { timeout: 10_000 })
+})
+
+test("a context-bound agent's publish toasts instead of commandeering the tab", async ({
+  owner,
+}) => {
+  // Bind the agent to a context — it's now an askable service, and its publishes
+  // may be answering someone ELSE's ask on the owner's grant.
+  const agent = await createAgent(owner.request, "Service Bot")
+  const manifestShortId = await publishArtifact(owner, "Service manifest", "# m")
+  const ctxRes = await owner.request.post("/v1/contexts", {
+    data: { name: "Service Desk", agent_id: agent.id, manifest_short_id: manifestShortId },
+  })
+  expect(ctxRes.ok(), `create context failed: ${ctxRes.status()}`).toBeTruthy()
+
+  await owner.goto("/")
+  // Give the per-user stream a beat to attach (mirrors the auto-open spec above) —
+  // the toast only rides the live event.
+  await owner.waitForTimeout(1000)
+  await agentPublish(owner.request, agent.token, {
+    title: "Someone Else's Answer",
+    content: "<h1>answer</h1>",
+  })
+
+  // The cue arrives as a toast with an Open action — the tab stays put.
+  await expect(owner.getByText(/published “Someone Else's Answer”/)).toBeVisible({
+    timeout: 10_000,
+  })
+  await expect(owner).toHaveURL(/\/$/)
 })

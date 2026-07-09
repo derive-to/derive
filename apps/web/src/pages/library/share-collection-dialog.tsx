@@ -208,9 +208,11 @@ export function ShareCollectionDialog({
                   data-testid="collection-share-role"
                   className="w-28 shrink-0"
                 />
-                {/* Add is this dialog's one filled primary. */}
+                {/* Add is this dialog's one filled primary — sm to sit flush with
+                    the h-8 row chassis, matching ShareDialog's add row. */}
                 <Button
                   variant="default"
+                  size="sm"
                   type="submit"
                   data-testid="collection-share-add"
                   loading={addMut.isPending}

@@ -13,7 +13,9 @@ import { parseRef, refFor } from "@/pages/artifact/parse-ref"
 // publishes (the server emits `artifact.pushed` on your user channel, only ever
 // to the granting owner), a newly created artifact opens right here; a revision
 // you're already viewing live-reloads via the artifact channel, and anything
-// else offers a toast. Renders nothing; mounted once in the root.
+// else offers a toast. A `service` push (a context-bound agent — often answering
+// someone ELSE's ask on your grant) never navigates, only toasts. Renders
+// nothing; mounted once in the root.
 //
 // The live path only reaches a VISIBLE tab (the stream closes while hidden, on
 // purpose — an idle tab shouldn't keep the per-user room billed active). So a
@@ -31,6 +33,10 @@ interface PushedEvent {
   version: number
   kind: "created" | "revised"
   agent: string
+  /** The agent is bound to a context (an askable service) — its publishes are
+   *  routinely OTHER people's asks riding this owner's grant, so they must
+   *  never commandeer the browser. Downgraded to a toast. */
+  service?: boolean
 }
 
 // Never act twice on one push: SSE reconnect replay, StrictMode double-fires,
@@ -82,6 +88,10 @@ export function AgentPushListener() {
       kind: "created" | "revised",
       agent: string,
       version?: number,
+      // Whether this push may navigate at all. False for a service (context-bound)
+      // agent — its publishes are often someone ELSE's ask — and for the refocus
+      // catch-up below, whose notification rows can't prove the push was yours.
+      mayNavigate = true,
     ) => {
       if (seen.has(id)) return
       remember(id)
@@ -97,7 +107,7 @@ export function AgentPushListener() {
       const open = () => nav({ to: "/artifacts/$ref", params: { ref } })
       const autoOpen = localStorage.getItem(STORAGE_KEYS.autoOpen) !== "off"
       const blocked = !!document.querySelector('[role="dialog"][data-state="open"]')
-      if (kind === "created" && autoOpen && !blocked && !inputHeld()) {
+      if (mayNavigate && kind === "created" && autoOpen && !blocked && !inputHeld()) {
         open()
         return
       }
@@ -127,6 +137,7 @@ export function AgentPushListener() {
         p.kind,
         p.agent,
         p.version,
+        !p.service,
       )
     },
     !!me && visible,
@@ -135,15 +146,12 @@ export function AgentPushListener() {
   // Regaining visibility: fetch the notification feed and catch up on the
   // single newest thing we missed while hidden — bounded to the last few
   // minutes and to unread rows, so reopening a tab from yesterday doesn't
-  // dredge up old pushes. Treated as "created" (always eligible to navigate)
-  // regardless of whether the underlying push was actually a create or a
-  // revision: the live path only withholds navigation to avoid interrupting
-  // active reading, which doesn't apply here — nothing was on screen to
-  // interrupt while the tab was hidden. Only the newest missed one navigates —
-  // several unread rows in the window would otherwise each fire their own
-  // `nav()`, and the LAST one processed wins the final URL, landing you on the
-  // oldest of the batch instead of the most recent. The bell still lists the
-  // rest for you to catch up on manually.
+  // dredge up old pushes. NEVER navigates, only toasts: publish/review rows in
+  // the feed also cover follower fan-outs, teammates' review asks, and a
+  // context agent answering someone else's ask — a feed row can't prove the
+  // push was yours, and commandeering a tab the user just returned to (they
+  // came back to do something) is exactly the wrong moment. The toast's Open
+  // action is the one-click recovery; the bell lists the rest.
   useEffect(() => {
     if (!me || !visible || wasVisible.current) {
       wasVisible.current = visible
@@ -167,6 +175,8 @@ export function AgentPushListener() {
             missed.artifact_title,
             "created",
             missed.actor,
+            undefined,
+            false,
           )
       })
       .catch(() => {})

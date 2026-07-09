@@ -264,10 +264,23 @@ export function MentionField({
             ),
           )}
         </div>
+        {/* Raw elements (the mention backdrop needs them), so they carry the
+            password-manager ignore set themselves — see ui/input for why. */}
         {multiline ? (
-          <textarea {...handlers} className={fieldClass} />
+          <textarea
+            {...handlers}
+            data-1p-ignore="true"
+            data-lpignore="true"
+            className={fieldClass}
+          />
         ) : (
-          <input {...handlers} className={fieldClass} onClick={(e) => e.stopPropagation()} />
+          <input
+            {...handlers}
+            data-1p-ignore="true"
+            data-lpignore="true"
+            className={fieldClass}
+            onClick={(e) => e.stopPropagation()}
+          />
         )}
       </div>
 

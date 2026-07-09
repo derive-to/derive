@@ -6,6 +6,12 @@ function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
   return (
     <textarea
       data-slot="textarea"
+      // No textarea hosts credentials — password managers stay out unconditionally
+      // (the same vendor ignore set as ui/input; see the rationale there).
+      data-1p-ignore="true"
+      data-lpignore="true"
+      data-bwignore="true"
+      data-form-type="other"
       className={cn(
         // Quiet well: hairline border-input; transparent on light (the themed shadow
         // var adds depth there and zeroes in dark, where the well fill does the work).

@@ -3,14 +3,16 @@ import { useNavigate, useParams } from "@tanstack/react-router"
 import { Minimize2 } from "lucide-react"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { API_BASE, ApiError, api } from "@/api"
+import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
 import { Kbd } from "@/components/ui/kbd"
-import { useSidebar } from "@/components/ui/sidebar"
+import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { artifactTypeLabel } from "@/lib/artifact"
 import { artifactAgentsQuery, artifactQuery, commentsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
+import { useDocumentTitle } from "@/lib/use-document-title"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
 import { useArtifactActions } from "./artifact-actions"
@@ -73,21 +75,18 @@ function DocFab({
   )
 }
 
-// Focus mode also collapses the app nav rail (the render is the hero — the rail is
-// the shell's, not the page's, so this authed-only helper drives it through the
-// sidebar context). Restores the viewer's prior rail state on exit.
-function FocusRailSync({ focus }: { focus: boolean }) {
-  const { open, setOpen } = useSidebar()
-  const prior = useRef(open)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: react to focus flips only, not rail toggles.
+// Focus mode is immersive: the shell unmounts the nav rail (and mobile top bar)
+// entirely and the inset mat drops, so the render runs edge-to-edge — not the old
+// icon-strip collapse that left a 3rem rail beside "focus". The rail is the
+// shell's, not the page's, so this authed-only helper drives it through the shell
+// context; the cleanup restores the chrome if the page unmounts mid-focus, and the
+// rail's own open/collapsed preference is never touched.
+function FocusShellSync({ focus }: { focus: boolean }) {
+  const { setImmersive } = useShell()
   useEffect(() => {
-    if (focus) {
-      prior.current = open
-      setOpen(false)
-    } else if (prior.current) {
-      setOpen(true)
-    }
-  }, [focus])
+    setImmersive(focus)
+    return () => setImmersive(false)
+  }, [focus, setImmersive])
   return null
 }
 
@@ -104,6 +103,8 @@ export function Artifact() {
   // the SSE live updates below write through the same client.
   const qc = useQueryClient()
   const { data: art, isError: failed, error, refetch } = useQuery(artifactQuery(shortId))
+  // The tab is named after the document, like the workbench header (title, else id).
+  useDocumentTitle(art ? (art.title ?? shortId) : null)
   const { data: comments = [] } = useQuery(commentsQuery(shortId))
   // Agents this viewer can hand a revision to (the "ask an agent" flow). Empty for
   // an anon viewer (the query is authed) or a workspace with no agents — then the
@@ -162,10 +163,47 @@ export function Artifact() {
   const [reviewTick, setReviewTick] = useState(0)
   const onReview = useCallback(() => setReviewTick((t) => t + 1), [])
 
+  // A version published while we're LOOKING refetches (the unpinned render swaps
+  // in place) and gets a cue, so the repaint reads as an update, not a glitch:
+  // a quiet toast normally, a WARNING while editing (this edit started from the
+  // old version — publishing it replaces the newer one). Pinned views (@vN) get
+  // neither: their version bar already carries "you're on an old version", and the
+  // refetch keeps it truthful. Read through refs so the SSE stream doesn't
+  // resubscribe every time the user opens the editor.
+  const editingRef = useRef(editing)
+  editingRef.current = editing
+  const pinnedRef = useRef(version)
+  pinnedRef.current = version
+  const onVersionLive = useCallback(
+    (n?: number) => {
+      load()
+      if (pinnedRef.current !== undefined) return
+      const v = n !== undefined ? `v${n}` : "A new version"
+      if (editingRef.current) {
+        toast.warning(`${v} was just published — publishing this edit will replace it.`, {
+          id: `stale-edit-${shortId}`,
+          duration: 8000,
+        })
+      } else {
+        toast(`Updated to ${v === "A new version" ? "the newest version" : v}.`, {
+          id: `live-version-${shortId}`,
+        })
+      }
+    },
+    [load, shortId],
+  )
+
   // Presence, live multiplayer cursors, the SSE stream, and view recording — see
   // use-artifact-live. The page feeds pointer moves in (from the iframe bridge
   // below) and reads `viewers` + the `cursorLayer` overlay ref back out.
-  const live = useArtifactLive({ shortId, onComment: refetchComments, onVersion: load, onReview })
+  // onResync closes coverage gaps (hidden tab return, SSE reconnect) silently.
+  const live = useArtifactLive({
+    shortId,
+    onComment: refetchComments,
+    onVersion: onVersionLive,
+    onReview,
+    onResync: load,
+  })
 
   // The whole postMessage channel with the sandboxed iframe: text selection,
   // anchor geometry, scroll, deck position, and peer cursors in; highlight
@@ -551,7 +589,7 @@ export function Artifact() {
       {/* data-artifact-view: while the workbench is mounted, globals.css drops the
           film-grain overlay so Derive's material steps back inside the author's document. */}
       <div data-artifact-view className="flex min-h-0 flex-1 flex-col">
-        <FocusRailSync focus={focus} />
+        <FocusShellSync focus={focus} />
         {/* The workbench bar — full-width now (sidebar-first shell), so the
               comments panel docks BELOW it instead of squeezing it into the
               remaining width. The page owns its toolbar: the artifact title (the
@@ -690,15 +728,16 @@ export function Artifact() {
             ) : (
               documentEl
             )}
-            {!isAnon && !focus && panel === "hidden" && (
+            {/* Only when there ARE open comments — a zero-count "Show comments" pill
+                is noise over the render. The top-bar Comments toggle (and `c`)
+                still opens the empty panel to start the first thread. */}
+            {!isAnon && !focus && panel === "hidden" && openCount > 0 && (
               <DocFab
                 title="Show comments (c)"
                 testId="artifact-comments-fab"
                 onClick={() => setPanel("open")}
               >
-                {openCount > 0
-                  ? `${openCount} comment${openCount === 1 ? "" : "s"}`
-                  : "Show comments"}
+                {`${openCount} comment${openCount === 1 ? "" : "s"}`}
               </DocFab>
             )}
             {/* Anonymous visitor on a comment-enabled link: commenting forces auth (anon

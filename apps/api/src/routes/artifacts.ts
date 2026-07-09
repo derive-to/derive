@@ -790,6 +790,12 @@ export const artifactRoutes = (ctx: AppContext) => {
             notification: { ...row, read: 0, created_at: new Date().toISOString() },
           })
         }
+        // A context-bound agent is an askable service: its publishes are routinely
+        // OTHER people's asks riding this owner's grant, so the push must not
+        // commandeer the owner's browser. Flag it — the client downgrades
+        // auto-open to a toast (the bell row above still lands).
+        const contexts = await meta.listContexts(artifact.org_id)
+        const service = contexts.some((x) => x.agent_id === agentPrincipal.id)
         const pushed = {
           type: "artifact.pushed" as const,
           event_id: newId("ev"),
@@ -801,6 +807,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           url: artifactUrl(deps.baseUrl, artifact),
           agent: agentPrincipal.name,
           review_requested: roundCreated,
+          service,
         }
         if (bus.publishWithReceipt) {
           openedInTab = await Promise.race([

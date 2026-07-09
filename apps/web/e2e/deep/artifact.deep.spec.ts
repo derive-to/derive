@@ -105,3 +105,34 @@ test("add a tag from the header", async ({ page }) => {
   await page.getByTestId("tag-add").click()
   await expect(page.getByText("#design")).toBeVisible()
 })
+
+test("focus mode removes the shell entirely and restores it on exit", async ({ page }) => {
+  const rail = page.locator('[data-slot="sidebar"]').first()
+  await expect(rail).toBeVisible()
+
+  // Enter via the ⋯ menu: the nav rail unmounts (fully gone, not the icon strip)
+  // and the workbench header hides — the render is the whole viewport.
+  await page.getByTestId("artifact-more").click()
+  await page.getByTestId("artifact-focus").click()
+  await expect(rail).toHaveCount(0)
+  await expect(page.getByTestId("artifact-more")).not.toBeVisible()
+
+  // Esc exits; the rail and header come back.
+  await page.keyboard.press("Escape")
+  await expect(page.locator('[data-slot="sidebar"]').first()).toBeVisible()
+  await expect(page.getByTestId("artifact-more")).toBeVisible()
+})
+
+test("typing c in the source editor never toggles the comments panel", async ({ page }) => {
+  // The desktop panel starts open (its empty state shows on a fresh doc).
+  const panelEmpty = page.getByText("Start the conversation.")
+  await expect(panelEmpty).toBeVisible()
+
+  // The source editor is contentEditable (CodeMirror) — the regression was a
+  // mid-sentence "c" collapsing the panel out from under the typist.
+  await page.getByTestId("artifact-more").click()
+  await page.getByTestId("artifact-edit").click()
+  await page.locator(".cm-content").click()
+  await page.keyboard.type("once section c")
+  await expect(panelEmpty).toBeVisible()
+})
