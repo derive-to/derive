@@ -5387,7 +5387,10 @@ export interface components {
             created_at: string;
             /** @description When the runner last polled the queue (~minutely); null = never. Drives online/offline. */
             runner_seen_at: string | null;
-            /** @enum {string} */
+            /**
+             * @description Who in the workspace may ask: any member, or the invited roster. Never outside the workspace.
+             * @enum {string}
+             */
             ask_policy: "workspace" | "invited";
         };
         Session: {

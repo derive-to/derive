@@ -17,8 +17,10 @@ import { log } from "../log"
 /**
  * Contexts (askable agent setups) + sessions (ask-conversations with one).
  *
- * A context links a registered agent to its manifest artifact; the manifest's
- * share roster is the ask grant (v1: viewer on the manifest = can ask). Sessions
+ * A context links a registered agent to its manifest artifact. Ask-access is a
+ * WORKSPACE-SCOPED grant on the context itself (ask_policy + the asker roster) —
+ * NOT the manifest's artifact sharing: a context is a data grant, not a document,
+ * and must never be reachable outside its workspace (see canAskContext). Sessions
  * are private to the asker and the context owner — 404 to everyone else, so their
  * existence never leaks. The runner drains `open` sessions from the queue endpoint
  * with the agent's own bearer and answers through the messages endpoint. The
@@ -180,8 +182,9 @@ export const contextRoutes = (ctx: AppContext) => {
   }
 
   // Create a context: wire an agent to a manifest artifact. Editor+ in the
-  // workspace, and share-standing on the manifest — creating a context makes the
-  // manifest's roster govern who can ask, which is a sharing decision.
+  // workspace, and share-standing on the manifest (creating a context exposes the
+  // manifest's identity to askers, so it's a sharing decision). Who can ASK is a
+  // separate, workspace-scoped grant on the context — set via /access, not here.
   app.openapi(
     createRoute({
       method: "post",

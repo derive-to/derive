@@ -2,8 +2,103 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Derive API",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "description": "Derive's HTTP API. Every response shape here is the single source of truth for the web client — generated from the same Zod schemas that back this reference, so the docs never drift from the running API.\n\n**Auth:** a session cookie (browser) or a bearer token (agents and the CLI). Most write routes are scoped to the caller's active workspace. The `/v1` paths are the stable product surface; `/openapi.json` serves this spec and `/docs` renders it."
   },
+  "tags": [
+    {
+      "name": "Artifacts",
+      "description": "Documents (files and bundles): browse, publish, version, restore, and control access."
+    },
+    {
+      "name": "Comments",
+      "description": "Threaded, anchored comments with reactions, edits, and resolution."
+    },
+    {
+      "name": "Proposals",
+      "description": "Suggested revisions awaiting review — the propose → approve / request-changes flow."
+    },
+    {
+      "name": "Review",
+      "description": "Review rounds on an artifact: request a review, send it back, or approve."
+    },
+    {
+      "name": "Collections",
+      "description": "Shareable groups of artifacts, each with its own members."
+    },
+    {
+      "name": "Sharing",
+      "description": "Per-artifact collaborator roles (shares) layered over the workspace baseline."
+    },
+    {
+      "name": "Contexts",
+      "description": "Askable agent setups: wire an agent to a manifest, then open Q&A sessions against it."
+    },
+    {
+      "name": "Agents",
+      "description": "Registered agents (bearer tokens) and the OAuth agents a user has authorized."
+    },
+    {
+      "name": "Assets",
+      "description": "Standalone binary image assets referenced from bundles."
+    },
+    {
+      "name": "Favorites",
+      "description": "The caller's favorited artifacts."
+    },
+    {
+      "name": "Follows",
+      "description": "Follow people and repo paths to build the activity feed."
+    },
+    {
+      "name": "Notifications",
+      "description": "The caller's in-app notification feed."
+    },
+    {
+      "name": "Session",
+      "description": "Identity: the signed-in user, public profiles, and the people directory."
+    },
+    {
+      "name": "Workspace",
+      "description": "The workspace itself: members, settings, invitations, and switching."
+    },
+    {
+      "name": "Domains",
+      "description": "Custom domains and vanity subdomains bound to artifacts."
+    },
+    {
+      "name": "Sync",
+      "description": "GitHub repository mirroring: connect a repo and keep its docs in sync."
+    },
+    {
+      "name": "Slack",
+      "description": "Slack connection status and integration toggles."
+    },
+    {
+      "name": "Webhooks",
+      "description": "Outgoing webhooks and their delivery log."
+    },
+    {
+      "name": "OAuth",
+      "description": "OAuth 2.1 authorization-server endpoints and sign-in capabilities."
+    },
+    {
+      "name": "Realtime",
+      "description": "Live presence and cursor sharing on an artifact."
+    },
+    {
+      "name": "Analytics",
+      "description": "Aggregate view statistics for an artifact."
+    },
+    {
+      "name": "Moderation",
+      "description": "Abuse reports and takedown / reinstate actions."
+    },
+    {
+      "name": "Vitals",
+      "description": "Client-reported web-vitals ingestion."
+    }
+  ],
   "components": {
     "schemas": {
       "PublicProfile": {
@@ -18,22 +113,27 @@
           },
           "image": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Avatar URL; null if none is set."
           },
           "profession": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Self-set team role ('what you do'); null if unset."
           },
           "about": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "One-line bio; on the full profile only, null if unset."
           },
           "github_login": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Linked GitHub login; full profile only, null if not linked."
           },
           "teammate": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True when the viewer shares a workspace with this user."
           },
           "stats": {
             "type": "object",
@@ -44,10 +144,12 @@
             },
             "required": [
               "works"
-            ]
+            ],
+            "description": "Authored-works count; present only for teammates."
           },
           "followed_by_me": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the signed-in viewer follows this user."
           }
         },
         "required": [
@@ -60,35 +162,42 @@
         "type": "object",
         "properties": {
           "short_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Stable public id — the /a/<short_id> URL slug."
           },
           "url": {
-            "type": "string"
+            "type": "string",
+            "description": "Canonical public URL of the artifact."
           },
           "title": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Display title; null when untitled or taken down."
           },
           "kind": {
             "type": "string",
             "enum": [
               "file",
               "bundle"
-            ]
+            ],
+            "description": "file = single file; bundle = multi-file archive (skill, site, or docs folder)."
           },
           "current_content_type": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "MIME type of the current version's content."
           },
           "locked": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "When true, direct publishes are blocked — changes go through review."
           },
           "workspace_access": {
             "type": "string",
             "enum": [
               "none",
               "member"
-            ]
+            ],
+            "description": "v2 access: member = workspace seats reach it at their role; none = they don't."
           },
           "link_role": {
             "type": "string",
@@ -97,7 +206,8 @@
               "viewer",
               "commenter",
               "editor"
-            ]
+            ],
+            "description": "v2 access: what merely holding the world link confers (none = no link)."
           },
           "listed": {
             "type": "string",
@@ -105,22 +215,28 @@
               "none",
               "workspace",
               "public"
-            ]
+            ],
+            "description": "v2 access: where it surfaces for discovery — nowhere, the workspace, or public."
           },
           "password_protected": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "true when the world link is password-locked (the password is never returned)."
           },
           "org_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The artifact's workspace id; drives move-to-workspace."
           },
           "raw_token": {
-            "type": "string"
+            "type": "string",
+            "description": "Signed, short-lived token for fetching raw content; detail responses only."
           },
           "spa": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "true when the bundle is a single-page app (all paths route to the entry)."
           },
           "current_version": {
-            "type": "number"
+            "type": "number",
+            "description": "Latest version number; 0 before any content is published."
           },
           "versions": {
             "type": "array",
@@ -131,14 +247,17 @@
                   "type": "number"
                 },
                 "content_type": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "MIME type of this version's content."
                 },
                 "author": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "Display byline; heals to the author's current name."
                 },
                 "author_login": {
                   "type": "string",
-                  "nullable": true
+                  "nullable": true,
+                  "description": "Committer's GitHub login; null when not a GitHub commit."
                 },
                 "author_avatar": {
                   "type": "string",
@@ -146,19 +265,23 @@
                 },
                 "author_gh_id": {
                   "type": "string",
-                  "nullable": true
+                  "nullable": true,
+                  "description": "Committer's GitHub user id; null when not a GitHub commit."
                 },
                 "handle": {
                   "type": "string",
-                  "nullable": true
+                  "nullable": true,
+                  "description": "Committer's Derive @handle; null unless they signed in with GitHub."
                 },
                 "message": {
                   "type": "string",
-                  "nullable": true
+                  "nullable": true,
+                  "description": "Version (commit) message; null when none given."
                 },
                 "name": {
                   "type": "string",
-                  "nullable": true
+                  "nullable": true,
+                  "description": "Optional version label; null when unnamed."
                 },
                 "created_at": {
                   "type": "string"
@@ -177,10 +300,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/VersionSession"
-            }
+            },
+            "description": "Versions grouped into time-clustered sessions for the UI (newest-first)."
           },
           "views": {
-            "type": "number"
+            "type": "number",
+            "description": "Total views; present only when analytics is enabled."
           },
           "my_role": {
             "type": "string",
@@ -191,7 +316,8 @@
               "editor",
               "owner",
               null
-            ]
+            ],
+            "description": "The caller's effective permission tier; null when they have none."
           },
           "tags": {
             "type": "array",
@@ -200,54 +326,68 @@
             }
           },
           "favorite": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "true when the caller has favorited this."
           },
           "has_preview": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "true when the current version has a ready screenshot preview."
           },
           "open_proposals": {
-            "type": "number"
+            "type": "number",
+            "description": "Count of open (pending-review) proposals."
           },
           "proposals_total": {
-            "type": "number"
+            "type": "number",
+            "description": "Count of all proposals except withdrawn ones."
           },
           "open_threads": {
-            "type": "number"
+            "type": "number",
+            "description": "Count of open (unresolved) comment threads."
           },
           "mentions_me": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "true when an open thread @mentions the calling user."
           },
           "i_participated": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "true when the caller authored or commented in a thread here."
           },
           "collections": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Ids of the collections that include this artifact."
           },
           "removed": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "true when the artifact has been taken down (tombstone)."
           },
           "managed": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "true when mirrored from a GitHub sync — read-only in Derive."
           },
           "bundle": {
             "type": "object",
             "properties": {
               "isSkill": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "true when the bundle is a skill (entry SKILL.md)."
               },
               "name": {
                 "type": "string",
-                "nullable": true
+                "nullable": true,
+                "description": "Skill/bundle name; null when not declared."
               },
               "description": {
                 "type": "string",
-                "nullable": true
+                "nullable": true,
+                "description": "Skill/bundle description; null when not declared."
               },
               "entry": {
-                "type": "string"
+                "type": "string",
+                "description": "Path of the entry document rendered first."
               },
               "files": {
                 "type": "array",
@@ -265,7 +405,8 @@
                     "path",
                     "type"
                   ]
-                }
+                },
+                "description": "The bundle's file tree (path + MIME type) for navigation."
               }
             },
             "required": [
@@ -274,34 +415,41 @@
               "description",
               "entry",
               "files"
-            ]
+            ],
+            "description": "Present for a markdown bundle (skill or docs folder): entry, file tree, identity."
           },
           "source_path": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Source path (e.g. the repo path of a synced artifact); null when none."
           },
           "created_at": {
             "type": "string"
           },
           "updated_at": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Last-update timestamp; null when never updated since creation."
           },
           "author_name": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Raw current-author name; the resolved `author` object is preferred."
           },
           "author_login": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Raw current-author GitHub login; null when not from GitHub."
           },
           "author_avatar": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Raw current-author avatar URL; null when none."
           },
           "author_gh_id": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Raw current-author GitHub id; null when not from GitHub."
           },
           "author": {
             "type": "object",
@@ -313,7 +461,8 @@
               },
               "login": {
                 "type": "string",
-                "nullable": true
+                "nullable": true,
+                "description": "GitHub login; null if never signed in with GitHub."
               },
               "avatar": {
                 "type": "string",
@@ -321,7 +470,8 @@
               },
               "handle": {
                 "type": "string",
-                "nullable": true
+                "nullable": true,
+                "description": "Derive @handle; null when the author has none."
               }
             },
             "required": [
@@ -329,7 +479,8 @@
               "login",
               "avatar",
               "handle"
-            ]
+            ],
+            "description": "Resolved current-author profile; preferred over the raw author_* fields."
           }
         },
         "required": [
@@ -345,23 +496,28 @@
         "type": "object",
         "properties": {
           "n": {
-            "type": "number"
+            "type": "number",
+            "description": "Newest version number in this grouped session."
           },
           "from_n": {
-            "type": "number"
+            "type": "number",
+            "description": "Oldest version number in this grouped session."
           },
           "count": {
-            "type": "number"
+            "type": "number",
+            "description": "How many versions this session groups."
           },
           "author": {
             "type": "string"
           },
           "name": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Session label; null when unnamed."
           },
           "created_at": {
-            "type": "string"
+            "type": "string",
+            "description": "Timestamp of the newest version in the group."
           }
         },
         "required": [
@@ -377,7 +533,8 @@
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "User id, or the agent id when kind is agent."
           },
           "name": {
             "type": "string",
@@ -385,18 +542,21 @@
           },
           "handle": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The @handle; null for agents (and users without one)."
           },
           "kind": {
             "type": "string",
             "enum": [
               "user",
               "agent"
-            ]
+            ],
+            "description": "Whether this entry is a person (user) or an agent."
           },
           "profession": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The person's role; null for agents."
           }
         },
         "required": [
@@ -413,15 +573,18 @@
           },
           "handle": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Public @handle; null when the user has none."
           },
           "name": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Display name; null when unset."
           },
           "profession": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Joined only on workspace-member payloads; absent on artifact/collection lists."
           },
           "role": {
             "type": "string",
@@ -430,7 +593,8 @@
               "commenter",
               "editor",
               "owner"
-            ]
+            ],
+            "description": "Permission tier, ascending: viewer < commenter < editor < owner."
           }
         },
         "required": [
@@ -456,7 +620,8 @@
               "commenter",
               "editor",
               "owner"
-            ]
+            ],
+            "description": "The caller's role in this workspace (owner = Admin)."
           },
           "members": {
             "type": "array",
@@ -481,7 +646,8 @@
                 "type": "string",
                 "enum": [
                   "member"
-                ]
+                ],
+                "description": "The invitee already had an account and was added directly."
               },
               "member": {
                 "$ref": "#/components/schemas/ArtifactMember"
@@ -499,13 +665,15 @@
                 "type": "string",
                 "enum": [
                   "invite"
-                ]
+                ],
+                "description": "No account yet — a pending invite was created instead."
               },
               "invite": {
                 "$ref": "#/components/schemas/Invite"
               },
               "accept_url": {
-                "type": "string"
+                "type": "string",
+                "description": "The link the invitee follows to accept."
               }
             },
             "required": [
@@ -532,13 +700,15 @@
               "commenter",
               "editor",
               "owner"
-            ]
+            ],
+            "description": "The role the invitee will receive (owner = Admin)."
           },
           "created_at": {
             "type": "string"
           },
           "expires_at": {
-            "type": "string"
+            "type": "string",
+            "description": "When the invite expires (7-day TTL)."
           }
         },
         "required": [
@@ -553,7 +723,8 @@
         "type": "object",
         "properties": {
           "workspace": {
-            "type": "string"
+            "type": "string",
+            "description": "Name of the workspace this invite joins."
           },
           "role": {
             "type": "string",
@@ -562,14 +733,17 @@
               "commenter",
               "editor",
               "owner"
-            ]
+            ],
+            "description": "The role this invite grants (owner = Admin)."
           },
           "email": {
-            "type": "string"
+            "type": "string",
+            "description": "The email address the invite was addressed to."
           },
           "inviter": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The inviter's display name; null if unknown."
           }
         },
         "required": [
@@ -583,32 +757,32 @@
         "type": "object",
         "properties": {
           "emailNotifications": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "When true, send workspace email notifications."
           },
           "githubPostComments": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "When true, post Derive comments onto the linked GitHub PR."
           },
           "githubMirrorComments": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "When true, mirror GitHub PR comments back into Derive."
           },
           "githubPreviewLink": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "When true, add a preview link to the linked GitHub PR."
           },
           "slackPost": {
-            "type": "boolean"
-          },
-          "slackEvents": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "boolean"
-            }
+            "type": "boolean",
+            "description": "When true, post events to Slack."
           },
           "defaultWorkspaceAccess": {
             "type": "string",
             "enum": [
               "none",
               "member"
-            ]
+            ],
+            "description": "Access a new publish lands with: none, or member (factory default)."
           },
           "defaultLinkRole": {
             "type": "string",
@@ -617,7 +791,8 @@
               "viewer",
               "commenter",
               "editor"
-            ]
+            ],
+            "description": "Share-link role a new publish lands with (factory default: none)."
           },
           "defaultListed": {
             "type": "string",
@@ -625,7 +800,8 @@
               "none",
               "workspace",
               "public"
-            ]
+            ],
+            "description": "Listing a new publish lands with: none (default), workspace, or public."
           }
         },
         "required": [
@@ -643,10 +819,12 @@
         "type": "object",
         "properties": {
           "multi": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether multi-workspace mode is enabled."
           },
           "active": {
-            "type": "string"
+            "type": "string",
+            "description": "Id of the workspace this request resolved to."
           },
           "account": {
             "$ref": "#/components/schemas/AccountSummary"
@@ -674,7 +852,8 @@
           },
           "handle": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The account's @handle; null if unclaimed."
           },
           "name": {
             "type": "string",
@@ -685,7 +864,8 @@
           "id",
           "handle",
           "name"
-        ]
+        ],
+        "description": "The owner's identity (id + handle); null for anonymous callers."
       },
       "WorkspaceSummary": {
         "type": "object",
@@ -703,10 +883,12 @@
               "commenter",
               "editor",
               "owner"
-            ]
+            ],
+            "description": "The caller's role in this workspace (owner = Admin)."
           },
           "personal": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True for the auto-provisioned personal workspace (id ws_p_<userId>)."
           }
         },
         "required": [
@@ -732,7 +914,8 @@
               "commenter",
               "editor",
               "owner"
-            ]
+            ],
+            "description": "Permission level; commenter proposes only, editor can write, owner never allowed"
           },
           "created_at": {
             "type": "string"
@@ -749,7 +932,8 @@
         "type": "object",
         "properties": {
           "clientId": {
-            "type": "string"
+            "type": "string",
+            "description": "OAuth client id of the authorized agent (e.g. an MCP client like Claude)"
           },
           "clientName": {
             "type": "string"
@@ -758,7 +942,8 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "The OAuth scopes this agent was granted"
           },
           "grantedAt": {
             "type": "string"
@@ -775,10 +960,12 @@
         "type": "object",
         "properties": {
           "key": {
-            "type": "string"
+            "type": "string",
+            "description": "The blob hash (content-addressed storage key)"
           },
           "ref": {
-            "type": "string"
+            "type": "string",
+            "description": "The exact \"asset:<hash>\" string to drop into a publish files map"
           },
           "type": {
             "type": "string",
@@ -787,10 +974,12 @@
               "image/jpeg",
               "image/gif",
               "image/webp"
-            ]
+            ],
+            "description": "The sniffed image MIME type (PNG, JPEG, GIF, or WebP)"
           },
           "size": {
-            "type": "number"
+            "type": "number",
+            "description": "The asset's size in bytes"
           }
         },
         "required": [
@@ -807,10 +996,12 @@
             "type": "string"
           },
           "org_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The workspace this follow is scoped to; \"*\" (global) for people-follows"
           },
           "user_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The follower (the signed-in user who owns this follow)"
           },
           "kind": {
             "type": "string",
@@ -818,25 +1009,30 @@
               "author",
               "path",
               "user"
-            ]
+            ],
+            "description": "What's followed: a GitHub author, a repo path prefix, or a person"
           },
           "target": {
-            "type": "string"
+            "type": "string",
+            "description": "The followed value: author login, path prefix, or (people) public @handle"
           },
           "created_at": {
             "type": "string"
           },
           "handle": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "For people-follows, the followed person's public @handle; absent otherwise"
           },
           "name": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "For people-follows, the followed person's display name; absent otherwise"
           },
           "image": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "For people-follows, the followed person's avatar URL; absent otherwise"
           }
         },
         "required": [
@@ -858,20 +1054,23 @@
             "type": "string"
           },
           "created_by": {
-            "type": "string"
+            "type": "string",
+            "description": "Creator's user id (\"anon\" if created anonymously)."
           },
           "created_at": {
             "type": "string"
           },
           "count": {
-            "type": "number"
+            "type": "number",
+            "description": "Number of artifacts in the collection."
           },
           "workspace_access": {
             "type": "string",
             "enum": [
               "none",
               "member"
-            ]
+            ],
+            "description": "Workspace share scope: \"member\" (all members) or \"none\" (invite-only)."
           },
           "my_role": {
             "type": "string",
@@ -882,7 +1081,8 @@
               "editor",
               "owner",
               null
-            ]
+            ],
+            "description": "Caller's own role on the collection; drives the Share dialog. Null if none."
           },
           "kind": {
             "type": "string",
@@ -890,16 +1090,20 @@
               "manual",
               "repo",
               "pr"
-            ]
+            ],
+            "description": "Origin: \"manual\" (user-made), \"repo\" (GitHub mirror), or \"pr\" (PR preview)."
           },
           "parentId": {
-            "type": "string"
+            "type": "string",
+            "description": "For a PR preview: the repo collection it nests under, when connected."
           },
           "prNumber": {
-            "type": "number"
+            "type": "number",
+            "description": "For a PR preview: the pull-request number."
           },
           "repo": {
-            "type": "string"
+            "type": "string",
+            "description": "For repo/PR collections: the \"owner/name\" slug."
           }
         },
         "required": [
@@ -917,25 +1121,30 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/RepoSource"
-            }
+            },
+            "description": "Branch mirrors, one per connected repo."
           },
           "prs": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/PrPreview"
-            }
+            },
+            "description": "PR previews, one per pull request being mirrored."
           },
           "app": {
             "type": "object",
             "properties": {
               "configured": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "True when a live GitHub App is set up on this server."
               },
               "slug": {
-                "type": "string"
+                "type": "string",
+                "description": "The App's GitHub slug for install links; absent when unconfigured."
               },
               "upToDate": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "True when the App has every required permission and event."
               },
               "missing": {
                 "type": "object",
@@ -944,36 +1153,43 @@
                     "type": "object",
                     "additionalProperties": {
                       "type": "string"
-                    }
+                    },
+                    "description": "Scope → level still to grant (e.g. contents → read)."
                   },
                   "events": {
                     "type": "array",
                     "items": {
                       "type": "string"
-                    }
+                    },
+                    "description": "Webhook event names still to subscribe to."
                   }
                 },
                 "required": [
                   "permissions",
                   "events"
-                ]
+                ],
+                "description": "Permissions and events still to grant; absent when up to date."
               },
               "permissionsUrl": {
-                "type": "string"
+                "type": "string",
+                "description": "GitHub URL to adjust the App's permissions; absent when unconfigured."
               },
               "approveUrl": {
-                "type": "string"
+                "type": "string",
+                "description": "GitHub URL to install or approve the App; absent when unconfigured."
               }
             },
             "required": [
               "configured"
-            ]
+            ],
+            "description": "The instance GitHub App's setup and permission state."
           },
           "installations": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/GithubInstallation"
-            }
+            },
+            "description": "This workspace's App installations (entry points to the repo picker)."
           }
         },
         "required": [
@@ -990,32 +1206,40 @@
             "type": "string"
           },
           "collection_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Collection the repo's docs are mirrored into."
           },
           "repo": {
-            "type": "string"
+            "type": "string",
+            "description": "The connected GitHub repo, as owner/name."
           },
           "ref": {
-            "type": "string"
+            "type": "string",
+            "description": "Branch or tag to mirror; \"HEAD\" tracks the default branch."
           },
           "includes": {
-            "type": "string"
+            "type": "string",
+            "description": "Comma-separated glob patterns selecting which files to mirror."
           },
           "token": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Redacted to \"•••\" when a PAT is stored; null for App-backed sources."
           },
           "installation_id": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "GitHub App installation backing this source; null when using a PAT."
           },
           "last_synced_at": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "When the last sync finished; null if it has never synced."
           },
           "last_status": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Outcome of the last sync run; null if it has never synced."
           },
           "created_by": {
             "type": "string"
@@ -1024,11 +1248,13 @@
             "type": "string"
           },
           "file_count": {
-            "type": "number"
+            "type": "number",
+            "description": "How many files are currently mirrored from the repo."
           },
           "progress": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Live sync progress as a JSON blob driving the bar; null when none recorded."
           }
         },
         "required": [
@@ -1054,31 +1280,39 @@
             "type": "string"
           },
           "collection_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Collection holding this PR's previewed docs."
           },
           "repo": {
-            "type": "string"
+            "type": "string",
+            "description": "The connected GitHub repo, as owner/name."
           },
           "pr_number": {
-            "type": "number"
+            "type": "number",
+            "description": "The pull request number this preview mirrors."
           },
           "title": {
-            "type": "string"
+            "type": "string",
+            "description": "The PR's title, used as the preview's display name."
           },
           "last_status": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Outcome of the last sync run; null if it has never synced."
           },
           "last_synced_at": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "When the last sync finished; null if it has never synced."
           },
           "file_count": {
-            "type": "number"
+            "type": "number",
+            "description": "How many of the PR's changed docs are mirrored."
           },
           "progress": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Live sync progress as a JSON blob driving the bar; null when none recorded."
           }
         },
         "required": [
@@ -1097,11 +1331,13 @@
         "type": "object",
         "properties": {
           "installation_id": {
-            "type": "string"
+            "type": "string",
+            "description": "GitHub's numeric App installation id, as a string."
           },
           "account_login": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The org/user the App is installed on; null until GitHub reports it."
           }
         },
         "required": [
@@ -1113,17 +1349,21 @@
         "type": "object",
         "properties": {
           "full_name": {
-            "type": "string"
+            "type": "string",
+            "description": "The repository's full name, as owner/name."
           },
           "private": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True when the repo is private on GitHub."
           },
           "default_branch": {
-            "type": "string"
+            "type": "string",
+            "description": "The repo's default branch (e.g. main)."
           },
           "pushed_at": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "When the repo was last pushed to; null if unknown. Drives sort order."
           }
         },
         "required": [
@@ -1137,19 +1377,24 @@
         "type": "object",
         "properties": {
           "total": {
-            "type": "number"
+            "type": "number",
+            "description": "Total files matching the include globs."
           },
           "md": {
-            "type": "number"
+            "type": "number",
+            "description": "How many matches are Markdown files."
           },
           "html": {
-            "type": "number"
+            "type": "number",
+            "description": "How many matches are HTML files."
           },
           "other": {
-            "type": "number"
+            "type": "number",
+            "description": "Matches that are neither Markdown nor HTML."
           },
           "truncated": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True when GitHub capped the tree, so counts are a lower bound."
           }
         },
         "required": [
@@ -1167,22 +1412,27 @@
             "type": "string"
           },
           "repo": {
-            "type": "string"
+            "type": "string",
+            "description": "The connected GitHub repo, as owner/name."
           },
           "progress": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Live sync progress as a JSON blob driving the bar; null when none recorded."
           },
           "last_status": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Outcome of the last sync run; null if it has never synced."
           },
           "last_synced_at": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "When the last sync finished; null if it has never synced."
           },
           "file_count": {
-            "type": "number"
+            "type": "number",
+            "description": "How many files are currently mirrored from the repo."
           }
         },
         "required": [
@@ -1198,27 +1448,30 @@
         "type": "object",
         "properties": {
           "available": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True if this instance has Slack configured at all"
           },
           "connected": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True if this workspace has connected a Slack team"
           },
           "team_name": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The connected Slack team's name, or null if not connected"
           },
           "default_channel": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The channel Derive posts to, or null if unset"
           },
           "needs_reauth": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the stored bot token needs a re-auth (an auth error since connecting)"
           },
-          "linked": {
-            "type": "boolean"
-          },
-          "mention_dm": {
-            "type": "boolean"
+          "slack_dm": {
+            "type": "boolean",
+            "description": "The caller's \"DM me for interrupts\" preference (mentions, review requests, shares)"
           }
         },
         "required": [
@@ -1227,8 +1480,7 @@
           "team_name",
           "default_channel",
           "needs_reauth",
-          "linked",
-          "mention_dm"
+          "slack_dm"
         ]
       },
       "Report": {
@@ -1244,15 +1496,18 @@
             "type": "string"
           },
           "reason": {
-            "type": "string"
+            "type": "string",
+            "description": "The reporter's stated reason for the report"
           },
           "detail": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Optional extra detail from the reporter, or null"
           },
           "reporter": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The reporter's IP (best-effort), or null; abuse reports are anonymous/public"
           },
           "state": {
             "type": "string",
@@ -1260,7 +1515,8 @@
               "open",
               "actioned",
               "dismissed"
-            ]
+            ],
+            "description": "open (awaiting review), actioned (taken down), or dismissed (no action)"
           },
           "created_at": {
             "type": "string"
@@ -1293,18 +1549,22 @@
               "takedown",
               "reinstate",
               "dismiss"
-            ]
+            ],
+            "description": "What happened: report filed, takedown, reinstate, or dismiss"
           },
           "artifact_id": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The artifact acted on, or null if not artifact-specific"
           },
           "actor": {
-            "type": "string"
+            "type": "string",
+            "description": "Who performed it: a user's name, or an IP/'anonymous' for public reports"
           },
           "detail": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Context such as the report reason or takedown note, or null"
           },
           "created_at": {
             "type": "string"
@@ -1329,10 +1589,12 @@
               "ctx",
               "add",
               "del"
-            ]
+            ],
+            "description": "Line op: ctx = unchanged context, add = added, del = removed."
           },
           "line": {
-            "type": "string"
+            "type": "string",
+            "description": "The line's text; the +/- marker lives in `t`, not here."
           }
         },
         "required": [
@@ -1353,10 +1615,12 @@
               "approved",
               "changes_requested",
               "withdrawn"
-            ]
+            ],
+            "description": "Review state: open, approved (went live), changes_requested, or withdrawn."
           },
           "author": {
-            "type": "string"
+            "type": "string",
+            "description": "Proposer's display name; \"anonymous\" if not signed in."
           },
           "on_behalf_of": {
             "type": "object",
@@ -1374,43 +1638,52 @@
             "required": [
               "handle",
               "name"
-            ]
+            ],
+            "description": "When an agent proposed, the human it acted on behalf of; null for a direct human proposal."
           },
           "message": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Proposer's cover message; null if none."
           },
           "base_version": {
-            "type": "number"
+            "type": "number",
+            "description": "Artifact version this proposal was authored against."
           },
           "kind": {
             "type": "string",
             "enum": [
               "file",
               "bundle"
-            ]
+            ],
+            "description": "Content shape: a single file or a multi-file bundle."
           },
           "decided_by": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Who approved/requested-changes/withdrew it; null while still open."
           },
           "decided_version": {
             "type": "number",
-            "nullable": true
+            "nullable": true,
+            "description": "The version it went live as when approved; null otherwise."
           },
           "decision_note": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Reviewer's note on the decision; null while open or if none."
           },
           "decided_at": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "When it was decided; null while still open."
           },
           "created_at": {
             "type": "string"
           },
           "preview_url": {
-            "type": "string"
+            "type": "string",
+            "description": "URL that renders the proposed content like a live version."
           },
           "diff": {
             "type": "object",
@@ -1428,7 +1701,8 @@
             "required": [
               "base_version",
               "ops"
-            ]
+            ],
+            "description": "Line diff vs the base version; present only on the single-proposal fetch."
           }
         },
         "required": [
@@ -1456,13 +1730,16 @@
             "type": "string"
           },
           "version": {
-            "type": "number"
+            "type": "number",
+            "description": "The artifact version this round is reviewing."
           },
           "requested_by": {
-            "type": "string"
+            "type": "string",
+            "description": "Who asked for the review (usually the agent that published)."
           },
           "requested_for": {
-            "type": "string"
+            "type": "string",
+            "description": "The person asked to answer or approve this round."
           },
           "state": {
             "type": "string",
@@ -1470,18 +1747,21 @@
               "pending",
               "sent_back",
               "approved"
-            ]
+            ],
+            "description": "Round state: pending, sent_back (answers returned), or approved (the go-signal)."
           },
           "note": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Free-text note attached to the round; null if none."
           },
           "created_at": {
             "type": "string"
           },
           "resolved_at": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "When it was sent back or approved; null while pending."
           }
         },
         "required": [
@@ -1503,24 +1783,30 @@
             "type": "string"
           },
           "thread_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The thread this comment belongs to; equals id for the thread's root comment."
           },
           "base_version": {
-            "type": "number"
+            "type": "number",
+            "description": "Artifact version this comment was anchored against."
           },
           "path": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "File within a bundle the comment targets; null if not file-scoped."
           },
           "anchor": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Serialized text-quote or element anchor locating the comment; null if unanchored."
           },
           "body_md": {
-            "type": "string"
+            "type": "string",
+            "description": "Comment body in Markdown; blanked when the comment is deleted."
           },
           "author": {
-            "type": "string"
+            "type": "string",
+            "description": "Author's display name; \"anonymous\" for an anonymous poster."
           },
           "state": {
             "type": "string",
@@ -1529,13 +1815,15 @@
               "addressed",
               "resolved",
               "outdated"
-            ]
+            ],
+            "description": "Thread state: open, addressed (a proposal in review claims to fix it), resolved, or outdated (the quoted text changed)."
           },
           "created_at": {
             "type": "string"
           },
           "anchored": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the anchor still resolves against the current version (list only)."
           },
           "reactions": {
             "type": "object",
@@ -1544,23 +1832,28 @@
               "items": {
                 "type": "string"
               }
-            }
+            },
+            "description": "Emoji → list of reactor display names."
           },
           "edited": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True if the body was edited after posting."
           },
           "edited_at": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "When the comment was last edited; null if never."
           },
           "deleted": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True if soft-deleted; the row stays but the body is blanked."
           },
           "mentions": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Mention"
-            }
+            },
+            "description": "Users or agents @mentioned in the comment body."
           }
         },
         "required": [
@@ -1579,7 +1872,8 @@
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Id of the mentioned person or agent."
           },
           "name": {
             "type": "string"
@@ -1600,11 +1894,13 @@
             "type": "string"
           },
           "agent_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The registered agent this context routes asks to."
           },
           "manifest_short_id": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Short id of the linked manifest artifact; null if it can't be resolved."
           },
           "created_by": {
             "type": "string"
@@ -1614,14 +1910,16 @@
           },
           "runner_seen_at": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "When the runner last polled the queue (~minutely); null = never. Drives online/offline."
           },
           "ask_policy": {
             "type": "string",
             "enum": [
               "workspace",
               "invited"
-            ]
+            ],
+            "description": "Who in the workspace may ask: any member, or the invited roster. Never outside the workspace."
           }
         },
         "required": [
@@ -1648,7 +1946,8 @@
             "type": "string"
           },
           "context_version": {
-            "type": "number"
+            "type": "number",
+            "description": "The manifest version this session was opened against."
           },
           "state": {
             "type": "string",
@@ -1658,13 +1957,15 @@
               "escalated",
               "failed",
               "closed"
-            ]
+            ],
+            "description": "open = awaiting the agent; answered; escalated = draft went to review; failed = run crashed; closed = ended by asker/owner."
           },
           "created_at": {
             "type": "string"
           },
           "updated_at": {
-            "type": "string"
+            "type": "string",
+            "description": "Last state/message change; equals created_at when never updated."
           }
         },
         "required": [
@@ -1688,13 +1989,16 @@
             "enum": [
               "asker",
               "agent"
-            ]
+            ],
+            "description": "Who wrote it: asker (the human) or agent (the context's runner)."
           },
           "author_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The asker's user id, or the agent id when author_kind is agent."
           },
           "body_md": {
-            "type": "string"
+            "type": "string",
+            "description": "The message body as Markdown."
           },
           "meta": {
             "$ref": "#/components/schemas/SessionMeta"
@@ -1718,21 +2022,25 @@
         "properties": {
           "query": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The underlying query the agent ran to produce this answer."
           },
           "confidence": {
             "type": "number",
-            "nullable": true
+            "nullable": true,
+            "description": "The agent's confidence in the answer, 0-1 (shown as a percentage)."
           },
           "caveats": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Caveats or limitations the agent flagged on its answer."
           },
           "escalation_reason": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Why the agent escalated to a human instead of answering."
           },
           "artifacts": {
             "type": "array",
@@ -1750,22 +2058,27 @@
                 "short_id",
                 "title"
               ]
-            }
+            },
+            "description": "Artifacts the agent cited, each linkable by short_id."
           }
-        }
+        },
+        "description": "Structured answer payload on agent messages; null on asker messages."
       },
       "Viewer": {
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "The viewer's id: a signed-in user's id, or a stable anonymous viewer id"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Display name: a user's @handle, or a friendly handle for anonymous viewers"
           },
           "role": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The viewer's effective role on this artifact, or null if they have none"
           }
         },
         "required": [
@@ -1778,13 +2091,16 @@
         "type": "object",
         "properties": {
           "total": {
-            "type": "number"
+            "type": "number",
+            "description": "Total recorded views across all versions (de-duped opens)"
           },
           "unique": {
-            "type": "number"
+            "type": "number",
+            "description": "Distinct viewers; a signed-in person or anon cookie counts once"
           },
           "anonViewers": {
-            "type": "number"
+            "type": "number",
+            "description": "How many of the unique viewers are anonymous"
           },
           "perVersion": {
             "type": "array",
@@ -1795,7 +2111,8 @@
                   "type": "number"
                 },
                 "count": {
-                  "type": "number"
+                  "type": "number",
+                  "description": "Views recorded for that version"
                 }
               },
               "required": [
@@ -1810,10 +2127,12 @@
               "type": "object",
               "properties": {
                 "day": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "Calendar day bucket (YYYY-MM-DD)"
                 },
                 "count": {
-                  "type": "number"
+                  "type": "number",
+                  "description": "Views recorded on that day"
                 }
               },
               "required": [
@@ -1828,21 +2147,25 @@
               "type": "object",
               "properties": {
                 "viewer": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "Display name (resolved @handle for users), or the anon viewer id"
                 },
                 "kind": {
                   "type": "string",
                   "enum": [
                     "user",
                     "anon"
-                  ]
+                  ],
+                  "description": "Whether the viewer is a signed-in user or anonymous"
                 },
                 "at": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "When they last viewed (ISO timestamp)"
                 },
                 "avatar": {
                   "type": "string",
-                  "nullable": true
+                  "nullable": true,
+                  "description": "The user's avatar URL, or null/absent for anonymous viewers"
                 }
               },
               "required": [
@@ -1869,10 +2192,12 @@
             "type": "string"
           },
           "user_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The recipient this notification belongs to"
           },
           "actor": {
-            "type": "string"
+            "type": "string",
+            "description": "Who triggered it; for follow/publish this is the person's @handle"
           },
           "kind": {
             "type": "string",
@@ -1883,26 +2208,32 @@
               "follow",
               "publish",
               "review"
-            ]
+            ],
+            "description": "What happened: mention, comment, share, follow, publish, or review"
           },
           "artifact_id": {
             "type": "string"
           },
           "artifact_short_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The artifact's public short id for links; empty for follows (no anchor)"
           },
           "artifact_title": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The artifact's title, or null if untitled or not artifact-anchored"
           },
           "thread_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The comment thread anchor; empty when not comment-related"
           },
           "comment_id": {
-            "type": "string"
+            "type": "string",
+            "description": "The specific comment anchor; empty when not comment-related"
           },
           "preview": {
-            "type": "string"
+            "type": "string",
+            "description": "Short text preview shown in the notification bell"
           },
           "read": {
             "anyOf": [
@@ -1918,7 +2249,8 @@
                   1
                 ]
               }
-            ]
+            ],
+            "description": "Whether the user has read it: 0 unread, 1 read"
           },
           "created_at": {
             "type": "string"
@@ -1947,24 +2279,29 @@
           },
           "artifact_id": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The artifact this webhook is scoped to, or null to fire on all workspace events"
           },
           "url": {
-            "type": "string"
+            "type": "string",
+            "description": "The destination endpoint deliveries are POSTed to"
           },
           "kind": {
             "type": "string",
             "enum": [
               "generic",
               "slack"
-            ]
+            ],
+            "description": "Delivery format: generic posts signed JSON, slack posts a Block Kit message"
           },
           "events": {
-            "type": "string"
+            "type": "string",
+            "description": "Comma-separated event types to deliver, or \"*\" for all events"
           },
           "label": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Optional human-readable label, or null if unnamed"
           },
           "active": {
             "anyOf": [
@@ -1980,7 +2317,8 @@
                   1
                 ]
               }
-            ]
+            ],
+            "description": "Whether deliveries are enabled (1) or paused (0)"
           },
           "created_at": {
             "type": "string"
@@ -2012,14 +2350,17 @@
               "pending",
               "delivered",
               "dead"
-            ]
+            ],
+            "description": "Delivery state: pending (awaiting/retrying), delivered (succeeded), dead (gave up)"
           },
           "attempts": {
-            "type": "number"
+            "type": "number",
+            "description": "Number of delivery attempts made so far"
           },
           "last_error": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "The most recent failure message, or null if none"
           },
           "created_at": {
             "type": "string"
@@ -2038,17 +2379,20 @@
         "type": "object",
         "properties": {
           "host": {
-            "type": "string"
+            "type": "string",
+            "description": "The hostname the artifact is served at."
           },
           "url": {
-            "type": "string"
+            "type": "string",
+            "description": "That host with scheme, ready to link to."
           },
           "kind": {
             "type": "string",
             "enum": [
               "subdomain",
               "custom"
-            ]
+            ],
+            "description": "\"subdomain\" = a vanity <label>.<base>; \"custom\" = a workspace custom domain."
           },
           "status": {
             "type": "string",
@@ -2056,7 +2400,8 @@
               "active",
               "pending",
               "error"
-            ]
+            ],
+            "description": "\"active\" = serving; \"pending\" = awaiting DNS/cert; \"error\" = validation failed."
           },
           "created_at": {
             "type": "string"
@@ -2074,7 +2419,8 @@
         "type": "object",
         "properties": {
           "host": {
-            "type": "string"
+            "type": "string",
+            "description": "The custom domain attached to the workspace."
           },
           "status": {
             "type": "string",
@@ -2082,13 +2428,15 @@
               "active",
               "pending",
               "error"
-            ]
+            ],
+            "description": "\"active\" = serving; \"pending\" = awaiting DNS/cert; \"error\" = validation failed."
           },
           "records": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/DomainDnsRecord"
-            }
+            },
+            "description": "DNS records to add while pending; absent once the domain is active."
           },
           "created_at": {
             "type": "string"
@@ -2104,13 +2452,16 @@
         "type": "object",
         "properties": {
           "type": {
-            "type": "string"
+            "type": "string",
+            "description": "DNS record type to create (e.g. CNAME)."
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "The name/host to create the DNS record at."
           },
           "value": {
-            "type": "string"
+            "type": "string",
+            "description": "The value the DNS record should point at."
           }
         },
         "required": [
@@ -2123,38 +2474,47 @@
         "type": "object",
         "properties": {
           "password": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True if email + password sign-in is available (always on here)"
           },
           "google": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True if Google sign-in is configured"
           },
           "github": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True if GitHub sign-in is configured"
           },
           "oidc": {
             "type": "object",
             "nullable": true,
             "properties": {
               "providerId": {
-                "type": "string"
+                "type": "string",
+                "description": "The provider id used to initiate SSO"
               },
               "label": {
-                "type": "string"
+                "type": "string",
+                "description": "Human-readable label for the SSO button"
               }
             },
             "required": [
               "providerId",
               "label"
-            ]
+            ],
+            "description": "The enterprise OIDC/SSO provider, or null if none is configured"
           },
           "emailVerification": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True if verification emails can be sent (a mail transport is configured)"
           },
           "passwordReset": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True if password-reset emails can be sent"
           },
           "passkey": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "True if passkey (WebAuthn) sign-in works on this instance"
           }
         },
         "required": [
@@ -2200,27 +2560,34 @@
                         },
                         "username": {
                           "type": "string",
-                          "nullable": true
+                          "nullable": true,
+                          "description": "The @handle; null until claimed at onboarding."
                         },
                         "discoverable": {
-                          "type": "boolean"
+                          "type": "boolean",
+                          "description": "Whether the user is findable in people search."
                         },
                         "profession": {
                           "type": "string",
-                          "nullable": true
+                          "nullable": true,
+                          "description": "Self-set team role; null if unset."
                         },
                         "about": {
                           "type": "string",
-                          "nullable": true
+                          "nullable": true,
+                          "description": "One-line bio; null if unset."
                         },
                         "onboarded": {
-                          "type": "boolean"
+                          "type": "boolean",
+                          "description": "Whether first-run onboarding is complete."
                         },
                         "emailVerified": {
-                          "type": "boolean"
+                          "type": "boolean",
+                          "description": "Whether the account email is verified."
                         },
                         "role": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "The caller's role in the active workspace: viewer, commenter, editor, or owner (Admin)."
                         }
                       },
                       "required": [
@@ -2237,7 +2604,8 @@
                       ]
                     },
                     "multi": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "Whether multi-workspace mode is enabled."
                     }
                   },
                   "required": [
@@ -2295,11 +2663,13 @@
                   "properties": {
                     "profession": {
                       "type": "string",
-                      "nullable": true
+                      "nullable": true,
+                      "description": "Saved team role; null when cleared."
                     },
                     "about": {
                       "type": "string",
-                      "nullable": true
+                      "nullable": true,
+                      "description": "Saved bio; null when cleared."
                     }
                   },
                   "required": [
@@ -2501,7 +2871,8 @@
                     },
                     "next_cursor": {
                       "type": "string",
-                      "nullable": true
+                      "nullable": true,
+                      "description": "Opaque cursor for the next page; null when there are no more."
                     }
                   },
                   "required": [
@@ -2530,7 +2901,8 @@
                   "type": "object",
                   "properties": {
                     "image": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "The served (absolute) avatar URL."
                     }
                   },
                   "required": [
@@ -3184,7 +3556,8 @@
                     },
                     "next_cursor": {
                       "type": "string",
-                      "nullable": true
+                      "nullable": true,
+                      "description": "Opaque cursor for the next page; null on the last page."
                     },
                     "collection": {
                       "type": "object",
@@ -3199,7 +3572,8 @@
                       "required": [
                         "id",
                         "title"
-                      ]
+                      ],
+                      "description": "The scoped collection; present only when listing one (?collection=)."
                     }
                   },
                   "required": [
@@ -3228,16 +3602,20 @@
                   "type": "object",
                   "properties": {
                     "total": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "Total artifacts in the workspace."
                     },
                     "favorites": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "The caller's favorite count in this workspace."
                     },
                     "mine": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "Count of artifacts the caller owns ('Created by me')."
                     },
                     "mine_private": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "Owned artifacts not surfaced anywhere yet (listed=none)."
                     },
                     "tags": {
                       "type": "array",
@@ -3255,11 +3633,13 @@
                           "tag",
                           "count"
                         ]
-                      }
+                      },
+                      "description": "Per-tag artifact counts for the workspace."
                     },
                     "workspace": {
                       "type": "string",
-                      "nullable": true
+                      "nullable": true,
+                      "description": "Workspace display name; null for a non-member (empty summary)."
                     }
                   },
                   "required": [
@@ -3357,7 +3737,8 @@
                       "enum": [
                         "none",
                         "member"
-                      ]
+                      ],
+                      "description": "New workspace access: member = seats reach it; none = they don't."
                     },
                     "link_role": {
                       "type": "string",
@@ -3366,7 +3747,8 @@
                         "viewer",
                         "commenter",
                         "editor"
-                      ]
+                      ],
+                      "description": "New world-link role; none = no link."
                     },
                     "listed": {
                       "type": "string",
@@ -3374,10 +3756,12 @@
                         "none",
                         "workspace",
                         "public"
-                      ]
+                      ],
+                      "description": "New discovery listing: nowhere, the workspace, or public."
                     },
                     "locked": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "true when the world link is now password-locked."
                     }
                   },
                   "required": [
@@ -3537,7 +3921,8 @@
                       "type": "object",
                       "properties": {
                         "published": {
-                          "type": "number"
+                          "type": "number",
+                          "description": "The new version number created by the restore."
                         }
                       },
                       "required": [
@@ -3631,13 +4016,15 @@
                         "commenter",
                         "editor",
                         "owner"
-                      ]
+                      ],
+                      "description": "Workspace baseline role applied to anyone without an explicit share."
                     },
                     "members": {
                       "type": "array",
                       "items": {
                         "$ref": "#/components/schemas/ArtifactMember"
-                      }
+                      },
+                      "description": "Collaborators with an explicit per-artifact role share."
                     }
                   },
                   "required": [
@@ -4022,7 +4409,8 @@
                       "enum": [
                         "none",
                         "member"
-                      ]
+                      ],
+                      "description": "The collection's new workspace share scope."
                     }
                   },
                   "required": [
@@ -4135,7 +4523,8 @@
                   "type": "object",
                   "properties": {
                     "created_by": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "User id of the collection's creator."
                     },
                     "members": {
                       "type": "array",
@@ -4843,7 +5232,8 @@
                           "type": "array",
                           "items": {
                             "type": "string"
-                          }
+                          },
+                          "description": "Thread ids this proposal flipped to addressed (pending review)."
                         }
                       },
                       "required": [
@@ -4987,7 +5377,8 @@
                       "type": "object",
                       "properties": {
                         "published": {
-                          "type": "number"
+                          "type": "number",
+                          "description": "The version number the approved proposal became live as."
                         }
                       },
                       "required": [
@@ -5182,7 +5573,8 @@
                       "type": "array",
                       "items": {
                         "$ref": "#/components/schemas/ReviewRound"
-                      }
+                      },
+                      "description": "All review rounds, newest first."
                     },
                     "pending": {
                       "allOf": [
@@ -5190,7 +5582,8 @@
                           "$ref": "#/components/schemas/ReviewRound"
                         },
                         {
-                          "nullable": true
+                          "nullable": true,
+                          "description": "The current unsettled round, or null if none is pending."
                         }
                       ]
                     }
@@ -5329,10 +5722,12 @@
                       "enum": [
                         "open",
                         "resolved"
-                      ]
+                      ],
+                      "description": "The thread's new state: resolved, or open when reopened."
                     },
                     "updated": {
-                      "type": "number"
+                      "type": "number",
+                      "description": "Number of comments in the thread whose state changed."
                     }
                   },
                   "required": [
@@ -6386,13 +6781,15 @@
                   "properties": {
                     "base": {
                       "type": "string",
-                      "nullable": true
+                      "nullable": true,
+                      "description": "Base host subdomains hang off (e.g. derive.to); null if disabled."
                     },
                     "domains": {
                       "type": "array",
                       "items": {
                         "$ref": "#/components/schemas/ArtifactDomain"
-                      }
+                      },
+                      "description": "The artifact's own vanity subdomains, managed here."
                     },
                     "workspace_domains": {
                       "type": "array",
@@ -6403,14 +6800,16 @@
                             "type": "string"
                           },
                           "url": {
-                            "type": "string"
+                            "type": "string",
+                            "description": "This artifact's URL on that domain, including its ref."
                           }
                         },
                         "required": [
                           "host",
                           "url"
                         ]
-                      }
+                      },
+                      "description": "Workspace custom domains this artifact is served at (read-only)."
                     }
                   },
                   "required": [
@@ -6524,17 +6923,20 @@
                   "type": "object",
                   "properties": {
                     "enabled": {
-                      "type": "boolean"
+                      "type": "boolean",
+                      "description": "True when this server supports custom domains."
                     },
                     "cname_target": {
                       "type": "string",
-                      "nullable": true
+                      "nullable": true,
+                      "description": "The CNAME target to point domains at; null when they're disabled."
                     },
                     "domains": {
                       "type": "array",
                       "items": {
                         "$ref": "#/components/schemas/WorkspaceDomain"
-                      }
+                      },
+                      "description": "The workspace's attached custom domains."
                     }
                   },
                   "required": [
@@ -6567,7 +6969,8 @@
                       "type": "object",
                       "properties": {
                         "cname_target": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "The CNAME target to point your domain at."
                         }
                       },
                       "required": [
@@ -6592,7 +6995,8 @@
                       "type": "object",
                       "properties": {
                         "cname_target": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "The CNAME target to point your domain at."
                         }
                       },
                       "required": [

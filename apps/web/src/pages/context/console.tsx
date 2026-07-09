@@ -193,47 +193,40 @@ function Console({ id }: { id: string }) {
 // There is no "anyone"/public option here BY DESIGN: a context is a data-access
 // grant, not a document, and must never be reachable outside its workspace.
 function ContextAccess({ id, policy }: { id: string; policy: "workspace" | "invited" }) {
-  const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [email, setEmail] = useState("")
-  const [busy, setBusy] = useState(false)
+  const rosterKey = ["context-askers", id] as const
   const { data: roster } = useQuery({
-    queryKey: ["context-askers", id] as const,
+    queryKey: rosterKey,
     queryFn: () => api.listContextAskers(id).then((r) => r.askers),
     enabled: open && policy === "invited",
   })
-  const refresh = () => qc.invalidateQueries({ queryKey: contextQuery(id).queryKey })
 
-  const setPolicy = async (next: "workspace" | "invited") => {
-    if (next === policy) return
-    setBusy(true)
-    try {
-      await api.setContextAskPolicy(id, next)
-      refresh()
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Could not update access")
-    } finally {
-      setBusy(false)
-    }
+  // Mutations go through useApiMutation (#361): one place for the error toast +
+  // settle-time invalidation, so these can't drift from the app's write contract.
+  const policyMut = useApiMutation({
+    mutationFn: (next: "workspace" | "invited") => api.setContextAskPolicy(id, next),
+    invalidate: [contextQuery(id).queryKey],
+  })
+  const addMut = useApiMutation({
+    mutationFn: (v: string) => api.addContextAsker(id, v),
+    invalidate: [rosterKey],
+    onSuccess: () => setEmail(""),
+  })
+  const removeMut = useApiMutation({
+    mutationFn: (userId: string) => api.removeContextAsker(id, userId),
+    invalidate: [rosterKey],
+  })
+  const busy = policyMut.isPending || addMut.isPending || removeMut.isPending
+
+  const setPolicy = (next: "workspace" | "invited") => {
+    if (next !== policy) policyMut.mutate(next)
   }
-  const add = async () => {
+  const add = () => {
     const v = email.trim()
-    if (!v) return
-    setBusy(true)
-    try {
-      await api.addContextAsker(id, v)
-      setEmail("")
-      qc.invalidateQueries({ queryKey: ["context-askers", id] })
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Could not add")
-    } finally {
-      setBusy(false)
-    }
+    if (v) addMut.mutate(v)
   }
-  const remove = async (userId: string) => {
-    await api.removeContextAsker(id, userId).catch(() => {})
-    qc.invalidateQueries({ queryKey: ["context-askers", id] })
-  }
+  const remove = (userId: string) => removeMut.mutate(userId)
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
