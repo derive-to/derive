@@ -16,8 +16,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { toast } from "@/components/ui/sonner"
 import { webhookDeliveriesQuery, webhooksQuery } from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 import { ALL_EVENTS } from "./webhook-events"
@@ -47,12 +47,7 @@ export function WebhooksSection() {
         </>
       }
     >
-      <NewWebhook
-        onCreated={(msg) => {
-          toast.success(msg)
-          reload()
-        }}
-      />
+      <NewWebhook onCreated={reload} />
 
       {isPending ? (
         <SettingsListSkeleton />
@@ -61,15 +56,7 @@ export function WebhooksSection() {
       ) : (
         <SettingsGroup>
           {hooks.map((w) => (
-            <WebhookRow
-              key={w.id}
-              hook={w}
-              onChanged={(m) => {
-                toast.success(m)
-                reload()
-              }}
-              onError={(m) => toast.error(m)}
-            />
+            <WebhookRow key={w.id} hook={w} onDone={reload} />
           ))}
         </SettingsGroup>
       )}
@@ -77,30 +64,28 @@ export function WebhooksSection() {
   )
 }
 
-function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
+function NewWebhook({ onCreated }: { onCreated: () => void }) {
   const [url, setUrl] = useState("")
   const [kind, setKind] = useState<"generic" | "slack">("generic")
   const [events, setEvents] = useState<string[]>([...ALL_EVENTS])
-  const [busy, setBusy] = useState(false)
   const valid = /^https?:\/\//.test(url)
   const toggle = (e: string) =>
     setEvents((cur) => (cur.includes(e) ? cur.filter((x) => x !== e) : [...cur, e]))
-  const add = async () => {
-    if (!valid) return
-    setBusy(true)
-    try {
-      await api.createWebhook({
+  const create = useApiMutation({
+    mutationFn: () =>
+      api.createWebhook({
         url,
         kind,
         events: events.length === ALL_EVENTS.length ? undefined : events,
-      })
+      }),
+    success: "Webhook added",
+    onSuccess: () => {
       setUrl("")
-      onCreated("Webhook added")
-    } catch (e) {
-      onCreated((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
+      onCreated()
+    },
+  })
+  const add = () => {
+    if (valid) create.mutate()
   }
   return (
     <div className="flex flex-col gap-3">
@@ -132,10 +117,10 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
           variant="secondary"
           size="sm"
           onClick={add}
-          loading={busy}
-          disabled={busy || !valid}
+          loading={create.isPending}
+          disabled={create.isPending || !valid}
         >
-          {busy ? "Adding…" : "Add"}
+          {create.isPending ? "Adding…" : "Add"}
         </Button>
       </div>
       <div className="flex flex-wrap gap-3.5">
@@ -162,15 +147,7 @@ function NewWebhook({ onCreated }: { onCreated: (msg: string) => void }) {
 const deliveryBadge = (status: string): "success" | "destructive" | "default" =>
   status === "delivered" ? "success" : status === "dead" ? "destructive" : "default"
 
-function WebhookRow({
-  hook,
-  onChanged,
-  onError,
-}: {
-  hook: Webhook
-  onChanged: (m: string) => void
-  onError: (m: string) => void
-}) {
+function WebhookRow({ hook, onDone }: { hook: Webhook; onDone: () => void }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   // Lazily load this webhook's delivery log only while the row's log is open.
@@ -179,28 +156,24 @@ function WebhookRow({
     enabled: open,
   })
   const showLog = () => setOpen((o) => !o)
-  const test = async () => {
-    try {
-      await api.testWebhook(hook.id)
-      onChanged("Test event queued")
+  const test = useApiMutation({
+    mutationFn: () => api.testWebhook(hook.id),
+    success: "Test event queued",
+    onSuccess: () => {
+      // Refresh the delivery log (if open) once the queued event has had a moment to land.
       if (open)
         setTimeout(
           () => qc.invalidateQueries({ queryKey: webhookDeliveriesQuery(hook.id).queryKey }),
           1500,
         )
-    } catch (e) {
-      onError((e as Error).message)
-    }
-  }
+    },
+  })
   const [confirming, setConfirming] = useState(false)
-  const remove = async () => {
-    try {
-      await api.deleteWebhook(hook.id)
-      onChanged("Webhook removed")
-    } catch (e) {
-      onError((e as Error).message)
-    }
-  }
+  const remove = useApiMutation({
+    mutationFn: () => api.deleteWebhook(hook.id),
+    success: "Webhook removed",
+    onSuccess: () => onDone(),
+  })
   return (
     <div data-testid={`webhook-row-${hook.id}`} className="flex flex-col gap-2 py-3">
       <div className="flex items-center gap-2.5">
@@ -214,7 +187,13 @@ function WebhookRow({
         <Button data-testid={`webhook-log-${hook.id}`} variant="ghost" size="sm" onClick={showLog}>
           {open ? "Hide" : "Log"}
         </Button>
-        <Button data-testid={`webhook-test-${hook.id}`} variant="ghost" size="sm" onClick={test}>
+        <Button
+          data-testid={`webhook-test-${hook.id}`}
+          variant="ghost"
+          size="sm"
+          onClick={() => test.mutate()}
+          loading={test.isPending}
+        >
           Test
         </Button>
         <Button
@@ -232,7 +211,7 @@ function WebhookRow({
         title="Remove this webhook?"
         description={`Deliveries to ${hook.url} stop immediately.`}
         confirmLabel="Remove"
-        onConfirm={remove}
+        onConfirm={() => remove.mutate()}
       />
       {open && (
         <div className="rounded-lg bg-secondary px-3 py-2">

@@ -22,8 +22,8 @@ import {
   SelectMenuItem,
   SelectMenuTrigger,
 } from "@/components/ui/select-menu"
-import { toast } from "@/components/ui/sonner"
 import { workspaceQuery, workspaceSettingsQuery, workspacesQuery } from "@/lib/queries"
+import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsSection } from "./settings-section"
 
 // Workspace identity + lifecycle: rename it, spin up a new one, or (admins only)
@@ -35,13 +35,10 @@ export function GeneralSection() {
   const qc = useQueryClient()
   const { data: ws } = useQuery(workspaceQuery())
   const [name, setName] = useState("")
-  const [savingName, setSavingName] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState("")
   const [newInvites, setNewInvites] = useState("")
-  const [creating, setCreating] = useState(false)
   const [delName, setDelName] = useState("")
-  const [deleting, setDeleting] = useState(false)
 
   // Seed the editable name once the workspace loads (and re-seed on a rename that
   // updates the cache). Focus refetches are off globally, so this won't clobber typing.
@@ -66,54 +63,46 @@ export function GeneralSection() {
   // Create a brand-new workspace — a deliberate, infrequent action that lives
   // here rather than in the rail's switcher. One flow: name it and (optionally)
   // invite the team in the same gesture; createWorkspace switches + reloads.
-  const createSubmit = async () => {
+  // createWorkspace switches + reloads on success, so there's no onSuccess to run — the
+  // primitive just carries the pending state and surfaces a failure.
+  const create = useApiMutation({
+    mutationFn: ({ name, invites }: { name: string; invites: string[] }) =>
+      createWorkspace(name, invites),
+  })
+  const createSubmit = () => {
     const t = newName.trim()
-    if (!t || creating) return
+    if (!t || create.isPending) return
     // Loose parse: split on commas/whitespace, keep anything @-shaped. The server
-    // validates properly; a stray non-email token is dropped rather than blocking
-    // the create (invites are re-sendable from Members).
+    // validates properly; a stray non-email token is dropped rather than blocking the
+    // create (invites are re-sendable from Members).
     const invites = newInvites
       .split(/[\s,;]+/)
       .map((s) => s.trim())
       .filter((s) => s.includes("@"))
-    setCreating(true)
-    try {
-      await createWorkspace(t, invites)
-    } catch (e) {
-      toast.error((e as Error).message)
-      setCreating(false)
-    }
+    create.mutate({ name: t, invites })
   }
 
-  const saveName = async () => {
+  const rename = useApiMutation({
+    mutationFn: (n: string) => api.renameWorkspace(n),
+    onSuccess: (r) =>
+      qc.setQueryData(workspaceQuery().queryKey, (w) => (w ? { ...w, name: r.name } : w)),
+    // Invalidate so the switcher + rail pick up the new name immediately.
+    invalidate: [workspacesQuery().queryKey],
+    success: "Workspace renamed",
+  })
+  const saveName = () => {
     const n = name.trim()
-    if (!n || n === ws?.name) return
-    setSavingName(true)
-    try {
-      const r = await api.renameWorkspace(n)
-      qc.setQueryData(workspaceQuery().queryKey, (w) => (w ? { ...w, name: r.name } : w))
-      // Invalidate so the switcher + rail pick up the new name immediately.
-      qc.invalidateQueries({ queryKey: workspacesQuery().queryKey })
-      toast.success("Workspace renamed")
-    } catch (e) {
-      toast.error((e as Error).message)
-    } finally {
-      setSavingName(false)
-    }
+    if (n && n !== ws?.name) rename.mutate(n)
   }
 
-  // Delete the active workspace. The server enforces the guards (Admin, not your
-  // last, must be empty); we surface those and reload on success.
-  const onDelete = async () => {
-    if (!ws) return
-    setDeleting(true)
-    try {
-      await api.deleteWorkspace(ws.id)
-      window.location.reload()
-    } catch (e) {
-      toast.error((e as Error).message)
-      setDeleting(false)
-    }
+  // Delete the active workspace. The server enforces the guards (Admin, not your last,
+  // must be empty); the primitive surfaces those and we reload on success.
+  const del = useApiMutation({
+    mutationFn: (id: string) => api.deleteWorkspace(id),
+    onSuccess: () => window.location.reload(),
+  })
+  const onDelete = () => {
+    if (ws) del.mutate(ws.id)
   }
 
   return (
@@ -167,11 +156,11 @@ export function GeneralSection() {
               <Button
                 variant="default"
                 onClick={createSubmit}
-                disabled={!newName.trim() || creating}
-                loading={creating}
+                disabled={!newName.trim() || create.isPending}
+                loading={create.isPending}
                 data-testid="workspace-create-submit"
               >
-                {creating ? "Creating…" : "Create"}
+                {create.isPending ? "Creating…" : "Create"}
               </Button>
             </div>
           </DialogContent>
@@ -197,10 +186,10 @@ export function GeneralSection() {
               variant="default"
               size="sm"
               onClick={saveName}
-              loading={savingName}
-              disabled={savingName || !name.trim() || name.trim() === ws?.name}
+              loading={rename.isPending}
+              disabled={rename.isPending || !name.trim() || name.trim() === ws?.name}
             >
-              {savingName ? "Saving…" : "Save"}
+              {rename.isPending ? "Saving…" : "Save"}
             </Button>
           )}
         </div>
@@ -241,11 +230,11 @@ export function GeneralSection() {
                   data-testid="workspace-delete-go"
                   variant="destructive"
                   onClick={onDelete}
-                  loading={deleting}
-                  disabled={deleting || delName.trim() !== ws.name}
+                  loading={del.isPending}
+                  disabled={del.isPending || delName.trim() !== ws.name}
                   className="mt-2 w-full"
                 >
-                  {deleting ? "Deleting…" : "Delete this workspace"}
+                  {del.isPending ? "Deleting…" : "Delete this workspace"}
                 </Button>
               </DialogContent>
             </Dialog>
@@ -264,18 +253,18 @@ function SharingDefaults() {
   const qc = useQueryClient()
   const { data: settings } = useQuery(workspaceSettingsQuery())
 
+  const update = useApiMutation({
+    mutationFn: (patch: Partial<OrgSettings>) => api.updateWorkspaceSettings(patch),
+    optimistic: (patch, client) => {
+      const qk = workspaceSettingsQuery().queryKey
+      const rollback = snapshot(client, qk)
+      client.setQueryData(qk, (prev) => (prev ? { ...prev, ...patch } : prev))
+      return rollback
+    },
+    onSuccess: (s) => qc.setQueryData(workspaceSettingsQuery().queryKey, s),
+  })
   const set = <K extends keyof OrgSettings>(key: K, next: OrgSettings[K]) => {
-    const qk = workspaceSettingsQuery().queryKey
-    const prev = qc.getQueryData(qk)
-    if (!prev) return
-    qc.setQueryData(qk, { ...prev, [key]: next })
-    api
-      .updateWorkspaceSettings({ [key]: next })
-      .then((s) => qc.setQueryData(qk, s))
-      .catch((e) => {
-        qc.setQueryData(qk, prev)
-        toast.error(e instanceof Error ? e.message : "Could not save")
-      })
+    update.mutate({ [key]: next } as Partial<OrgSettings>)
   }
 
   if (!settings) return null

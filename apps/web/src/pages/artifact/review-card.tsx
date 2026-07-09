@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import { api, type ReviewRound } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 
 /**
@@ -28,7 +29,6 @@ export function ReviewCard({
     pending: null,
     last: null,
   })
-  const [busy, setBusy] = useState<"send" | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -44,15 +44,12 @@ export function ReviewCard({
     void refresh()
   }, [refresh, refreshKey])
 
-  const sendBack = async () => {
-    setBusy("send")
-    try {
-      await api.sendBackReview(shortId)
-      await refresh()
-    } finally {
-      setBusy(null)
-    }
-  }
+  // Send-back through the governed primitive: pending drives the button, and a failure
+  // surfaces via the global safety net instead of the silent try/finally this once had.
+  const send = useApiMutation({
+    mutationFn: () => api.sendBackReview(shortId),
+    onSuccess: () => refresh(),
+  })
 
   const pending = state.pending
   // Nothing requested, ever → render nothing (the card is review-only chrome).
@@ -92,12 +89,12 @@ export function ReviewCard({
       <div className="flex items-center">
         <Button
           size="sm"
-          onClick={sendBack}
-          disabled={!!busy}
+          onClick={() => send.mutate()}
+          disabled={send.isPending}
           className="ml-auto"
           data-testid="review-send-back"
         >
-          {busy === "send" ? "Sending…" : "Send back to the agent"}
+          {send.isPending ? "Sending…" : "Send back to the agent"}
         </Button>
       </div>
     </div>

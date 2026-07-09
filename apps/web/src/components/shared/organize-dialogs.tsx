@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { toast } from "@/components/ui/sonner"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 
 // The two "organize" dialogs, shared by the artifact workbench's ⋯ menu and the
@@ -44,29 +44,34 @@ export function CollectionsDialog({
         .catch(() => {})
   }, [open])
   const inSet = new Set(inCollections)
-  const toggle = async (col: Collection) => {
-    const isIn = inSet.has(col.id)
-    onChange(isIn ? inCollections.filter((id) => id !== col.id) : [...inCollections, col.id])
-    try {
-      if (isIn) await api.removeFromCollection(col.id, shortId)
-      else await api.addToCollection(col.id, shortId)
-    } catch (e) {
-      onChange(inCollections)
-      toast.error(e instanceof Error ? e.message : "Couldn't update collections")
-    }
-  }
-  const create = async () => {
-    const t = draft.trim()
-    setDraft("")
-    if (!t) return
-    try {
-      const col = await api.createCollection(t)
+  // Toggle membership optimistically (via onChange); the primitive rolls it back and
+  // toasts if the write fails.
+  const toggleCol = useApiMutation({
+    mutationFn: ({ col, isIn }: { col: Collection; isIn: boolean }) =>
+      isIn ? api.removeFromCollection(col.id, shortId) : api.addToCollection(col.id, shortId),
+    optimistic: ({ col, isIn }) => {
+      const prev = inCollections
+      onChange(isIn ? inCollections.filter((id) => id !== col.id) : [...inCollections, col.id])
+      return () => onChange(prev)
+    },
+  })
+  const toggle = (col: Collection) => toggleCol.mutate({ col, isIn: inSet.has(col.id) })
+  // Create a collection and drop this artifact into it in one gesture.
+  const createCol = useApiMutation({
+    mutationFn: async (title: string) => {
+      const col = await api.createCollection(title)
       await api.addToCollection(col.id, shortId)
+      return col
+    },
+    onSuccess: (col) => {
       setAll((a) => [col, ...a])
       onChange([...inCollections, col.id])
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't create collection")
-    }
+    },
+  })
+  const create = () => {
+    const t = draft.trim()
+    setDraft("")
+    if (t) createCol.mutate(t)
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -149,15 +154,18 @@ export function TagsDialog({
   onOpenChange: (o: boolean) => void
 }) {
   const [draft, setDraft] = useState("")
-  const save = async (next: string[]) => {
-    onChange(next)
-    try {
-      const r = await api.setTags(shortId, next)
-      onChange(r.tags)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't save tags")
-    }
-  }
+  // Replace the tag set optimistically; the primitive rolls back + toasts on failure —
+  // the old hand-rolled save toasted but never reverted the optimistic change.
+  const saveTags = useApiMutation({
+    mutationFn: (next: string[]) => api.setTags(shortId, next),
+    optimistic: (next) => {
+      const prev = tags
+      onChange(next)
+      return () => onChange(prev)
+    },
+    onSuccess: (r) => onChange(r.tags),
+  })
+  const save = (next: string[]) => saveTags.mutate(next)
   const add = () => {
     const v = draft.trim().toLowerCase()
     setDraft("")

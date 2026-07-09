@@ -1,10 +1,11 @@
 import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect } from "react"
 import { api, type GithubSyncStatus } from "@/api"
 import { SectionTitle } from "@/components/shared/section-title"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { useApiMutation } from "@/lib/use-api-mutation"
 
 // Human labels for the GitHub App permission/event diff (the banner). Keys mirror
 // the scopes/events in the server's REQUIRED_PERMISSIONS / REQUIRED_EVENTS.
@@ -68,25 +69,18 @@ export function SetUpApp() {
 export function ConnectViaApp({
   status,
   onPick,
-  onError,
   onRefresh,
 }: {
   status: GithubSyncStatus
   onPick: (installationId: string) => void
-  onError: (m: string) => void
   onRefresh: () => void
 }) {
-  const [busy, setBusy] = useState(false)
-  const install = async () => {
-    setBusy(true)
-    try {
-      const { url } = await api.githubInstallUrl()
+  const install = useApiMutation({
+    mutationFn: () => api.githubInstallUrl(),
+    onSuccess: ({ url }) => {
       window.location.href = url
-    } catch (e) {
-      onError((e as Error).message)
-      setBusy(false)
-    }
-  }
+    },
+  })
   // On mount (and whenever installations list is empty), fetch from GitHub and seed
   // any existing installations the DB might be missing — covers the recovery case
   // where rows were lost without a full GitHub re-install.
@@ -187,10 +181,10 @@ export function ConnectViaApp({
                   data-testid="github-install"
                   variant="default"
                   className="mt-3"
-                  onClick={install}
-                  disabled={busy}
+                  onClick={() => install.mutate()}
+                  disabled={install.isPending}
                 >
-                  {busy ? "Opening GitHub…" : "Install on GitHub →"}
+                  {install.isPending ? "Opening GitHub…" : "Install on GitHub →"}
                 </Button>
               </>
             )}
@@ -200,10 +194,10 @@ export function ConnectViaApp({
               data-testid="github-install-more"
               variant="outline"
               size="sm"
-              onClick={install}
-              disabled={busy}
+              onClick={() => install.mutate()}
+              disabled={install.isPending}
             >
-              {busy ? "Opening GitHub…" : "Install on more"}
+              {install.isPending ? "Opening GitHub…" : "Install on more"}
             </Button>
           )}
         </div>

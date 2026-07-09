@@ -17,6 +17,7 @@ import {
 import { toast } from "@/components/ui/sonner"
 import { getInitials } from "@/lib/initials"
 import { workspaceInvitesQuery, workspaceQuery } from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { roleLabel, roleValue, WS_ROLES } from "./roles"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
@@ -29,71 +30,71 @@ export function MembersSection({ meId }: { meId: string }) {
   const { data: ws } = useQuery(workspaceQuery())
   const [email, setEmail] = useState("")
   const [addRole, setAddRole] = useState<Role>("commenter")
-  const [adding, setAdding] = useState(false)
-  // A ref, not just the `adding` state: state updates are batched/async, so a
-  // burst of synchronous native submit events (Enter held down, or auto-
-  // repeating — see PersonSearchInput's documented submit-fallthrough) can all
-  // read the SAME stale `false` closure before the first call's setAdding(true)
-  // re-renders. The ref flips synchronously, so only the first gets through.
+  // A ref, not just the mutation's isPending: state updates are batched/async, so a
+  // burst of synchronous native submit events (Enter held down, or auto-repeating — see
+  // PersonSearchInput's documented submit-fallthrough) can all read the SAME stale closure
+  // before the first call re-renders. The ref flips synchronously, so only the first gets
+  // through.
   const addingRef = useRef(false)
   const [removing, setRemoving] = useState<ArtifactMember | null>(null)
 
   const isAdmin = ws?.role === "owner"
 
-  const addMember = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (addingRef.current) return
-    const em = email.trim()
-    if (!em) return
-    addingRef.current = true
-    setAdding(true)
-    try {
-      const r = await api.inviteToWorkspace(em, addRole)
+  const invite = useApiMutation({
+    mutationFn: ({ email, role }: { email: string; role: Role }) =>
+      api.inviteToWorkspace(email, role),
+    onSuccess: async (r) => {
       setEmail("")
       if (r.kind === "member") {
         toast.success("Member added")
         qc.invalidateQueries({ queryKey: workspaceQuery().queryKey })
       } else {
-        // A pending invite — copy the accept link to the clipboard so it works even
-        // where mail isn't configured, and refresh the pending list.
+        // A pending invite — copy the accept link to the clipboard so it works even where
+        // mail isn't configured, and refresh the pending list.
         await navigator.clipboard?.writeText(r.accept_url).catch(() => {})
         toast.success(`Invite sent to ${r.invite.email} — link copied`)
         qc.invalidateQueries({ queryKey: workspaceInvitesQuery().queryKey })
       }
-    } catch (e) {
-      toast.error((e as Error).message)
-    } finally {
-      addingRef.current = false
-      setAdding(false)
-    }
+    },
+  })
+  const addMember = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (addingRef.current || invite.isPending) return
+    const em = email.trim()
+    if (!em) return
+    addingRef.current = true
+    invite.mutate(
+      { email: em, role: addRole },
+      {
+        onSettled: () => {
+          addingRef.current = false
+        },
+      },
+    )
   }
 
-  const changeRole = async (userId: string, role: Role) => {
-    try {
-      await api.setWorkspaceMemberRole(userId, role)
+  const roleMut = useApiMutation({
+    mutationFn: ({ userId, role }: { userId: string; role: Role }) =>
+      api.setWorkspaceMemberRole(userId, role),
+    onSuccess: (_data, { userId, role }) =>
       qc.setQueryData(workspaceQuery().queryKey, (w) =>
         w
           ? { ...w, members: w.members.map((m) => (m.user_id === userId ? { ...m, role } : m)) }
           : w,
-      )
-      toast.success("Role updated")
-    } catch (e) {
-      toast.error((e as Error).message)
-      qc.invalidateQueries({ queryKey: workspaceQuery().queryKey })
-    }
-  }
+      ),
+    success: "Role updated",
+  })
+  const changeRole = (userId: string, role: Role) => roleMut.mutate({ userId, role })
 
-  const removeMember = async (m: ArtifactMember) => {
-    try {
-      await api.removeWorkspaceMember(m.user_id)
+  const removeMut = useApiMutation({
+    mutationFn: (m: ArtifactMember) => api.removeWorkspaceMember(m.user_id),
+    onSuccess: (_data, m) =>
       qc.setQueryData(workspaceQuery().queryKey, (w) =>
         w ? { ...w, members: w.members.filter((x) => x.user_id !== m.user_id) } : w,
-      )
-      toast.success("Member removed")
-    } catch (e) {
-      toast.error((e as Error).message)
-    }
-  }
+      ),
+    success: "Member removed",
+  })
+  const removeMember = (m: ArtifactMember) => removeMut.mutate(m)
 
   return (
     <SettingsSection
@@ -131,10 +132,10 @@ export function MembersSection({ meId }: { meId: string }) {
             type="submit"
             variant="secondary"
             size="sm"
-            loading={adding}
-            disabled={adding || !email.trim()}
+            loading={invite.isPending}
+            disabled={invite.isPending || !email.trim()}
           >
-            {adding ? "Adding…" : "Add"}
+            {invite.isPending ? "Adding…" : "Add"}
           </Button>
         </form>
       )}
@@ -226,19 +227,16 @@ export function MembersSection({ meId }: { meId: string }) {
 function PendingInvites() {
   const qc = useQueryClient()
   const { data: invites } = useQuery(workspaceInvitesQuery())
-  if (!invites || invites.length === 0) return null
-
-  const revoke = async (id: string) => {
-    try {
-      await api.revokeWorkspaceInvite(id)
+  const revokeMut = useApiMutation({
+    mutationFn: (id: string) => api.revokeWorkspaceInvite(id),
+    onSuccess: (_data, id) =>
       qc.setQueryData(workspaceInvitesQuery().queryKey, (list) =>
         list ? list.filter((i) => i.id !== id) : list,
-      )
-      toast.success("Invitation revoked")
-    } catch (e) {
-      toast.error((e as Error).message)
-    }
-  }
+      ),
+    success: "Invitation revoked",
+  })
+  const revoke = (id: string) => revokeMut.mutate(id)
+  if (!invites || invites.length === 0) return null
 
   return (
     <div className="flex flex-col gap-2">

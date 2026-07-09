@@ -7,8 +7,8 @@ import { SettingsGroup } from "@/components/shared/settings-group"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { toast } from "@/components/ui/sonner"
 import { customDomainsQuery } from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
@@ -59,21 +59,17 @@ function NewDomain({
   onCreated: () => void
 }) {
   const [host, setHost] = useState("")
-  const [busy, setBusy] = useState(false)
-  const add = async () => {
-    const h = host.trim()
-    if (!h) return
-    setBusy(true)
-    try {
-      await api.addWorkspaceDomain(h)
+  const addDomain = useApiMutation({
+    mutationFn: (h: string) => api.addWorkspaceDomain(h),
+    success: "Domain added — add the DNS records to finish",
+    onSuccess: () => {
       setHost("")
-      toast.success("Domain added — add the DNS records to finish")
       onCreated()
-    } catch (e) {
-      toast.error((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
+    },
+  })
+  const add = () => {
+    const h = host.trim()
+    if (h) addDomain.mutate(h)
   }
   return (
     <div className="flex flex-col gap-2">
@@ -92,10 +88,10 @@ function NewDomain({
           variant="secondary"
           size="sm"
           onClick={add}
-          loading={busy}
-          disabled={busy || !host.trim()}
+          loading={addDomain.isPending}
+          disabled={addDomain.isPending || !host.trim()}
         >
-          {busy ? "Adding…" : "Add"}
+          {addDomain.isPending ? "Adding…" : "Add"}
         </Button>
       </div>
       {cnameTarget && (
@@ -121,23 +117,17 @@ const statusBadge = (
 function DomainRow({ domain, onChanged }: { domain: WorkspaceDomain; onChanged: () => void }) {
   const b = statusBadge(domain.status)
   const [confirming, setConfirming] = useState(false)
-  const refresh = async () => {
-    try {
-      await api.refreshWorkspaceDomain(domain.host)
-      onChanged()
-    } catch (e) {
-      toast.error((e as Error).message)
-    }
-  }
-  const remove = async () => {
-    try {
-      await api.removeWorkspaceDomain(domain.host)
-      toast.success("Domain removed")
-      onChanged()
-    } catch (e) {
-      toast.error((e as Error).message)
-    }
-  }
+  const refreshMut = useApiMutation({
+    mutationFn: () => api.refreshWorkspaceDomain(domain.host),
+    onSuccess: () => onChanged(),
+  })
+  const refresh = () => refreshMut.mutate()
+  const removeMut = useApiMutation({
+    mutationFn: () => api.removeWorkspaceDomain(domain.host),
+    success: "Domain removed",
+    onSuccess: () => onChanged(),
+  })
+  const remove = () => removeMut.mutate()
   return (
     <div data-testid={`domain-row-${domain.host}`} className="flex flex-col gap-2 py-3">
       <div className="flex items-center gap-2.5">

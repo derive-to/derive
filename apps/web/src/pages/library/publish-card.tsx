@@ -1,4 +1,3 @@
-import { useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { Upload } from "lucide-react"
 import { useRef, useState } from "react"
@@ -8,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { toast } from "@/components/ui/sonner"
 import { collectionsQuery, summaryQuery } from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { refFor } from "../artifact/parse-ref"
 
@@ -17,11 +17,16 @@ import { refFor } from "../artifact/parse-ref"
 // governs — no visibility sent); widen access from the artifact's Share menu.
 export function PublishCard() {
   const nav = useNavigate()
-  const qc = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
-  const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
 
+  // Publishing an uploaded file: the primitive owns pending + the error toast; on success
+  // we freshen the library caches and jump to the new artifact.
+  const publish = useApiMutation({
+    mutationFn: (f: File) => api.publish(f, { title: f.name.replace(/\.[^.]+$/, "") }),
+    invalidate: [summaryQuery().queryKey, collectionsQuery().queryKey, ["artifacts"]],
+    onSuccess: (a) => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } }),
+  })
   const publishFile = async (f: File) => {
     // Warn about local stylesheet references in HTML files before uploading.
     if (/\.html?$/i.test(f.name)) {
@@ -39,19 +44,7 @@ export function PublishCard() {
         )
       }
     }
-    setBusy(true)
-    try {
-      // No access fields: the server default (the team draft) governs; widen from the Share dialog.
-      const a = await api.publish(f, { title: f.name.replace(/\.[^.]+$/, "") })
-      // Freshen the library so the new artifact + bumped total are correct on return.
-      qc.invalidateQueries({ queryKey: summaryQuery().queryKey })
-      qc.invalidateQueries({ queryKey: collectionsQuery().queryKey })
-      qc.invalidateQueries({ queryKey: ["artifacts"] })
-      nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })
-    } catch (e) {
-      toast.error((e as Error).message)
-      setBusy(false)
-    }
+    publish.mutate(f)
   }
 
   return (
@@ -100,9 +93,9 @@ export function PublishCard() {
         variant="outline"
         data-testid="library-upload"
         onClick={() => fileRef.current?.click()}
-        disabled={busy}
+        disabled={publish.isPending}
       >
-        <Upload /> {busy ? "Publishing…" : "Upload a file"}
+        <Upload /> {publish.isPending ? "Publishing…" : "Upload a file"}
       </Button>
       <Button variant="default" data-testid="library-new" onClick={() => nav({ to: "/new" })}>
         <Icon name="plus" /> Write or paste

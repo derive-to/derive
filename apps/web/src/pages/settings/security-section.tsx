@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { QRCodeSVG } from "qrcode.react"
 import { useEffect, useState } from "react"
-import { ApiError, type AuthCapabilities, api } from "@/api"
+import { type AuthCapabilities, api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { FormField } from "@/components/shared/form-field"
@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { authClient } from "@/lib/auth-client"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
@@ -85,18 +86,16 @@ function ConnectedAgents() {
   })
   const [confirming, setConfirming] = useState<string | null>(null)
 
-  const revoke = async (clientId: string) => {
-    try {
-      await api.revokeConnectedAgent(clientId)
+  const revokeMut = useApiMutation({
+    mutationFn: (clientId: string) => api.revokeConnectedAgent(clientId),
+    onSuccess: (_data, clientId) =>
       qc.setQueryData(["connected-agents"], (list: { clientId: string }[] | undefined) =>
         list?.filter((a) => a.clientId !== clientId),
-      )
-      toast.success("Access revoked — the agent must be re-authorized to act again")
-    } catch {
-      toast.error("Could not revoke that agent")
-      qc.invalidateQueries({ queryKey: ["connected-agents"] })
-    }
-  }
+      ),
+    success: "Access revoked — the agent must be re-authorized to act again",
+    invalidate: [["connected-agents"]],
+  })
+  const revoke = (clientId: string) => revokeMut.mutate(clientId)
 
   // No connected agents (and not loading) → keep the surface quiet; this is an advanced,
   // opt-in area that only appears once you've actually authorized an agent.
@@ -174,22 +173,19 @@ function DeleteAccount() {
   const [open, setOpen] = useState(false)
   const [password, setPassword] = useState("")
   const [confirm, setConfirm] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState("")
 
-  const submit = async () => {
-    setErr("")
-    setBusy(true)
-    try {
+  const del = useApiMutation({
+    mutationFn: async () => {
       const res = await authClient.deleteUser({ password })
       if (res?.error) throw new Error(res.error.message ?? "Could not delete your account.")
+    },
+    errorToast: false, // rendered inline in the dialog
+    onSuccess: () => {
       setMe(null)
       nav({ to: "/login" })
-    } catch (e) {
-      setErr((e as Error).message)
-      setBusy(false)
-    }
-  }
+    },
+  })
+  const submit = () => del.mutate()
 
   return (
     <SettingsGroup>
@@ -219,7 +215,7 @@ function DeleteAccount() {
                 submit()
               }}
             >
-              {err && <StatusPanel tone="danger" layout="inline" title={err} />}
+              {del.error && <StatusPanel tone="danger" layout="inline" title={del.error.message} />}
               <FormField label="Password" htmlFor="del-password">
                 <Input
                   id="del-password"
@@ -243,11 +239,11 @@ function DeleteAccount() {
                 <Button
                   type="submit"
                   variant="destructive"
-                  loading={busy}
+                  loading={del.isPending}
                   disabled={!password || confirm.trim().toLowerCase() !== "delete"}
                   data-testid="delete-confirm-btn"
                 >
-                  {busy ? "Deleting…" : "Delete my account"}
+                  {del.isPending ? "Deleting…" : "Delete my account"}
                 </Button>
               </DialogFooter>
             </form>
@@ -291,10 +287,41 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
   const [secret, setSecret] = useState("")
   const [showKey, setShowKey] = useState(false)
   const [backup, setBackup] = useState<string[]>([])
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState("")
 
-  const reset = () => {
+  const start = useApiMutation({
+    mutationFn: async () => {
+      const res = await authClient.twoFactor.enable({ password })
+      if (res?.error || !res?.data) throw new Error(res?.error?.message ?? "Could not start setup.")
+      return res.data
+    },
+    errorToast: false, // rendered inline in the dialog
+    onSuccess: (data) => {
+      // totpURI is otpauth://totp/Derive:email?secret=…&issuer=Derive — the QR encodes it
+      // directly; pull the secret out too for the manual "can't scan?" fallback.
+      setTotpURI(data.totpURI)
+      setSecret(new URL(data.totpURI).searchParams.get("secret") ?? "")
+      setBackup(data.backupCodes ?? [])
+      setStep("confirm")
+    },
+  })
+
+  const confirm = useApiMutation({
+    mutationFn: async () => {
+      const res = await authClient.twoFactor.verifyTotp({ code })
+      if (res?.error) throw new Error(res.error.message ?? "That code didn't work.")
+    },
+    errorToast: false, // rendered inline in the dialog
+    onSuccess: async () => {
+      await onDone()
+      toast.success("Two-factor authentication is on")
+      setOpen(false)
+      reset()
+    },
+  })
+
+  // Clear the wizard + both mutations' errors when the dialog closes or a round completes.
+  // A function declaration (hoisted) so confirm's onSuccess above can call it.
+  function reset() {
     setStep("password")
     setPassword("")
     setCode("")
@@ -302,43 +329,8 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
     setSecret("")
     setShowKey(false)
     setBackup([])
-    setErr("")
-  }
-
-  const start = async () => {
-    setErr("")
-    setBusy(true)
-    try {
-      const res = await authClient.twoFactor.enable({ password })
-      if (res?.error || !res?.data) throw new Error(res?.error?.message ?? "Could not start setup.")
-      // totpURI is otpauth://totp/Derive:email?secret=…&issuer=Derive — the QR encodes it
-      // directly; pull the secret out too for the manual "can't scan?" fallback.
-      setTotpURI(res.data.totpURI)
-      setSecret(new URL(res.data.totpURI).searchParams.get("secret") ?? "")
-      setBackup(res.data.backupCodes ?? [])
-      setStep("confirm")
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : (e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const confirm = async () => {
-    setErr("")
-    setBusy(true)
-    try {
-      const res = await authClient.twoFactor.verifyTotp({ code })
-      if (res?.error) throw new Error(res.error.message ?? "That code didn't work.")
-      await onDone()
-      toast.success("Two-factor authentication is on")
-      setOpen(false)
-      reset()
-    } catch (e) {
-      setErr((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
+    start.reset()
+    confirm.reset()
   }
 
   return (
@@ -363,13 +355,19 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
               : "Scan the QR code with your authenticator app, save your backup codes, then enter a code to confirm."}
           </DialogDescription>
         </DialogHeader>
-        {err && <StatusPanel tone="danger" layout="inline" title={err} />}
+        {(start.error ?? confirm.error) && (
+          <StatusPanel
+            tone="danger"
+            layout="inline"
+            title={(start.error ?? confirm.error)?.message ?? ""}
+          />
+        )}
         {step === "password" ? (
           <form
             className="flex flex-col gap-4"
             onSubmit={(e) => {
               e.preventDefault()
-              start()
+              start.mutate()
             }}
           >
             <FormField label="Password" htmlFor="tfa-password">
@@ -383,8 +381,13 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
               />
             </FormField>
             <DialogFooter>
-              <Button type="submit" loading={busy} disabled={!password} data-testid="2fa-start">
-                {busy ? "Starting…" : "Continue"}
+              <Button
+                type="submit"
+                loading={start.isPending}
+                disabled={!password}
+                data-testid="2fa-start"
+              >
+                {start.isPending ? "Starting…" : "Continue"}
               </Button>
             </DialogFooter>
           </form>
@@ -393,7 +396,7 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
             className="flex flex-col gap-4"
             onSubmit={(e) => {
               e.preventDefault()
-              confirm()
+              confirm.mutate()
             }}
           >
             <div className="flex flex-col items-center gap-3">
@@ -476,8 +479,13 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
               />
             </FormField>
             <DialogFooter>
-              <Button type="submit" loading={busy} disabled={!code} data-testid="2fa-confirm">
-                {busy ? "Verifying…" : "Turn on"}
+              <Button
+                type="submit"
+                loading={confirm.isPending}
+                disabled={!code}
+                data-testid="2fa-confirm"
+              >
+                {confirm.isPending ? "Verifying…" : "Turn on"}
               </Button>
             </DialogFooter>
           </form>
@@ -490,25 +498,21 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
 function DisableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
   const [open, setOpen] = useState(false)
   const [password, setPassword] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState("")
 
-  const submit = async () => {
-    setErr("")
-    setBusy(true)
-    try {
+  const disable = useApiMutation({
+    mutationFn: async () => {
       const res = await authClient.twoFactor.disable({ password })
       if (res?.error) throw new Error(res.error.message ?? "Could not turn it off.")
+    },
+    errorToast: false, // rendered inline in the dialog
+    onSuccess: async () => {
       await onDone()
       toast.success("Two-factor authentication is off")
       setOpen(false)
       setPassword("")
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : (e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
+    },
+  })
+  const submit = () => disable.mutate()
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -531,7 +535,9 @@ function DisableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
             submit()
           }}
         >
-          {err && <StatusPanel tone="danger" layout="inline" title={err} />}
+          {disable.error && (
+            <StatusPanel tone="danger" layout="inline" title={disable.error.message} />
+          )}
           <FormField label="Password" htmlFor="tfa-off-password">
             <Input
               id="tfa-off-password"
@@ -546,11 +552,11 @@ function DisableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
             <Button
               type="submit"
               variant="destructive"
-              loading={busy}
+              loading={disable.isPending}
               disabled={!password}
               data-testid="2fa-off-confirm"
             >
-              {busy ? "Turning off…" : "Turn off"}
+              {disable.isPending ? "Turning off…" : "Turn off"}
             </Button>
           </DialogFooter>
         </form>
@@ -564,25 +570,19 @@ function DisableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
 // named (Better Auth stores only UA + IP), so we show a coarse device line and the headline
 // bulk action rather than a per-row revoke that's hard to attribute confidently.
 function Sessions() {
-  const qc = useQueryClient()
   const { data: sessions, isPending } = useQuery({
     queryKey: ["sessions"],
     queryFn: async () => (await authClient.listSessions()).data ?? [],
   })
-  const [revoking, setRevoking] = useState(false)
 
-  const revokeOthers = async () => {
-    setRevoking(true)
-    try {
-      await authClient.revokeOtherSessions()
-      toast.success("Signed out your other devices")
-      qc.invalidateQueries({ queryKey: ["sessions"] })
-    } catch {
-      toast.error("Could not sign out the other sessions")
-    } finally {
-      setRevoking(false)
-    }
-  }
+  const revokeOthers = useApiMutation({
+    mutationFn: async () => {
+      const res = await authClient.revokeOtherSessions()
+      if (res?.error) throw new Error(res.error.message ?? "Could not sign out the other sessions")
+    },
+    success: "Signed out your other devices",
+    invalidate: [["sessions"]],
+  })
 
   const count = sessions?.length ?? 0
   return (
@@ -600,8 +600,8 @@ function Sessions() {
         <Button
           variant="outline"
           size="sm"
-          onClick={revokeOthers}
-          loading={revoking}
+          onClick={() => revokeOthers.mutate()}
+          loading={revokeOthers.isPending}
           disabled={count <= 1}
           data-testid="sessions-revoke-others"
         >
@@ -633,24 +633,27 @@ function Passkeys() {
     } catch (e) {
       // Cancelling the browser prompt rejects — keep that quiet; surface real failures.
       const msg = (e as Error).message
-      if (msg && !/cancel|abort|NotAllowed/i.test(msg)) toast.error(msg)
+      // mutation-ignore: WebAuthn cancel/abort must stay silent; the primitive has no
+      // per-error suppression, so this passkey add is deliberately hand-rolled.
+      if (msg && !/cancel|abort|NotAllowed/i.test(msg)) toast.error(msg) // mutation-ignore
     } finally {
       setAdding(false)
     }
   }
 
-  const remove = async (id: string) => {
-    try {
-      await authClient.passkey.deletePasskey({ id })
+  const removeMut = useApiMutation({
+    mutationFn: async (id: string) => {
+      const res = await authClient.passkey.deletePasskey({ id })
+      if (res?.error) throw new Error(res.error.message ?? "Could not remove that passkey")
+    },
+    onSuccess: (_data, id) =>
       qc.setQueryData(["passkeys"], (list: { id: string }[] | undefined) =>
         list?.filter((p) => p.id !== id),
-      )
-      toast.success("Passkey removed")
-    } catch {
-      toast.error("Could not remove that passkey")
-      qc.invalidateQueries({ queryKey: ["passkeys"] })
-    }
-  }
+      ),
+    success: "Passkey removed",
+    invalidate: [["passkeys"]],
+  })
+  const remove = (id: string) => removeMut.mutate(id)
 
   return (
     <div className="flex flex-col gap-3">
@@ -708,24 +711,18 @@ function PasswordRow() {
   const [open, setOpen] = useState(false)
   const [current, setCurrent] = useState("")
   const [next, setNext] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState("")
 
-  const submit = async () => {
-    setErr("")
-    setBusy(true)
-    try {
-      await api.changePassword(current, next)
-      toast.success("Password updated. Other sessions were signed out.")
+  const change = useApiMutation({
+    mutationFn: () => api.changePassword(current, next),
+    errorToast: false, // rendered inline in the dialog
+    success: "Password updated. Other sessions were signed out.",
+    onSuccess: () => {
       setOpen(false)
       setCurrent("")
       setNext("")
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Could not update your password.")
-    } finally {
-      setBusy(false)
-    }
-  }
+    },
+  })
+  const submit = () => change.mutate()
 
   return (
     <SettingRow
@@ -752,7 +749,9 @@ function PasswordRow() {
               submit()
             }}
           >
-            {err && <StatusPanel tone="danger" layout="inline" title={err} />}
+            {change.error && (
+              <StatusPanel tone="danger" layout="inline" title={change.error.message} />
+            )}
             <FormField label="Current password" htmlFor="cur-password">
               <Input
                 id="cur-password"
@@ -777,11 +776,11 @@ function PasswordRow() {
             <DialogFooter>
               <Button
                 type="submit"
-                loading={busy}
+                loading={change.isPending}
                 disabled={!current || next.length < 8}
                 data-testid="security-save-password"
               >
-                {busy ? "Saving…" : "Update password"}
+                {change.isPending ? "Saving…" : "Update password"}
               </Button>
             </DialogFooter>
           </form>
@@ -803,18 +802,11 @@ function EmailRow({
   verified: boolean
   canChange: boolean
 }) {
-  const [resending, setResending] = useState(false)
-  const resend = async () => {
-    setResending(true)
-    try {
-      await api.sendVerificationEmail(email, `${window.location.origin}/`)
-      toast.success("Verification email sent — check your inbox.")
-    } catch {
-      toast.error("Could not send the verification email.")
-    } finally {
-      setResending(false)
-    }
-  }
+  const resendMut = useApiMutation({
+    mutationFn: () => api.sendVerificationEmail(email, `${window.location.origin}/`),
+    success: "Verification email sent — check your inbox.",
+  })
+  const resend = () => resendMut.mutate()
 
   return (
     <SettingRow
@@ -835,7 +827,7 @@ function EmailRow({
           variant="ghost"
           size="sm"
           onClick={resend}
-          loading={resending}
+          loading={resendMut.isPending}
           data-testid="security-resend-verification"
         >
           Resend verification
@@ -849,23 +841,17 @@ function EmailRow({
 function ChangeEmailDialog() {
   const [open, setOpen] = useState(false)
   const [email, setEmail] = useState("")
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState("")
 
-  const submit = async () => {
-    setErr("")
-    setBusy(true)
-    try {
-      await api.changeEmail(email, `${window.location.origin}/`)
-      toast.success(`Confirm the change from the link we sent to ${email}.`)
+  const change = useApiMutation({
+    mutationFn: () => api.changeEmail(email, `${window.location.origin}/`),
+    errorToast: false, // rendered inline in the dialog
+    success: () => `Confirm the change from the link we sent to ${email}.`,
+    onSuccess: () => {
       setOpen(false)
       setEmail("")
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "Could not change your email.")
-    } finally {
-      setBusy(false)
-    }
-  }
+    },
+  })
+  const submit = () => change.mutate()
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -889,7 +875,9 @@ function ChangeEmailDialog() {
             submit()
           }}
         >
-          {err && <StatusPanel tone="danger" layout="inline" title={err} />}
+          {change.error && (
+            <StatusPanel tone="danger" layout="inline" title={change.error.message} />
+          )}
           <FormField label="New email" htmlFor="new-email">
             <Input
               id="new-email"
@@ -904,11 +892,11 @@ function ChangeEmailDialog() {
           <DialogFooter>
             <Button
               type="submit"
-              loading={busy}
+              loading={change.isPending}
               disabled={!email}
               data-testid="security-save-email"
             >
-              {busy ? "Sending…" : "Send confirmation"}
+              {change.isPending ? "Sending…" : "Send confirmation"}
             </Button>
           </DialogFooter>
         </form>

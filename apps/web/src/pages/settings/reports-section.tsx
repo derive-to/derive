@@ -3,7 +3,7 @@ import { api, type Report } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { Button } from "@/components/ui/button"
-import { toast } from "@/components/ui/sonner"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsSection } from "./settings-section"
 
 export function ReportsSection({ reports, reload }: { reports: Report[]; reload: () => void }) {
@@ -14,43 +14,23 @@ export function ReportsSection({ reports, reload }: { reports: Report[]; reload:
     >
       <SettingsGroup>
         {reports.map((r) => (
-          <ReportRow
-            key={r.id}
-            report={r}
-            onChanged={(m) => {
-              toast.success(m)
-              reload()
-            }}
-            onError={(m) => toast.error(m)}
-          />
+          <ReportRow key={r.id} report={r} onDone={reload} />
         ))}
       </SettingsGroup>
     </SettingsSection>
   )
 }
 
-function ReportRow({
-  report,
-  onChanged,
-  onError,
-}: {
-  report: Report
-  onChanged: (msg: string) => void
-  onError: (msg: string) => void
-}) {
-  const [busy, setBusy] = useState(false)
+function ReportRow({ report, onDone }: { report: Report; onDone: () => void }) {
   const [confirming, setConfirming] = useState(false)
-  const act = async (fn: () => Promise<unknown>, msg: string) => {
-    setBusy(true)
-    try {
-      await fn()
-      onChanged(msg)
-    } catch (e) {
-      onError((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
+  // Dismiss / take down. One mutation runs whichever action fired: the primitive toasts
+  // the per-action success message (and any failure, via the global safety net) and
+  // reloads the list. `isPending` disables both buttons while either is in flight.
+  const act = useApiMutation({
+    mutationFn: ({ fn }: { fn: () => Promise<unknown>; msg: string }) => fn(),
+    success: (_data, { msg }) => msg,
+    onSuccess: () => onDone(),
+  })
   return (
     <div data-testid={`report-row-${report.id}`} className="flex flex-wrap items-start gap-3 py-3">
       <div className="min-w-0 flex-1">
@@ -75,8 +55,10 @@ function ReportRow({
           data-testid={`report-dismiss-${report.id}`}
           variant="outline"
           size="sm"
-          disabled={busy}
-          onClick={() => act(() => api.dismissReport(report.id), "Report dismissed")}
+          disabled={act.isPending}
+          onClick={() =>
+            act.mutate({ fn: () => api.dismissReport(report.id), msg: "Report dismissed" })
+          }
         >
           Dismiss
         </Button>
@@ -84,7 +66,7 @@ function ReportRow({
           data-testid={`report-takedown-${report.id}`}
           variant="destructive-ghost"
           size="sm"
-          disabled={busy}
+          disabled={act.isPending}
           onClick={() => setConfirming(true)}
         >
           Take down
@@ -97,7 +79,9 @@ function ReportRow({
         description="Its content stops serving everywhere (410). The record is kept."
         confirmLabel="Take down"
         confirmTestId={`report-takedown-confirm-${report.id}`}
-        onConfirm={() => act(() => api.takedown(report.artifact_id), "Artifact taken down")}
+        onConfirm={() =>
+          act.mutate({ fn: () => api.takedown(report.artifact_id), msg: "Artifact taken down" })
+        }
       />
     </div>
   )

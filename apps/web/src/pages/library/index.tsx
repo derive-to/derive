@@ -13,7 +13,6 @@ import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
-import { toast } from "@/components/ui/sonner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
 import {
@@ -23,6 +22,7 @@ import {
   summaryQuery,
 } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { useFollows } from "@/lib/use-follows"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
@@ -172,17 +172,18 @@ function LibraryBody({ view }: { view: LibraryView }) {
     })
   }
 
-  const renameCollection = async (id: string, title: string) => {
-    await api.renameCollection(id, title).catch((e) => toast.error((e as Error).message))
-    qc.invalidateQueries({ queryKey: summaryQuery().queryKey })
-    qc.invalidateQueries({ queryKey: collectionsQuery().queryKey })
-    nav({ to: "/", search: { collection: id } })
-  }
-  const deleteCollection = async (id: string) => {
-    await api.deleteCollection(id).catch((e) => toast.error((e as Error).message))
-    qc.invalidateQueries({ queryKey: collectionsQuery().queryKey })
-    nav({ to: "/", search: {} })
-  }
+  const renameCol = useApiMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) => api.renameCollection(id, title),
+    invalidate: [summaryQuery().queryKey, collectionsQuery().queryKey],
+    onSuccess: (_data, { id }) => nav({ to: "/", search: { collection: id } }),
+  })
+  const renameCollection = (id: string, title: string) => renameCol.mutate({ id, title })
+  const deleteCol = useApiMutation({
+    mutationFn: (id: string) => api.deleteCollection(id),
+    invalidate: [collectionsQuery().queryKey],
+    onSuccess: () => nav({ to: "/", search: {} }),
+  })
+  const deleteCollection = (id: string) => deleteCol.mutate(id)
 
   // Destructive intent is confirmed in the shared ConfirmDialog — rows only stage here.
   const [pendingDelete, setPendingDelete] = useState<Artifact | null>(null)

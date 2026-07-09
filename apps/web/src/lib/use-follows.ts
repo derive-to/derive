@@ -1,8 +1,7 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { api, type Follow, type FollowKind } from "@/api"
-import { toast } from "@/components/ui/sonner"
 import { followsQuery } from "./queries"
+import { snapshot, useApiMutation } from "./use-api-mutation"
 
 // Path targets are stored verbatim as repo prefixes (e.g. "docs/plans/"); a
 // trailing slash keeps a LIKE prefix% from matching a sibling like "docs/plan2".
@@ -26,24 +25,16 @@ export const keyOf = (f: Pick<Follow, "kind" | "target" | "handle">): string =>
 
 /**
  * The caller's follows + the derived follow-state helpers and toggle actions. One query
- * (`followsQuery`) is the source of truth. Toggles are OPTIMISTIC: the follows cache is
- * edited on click so every Follow button flips instantly (then reconciled on settle),
- * and pending state is tracked PER target so toggling one button never disables the rest.
+ * (`followsQuery`) is the source of truth. Every toggle runs through the one governed
+ * mutation primitive (`useApiMutation`): OPTIMISTIC — the follows cache is edited on
+ * click so every Follow button flips instantly, then rolled back + toasted by the
+ * primitive if the write fails; pending is tracked PER target (keyOf) so toggling one
+ * button never disables the rest; and on settle both the follows list and any open
+ * profile (its stats + followed_by_me) reconcile against the server.
  */
 export function useFollows() {
-  const qc = useQueryClient()
   const fq = followsQuery().queryKey
   const { data: follows = [] } = useQuery(followsQuery())
-  // Keys (kind:target) with an in-flight mutation — per-target so one toggle doesn't
-  // disable every other Follow button on the page.
-  const [pending, setPending] = useState<ReadonlySet<string>>(new Set())
-  const mark = (key: string, on: boolean) =>
-    setPending((prev) => {
-      const next = new Set(prev)
-      if (on) next.add(key)
-      else next.delete(key)
-      return next
-    })
 
   const authors = new Set<string>()
   const paths = new Set<string>()
@@ -56,50 +47,49 @@ export function useFollows() {
     else if (fol.kind === "user") users.add((fol.handle ?? fol.target).toLowerCase())
   }
 
-  // Optimistically edit the follows cache so the button flips before the round-trip;
-  // returns a rollback snapshot. `op` add inserts a placeholder row; remove filters it.
-  const optimistic = (op: "add" | "remove", kind: FollowKind, target: string): Follow[] => {
-    const prev = qc.getQueryData<Follow[]>(fq) ?? []
-    const key = keyOf({ kind, target, handle: kind === "user" ? target : null })
-    qc.setQueryData<Follow[]>(fq, (cur = []) => {
-      if (op === "remove") return cur.filter((f) => keyOf(f) !== key)
-      if (cur.some((f) => keyOf(f) === key)) return cur
-      const row: Follow = {
-        id: `optimistic:${key}`,
-        org_id: kind === "user" ? "*" : "",
-        user_id: "",
-        kind,
-        target,
-        created_at: new Date().toISOString(),
-        ...(kind === "user" ? { handle: target } : {}),
-      }
-      return [row, ...cur]
-    })
-    return prev
-  }
-
-  // A settled follow change also shifts any open profile (its stats + followed_by_me),
-  // so reconcile both query trees with the server once the mutation resolves.
-  const reconcile = () => {
-    qc.invalidateQueries({ queryKey: fq })
-    qc.invalidateQueries({ queryKey: ["profile"] })
-  }
-
-  const run = (op: "add" | "remove", kind: FollowKind, target: string) => {
-    const key = keyOf({ kind, target, handle: kind === "user" ? target : null })
-    mark(key, true)
-    const snapshot = optimistic(op, kind, target)
-    const call = op === "add" ? api.addFollow(kind, target) : api.removeFollow(kind, target)
-    void Promise.resolve(call)
-      .catch((e) => {
-        qc.setQueryData<Follow[]>(fq, snapshot) // rollback
-        toast.error((e as Error).message)
+  const follow = useApiMutation({
+    mutationFn: async ({
+      op,
+      kind,
+      target,
+    }: {
+      op: "add" | "remove"
+      kind: FollowKind
+      target: string
+    }) => {
+      // Discard the differing results (addFollow returns the row, removeFollow void) —
+      // the settle invalidation reconciles the cache, so the primitive needs only void.
+      if (op === "add") await api.addFollow(kind, target)
+      else await api.removeFollow(kind, target)
+    },
+    // Per-target so one Follow button's flight doesn't disable every other on the page.
+    pendingKey: ({ kind, target }) =>
+      keyOf({ kind, target, handle: kind === "user" ? target : null }),
+    optimistic: ({ op, kind, target }, qc) => {
+      const rollback = snapshot(qc, fq)
+      const key = keyOf({ kind, target, handle: kind === "user" ? target : null })
+      qc.setQueryData<Follow[]>(fq, (cur = []) => {
+        if (op === "remove") return cur.filter((f) => keyOf(f) !== key)
+        if (cur.some((f) => keyOf(f) === key)) return cur
+        const row: Follow = {
+          id: `optimistic:${key}`,
+          org_id: kind === "user" ? "*" : "",
+          user_id: "",
+          kind,
+          target,
+          created_at: new Date().toISOString(),
+          ...(kind === "user" ? { handle: target } : {}),
+        }
+        return [row, ...cur]
       })
-      .finally(() => {
-        mark(key, false)
-        reconcile()
-      })
-  }
+      return rollback
+    },
+    // A settled follow change also shifts any open profile, so reconcile both trees.
+    invalidate: [fq, ["profile"]],
+  })
+
+  const run = (op: "add" | "remove", kind: FollowKind, target: string) =>
+    follow.mutate({ op, kind, target })
 
   return {
     follows,
@@ -122,7 +112,7 @@ export function useFollows() {
       run(users.has(username.toLowerCase()) ? "remove" : "add", "user", username)
     },
     // Is THIS person's follow toggle mid-flight? (per-target, not a global flag).
-    isTogglingUser: (username: string) => pending.has(`user:${username.toLowerCase()}`),
+    isTogglingUser: (username: string) => follow.isPendingFor(`user:${username.toLowerCase()}`),
     // Drop a follow directly (the manage strip's × buttons).
     unfollow: (kind: FollowKind, target: string) => run("remove", kind, target),
   }

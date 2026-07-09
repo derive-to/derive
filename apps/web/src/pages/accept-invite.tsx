@@ -1,6 +1,5 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { getRouteApi, useNavigate } from "@tanstack/react-router"
-import { useState } from "react"
 import { api, type InvitePreview } from "@/api"
 import { Logo } from "@/components/shared/logo"
 import { Spinner } from "@/components/shared/spinner"
@@ -9,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/ctx"
 import { workspaceQuery } from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { roleLabel } from "./settings/roles"
 
 const route = getRouteApi("/invite/$token")
@@ -34,9 +34,6 @@ export function AcceptInvite() {
   const { token } = route.useParams()
   const { me, loading } = useAuth()
   const nav = useNavigate()
-  const qc = useQueryClient()
-  const [accepting, setAccepting] = useState(false)
-  const [err, setErr] = useState("")
 
   const {
     data: preview,
@@ -58,23 +55,20 @@ export function AcceptInvite() {
     preview.email.toLowerCase() !== me.email.toLowerCase()
   )
 
-  const accept = async () => {
+  const acceptMut = useApiMutation({
+    mutationFn: () => api.acceptInvite(token, mismatch),
+    errorToast: false,
+    // The roster/active-workspace may change — refresh, then land in the app.
+    invalidate: [workspaceQuery().queryKey],
+    onSuccess: () => nav({ to: "/" }),
+  })
+  const accept = () => {
     // Not signed in → send them to sign in, returning here to finish.
     if (!me) {
       nav({ to: "/login", search: { return_to: `/invite/${token}` } })
       return
     }
-    setAccepting(true)
-    setErr("")
-    try {
-      await api.acceptInvite(token, mismatch)
-      // The roster/active-workspace may change — refresh, then land in the app.
-      qc.invalidateQueries({ queryKey: workspaceQuery().queryKey })
-      nav({ to: "/" })
-    } catch (e) {
-      setErr((e as Error).message)
-      setAccepting(false)
-    }
+    acceptMut.mutate()
   }
 
   if (isPending || loading)
@@ -102,8 +96,8 @@ export function AcceptInvite() {
     <Invitation
       preview={preview}
       signedIn={!!me}
-      accepting={accepting}
-      err={err}
+      accepting={acceptMut.isPending}
+      err={acceptMut.error?.message ?? ""}
       mismatchEmail={mismatch ? (me?.email ?? null) : null}
       onAccept={accept}
     />

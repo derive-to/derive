@@ -11,7 +11,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { toast } from "@/components/ui/sonner"
 import { ago } from "@/lib/time"
+import { useApiMutation } from "@/lib/use-api-mutation"
 
 // Exact, human wording for each phase. The user wants zero guessing about what's
 // happening, so every state is spelled out — headline + a detail line.
@@ -44,15 +46,7 @@ const phaseDetail = (p: SyncProgress): string => {
   }
 }
 
-export function RepoSourceRow({
-  source,
-  onChanged,
-  onError,
-}: {
-  source: RepoSource
-  onChanged: (m: string) => void
-  onError: (m: string) => void
-}) {
+export function RepoSourceRow({ source, onDone }: { source: RepoSource; onDone: () => void }) {
   // Local live status, seeded from the source's persisted progress so the bar renders
   // instantly — even on a fresh page load mid-sync (the tab-independence proof). The
   // poll overwrites it every ~1.5s while a sync runs.
@@ -94,44 +88,39 @@ export function RepoSourceRow({
   const wasActive = useRef(active)
   useEffect(() => {
     if (wasActive.current && !active) {
-      if (phase === "done") onChanged(`Synced ${source.repo}`)
-      else if (phase === "error") onError(prog?.message ?? "Sync failed")
+      // The sync runs on the server; the poll (not a client mutation) detects the outcome.
+      if (phase === "done") {
+        toast.success(`Synced ${source.repo}`)
+        onDone()
+      } else if (phase === "error") toast.error(prog?.message ?? "Sync failed") // mutation-ignore: server-side sync outcome from the poll, not a client mutation
     }
     wasActive.current = active
-  }, [active, phase, prog?.message, source.repo, onChanged, onError])
+  }, [active, phase, prog?.message, source.repo, onDone])
 
-  const sync = async () => {
-    try {
-      // Trigger + adopt the server's state. With a runner this returns "queued" (the
-      // poll takes over); without one (self-host) it returns the finished source.
-      const r = await api.runRepoSync(source.id)
+  // Trigger + adopt the server's state. With a runner this returns "queued" (the poll
+  // takes over); without one (self-host) it returns the finished source.
+  const sync = useApiMutation({
+    mutationFn: () => api.runRepoSync(source.id),
+    onSuccess: (r) =>
       setStatus((s) => ({
         ...s,
         progress: r.progress,
         last_status: r.last_status,
         last_synced_at: r.last_synced_at,
         file_count: r.file_count,
-      }))
-    } catch (e) {
-      onError((e as Error).message)
-    }
-  }
+      })),
+  })
 
   const [disconnectDialog, setDisconnectDialog] = useState(false)
-  const [wipeBusy, setWipeBusy] = useState(false)
-
-  const remove = async (wipe: boolean) => {
-    setWipeBusy(true)
-    try {
-      await api.deleteRepoSource(source.id, wipe)
+  const remove = useApiMutation({
+    mutationFn: (wipe: boolean) => api.deleteRepoSource(source.id, wipe),
+    success: (_data, wipe) =>
+      wipe ? "Repo disconnected and docs deleted" : "Repo disconnected (docs kept)",
+    onSuccess: () => {
       setDisconnectDialog(false)
-      onChanged(wipe ? "Repo disconnected and docs deleted" : "Repo disconnected (docs kept)")
-    } catch (e) {
-      onError((e as Error).message)
-    } finally {
-      setWipeBusy(false)
-    }
-  }
+      onDone()
+    },
+  })
 
   const pct = prog && prog.total > 0 ? Math.min(100, Math.round((prog.done / prog.total) * 100)) : 0
   // Queued / listing have no count yet → an indeterminate, pulsing bar.
@@ -162,7 +151,7 @@ export function RepoSourceRow({
           data-testid={`github-sync-${source.id}`}
           variant="outline"
           size="sm"
-          onClick={sync}
+          onClick={() => sync.mutate()}
           disabled={active}
         >
           {active ? "Syncing…" : "Sync now"}
@@ -190,19 +179,19 @@ export function RepoSourceRow({
             <div className="mt-2 flex flex-col gap-2">
               <Button
                 variant="outline"
-                disabled={wipeBusy}
+                disabled={remove.isPending}
                 data-testid={`github-disconnect-keep-${source.id}`}
-                onClick={() => remove(false)}
+                onClick={() => remove.mutate(false)}
               >
                 Keep docs — stop syncing, docs stay readable
               </Button>
               <Button
                 variant="destructive"
-                disabled={wipeBusy}
+                disabled={remove.isPending}
                 data-testid={`github-disconnect-wipe-${source.id}`}
-                onClick={() => remove(true)}
+                onClick={() => remove.mutate(true)}
               >
-                {wipeBusy ? "Deleting…" : "Delete docs — remove all synced content"}
+                {remove.isPending ? "Deleting…" : "Delete docs — remove all synced content"}
               </Button>
             </div>
           </DialogContent>
@@ -268,7 +257,7 @@ export function RepoSourceRow({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={sync}
+                onClick={() => sync.mutate()}
                 data-testid={`github-retry-${source.id}`}
               >
                 Try again

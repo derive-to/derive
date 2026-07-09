@@ -6,14 +6,14 @@ import { API_BASE, ApiError, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { Kbd } from "@/components/ui/kbd"
 import { useSidebar } from "@/components/ui/sidebar"
-import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { artifactTypeLabel } from "@/lib/artifact"
 import { artifactAgentsQuery, artifactQuery, commentsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
+import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
-import { artifactActions } from "./artifact-actions"
+import { useArtifactActions } from "./artifact-actions"
 import { ArtifactComments } from "./artifact-comments"
 import { ArtifactDocument } from "./artifact-document"
 import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact-states"
@@ -128,7 +128,6 @@ export function Artifact() {
   const [surface, setSurface] = useState<null | "insights" | "history">(null)
   const [proposeMsg, setProposeMsg] = useState("")
   const [message, setMessage] = useState("")
-  const [restoring, setRestoring] = useState(false)
   const [reader, setReader] = useState(false)
   const [src, setSrc] = useState("")
   // See the `rawSrc` construction below: pins the raw-content token per (shortId,
@@ -279,6 +278,69 @@ export function Artifact() {
     setActiveThread,
   })
 
+  // Every mutating action the page drives, each routed through the governed mutation
+  // primitive. Called ABOVE the load guards below — a hook can't sit under an early
+  // return — so it takes the artifact as possibly-undefined; the handlers only ever fire
+  // from the loaded workbench, where it's present.
+  const {
+    startEdit,
+    publishEdit,
+    proposeEdit,
+    reply,
+    submitNew,
+    toggleResolve,
+    activate,
+    startSelComment,
+    startSelAgent,
+    actions,
+    restore,
+    publishing,
+    restoring,
+  } = useArtifactActions({
+    shortId,
+    art,
+    me,
+    src,
+    title: editTitle,
+    proposeMsg,
+    message,
+    composer,
+    sel,
+    post,
+    load,
+    refetchComments,
+    onRestoredJump: () =>
+      nav({
+        to: "/artifacts/$ref",
+        params: { ref: refFor({ short_id: shortId, title: art?.title }) },
+      }),
+    onOpenReview: () => setReviewing(true),
+    setEditing,
+    setSrc,
+    setTitle: setEditTitle,
+    setProposeMsg,
+    setComposer,
+    setSel,
+    setActiveThread,
+  })
+
+  // Reinstate a removed artifact (owner-only, from the tombstone) and lock/unlock the
+  // current version — page-level writes, hoisted above the load guards like the actions
+  // hook so the primitive can govern them.
+  const reinstate = useApiMutation({
+    mutationFn: () => api.reinstate(shortId),
+    success: "Reinstated",
+    onSuccess: () => load(),
+  })
+  const lockMut = useApiMutation({
+    mutationFn: (next: boolean) => api.setLocked(shortId, next),
+    optimistic: (next, client) => {
+      const rollback = snapshot(client, artifactQuery(shortId).queryKey)
+      client.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, locked: next } : a))
+      return rollback
+    },
+  })
+
   if (locked) return <PasswordGate shortId={shortId} onUnlocked={() => refetch()} />
   if (failed) {
     // A genuine 404/403 is "not found / no access". Anything else (a 5xx, a
@@ -299,15 +361,7 @@ export function Artifact() {
     return (
       <ArtifactRemoved
         canReinstate={art.my_role === "owner"}
-        onReinstate={async () => {
-          try {
-            await api.reinstate(shortId)
-            toast.success("Reinstated")
-            load()
-          } catch (e) {
-            toast.error((e as Error).message)
-          }
-        }}
+        onReinstate={() => reinstate.mutate()}
         onBack={() => nav({ to: "/" })}
       />
     )
@@ -385,49 +439,6 @@ export function Artifact() {
     landedSlides,
     anchorTops,
     scrollY,
-  })
-
-  const {
-    startEdit,
-    publishEdit,
-    proposeEdit,
-    reply,
-    submitNew,
-    toggleResolve,
-    activate,
-    startSelComment,
-    startSelAgent,
-    actions,
-    restore,
-  } = artifactActions({
-    shortId,
-    art,
-    qc,
-    me,
-    src,
-    title: editTitle,
-    proposeMsg,
-    message,
-    format,
-    composer,
-    sel,
-    post,
-    load,
-    refetchComments,
-    onRestoredJump: () =>
-      nav({
-        to: "/artifacts/$ref",
-        params: { ref: refFor({ short_id: shortId, title: art.title }) },
-      }),
-    onOpenReview: () => setReviewing(true),
-    setEditing,
-    setSrc,
-    setTitle: setEditTitle,
-    setProposeMsg,
-    setComposer,
-    setSel,
-    setActiveThread,
-    setRestoring,
   })
 
   // Activating a thread from the panel: on a deck, first flip to the slide it
@@ -607,21 +618,7 @@ export function Artifact() {
               canMove={canMove}
               locked={isLocked}
               onPresent={toggleFullscreen}
-              onLockToggle={async () => {
-                const next = !isLocked
-                // Optimistic flip; roll back if the server rejects.
-                qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
-                  a ? { ...a, locked: next } : a,
-                )
-                try {
-                  await api.setLocked(shortId, next)
-                } catch (e) {
-                  qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
-                    a ? { ...a, locked: !next } : a,
-                  )
-                  toast.error((e as Error).message)
-                }
-              }}
+              onLockToggle={() => lockMut.mutate(!isLocked)}
               onFavorite={(fav) =>
                 qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
                   a ? { ...a, favorite: fav } : a,
@@ -678,6 +675,7 @@ export function Artifact() {
                 onCancel={() => setEditing(false)}
                 onPublish={publishEdit}
                 onPropose={proposeEdit}
+                publishing={publishing}
               />
             ) : (
               documentEl

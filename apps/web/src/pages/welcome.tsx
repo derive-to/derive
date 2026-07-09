@@ -30,6 +30,7 @@ import { authClient } from "@/lib/auth-client"
 import { getInitials } from "@/lib/initials"
 import { OTHER, PROFESSIONS, presetFor } from "@/lib/professions"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { normalizeUsername, usernameError } from "@/lib/username"
 
 // A present account — the stateful onboarding body only mounts once `me` resolves
@@ -113,15 +114,12 @@ function Onboarding({ me }: { me: Account }) {
   // "Continue to Derive" — persists it and advances in one step. The old flow had a
   // separate "Save profile" button, so filled fields were silently lost if you hit
   // Continue without saving first.
-  const [uploading, setUploading] = useState(false)
   const [handle, setHandle] = useState(me.username ?? "")
   const [preset, setPreset] = useState(presetFor(me.profession ?? null))
   const [custom, setCustom] = useState(
     me.profession && presetFor(me.profession) === OTHER ? me.profession : "",
   )
   const [about, setAbout] = useState(me.about ?? "")
-  const [saving, setSaving] = useState(false)
-  const [err, setErr] = useState("")
 
   const publicUrl =
     typeof window !== "undefined" ? publicUrlOf(window.location.origin) : PLACEHOLDER_URL
@@ -134,17 +132,15 @@ function Onboarding({ me }: { me: Account }) {
   const handleErr = normalized ? usernameError(normalized) : null
   const profession = preset === OTHER ? custom.trim() : preset
 
-  const pickPhoto = async (f: File | null) => {
-    if (!f) return
-    setUploading(true)
-    try {
-      const { image } = await api.uploadAvatar(f)
-      setMe({ ...me, image })
-    } catch {
-      /* non-blocking */
-    } finally {
-      setUploading(false)
-    }
+  // Non-blocking by design: a failed avatar upload stays quiet (errorToast:false, no
+  // inline error) — the rest of onboarding proceeds regardless.
+  const upload = useApiMutation({
+    mutationFn: (f: File) => api.uploadAvatar(f),
+    errorToast: false,
+    onSuccess: ({ image }) => setMe({ ...me, image }),
+  })
+  const pickPhoto = (f: File | null) => {
+    if (f) upload.mutate(f)
   }
 
   // Skip = leave now, persist nothing. Continue = save the profile (handle + role +
@@ -155,26 +151,34 @@ function Onboarding({ me }: { me: Account }) {
     nav({ to: "/" })
   }
 
-  const continueToApp = async () => {
-    if (handleErr) return
-    setSaving(true)
-    setErr("")
-    try {
+  const save = useApiMutation({
+    mutationFn: async () => {
       let username = me.username
-      // Only claim when it actually changed (claiming your own handle is a no-op,
-      // but skipping avoids a needless round-trip).
+      // Only claim when it actually changed (claiming your own handle is a no-op, but
+      // skipping avoids a needless round-trip).
       if (normalized && normalized !== me.username) {
         const r = await api.setUsername(normalized)
         username = r.username
       }
       const res = await api.setProfile({ profession, about: about.trim() })
-      setMe({ ...me, username, profession: res.profession, about: res.about, onboarded: true })
+      return { username, profession: res.profession, about: res.about }
+    },
+    errorToast: false,
+    onSuccess: ({ username, profession: prof, about: bio }) => {
+      setMe({ ...me, username, profession: prof, about: bio, onboarded: true })
       markOnboarded()
       nav({ to: "/" })
-    } catch (caught) {
-      setErr(caught instanceof ApiError ? caught.message : "Could not save your profile.")
-      setSaving(false)
-    }
+    },
+  })
+  // Preserve the original message logic: the server's message for a known ApiError, a
+  // friendly fallback for anything else.
+  const saveErr = save.error
+    ? save.error instanceof ApiError
+      ? save.error.message
+      : "Could not save your profile."
+    : ""
+  const continueToApp = () => {
+    if (!handleErr) save.mutate()
   }
 
   return (
@@ -199,7 +203,7 @@ function Onboarding({ me }: { me: Account }) {
             <AvatarPicker
               image={me.image}
               initials={me.name ? initials : null}
-              uploading={uploading}
+              uploading={upload.isPending}
               onPick={pickPhoto}
               ariaLabel="Add a profile photo"
               testId="welcome-avatar"
@@ -224,7 +228,7 @@ function Onboarding({ me }: { me: Account }) {
                       value={handle}
                       onChange={(e) => {
                         setHandle(e.target.value)
-                        setErr("")
+                        save.reset()
                       }}
                       placeholder="yourname"
                     />
@@ -275,11 +279,11 @@ function Onboarding({ me }: { me: Account }) {
                 />
               </FormField>
 
-              {(err || handleErr) && (
+              {(saveErr || handleErr) && (
                 // The house form-error surface (matches Login): StatusPanel inline
                 // danger announces via role="alert"; the wrapper only carries the id.
                 <div data-testid="welcome-profile-error">
-                  <StatusPanel tone="danger" layout="inline" title={err || handleErr} />
+                  <StatusPanel tone="danger" layout="inline" title={saveErr || handleErr} />
                 </div>
               )}
 
@@ -337,10 +341,10 @@ function Onboarding({ me }: { me: Account }) {
             variant="default"
             data-testid="welcome-continue"
             onClick={continueToApp}
-            loading={saving}
+            loading={save.isPending}
             disabled={!!handleErr}
           >
-            {saving ? "Finishing…" : "Continue to Derive"}
+            {save.isPending ? "Finishing…" : "Continue to Derive"}
           </Button>
         </div>
 
@@ -384,7 +388,9 @@ function PasskeyNudge() {
       toast.success("Passkey added")
     } catch (e) {
       const msg = (e as Error).message
-      if (msg && !/cancel|abort|NotAllowed/i.test(msg)) toast.error(msg)
+      // mutation-ignore: WebAuthn cancel/abort must stay silent; the primitive has no
+      // per-error suppression, so this passkey add is deliberately hand-rolled.
+      if (msg && !/cancel|abort|NotAllowed/i.test(msg)) toast.error(msg) // mutation-ignore
     } finally {
       setBusy(false)
     }

@@ -10,10 +10,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { toast } from "@/components/ui/sonner"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import { OTHER, PROFESSIONS, presetFor } from "@/lib/professions"
+import { useApiMutation } from "@/lib/use-api-mutation"
 
 // Role + "what you do" editor used in Settings → Profile (onboarding has its own
 // unified form). Self-contained: reads the current values off `me`, saves via
@@ -26,27 +26,25 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
     me?.profession && presetFor(me.profession) === OTHER ? me.profession : "",
   )
   const [about, setAbout] = useState<string>(me?.about ?? "")
-  const [saving, setSaving] = useState(false)
+  // Above the `!me` guard below — a hook can't sit under an early return. The functional
+  // setMe keeps it null-safe up here; onSuccess only fires post-guard, with me present.
+  const saveMut = useApiMutation({
+    mutationFn: (vars: { profession: string; about: string }) => api.setProfile(vars),
+    success: "Profile saved",
+    onSuccess: (res) => {
+      // Fires post-guard (Save is only reachable with me present), but the hook sits above
+      // the `!me` return, so narrow here rather than assert.
+      if (me) setMe({ ...me, profession: res.profession, about: res.about })
+      onSaved?.()
+    },
+  })
   if (!me) return null
 
   // The role we'll persist: the preset, except "Other" which uses the free text.
   const profession = preset === OTHER ? custom.trim() : preset === "" ? "" : preset
   const dirty = profession !== (me.profession ?? "") || about.trim() !== (me.about ?? "")
   const presetHint = PROFESSIONS.find((p) => p.value === preset)?.hint ?? ""
-
-  const save = async () => {
-    setSaving(true)
-    try {
-      const res = await api.setProfile({ profession, about: about.trim() })
-      setMe({ ...me, profession: res.profession, about: res.about })
-      toast.success("Profile saved")
-      onSaved?.()
-    } catch (e) {
-      toast.error((e as Error).message)
-    } finally {
-      setSaving(false)
-    }
-  }
+  const save = () => saveMut.mutate({ profession, about: about.trim() })
 
   return (
     <div className="flex flex-col gap-4">
@@ -107,10 +105,10 @@ export function ProfileFields({ onSaved }: { onSaved?: () => void }) {
           variant="default"
           data-testid="profile-save"
           onClick={save}
-          loading={saving}
+          loading={saveMut.isPending}
           disabled={!dirty}
         >
-          {saving ? "Saving…" : "Save profile"}
+          {saveMut.isPending ? "Saving…" : "Save profile"}
         </Button>
       </div>
     </div>

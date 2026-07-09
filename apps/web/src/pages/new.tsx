@@ -1,10 +1,10 @@
-import { useQueryClient } from "@tanstack/react-query"
 import { useBlocker, useNavigate } from "@tanstack/react-router"
 import { useRef, useState } from "react"
 import { api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { toast } from "@/components/ui/sonner"
 import { collectionsQuery, summaryQuery } from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { refFor } from "./artifact/parse-ref"
 import { SourceEditor } from "./artifact/source-editor"
 
@@ -30,7 +30,6 @@ const detectFormat = (t: string): "md" | "html" => {
 // access from its Share menu) and opens it.
 export function NewArtifact() {
   const nav = useNavigate()
-  const qc = useQueryClient()
   const [src, setSrc] = useState("")
   const [title, setTitle] = useState("")
   const [message, setMessage] = useState("")
@@ -53,31 +52,31 @@ export function NewArtifact() {
     withResolver: true,
   })
 
-  const publish = async () => {
-    if (!src.trim()) {
-      toast.error("Add some content first.")
-      return
-    }
-    try {
+  const publishMut = useApiMutation({
+    mutationFn: () => {
       const name = title.trim() || "Untitled"
       const ext = format === "md" ? "md" : "html"
       const type = format === "md" ? "text/markdown" : "text/html"
       const fields: Record<string, string> = { title: name }
       if (message.trim()) fields.message = message.trim()
-      const a = await api.publish(new File([src], `inline.${ext}`, { type }), fields)
-      // Freshen the library so the new artifact + bumped total are correct on return,
-      // instead of relying only on the app-shell's nav-change invalidation.
-      qc.invalidateQueries({ queryKey: summaryQuery().queryKey })
-      qc.invalidateQueries({ queryKey: collectionsQuery().queryKey })
-      qc.invalidateQueries({ queryKey: ["artifacts"] })
-      // Drop the unsaved guard before navigating to the artifact (this nav is the save,
+      return api.publish(new File([src], `inline.${ext}`, { type }), fields)
+    },
+    // Freshen the library so the new artifact + bumped total are correct on return.
+    invalidate: [summaryQuery().queryKey, collectionsQuery().queryKey, ["artifacts"]],
+    onSuccess: (a) => {
+      // Drop the unsaved guard before navigating to the artifact (this nav IS the save,
       // not an abandon), so the blocker doesn't intercept it. Ref, so it's in effect the
       // instant nav() runs — see the note on `publishing` above.
       publishing.current = true
       nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })
-    } catch (e) {
-      toast.error((e as Error).message)
+    },
+  })
+  const publish = () => {
+    if (!src.trim()) {
+      toast.error("Add some content first.")
+      return
     }
+    publishMut.mutate()
   }
 
   return (
@@ -96,6 +95,7 @@ export function NewArtifact() {
         onCancel={() => nav({ to: "/" })}
         onPublish={publish}
         onPropose={() => {}}
+        publishing={publishMut.isPending}
         placeholder="Write or paste Markdown or HTML — the preview updates as you type."
       />
       {/* The unsaved-draft confirm: fires for any blocked departure (Cancel, a rail click,

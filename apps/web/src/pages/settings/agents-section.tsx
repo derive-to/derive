@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
 import { agentsQuery } from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
@@ -39,12 +40,7 @@ export function AgentsSection() {
         </>
       }
     >
-      <NewAgent
-        onCreated={(msg) => {
-          toast.success(msg)
-          reload()
-        }}
-      />
+      <NewAgent onCreated={reload} />
 
       {isPending ? (
         <SettingsListSkeleton />
@@ -53,15 +49,7 @@ export function AgentsSection() {
       ) : (
         <SettingsGroup>
           {agents.map((a) => (
-            <AgentRow
-              key={a.id}
-              agent={a}
-              onChanged={(m) => {
-                toast.success(m)
-                reload()
-              }}
-              onError={(m) => toast.error(m)}
-            />
+            <AgentRow key={a.id} agent={a} onDone={reload} />
           ))}
         </SettingsGroup>
       )}
@@ -69,25 +57,22 @@ export function AgentsSection() {
   )
 }
 
-function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
+function NewAgent({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = useState("")
   const [role, setRole] = useState<Role>("commenter")
-  const [busy, setBusy] = useState(false)
   const [created, setCreated] = useState<{ name: string; token: string } | null>(null)
 
-  const add = async () => {
-    if (!name.trim()) return
-    setBusy(true)
-    try {
-      const a = await api.createAgent(name.trim(), role)
+  const create = useApiMutation({
+    mutationFn: () => api.createAgent(name.trim(), role),
+    success: (a) => `Agent ${a.name} created`,
+    onSuccess: (a) => {
       setCreated({ name: a.name, token: a.token })
       setName("")
-      onCreated(`Agent ${a.name} created`)
-    } catch (e) {
-      onCreated((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
+      onCreated()
+    },
+  })
+  const add = () => {
+    if (name.trim()) create.mutate()
   }
 
   return (
@@ -116,10 +101,10 @@ function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
           variant="secondary"
           size="sm"
           onClick={add}
-          loading={busy}
-          disabled={busy || !name.trim()}
+          loading={create.isPending}
+          disabled={create.isPending || !name.trim()}
         >
-          {busy ? "Adding…" : "Add agent"}
+          {create.isPending ? "Adding…" : "Add agent"}
         </Button>
       </div>
       {/* The token is shown exactly once, right after creation — a safety-orange
@@ -143,7 +128,7 @@ function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
                   size="sm"
                   onClick={() => {
                     navigator.clipboard?.writeText(created.token)
-                    onCreated("Token copied")
+                    toast.success("Token copied")
                   }}
                 >
                   Copy
@@ -165,16 +150,13 @@ function NewAgent({ onCreated }: { onCreated: (msg: string) => void }) {
   )
 }
 
-function AgentRow({
-  agent,
-  onChanged,
-  onError,
-}: {
-  agent: Agent
-  onChanged: (msg: string) => void
-  onError: (msg: string) => void
-}) {
+function AgentRow({ agent, onDone }: { agent: Agent; onDone: () => void }) {
   const [confirming, setConfirming] = useState(false)
+  const remove = useApiMutation({
+    mutationFn: () => api.deleteAgent(agent.id),
+    success: `Agent ${agent.name} removed`,
+    onSuccess: () => onDone(),
+  })
   return (
     <div data-testid={`agent-row-${agent.id}`} className="flex items-center gap-3 py-3">
       <Avatar className="size-7 shrink-0">
@@ -205,14 +187,7 @@ function AgentRow({
         title={`Remove @${agent.name}?`}
         description="Its token stops working immediately."
         confirmLabel="Remove"
-        onConfirm={async () => {
-          try {
-            await api.deleteAgent(agent.id)
-            onChanged(`Agent ${agent.name} removed`)
-          } catch (e) {
-            onError((e as Error).message)
-          }
-        }}
+        onConfirm={() => remove.mutate()}
       />
     </div>
   )
