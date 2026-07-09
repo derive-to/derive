@@ -34,7 +34,10 @@ export function ContextConsole() {
 function Console({ id }: { id: string }) {
   const { me } = useAuth()
   const qc = useQueryClient()
-  const { data: context } = useQuery(contextQuery(id))
+  // Polled (unlike the one-shot route loader fetch): runner_seen_at only moves
+  // when the server re-reads the row, and liveness going STALE is exactly the
+  // signal this page exists to show.
+  const { data: context } = useQuery({ ...contextQuery(id), refetchInterval: 60_000 })
   const { data: sessions } = useQuery(contextSessionsQuery(id))
 
   // The session on screen: sticky once picked; defaults to the most recent.
@@ -60,6 +63,7 @@ function Console({ id }: { id: string }) {
         <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">
           {context.name}
         </h1>
+        <RunnerLiveness seenAt={context.runner_seen_at} />
         {context.manifest_short_id && (
           <Link
             to="/artifacts/$ref"
@@ -145,6 +149,40 @@ function Console({ id }: { id: string }) {
         )}
       </Tabs>
     </PageShell>
+  )
+}
+
+// Whether the context's runner is alive, derived from the queue poll's stamp
+// (runner_seen_at) — no heartbeat protocol. Thresholds follow the write path:
+// the runner polls ~5s but the server stamps at most once a minute, so online
+// = seen within 90s (throttle + grace); within 10 minutes reads as recently
+// seen; anything older (or never) is offline.
+function RunnerLiveness({ seenAt }: { seenAt: string | null }) {
+  // Re-evaluate on a clock, not only on refetch: a dead runner stops CHANGING
+  // the stamp, and unchanged query data never re-renders this component.
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 30_000)
+    return () => clearInterval(t)
+  }, [])
+  const age = seenAt ? Date.now() - new Date(seenAt).getTime() : Number.POSITIVE_INFINITY
+  const [dot, label] =
+    seenAt && age < 90_000
+      ? ["bg-success", "runner online"]
+      : seenAt && age < 600_000
+        ? ["bg-warning", `seen ${ago(seenAt)}`]
+        : [
+            "bg-muted-foreground",
+            `runner offline — ${seenAt ? `seen ${ago(seenAt)}` : "never seen"}`,
+          ]
+  return (
+    <span
+      data-testid="console-runner-liveness"
+      className="flex items-center gap-1.5 text-xs text-muted-foreground"
+    >
+      <span className={cn("size-1.5 rounded-full", dot)} aria-hidden />
+      {label}
+    </span>
   )
 }
 

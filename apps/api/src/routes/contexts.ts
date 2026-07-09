@@ -9,6 +9,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { bail, fail, readJson } from "../lib/http"
+import { log } from "../log"
 
 /**
  * Contexts (askable agent setups) + sessions (ask-conversations with one).
@@ -42,6 +43,9 @@ export const contextRoutes = (ctx: AppContext) => {
       manifest_short_id: z.string().nullable(),
       created_by: z.string(),
       created_at: z.string(),
+      // When the runner last polled the queue (stamped there, ~minutely) — the
+      // console derives online/offline from this client-side. Null = never.
+      runner_seen_at: z.string().nullable(),
     })
     .openapi("ContextInfo")
 
@@ -86,6 +90,7 @@ export const contextRoutes = (ctx: AppContext) => {
     manifest_short_id: manifestShortId,
     created_by: x.created_by,
     created_at: x.created_at,
+    runner_seen_at: x.runner_seen_at,
   })
 
   const messageJson = (m: SessionMessageRecord) => {
@@ -582,6 +587,21 @@ export const contextRoutes = (ctx: AppContext) => {
       if (!agent) return bail(fail(c, 401, "agent token required"))
       const x = await meta.getContext(c.req.param("id"))
       if (!x || x.agent_id !== agent.id) return bail(fail(c, 404, "not found"))
+      // Liveness IS this poll — no heartbeat protocol. Stamp at most once a
+      // minute (the poll is ~5s; a write per poll would be pure churn, and the
+      // console's 90s "online" window tolerates the gap). Best-effort: a failed
+      // stamp must not 500 the queue — the runner's real job comes first.
+      const now = new Date()
+      if (!x.runner_seen_at || now.getTime() - new Date(x.runner_seen_at).getTime() > 60_000) {
+        try {
+          await meta.touchContextSeen(x.id, now.toISOString())
+        } catch (err) {
+          log.warn("runner liveness stamp failed", {
+            context: x.id,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
       const limit = Math.min(20, Math.max(1, Number(c.req.query("limit")) || 10))
       const sessions = await meta.pendingSessions(x.id, limit)
       // One query for every pending session's transcript, then group by session_id —

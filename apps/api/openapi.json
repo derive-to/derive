@@ -1593,6 +1593,10 @@
           },
           "created_at": {
             "type": "string"
+          },
+          "runner_seen_at": {
+            "type": "string",
+            "nullable": true
           }
         },
         "required": [
@@ -1601,7 +1605,8 @@
           "agent_id",
           "manifest_short_id",
           "created_by",
-          "created_at"
+          "created_at",
+          "runner_seen_at"
         ]
       },
       "Session": {

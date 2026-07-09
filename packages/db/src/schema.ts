@@ -586,6 +586,11 @@ export const context = sqliteTable(
       .references(() => artifact.id),
     created_by: text("created_by").notNull(),
     created_at: text("created_at").notNull().default(now),
+    // Last time this context's runner polled its queue — liveness derived from the
+    // poll itself, no separate heartbeat. Stamped at most once a minute (the queue
+    // route throttles; the poll is ~5s) so the row isn't churned. Nullable (never
+    // polled + clean ALTER ADD COLUMN); the console renders online/offline from it.
+    runner_seen_at: text("runner_seen_at"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
 )

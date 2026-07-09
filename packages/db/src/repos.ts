@@ -1782,6 +1782,11 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(contextSession).where(eq(contextSession.context_id, id)).run()
     await db.delete(context).where(eq(context.id, id)).run()
   }
+  // A no-op on an unknown id, deliberately: the caller already 404'd before
+  // stamping, and liveness is best-effort — never worth a throw.
+  const touchContextSeen = async (id: string, at: string): Promise<void> => {
+    await db.update(context).set({ runner_seen_at: at }).where(eq(context.id, id)).run()
+  }
   const createSession = async (s: NewSession): Promise<SessionRecord> =>
     (await db.insert(contextSession).values(s).returning().get()) as SessionRecord
   const getSession = async (id: string): Promise<SessionRecord | null> =>
@@ -2432,6 +2437,7 @@ export function makeRepos(db: SqliteDb) {
     getContext,
     listContexts,
     deleteContext,
+    touchContextSeen,
     createSession,
     getSession,
     listSessions,
