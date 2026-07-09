@@ -19,11 +19,13 @@ trap cleanup EXIT
 
 echo "→ starting ephemeral Postgres ($IMAGE)…"
 # Random host port (avoids clashing with any local :5432); bound to loopback.
-# A generous max_connections covers one Pool per isolated test schema.
+# A generous max_connections covers many Pools at once — under file parallelism
+# several files' isolated-schema stores are live concurrently (pools are lazy, so
+# real usage sits well below this ceiling).
 docker run -d --rm --name "$NAME" \
   -e POSTGRES_PASSWORD="$PASSWORD" -e POSTGRES_DB="$DB" \
   -p 127.0.0.1::5432 \
-  "$IMAGE" -c max_connections=200 >/dev/null
+  "$IMAGE" -c max_connections=400 >/dev/null
 
 PORT="$(docker port "$NAME" 5432/tcp | head -1 | sed 's/.*://')"
 URL="postgres://postgres:${PASSWORD}@127.0.0.1:${PORT}/${DB}"
@@ -49,7 +51,13 @@ cd "$ROOT/apps/api"
 # CASCADE + full DDL replay via the helpers' deferred store) — on a CI runner
 # that alone can cross vitest's default 5s testTimeout as the schema grows.
 # Relax the timeout for this lane only; the SQLite lane keeps the 5s default.
-pnpm exec vitest run --no-file-parallelism --testTimeout=15000 "$@"
+#
+# File parallelism is ON (previously --no-file-parallelism): helpers.ts keys each
+# schema on VITEST_POOL_ID, so concurrent files land in distinct schemas and can't
+# collide. Cap workers so the per-store pools (node-postgres default max=10) stay
+# well under max_connections; a 2-vCPU CI box uses ~2 anyway, so the cap only
+# bounds beefier local machines.
+pnpm exec vitest run --maxWorkers=4 --testTimeout=15000 "$@"
 
 # Also run @derive/db's store contract against the same Postgres — the only place
 # pg.ts (the hosted-tier driver) is covered + gated by the db package's own suite.

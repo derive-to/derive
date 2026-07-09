@@ -27,13 +27,18 @@ type TestStore = MetaStore & { close(): unknown }
 type Seat = { user_id: string; role: Role }
 
 // Postgres has no file-per-store isolation like SQLite, so each named store gets
-// its own schema (search_path), dropped + recreated on first use in this process.
-// Same name → same schema (mirrors SQLite's `${name}.db`); the pid keeps parallel
-// test files from colliding. Pools are tracked so afterAll can release handles.
+// its own schema (search_path), dropped + recreated on first use in this file.
+// Same name → same schema (mirrors SQLite's `${name}.db`). A per-worker key
+// namespaces the schema so parallel test files never collide: VITEST_POOL_ID is
+// unique per worker slot and pool-agnostic (correct under forks OR threads),
+// falling back to the pid outside vitest. Isolation also relies on vitest's
+// default isolate:true — a fresh module per file re-runs the DROP+recreate below,
+// so a worker's next file starts clean. Pools are tracked so afterAll releases them.
 const pgStores: TestStore[] = []
 const pgSchemas = new Set<string>()
+const workerKey = (process.env.VITEST_POOL_ID ?? String(process.pid)).replace(/[^a-z0-9]+/gi, "_")
 const schemaFor = (name: string) =>
-  `t_${process.pid}_${name.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`
+  `t_${workerKey}_${name.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`
 
 const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore => {
   const base = PG_URL as string
