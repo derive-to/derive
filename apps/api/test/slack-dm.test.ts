@@ -1,6 +1,12 @@
 import { type ArtifactRecord, type CommentRecord, type DeliveryRecord, newId } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { enqueueSlackMentionDms, makeSlackDmSender, wantsMentionDm } from "../src/lib/slack-dm"
+import {
+  enqueueSlackMentionDms,
+  enqueueSlackReviewRequestedDm,
+  enqueueSlackShareDm,
+  makeSlackDmSender,
+  wantsSlackDm,
+} from "../src/lib/slack-dm"
 import { quotaApp, type TestUser } from "./helpers"
 
 const KEY = "dm-key"
@@ -35,8 +41,17 @@ const connect = (meta: ReturnType<typeof make>) =>
     created_at: new Date().toISOString(),
   })
 
-const artifactAndComment = async (meta: ReturnType<typeof make>) => {
-  const artifact = (await meta.createArtifact({
+const optOut = (meta: ReturnType<typeof make>, userId: string) =>
+  meta.setUserNotificationPref({
+    id: newId("unp"),
+    org_id: "default",
+    user_id: userId,
+    prefs: JSON.stringify({ slackDm: false }),
+    created_at: new Date().toISOString(),
+  })
+
+const makeArtifact = (meta: ReturnType<typeof make>) =>
+  meta.createArtifact({
     id: newId("a"),
     short_id: newId("s").slice(0, 8),
     org_id: "default",
@@ -45,7 +60,10 @@ const artifactAndComment = async (meta: ReturnType<typeof make>) => {
     link_role: "viewer",
     kind: "file",
     spa: 0,
-  })) as ArtifactRecord
+  }) as Promise<ArtifactRecord>
+
+const artifactAndComment = async (meta: ReturnType<typeof make>) => {
+  const artifact = await makeArtifact(meta)
   const comment = await meta.createComment({
     id: newId("c"),
     artifact_id: artifact.id,
@@ -67,13 +85,13 @@ const claim = (meta: ReturnType<typeof make>): Promise<DeliveryRecord[]> =>
     new Date(Date.now() + 120_000).toISOString(),
   )
 
-describe("wantsMentionDm", () => {
+describe("wantsSlackDm", () => {
   it("defaults on; off only when explicitly disabled", () => {
-    expect(wantsMentionDm(undefined)).toBe(true)
-    expect(wantsMentionDm("{}")).toBe(true)
-    expect(wantsMentionDm(JSON.stringify({ slackMentionDm: false }))).toBe(false)
-    expect(wantsMentionDm(JSON.stringify({ slackMentionDm: true }))).toBe(true)
-    expect(wantsMentionDm("not json")).toBe(true)
+    expect(wantsSlackDm(undefined)).toBe(true)
+    expect(wantsSlackDm("{}")).toBe(true)
+    expect(wantsSlackDm(JSON.stringify({ slackDm: false }))).toBe(false)
+    expect(wantsSlackDm(JSON.stringify({ slackDm: true }))).toBe(true)
+    expect(wantsSlackDm("not json")).toBe(true)
   })
 })
 
@@ -81,13 +99,7 @@ describe("enqueueSlackMentionDms (gate)", () => {
   it("enqueues a DM for an opted-in member; skips opted-out and non-members", async () => {
     const meta = make("slack-dm-gate")
     await connect(meta)
-    await meta.setUserNotificationPref({
-      id: newId("unp"),
-      org_id: "default",
-      user_id: optout.id,
-      prefs: JSON.stringify({ slackMentionDm: false }),
-      created_at: new Date().toISOString(),
-    })
+    await optOut(meta, optout.id)
     const { artifact, comment } = await artifactAndComment(meta)
     await enqueueSlackMentionDms({ meta, baseUrl }, artifact, comment, [
       { id: linked.id, name: "Lin" },
@@ -97,6 +109,62 @@ describe("enqueueSlackMentionDms (gate)", () => {
     const dms = (await claim(meta)).filter((d) => d.kind === "slack_dm")
     expect(dms).toHaveLength(1)
     expect(JSON.parse(dms[0]?.payload ?? "{}").userId).toBe(linked.id)
+  })
+})
+
+describe("enqueueSlackReviewRequestedDm (gate)", () => {
+  it("enqueues a DM for the reviewer when opted in; skips when opted out", async () => {
+    const meta = make("slack-dm-review")
+    await connect(meta)
+    const artifact = await makeArtifact(meta)
+    await enqueueSlackReviewRequestedDm(
+      { meta, baseUrl },
+      artifact,
+      { requestedBy: "Ada", version: 3, note: "please check the intro" },
+      linked.id,
+    )
+    const dms = (await claim(meta)).filter((d) => d.kind === "slack_dm")
+    expect(dms).toHaveLength(1)
+    const payload = JSON.parse(dms[0]?.payload ?? "{}")
+    expect(payload.userId).toBe(linked.id)
+    expect(payload.text).toContain("Ada requested your review")
+
+    await optOut(meta, optout.id)
+    await enqueueSlackReviewRequestedDm(
+      { meta, baseUrl },
+      artifact,
+      { requestedBy: "Ada", version: 3 },
+      optout.id,
+    )
+    expect((await claim(meta)).filter((d) => d.kind === "slack_dm")).toHaveLength(0)
+  })
+})
+
+describe("enqueueSlackShareDm (gate)", () => {
+  it("enqueues a DM for the person shared with when opted in; skips when opted out", async () => {
+    const meta = make("slack-dm-share")
+    await connect(meta)
+    const artifact = await makeArtifact(meta)
+    await enqueueSlackShareDm(
+      { meta, baseUrl },
+      artifact,
+      { sharedBy: "Ada", role: "editor" },
+      linked.id,
+    )
+    const dms = (await claim(meta)).filter((d) => d.kind === "slack_dm")
+    expect(dms).toHaveLength(1)
+    const payload = JSON.parse(dms[0]?.payload ?? "{}")
+    expect(payload.userId).toBe(linked.id)
+    expect(payload.text).toContain("Ada shared")
+
+    await optOut(meta, optout.id)
+    await enqueueSlackShareDm(
+      { meta, baseUrl },
+      artifact,
+      { sharedBy: "Ada", role: "viewer" },
+      optout.id,
+    )
+    expect((await claim(meta)).filter((d) => d.kind === "slack_dm")).toHaveLength(0)
   })
 })
 

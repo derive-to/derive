@@ -597,12 +597,6 @@
           "slackPost": {
             "type": "boolean"
           },
-          "slackEvents": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "boolean"
-            }
-          },
           "defaultWorkspaceAccess": {
             "type": "string",
             "enum": [
@@ -1214,7 +1208,7 @@
           "needs_reauth": {
             "type": "boolean"
           },
-          "mention_dm": {
+          "slack_dm": {
             "type": "boolean"
           }
         },
@@ -1224,7 +1218,7 @@
           "team_name",
           "default_channel",
           "needs_reauth",
-          "mention_dm"
+          "slack_dm"
         ]
       },
       "Report": {

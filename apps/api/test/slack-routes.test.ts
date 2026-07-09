@@ -100,27 +100,27 @@ describe("slack status + admin routes", () => {
 })
 
 describe("slack DM prefs (email-resolved, no linking)", () => {
-  it("status reports mention_dm; defaults on even before Slack is connected", async () => {
+  it("status reports slack_dm; defaults on even before Slack is connected", async () => {
     const { app } = make("slack-dm-status")
     const before = await (await app.request("/v1/slack", { headers: as(owner.email) })).json()
-    expect(before).toMatchObject({ mention_dm: true })
+    expect(before).toMatchObject({ slack_dm: true })
   })
 
-  it("toggles the caller's mention-DM pref and reflects it in status", async () => {
+  it("toggles the caller's Slack-DM pref and reflects it in status", async () => {
     const { app, meta } = make("slack-dm-toggle")
     const off = await app.request("/v1/slack/prefs", {
       method: "PATCH",
       headers: { "content-type": "application/json", ...as(owner.email) },
-      body: JSON.stringify({ mention_dm: false }),
+      body: JSON.stringify({ slack_dm: false }),
     })
     expect(off.status).toBe(200)
-    expect(await off.json()).toEqual({ mention_dm: false })
+    expect(await off.json()).toEqual({ slack_dm: false })
 
     const status = await (await app.request("/v1/slack", { headers: as(owner.email) })).json()
-    expect(status.mention_dm).toBe(false)
+    expect(status.slack_dm).toBe(false)
 
     const pref = await meta.getUserNotificationPref("default", owner.id)
-    expect(pref && JSON.parse(pref.prefs)).toMatchObject({ slackMentionDm: false })
+    expect(pref && JSON.parse(pref.prefs)).toMatchObject({ slackDm: false })
   })
 
   it("test DM requires Slack to be connected, then enqueues a slack_dm", async () => {

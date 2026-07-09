@@ -1484,10 +1484,6 @@ export interface OrgSettings {
   githubPreviewLink: boolean
   /** Post Derive comment activity to the connected Slack workspace (the thread mirror). */
   slackPost: boolean
-  /** Per-event toggles for the connected app's richer event cards (version.published,
-   *  proposal.*, review.*). Keyed by webhook event name; an absent key means on. Comment
-   *  posts stay governed by `slackPost`. */
-  slackEvents?: Record<string, boolean>
   /** The access a NEW publish lands with when the publisher doesn't say (see
    *  access-model.md). Factory default is the "team draft": `workspace_access =
    *  member` (a pasted link opens for a teammate or an on-behalf agent at their
@@ -1505,7 +1501,6 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   githubMirrorComments: true,
   githubPreviewLink: true,
   slackPost: true,
-  slackEvents: {},
   defaultWorkspaceAccess: "member",
   defaultLinkRole: "none",
   defaultListed: "none",
@@ -1603,7 +1598,6 @@ export type DeliveryStatus = "pending" | "delivered" | "dead"
 export type DeliveryKind =
   | WebhookKind
   | "slack_app"
-  | "slack_app_event"
   | "slack_dm"
   | "github_review_comment"
   | "github_issue_comment"

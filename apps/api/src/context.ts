@@ -35,7 +35,6 @@ import {
   type RateLimiters,
   rateLimited,
 } from "./lib/rate-limit"
-import { enqueueSlackEvent } from "./lib/slack-events"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
@@ -243,15 +242,9 @@ export function buildContext(deps: AppDeps) {
   // When something was enqueued, poke the drainer so it goes out now instead of on
   // the next interval/alarm tick.
   const notify = (a: ArtifactRecord, event: WebhookEvent, data: Record<string, unknown>) =>
-    // Fan the event to both configured webhook rows and the connected Slack App (the app
-    // is a first-class subscriber of the same stream, not a per-route side call). Poke the
-    // drainer if either enqueued something.
-    Promise.all([
-      enqueueForEvent(meta, deps.baseUrl, a, event, data),
-      enqueueSlackEvent({ meta, baseUrl: deps.baseUrl }, a, event, data).then((q) => (q ? 1 : 0)),
-    ])
-      .then(([queued, slackQueued]) => {
-        if (queued + slackQueued > 0) deps.pokeWebhooks?.()
+    enqueueForEvent(meta, deps.baseUrl, a, event, data)
+      .then((queued) => {
+        if (queued > 0) deps.pokeWebhooks?.()
       })
       .catch((err) =>
         // Non-fatal (the request still succeeds), but a dropped enqueue means the

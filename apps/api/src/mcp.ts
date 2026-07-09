@@ -60,6 +60,7 @@ import { type MaterializedEdits, materializeEdits } from "./lib/edits"
 import { buildReviewEmail } from "./lib/email"
 import { MAX_UPLOAD_BYTES } from "./lib/http"
 import { notifyCommentBells } from "./lib/notify-comment"
+import { enqueueSlackReviewRequestedDm } from "./lib/slack-dm"
 import { enqueueChannelDelivery } from "./webhooks"
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
@@ -1388,6 +1389,14 @@ function buildServer(
                 }),
               })
           }
+          // Same interrupt, mirrored to Slack (independent of the email gate above —
+          // gated on the reviewer's own Slack-DM preference instead).
+          await enqueueSlackReviewRequestedDm(
+            { meta: ctx.meta, baseUrl: ctx.deps.baseUrl },
+            artifact,
+            { requestedBy: agent.name, version: version.n },
+            actingFor.id,
+          )
         }
         const url = artifactUrl(ctx.deps.baseUrl, artifact)
         // Bell entry for the human behind the grant, so a push reaches them even

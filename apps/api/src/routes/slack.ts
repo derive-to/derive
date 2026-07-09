@@ -11,17 +11,17 @@ import {
   verifySlackSignature,
 } from "../lib/slack"
 import { ingestSlackReply } from "../lib/slack-comments"
-import { enqueueSlackDm, wantsMentionDm } from "../lib/slack-dm"
+import { enqueueSlackDm, wantsSlackDm } from "../lib/slack-dm"
 import { log } from "../log"
 import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
 
 /** Slack App: connect a workspace (OAuth), receive its Events API (comment reply-back),
- *  and post notifications for Derive activity (via the notify() event stream — see
- *  lib/slack-events.ts). The events endpoint is signature-gated (no session) — it's in
- *  the app's anon-write allow list. The connect endpoints require a signed-in workspace
- *  admin. The SlackStatus response schema is the single source for the web client's
- *  type; the OAuth redirects and the Slack Events webhook stay plain routes (not typed
- *  JSON). */
+ *  and DM a workspace member for the same interrupts email does — mentions, review
+ *  requests, shares (see lib/slack-dm.ts). The events endpoint is signature-gated (no
+ *  session) — it's in the app's anon-write allow list. The connect endpoints require a
+ *  signed-in workspace admin. The SlackStatus response schema is the single source for
+ *  the web client's type; the OAuth redirects and the Slack Events webhook stay plain
+ *  routes (not typed JSON). */
 export const slackRoutes = (ctx: AppContext) => {
   const { meta, deps, bus, requireUser } = ctx
   const { activeWorkspace, workspaceCan } = ctx
@@ -43,8 +43,8 @@ export const slackRoutes = (ctx: AppContext) => {
       default_channel: z.string().nullable(),
       /** Whether the stored bot token needs a re-auth (an auth error since connecting). */
       needs_reauth: z.boolean(),
-      /** The caller's "DM me when I'm @mentioned" preference. */
-      mention_dm: z.boolean(),
+      /** The caller's "DM me for interrupts" preference (mentions, review requests, shares). */
+      slack_dm: z.boolean(),
     })
     .openapi("SlackStatus")
 
@@ -190,16 +190,16 @@ export const slackRoutes = (ctx: AppContext) => {
         team_name: install?.team_name ?? null,
         default_channel: install?.default_channel ?? null,
         needs_reauth: install?.needs_reauth === 1,
-        mention_dm: wantsMentionDm(pref?.prefs),
+        slack_dm: wantsSlackDm(pref?.prefs),
       })
     },
   )
 
-  // Toggle the caller's "DM me when I'm @mentioned" preference.
+  // Toggle the caller's "DM me for interrupts" preference.
   app.patch("/v1/slack/prefs", async (c) => {
     const me = await requireUser(c)
     if (me instanceof Response) return me
-    const b = await readJson(c, z.object({ mention_dm: z.boolean() }))
+    const b = await readJson(c, z.object({ slack_dm: z.boolean() }))
     if (b instanceof Response) return b
     const org = await activeWorkspace(c)
     const cur = await meta.getUserNotificationPref(org, me.id)
@@ -207,7 +207,7 @@ export const slackRoutes = (ctx: AppContext) => {
     try {
       if (cur) existing = JSON.parse(cur.prefs) as Record<string, unknown>
     } catch {}
-    const prefs = { ...existing, slackMentionDm: b.mention_dm }
+    const prefs = { ...existing, slackDm: b.slack_dm }
     await meta.setUserNotificationPref({
       id: cur?.id ?? newId("unp"),
       org_id: org,
@@ -215,7 +215,7 @@ export const slackRoutes = (ctx: AppContext) => {
       prefs: JSON.stringify(prefs),
       created_at: cur?.created_at ?? new Date().toISOString(),
     })
-    return c.json({ mention_dm: b.mention_dm })
+    return c.json({ slack_dm: b.slack_dm })
   })
 
   // Send the caller a test DM (verifies their account email matches a Slack account +

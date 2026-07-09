@@ -656,8 +656,8 @@ export const api = {
     f("/v1/slack", { ...opts({ default_channel }), method: "PATCH" }).then(j),
   disconnectSlack: (): Promise<void> =>
     f("/v1/slack", { method: "DELETE", credentials: "include" }).then(() => undefined),
-  setSlackMentionDm: (mention_dm: boolean): Promise<{ mention_dm: boolean }> =>
-    f("/v1/slack/prefs", { ...opts({ mention_dm }), method: "PATCH" }).then(j),
+  setSlackDm: (slack_dm: boolean): Promise<{ slack_dm: boolean }> =>
+    f("/v1/slack/prefs", { ...opts({ slack_dm }), method: "PATCH" }).then(j),
   sendSlackTestDm: (): Promise<{ ok: boolean }> =>
     f("/v1/slack/test-dm", { ...opts({}), method: "POST" }).then(j),
 
