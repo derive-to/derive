@@ -130,8 +130,14 @@ export const artifactRoutes = (ctx: AppContext) => {
             "application/json": {
               schema: z.object({
                 artifacts: z.array(Artifact),
-                next_cursor: z.string().nullable(),
-                collection: z.object({ id: z.string(), title: z.string() }).optional(),
+                next_cursor: z
+                  .string()
+                  .nullable()
+                  .describe("Opaque cursor for the next page; null on the last page."),
+                collection: z
+                  .object({ id: z.string(), title: z.string() })
+                  .optional()
+                  .describe("The scoped collection; present only when listing one (?collection=)."),
               }),
             },
           },
@@ -356,12 +362,19 @@ export const artifactRoutes = (ctx: AppContext) => {
           content: {
             "application/json": {
               schema: z.object({
-                total: z.number(),
-                favorites: z.number(),
-                mine: z.number(),
-                mine_private: z.number(),
-                tags: z.array(z.object({ tag: z.string(), count: z.number() })),
-                workspace: z.string().nullable(),
+                total: z.number().describe("Total artifacts in the workspace."),
+                favorites: z.number().describe("The caller's favorite count in this workspace."),
+                mine: z.number().describe("Count of artifacts the caller owns ('Created by me')."),
+                mine_private: z
+                  .number()
+                  .describe("Owned artifacts not surfaced anywhere yet (listed=none)."),
+                tags: z
+                  .array(z.object({ tag: z.string(), count: z.number() }))
+                  .describe("Per-tag artifact counts for the workspace."),
+                workspace: z
+                  .string()
+                  .nullable()
+                  .describe("Workspace display name; null for a non-member (empty summary)."),
               }),
             },
           },
@@ -980,10 +993,16 @@ export const artifactRoutes = (ctx: AppContext) => {
           content: {
             "application/json": {
               schema: z.object({
-                workspace_access: z.enum(["none", "member"]),
-                link_role: z.enum(["none", "viewer", "commenter", "editor"]),
-                listed: z.enum(["none", "workspace", "public"]),
-                locked: z.boolean(),
+                workspace_access: z
+                  .enum(["none", "member"])
+                  .describe("New workspace access: member = seats reach it; none = they don't."),
+                link_role: z
+                  .enum(["none", "viewer", "commenter", "editor"])
+                  .describe("New world-link role; none = no link."),
+                listed: z
+                  .enum(["none", "workspace", "public"])
+                  .describe("New discovery listing: nowhere, the workspace, or public."),
+                locked: z.boolean().describe("true when the world link is now password-locked."),
               }),
             },
           },
@@ -1183,7 +1202,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       responses: {
         201: {
           description: "The artifact after restore, plus the new version number.",
-          content: { "application/json": { schema: Artifact.extend({ published: z.number() }) } },
+          content: {
+            "application/json": {
+              schema: Artifact.extend({
+                published: z.number().describe("The new version number created by the restore."),
+              }),
+            },
+          },
         },
       },
     }),

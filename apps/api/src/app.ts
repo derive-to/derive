@@ -387,7 +387,85 @@ export function createApp(deps: AppDeps): Hono {
   // Snapshot-locked at apps/api/openapi.json — a shape change fails the openapi test.
   app.doc("/openapi.json", {
     openapi: "3.0.3",
-    info: { title: "Derive API", version: "1.0.0" },
+    info: {
+      title: "Derive API",
+      version: "1.0.0",
+      description:
+        "Derive's HTTP API. Every response shape here is the single source of truth for the " +
+        "web client — generated from the same Zod schemas that back this reference, so the docs " +
+        "never drift from the running API.\n\n" +
+        "**Auth:** a session cookie (browser) or a bearer token (agents and the CLI). Most write " +
+        "routes are scoped to the caller's active workspace. The `/v1` paths are the stable " +
+        "product surface; `/openapi.json` serves this spec and `/docs` renders it.",
+    },
+    // Section order + descriptions for the reference sidebar (Scalar renders tags in
+    // this order; a tag used by a route but absent here still appears, unsorted).
+    tags: [
+      {
+        name: "Artifacts",
+        description:
+          "Documents (files and bundles): browse, publish, version, restore, and control access.",
+      },
+      {
+        name: "Comments",
+        description: "Threaded, anchored comments with reactions, edits, and resolution.",
+      },
+      {
+        name: "Proposals",
+        description:
+          "Suggested revisions awaiting review — the propose → approve / request-changes flow.",
+      },
+      {
+        name: "Review",
+        description: "Review rounds on an artifact: request a review, send it back, or approve.",
+      },
+      {
+        name: "Collections",
+        description: "Shareable groups of artifacts, each with its own members.",
+      },
+      {
+        name: "Sharing",
+        description:
+          "Per-artifact collaborator roles (shares) layered over the workspace baseline.",
+      },
+      {
+        name: "Contexts",
+        description:
+          "Askable agent setups: wire an agent to a manifest, then open Q&A sessions against it.",
+      },
+      {
+        name: "Agents",
+        description:
+          "Registered agents (bearer tokens) and the OAuth agents a user has authorized.",
+      },
+      { name: "Assets", description: "Standalone binary image assets referenced from bundles." },
+      { name: "Favorites", description: "The caller's favorited artifacts." },
+      { name: "Follows", description: "Follow people and repo paths to build the activity feed." },
+      { name: "Notifications", description: "The caller's in-app notification feed." },
+      {
+        name: "Session",
+        description: "Identity: the signed-in user, public profiles, and the people directory.",
+      },
+      {
+        name: "Workspace",
+        description: "The workspace itself: members, settings, invitations, and switching.",
+      },
+      { name: "Domains", description: "Custom domains and vanity subdomains bound to artifacts." },
+      {
+        name: "Sync",
+        description: "GitHub repository mirroring: connect a repo and keep its docs in sync.",
+      },
+      { name: "Slack", description: "Slack connection status and integration toggles." },
+      { name: "Webhooks", description: "Outgoing webhooks and their delivery log." },
+      {
+        name: "OAuth",
+        description: "OAuth 2.1 authorization-server endpoints and sign-in capabilities.",
+      },
+      { name: "Realtime", description: "Live presence and cursor sharing on an artifact." },
+      { name: "Analytics", description: "Aggregate view statistics for an artifact." },
+      { name: "Moderation", description: "Abuse reports and takedown / reinstate actions." },
+      { name: "Vitals", description: "Client-reported web-vitals ingestion." },
+    ],
   })
 
   // Interactive API reference (Scalar) rendered from the spec above. Public +

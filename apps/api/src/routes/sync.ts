@@ -92,84 +92,152 @@ export const syncRoutes = (ctx: AppContext) => {
   const RepoSource = z
     .object({
       id: z.string(),
-      collection_id: z.string(),
-      repo: z.string(),
-      ref: z.string(),
-      includes: z.string(),
-      token: z.string().nullable(),
-      installation_id: z.string().nullable(),
-      last_synced_at: z.string().nullable(),
-      last_status: z.string().nullable(),
+      collection_id: z.string().describe("Collection the repo's docs are mirrored into."),
+      repo: z.string().describe("The connected GitHub repo, as owner/name."),
+      ref: z.string().describe('Branch or tag to mirror; "HEAD" tracks the default branch.'),
+      includes: z
+        .string()
+        .describe("Comma-separated glob patterns selecting which files to mirror."),
+      token: z
+        .string()
+        .nullable()
+        .describe('Redacted to "•••" when a PAT is stored; null for App-backed sources.'),
+      installation_id: z
+        .string()
+        .nullable()
+        .describe("GitHub App installation backing this source; null when using a PAT."),
+      last_synced_at: z
+        .string()
+        .nullable()
+        .describe("When the last sync finished; null if it has never synced."),
+      last_status: z
+        .string()
+        .nullable()
+        .describe("Outcome of the last sync run; null if it has never synced."),
       created_by: z.string(),
       created_at: z.string(),
-      file_count: z.number(),
-      progress: z.string().nullable(),
+      file_count: z.number().describe("How many files are currently mirrored from the repo."),
+      progress: z
+        .string()
+        .nullable()
+        .describe("Live sync progress as a JSON blob driving the bar; null when none recorded."),
     })
     .openapi("RepoSource")
 
   const PrPreview = z
     .object({
       id: z.string(),
-      collection_id: z.string(),
-      repo: z.string(),
-      pr_number: z.number(),
-      title: z.string(),
-      last_status: z.string().nullable(),
-      last_synced_at: z.string().nullable(),
-      file_count: z.number(),
-      progress: z.string().nullable(),
+      collection_id: z.string().describe("Collection holding this PR's previewed docs."),
+      repo: z.string().describe("The connected GitHub repo, as owner/name."),
+      pr_number: z.number().describe("The pull request number this preview mirrors."),
+      title: z.string().describe("The PR's title, used as the preview's display name."),
+      last_status: z
+        .string()
+        .nullable()
+        .describe("Outcome of the last sync run; null if it has never synced."),
+      last_synced_at: z
+        .string()
+        .nullable()
+        .describe("When the last sync finished; null if it has never synced."),
+      file_count: z.number().describe("How many of the PR's changed docs are mirrored."),
+      progress: z
+        .string()
+        .nullable()
+        .describe("Live sync progress as a JSON blob driving the bar; null when none recorded."),
     })
     .openapi("PrPreview")
 
   const GithubInstallation = z
-    .object({ installation_id: z.string(), account_login: z.string().nullable() })
+    .object({
+      installation_id: z.string().describe("GitHub's numeric App installation id, as a string."),
+      account_login: z
+        .string()
+        .nullable()
+        .describe("The org/user the App is installed on; null until GitHub reports it."),
+    })
     .openapi("GithubInstallation")
 
   const InstallationRepo = z
     .object({
-      full_name: z.string(),
-      private: z.boolean(),
-      default_branch: z.string(),
-      pushed_at: z.string().nullable(),
+      full_name: z.string().describe("The repository's full name, as owner/name."),
+      private: z.boolean().describe("True when the repo is private on GitHub."),
+      default_branch: z.string().describe("The repo's default branch (e.g. main)."),
+      pushed_at: z
+        .string()
+        .nullable()
+        .describe("When the repo was last pushed to; null if unknown. Drives sort order."),
     })
     .openapi("InstallationRepo")
 
   const SyncPreview = z
     .object({
-      total: z.number(),
-      md: z.number(),
-      html: z.number(),
-      other: z.number(),
-      truncated: z.boolean(),
+      total: z.number().describe("Total files matching the include globs."),
+      md: z.number().describe("How many matches are Markdown files."),
+      html: z.number().describe("How many matches are HTML files."),
+      other: z.number().describe("Matches that are neither Markdown nor HTML."),
+      truncated: z
+        .boolean()
+        .describe("True when GitHub capped the tree, so counts are a lower bound."),
     })
     .openapi("SyncPreview")
 
   const SyncStatus = z
     .object({
       id: z.string(),
-      repo: z.string(),
-      progress: z.string().nullable(),
-      last_status: z.string().nullable(),
-      last_synced_at: z.string().nullable(),
-      file_count: z.number(),
+      repo: z.string().describe("The connected GitHub repo, as owner/name."),
+      progress: z
+        .string()
+        .nullable()
+        .describe("Live sync progress as a JSON blob driving the bar; null when none recorded."),
+      last_status: z
+        .string()
+        .nullable()
+        .describe("Outcome of the last sync run; null if it has never synced."),
+      last_synced_at: z
+        .string()
+        .nullable()
+        .describe("When the last sync finished; null if it has never synced."),
+      file_count: z.number().describe("How many files are currently mirrored from the repo."),
     })
     .openapi("SyncStatus")
 
   const GithubSyncStatus = z
     .object({
-      sources: z.array(RepoSource),
-      prs: z.array(PrPreview),
-      app: z.object({
-        configured: z.boolean(),
-        slug: z.string().optional(),
-        upToDate: z.boolean().optional(),
-        missing: z
-          .object({ permissions: z.record(z.string(), z.string()), events: z.array(z.string()) })
-          .optional(),
-        permissionsUrl: z.string().optional(),
-        approveUrl: z.string().optional(),
-      }),
-      installations: z.array(GithubInstallation),
+      sources: z.array(RepoSource).describe("Branch mirrors, one per connected repo."),
+      prs: z.array(PrPreview).describe("PR previews, one per pull request being mirrored."),
+      app: z
+        .object({
+          configured: z.boolean().describe("True when a live GitHub App is set up on this server."),
+          slug: z
+            .string()
+            .optional()
+            .describe("The App's GitHub slug for install links; absent when unconfigured."),
+          upToDate: z
+            .boolean()
+            .optional()
+            .describe("True when the App has every required permission and event."),
+          missing: z
+            .object({
+              permissions: z
+                .record(z.string(), z.string())
+                .describe("Scope → level still to grant (e.g. contents → read)."),
+              events: z.array(z.string()).describe("Webhook event names still to subscribe to."),
+            })
+            .optional()
+            .describe("Permissions and events still to grant; absent when up to date."),
+          permissionsUrl: z
+            .string()
+            .optional()
+            .describe("GitHub URL to adjust the App's permissions; absent when unconfigured."),
+          approveUrl: z
+            .string()
+            .optional()
+            .describe("GitHub URL to install or approve the App; absent when unconfigured."),
+        })
+        .describe("The instance GitHub App's setup and permission state."),
+      installations: z
+        .array(GithubInstallation)
+        .describe("This workspace's App installations (entry points to the repo picker)."),
     })
     .openapi("GithubSyncStatus")
 

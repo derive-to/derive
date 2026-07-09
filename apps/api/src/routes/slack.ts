@@ -37,14 +37,24 @@ export const slackRoutes = (ctx: AppContext) => {
 
   const SlackStatus = z
     .object({
-      available: z.boolean(),
-      connected: z.boolean(),
-      team_name: z.string().nullable(),
-      default_channel: z.string().nullable(),
-      /** Whether the stored bot token needs a re-auth (an auth error since connecting). */
-      needs_reauth: z.boolean(),
-      /** The caller's "DM me for interrupts" preference (mentions, review requests, shares). */
-      slack_dm: z.boolean(),
+      available: z.boolean().describe("True if this instance has Slack configured at all"),
+      connected: z.boolean().describe("True if this workspace has connected a Slack team"),
+      team_name: z
+        .string()
+        .nullable()
+        .describe("The connected Slack team's name, or null if not connected"),
+      default_channel: z
+        .string()
+        .nullable()
+        .describe("The channel Derive posts to, or null if unset"),
+      needs_reauth: z
+        .boolean()
+        .describe("Whether the stored bot token needs a re-auth (an auth error since connecting)"),
+      slack_dm: z
+        .boolean()
+        .describe(
+          'The caller\'s "DM me for interrupts" preference (mentions, review requests, shares)',
+        ),
     })
     .openapi("SlackStatus")
 

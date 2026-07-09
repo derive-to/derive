@@ -36,24 +36,51 @@ export const sessionRoutes = (ctx: AppContext) => {
     .object({
       username: z.string(),
       name: z.string().nullable(),
-      image: z.string().nullable(),
-      profession: z.string().nullable().optional(),
-      about: z.string().nullable().optional(),
-      github_login: z.string().nullable().optional(),
-      teammate: z.boolean().optional(),
-      stats: z.object({ works: z.number() }).optional(),
-      followed_by_me: z.boolean().optional(),
+      image: z.string().nullable().describe("Avatar URL; null if none is set."),
+      profession: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("Self-set team role ('what you do'); null if unset."),
+      about: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("One-line bio; on the full profile only, null if unset."),
+      github_login: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("Linked GitHub login; full profile only, null if not linked."),
+      teammate: z
+        .boolean()
+        .optional()
+        .describe("True when the viewer shares a workspace with this user."),
+      stats: z
+        .object({ works: z.number() })
+        .optional()
+        .describe("Authored-works count; present only for teammates."),
+      followed_by_me: z
+        .boolean()
+        .optional()
+        .describe("Whether the signed-in viewer follows this user."),
     })
     .openapi("PublicProfile")
 
   // A person or agent offered by the @mention picker — by @handle, never email.
   const DirUser = z
     .object({
-      id: z.string(),
+      id: z.string().describe("User id, or the agent id when kind is agent."),
       name: z.string().nullable(),
-      handle: z.string().nullable(),
-      kind: z.enum(["user", "agent"]).optional(),
-      profession: z.string().nullable().optional(),
+      handle: z
+        .string()
+        .nullable()
+        .describe("The @handle; null for agents (and users without one)."),
+      kind: z
+        .enum(["user", "agent"])
+        .optional()
+        .describe("Whether this entry is a person (user) or an agent."),
+      profession: z.string().nullable().optional().describe("The person's role; null for agents."),
     })
     .openapi("DirUser")
 
@@ -73,15 +100,24 @@ export const sessionRoutes = (ctx: AppContext) => {
                   id: z.string(),
                   email: z.string(),
                   name: z.string().nullable(),
-                  username: z.string().nullable(),
-                  discoverable: z.boolean(),
-                  profession: z.string().nullable(),
-                  about: z.string().nullable(),
-                  onboarded: z.boolean(),
-                  emailVerified: z.boolean(),
-                  role: z.string(),
+                  username: z
+                    .string()
+                    .nullable()
+                    .describe("The @handle; null until claimed at onboarding."),
+                  discoverable: z
+                    .boolean()
+                    .describe("Whether the user is findable in people search."),
+                  profession: z.string().nullable().describe("Self-set team role; null if unset."),
+                  about: z.string().nullable().describe("One-line bio; null if unset."),
+                  onboarded: z.boolean().describe("Whether first-run onboarding is complete."),
+                  emailVerified: z.boolean().describe("Whether the account email is verified."),
+                  role: z
+                    .string()
+                    .describe(
+                      "The caller's role in the active workspace: viewer, commenter, editor, or owner (Admin).",
+                    ),
                 }),
-                multi: z.boolean(),
+                multi: z.boolean().describe("Whether multi-workspace mode is enabled."),
               }),
             },
           },
@@ -141,8 +177,8 @@ export const sessionRoutes = (ctx: AppContext) => {
           content: {
             "application/json": {
               schema: z.object({
-                profession: z.string().nullable(),
-                about: z.string().nullable(),
+                profession: z.string().nullable().describe("Saved team role; null when cleared."),
+                about: z.string().nullable().describe("Saved bio; null when cleared."),
               }),
             },
           },
@@ -370,7 +406,10 @@ export const sessionRoutes = (ctx: AppContext) => {
             "application/json": {
               schema: z.object({
                 artifacts: z.array(Artifact),
-                next_cursor: z.string().nullable(),
+                next_cursor: z
+                  .string()
+                  .nullable()
+                  .describe("Opaque cursor for the next page; null when there are no more."),
               }),
             },
           },
@@ -437,7 +476,13 @@ export const sessionRoutes = (ctx: AppContext) => {
       responses: {
         200: {
           description: "The served avatar URL.",
-          content: { "application/json": { schema: z.object({ image: z.string() }) } },
+          content: {
+            "application/json": {
+              schema: z.object({
+                image: z.string().describe("The served (absolute) avatar URL."),
+              }),
+            },
+          },
         },
       },
     }),

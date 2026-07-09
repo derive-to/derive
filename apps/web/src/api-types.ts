@@ -32,14 +32,22 @@ export interface paths {
                                 id: string;
                                 email: string;
                                 name: string | null;
+                                /** @description The @handle; null until claimed at onboarding. */
                                 username: string | null;
+                                /** @description Whether the user is findable in people search. */
                                 discoverable: boolean;
+                                /** @description Self-set team role; null if unset. */
                                 profession: string | null;
+                                /** @description One-line bio; null if unset. */
                                 about: string | null;
+                                /** @description Whether first-run onboarding is complete. */
                                 onboarded: boolean;
+                                /** @description Whether the account email is verified. */
                                 emailVerified: boolean;
+                                /** @description The caller's role in the active workspace: viewer, commenter, editor, or owner (Admin). */
                                 role: string;
                             };
+                            /** @description Whether multi-workspace mode is enabled. */
                             multi: boolean;
                         };
                     };
@@ -118,7 +126,9 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
+                            /** @description Saved team role; null when cleared. */
                             profession: string | null;
+                            /** @description Saved bio; null when cleared. */
                             about: string | null;
                         };
                     };
@@ -350,6 +360,7 @@ export interface paths {
                     content: {
                         "application/json": {
                             artifacts: components["schemas"]["Artifact"][];
+                            /** @description Opaque cursor for the next page; null when there are no more. */
                             next_cursor: string | null;
                         };
                     };
@@ -390,6 +401,7 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
+                            /** @description The served (absolute) avatar URL. */
                             image: string;
                         };
                     };
@@ -1158,7 +1170,9 @@ export interface paths {
                     content: {
                         "application/json": {
                             artifacts: components["schemas"]["Artifact"][];
+                            /** @description Opaque cursor for the next page; null on the last page. */
                             next_cursor: string | null;
+                            /** @description The scoped collection; present only when listing one (?collection=). */
                             collection?: {
                                 id: string;
                                 title: string;
@@ -1200,14 +1214,20 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
+                            /** @description Total artifacts in the workspace. */
                             total: number;
+                            /** @description The caller's favorite count in this workspace. */
                             favorites: number;
+                            /** @description Count of artifacts the caller owns ('Created by me'). */
                             mine: number;
+                            /** @description Owned artifacts not surfaced anywhere yet (listed=none). */
                             mine_private: number;
+                            /** @description Per-tag artifact counts for the workspace. */
                             tags: {
                                 tag: string;
                                 count: number;
                             }[];
+                            /** @description Workspace display name; null for a non-member (empty summary). */
                             workspace: string | null;
                         };
                     };
@@ -1312,12 +1332,22 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
-                            /** @enum {string} */
+                            /**
+                             * @description New workspace access: member = seats reach it; none = they don't.
+                             * @enum {string}
+                             */
                             workspace_access: "none" | "member";
-                            /** @enum {string} */
+                            /**
+                             * @description New world-link role; none = no link.
+                             * @enum {string}
+                             */
                             link_role: "none" | "viewer" | "commenter" | "editor";
-                            /** @enum {string} */
+                            /**
+                             * @description New discovery listing: nowhere, the workspace, or public.
+                             * @enum {string}
+                             */
                             listed: "none" | "workspace" | "public";
+                            /** @description true when the world link is now password-locked. */
                             locked: boolean;
                         };
                     };
@@ -1474,6 +1504,7 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Artifact"] & {
+                            /** @description The new version number created by the restore. */
                             published: number;
                         };
                     };
@@ -1586,8 +1617,12 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
-                            /** @enum {string} */
+                            /**
+                             * @description Workspace baseline role applied to anyone without an explicit share.
+                             * @enum {string}
+                             */
                             default_role: "viewer" | "commenter" | "editor" | "owner";
+                            /** @description Collaborators with an explicit per-artifact role share. */
                             members: components["schemas"]["ArtifactMember"][];
                         };
                     };
@@ -1991,7 +2026,10 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
-                            /** @enum {string} */
+                            /**
+                             * @description The collection's new workspace share scope.
+                             * @enum {string}
+                             */
                             workspace_access: "none" | "member";
                         };
                     };
@@ -2088,6 +2126,7 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
+                            /** @description User id of the collection's creator. */
                             created_by: string;
                             members: components["schemas"]["ArtifactMember"][];
                         };
@@ -2943,6 +2982,7 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Proposal"] & {
+                            /** @description Thread ids this proposal flipped to addressed (pending review). */
                             addressed: string[];
                         };
                     };
@@ -3023,6 +3063,7 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Proposal"] & {
+                            /** @description The version number the approved proposal became live as. */
                             published: number;
                         };
                     };
@@ -3219,6 +3260,7 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
+                            /** @description All review rounds, newest first. */
                             rounds: components["schemas"]["ReviewRound"][];
                             pending: components["schemas"]["ReviewRound"] & unknown;
                         };
@@ -3328,8 +3370,12 @@ export interface paths {
                     content: {
                         "application/json": {
                             thread_id: string;
-                            /** @enum {string} */
+                            /**
+                             * @description The thread's new state: resolved, or open when reopened.
+                             * @enum {string}
+                             */
                             state: "open" | "resolved";
+                            /** @description Number of comments in the thread whose state changed. */
                             updated: number;
                         };
                     };
@@ -4205,10 +4251,14 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
+                            /** @description Base host subdomains hang off (e.g. derive.to); null if disabled. */
                             base: string | null;
+                            /** @description The artifact's own vanity subdomains, managed here. */
                             domains: components["schemas"]["ArtifactDomain"][];
+                            /** @description Workspace custom domains this artifact is served at (read-only). */
                             workspace_domains: {
                                 host: string;
+                                /** @description This artifact's URL on that domain, including its ref. */
                                 url: string;
                             }[];
                         };
@@ -4320,8 +4370,11 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
+                            /** @description True when this server supports custom domains. */
                             enabled: boolean;
+                            /** @description The CNAME target to point domains at; null when they're disabled. */
                             cname_target: string | null;
+                            /** @description The workspace's attached custom domains. */
                             domains: components["schemas"]["WorkspaceDomain"][];
                         };
                     };
@@ -4346,6 +4399,7 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["WorkspaceDomain"] & {
+                            /** @description The CNAME target to point your domain at. */
                             cname_target: string;
                         };
                     };
@@ -4357,6 +4411,7 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["WorkspaceDomain"] & {
+                            /** @description The CNAME target to point your domain at. */
                             cname_target: string;
                         };
                     };
@@ -4528,343 +4583,586 @@ export interface components {
         PublicProfile: {
             username: string;
             name: string | null;
+            /** @description Avatar URL; null if none is set. */
             image: string | null;
+            /** @description Self-set team role ('what you do'); null if unset. */
             profession?: string | null;
+            /** @description One-line bio; on the full profile only, null if unset. */
             about?: string | null;
+            /** @description Linked GitHub login; full profile only, null if not linked. */
             github_login?: string | null;
+            /** @description True when the viewer shares a workspace with this user. */
             teammate?: boolean;
+            /** @description Authored-works count; present only for teammates. */
             stats?: {
                 works: number;
             };
+            /** @description Whether the signed-in viewer follows this user. */
             followed_by_me?: boolean;
         };
         Artifact: {
+            /** @description Stable public id — the /a/<short_id> URL slug. */
             short_id: string;
+            /** @description Canonical public URL of the artifact. */
             url: string;
+            /** @description Display title; null when untitled or taken down. */
             title: string | null;
-            /** @enum {string} */
+            /**
+             * @description file = single file; bundle = multi-file archive (skill, site, or docs folder).
+             * @enum {string}
+             */
             kind: "file" | "bundle";
+            /** @description MIME type of the current version's content. */
             current_content_type?: string | null;
+            /** @description When true, direct publishes are blocked — changes go through review. */
             locked?: boolean;
-            /** @enum {string} */
+            /**
+             * @description v2 access: member = workspace seats reach it at their role; none = they don't.
+             * @enum {string}
+             */
             workspace_access?: "none" | "member";
-            /** @enum {string} */
+            /**
+             * @description v2 access: what merely holding the world link confers (none = no link).
+             * @enum {string}
+             */
             link_role?: "none" | "viewer" | "commenter" | "editor";
-            /** @enum {string} */
+            /**
+             * @description v2 access: where it surfaces for discovery — nowhere, the workspace, or public.
+             * @enum {string}
+             */
             listed?: "none" | "workspace" | "public";
+            /** @description true when the world link is password-locked (the password is never returned). */
             password_protected?: boolean;
+            /** @description The artifact's workspace id; drives move-to-workspace. */
             org_id?: string;
+            /** @description Signed, short-lived token for fetching raw content; detail responses only. */
             raw_token?: string;
+            /** @description true when the bundle is a single-page app (all paths route to the entry). */
             spa?: boolean;
+            /** @description Latest version number; 0 before any content is published. */
             current_version: number;
             versions: {
                 n: number;
+                /** @description MIME type of this version's content. */
                 content_type?: string;
+                /** @description Display byline; heals to the author's current name. */
                 author: string;
+                /** @description Committer's GitHub login; null when not a GitHub commit. */
                 author_login?: string | null;
                 author_avatar?: string | null;
+                /** @description Committer's GitHub user id; null when not a GitHub commit. */
                 author_gh_id?: string | null;
+                /** @description Committer's Derive @handle; null unless they signed in with GitHub. */
                 handle?: string | null;
+                /** @description Version (commit) message; null when none given. */
                 message: string | null;
+                /** @description Optional version label; null when unnamed. */
                 name: string | null;
                 created_at: string;
             }[];
+            /** @description Versions grouped into time-clustered sessions for the UI (newest-first). */
             sessions?: components["schemas"]["VersionSession"][];
+            /** @description Total views; present only when analytics is enabled. */
             views?: number;
-            /** @enum {string|null} */
+            /**
+             * @description The caller's effective permission tier; null when they have none.
+             * @enum {string|null}
+             */
             my_role?: "viewer" | "commenter" | "editor" | "owner" | null;
             tags?: string[];
+            /** @description true when the caller has favorited this. */
             favorite?: boolean;
+            /** @description true when the current version has a ready screenshot preview. */
             has_preview?: boolean;
+            /** @description Count of open (pending-review) proposals. */
             open_proposals?: number;
+            /** @description Count of all proposals except withdrawn ones. */
             proposals_total?: number;
+            /** @description Count of open (unresolved) comment threads. */
             open_threads?: number;
+            /** @description true when an open thread @mentions the calling user. */
             mentions_me?: boolean;
+            /** @description true when the caller authored or commented in a thread here. */
             i_participated?: boolean;
+            /** @description Ids of the collections that include this artifact. */
             collections?: string[];
+            /** @description true when the artifact has been taken down (tombstone). */
             removed?: boolean;
+            /** @description true when mirrored from a GitHub sync — read-only in Derive. */
             managed?: boolean;
+            /** @description Present for a markdown bundle (skill or docs folder): entry, file tree, identity. */
             bundle?: {
+                /** @description true when the bundle is a skill (entry SKILL.md). */
                 isSkill: boolean;
+                /** @description Skill/bundle name; null when not declared. */
                 name: string | null;
+                /** @description Skill/bundle description; null when not declared. */
                 description: string | null;
+                /** @description Path of the entry document rendered first. */
                 entry: string;
+                /** @description The bundle's file tree (path + MIME type) for navigation. */
                 files: {
                     path: string;
                     type: string;
                 }[];
             };
+            /** @description Source path (e.g. the repo path of a synced artifact); null when none. */
             source_path?: string | null;
             created_at?: string;
+            /** @description Last-update timestamp; null when never updated since creation. */
             updated_at?: string | null;
+            /** @description Raw current-author name; the resolved `author` object is preferred. */
             author_name?: string | null;
+            /** @description Raw current-author GitHub login; null when not from GitHub. */
             author_login?: string | null;
+            /** @description Raw current-author avatar URL; null when none. */
             author_avatar?: string | null;
+            /** @description Raw current-author GitHub id; null when not from GitHub. */
             author_gh_id?: string | null;
+            /** @description Resolved current-author profile; preferred over the raw author_* fields. */
             author?: {
                 name: string | null;
+                /** @description GitHub login; null if never signed in with GitHub. */
                 login: string | null;
                 avatar: string | null;
+                /** @description Derive @handle; null when the author has none. */
                 handle: string | null;
             } | null;
         };
         VersionSession: {
+            /** @description Newest version number in this grouped session. */
             n: number;
+            /** @description Oldest version number in this grouped session. */
             from_n: number;
+            /** @description How many versions this session groups. */
             count: number;
             author: string;
+            /** @description Session label; null when unnamed. */
             name: string | null;
+            /** @description Timestamp of the newest version in the group. */
             created_at: string;
         };
         DirUser: {
+            /** @description User id, or the agent id when kind is agent. */
             id: string;
             name: string | null;
+            /** @description The @handle; null for agents (and users without one). */
             handle: string | null;
-            /** @enum {string} */
+            /**
+             * @description Whether this entry is a person (user) or an agent.
+             * @enum {string}
+             */
             kind?: "user" | "agent";
+            /** @description The person's role; null for agents. */
             profession?: string | null;
         };
         ArtifactMember: {
             user_id: string;
+            /** @description Public @handle; null when the user has none. */
             handle: string | null;
+            /** @description Display name; null when unset. */
             name: string | null;
+            /** @description Joined only on workspace-member payloads; absent on artifact/collection lists. */
             profession?: string | null;
-            /** @enum {string} */
+            /**
+             * @description Permission tier, ascending: viewer < commenter < editor < owner.
+             * @enum {string}
+             */
             role: "viewer" | "commenter" | "editor" | "owner";
         };
         Workspace: {
             id: string;
             name: string;
-            /** @enum {string} */
+            /**
+             * @description The caller's role in this workspace (owner = Admin).
+             * @enum {string}
+             */
             role: "viewer" | "commenter" | "editor" | "owner";
             members: components["schemas"]["ArtifactMember"][];
         };
         InviteResult: {
-            /** @enum {string} */
+            /**
+             * @description The invitee already had an account and was added directly.
+             * @enum {string}
+             */
             kind: "member";
             member: components["schemas"]["ArtifactMember"];
         } | {
-            /** @enum {string} */
+            /**
+             * @description No account yet — a pending invite was created instead.
+             * @enum {string}
+             */
             kind: "invite";
             invite: components["schemas"]["Invite"];
+            /** @description The link the invitee follows to accept. */
             accept_url: string;
         };
         Invite: {
             id: string;
             email: string;
-            /** @enum {string} */
+            /**
+             * @description The role the invitee will receive (owner = Admin).
+             * @enum {string}
+             */
             role: "viewer" | "commenter" | "editor" | "owner";
             created_at: string;
+            /** @description When the invite expires (7-day TTL). */
             expires_at: string;
         };
         InvitePreview: {
+            /** @description Name of the workspace this invite joins. */
             workspace: string;
-            /** @enum {string} */
+            /**
+             * @description The role this invite grants (owner = Admin).
+             * @enum {string}
+             */
             role: "viewer" | "commenter" | "editor" | "owner";
+            /** @description The email address the invite was addressed to. */
             email: string;
+            /** @description The inviter's display name; null if unknown. */
             inviter: string | null;
         };
         OrgSettings: {
+            /** @description When true, send workspace email notifications. */
             emailNotifications: boolean;
+            /** @description When true, post Derive comments onto the linked GitHub PR. */
             githubPostComments: boolean;
+            /** @description When true, mirror GitHub PR comments back into Derive. */
             githubMirrorComments: boolean;
+            /** @description When true, add a preview link to the linked GitHub PR. */
             githubPreviewLink: boolean;
+            /** @description When true, post events to Slack. */
             slackPost: boolean;
-            /** @enum {string} */
+            /**
+             * @description Access a new publish lands with: none, or member (factory default).
+             * @enum {string}
+             */
             defaultWorkspaceAccess: "none" | "member";
-            /** @enum {string} */
+            /**
+             * @description Share-link role a new publish lands with (factory default: none).
+             * @enum {string}
+             */
             defaultLinkRole: "none" | "viewer" | "commenter" | "editor";
-            /** @enum {string} */
+            /**
+             * @description Listing a new publish lands with: none (default), workspace, or public.
+             * @enum {string}
+             */
             defaultListed: "none" | "workspace" | "public";
         };
         Workspaces: {
+            /** @description Whether multi-workspace mode is enabled. */
             multi: boolean;
+            /** @description Id of the workspace this request resolved to. */
             active: string;
             account: components["schemas"]["AccountSummary"];
             workspaces: components["schemas"]["WorkspaceSummary"][];
         };
+        /** @description The owner's identity (id + handle); null for anonymous callers. */
         AccountSummary: {
             id: string;
+            /** @description The account's @handle; null if unclaimed. */
             handle: string | null;
             name: string | null;
         } | null;
         WorkspaceSummary: {
             id: string;
             name: string;
-            /** @enum {string} */
+            /**
+             * @description The caller's role in this workspace (owner = Admin).
+             * @enum {string}
+             */
             role: "viewer" | "commenter" | "editor" | "owner";
+            /** @description True for the auto-provisioned personal workspace (id ws_p_<userId>). */
             personal: boolean;
         };
         Agent: {
             id: string;
             name: string;
-            /** @enum {string} */
+            /**
+             * @description Permission level; commenter proposes only, editor can write, owner never allowed
+             * @enum {string}
+             */
             role: "viewer" | "commenter" | "editor" | "owner";
             created_at: string;
         };
         ConnectedAgent: {
+            /** @description OAuth client id of the authorized agent (e.g. an MCP client like Claude) */
             clientId: string;
             clientName: string;
+            /** @description The OAuth scopes this agent was granted */
             scopes: string[];
             grantedAt: string;
         };
         AssetRef: {
+            /** @description The blob hash (content-addressed storage key) */
             key: string;
+            /** @description The exact "asset:<hash>" string to drop into a publish files map */
             ref: string;
-            /** @enum {string} */
+            /**
+             * @description The sniffed image MIME type (PNG, JPEG, GIF, or WebP)
+             * @enum {string}
+             */
             type: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+            /** @description The asset's size in bytes */
             size: number;
         };
         Follow: {
             id: string;
+            /** @description The workspace this follow is scoped to; "*" (global) for people-follows */
             org_id: string;
+            /** @description The follower (the signed-in user who owns this follow) */
             user_id: string;
-            /** @enum {string} */
+            /**
+             * @description What's followed: a GitHub author, a repo path prefix, or a person
+             * @enum {string}
+             */
             kind: "author" | "path" | "user";
+            /** @description The followed value: author login, path prefix, or (people) public @handle */
             target: string;
             created_at: string;
+            /** @description For people-follows, the followed person's public @handle; absent otherwise */
             handle?: string | null;
+            /** @description For people-follows, the followed person's display name; absent otherwise */
             name?: string | null;
+            /** @description For people-follows, the followed person's avatar URL; absent otherwise */
             image?: string | null;
         };
         Collection: {
             id: string;
             title: string;
+            /** @description Creator's user id ("anon" if created anonymously). */
             created_by: string;
             created_at: string;
+            /** @description Number of artifacts in the collection. */
             count: number;
-            /** @enum {string} */
+            /**
+             * @description Workspace share scope: "member" (all members) or "none" (invite-only).
+             * @enum {string}
+             */
             workspace_access?: "none" | "member";
-            /** @enum {string|null} */
+            /**
+             * @description Caller's own role on the collection; drives the Share dialog. Null if none.
+             * @enum {string|null}
+             */
             my_role?: "viewer" | "commenter" | "editor" | "owner" | null;
-            /** @enum {string} */
+            /**
+             * @description Origin: "manual" (user-made), "repo" (GitHub mirror), or "pr" (PR preview).
+             * @enum {string}
+             */
             kind?: "manual" | "repo" | "pr";
+            /** @description For a PR preview: the repo collection it nests under, when connected. */
             parentId?: string;
+            /** @description For a PR preview: the pull-request number. */
             prNumber?: number;
+            /** @description For repo/PR collections: the "owner/name" slug. */
             repo?: string;
         };
         GithubSyncStatus: {
+            /** @description Branch mirrors, one per connected repo. */
             sources: components["schemas"]["RepoSource"][];
+            /** @description PR previews, one per pull request being mirrored. */
             prs: components["schemas"]["PrPreview"][];
+            /** @description The instance GitHub App's setup and permission state. */
             app: {
+                /** @description True when a live GitHub App is set up on this server. */
                 configured: boolean;
+                /** @description The App's GitHub slug for install links; absent when unconfigured. */
                 slug?: string;
+                /** @description True when the App has every required permission and event. */
                 upToDate?: boolean;
+                /** @description Permissions and events still to grant; absent when up to date. */
                 missing?: {
+                    /** @description Scope → level still to grant (e.g. contents → read). */
                     permissions: {
                         [key: string]: string;
                     };
+                    /** @description Webhook event names still to subscribe to. */
                     events: string[];
                 };
+                /** @description GitHub URL to adjust the App's permissions; absent when unconfigured. */
                 permissionsUrl?: string;
+                /** @description GitHub URL to install or approve the App; absent when unconfigured. */
                 approveUrl?: string;
             };
+            /** @description This workspace's App installations (entry points to the repo picker). */
             installations: components["schemas"]["GithubInstallation"][];
         };
         RepoSource: {
             id: string;
+            /** @description Collection the repo's docs are mirrored into. */
             collection_id: string;
+            /** @description The connected GitHub repo, as owner/name. */
             repo: string;
+            /** @description Branch or tag to mirror; "HEAD" tracks the default branch. */
             ref: string;
+            /** @description Comma-separated glob patterns selecting which files to mirror. */
             includes: string;
+            /** @description Redacted to "•••" when a PAT is stored; null for App-backed sources. */
             token: string | null;
+            /** @description GitHub App installation backing this source; null when using a PAT. */
             installation_id: string | null;
+            /** @description When the last sync finished; null if it has never synced. */
             last_synced_at: string | null;
+            /** @description Outcome of the last sync run; null if it has never synced. */
             last_status: string | null;
             created_by: string;
             created_at: string;
+            /** @description How many files are currently mirrored from the repo. */
             file_count: number;
+            /** @description Live sync progress as a JSON blob driving the bar; null when none recorded. */
             progress: string | null;
         };
         PrPreview: {
             id: string;
+            /** @description Collection holding this PR's previewed docs. */
             collection_id: string;
+            /** @description The connected GitHub repo, as owner/name. */
             repo: string;
+            /** @description The pull request number this preview mirrors. */
             pr_number: number;
+            /** @description The PR's title, used as the preview's display name. */
             title: string;
+            /** @description Outcome of the last sync run; null if it has never synced. */
             last_status: string | null;
+            /** @description When the last sync finished; null if it has never synced. */
             last_synced_at: string | null;
+            /** @description How many of the PR's changed docs are mirrored. */
             file_count: number;
+            /** @description Live sync progress as a JSON blob driving the bar; null when none recorded. */
             progress: string | null;
         };
         GithubInstallation: {
+            /** @description GitHub's numeric App installation id, as a string. */
             installation_id: string;
+            /** @description The org/user the App is installed on; null until GitHub reports it. */
             account_login: string | null;
         };
         InstallationRepo: {
+            /** @description The repository's full name, as owner/name. */
             full_name: string;
+            /** @description True when the repo is private on GitHub. */
             private: boolean;
+            /** @description The repo's default branch (e.g. main). */
             default_branch: string;
+            /** @description When the repo was last pushed to; null if unknown. Drives sort order. */
             pushed_at: string | null;
         };
         SyncPreview: {
+            /** @description Total files matching the include globs. */
             total: number;
+            /** @description How many matches are Markdown files. */
             md: number;
+            /** @description How many matches are HTML files. */
             html: number;
+            /** @description Matches that are neither Markdown nor HTML. */
             other: number;
+            /** @description True when GitHub capped the tree, so counts are a lower bound. */
             truncated: boolean;
         };
         SyncStatus: {
             id: string;
+            /** @description The connected GitHub repo, as owner/name. */
             repo: string;
+            /** @description Live sync progress as a JSON blob driving the bar; null when none recorded. */
             progress: string | null;
+            /** @description Outcome of the last sync run; null if it has never synced. */
             last_status: string | null;
+            /** @description When the last sync finished; null if it has never synced. */
             last_synced_at: string | null;
+            /** @description How many files are currently mirrored from the repo. */
             file_count: number;
         };
         SlackStatus: {
+            /** @description True if this instance has Slack configured at all */
             available: boolean;
+            /** @description True if this workspace has connected a Slack team */
             connected: boolean;
+            /** @description The connected Slack team's name, or null if not connected */
             team_name: string | null;
+            /** @description The channel Derive posts to, or null if unset */
             default_channel: string | null;
+            /** @description Whether the stored bot token needs a re-auth (an auth error since connecting) */
             needs_reauth: boolean;
+            /** @description The caller's "DM me for interrupts" preference (mentions, review requests, shares) */
             slack_dm: boolean;
         };
         Report: {
             id: string;
             artifact_id: string;
             artifact_short_id: string;
+            /** @description The reporter's stated reason for the report */
             reason: string;
+            /** @description Optional extra detail from the reporter, or null */
             detail: string | null;
+            /** @description The reporter's IP (best-effort), or null; abuse reports are anonymous/public */
             reporter: string | null;
-            /** @enum {string} */
+            /**
+             * @description open (awaiting review), actioned (taken down), or dismissed (no action)
+             * @enum {string}
+             */
             state: "open" | "actioned" | "dismissed";
             created_at: string;
         };
         AuditEntry: {
             id: string;
             org_id: string;
-            /** @enum {string} */
+            /**
+             * @description What happened: report filed, takedown, reinstate, or dismiss
+             * @enum {string}
+             */
             action: "report" | "takedown" | "reinstate" | "dismiss";
+            /** @description The artifact acted on, or null if not artifact-specific */
             artifact_id: string | null;
+            /** @description Who performed it: a user's name, or an IP/'anonymous' for public reports */
             actor: string;
+            /** @description Context such as the report reason or takedown note, or null */
             detail: string | null;
             created_at: string;
         };
         DiffOp: {
-            /** @enum {string} */
+            /**
+             * @description Line op: ctx = unchanged context, add = added, del = removed.
+             * @enum {string}
+             */
             t: "ctx" | "add" | "del";
+            /** @description The line's text; the +/- marker lives in `t`, not here. */
             line: string;
         };
         Proposal: {
             id: string;
-            /** @enum {string} */
+            /**
+             * @description Review state: open, approved (went live), changes_requested, or withdrawn.
+             * @enum {string}
+             */
             state: "open" | "approved" | "changes_requested" | "withdrawn";
+            /** @description Proposer's display name; "anonymous" if not signed in. */
             author: string;
+            /** @description When an agent proposed, the human it acted on behalf of; null for a direct human proposal. */
             on_behalf_of?: {
                 handle: string | null;
                 name: string | null;
             } | null;
+            /** @description Proposer's cover message; null if none. */
             message: string | null;
+            /** @description Artifact version this proposal was authored against. */
             base_version: number;
-            /** @enum {string} */
+            /**
+             * @description Content shape: a single file or a multi-file bundle.
+             * @enum {string}
+             */
             kind: "file" | "bundle";
+            /** @description Who approved/requested-changes/withdrew it; null while still open. */
             decided_by: string | null;
+            /** @description The version it went live as when approved; null otherwise. */
             decided_version: number | null;
+            /** @description Reviewer's note on the decision; null while open or if none. */
             decision_note: string | null;
+            /** @description When it was decided; null while still open. */
             decided_at: string | null;
             created_at: string;
+            /** @description URL that renders the proposed content like a live version. */
             preview_url: string;
+            /** @description Line diff vs the base version; present only on the single-proposal fetch. */
             diff?: {
                 base_version: number;
                 ops: components["schemas"]["DiffOp"][];
@@ -4873,168 +5171,275 @@ export interface components {
         ReviewRound: {
             id: string;
             artifact_id: string;
+            /** @description The artifact version this round is reviewing. */
             version: number;
+            /** @description Who asked for the review (usually the agent that published). */
             requested_by: string;
+            /** @description The person asked to answer or approve this round. */
             requested_for: string;
-            /** @enum {string} */
+            /**
+             * @description Round state: pending, sent_back (answers returned), or approved (the go-signal).
+             * @enum {string}
+             */
             state: "pending" | "sent_back" | "approved";
+            /** @description Free-text note attached to the round; null if none. */
             note: string | null;
             created_at: string;
+            /** @description When it was sent back or approved; null while pending. */
             resolved_at: string | null;
         };
         Comment: {
             id: string;
+            /** @description The thread this comment belongs to; equals id for the thread's root comment. */
             thread_id: string;
+            /** @description Artifact version this comment was anchored against. */
             base_version: number;
+            /** @description File within a bundle the comment targets; null if not file-scoped. */
             path: string | null;
+            /** @description Serialized text-quote or element anchor locating the comment; null if unanchored. */
             anchor: string | null;
+            /** @description Comment body in Markdown; blanked when the comment is deleted. */
             body_md: string;
+            /** @description Author's display name; "anonymous" for an anonymous poster. */
             author: string;
-            /** @enum {string} */
+            /**
+             * @description Thread state: open, addressed (a proposal in review claims to fix it), resolved, or outdated (the quoted text changed).
+             * @enum {string}
+             */
             state: "open" | "addressed" | "resolved" | "outdated";
             created_at: string;
+            /** @description Whether the anchor still resolves against the current version (list only). */
             anchored?: boolean;
+            /** @description Emoji → list of reactor display names. */
             reactions?: {
                 [key: string]: string[];
             };
+            /** @description True if the body was edited after posting. */
             edited?: boolean;
+            /** @description When the comment was last edited; null if never. */
             edited_at?: string | null;
+            /** @description True if soft-deleted; the row stays but the body is blanked. */
             deleted?: boolean;
+            /** @description Users or agents @mentioned in the comment body. */
             mentions?: components["schemas"]["Mention"][];
         };
         Mention: {
+            /** @description Id of the mentioned person or agent. */
             id: string;
             name: string;
         };
         ContextInfo: {
             id: string;
             name: string;
+            /** @description The registered agent this context routes asks to. */
             agent_id: string;
+            /** @description Short id of the linked manifest artifact; null if it can't be resolved. */
             manifest_short_id: string | null;
             created_by: string;
             created_at: string;
+            /** @description When the runner last polled the queue (~minutely); null = never. Drives online/offline. */
             runner_seen_at: string | null;
         };
         Session: {
             id: string;
             context_id: string;
             asker_id: string;
+            /** @description The manifest version this session was opened against. */
             context_version: number;
-            /** @enum {string} */
+            /**
+             * @description open = awaiting the agent; answered; escalated = draft went to review; failed = run crashed; closed = ended by asker/owner.
+             * @enum {string}
+             */
             state: "open" | "answered" | "escalated" | "failed" | "closed";
             created_at: string;
+            /** @description Last state/message change; equals created_at when never updated. */
             updated_at: string;
         };
         SessionMessage: {
             id: string;
-            /** @enum {string} */
+            /**
+             * @description Who wrote it: asker (the human) or agent (the context's runner).
+             * @enum {string}
+             */
             author_kind: "asker" | "agent";
+            /** @description The asker's user id, or the agent id when author_kind is agent. */
             author_id: string;
+            /** @description The message body as Markdown. */
             body_md: string;
             meta: components["schemas"]["SessionMeta"];
             created_at: string;
         };
+        /** @description Structured answer payload on agent messages; null on asker messages. */
         SessionMeta: {
+            /** @description The underlying query the agent ran to produce this answer. */
             query?: string | null;
+            /** @description The agent's confidence in the answer, 0-1 (shown as a percentage). */
             confidence?: number | null;
+            /** @description Caveats or limitations the agent flagged on its answer. */
             caveats?: string[];
+            /** @description Why the agent escalated to a human instead of answering. */
             escalation_reason?: string | null;
+            /** @description Artifacts the agent cited, each linkable by short_id. */
             artifacts?: {
                 short_id: string;
                 title: string;
             }[];
         } | null;
         Viewer: {
+            /** @description The viewer's id: a signed-in user's id, or a stable anonymous viewer id */
             id: string;
+            /** @description Display name: a user's @handle, or a friendly handle for anonymous viewers */
             name: string;
+            /** @description The viewer's effective role on this artifact, or null if they have none */
             role: string | null;
         };
         Analytics: {
+            /** @description Total recorded views across all versions (de-duped opens) */
             total: number;
+            /** @description Distinct viewers; a signed-in person or anon cookie counts once */
             unique: number;
+            /** @description How many of the unique viewers are anonymous */
             anonViewers: number;
             perVersion: {
                 version: number;
+                /** @description Views recorded for that version */
                 count: number;
             }[];
             daily: {
+                /** @description Calendar day bucket (YYYY-MM-DD) */
                 day: string;
+                /** @description Views recorded on that day */
                 count: number;
             }[];
             recent: {
+                /** @description Display name (resolved @handle for users), or the anon viewer id */
                 viewer: string;
-                /** @enum {string} */
+                /**
+                 * @description Whether the viewer is a signed-in user or anonymous
+                 * @enum {string}
+                 */
                 kind: "user" | "anon";
+                /** @description When they last viewed (ISO timestamp) */
                 at: string;
+                /** @description The user's avatar URL, or null/absent for anonymous viewers */
                 avatar?: string | null;
             }[];
         };
         Notification: {
             id: string;
+            /** @description The recipient this notification belongs to */
             user_id: string;
+            /** @description Who triggered it; for follow/publish this is the person's @handle */
             actor: string;
-            /** @enum {string} */
+            /**
+             * @description What happened: mention, comment, share, follow, publish, or review
+             * @enum {string}
+             */
             kind: "mention" | "comment" | "share" | "follow" | "publish" | "review";
             artifact_id: string;
+            /** @description The artifact's public short id for links; empty for follows (no anchor) */
             artifact_short_id: string;
+            /** @description The artifact's title, or null if untitled or not artifact-anchored */
             artifact_title: string | null;
+            /** @description The comment thread anchor; empty when not comment-related */
             thread_id: string;
+            /** @description The specific comment anchor; empty when not comment-related */
             comment_id: string;
+            /** @description Short text preview shown in the notification bell */
             preview: string;
+            /** @description Whether the user has read it: 0 unread, 1 read */
             read: 0 | 1;
             created_at: string;
         };
         Webhook: {
             id: string;
+            /** @description The artifact this webhook is scoped to, or null to fire on all workspace events */
             artifact_id: string | null;
+            /** @description The destination endpoint deliveries are POSTed to */
             url: string;
-            /** @enum {string} */
+            /**
+             * @description Delivery format: generic posts signed JSON, slack posts a Block Kit message
+             * @enum {string}
+             */
             kind: "generic" | "slack";
+            /** @description Comma-separated event types to deliver, or "*" for all events */
             events: string;
+            /** @description Optional human-readable label, or null if unnamed */
             label: string | null;
+            /** @description Whether deliveries are enabled (1) or paused (0) */
             active: 0 | 1;
             created_at: string;
         };
         Delivery: {
             id: string;
             event_type: string;
-            /** @enum {string} */
+            /**
+             * @description Delivery state: pending (awaiting/retrying), delivered (succeeded), dead (gave up)
+             * @enum {string}
+             */
             status: "pending" | "delivered" | "dead";
+            /** @description Number of delivery attempts made so far */
             attempts: number;
+            /** @description The most recent failure message, or null if none */
             last_error: string | null;
             created_at: string;
         };
         ArtifactDomain: {
+            /** @description The hostname the artifact is served at. */
             host: string;
+            /** @description That host with scheme, ready to link to. */
             url: string;
-            /** @enum {string} */
+            /**
+             * @description "subdomain" = a vanity <label>.<base>; "custom" = a workspace custom domain.
+             * @enum {string}
+             */
             kind: "subdomain" | "custom";
-            /** @enum {string} */
+            /**
+             * @description "active" = serving; "pending" = awaiting DNS/cert; "error" = validation failed.
+             * @enum {string}
+             */
             status: "active" | "pending" | "error";
             created_at: string;
         };
         WorkspaceDomain: {
+            /** @description The custom domain attached to the workspace. */
             host: string;
-            /** @enum {string} */
+            /**
+             * @description "active" = serving; "pending" = awaiting DNS/cert; "error" = validation failed.
+             * @enum {string}
+             */
             status: "active" | "pending" | "error";
+            /** @description DNS records to add while pending; absent once the domain is active. */
             records?: components["schemas"]["DomainDnsRecord"][];
             created_at: string;
         };
         DomainDnsRecord: {
+            /** @description DNS record type to create (e.g. CNAME). */
             type: string;
+            /** @description The name/host to create the DNS record at. */
             name: string;
+            /** @description The value the DNS record should point at. */
             value: string;
         };
         AuthCapabilities: {
+            /** @description True if email + password sign-in is available (always on here) */
             password: boolean;
+            /** @description True if Google sign-in is configured */
             google: boolean;
+            /** @description True if GitHub sign-in is configured */
             github: boolean;
+            /** @description The enterprise OIDC/SSO provider, or null if none is configured */
             oidc: {
+                /** @description The provider id used to initiate SSO */
                 providerId: string;
+                /** @description Human-readable label for the SSO button */
                 label: string;
             } | null;
+            /** @description True if verification emails can be sent (a mail transport is configured) */
             emailVerification: boolean;
+            /** @description True if password-reset emails can be sent */
             passwordReset: boolean;
+            /** @description True if passkey (WebAuthn) sign-in works on this instance */
             passkey: boolean;
         };
     };

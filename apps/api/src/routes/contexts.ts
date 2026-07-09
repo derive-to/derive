@@ -39,34 +39,64 @@ export const contextRoutes = (ctx: AppContext) => {
     .object({
       id: z.string(),
       name: z.string(),
-      agent_id: z.string(),
-      manifest_short_id: z.string().nullable(),
+      agent_id: z.string().describe("The registered agent this context routes asks to."),
+      manifest_short_id: z
+        .string()
+        .nullable()
+        .describe("Short id of the linked manifest artifact; null if it can't be resolved."),
       created_by: z.string(),
       created_at: z.string(),
-      // When the runner last polled the queue (stamped there, ~minutely) — the
-      // console derives online/offline from this client-side. Null = never.
-      runner_seen_at: z.string().nullable(),
+      runner_seen_at: z
+        .string()
+        .nullable()
+        .describe(
+          "When the runner last polled the queue (~minutely); null = never. Drives online/offline.",
+        ),
     })
     .openapi("ContextInfo")
 
   // The runner's structured payload on an agent message (parsed server-side).
   const SessionMeta = z
     .object({
-      query: z.string().nullable().optional(),
-      confidence: z.number().nullable().optional(),
-      caveats: z.array(z.string()).optional(),
-      escalation_reason: z.string().nullable().optional(),
-      artifacts: z.array(z.object({ short_id: z.string(), title: z.string() })).optional(),
+      query: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("The underlying query the agent ran to produce this answer."),
+      confidence: z
+        .number()
+        .nullable()
+        .optional()
+        .describe("The agent's confidence in the answer, 0-1 (shown as a percentage)."),
+      caveats: z
+        .array(z.string())
+        .optional()
+        .describe("Caveats or limitations the agent flagged on its answer."),
+      escalation_reason: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("Why the agent escalated to a human instead of answering."),
+      artifacts: z
+        .array(z.object({ short_id: z.string(), title: z.string() }))
+        .optional()
+        .describe("Artifacts the agent cited, each linkable by short_id."),
     })
     .openapi("SessionMeta")
 
   const SessionMessage = z
     .object({
       id: z.string(),
-      author_kind: z.enum(["asker", "agent"]),
-      author_id: z.string(),
-      body_md: z.string(),
-      meta: SessionMeta.nullable(),
+      author_kind: z
+        .enum(["asker", "agent"])
+        .describe("Who wrote it: asker (the human) or agent (the context's runner)."),
+      author_id: z
+        .string()
+        .describe("The asker's user id, or the agent id when author_kind is agent."),
+      body_md: z.string().describe("The message body as Markdown."),
+      meta: SessionMeta.nullable().describe(
+        "Structured answer payload on agent messages; null on asker messages.",
+      ),
       created_at: z.string(),
     })
     .openapi("SessionMessage")
@@ -76,10 +106,16 @@ export const contextRoutes = (ctx: AppContext) => {
       id: z.string(),
       context_id: z.string(),
       asker_id: z.string(),
-      context_version: z.number(),
-      state: z.enum(["open", "answered", "escalated", "failed", "closed"]),
+      context_version: z.number().describe("The manifest version this session was opened against."),
+      state: z
+        .enum(["open", "answered", "escalated", "failed", "closed"])
+        .describe(
+          "open = awaiting the agent; answered; escalated = draft went to review; failed = run crashed; closed = ended by asker/owner.",
+        ),
       created_at: z.string(),
-      updated_at: z.string(),
+      updated_at: z
+        .string()
+        .describe("Last state/message change; equals created_at when never updated."),
     })
     .openapi("Session")
 

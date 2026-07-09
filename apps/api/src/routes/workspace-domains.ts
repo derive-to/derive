@@ -40,14 +40,24 @@ export const workspaceDomainRoutes = (ctx: AppContext) => {
   })
 
   const DomainDnsRecord = z
-    .object({ type: z.string(), name: z.string(), value: z.string() })
+    .object({
+      type: z.string().describe("DNS record type to create (e.g. CNAME)."),
+      name: z.string().describe("The name/host to create the DNS record at."),
+      value: z.string().describe("The value the DNS record should point at."),
+    })
     .openapi("DomainDnsRecord")
   const WorkspaceDomain = z
     .object({
-      host: z.string(),
-      status: z.enum(["active", "pending", "error"]),
-      /** DNS records to add while pending (absent once active). */
-      records: z.array(DomainDnsRecord).optional(),
+      host: z.string().describe("The custom domain attached to the workspace."),
+      status: z
+        .enum(["active", "pending", "error"])
+        .describe(
+          '"active" = serving; "pending" = awaiting DNS/cert; "error" = validation failed.',
+        ),
+      records: z
+        .array(DomainDnsRecord)
+        .optional()
+        .describe("DNS records to add while pending; absent once the domain is active."),
       created_at: z.string(),
     })
     .openapi("WorkspaceDomain")
@@ -65,9 +75,14 @@ export const workspaceDomainRoutes = (ctx: AppContext) => {
           content: {
             "application/json": {
               schema: z.object({
-                enabled: z.boolean(),
-                cname_target: z.string().nullable(),
-                domains: z.array(WorkspaceDomain),
+                enabled: z.boolean().describe("True when this server supports custom domains."),
+                cname_target: z
+                  .string()
+                  .nullable()
+                  .describe("The CNAME target to point domains at; null when they're disabled."),
+                domains: z
+                  .array(WorkspaceDomain)
+                  .describe("The workspace's attached custom domains."),
               }),
             },
           },
@@ -97,13 +112,21 @@ export const workspaceDomainRoutes = (ctx: AppContext) => {
         200: {
           description: "The domain (already attached to this workspace).",
           content: {
-            "application/json": { schema: WorkspaceDomain.extend({ cname_target: z.string() }) },
+            "application/json": {
+              schema: WorkspaceDomain.extend({
+                cname_target: z.string().describe("The CNAME target to point your domain at."),
+              }),
+            },
           },
         },
         201: {
           description: "The newly attached domain, pending DNS validation.",
           content: {
-            "application/json": { schema: WorkspaceDomain.extend({ cname_target: z.string() }) },
+            "application/json": {
+              schema: WorkspaceDomain.extend({
+                cname_target: z.string().describe("The CNAME target to point your domain at."),
+              }),
+            },
           },
         },
       },

@@ -17,13 +17,22 @@ export const reviewRoutes = (ctx: AppContext) => {
     .object({
       id: z.string(),
       artifact_id: z.string(),
-      version: z.number(),
-      requested_by: z.string(),
-      requested_for: z.string(),
-      state: z.enum(["pending", "sent_back", "approved"]),
-      note: z.string().nullable(),
+      version: z.number().describe("The artifact version this round is reviewing."),
+      requested_by: z
+        .string()
+        .describe("Who asked for the review (usually the agent that published)."),
+      requested_for: z.string().describe("The person asked to answer or approve this round."),
+      state: z
+        .enum(["pending", "sent_back", "approved"])
+        .describe(
+          "Round state: pending, sent_back (answers returned), or approved (the go-signal).",
+        ),
+      note: z.string().nullable().describe("Free-text note attached to the round; null if none."),
       created_at: z.string(),
-      resolved_at: z.string().nullable(),
+      resolved_at: z
+        .string()
+        .nullable()
+        .describe("When it was sent back or approved; null while pending."),
     })
     .openapi("ReviewRound")
 
@@ -117,7 +126,12 @@ export const reviewRoutes = (ctx: AppContext) => {
           description: "All rounds (newest first) and the current pending round or null.",
           content: {
             "application/json": {
-              schema: z.object({ rounds: z.array(ReviewRound), pending: ReviewRound.nullable() }),
+              schema: z.object({
+                rounds: z.array(ReviewRound).describe("All review rounds, newest first."),
+                pending: ReviewRound.nullable().describe(
+                  "The current unsettled round, or null if none is pending.",
+                ),
+              }),
             },
           },
         },
