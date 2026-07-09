@@ -38,6 +38,7 @@
     "typecheck": "pnpm -r typecheck",
     "typecheck:tsc": "pnpm -r typecheck:tsc",
     "test": "pnpm -r test",
+    "test:coverage": "pnpm -r test:coverage",
     "test:pg": "bash scripts/test-pg.sh",
     "lint": "biome lint",
     "lint:tokens": "node scripts/check-design-tokens.mjs",

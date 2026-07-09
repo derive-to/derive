@@ -58,8 +58,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Test
-        run: pnpm test
+      # Runs every package's suite once WITH coverage. Thresholds live in each
+      # vitest.config.ts (ratchet floors) — a regression fails here, and since
+      # deploy needs `check`, it blocks the ship. Replaces the old separate,
+      # redundant `coverage` job (which re-ran the whole suite a third time).
+      - name: Test + coverage gate
+        run: pnpm test:coverage
 
   # Runs the SAME apps/api suite against a real Postgres (ephemeral Docker
   # container, via scripts/test-pg.sh) so the hosted-tier driver is covered by
@@ -85,28 +89,6 @@ jobs:
 
       - name: Test against Cloudflare D1 (workerd)
         run: pnpm --filter @derive/db test:d1
-
-  # Coverage gates (ratchet floors; see each package's vitest.config.ts): the API
-  # suite, the data layer (@derive/db), the shared domain logic (@derive/core), the blob
-  # stores (@derive/storage), the MCP client, and the web app's pure logic (@derive/web;
-  # its user flows are covered separately by the Playwright e2e suite).
-  coverage:
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: ./.github/actions/setup
-      - name: API coverage
-        run: pnpm --filter @derive/api test:coverage
-      - name: DB coverage
-        run: pnpm --filter @derive/db test:coverage
-      - name: Core coverage
-        run: pnpm --filter @derive/core test:coverage
-      - name: Storage coverage
-        run: pnpm --filter @derive/storage test:coverage
-      - name: MCP coverage
-        run: pnpm --filter @derive-to/mcp test:coverage
-      - name: Web coverage
-        run: pnpm --filter @derive/web test:coverage
 
   # Bundle budget: build the web client and fail if the gzipped JS blows past the
   # budget (see scripts/check-bundle.mjs), so phosphor / radix / cmdk weight can't
@@ -145,8 +127,11 @@ jobs:
 
   # CD: ship main to the hosted tier (Workers + Hyperdrive/Neon, derive.to) once
   # check/pg/d1 + security pass. Schemas (D1 + Postgres) land BEFORE the worker
-  # flips, so a new version never serves against stale DDL. Coverage/bundle stay
-  # non-gating: quality ratchets shouldn't block a prod fix. The laptop path
+  # flips, so a new version never serves against stale DDL. Coverage now GATES:
+  # it's folded into `check` (thresholds per vitest.config.ts), so a regression
+  # fails check and blocks the deploy — a deliberate reversal of the old "ratchets
+  # shouldn't block a prod fix" rule (escape hatch: lower the threshold in the same
+  # PR). `bundle` stays non-gating. The laptop path
   # (`pnpm --filter @derive/api deploy`) remains for manual deploys; this job is
   # the production path. Stays on an x64 runner — the production deploy path is not
   # the place to also debut a runner-arch change.

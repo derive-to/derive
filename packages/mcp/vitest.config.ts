@@ -10,6 +10,9 @@ export default defineConfig({
       provider: "v8",
       include: ["src/client.ts"],
       reporter: ["text-summary"],
+      // Ratchet floors under current (80.9/73.8/72.2/92.8), with headroom — client.ts
+      // is small (18 fns), so each unit is worth several %.
+      thresholds: { statements: 75, branches: 66, functions: 66, lines: 88 },
     },
   },
 })

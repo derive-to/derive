@@ -17,6 +17,8 @@ export default defineConfig({
       provider: "v8",
       include: ["src/repos.ts", "src/sqlite.ts", "src/schema.ts", "src/d1-schema.ts"],
       reporter: ["text-summary"],
+      // Ratchet floors just under current (85.4/68.7/84.6/87.0). Raise over time.
+      thresholds: { statements: 82, branches: 65, functions: 81, lines: 84 },
     },
   },
 })

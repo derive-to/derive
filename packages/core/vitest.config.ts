@@ -9,6 +9,8 @@ export default defineConfig({
       provider: "v8",
       include: ["src/**"],
       reporter: ["text-summary"],
+      // Ratchet floors just under current (57.6/51.9/64.9/58.4). Raise over time.
+      thresholds: { statements: 55, branches: 49, functions: 62, lines: 56 },
     },
   },
 })

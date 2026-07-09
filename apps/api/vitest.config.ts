@@ -20,6 +20,10 @@ export default defineConfig({
       provider: "v8",
       include: ["src/**"],
       reporter: ["text-summary"],
+      // Ratchet floors, set just under the current numbers (78.9/70.1/79.0/83.2)
+      // with headroom for noise. A drop fails `check`, and deploy needs check, so
+      // a coverage regression blocks the ship. Raise as coverage climbs.
+      thresholds: { statements: 76, branches: 67, functions: 76, lines: 80 },
     },
   },
 })
