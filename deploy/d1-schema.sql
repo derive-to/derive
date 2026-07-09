@@ -377,6 +377,7 @@ CREATE TABLE IF NOT EXISTS context (
   manifest_artifact_id TEXT NOT NULL,
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  runner_seen_at TEXT,
   UNIQUE (org_id, name),
   FOREIGN KEY (manifest_artifact_id) REFERENCES artifact(id)
 );

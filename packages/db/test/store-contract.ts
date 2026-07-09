@@ -1334,6 +1334,15 @@ export function runStoreContract(
       expect(await store.listContexts(`other_${uuid()}`)).toHaveLength(0)
     })
 
+    it("touchContextSeen stamps runner_seen_at; an unknown id is a quiet no-op", async () => {
+      const ctx = await newContext()
+      expect(ctx.runner_seen_at).toBeNull()
+      const at = new Date().toISOString()
+      await store.touchContextSeen(ctx.id, at)
+      expect((await store.getContext(ctx.id))?.runner_seen_at).toBe(at)
+      await expect(store.touchContextSeen(uuid(), at)).resolves.toBeUndefined()
+    })
+
     it("rejects a duplicate context name within a workspace", async () => {
       const ctx = await newContext()
       await expect(

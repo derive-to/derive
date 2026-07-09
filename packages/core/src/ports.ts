@@ -618,6 +618,9 @@ export interface ContextStore {
   listContexts(orgId: string): Promise<ContextRecord[]>
   /** Remove a context and its sessions + messages, scoped to its workspace. */
   deleteContext(id: string, orgId: string): Promise<void>
+  /** Stamp `runner_seen_at` (the queue route's liveness mark). The caller decides
+   *  WHEN — the write throttle lives there, next to the poll cadence it paces. */
+  touchContextSeen(id: string, at: string): Promise<void>
   createSession(s: NewSession): Promise<SessionRecord>
   getSession(id: string): Promise<SessionRecord | null>
   /** Sessions on a context, newest first; `askerId` narrows to one person's. */
@@ -1157,6 +1160,9 @@ export interface ContextRecord {
   manifest_artifact_id: string
   created_by: string
   created_at: string
+  /** When the runner last polled the queue (ISO), throttle-stamped there — the
+   *  console's liveness signal. Null = never polled (or a pre-column row). */
+  runner_seen_at: string | null
 }
 export interface NewContext {
   id: string

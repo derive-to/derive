@@ -1646,6 +1646,11 @@ export class PgMetaStore implements MetaStore {
     await this.db.delete(contextSession).where(eq(contextSession.context_id, id))
     await this.db.delete(context).where(eq(context.id, id))
   }
+  // A no-op on an unknown id, deliberately: the caller already 404'd before
+  // stamping, and liveness is best-effort — never worth a throw.
+  async touchContextSeen(id: string, at: string): Promise<void> {
+    await this.db.update(context).set({ runner_seen_at: at }).where(eq(context.id, id))
+  }
   async createSession(s: NewSession): Promise<SessionRecord> {
     const rows = await this.db.insert(contextSession).values(s).returning()
     return one(rows)

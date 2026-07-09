@@ -494,6 +494,8 @@ export const context = pgTable(
       .references(() => artifact.id),
     created_by: text("created_by").notNull(),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
+    // Last runner queue poll, throttle-stamped — see schema.ts for the contract.
+    runner_seen_at: text("runner_seen_at"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
 )

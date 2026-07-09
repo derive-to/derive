@@ -333,3 +333,51 @@ describe("sessions: the ask → answer → follow-up loop", () => {
     expect(settled.session.state).toBe("answered")
   })
 })
+
+describe("runner liveness: the queue poll stamps runner_seen_at, throttled", () => {
+  const owner: TestUser = { id: "u_rl_own", email: "rlown@derive.test", name: "Owner" }
+  const { app, meta } = makeAuthedApp("contexts-liveness", [owner])
+
+  it("the first poll stamps; polls inside the 60s window don't; stale re-stamps", async () => {
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const ag = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Analyst" }))
+    ).json()
+    const manifestShortId = (await (await publishAs(app, "# Manifest", {}, as(owner.email))).json())
+      .short_id
+    const x = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "Analytics",
+          agent_id: ag.id,
+          manifest_short_id: manifestShortId,
+        }),
+      )
+    ).json()
+    expect(x.runner_seen_at).toBeNull() // never polled
+
+    const seenAt = async () =>
+      (await (await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })).json())
+        .runner_seen_at
+    await app.request(`/v1/contexts/${x.id}/queue`, { headers: bearer(ag.token) })
+    const first = await seenAt()
+    expect(first).toBeTruthy()
+
+    // Backdating (rather than back-to-back polls, whose stamps could collide on
+    // the same millisecond) makes the throttle branch unambiguous: 30s old is
+    // inside the window and must survive the poll; 2m old must be replaced.
+    await meta.touchContextSeen(x.id, new Date(Date.now() - 30_000).toISOString())
+    const fresh = await seenAt()
+    await app.request(`/v1/contexts/${x.id}/queue`, { headers: bearer(ag.token) })
+    expect(await seenAt()).toBe(fresh)
+
+    await meta.touchContextSeen(x.id, new Date(Date.now() - 120_000).toISOString())
+    await app.request(`/v1/contexts/${x.id}/queue`, { headers: bearer(ag.token) })
+    expect((await seenAt()) > fresh).toBe(true)
+
+    // Both user-facing reads carry the stamp (the console + directory render it).
+    const list = await (await app.request("/v1/contexts", { headers: as(owner.email) })).json()
+    expect(list.contexts[0].runner_seen_at).toBe(await seenAt())
+  })
+})

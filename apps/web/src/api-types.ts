@@ -4911,6 +4911,7 @@ export interface components {
             manifest_short_id: string | null;
             created_by: string;
             created_at: string;
+            runner_seen_at: string | null;
         };
         Session: {
             id: string;
