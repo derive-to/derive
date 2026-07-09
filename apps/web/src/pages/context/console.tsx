@@ -49,7 +49,11 @@ function Console({ id }: { id: string }) {
     ...contextQuery(id),
     refetchInterval: 60_000,
   })
-  const { data: sessions } = useQuery(contextSessionsQuery(id))
+  const {
+    data: sessions,
+    isError: sessionsFailed,
+    refetch: refetchSessions,
+  } = useQuery(contextSessionsQuery(id))
 
   // The session on screen: sticky once picked; defaults to the most recent.
   const [picked, setPicked] = useState<string | null>(null)
@@ -66,7 +70,11 @@ function Console({ id }: { id: string }) {
   // a bug report. Say that plainly instead of spinning forever (the old
   // behavior: the loader threw, `context` stayed undefined, the spinner never
   // resolved — indistinguishable from "still loading").
-  if (error) {
+  //
+  // Gate on `!context` too: this query polls every 60s, and a background-poll blip sets
+  // `error` while the loaded context is retained — don't throw a working console (and any
+  // half-typed follow-up) to this screen over a transient blip; it self-heals next poll.
+  if (error && !context) {
     const status = error instanceof ApiError ? error.status : undefined
     return (
       <PageShell className="flex justify-center pt-16">
@@ -127,6 +135,26 @@ function Console({ id }: { id: string }) {
         </TabsList>
 
         <TabsContent value="ask" className="flex flex-col gap-4 pt-4">
+          {/* A failed sessions load mustn't masquerade as "no conversations yet" — say so and
+              let them retry (they can still ask a fresh question below). */}
+          {sessionsFailed && !sessions && (
+            <StatusPanel
+              tone="danger"
+              layout="inline"
+              title="Couldn't load your conversations"
+              description="You can still ask below, or try again."
+              action={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="console-sessions-retry"
+                  onClick={() => refetchSessions()}
+                >
+                  Try again
+                </Button>
+              }
+            />
+          )}
           {mine.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
               {/* Recent conversations only — the full history is the owner's
@@ -312,8 +340,7 @@ function SessionThread({
   }, [state, contextId, qc])
   const refresh = () => qc.invalidateQueries({ queryKey: sessionQuery(sessionId).queryKey })
   // Post a follow-up / close the conversation. Defined ABOVE the `!data` guard so the
-  // hooks run unconditionally (a hook can't sit below an early return). Closing swallows
-  // its error — an already-closed session is fine — so it opts out of the error toast.
+  // hooks run unconditionally (a hook can't sit below an early return).
   const post = useApiMutation({
     mutationFn: () => api.postSessionMessage(sessionId, text.trim()),
     onSuccess: () => {
@@ -323,13 +350,17 @@ function SessionThread({
   })
   const closeMut = useApiMutation({
     mutationFn: () => api.closeSession(sessionId),
-    errorToast: false,
+    // A genuine close failure surfaces via the safety net (the old errorToast:false swallowed
+    // real network/500 errors too, not just the benign already-closed race).
     onSuccess: () => {
       refresh()
       onClosed()
     },
   })
-  if (isError)
+  // `isError && !data`: only when the FIRST load fails (no transcript yet). A background-poll
+  // blip sets isError while `data` is retained — don't replace a live transcript with an error
+  // screen; it self-heals on the next poll.
+  if (isError && !data)
     return (
       <StatusPanel
         layout="inline"

@@ -20,11 +20,10 @@ import { SettingsSection } from "./settings-section"
 export function ProfileSection() {
   const { me, setMe } = useAuth()
   const [discoverable, setDiscoverable] = useState(!!me?.discoverable)
-  // Avatar upload is deliberately non-blocking — a failure leaves the current photo as-is,
-  // so it opts out of the global error toast (errorToast:false).
+  // Avatar upload is non-blocking (a failure leaves the current photo as-is) but NOT silent —
+  // a failed upload toasts via the safety net, so the user isn't misled that it saved.
   const avatar = useApiMutation({
     mutationFn: (f: File) => api.uploadAvatar(f),
-    errorToast: false,
     onSuccess: ({ image }) => {
       if (me) setMe({ ...me, image })
     },

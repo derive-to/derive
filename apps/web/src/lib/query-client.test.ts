@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { isTransient, retryQuery, shouldToastError } from "./query-client"
+import { isTransient, retryQuery, shouldToastError, toastMessageFor } from "./query-client"
 
 // The resilience seam: transient failures self-heal, client errors fail fast.
 const apiErr = (status: number) => Object.assign(new Error(`HTTP ${status}`), { status })
@@ -37,5 +37,20 @@ describe("shouldToastError", () => {
   })
   it("stays silent only when a mutation explicitly opts out (errorToast:false)", () => {
     expect(shouldToastError({ errorToast: false })).toBe(false)
+  })
+})
+
+describe("toastMessageFor", () => {
+  it("shows the server's message for an ApiError (has a numeric status)", () => {
+    expect(toastMessageFor(apiErr(409))).toBe("HTTP 409")
+  })
+  it("falls back to a friendly line for a network error (no status → raw 'Failed to fetch')", () => {
+    expect(toastMessageFor(new TypeError("Failed to fetch"))).toMatch(/check your connection/i)
+  })
+  it("falls back for a non-Error throw, or an Error with no message (never a blank toast)", () => {
+    expect(toastMessageFor("just a string")).toMatch(/something went wrong/i)
+    expect(toastMessageFor(Object.assign(new Error(""), { status: 500 }))).toMatch(
+      /something went wrong/i,
+    )
   })
 })

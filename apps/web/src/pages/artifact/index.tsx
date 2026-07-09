@@ -339,10 +339,16 @@ export function Artifact() {
       client.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, locked: next } : a))
       return rollback
     },
+    // Reconcile on settle: the whole-artifact snapshot rollback could otherwise clobber a
+    // concurrent edit to the same key (a favorite/tag toggle) that landed mid-flight.
+    invalidate: [artifactQuery(shortId).queryKey],
   })
 
   if (locked) return <PasswordGate shortId={shortId} onUnlocked={() => refetch()} />
-  if (failed) {
+  // `failed && !art`: only show the full error page when there's NO artifact to show. A
+  // background-refetch failure sets isError while react-query keeps `art` (e.g. a blip right
+  // after a publish invalidates the query) — keep the loaded workbench, don't flash the error.
+  if (failed && !art) {
     // A genuine 404/403 is "not found / no access". Anything else (a 5xx, a
     // network blip, the server briefly unhealthy) is transient — the query already
     // auto-retried with backoff, so offer a clean "Try again" rather than a

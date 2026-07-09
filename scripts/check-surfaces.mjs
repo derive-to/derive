@@ -5,17 +5,21 @@
 // gold-standard surfaces — library, profile, people, artifact — do all three. This guard
 // locks in the two that are crisply checkable:
 //
-//   A. A route with a data `loader` must declare a shape-matched `pendingComponent`.
+//   A. A route with a data `loader` must declare a `pendingComponent` (a PRESENCE check —
+//      that the frame is shape-matched, not `() => null`, stays the author's judgment).
 //      Without it the cold-load window falls to the generic AppBoot (a blank-ish flash),
 //      not a skeleton shaped like the page. (empty/error are the component's job.)
 //
 //   B. A .tsx surface that reads a query (`useQuery`/`useInfiniteQuery`) must handle the
-//      failure — i.e. reference `isError`. A query whose `.data` is rendered with no error
-//      branch degrades silently: a failed read looks like an empty list, or (when the
-//      loading gate is `!data` instead of `isPending`) spins forever.
+//      failure — reference `isError`/`isLoadingError`, or destructure `error`. A query whose
+//      `.data` is rendered with no error branch degrades silently: a failed read looks like
+//      an empty list, or (when the loading gate is `!data` instead of `isPending`) spins.
 //
-// Ambient / warm-cache / degrade-by-design reads are allow-listed. Escape hatch for a
-// one-off: a `surface-ignore` comment on the offending line.
+// Deliberate scope (a proxy, not a proof): Check B is per-FILE — a file passes once it
+// handles error on ANY one query, so a secondary/ambient read alongside a handled one rides
+// along — and it sees only literal useQuery calls in pages/ + components/ .tsx (a query
+// behind a custom hook, or in a .ts file or a route, isn't reached). Ambient / warm-cache /
+// degrade-by-design reads are allow-listed; a one-off gets a `surface-ignore` comment.
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, relative } from "node:path"
 import ts from "typescript"
@@ -113,13 +117,16 @@ const usesQuery = (src) => {
   return hit
 }
 
-// A file HANDLES a query's error if it references isError/isLoadingError, or destructures
-// `error` from a query result (`const { error } = useQuery(...)` — the console's pattern).
-const handlesError = (src, text) => {
-  if (/\b(isError|isLoadingError)\b/.test(text)) return true
+// A file HANDLES a query's error if it REFERENCES `isError`/`isLoadingError` (a destructured
+// var, or a `.isError` access) or destructures `error` from a query result (the console's
+// pattern). AST identifiers ONLY — a comment or string that merely mentions "isError" must
+// not count, or a file could pass by talking about error handling without doing it.
+const handlesError = (src) => {
   let found = false
   const visit = (node) => {
-    if (
+    if (ts.isIdentifier(node) && (node.text === "isError" || node.text === "isLoadingError"))
+      found = true
+    else if (
       ts.isVariableDeclaration(node) &&
       node.initializer &&
       ts.isCallExpression(node.initializer) &&
@@ -145,7 +152,7 @@ const checkB = () => {
       const text = readFileSync(file, "utf8")
       if (text.includes("surface-ignore")) continue
       const src = parse(file)
-      if (usesQuery(src) && !handlesError(src, text))
+      if (usesQuery(src) && !handlesError(src))
         out.push({ rel, kind: "error", msg: "reads a query but never handles its error" })
     }
   }

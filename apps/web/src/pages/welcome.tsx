@@ -132,11 +132,10 @@ function Onboarding({ me }: { me: Account }) {
   const handleErr = normalized ? usernameError(normalized) : null
   const profession = preset === OTHER ? custom.trim() : preset
 
-  // Non-blocking by design: a failed avatar upload stays quiet (errorToast:false, no
-  // inline error) — the rest of onboarding proceeds regardless.
+  // Non-blocking (onboarding proceeds regardless) but NOT silent: a failed upload toasts, so
+  // the user isn't left believing a photo saved when it didn't.
   const upload = useApiMutation({
     mutationFn: (f: File) => api.uploadAvatar(f),
-    errorToast: false,
     onSuccess: ({ image }) => setMe({ ...me, image }),
   })
   const pickPhoto = (f: File | null) => {
