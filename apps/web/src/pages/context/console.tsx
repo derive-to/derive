@@ -27,6 +27,7 @@ import { useAuth } from "@/ctx"
 import { contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { useDocumentTitle } from "@/lib/use-document-title"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
 import { ConsolePending } from "./context-skeleton"
@@ -63,6 +64,8 @@ function Console({ id }: { id: string }) {
     isError: sessionsFailed,
     refetch: refetchSessions,
   } = useQuery(contextSessionsQuery(id))
+  // The tab names the context; base title while it loads (or on no-access).
+  useDocumentTitle(context?.name ?? null)
 
   // The session on screen: sticky once picked; defaults to the most recent.
   const [picked, setPicked] = useState<string | null>(null)

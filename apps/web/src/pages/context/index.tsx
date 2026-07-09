@@ -17,12 +17,14 @@ import {
 } from "@/components/ui/select"
 import { agentsQuery, contextsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { useDocumentTitle } from "@/lib/use-document-title"
 import { ContextRowsSkeleton } from "./context-skeleton"
 
 // The contexts directory: the workspace's askable agent setups. Creation wires an
 // existing agent (Settings → Agents) to a manifest artifact by its short id — the
 // two halves already exist as first-class objects; a context is just the joint.
 export function Contexts() {
+  useDocumentTitle("Contexts")
   const qc = useQueryClient()
   const { data: contexts, isPending, isError, refetch } = useQuery(contextsQuery())
   // Agents load lazily for the create form; a 403 (non-admin) just hides it —

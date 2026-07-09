@@ -20,6 +20,7 @@ import { useAuth } from "@/ctx"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 import { profileArtifactsQuery, profileQuery } from "@/lib/queries"
+import { useDocumentTitle } from "@/lib/use-document-title"
 import { ProfilePending, ProfileWorkSkeleton } from "./skeleton"
 import { ProfileWorkCard, ProfileWorkRow } from "./work-card"
 
@@ -52,6 +53,9 @@ function ProfileInner({ handle }: { handle: string }) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const { data, isPending, isError, error, refetch } = useQuery(profileQuery(handle))
+  // The tab names the person (display name, else handle); before the early
+  // returns — hooks. Base title while loading or on a 404.
+  useDocumentTitle(data ? (data.name ?? `@${data.username}`) : null)
 
   // The identity is preloaded, so isPending here is only ever a genuine cold load; the
   // route's ProfilePending (same skeleton) already covers that window, so a null here

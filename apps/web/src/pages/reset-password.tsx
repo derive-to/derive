@@ -7,6 +7,7 @@ import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { useDocumentTitle } from "@/lib/use-document-title"
 
 const route = getRouteApi("/reset-password")
 
@@ -61,6 +62,7 @@ function BackToSignIn() {
 }
 
 export function ResetPassword() {
+  useDocumentTitle("Reset password")
   const { token, error } = route.useSearch()
   // The emailed link lands here with a token; without one this is the request form.
   return token ? <Complete token={token} /> : <Request expired={error === "INVALID_TOKEN"} />

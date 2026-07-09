@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { useAuth } from "@/ctx"
 import { workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { useDocumentTitle } from "@/lib/use-document-title"
 import { roleLabel } from "./settings/roles"
 
 const route = getRouteApi("/invite/$token")
@@ -31,6 +32,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 }
 
 export function AcceptInvite() {
+  useDocumentTitle("Invitation")
   const { token } = route.useParams()
   const { me, loading } = useAuth()
   const nav = useNavigate()

@@ -24,6 +24,7 @@ import {
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
+import { useDocumentTitle } from "@/lib/use-document-title"
 import { useFollows } from "@/lib/use-follows"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { cn } from "@/lib/utils"
@@ -287,6 +288,9 @@ function LibraryBody({ view }: { view: LibraryView }) {
                 : filter.kind === "tag"
                   ? `#${filter.tag}`
                   : collectionTitle
+  // The tab names the view — a tag, a collection, Favorites, Created by me… —
+  // while the unfiltered home stays plain "Derive".
+  useDocumentTitle(filter.kind === "all" ? null : heading)
   // Only the counts the server can state authoritatively (preloaded summary / the
   // collection's own count) get a number; the follow/shared/feedback feeds show none
   // rather than a misleading "loaded-so-far" count that grows as you scroll.

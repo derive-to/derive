@@ -17,10 +17,12 @@ import {
 import { useAuth } from "@/ctx"
 import { authClient } from "@/lib/auth-client"
 import { needsOnboarding } from "@/lib/route-guards"
+import { useDocumentTitle } from "@/lib/use-document-title"
 
 const loginRoute = getRouteApi("/login")
 
 export function Login() {
+  useDocumentTitle("Sign in")
   const { me, loading, setMe } = useAuth()
   const { signup: wantSignup, return_to: returnTo, reset: didReset } = loginRoute.useSearch()
   const [mode, setMode] = useState<"login" | "signup">(wantSignup ? "signup" : "login")

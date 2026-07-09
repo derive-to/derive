@@ -56,3 +56,16 @@ test("icon-only chrome controls expose accessible names", async ({ owner }) => {
   await expect(owner.getByRole("button", { name: "Search (⌘K)" })).toBeVisible()
   await expect(owner.getByRole("searchbox", { name: "Filter artifacts by title" })).toBeVisible()
 })
+
+test("the tab title follows the view", async ({ owner }) => {
+  await expect(owner).toHaveTitle("Derive")
+  await owner.getByTestId("library-tab-mine").click()
+  await expect(owner).toHaveTitle("Created by me · Derive")
+  await owner.goto("/people")
+  await expect(owner).toHaveTitle("People · Derive")
+  await owner.goto("/settings/members")
+  await expect(owner).toHaveTitle("Members · Settings · Derive")
+  // Back home restores the base title (the hook's unmount contract).
+  await owner.goto("/")
+  await expect(owner).toHaveTitle("Derive")
+})
