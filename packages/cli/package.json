@@ -40,7 +40,9 @@
   },
   "scripts": {
     "typecheck": "echo 'plain js cli'",
-    "test": "vitest run"
+    "typecheck:tsc": "echo 'plain js cli'",
+    "test": "vitest run",
+    "test:coverage": "vitest run"
   },
   "dependencies": {
     "fflate": "^0.8.2"

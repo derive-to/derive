@@ -9,6 +9,9 @@ export default defineConfig({
       provider: "v8",
       include: ["src/**"],
       reporter: ["text-summary"],
+      // Ratchet floors under current (98.9/94.7/94.4/100), with headroom — small
+      // denominators (18 fns) swing several % per unit.
+      thresholds: { statements: 92, branches: 85, functions: 83, lines: 95 },
     },
   },
 })

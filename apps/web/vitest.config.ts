@@ -24,6 +24,9 @@ export default defineConfig({
         "src/pages/artifact/lib/layout.ts",
       ],
       reporter: ["text-summary"],
+      // Ratchet floors under current (95.5/83/100/97.2). Extra headroom: this gate
+      // is scoped to 7 small pure-logic files, so each function is worth several %.
+      thresholds: { statements: 90, branches: 76, functions: 90, lines: 92 },
     },
   },
 })

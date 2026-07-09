@@ -1,40 +1,37 @@
 name: e2e smoke
 
 # The fast critical-path suite: one happy path per surface (sign up, publish →
-# comment → resolve, library, share, settings, theme, review).
+# comment → resolve, library, share, settings, theme, review). Runs on PRs.
 #
-# DISABLED on CI for now (no automatic trigger — manual only via
-# workflow_dispatch; `pnpm run deploy` no longer chains it post-deploy either).
-# The suite still flakes under CI CPU contention (multi-context owner+member
-# specs starving on a small runner). Re-add `pull_request:` once it's reliably
-# green, and re-chain `deploy:smoke` into apps/api's `deploy` script.
+# Previously disabled for CPU-contention flakes on the 2-vCPU runner. The
+# reliability fixes now live in playwright.config.ts: workers=1 on CI (each
+# multi-context spec already opens two browser contexts), a prebuilt SPA served by
+# `vite preview` instead of the on-demand dev server (deterministic first paint),
+# expect.timeout 15s, retries=2. If it proves flaky here, tighten there — don't
+# just bump workers.
 on:
   workflow_dispatch:
+  pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   smoke:
-    # 4 vCPU + 2 workers: the review/share specs each drive two browser contexts
-    # (owner + member), so 4 workers on a 2-vCPU box oversubscribed the CPU and the UI
-    # didn't paint within the expect timeout — the toBeVisible() flakes. Right-size it.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
 
       - name: Install Playwright browser
         run: pnpm --filter @derive/web exec playwright install --with-deps chromium
 
       - name: Smoke suite
-        run: pnpm --filter @derive/web test:e2e:smoke -- --workers=2
+        run: pnpm --filter @derive/web test:e2e:smoke
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
