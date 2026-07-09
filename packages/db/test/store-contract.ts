@@ -886,6 +886,42 @@ export function runStoreContract(
       await store.deleteCollection(col.id)
       expect(await store.getCollection(col.id)).toBeNull()
     })
+
+    it("propagates a workspace-open collection's seat role to its artifacts; invite-only does not", async () => {
+      // A private artifact (workspace_access=none) no one is an explicit member of.
+      const priv = await store.createArtifact(
+        newArtifact({ workspace_access: "none", link_role: "none", listed: "none" }),
+      )
+      // carol has a workspace SEAT (editor) but is NOT an explicit collection member.
+      await store.setMembership({ id: uuid(), org_id: ORG, user_id: "carol", role: "editor" })
+
+      // A workspace-open collection hands carol her seat role on every artifact inside
+      // it — even a private one — purely via her workspace membership.
+      const open = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Open",
+        created_by: "amy",
+        workspace_access: "member",
+      })
+      await store.addCollectionItem(open.id, priv.id)
+      expect(await store.collectionRolesForArtifact(priv.id, "carol")).toContain("editor")
+
+      // An invite-only collection (workspace_access=none) grants a bare seat nothing —
+      // only its explicit members reach it.
+      const invite = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Invite",
+        created_by: "amy",
+        workspace_access: "none",
+      })
+      const priv2 = await store.createArtifact(
+        newArtifact({ workspace_access: "none", link_role: "none", listed: "none" }),
+      )
+      await store.addCollectionItem(invite.id, priv2.id)
+      expect(await store.collectionRolesForArtifact(priv2.id, "carol")).toHaveLength(0)
+    })
   })
 
   describe(`${label}: github sync sources`, () => {

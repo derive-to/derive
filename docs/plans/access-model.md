@@ -54,6 +54,28 @@ Consequences that fall out for free:
 - The **role dropdown only appears for "Anyone"** in the UI — Workspace uses seats,
   so it has no role, just a listing switch.
 
+### Collections propagate like a workspace-open artifact
+
+A collection's role reaches its **contents** by the same explicit-or-seat rule an
+artifact uses, so "who can open the collection" and "who can open what's inside"
+never diverge:
+
+- **Explicit** `collection_member` rows grant that role on every artifact in the
+  collection (can cross workspaces).
+- A **workspace-open** collection (`workspace_access = member`) additionally hands
+  every workspace member their **seat role** on every artifact inside — the Share
+  dialog's promise, "Everyone in the workspace opens this at their role." An
+  **invite-only** collection (`workspace_access = none`) grants nothing from a mere
+  seat; only its explicit members reach it.
+
+`collectionRolesForArtifact` (both stores) folds both sources into an artifact's
+effective role, and `collectionRole` gates collection visibility on the same rule —
+so a raw `COUNT(collection_item)` is always truthful for anyone who can see the
+collection (no "· 1 but empty"). The **creator** (`created_by`) is permanently
+owner and can never be demoted or removed; workspace admins may otherwise manage
+membership. Collections omit `listed`/`link_role` (a collection isn't individually
+link-servable — it's a grouping of artifacts, each with its own link).
+
 ## Listing preconditions (the only invariants)
 
 Discovery may not surface an artifact to an audience that cannot open it:

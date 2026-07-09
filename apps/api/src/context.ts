@@ -762,10 +762,11 @@ export function buildContext(deps: AppDeps) {
     // it's workspace-open; an invite-only collection (workspace_access=none)
     // grants nothing from mere membership, matching Invited. An explicit
     // collection share (which can cross workspaces) folds in alongside either
-    // way, higher wins. This governs who can view/manage the COLLECTION only;
-    // artifact access still propagates purely from explicit collection
-    // membership (collectionRolesForArtifact), so a seat here never hands out
-    // access to the artifacts inside.
+    // way, higher wins. This is the role on the COLLECTION itself; a workspace-open
+    // collection propagates that same seat role to every artifact inside it —
+    // collectionRolesForArtifact mirrors this exact rule (explicit membership OR a
+    // seat on a workspace-open collection), so visibility of the collection and of
+    // its contents stay in lockstep (no phantom-empty collections).
     const explicit = (await meta.getCollectionMember(col.id, me.id))?.role ?? null
     const seat =
       col.workspace_access === "member"

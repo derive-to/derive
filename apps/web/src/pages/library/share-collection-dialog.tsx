@@ -206,52 +206,53 @@ export function ShareCollectionDialog({
               <EmptyState className="mt-2 p-6">No one shared yet.</EmptyState>
             ) : (
               <div className="mt-2 flex flex-col gap-1.5">
-                {members.map((m) => (
-                  <div key={m.user_id} className="flex items-center gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-foreground">
-                        {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
-                      </div>
-                      {m.name && m.handle && (
-                        <div className="truncate font-mono text-2xs text-muted-foreground">
-                          @{m.handle}
+                {members.map((m) => {
+                  const who = m.name ?? (m.handle ? `@${m.handle}` : "member")
+                  return (
+                    <div key={m.user_id} className="flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium text-foreground">
+                          {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
                         </div>
-                      )}
-                    </div>
-                    {canManage ? (
-                      <>
-                        <RoleSelect
-                          value={m.role}
-                          onChange={(next) => change(m, next)}
-                          data-testid={`collection-share-member-role-${m.user_id}`}
-                          aria-label={`Role for ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
-                          className="w-28 shrink-0"
-                        />
-                        {/* The creator's own row is fixed — unlike an artifact's
-                            "last owner" member row, a collection's creator is
-                            permanently owner via created_by regardless of member
-                            rows (collectionRole checks it first), so removing this
-                            row wouldn't revoke access — it would just make them
-                            vanish from their own roster. Nothing to offer. */}
-                        {m.user_id !== collection.created_by && (
+                        {m.name && m.handle && (
+                          <div className="truncate font-mono text-2xs text-muted-foreground">
+                            @{m.handle}
+                          </div>
+                        )}
+                      </div>
+                      {/* The creator's row is fixed — a collection's creator is
+                        permanently owner via created_by regardless of member rows
+                        (collectionRole checks it first), so their role can't be
+                        changed and removing the row wouldn't revoke access, just
+                        orphan the roster. Show it read-only even to a manager (the
+                        backend rejects demote/remove of the creator too). */}
+                      {canManage && m.user_id !== collection.created_by ? (
+                        <>
+                          <RoleSelect
+                            value={m.role}
+                            onChange={(next) => change(m, next)}
+                            data-testid={`collection-share-member-role-${m.user_id}`}
+                            aria-label={`Role for ${who}`}
+                            className="w-28 shrink-0"
+                          />
                           <Button
                             variant="ghost"
                             size="icon"
                             data-testid={`collection-share-remove-${m.user_id}`}
                             onClick={() => remove(m)}
-                            aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
+                            aria-label={`Remove ${who}`}
                           >
                             <Icon name="close" />
                           </Button>
-                        )}
-                      </>
-                    ) : (
-                      <span className="shrink-0 text-sm text-muted-foreground">
-                        {ROLE_LABELS[m.role]}
-                      </span>
-                    )}
-                  </div>
-                ))}
+                        </>
+                      ) : (
+                        <span className="shrink-0 text-sm text-muted-foreground">
+                          {ROLE_LABELS[m.role]}
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>

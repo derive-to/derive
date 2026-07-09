@@ -410,6 +410,10 @@ export const collectionRoutes = (ctx: AppContext) => {
       const id = await resolveUserRef(meta, (b.user ?? b.email) as string)
       const [user] = id ? await meta.getUsers([id]) : []
       if (!user) return bail(fail(c, 404, "no Derive user with that username or email"))
+      // The creator is permanently owner (collectionRole checks created_by first), so
+      // their role isn't a member row anyone can rewrite — reject demoting them.
+      if (user.id === col.created_by)
+        return bail(fail(c, 409, "the collection owner's role can't be changed"))
       await meta.setCollectionMember({
         id: newId("cm"),
         collection_id: col.id,
@@ -433,6 +437,10 @@ export const collectionRoutes = (ctx: AppContext) => {
       const col = await meta.getCollection(c.req.param("id"))
       if (!col) return bail(fail(c, 404, "not found"))
       if (!(await canManageCollection(c, col, "manage"))) return bail(fail(c, 403, "forbidden"))
+      // The creator stays owner via created_by regardless of member rows; removing the
+      // row wouldn't revoke their access, it would just orphan the roster — refuse it.
+      if (c.req.param("userId") === col.created_by)
+        return bail(fail(c, 409, "can't remove the collection owner"))
       await meta.removeCollectionMember(col.id, c.req.param("userId"))
       return c.body(null, 204)
     },
