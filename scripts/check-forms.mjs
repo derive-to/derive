@@ -9,11 +9,12 @@
 // with the field. A red border / an "invalid" announcement with no reason attached is exactly
 // the silent failure the read + write layers already eliminated, on the input side.
 //
-// Scope: JSX in pages/ + components/shared + components/chrome. The house FormField primitive
-// wires BOTH aria-* onto its child at runtime (not in the JSX), so a field that uses
-// `<FormField error=…>` is correct and invisible here — the guard only ever sees a HAND-ROLLED
-// `aria-invalid`, which must therefore self-associate. The `components/ui` primitives only
-// FORWARD/style aria-invalid, so they're out of scope. Escape hatch: a `form-ignore` comment.
+// Deliberate scope (a backstop, not a proof): the guard flags only a HAND-ROLLED literal
+// `aria-invalid` in pages/ + components/shared + components/chrome .tsx. The sanctioned paths —
+// `fieldError(...).aria` (a spread) and `<FormField error=…>` (a runtime clone) — attach both
+// aria-* by construction and are invisible here; the `components/ui` primitives only
+// forward/style aria-invalid. So this catches the ad-hoc "red field, no message" case, not the
+// house helpers. Escape hatch: a `// form-ignore` or `/* form-ignore */` comment on the line.
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, relative } from "node:path"
 import ts from "typescript"
@@ -60,9 +61,13 @@ const attr = (node, name) =>
 const canBeInvalid = (a) => {
   const init = a.initializer
   if (!init) return true // bare attribute ⇒ true
-  if (ts.isStringLiteral(init)) return init.text !== "false"
-  if (ts.isJsxExpression(init) && init.expression)
-    return init.expression.kind !== ts.SyntaxKind.FalseKeyword
+  if (ts.isStringLiteral(init)) return init.text !== "false" // aria-invalid="false"
+  if (ts.isJsxExpression(init) && init.expression) {
+    const e = init.expression
+    if (e.kind === ts.SyntaxKind.FalseKeyword) return false // {false}
+    if (ts.isStringLiteral(e)) return e.text !== "false" // {"false"}
+    return true
+  }
   return true
 }
 
@@ -75,10 +80,10 @@ const scan = (file) => {
       const ai = attr(node, "aria-invalid")
       if (ai && ts.isJsxAttribute(ai) && canBeInvalid(ai) && !attr(node, "aria-describedby")) {
         const { line } = src.getLineAndCharacterOfPosition(ai.getStart(src))
-        if (
-          !/\/\/\s*form-ignore\b/.test(lines[line] ?? "") &&
-          !lines[line]?.includes("form-ignore")
-        )
+        // A deliberate `// form-ignore` or `/* form-ignore */` COMMENT on the line (a block
+        // comment is what works inside a JSX attribute expression) — NOT any substring, so a
+        // string value or attribute that merely contains the token can't suppress the check.
+        if (!/\/[/*]\s*form-ignore\b/.test(lines[line] ?? ""))
           out.push({ line: line + 1, text: (lines[line] ?? "").trim() })
       }
     }
