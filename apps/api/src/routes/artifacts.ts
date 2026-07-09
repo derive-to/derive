@@ -18,10 +18,12 @@ import {
   PublishError,
   pageText,
   publish,
+  type Role,
   renderMarkdown,
   sectionOf,
   toJson,
   toMarkdown,
+  type WorkspaceAccess,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
@@ -880,6 +882,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           tags: [],
           favorite: false,
           collections: [],
+          collection_access: [],
           open_proposals: 0,
           proposals_total: 0,
           removed: true,
@@ -890,6 +893,70 @@ export const artifactRoutes = (ctx: AppContext) => {
       const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
       const favorite = me ? (await meta.listUserFavoriteIds(me)).includes(artifact.id) : false
       const collections = await meta.collectionIdsForArtifact(artifact.id)
+      const myRole = effectiveRole(actor, artifact.workspace_access, artifact.link_role)
+      // The share dialog's disclosure rows: which collections' sharing REACHES this
+      // artifact (a workspace-open collection propagates every seat; an invite-only
+      // one its members — see collectionRolesForArtifact). The artifact's own access
+      // fields never reflect that grant, so the detail response must carry it or the
+      // dialog lies ("Invited · 1 person" on a doc the whole workspace can open).
+      // Two independent gates shape the list:
+      //   VISIBLE — collections the caller has a role on (their explicit share, a
+      //     seat on a workspace-open one, created_by, or the operator token), plus
+      //     everything for the artifact's own managers. Manager standing is computed
+      //     WITHOUT the world link (linkRole "none") — a stranger holding an editor
+      //     URL must not unlock other people's private collections' titles/rosters,
+      //     the same class of caller the members-roster route 404s.
+      //   GRANTING — of those, only collections that actually ADD reach: any
+      //     workspace-open one; an invite-only one only when someone besides the
+      //     caller enters through it (another member row, or a creator who isn't
+      //     them). This is the response's contract — consumers render it verbatim.
+      const standing = effectiveRole(actor, artifact.workspace_access, "none")
+      const canManageArtifact = standing === "owner" || standing === "editor"
+      let collectionAccess: {
+        id: string
+        title: string
+        workspace_access: WorkspaceAccess
+        my_role: Role | null
+        member_count: number
+        created_by: string
+        owner_name: string | null
+      }[] = []
+      // Anonymous link readers can never see a row (no role, no standing) — skip the
+      // lookups entirely on that hot path.
+      if (collections.length > 0 && (me !== null || isToken(c) || canManageArtifact)) {
+        const [colRecords, rolesById] = await Promise.all([
+          meta.getCollections(collections),
+          me
+            ? meta.collectionRolesForUser(collections, me)
+            : Promise.resolve<Record<string, Role>>({}),
+        ])
+        // Fold in the two sources the batched query can't know (mirrors collectionRole).
+        const roleOf = (col: (typeof colRecords)[number]): Role | null =>
+          isToken(c) ? "owner" : col.created_by === me ? "owner" : (rolesById[col.id] ?? null)
+        const visible = colRecords
+          .map((col) => ({ col, role: roleOf(col) }))
+          .filter(({ role }) => role !== null || canManageArtifact)
+        const [memberCounts, creatorNames] = await Promise.all([
+          meta.collectionMemberCounts(visible.map(({ col }) => col.id)),
+          resolveUserBylines(meta, [...new Set(visible.map(({ col }) => col.created_by))]),
+        ])
+        collectionAccess = visible
+          .filter(
+            ({ col }) =>
+              col.workspace_access === "member" ||
+              col.created_by !== me ||
+              (memberCounts[col.id] ?? 0) >= 2,
+          )
+          .map(({ col, role }) => ({
+            id: col.id,
+            title: col.title,
+            workspace_access: col.workspace_access,
+            my_role: role,
+            member_count: memberCounts[col.id] ?? 0,
+            created_by: col.created_by,
+            owner_name: creatorNames[col.created_by]?.name ?? null,
+          }))
+      }
       const proposals = await meta.listProposals(artifact.id)
       // A markdown bundle (a skill — entry SKILL.md — or a docs folder) gets a `bundle`
       // block: the entry + file tree (so the client can render the doc and navigate
@@ -948,13 +1015,14 @@ export const artifactRoutes = (ctx: AppContext) => {
           }
         }),
         sessions: groupSessions(versions, versionWindowMs),
-        my_role: effectiveRole(actor, artifact.workspace_access, artifact.link_role),
+        my_role: myRole,
         // The artifact's current workspace — the move dialog needs this to exclude
         // it from the destination picker.
         org_id: artifact.org_id,
         tags,
         favorite,
         collections,
+        collection_access: collectionAccess,
         open_proposals: proposals.filter((p) => p.state === "open").length,
         proposals_total: proposals.filter((p) => p.state !== "withdrawn").length,
         // Present for a markdown bundle (skill or docs folder): { isSkill, name,

@@ -57,6 +57,32 @@ export const VersionSession = z
   })
   .openapi("VersionSession")
 
+/** A collection that grants access to an artifact, as the share dialog discloses it: a
+ *  workspace-open collection reaches every workspace seat at their role; an invite-only
+ *  one reaches its explicit members. The artifact's own access fields never see this
+ *  grant (it folds into the explicit slot — see access-model.md), so the dialog must. */
+export const CollectionGrant = z
+  .object({
+    id: z.string(),
+    title: z.string(),
+    workspace_access: z
+      .enum(["none", "member"])
+      .describe('"member" = every workspace seat opens the artifact at their role.'),
+    my_role: z
+      .enum(["viewer", "commenter", "editor", "owner"])
+      .nullable()
+      .describe("Caller's role on the COLLECTION (owner ⇒ can manage its sharing); null if none."),
+    member_count: z
+      .number()
+      .describe("Explicit collection-member rows (the creator always holds one)."),
+    created_by: z.string().describe("Creator's user id — permanently owner of the collection."),
+    owner_name: z
+      .string()
+      .nullable()
+      .describe('Creator\'s display name for attribution ("Managed by …"); null when unknown.'),
+  })
+  .openapi("CollectionGrant")
+
 /** The artifact view-model — the largest, most-composed shape in the client. Built by
  *  core's toJson() plus per-request enrichment (roles, counts, tags, threads). Returned
  *  by the artifacts router AND session's /users/:handle/artifacts, so it's shared here.
@@ -170,6 +196,16 @@ export const Artifact = z
       .array(z.string())
       .optional()
       .describe("Ids of the collections that include this artifact."),
+    collection_access: z
+      .array(CollectionGrant)
+      .optional()
+      .describe(
+        "Collections whose sharing ADDS reach to this artifact — the share dialog's " +
+          "disclosure rows, renderable verbatim (the caller's own solo invite-only " +
+          "collection is already excluded). Detail responses only; scoped to collections " +
+          "the caller can see, except the artifact's managers (explicit or seat standing " +
+          "— never mere link-holders), who see every granting collection.",
+      ),
     removed: z
       .boolean()
       .optional()

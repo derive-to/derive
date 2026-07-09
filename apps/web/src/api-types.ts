@@ -4834,6 +4834,8 @@ export interface components {
             i_participated?: boolean;
             /** @description Ids of the collections that include this artifact. */
             collections?: string[];
+            /** @description Collections whose sharing ADDS reach to this artifact — the share dialog's disclosure rows, renderable verbatim (the caller's own solo invite-only collection is already excluded). Detail responses only; scoped to collections the caller can see, except the artifact's managers (explicit or seat standing — never mere link-holders), who see every granting collection. */
+            collection_access?: components["schemas"]["CollectionGrant"][];
             /** @description true when the artifact has been taken down (tombstone). */
             removed?: boolean;
             /** @description true when mirrored from a GitHub sync — read-only in Derive. */
@@ -4889,6 +4891,26 @@ export interface components {
             name: string | null;
             /** @description Timestamp of the newest version in the group. */
             created_at: string;
+        };
+        CollectionGrant: {
+            id: string;
+            title: string;
+            /**
+             * @description "member" = every workspace seat opens the artifact at their role.
+             * @enum {string}
+             */
+            workspace_access: "none" | "member";
+            /**
+             * @description Caller's role on the COLLECTION (owner ⇒ can manage its sharing); null if none.
+             * @enum {string|null}
+             */
+            my_role: "viewer" | "commenter" | "editor" | "owner" | null;
+            /** @description Explicit collection-member rows (the creator always holds one). */
+            member_count: number;
+            /** @description Creator's user id — permanently owner of the collection. */
+            created_by: string;
+            /** @description Creator's display name for attribution ("Managed by …"); null when unknown. */
+            owner_name: string | null;
         };
         DirUser: {
             /** @description User id, or the agent id when kind is agent. */

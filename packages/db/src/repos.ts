@@ -79,7 +79,7 @@ import type {
   WorkspaceAccess,
   WorkspaceRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG } from "@derive/core"
+import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG, maxRole } from "@derive/core"
 import {
   and,
   asc,
@@ -1436,6 +1436,18 @@ export function makeRepos(db: SqliteDb) {
       .get()) ?? null
   const listCollectionMembers = async (collectionId: string): Promise<CollectionMemberRecord[]> =>
     db.select().from(collectionMember).where(eq(collectionMember.collection_id, collectionId)).all()
+  const collectionMemberCounts = async (
+    collectionIds: string[],
+  ): Promise<Record<string, number>> => {
+    if (collectionIds.length === 0) return {}
+    const rows = await db
+      .select({ id: collectionMember.collection_id, c: count() })
+      .from(collectionMember)
+      .where(inArray(collectionMember.collection_id, collectionIds))
+      .groupBy(collectionMember.collection_id)
+      .all()
+    return Object.fromEntries(rows.map((r) => [r.id, Number(r.c)]))
+  }
   const setCollectionMember = async (m: NewCollectionMember): Promise<CollectionMemberRecord> =>
     (await db
       .insert(collectionMember)
@@ -1483,6 +1495,39 @@ export function makeRepos(db: SqliteDb) {
       )
       .all()
     return [...explicit, ...seat].map((r) => r.role)
+  }
+  const collectionRolesForUser = async (
+    collectionIds: string[],
+    userId: string,
+  ): Promise<Record<string, Role>> => {
+    if (collectionIds.length === 0) return {}
+    // Same two sources as collectionRolesForArtifact, keyed per collection: the
+    // user's explicit member rows, and their SEAT on each workspace-open collection.
+    const explicit = await db
+      .select({ id: collectionMember.collection_id, role: collectionMember.role })
+      .from(collectionMember)
+      .where(
+        and(
+          inArray(collectionMember.collection_id, collectionIds),
+          eq(collectionMember.user_id, userId),
+        ),
+      )
+      .all()
+    const seat = await db
+      .select({ id: collection.id, role: membership.role })
+      .from(collection)
+      .innerJoin(membership, eq(membership.org_id, collection.org_id))
+      .where(
+        and(
+          inArray(collection.id, collectionIds),
+          eq(collection.workspace_access, "member"),
+          eq(membership.user_id, userId),
+        ),
+      )
+      .all()
+    const out: Record<string, Role> = {}
+    for (const r of [...explicit, ...seat]) out[r.id] = maxRole(out[r.id] ?? null, r.role) as Role
+    return out
   }
 
   // ---- GitHub sync sources -----------------------------------------------
@@ -2463,6 +2508,8 @@ export function makeRepos(db: SqliteDb) {
     setCollectionMember,
     removeCollectionMember,
     collectionRolesForArtifact,
+    collectionRolesForUser,
+    collectionMemberCounts,
     createRepoSource,
     getRepoSource,
     listRepoSources,

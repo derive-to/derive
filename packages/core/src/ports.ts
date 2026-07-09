@@ -474,6 +474,16 @@ export interface CollectionStore {
   removeCollectionItem(collectionId: string, artifactId: string): Promise<void>
   getCollectionMember(collectionId: string, userId: string): Promise<CollectionMemberRecord | null>
   listCollectionMembers(collectionId: string): Promise<CollectionMemberRecord[]>
+  /** Explicit member-row counts for a set of collections in ONE query (id ∈ ids);
+   *  ids with no member rows are absent from the map. Empty ids ⇒ {}. Drives the
+   *  share dialog's collection-disclosure rows ("n collection members"). */
+  collectionMemberCounts(collectionIds: string[]): Promise<Record<string, number>>
+  /** One user's role per collection over a set of collections, in TWO queries
+   *  (explicit member rows + the workspace seat on workspace-open collections,
+   *  higher wins) — the batched face of context.ts's collectionRole for the
+   *  artifact detail's disclosure rows. The caller still folds in created_by
+   *  (permanent owner) and the static token. Ids with no role are absent. */
+  collectionRolesForUser(collectionIds: string[], userId: string): Promise<Record<string, Role>>
   setCollectionMember(m: NewCollectionMember): Promise<CollectionMemberRecord>
   removeCollectionMember(collectionId: string, userId: string): Promise<void>
   /** This user's collection-member roles over collections containing the

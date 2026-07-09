@@ -601,6 +601,7 @@ export function Artifact() {
               favorite={!!art.favorite}
               tags={art.tags ?? []}
               collections={art.collections ?? []}
+              collectionAccess={art.collection_access ?? []}
               canEditTags={art.my_role === "editor" || art.my_role === "owner"}
               openProposals={art.open_proposals ?? 0}
               proposalsTotal={art.proposals_total ?? 0}
@@ -634,6 +635,9 @@ export function Artifact() {
                 qc.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, tags } : a))
               }
               onCollections={(collections) =>
+                // Pure cache write — CollectionsDialog calls this during its OPTIMISTIC
+                // phase, so no refetch here (it would race the in-flight write); the
+                // dialog itself reconciles collection_access on settle.
                 qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
                   a ? { ...a, collections } : a,
                 )

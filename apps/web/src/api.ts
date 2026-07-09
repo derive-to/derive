@@ -52,6 +52,9 @@ export type Report = components["schemas"]["Report"]
  *  (kind = manual / repo / pr). Generated from the OpenAPI spec (apps/api/openapi.json)
  *  — a backend shape change surfaces here at `tsc`. */
 export type Collection = components["schemas"]["Collection"]
+/** A collection whose sharing reaches an artifact (workspace-open, or invite-only with
+ *  members) — the share dialog's disclosure rows. Generated from the OpenAPI spec. */
+export type CollectionGrant = components["schemas"]["CollectionGrant"]
 /** A per-user follow: a GitHub author (kind="author", target=login), a repo path
  *  prefix (kind="path", target=path prefix), or a person (kind="user", target=username
  *  on the wire). Drives the `scope=following` feed. Generated from the API's OpenAPI

@@ -33,9 +33,17 @@ const SEGMENTS: { value: Segment; label: string; icon: IconName }[] = [
 export function ShareCollectionDialog({
   collection,
   onClose,
+  onChanged,
 }: {
-  collection: Collection
+  /** Narrowed to the fields this dialog reads, so both callers fit: the library
+   *  passes a full Collection; the artifact share dialog passes a CollectionGrant
+   *  (its disclosure row's Manage action — see share-dialog.tsx). */
+  collection: Pick<Collection, "id" | "title" | "created_by" | "workspace_access" | "my_role">
   onClose: () => void
+  /** Fired each time a write LANDS (access flip, member add/remove/re-role) — the
+   *  artifact share dialog refetches its disclosure rows from here, never from
+   *  onClose, so an Escape mid-flight can't race the write. */
+  onChanged?: () => void
 }) {
   const [members, setMembers] = useState<ArtifactMember[]>([])
   const [email, setEmail] = useState("")
@@ -46,6 +54,12 @@ export function ShareCollectionDialog({
   // first mutate re-renders. The ref flips synchronously, so only the first gets through.
   const adding = useRef(false)
   const [wsAccess, setWsAccess] = useState<WorkspaceAccess>(collection.workspace_access ?? "member")
+  // Re-seed when the caller hands us a different snapshot of the SAME dialog's
+  // subject — the artifact share dialog's grant refreshes after a write, and a
+  // stale seed here would re-create the exact lie this feature exists to fix.
+  useEffect(() => {
+    setWsAccess(collection.workspace_access ?? "member")
+  }, [collection.workspace_access])
 
   // Unlike an artifact (editors can share — GDocs model), a collection's access
   // and membership routes are owner-only on the backend (same bar as delete —
@@ -75,7 +89,10 @@ export function ShareCollectionDialog({
       setWsAccess(next)
       return () => setWsAccess(prev)
     },
-    onSuccess: (r) => setWsAccess(r.workspace_access),
+    onSuccess: (r) => {
+      setWsAccess(r.workspace_access)
+      onChanged?.()
+    },
   })
   const applyAccess = (next: WorkspaceAccess) => accessMut.mutate(next)
 
@@ -84,6 +101,7 @@ export function ShareCollectionDialog({
     onSuccess: () => {
       setEmail("")
       load()
+      onChanged?.()
     },
   })
   const add = (e: React.FormEvent) => {
@@ -101,7 +119,10 @@ export function ShareCollectionDialog({
 
   const removeMut = useApiMutation({
     mutationFn: (m: ArtifactMember) => api.removeCollectionMember(collection.id, m.user_id),
-    onSuccess: () => load(),
+    onSuccess: () => {
+      load()
+      onChanged?.()
+    },
   })
   const remove = (m: ArtifactMember) => removeMut.mutate(m)
 
@@ -110,7 +131,10 @@ export function ShareCollectionDialog({
     mutationFn: ({ handle, next }: { handle: string; next: Role }) =>
       api.setCollectionMember(collection.id, handle, next),
     success: "Role updated",
-    onSuccess: () => load(),
+    onSuccess: () => {
+      load()
+      onChanged?.()
+    },
   })
   const change = (m: ArtifactMember, next: Role) => {
     if (next === m.role || !m.handle) return
