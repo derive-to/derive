@@ -1335,12 +1335,29 @@ export class PgMetaStore implements MetaStore {
       )
   }
   async collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]> {
-    const rows = await this.db
+    // Explicit collectionMember rows on any collection holding this artifact.
+    const explicit = await this.db
       .select({ role: collectionMember.role })
       .from(collectionMember)
       .innerJoin(collectionItem, eq(collectionItem.collection_id, collectionMember.collection_id))
       .where(and(eq(collectionItem.artifact_id, artifactId), eq(collectionMember.user_id, userId)))
-    return rows.map((r) => r.role)
+    // A workspace-open collection propagates the viewer's SEAT role to every artifact
+    // inside it — "Everyone in the workspace opens this at their role" (the Share
+    // dialog's promise; see access-model.md). Join the artifact's collections to the
+    // viewer's membership in each collection's org, keeping only workspace-open ones.
+    const seat = await this.db
+      .select({ role: membership.role })
+      .from(collectionItem)
+      .innerJoin(collection, eq(collection.id, collectionItem.collection_id))
+      .innerJoin(membership, eq(membership.org_id, collection.org_id))
+      .where(
+        and(
+          eq(collectionItem.artifact_id, artifactId),
+          eq(collection.workspace_access, "member"),
+          eq(membership.user_id, userId),
+        ),
+      )
+    return [...explicit, ...seat].map((r) => r.role)
   }
 
   // ---- GitHub sync sources -----------------------------------------------

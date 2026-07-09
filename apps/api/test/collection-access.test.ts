@@ -126,4 +126,75 @@ describe("a collection's own workspace access", () => {
     // The collection's title doesn't leak to a caller who no longer has a role on it.
     expect(invitedFeed.collection).toBeUndefined()
   })
+
+  // Regression: the phantom-empty collection. The list count is a raw item count, but a
+  // seat-only member (no explicit share) used to get NO role on a PRIVATE artifact inside
+  // a workspace-open collection — so "· 1" rendered an empty body and opening the item
+  // 404'd. Propagation (collectionRolesForArtifact folds the seat) + the feed's
+  // collection-access bypass now let the seat reach every item, so count === contents and
+  // the item actually opens.
+  it("a seat-only member sees and can open a private artifact in a workspace-open collection; count matches", async () => {
+    const col = await create("Eng docs", as(ana.email))
+    // A truly private artifact: no workspace seat on the artifact itself, unlisted, no
+    // link — the ONLY way to reach it is the collection.
+    const priv = await (
+      await publishAs(
+        app,
+        "<p>secret</p>",
+        { title: "Secret", workspace_access: "none", listed: "none", link_role: "none" },
+        as(ana.email),
+      )
+    ).json()
+    await app.request(`/v1/collections/${col.id}/items/${priv.short_id}`, {
+      method: "PUT",
+      headers: as(ana.email),
+    })
+
+    // Ben has an editor SEAT but no explicit collection share and no artifact share. The
+    // count he sees…
+    const listForBen = await (
+      await app.request("/v1/collections", { headers: as(ben.email) })
+    ).json()
+    expect(listForBen.collections.find((c: { id: string }) => c.id === col.id)?.count).toBe(1)
+    // …matches the contents the feed serves him (no phantom-empty)…
+    const feed = await (
+      await app.request(`/v1/artifacts?collection=${col.id}`, { headers: as(ben.email) })
+    ).json()
+    expect(feed.artifacts.map((a: { short_id: string }) => a.short_id)).toEqual([priv.short_id])
+    // …and he can actually OPEN the item, not just see it listed (propagation reaches the
+    // read path too, so no 404).
+    expect(
+      (await app.request(`/v1/artifacts/${priv.short_id}`, { headers: as(ben.email) })).status,
+    ).toBe(200)
+  })
+
+  // The creator is permanently owner via created_by — their roster row is immovable, and
+  // the backend refuses to demote or remove them regardless of who asks (a self-demote,
+  // or another manager trying to unseat them).
+  it("the collection creator's owner role can't be demoted or removed, by anyone", async () => {
+    const col = await create("Ana's collection", as(ana.email))
+    const putMember = (actor: Record<string, string>, user: string, role: string) =>
+      app.request(`/v1/collections/${col.id}/members`, {
+        ...jsonAs(actor, { user, role }),
+        method: "PUT",
+      })
+    const delMember = (actor: Record<string, string>, userId: string) =>
+      app.request(`/v1/collections/${col.id}/members/${userId}`, {
+        method: "DELETE",
+        headers: actor,
+      })
+
+    // The creator can't demote or remove herself.
+    expect((await putMember(as(ana.email), ana.email, "editor")).status).toBe(409)
+    expect((await delMember(as(ana.email), ana.id)).status).toBe(409)
+
+    // Another manager (cara, promoted to owner) can manage the roster but still can't
+    // touch the creator.
+    expect((await putMember(as(ana.email), cara.email, "owner")).status).toBe(201)
+    expect((await putMember(as(cara.email), ana.email, "viewer")).status).toBe(409)
+    expect((await delMember(as(cara.email), ana.id)).status).toBe(409)
+
+    // Ana is still owner throughout.
+    expect((await meta.getCollectionMember(col.id, ana.id))?.role).toBe("owner")
+  })
 })

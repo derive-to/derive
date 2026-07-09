@@ -270,8 +270,14 @@ export const artifactRoutes = (ctx: AppContext) => {
         publicOnly: shared || following ? false : publicOnly,
         // Private artifacts appear only for their explicit members (the publisher's
         // owner row included, so agents and owners always find their own drafts);
-        // the operator token sees everything (viewerId omitted).
-        viewerId: isOperator ? undefined : (memberKey ?? undefined),
+        // the operator token sees everything (viewerId omitted). Collection access is
+        // access to the WHOLE collection — a member/creator/seat-on-a-workspace-open
+        // collection reaches every item in it (matching collectionRolesForArtifact's
+        // propagation), so within a collection scope we drop the per-artifact filter
+        // (the collectionId JOIN already bounds the results). Without this the count
+        // (all items) would outrun the list (only your explicitly-shared items).
+        viewerId:
+          isOperator || (collectionId && collectionAccess) ? undefined : (memberKey ?? undefined),
       })
       const hasMore = rows.length > limit
       const page = hasMore ? rows.slice(0, limit) : rows
