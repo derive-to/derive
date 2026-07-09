@@ -10,7 +10,8 @@
  *
  * The frame has an opaque origin, so everything rides postMessage:
  *   frame → host:  select / anchors-resolved / anchor-rects / scroll / anchor-click /
- *                  anchor-hover / cursor / cursor-tap / cursor-leave / navigate
+ *                  anchor-hover / cursor / cursor-tap / cursor-leave / navigate /
+ *                  open-external / esc
  *   host → frame:  anchors / remeasure / focus-anchor / emphasize / scroll-by
  *
  * Keep it dependency-free apart from `anchor-shared` (which is DOM-free + pure) so it
@@ -293,6 +294,12 @@ interface ElReg {
   window.addEventListener("blur", () => post({ type: "cursor-leave" }))
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) post({ type: "cursor-leave" })
+  })
+  // Escape pressed while keyboard focus is INSIDE the frame (a click into the
+  // document moves it here): the host's window listener can't see it, so forward
+  // it for host-level dismissals (exiting focus mode, cancelling a composer).
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") post({ type: "esc" })
   })
 
   /* -- highlight styles (mark's default yellow is overridden) -- */
@@ -1178,6 +1185,7 @@ interface ElReg {
         return
       }
       navLink(e)
+      extLink(e)
     },
     true,
   )
@@ -1196,10 +1204,40 @@ interface ElReg {
       newTab: !!(e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1),
     })
   }
+  /* Every OTHER link: never navigate the sandboxed frame itself. In-page (#)
+     links and bundle-internal links (same origin, under the /raw/ serving path —
+     a bundle is a whole site; its internal nav belongs in the frame) keep the
+     browser default. Everything else is handed to the host, which SPA-navigates
+     the app's own /artifacts/… URLs and opens the rest in a clean un-sandboxed
+     tab: navigating the frame to a site that refuses framing dead-ends at
+     "refused to connect", and a target=_blank popup from in here would inherit
+     the sandbox. */
+  const extLink = (e: MouseEvent) => {
+    if (e.defaultPrevented) return
+    const a = asEl(e.target)?.closest("a[href]")
+    if (!a || a.hasAttribute("data-derive-nav")) return
+    const href = a.getAttribute("href") || ""
+    if (href.startsWith("#")) return
+    let u: URL
+    try {
+      u = new URL(href, location.href)
+    } catch {
+      return
+    }
+    if (u.origin === location.origin) {
+      if (u.pathname === location.pathname && u.hash) return
+      if (u.pathname.startsWith("/raw/")) return
+    }
+    e.preventDefault()
+    post({ type: "open-external", href: u.href })
+  }
   document.addEventListener(
     "auxclick",
     (e) => {
-      if (e.button === 1) navLink(e)
+      if (e.button === 1) {
+        navLink(e)
+        extLink(e)
+      }
     },
     true,
   )

@@ -35,6 +35,15 @@ export function useArtifactFrame(p: {
   // sibling artifact `ref`. The frame is sandboxed and can't navigate the host, so it
   // hands the click here for an SPA transition (or a new tab on a modified click).
   onNavigate: (ref: string, newTab: boolean) => void
+  /** Escape pressed while keyboard focus was inside the frame — the client
+   *  forwards it because the host's window listener can't see in. Treat it like
+   *  a window Escape (exit focus mode, cancel a composer). */
+  onEsc?: () => void
+  /** A non-bundle link clicked in the frame (absolute URL). The frame never
+   *  navigates itself — the host SPA-routes the app's own /artifacts/… URLs and
+   *  opens anything else in a clean un-sandboxed tab. The href comes from
+   *  untrusted artifact HTML: validate the scheme before acting. */
+  onOpenExternal?: (href: string) => void
 }) {
   const {
     comments,
@@ -46,7 +55,7 @@ export function useArtifactFrame(p: {
     onPointerLeave,
     onTap,
   } = p
-  const { setHoverThread, setActiveThread, setPanel, onNavigate } = p
+  const { setHoverThread, setActiveThread, setPanel, onNavigate, onEsc, onOpenExternal } = p
   const frame = useRef<HTMLIFrameElement>(null)
   const presentWrap = useRef<HTMLDivElement>(null)
   const [frameReady, setFrameReady] = useState(0)
@@ -143,11 +152,25 @@ export function useArtifactFrame(p: {
         onPointerLeave()
       } else if (d.type === "navigate" && typeof d.ref === "string") {
         onNavigate(d.ref, !!d.newTab)
+      } else if (d.type === "open-external" && typeof d.href === "string") {
+        onOpenExternal?.(d.href)
+      } else if (d.type === "esc") {
+        onEsc?.()
       }
     }
     window.addEventListener("message", onMsg)
     return () => window.removeEventListener("message", onMsg)
-  }, [onPointerMove, onPointerLeave, onTap, setHoverThread, setActiveThread, setPanel, onNavigate])
+  }, [
+    onPointerMove,
+    onPointerLeave,
+    onTap,
+    setHoverThread,
+    setActiveThread,
+    setPanel,
+    onNavigate,
+    onEsc,
+    onOpenExternal,
+  ])
 
   // Two-way hover: emphasize the matching highlight in the doc when a comment
   // card is hovered (the inbound anchor-hover sets the same state the other way).

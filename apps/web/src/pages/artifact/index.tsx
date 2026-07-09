@@ -245,6 +245,30 @@ export function Artifact() {
       if (newTab) window.open(`/artifacts/${ref}`, "_blank", "noopener")
       else nav({ to: "/artifacts/$ref", params: { ref } })
     },
+    // Escape typed INTO the sandboxed frame (a click into the doc moves keyboard
+    // focus there, out of the window listeners' reach) — mirror what a window
+    // Escape does on this page: exit focus mode, cancel a parked composer.
+    onEsc: () => {
+      setFocus(false)
+      setComposer(null)
+    },
+    // A non-bundle link clicked inside the frame. The href is untrusted artifact
+    // HTML — allowlist the scheme (a hostile doc could post javascript:). The
+    // app's own /artifacts/… links SPA-navigate (same as data-derive-nav links);
+    // everything else opens a clean tab, never the frame.
+    onOpenExternal: (href) => {
+      let u: URL
+      try {
+        u = new URL(href)
+      } catch {
+        return
+      }
+      if (!["http:", "https:", "mailto:"].includes(u.protocol)) return
+      const m =
+        u.origin === window.location.origin ? u.pathname.match(/^\/artifacts\/([^/]+)$/) : null
+      if (m?.[1]) nav({ to: "/artifacts/$ref", params: { ref: decodeURIComponent(m[1]) } })
+      else window.open(u.href, "_blank", "noopener,noreferrer")
+    },
   })
 
   // Preview vs. line-diff for the shown version, plus the fetched diff. See

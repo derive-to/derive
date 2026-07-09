@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer"
 import {
   activateThread,
   addComment,
@@ -123,6 +124,18 @@ test("focus mode removes the shell entirely and restores it on exit", async ({ p
   await expect(page.getByTestId("artifact-more")).toBeVisible()
 })
 
+test("escape exits focus mode from inside the sandboxed render", async ({ page }) => {
+  await page.getByTestId("artifact-more").click()
+  await page.getByTestId("artifact-focus").click()
+  await expect(page.locator('[data-slot="sidebar"]')).toHaveCount(0)
+
+  // Clicking into the artifact moves keyboard focus INSIDE the iframe, out of the
+  // host's window listeners' reach — the anchor client forwards Escape up.
+  await page.frameLocator("iframe").locator("body").click()
+  await page.keyboard.press("Escape")
+  await expect(page.locator('[data-slot="sidebar"]').first()).toBeVisible()
+})
+
 test("typing c in the source editor never toggles the comments panel", async ({ page }) => {
   // The desktop panel starts open (its empty state shows on a fresh doc).
   const panelEmpty = page.getByText("Start the conversation.")
@@ -135,4 +148,43 @@ test("typing c in the source editor never toggles the comments panel", async ({ 
   await page.locator(".cm-content").click()
   await page.keyboard.type("once section c")
   await expect(panelEmpty).toBeVisible()
+})
+
+test("frame links: artifact links route in-app, everything else opens a new tab", async ({
+  page,
+}) => {
+  // A target doc, plus an HTML doc linking to it by ABSOLUTE app URL (which the
+  // server's relative-link resolver never marks) and to a non-artifact app page.
+  const target = await publishArtifact(page, "target.md", "# Target doc")
+  let linksId = ""
+  await expect(async () => {
+    const res = await page.request.post("/v1/artifacts", {
+      multipart: {
+        file: {
+          name: "links.html",
+          mimeType: "text/html",
+          buffer: Buffer.from(
+            `<a id="art" href="/artifacts/${target}">sibling</a><br><a id="ext" href="/login">elsewhere</a>`,
+          ),
+        },
+        link_role: "viewer",
+      },
+    })
+    expect(res.ok(), `publish failed: ${res.status()}`).toBeTruthy()
+    linksId = ((await res.json()) as { short_id: string }).short_id
+  }).toPass()
+  await openArtifact(page, linksId)
+
+  // The artifact link SPA-navigates the workbench — before, it navigated the
+  // FRAME to the app origin, which refuses framing ("refused to connect").
+  await page.frameLocator("iframe").locator("#art").click()
+  await expect(page).toHaveURL(new RegExp(`/artifacts/.*${target}`))
+
+  // Every other link opens a clean un-sandboxed tab; the frame never navigates.
+  await openArtifact(page, linksId)
+  const [popup] = await Promise.all([
+    page.waitForEvent("popup"),
+    page.frameLocator("iframe").locator("#ext").click(),
+  ])
+  expect(popup.url()).toContain("/login")
 })
