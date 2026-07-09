@@ -74,6 +74,14 @@ const accessSummary = (linkRole: LinkRole, workspaceAccess: WorkspaceAccess): st
   return "Only invited people can open this."
 }
 
+// The access triple + an optional world-link password, applied atomically by setAccess.
+type AccessDraft = {
+  workspaceAccess: WorkspaceAccess
+  linkRole: LinkRole
+  listed: Listed
+  password?: string
+}
+
 /**
  * Per-artifact sharing, opened from the artifact header. Follows the Google Docs
  * model: the Share button is ALWAYS visible. Owners and editors can add people by
@@ -103,20 +111,17 @@ export function ShareButton({
   const [members, setMembers] = useState<ArtifactMember[]>([])
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<Role>("editor")
-  const [busy, setBusy] = useState(false)
-  // A ref, not just the `busy` state: state updates are batched/async, so a burst
-  // of synchronous native submit events (Enter held down, or auto-repeating —
-  // see PersonSearchInput's documented submit-fallthrough) can all read the SAME
-  // stale `busy=false` closure before the first call's setBusy(true) re-renders.
-  // The ref flips synchronously, so only the first of a burst gets through.
+  // A ref, not just the add mutation's async `isPending`: state updates are batched, so a
+  // burst of synchronous native submit events (Enter held down, or auto-repeating — see
+  // PersonSearchInput's documented submit-fallthrough) can all read the SAME stale pending
+  // closure before the first mutate re-renders. The ref flips synchronously, so only the
+  // first of a burst gets through.
   const adding = useRef(false)
-  const [err, setErr] = useState<string | null>(null)
   // Access draft: the three fields, plus the lock (password) state for the world link.
   const [wsAccess, setWsAccess] = useState<WorkspaceAccess>(workspaceAccess ?? "member")
   const [lRole, setLRole] = useState<LinkRole>(linkRole ?? "none")
   const [lst, setLst] = useState<Listed>(listed ?? "none")
   const [pw, setPw] = useState("")
-  const [savingVis, setSavingVis] = useState(false)
   // The lock as the server knows it, kept locally current as we set/clear it.
   const [hasLock, setHasLock] = useState(passwordProtected)
   // The checkbox is checked before a password exists (the input is showing) —
@@ -190,24 +195,28 @@ export function ShareButton({
   // Everything applies the moment it's picked — a Save button between a select and
   // its effect is friction with no safety benefit. The lock is the one exception:
   // checking the box reveals the input, and nothing applies until Set password.
-  const applyAccess = async (next: {
-    workspaceAccess: WorkspaceAccess
-    linkRole: LinkRole
-    listed: Listed
-    password?: string
-  }) => {
-    setSavingVis(true)
-    setErr(null)
-    // Optimistically mirror the intent so the controls don't flash the old state.
-    setWsAccess(next.workspaceAccess)
-    setLRole(next.linkRole)
-    setLst(next.listed)
-    if (next.linkRole === "none") {
-      setHasLock(false)
-      setLockDraft(false)
-    }
-    try {
-      const r = await api.setAccess(shortId, next)
+  // Optimistic so the controls don't flash the old state; the primitive rolls back the
+  // draft AND toasts on failure (converged with ShareCollectionDialog — no more inline err).
+  const accessMut = useApiMutation({
+    mutationFn: (next: AccessDraft) => api.setAccess(shortId, next),
+    optimistic: (next) => {
+      const prev = { wsAccess, lRole, lst, hasLock, lockDraft }
+      setWsAccess(next.workspaceAccess)
+      setLRole(next.linkRole)
+      setLst(next.listed)
+      if (next.linkRole === "none") {
+        setHasLock(false)
+        setLockDraft(false)
+      }
+      return () => {
+        setWsAccess(prev.wsAccess)
+        setLRole(prev.lRole)
+        setLst(prev.lst)
+        setHasLock(prev.hasLock)
+        setLockDraft(prev.lockDraft)
+      }
+    },
+    onSuccess: (r) => {
       setWsAccess(r.workspace_access)
       setLRole(r.link_role)
       setLst(r.listed)
@@ -215,19 +224,11 @@ export function ShareButton({
       setLockDraft(false)
       setPw("")
       setPwOpen(false)
-      // Refresh the artifact (drives the toolbar glyph) and the library.
-      qc.invalidateQueries({ queryKey: artifactQuery(shortId).queryKey })
-      qc.invalidateQueries({ queryKey: ["artifacts"] })
-    } catch (x) {
-      setErr(x instanceof Error ? x.message : "Couldn't update access")
-      // The controls reflect the server again, not the failed intent.
-      setWsAccess(workspaceAccess ?? "member")
-      setLRole(linkRole ?? "none")
-      setLst(listed ?? "none")
-    } finally {
-      setSavingVis(false)
-    }
-  }
+    },
+    // Refresh the artifact (drives the toolbar glyph) and the library.
+    invalidate: [artifactQuery(shortId).queryKey, ["artifacts"]],
+  })
+  const applyAccess = (next: AccessDraft) => accessMut.mutate(next)
   // Picking a segment sets its fields at the safe default: a fresh segment starts
   // UNLISTED (the switch is how you opt into a feed), the world link at view.
   const pickSegment = (seg: Segment) => {
@@ -304,24 +305,24 @@ export function ShareButton({
     qc.invalidateQueries({ queryKey: ["artifacts"] })
   }
 
-  const add = async (e: React.FormEvent) => {
+  const addMut = useApiMutation({
+    mutationFn: (addr: string) => api.setMember(shortId, addr, role),
+    onSuccess: () => {
+      setEmail("")
+      synced()
+    },
+  })
+  const add = (e: React.FormEvent) => {
     e.preventDefault()
     if (adding.current) return
     const addr = email.trim()
     if (!addr) return
     adding.current = true
-    setBusy(true)
-    setErr(null)
-    try {
-      await api.setMember(shortId, addr, role)
-      setEmail("")
-      await synced()
-    } catch (x) {
-      setErr(x instanceof Error ? x.message : "Could not share")
-    } finally {
-      adding.current = false
-      setBusy(false)
-    }
+    addMut.mutate(addr, {
+      onSettled: () => {
+        adding.current = false
+      },
+    })
   }
   // Role change / removal — a failed one surfaces via the global safety net; the member
   // list + shared caches reconcile on success.
@@ -380,7 +381,6 @@ export function ShareButton({
     <Dialog
       onOpenChange={(o) => {
         if (o) {
-          setErr(null)
           setWsAccess(workspaceAccess ?? "member")
           setLRole(linkRole ?? "none")
           setLst(listed ?? "none")
@@ -420,7 +420,7 @@ export function ShareButton({
 
         <div className="flex flex-col gap-6">
           <div>
-            <SectionEyebrow action={savingVis && <Spinner className="size-3" />}>
+            <SectionEyebrow action={accessMut.isPending && <Spinner className="size-3" />}>
               Who can open this
             </SectionEyebrow>
             {canManage ? (
@@ -431,7 +431,7 @@ export function ShareButton({
                   segments={SEGMENTS}
                   value={segment}
                   onChange={pickSegment}
-                  disabled={savingVis}
+                  disabled={accessMut.isPending}
                   testId="share-access"
                 />
 
@@ -458,7 +458,7 @@ export function ShareButton({
                       </div>
                       <Switch
                         checked={isListed}
-                        disabled={savingVis}
+                        disabled={accessMut.isPending}
                         aria-label="Show in the workspace library"
                         data-testid="share-listed"
                         onCheckedChange={toggleListed}
@@ -479,7 +479,7 @@ export function ShareButton({
                         <SelectMenuTrigger
                           aria-label="What the link grants"
                           data-testid="share-link-role"
-                          disabled={savingVis}
+                          disabled={accessMut.isPending}
                           className="bg-card"
                         >
                           {LINK_ROLE_LABEL[roleValue]}
@@ -508,7 +508,7 @@ export function ShareButton({
                       </div>
                       <Switch
                         checked={isListed}
-                        disabled={savingVis}
+                        disabled={accessMut.isPending}
                         aria-label="List in the public directory"
                         data-testid="share-listed"
                         onCheckedChange={toggleListed}
@@ -520,7 +520,7 @@ export function ShareButton({
                     <label className="mt-3 flex items-center gap-2 text-sm text-foreground">
                       <Checkbox
                         checked={hasLock || lockDraft}
-                        disabled={savingVis}
+                        disabled={accessMut.isPending}
                         aria-label="Require a password"
                         data-testid="share-lock-toggle"
                         onCheckedChange={(v) => toggleLock(v === true)}
@@ -546,10 +546,10 @@ export function ShareButton({
                           variant="secondary"
                           size="sm"
                           disabled={!pw}
-                          loading={savingVis}
+                          loading={accessMut.isPending}
                           onClick={() => setPassword(pw)}
                         >
-                          {savingVis ? "Setting…" : "Set password"}
+                          {accessMut.isPending ? "Setting…" : "Set password"}
                         </Button>
                       </div>
                     )}
@@ -697,9 +697,9 @@ export function ShareButton({
                     variant="default"
                     size="sm"
                     type="submit"
-                    loading={busy}
+                    loading={addMut.isPending}
                   >
-                    {busy ? "Adding…" : "Add"}
+                    {addMut.isPending ? "Adding…" : "Add"}
                   </Button>
                 </form>
               ) : (
@@ -710,11 +710,6 @@ export function ShareButton({
                   <Icon name="lock" />
                   View only · ask an owner or editor to change access.
                 </div>
-              )}
-              {err && (
-                <p data-testid="share-error" role="alert" className="text-sm text-destructive">
-                  {err}
-                </p>
               )}
             </div>
           </div>

@@ -26,8 +26,8 @@ export const retryQuery = (failureCount: number, err: unknown): boolean =>
   failureCount < 3 && isTransient(err)
 
 // Mutation meta the app understands. `errorToast: false` opts a single mutation OUT
-// of the global error toast — for the few sites that render the failure inline (the
-// login form, the share-access panel) from `mutation.error` instead of a toast.
+// of the global error toast — for the few sites that render the failure inline (e.g. the
+// login form) from `mutation.error` instead of a toast.
 // Augmenting react-query's Register makes `meta` typed everywhere a mutation is
 // declared, so a typo like `errorTost` is a compile error, not a silent no-op.
 export type AppMutationMeta = { errorToast?: boolean }
