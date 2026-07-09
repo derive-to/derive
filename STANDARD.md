@@ -42,6 +42,8 @@ compatible client. Messages are tagged with a `source` field.
 | `select` | `{ selector }` | user selected text; `selector` is a `TextQuoteSelector` (`{type, exact, prefix, suffix}`) or `null` when the selection cleared |
 | `anchors-resolved` | `{ resolved: { [id]: boolean } }` | which anchor ids were found in the current document |
 | `anchor-click` | `{ id }` | user clicked a painted highlight |
+| `open-external` | `{ href }` | a link that must not navigate the frame (anything but an in-page `#` or a same-origin `/raw/…` bundle page); the host validates the scheme, routes its own `/artifacts/…` in-app, and opens the rest in a new tab |
+| `esc` | — | Escape pressed while focus was inside the frame; the host applies its own dismissals (e.g. exiting focus mode) |
 
 ### Host → artifact frame (`source: "derive-host"`)
 
