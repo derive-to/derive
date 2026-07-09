@@ -2,12 +2,7 @@
  * Core owns the ports; packages/db and packages/storage provide the adapters.
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
  */
-import type { GeneralRole, LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
-
-/** @deprecated orphaned column vocabulary — the access model is `workspace_access`
- *  × `link_role` × `listed` (see access-model.md). Kept only to type the `visibility`
- *  DB column (backfilled once, read by nothing). */
-export type Visibility = "public" | "org" | "private"
+import type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
 
 export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
@@ -43,11 +38,6 @@ export interface ArtifactRecord {
   listed: Listed
   /** Salted hash of the unlock password locking the world link; null otherwise. */
   password_hash: string | null
-  /** @deprecated orphaned column, backfilled once into `workspace_access`+`listed`.
-   *  Kept only so this Record matches the drizzle table (parity.ts). Read by nothing. */
-  visibility: Visibility
-  /** @deprecated orphaned column, backfilled once into `link_role`. Read by nothing. */
-  general_role: GeneralRole
   kind: ArtifactKind
   spa: 0 | 1
   /** Locked: direct publishes are rejected; changes must go through a proposal. */
@@ -849,11 +839,6 @@ export interface ModerationStore {
    *  tables are absent). Pre-feature hand-published work without a GitHub identity has no
    *  recoverable author and is left null. */
   backfillAuthorIds(): Promise<number>
-  /** One-time boot backfill of the access model from the pre-v2 shape (`visibility`
-   *  + `general_role`) into `workspace_access` / `link_role` / `listed`. Idempotent:
-   *  it consumes `visibility` (resets it to the orphaned default), so a second run —
-   *  and every row created after — is a no-op. See docs/plans/access-model.md. */
-  backfillAccess(): Promise<void>
   createAuditLog(a: NewAuditLog): Promise<void>
   /** Moderation history, newest first. One workspace's, or — super-admin, orgId
    *  undefined — the whole instance's. Optionally narrowed to one artifact. */

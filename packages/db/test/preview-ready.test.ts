@@ -16,7 +16,6 @@ describe("previewReady", () => {
       org_id: "o1",
       slug: null,
       title: "t",
-      visibility: "public",
       kind: "file",
       spa: 0,
     })
@@ -40,7 +39,6 @@ describe("previewReady", () => {
       org_id: "o1",
       slug: null,
       title: "t",
-      visibility: "public",
       kind: "file",
       spa: 0,
     })
@@ -64,7 +62,6 @@ describe("previewReady", () => {
       org_id: "o1",
       slug: null,
       title: "t",
-      visibility: "public",
       kind: "file",
       spa: 0,
     })
@@ -98,7 +95,6 @@ describe("previewReady", () => {
       org_id: "o1",
       slug: null,
       title: "t",
-      visibility: "public",
       kind: "file",
       spa: 0,
     })
@@ -108,7 +104,6 @@ describe("previewReady", () => {
       org_id: "o1",
       slug: null,
       title: "t",
-      visibility: "public",
       kind: "file",
       spa: 0,
     })

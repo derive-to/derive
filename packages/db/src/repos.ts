@@ -408,25 +408,6 @@ export function makeRepos(db: SqliteDb) {
       .run()
   }
 
-  // One-time boot backfill from the pre-v2 shape (visibility + general_role) into
-  // the access fields. Idempotent: it CONSUMES `visibility` (resets it to the
-  // orphaned default 'private'), and only touches rows where it's still non-default
-  // — so a second boot, and every row created after (born visibility='private'),
-  // is a no-op. setAccess never writes visibility, so a later access change is
-  // never re-clobbered. See docs/plans/access-model.md.
-  // Self-sufficient: it also folds in the pre-collapse vocabulary (`link`/`password`
-  // → public, `unlisted` → private) so it maps correctly on ANY caller — the hosted
-  // deploy path (apply-pg-schema.ts) runs it without node.ts's separate collapse.
-  const backfillAccess = async (): Promise<void> => {
-    await db.run(sql`UPDATE artifact SET
-      workspace_access = CASE WHEN visibility IN ('org','public','link','password') THEN 'member' ELSE 'none' END,
-      listed = CASE WHEN visibility IN ('public','link','password') THEN 'public' WHEN visibility = 'org' THEN 'workspace' ELSE 'none' END,
-      link_role = CASE WHEN visibility IN ('public','link','password') THEN general_role ELSE 'none' END,
-      visibility = 'private',
-      general_role = 'viewer'
-      WHERE visibility != 'private'`)
-  }
-
   const setLocked = async (artifactId: string, locked: 0 | 1): Promise<void> => {
     await db.update(artifact).set({ locked }).where(eq(artifact.id, artifactId)).run()
   }
@@ -2385,7 +2366,6 @@ export function makeRepos(db: SqliteDb) {
   return {
     createArtifact,
     setAccess,
-    backfillAccess,
     setLocked,
     getByShortId,
     getArtifactById,

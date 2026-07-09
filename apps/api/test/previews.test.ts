@@ -46,7 +46,6 @@ type FakeArtifact = NewArtifact & {
   author_gh_id: string | null
   author_id: string | null
   password_hash: string | null
-  general_role: "viewer"
 }
 
 type FakeVersion = {
@@ -101,7 +100,6 @@ const makeFakes = (): FakeMeta => {
         author_gh_id: null,
         author_id: null,
         password_hash: null,
-        general_role: "viewer" as const,
       }
       artifacts.set(a.id, rec)
       return rec
@@ -214,7 +212,6 @@ const seedArtifact = async (
     author_gh_id: null,
     author_id: null,
     password_hash: null,
-    general_role: "viewer",
   }
   fakes.artifacts.set(id, art)
 

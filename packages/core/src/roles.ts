@@ -33,8 +33,3 @@ export type WorkspaceAccess = "none" | "member"
  *  (nowhere), `workspace` (the workspace library), `public` (the public directory).
  *  Listing preconditions live at the write path, not here. */
 export type Listed = "none" | "workspace" | "public"
-
-/** @deprecated retired by the v2 access model; kept only to type the orphaned
- *  `general_role` DB column (expand/contract — the column stays, backfilled once
- *  into `link_role`, read by nothing). */
-export type GeneralRole = "viewer" | "commenter"

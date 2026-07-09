@@ -1842,24 +1842,6 @@ export class PgMetaStore implements MetaStore {
       return []
     }
   }
-  // One-time access backfill from the pre-v2 shape (see repos.ts backfillAccess for
-  // the idempotency argument — it consumes `visibility`, so it re-runs to a no-op).
-  // Self-sufficient: folds in the pre-collapse vocabulary (`link`/`password` → public,
-  // `unlisted` → private) so the hosted deploy path (apply-pg-schema.ts) maps correctly
-  // without node.ts's separate collapse. Errors propagate — the DDL runs first (the
-  // columns always exist), so a failure here is real and must fail the deploy loudly,
-  // not silently ship the Worker against un-backfilled data.
-  async backfillAccess(): Promise<void> {
-    await this.pool.query(
-      `UPDATE "artifact" SET
-         workspace_access = CASE WHEN visibility IN ('org','public','link','password') THEN 'member' ELSE 'none' END,
-         listed = CASE WHEN visibility IN ('public','link','password') THEN 'public' WHEN visibility = 'org' THEN 'workspace' ELSE 'none' END,
-         link_role = CASE WHEN visibility IN ('public','link','password') THEN general_role ELSE 'none' END,
-         visibility = 'private',
-         general_role = 'viewer'
-       WHERE visibility != 'private'`,
-    )
-  }
   // Idempotent backfill (see sqlite.ts) — stamp author_id from a known author_gh_id→user mapping.
   async backfillAuthorIds(): Promise<number> {
     try {

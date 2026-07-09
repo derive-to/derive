@@ -8,7 +8,6 @@ import type {
   DomainKind,
   DomainStatus,
   FollowKind,
-  GeneralRole,
   LinkRole,
   Listed,
   NotificationKind,
@@ -20,7 +19,6 @@ import type {
   Role,
   SessionMessageAuthor,
   SessionState,
-  Visibility,
   WebhookKind,
   WorkspaceAccess,
 } from "@derive/core"
@@ -45,9 +43,6 @@ export const artifact = pgTable("artifact", {
   link_role: text("link_role").$type<LinkRole>().notNull().default("none"),
   listed: text("listed").$type<Listed>().notNull().default("none"),
   password_hash: text("password_hash"),
-  // Orphaned, backfilled once into the fields above; read by nothing (mirrors schema.ts).
-  visibility: text("visibility").$type<Visibility>().notNull().default("private"),
-  general_role: text("general_role").$type<GeneralRole>().notNull().default("viewer"),
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
   locked: integer("locked").$type<0 | 1>().notNull().default(0),

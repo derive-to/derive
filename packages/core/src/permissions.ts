@@ -3,7 +3,7 @@ import type { LinkRole, Role, WorkspaceAccess } from "./roles"
 // The access vocabulary lives in ./roles (a leaf) so ./ports and this module can
 // both use it without forming an import cycle. Re-exported here so the long-standing
 // `@derive/core` surface stays unchanged (roles is not itself in the index barrel).
-export type { GeneralRole, LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
+export type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
 
 /** What an actor wants to do. Kept coarse on purpose; `can()` is the only gate. */
 export type Action = "read" | "comment" | "propose" | "publish" | "approve" | "share" | "manage"

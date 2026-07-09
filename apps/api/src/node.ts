@@ -181,16 +181,10 @@ if (defaultOrg !== "local") {
   }
 }
 
-// One-time backfill of the v2 access model (see docs/plans/access-model.md): maps
-// the pre-v2 `visibility` onto the three single-purpose fields — org/public gain
-// workspace_access=member + their listing, a public row's live link is restored at
-// its legacy general_role. Self-contained: it folds the pre-3-value vocabulary
-// (link/password → public, unlisted → private) into its own CASE, so there's no
-// separate collapse pass to sequence. It CONSUMES visibility (resets it to 'private')
-// so the `WHERE visibility != 'private'` guard makes re-runs a no-op and setAccess
-// (which never writes visibility) is never re-clobbered. The hosted deploy applies
-// the same call after DDL (apply-pg-schema.ts) — migrations run wherever schema does.
-await meta.backfillAccess()
+// (The one-time pre-v2 → v2 access backfill used to run here. Retired with the
+// v1 `visibility`/`general_role` columns — a database upgrading straight from a
+// pre-v2 build runs deploy/drop-v1-access.sql, which folds the old values into
+// the access fields before dropping them.)
 
 // Blobs: S3/R2 when OBJECT_STORE_URL is set, else local disk (zero-config).
 const blobs: BlobStore = cfg.objectStoreUrl

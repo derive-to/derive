@@ -8,7 +8,6 @@ import type {
   DomainKind,
   DomainStatus,
   FollowKind,
-  GeneralRole,
   LinkRole,
   Listed,
   NotificationKind,
@@ -20,7 +19,6 @@ import type {
   Role,
   SessionMessageAuthor,
   SessionState,
-  Visibility,
   WebhookKind,
   WorkspaceAccess,
 } from "@derive/core"
@@ -58,12 +56,9 @@ export const artifact = sqliteTable("artifact", {
   // Locks the world link on a public-directory doc until unlocked; members and
   // explicit shares never need it.
   password_hash: text("password_hash"),
-  // ── Orphaned columns (expand/contract — CONTRIBUTING.md). Backfilled ONCE at
-  // boot into the access fields above (backfillAccess consumes `visibility`, so
-  // it re-runs to a no-op), then read by nothing. Kept so existing rows + the DDL
-  // stay consistent and ArtifactRecord's shape matches this table (see ./parity).
-  visibility: text("visibility").$type<Visibility>().notNull().default("private"),
-  general_role: text("general_role").$type<GeneralRole>().notNull().default("viewer"),
+  // (The v1 `visibility`/`general_role` columns were backfilled into the fields
+  // above and removed from this definition; existing databases drop them with
+  // deploy/drop-v1-access.sql — new ones never create them.)
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
   // When locked, direct publishes are rejected — changes must go through the
@@ -764,7 +759,7 @@ const ddl = generateDdl(TABLES, getTableConfig, {
 /**
  * Raw DDL run at boot for the self-host SQLite default (zero-config), and used to
  * seed D1 (deploy/d1-schema.sql). Table/index CREATEs come from the drizzle defs;
- * the not-yet-queried placeholder tables (principal/acl/view) and the perf indexes
+ * the not-yet-queried placeholder tables (principal/view) and the perf indexes
  * have no drizzle def and stay explicit (see ./ddl).
  */
 export const SCHEMA_STATEMENTS: string[] = [

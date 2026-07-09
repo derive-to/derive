@@ -1,4 +1,4 @@
-import type { LinkRole, Listed, Role, Visibility, WorkspaceAccess } from "@derive/core"
+import type { LinkRole, Listed, Role, WorkspaceAccess } from "@derive/core"
 import type { Context } from "hono"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
 import type { z } from "zod"
@@ -127,6 +127,11 @@ export const anonName = (seed: string): string => {
 }
 
 export const VISIBILITIES = ["public", "org", "private"] as const
+
+/** Pre-v2 wire vocabulary, still accepted on the publish/access params below
+ *  (legacyAccessOf) so old clients keep working. Purely a request-body dialect —
+ *  the v1 DB columns it once named are gone. */
+type Visibility = (typeof VISIBILITIES)[number]
 
 /** Pre-collapse visibility vocabulary, mapped so old clients (a pinned CLI, a
  *  self-hosted stdio MCP, saved derive.json files) keep publishing without an
