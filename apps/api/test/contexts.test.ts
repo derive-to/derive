@@ -372,6 +372,62 @@ describe("sessions: the ask → answer → follow-up loop", () => {
   })
 })
 
+// Revoking ask-access closes an IN-FLIGHT session too: a member who opened a
+// session and is then removed from the workspace can neither read it nor keep
+// asking — otherwise the session would be a standing query window that outlives
+// their membership (the exact "never outside the workspace" invariant).
+describe("sessions: revoking ask-access cuts off an existing session", () => {
+  const owner: TestUser = { id: "u_rv_own", email: "rvown@derive.test", name: "Owner" }
+  const daniel: TestUser = { id: "u_rv_dan", email: "rvdan@derive.test", name: "Daniel" }
+  const { app, meta } = makeAuthedApp("contexts-revoke", [owner, daniel], "commenter")
+
+  it("a removed member can't read or follow up on their own open session", async () => {
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(daniel.email) })
+    const ag = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Analyst", role: "editor" }))
+    ).json()
+    const manifest = (await (await publishAs(app, "# m", {}, as(owner.email))).json()).short_id
+    const ctx = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "Analytics",
+          agent_id: ag.id,
+          manifest_short_id: manifest,
+        }),
+      )
+    ).json()
+
+    // Daniel (a member, default workspace policy) opens a session.
+    const asked = await app.request(
+      `/v1/contexts/${ctx.id}/sessions`,
+      jsonAs(as(daniel.email), { body_md: "churn?" }),
+    )
+    expect(asked.status).toBe(201)
+    const sid = (await asked.json()).session.id
+    // He can read it while he's a member.
+    expect((await app.request(`/v1/sessions/${sid}`, { headers: as(daniel.email) })).status).toBe(
+      200,
+    )
+
+    // Remove Daniel from the workspace → his in-flight session goes dark.
+    await meta.removeMembership("default", daniel.id)
+    expect((await app.request(`/v1/sessions/${sid}`, { headers: as(daniel.email) })).status).toBe(
+      404,
+    )
+    const followUp = await app.request(
+      `/v1/sessions/${sid}/messages`,
+      jsonAs(as(daniel.email), { body_md: "one more query" }),
+    )
+    expect(followUp.status).toBe(404)
+    // The owner still sees it (they manage the context).
+    expect((await app.request(`/v1/sessions/${sid}`, { headers: as(owner.email) })).status).toBe(
+      200,
+    )
+  })
+})
+
 describe("runner liveness: the queue poll stamps runner_seen_at, throttled", () => {
   const owner: TestUser = { id: "u_rl_own", email: "rlown@derive.test", name: "Owner" }
   const { app, meta } = makeAuthedApp("contexts-liveness", [owner])

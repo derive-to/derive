@@ -603,8 +603,16 @@ export const contextRoutes = (ctx: AppContext) => {
       if (me instanceof Response) return bail(me)
       const s = await meta.getSession(c.req.param("id"))
       const linked = s ? await contextOf(s) : null
-      if (!s || !linked || (s.asker_id !== me.id && linked.context.created_by !== me.id))
-        return bail(fail(c, 404, "not found"))
+      // The owner always sees their context's sessions; the asker sees their own
+      // ONLY while they can still ask — losing ask-access (removed from the
+      // workspace/roster, or a tightened policy) closes the window, so a former
+      // member can't keep reading the data answers a context delivered.
+      const allowed =
+        !!s &&
+        !!linked &&
+        (linked.context.created_by === me.id ||
+          (s.asker_id === me.id && (await canAskContext(c, linked.context))))
+      if (!s || !linked || !allowed) return bail(fail(c, 404, "not found"))
       const messages = await meta.listSessionMessages(s.id)
       return c.json({
         session: sessionJson(s),
@@ -689,7 +697,12 @@ export const contextRoutes = (ctx: AppContext) => {
 
       const me = await currentUser(c)
       if (!me) return bail(fail(c, 401, "unauthenticated"))
-      if (s.asker_id !== me.id) return bail(fail(c, 404, "not found"))
+      // Re-gate on ask-access, not just session ownership: a follow-up re-opens
+      // the session and the runner answers it (a fresh query against the data).
+      // A member removed from the workspace/roster after opening a session must
+      // not keep querying through it — canAskContext re-checks membership + policy.
+      if (s.asker_id !== me.id || !(await canAskContext(c, linked.context)))
+        return bail(fail(c, 404, "not found"))
       const gone = closed()
       if (gone) return bail(gone)
       const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
