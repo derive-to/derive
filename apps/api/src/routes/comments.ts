@@ -239,7 +239,7 @@ export const commentRoutes = (ctx: AppContext) => {
               quote: quoteOf(created.anchor),
               thread_id: created.thread_id,
             })
-            // DM linked, opted-in teammates who were mentioned (self-gated on link + membership).
+            // DM opted-in teammates who were mentioned (resolved by email at delivery time).
             await enqueueSlackMentionDms(
               { meta, baseUrl: deps.baseUrl },
               artifact,

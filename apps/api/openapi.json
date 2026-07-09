@@ -776,13 +776,6 @@
             "type": "boolean",
             "description": "When true, post events to Slack."
           },
-          "slackEvents": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "boolean"
-            },
-            "description": "Per-event Slack toggles keyed by event name; absent if unset."
-          },
           "defaultWorkspaceAccess": {
             "type": "string",
             "enum": [
@@ -1474,15 +1467,11 @@
           },
           "needs_reauth": {
             "type": "boolean",
-            "description": "Whether the stored bot token needs re-auth (a scope bump or auth error)"
+            "description": "Whether the stored bot token needs a re-auth (an auth error since connecting)"
           },
-          "linked": {
+          "slack_dm": {
             "type": "boolean",
-            "description": "Whether the signed-in user has linked their own Slack account in this workspace"
-          },
-          "mention_dm": {
-            "type": "boolean",
-            "description": "The caller's \"DM me when I'm @mentioned\" preference"
+            "description": "The caller's \"DM me for interrupts\" preference (mentions, review requests, shares)"
           }
         },
         "required": [
@@ -1491,8 +1480,7 @@
           "team_name",
           "default_channel",
           "needs_reauth",
-          "linked",
-          "mention_dm"
+          "slack_dm"
         ]
       },
       "Report": {

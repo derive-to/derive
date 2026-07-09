@@ -14,7 +14,7 @@ import {
   type SlackThreadLinkRecord,
 } from "@derive/core"
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
-import { commentDeepLink, type Mention, parseMeta } from "./comments"
+import { commentDeepLink, parseMeta } from "./comments"
 import { context, section } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
 import { truncate } from "./text"
@@ -102,28 +102,6 @@ export const makeSlackSender =
     }
     return res
   }
-
-/** Resolve `<@U…>` user mentions in a Slack message to the Derive users they're linked to
- *  in this workspace (confirmed links only). Returns Mentions the shared notifier can fan
- *  out — so @mentioning a linked teammate in a Slack thread notifies them in Derive. */
-export const resolveSlackMentions = async (
-  meta: MetaStore,
-  orgId: string,
-  text: string,
-): Promise<Mention[]> => {
-  const seen = new Set<string>()
-  const out: Mention[] = []
-  for (const m of text.matchAll(/<@([A-Z0-9]+)>/g)) {
-    const slackId = m[1]
-    if (!slackId || seen.has(slackId)) continue
-    seen.add(slackId)
-    const link = await meta.getSlackUserLinkBySlackId(orgId, slackId)
-    if (link?.status !== "confirmed") continue
-    const [user] = await meta.getUsers([link.user_id])
-    out.push({ id: link.user_id, name: user?.name ?? user?.username ?? "someone" })
-  }
-  return out
-}
 
 /** Mirror a Slack thread reply into Derive as a comment on the linked thread. Returns the
  *  created comment, or null when it should be skipped (our own bot, or no thread link).

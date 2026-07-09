@@ -76,10 +76,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
         .boolean()
         .describe("When true, add a preview link to the linked GitHub PR."),
       slackPost: z.boolean().describe("When true, post events to Slack."),
-      slackEvents: z
-        .record(z.string(), z.boolean())
-        .optional()
-        .describe("Per-event Slack toggles keyed by event name; absent if unset."),
+      // The access a NEW publish lands with (see access-model.md): the three
+      // single-purpose fields. Factory default is the team draft — member / none / none.
       defaultWorkspaceAccess: z
         .enum(["none", "member"])
         .describe("Access a new publish lands with: none, or member (factory default)."),
@@ -592,7 +590,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
             githubMirrorComments: z.boolean(),
             githubPreviewLink: z.boolean(),
             slackPost: z.boolean(),
-            slackEvents: z.record(z.string(), z.boolean()),
             defaultWorkspaceAccess: z.enum(["none", "member"]),
             defaultLinkRole: z.enum(["none", "viewer", "commenter", "editor"]),
             defaultListed: z.enum(["none", "workspace", "public"]),

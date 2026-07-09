@@ -53,6 +53,7 @@ import {
   toBody,
   workspaceAccessOf,
 } from "../lib/http"
+import { enqueueSlackReviewRequestedDm } from "../lib/slack-dm"
 import { Artifact } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
 
@@ -723,18 +724,32 @@ export const artifactRoutes = (ctx: AppContext) => {
           // The review request is the one event that earns an email: the loop is
           // blocked on the reviewer, who may have no tab open. Never for your own
           // request on yourself (a human publishing with request_review).
-          if (reviewer !== actor?.id && (await meta.getOrgSettings(org)).emailNotifications) {
-            const [r] = await meta.getUsers([reviewer])
-            if (r?.email)
-              await enqueueChannelDelivery(meta, "email", "review.requested", {
-                to: r.email,
-                toName: r.name ?? undefined,
-                ...buildReviewEmail(deps.baseUrl, artifact, {
-                  requestedBy: actor?.name ?? "An agent",
-                  version: version.n,
-                  note: str(body["review_note"]) ?? null,
-                }),
-              })
+          if (reviewer !== actor?.id) {
+            if ((await meta.getOrgSettings(org)).emailNotifications) {
+              const [r] = await meta.getUsers([reviewer])
+              if (r?.email)
+                await enqueueChannelDelivery(meta, "email", "review.requested", {
+                  to: r.email,
+                  toName: r.name ?? undefined,
+                  ...buildReviewEmail(deps.baseUrl, artifact, {
+                    requestedBy: actor?.name ?? "An agent",
+                    version: version.n,
+                    note: str(body["review_note"]) ?? null,
+                  }),
+                })
+            }
+            // Same interrupt, mirrored to Slack (independent of the email gate above —
+            // gated on the reviewer's own Slack-DM preference instead).
+            await enqueueSlackReviewRequestedDm(
+              { meta, baseUrl: deps.baseUrl },
+              artifact,
+              {
+                requestedBy: actor?.name ?? "An agent",
+                version: version.n,
+                note: str(body["review_note"]) ?? null,
+              },
+              reviewer,
+            )
           }
         }
       }

@@ -4833,10 +4833,6 @@ export interface components {
             githubPreviewLink: boolean;
             /** @description When true, post events to Slack. */
             slackPost: boolean;
-            /** @description Per-event Slack toggles keyed by event name; absent if unset. */
-            slackEvents?: {
-                [key: string]: boolean;
-            };
             /**
              * @description Access a new publish lands with: none, or member (factory default).
              * @enum {string}
@@ -5085,12 +5081,10 @@ export interface components {
             team_name: string | null;
             /** @description The channel Derive posts to, or null if unset */
             default_channel: string | null;
-            /** @description Whether the stored bot token needs re-auth (a scope bump or auth error) */
+            /** @description Whether the stored bot token needs a re-auth (an auth error since connecting) */
             needs_reauth: boolean;
-            /** @description Whether the signed-in user has linked their own Slack account in this workspace */
-            linked: boolean;
-            /** @description The caller's "DM me when I'm @mentioned" preference */
-            mention_dm: boolean;
+            /** @description The caller's "DM me for interrupts" preference (mentions, review requests, shares) */
+            slack_dm: boolean;
         };
         Report: {
             id: string;
