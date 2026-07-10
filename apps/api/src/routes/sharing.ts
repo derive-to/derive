@@ -1,20 +1,48 @@
-import { type ArtifactRecord, effectiveRole, isRole, newId, ROLES, type Role } from "@derive/core"
+import {
+  type ArtifactInviteRecord,
+  type ArtifactRecord,
+  can,
+  effectiveRole,
+  isRole,
+  newId,
+  ROLES,
+  type Role,
+} from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { buildShareEmail } from "../lib/email"
+import { mintToken, sha256 } from "../lib/crypto"
+import { buildArtifactInviteEmail, buildShareEmail } from "../lib/email"
 import { bail, fail, readJson } from "../lib/http"
+import {
+  emailMismatch409,
+  INVITE_TTL_MS,
+  inviteJson,
+  isLiveInvite,
+  looksLikeEmail,
+} from "../lib/invite"
 import { resolveUserRef } from "../lib/resolve-user"
 import { enqueueSlackShareDm } from "../lib/slack-dm"
-import { ArtifactMember } from "../schemas"
+import { ArtifactMember, roleEnum } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
 
 /** Per-artifact role overrides (a share). Managing shares requires `share`
  *  (editor+, GDocs model); the share's role beats the caller's workspace baseline.
  *  Members are returned as the shared ArtifactMember shape (generated web type). */
 export const sharingRoutes = (ctx: AppContext) => {
-  const { meta, deps, defaultRole, authorize, actorFor, actingUser, bus } = ctx
+  const {
+    meta,
+    deps,
+    defaultRole,
+    authorize,
+    actorFor,
+    actingUser,
+    requireUser,
+    bus,
+    inviteLimiter,
+    limited,
+  } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   // A sharer can never grant — or remove — a role above their own. An editor (who
@@ -24,6 +52,52 @@ export const sharingRoutes = (ctx: AppContext) => {
   const rank = (r: Role | null): number => (r ? ROLES.indexOf(r) : -1)
   const callerRank = async (c: Context, a: ArtifactRecord): Promise<number> =>
     rank(effectiveRole(await actorFor(c, a), a.workspace_access, a.link_role))
+
+  // ---- Per-artifact invites (share-by-email to someone with no account) ----
+  const ArtifactInvite = z
+    .object({
+      id: z.string(),
+      email: z.string().describe("The invitee's email (share-capable callers only)."),
+      role: roleEnum.describe("The role accepting will grant."),
+      created_at: z.string(),
+      expires_at: z.string().describe("When the invite expires (7-day TTL)."),
+    })
+    .openapi("ArtifactInvite")
+  const ArtifactInvitePreview = z
+    .object({
+      title: z.string().nullable().describe("The artifact's title; null if untitled."),
+      role: roleEnum.describe("The role this invite grants."),
+      email: z.string().describe("The email address the invite was addressed to."),
+      inviter: z.string().nullable().describe("The inviter's display name; null if unknown."),
+    })
+    .openapi("ArtifactInvitePreview")
+  const ShareResult = z
+    .union([
+      z.object({
+        kind: z.literal("member").describe("The person already had an account — shared directly."),
+        member: ArtifactMember,
+      }),
+      z.object({
+        kind: z
+          .literal("invite")
+          .describe("No account with that email — a pending invite was created and emailed."),
+        invite: ArtifactInvite,
+        accept_url: z.string().describe("The link the invitee follows to accept."),
+      }),
+    ])
+    .openapi("ShareResult")
+  // Token → live pending invite + its artifact; null on unknown, spent, expired,
+  // or since-deleted — the preview and accept routes resolve identically.
+  const liveArtifactInvite = async (
+    c: Context,
+  ): Promise<{ inv: ArtifactInviteRecord; artifact: ArtifactRecord } | null> => {
+    const token = c.req.param("token")
+    if (!token) return null
+    const inv = await meta.getArtifactInviteByToken(sha256(token))
+    if (!inv || !isLiveInvite(inv)) return null
+    const artifact = await meta.getArtifactById(inv.artifact_id)
+    return artifact ? { inv, artifact } : null
+  }
 
   app.openapi(
     createRoute({
@@ -44,6 +118,11 @@ export const sharingRoutes = (ctx: AppContext) => {
                 members: z
                   .array(ArtifactMember)
                   .describe("Collaborators with an explicit per-artifact role share."),
+                invites: z
+                  .array(ArtifactInvite)
+                  .describe(
+                    "Pending emailed invites — share-capable callers (editor+) only; empty otherwise (invitee emails stay need-to-know).",
+                  ),
               }),
             },
           },
@@ -67,6 +146,13 @@ export const sharingRoutes = (ctx: AppContext) => {
       const rows = await meta.listArtifactMembers(artifact.id)
       const users = await meta.getUsers(rows.map((r) => r.user_id))
       const byId = new Map(users.map((u) => [u.id, u]))
+      // Pending invites carry EMAILS, so they're need-to-know: only callers who can
+      // themselves share (editor+) see them — a viewer-collaborator gets an empty
+      // list. `can` on the already-resolved actor: authorize() would re-resolve it
+      // (a third time on this route).
+      const invites = can(actor, "share", artifact.workspace_access, artifact.link_role)
+        ? (await meta.listPendingArtifactInvites(artifact.id)).map(inviteJson)
+        : []
       return c.json({
         default_role: defaultRole,
         members: rows.map((r) => ({
@@ -75,6 +161,7 @@ export const sharingRoutes = (ctx: AppContext) => {
           name: byId.get(r.user_id)?.name ?? null,
           role: r.role,
         })),
+        invites,
       })
     },
   )
@@ -84,12 +171,13 @@ export const sharingRoutes = (ctx: AppContext) => {
       method: "put",
       path: "/v1/artifacts/{shortId}/members",
       tags: ["Sharing"],
-      summary: "Share an artifact with a person at a role.",
+      summary: "Share an artifact with a person at a role — or email an invite.",
       request: { params: z.object({ shortId: z.string() }) },
       responses: {
         201: {
-          description: "The added member.",
-          content: { "application/json": { schema: ArtifactMember } },
+          description:
+            "Either the member added directly (existing account), or the pending invite + accept link (unknown email).",
+          content: { "application/json": { schema: ShareResult } },
         },
       },
     }),
@@ -113,9 +201,55 @@ export const sharingRoutes = (ctx: AppContext) => {
       if (b instanceof Response) return bail(b)
       if (rank(b.role) > (await callerRank(c, artifact)))
         return bail(fail(c, 403, "you can't grant a role above your own"))
-      const id = await resolveUserRef(meta, (b.user ?? b.username ?? b.email) as string)
+      const ref = (b.user ?? b.username ?? b.email) as string
+      const id = await resolveUserRef(meta, ref)
       const [user] = id ? await meta.getUsers([id]) : []
-      if (!user) return bail(fail(c, 404, "no Derive user with that username or email"))
+      if (!user) {
+        // No account behind that ref. An email becomes a pending invite — created
+        // here, emailed, redeemed at signup. An unknown @handle stays a plain miss.
+        const email = ref.trim().toLowerCase()
+        if (!looksLikeEmail(email))
+          return bail(fail(c, 404, "no Derive user with that username or email"))
+        // Each invite emails an arbitrary address with the caller's artifact title
+        // in the subject — rate-limited so an account can't run a spam cannon.
+        const rl = await limited(c, inviteLimiter)
+        if (rl) return bail(rl)
+        // A fresh token supersedes any prior pending invite for this (artifact, email).
+        await meta.deletePendingArtifactInvitesFor(artifact.id, email)
+        const token = mintToken("dka")
+        const sharer = await actingUser(c)
+        const invite = await meta.createArtifactInvite({
+          id: newId("ainv"),
+          artifact_id: artifact.id,
+          email,
+          role: b.role,
+          token: sha256(token),
+          invited_by: sharer?.id ?? null,
+          expires_at: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
+        })
+        const acceptUrl = `${deps.baseUrl.replace(/\/$/, "")}/invite/a/${token}`
+        // Best-effort email through the retrying outbox; the returned link is the
+        // fallback the dialog can copy.
+        await enqueueChannelDelivery(
+          meta,
+          "email",
+          "artifact.invite",
+          buildArtifactInviteEmail({
+            to: email,
+            title: artifact.title ?? "an untitled artifact",
+            inviter: sharer?.name ?? null,
+            role: b.role,
+            url: acceptUrl,
+          }),
+        )
+        return c.json(
+          { kind: "invite" as const, invite: inviteJson(invite), accept_url: acceptUrl },
+          201,
+        )
+      }
+      // A direct share supersedes any pending invite for the same person.
+      if (user.email)
+        await meta.deletePendingArtifactInvitesFor(artifact.id, user.email.toLowerCase())
       // An artifact keeps at least one owner-member: downgrading the sole owner
       // would orphan it — on `private` visibility, irrecoverably (workspace role
       // grants nothing there, so no one could share it back open).
@@ -176,7 +310,13 @@ export const sharingRoutes = (ctx: AppContext) => {
       }
       // Echo the public handle, never the email — otherwise sharing by @handle would
       // be a handle→email oracle (resolve anyone's email by sharing an artifact with them).
-      return c.json({ user_id: user.id, handle: user.username, name: user.name, role: b.role }, 201)
+      return c.json(
+        {
+          kind: "member" as const,
+          member: { user_id: user.id, handle: user.username, name: user.name, role: b.role },
+        },
+        201,
+      )
     },
   )
 
@@ -202,6 +342,108 @@ export const sharingRoutes = (ctx: AppContext) => {
         return bail(fail(c, 400, "an artifact keeps at least one owner"))
       await meta.removeArtifactMember(artifact.id, c.req.param("userId"))
       return c.body(null, 204)
+    },
+  )
+
+  // Revoke a pending invite (share-capable callers; can't revoke above your rank —
+  // an editor can't kill an owner-invite, mirroring the member-removal guard).
+  app.openapi(
+    createRoute({
+      method: "delete",
+      path: "/v1/artifacts/{shortId}/invites/{id}",
+      tags: ["Sharing"],
+      summary: "Revoke a pending emailed invite.",
+      request: { params: z.object({ shortId: z.string(), id: z.string() }) },
+      responses: { 204: { description: "The invite was revoked." } },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact) return bail(fail(c, 404, "not found"))
+      if (!(await authorize(c, "share", artifact))) return bail(fail(c, 403, "forbidden"))
+      const target = (await meta.listPendingArtifactInvites(artifact.id)).find(
+        (i) => i.id === c.req.param("id"),
+      )
+      if (target && rank(target.role) > (await callerRank(c, artifact)))
+        return bail(fail(c, 403, "you can't revoke an invite that outranks you"))
+      await meta.deleteArtifactInvite(c.req.param("id"), artifact.id)
+      return c.body(null, 204)
+    },
+  )
+
+  // Preview an invite before accepting — the token IS the secret (possession
+  // authorizes), mirroring the workspace-invite preview.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/artifact-invites/{token}",
+      tags: ["Sharing"],
+      summary: "Preview an artifact invitation (the accept page reads this).",
+      request: { params: z.object({ token: z.string() }) },
+      responses: {
+        200: {
+          description: "The artifact + role the token grants.",
+          content: { "application/json": { schema: ArtifactInvitePreview } },
+        },
+      },
+    }),
+    async (c) => {
+      const live = await liveArtifactInvite(c)
+      if (!live) return bail(fail(c, 404, "this invitation is invalid or has expired"))
+      const { inv, artifact } = live
+      const inviter = inv.invited_by ? (await meta.getUsers([inv.invited_by]))[0] : undefined
+      return c.json({
+        title: artifact.title,
+        role: inv.role,
+        email: inv.email,
+        inviter: inviter?.name ?? null,
+      })
+    },
+  )
+
+  // Accept: the signed-in token holder becomes a per-artifact member at the invite's
+  // role. Same mismatch contract as workspace invites: possession authorizes, but a
+  // different signed-in email must explicitly confirm (409 carries the flow).
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/artifact-invites/{token}/accept",
+      tags: ["Sharing"],
+      summary: "Accept an artifact invitation (the signed-in token holder is shared in).",
+      request: { params: z.object({ token: z.string() }) },
+      responses: {
+        200: {
+          description: "The artifact joined + the granted role.",
+          content: {
+            "application/json": {
+              schema: z.object({ short_id: z.string(), role: roleEnum }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await requireUser(c)
+      if (me instanceof Response) return bail(me)
+      const live = await liveArtifactInvite(c)
+      if (!live) return bail(fail(c, 404, "this invitation is invalid or has expired"))
+      const { inv, artifact } = live
+      const mismatch = await emailMismatch409(c, inv.email, me.email)
+      if (mismatch) return bail(mismatch)
+      // An existing share only ever upgrades — accepting a commenter invite while
+      // already an editor member must not downgrade the real grant.
+      const existing = await meta.getArtifactMember(artifact.id, me.id)
+      const granted = existing && rank(existing.role) >= rank(inv.role) ? existing.role : inv.role
+      if (granted !== existing?.role)
+        await meta.setArtifactMember({
+          id: existing?.id ?? newId("am"),
+          artifact_id: artifact.id,
+          user_id: me.id,
+          role: granted,
+        })
+      await meta.markArtifactInviteAccepted(inv.id)
+      // Any OTHER pending invites for this email on the artifact are now moot.
+      await meta.deletePendingArtifactInvitesFor(artifact.id, inv.email)
+      return c.json({ short_id: artifact.short_id, role: granted })
     },
   )
 

@@ -60,7 +60,7 @@ describe("share by username or email", () => {
     // By @handle.
     const r1 = await put({ user: "@bobby", role: "viewer" }, ann.email)
     expect(r1.status).toBe(201)
-    expect((await r1.json()).user_id).toBe(bob.id)
+    expect((await r1.json()).member.user_id).toBe(bob.id)
 
     // By bare handle (case-insensitive).
     expect((await put({ user: "BOBBY", role: "commenter" }, ann.email)).status).toBe(201)

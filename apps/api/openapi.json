@@ -1089,6 +1089,124 @@
           "size"
         ]
       },
+      "ArtifactInvite": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "description": "The invitee's email (share-capable callers only)."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ],
+            "description": "The role accepting will grant."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "description": "When the invite expires (7-day TTL)."
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role",
+          "created_at",
+          "expires_at"
+        ]
+      },
+      "ShareResult": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "member"
+                ],
+                "description": "The person already had an account — shared directly."
+              },
+              "member": {
+                "$ref": "#/components/schemas/ArtifactMember"
+              }
+            },
+            "required": [
+              "kind",
+              "member"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "invite"
+                ],
+                "description": "No account with that email — a pending invite was created and emailed."
+              },
+              "invite": {
+                "$ref": "#/components/schemas/ArtifactInvite"
+              },
+              "accept_url": {
+                "type": "string",
+                "description": "The link the invitee follows to accept."
+              }
+            },
+            "required": [
+              "kind",
+              "invite",
+              "accept_url"
+            ]
+          }
+        ]
+      },
+      "ArtifactInvitePreview": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "description": "The artifact's title; null if untitled."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ],
+            "description": "The role this invite grants."
+          },
+          "email": {
+            "type": "string",
+            "description": "The email address the invite was addressed to."
+          },
+          "inviter": {
+            "type": "string",
+            "nullable": true,
+            "description": "The inviter's display name; null if unknown."
+          }
+        },
+        "required": [
+          "title",
+          "role",
+          "email",
+          "inviter"
+        ]
+      },
       "Follow": {
         "type": "object",
         "properties": {
@@ -4167,11 +4285,19 @@
                         "$ref": "#/components/schemas/ArtifactMember"
                       },
                       "description": "Collaborators with an explicit per-artifact role share."
+                    },
+                    "invites": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ArtifactInvite"
+                      },
+                      "description": "Pending emailed invites — share-capable callers (editor+) only; empty otherwise (invitee emails stay need-to-know)."
                     }
                   },
                   "required": [
                     "default_role",
-                    "members"
+                    "members",
+                    "invites"
                   ]
                 }
               }
@@ -4183,7 +4309,7 @@
         "tags": [
           "Sharing"
         ],
-        "summary": "Share an artifact with a person at a role.",
+        "summary": "Share an artifact with a person at a role — or email an invite.",
         "parameters": [
           {
             "schema": {
@@ -4196,11 +4322,11 @@
         ],
         "responses": {
           "201": {
-            "description": "The added member.",
+            "description": "Either the member added directly (existing account), or the pending invite + accept link (unknown email).",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ArtifactMember"
+                  "$ref": "#/components/schemas/ShareResult"
                 }
               }
             }
@@ -4235,6 +4361,115 @@
         "responses": {
           "204": {
             "description": "The collaborator was removed."
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/invites/{id}": {
+      "delete": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Revoke a pending emailed invite.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The invite was revoked."
+          }
+        }
+      }
+    },
+    "/v1/artifact-invites/{token}": {
+      "get": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Preview an artifact invitation (the accept page reads this).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "token",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact + role the token grants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactInvitePreview"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifact-invites/{token}/accept": {
+      "post": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Accept an artifact invitation (the signed-in token holder is shared in).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "token",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact joined + the granted role.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "short_id": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "viewer",
+                        "commenter",
+                        "editor",
+                        "owner"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "short_id",
+                    "role"
+                  ]
+                }
+              }
+            }
           }
         }
       }

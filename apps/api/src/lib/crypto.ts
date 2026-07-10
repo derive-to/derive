@@ -4,10 +4,16 @@ import {
   createHash,
   createHmac,
   randomBytes,
+  randomUUID,
   timingSafeEqual,
 } from "node:crypto"
 
 export const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex")
+
+/** A bearer token: `<prefix>_` + 256 bits from two UUIDs. Stored only as its
+ *  sha256; the raw value rides the one link or response that delivers it. */
+export const mintToken = (prefix: string): string =>
+  `${prefix}_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
 
 // --- signed, expiring state tokens -----------------------------------------
 // A tamper-proof `state` we hand to GitHub at the start of the App install flow

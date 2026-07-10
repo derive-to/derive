@@ -80,8 +80,11 @@ describe("read-path exposure hardening", () => {
     })
     expect(res.status).toBe(201)
     const body = await res.json()
-    expect(body).not.toHaveProperty("email")
-    expect(body.role).toBe("viewer")
+    // The direct-share branch (existing account) — the member payload must not
+    // echo the email back (the handle→email oracle this test pins).
+    expect(body.kind).toBe("member")
+    expect(body.member).not.toHaveProperty("email")
+    expect(body.member.role).toBe("viewer")
   })
 })
 

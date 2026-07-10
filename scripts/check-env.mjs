@@ -26,6 +26,7 @@ const NON_CONFIG = new Set([
   "PREVIEW_RENDERER",
   "BROWSER",
   "RL_AUTH",
+  "RL_INVITE",
   "RL_WRITE",
   "RL_PUBLISH",
   "RL_COMMENT",

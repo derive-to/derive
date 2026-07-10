@@ -1641,12 +1641,14 @@ export interface paths {
                             default_role: "viewer" | "commenter" | "editor" | "owner";
                             /** @description Collaborators with an explicit per-artifact role share. */
                             members: components["schemas"]["ArtifactMember"][];
+                            /** @description Pending emailed invites — share-capable callers (editor+) only; empty otherwise (invitee emails stay need-to-know). */
+                            invites: components["schemas"]["ArtifactInvite"][];
                         };
                     };
                 };
             };
         };
-        /** Share an artifact with a person at a role. */
+        /** Share an artifact with a person at a role — or email an invite. */
         put: {
             parameters: {
                 query?: never;
@@ -1658,13 +1660,13 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The added member. */
+                /** @description Either the member added directly (existing account), or the pending invite + accept link (unknown email). */
                 201: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["ArtifactMember"];
+                        "application/json": components["schemas"]["ShareResult"];
                     };
                 };
             };
@@ -1708,6 +1710,123 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/artifacts/{shortId}/invites/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a pending emailed invite. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The invite was revoked. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/artifact-invites/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview an artifact invitation (the accept page reads this). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The artifact + role the token grants. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArtifactInvitePreview"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/artifact-invites/{token}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept an artifact invitation (the signed-in token holder is shared in). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The artifact joined + the granted role. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            short_id: string;
+                            /** @enum {string} */
+                            role: "viewer" | "commenter" | "editor" | "owner";
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -5109,6 +5228,49 @@ export interface components {
             type: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
             /** @description The asset's size in bytes */
             size: number;
+        };
+        ArtifactInvite: {
+            id: string;
+            /** @description The invitee's email (share-capable callers only). */
+            email: string;
+            /**
+             * @description The role accepting will grant.
+             * @enum {string}
+             */
+            role: "viewer" | "commenter" | "editor" | "owner";
+            created_at: string;
+            /** @description When the invite expires (7-day TTL). */
+            expires_at: string;
+        };
+        ShareResult: {
+            /**
+             * @description The person already had an account — shared directly.
+             * @enum {string}
+             */
+            kind: "member";
+            member: components["schemas"]["ArtifactMember"];
+        } | {
+            /**
+             * @description No account with that email — a pending invite was created and emailed.
+             * @enum {string}
+             */
+            kind: "invite";
+            invite: components["schemas"]["ArtifactInvite"];
+            /** @description The link the invitee follows to accept. */
+            accept_url: string;
+        };
+        ArtifactInvitePreview: {
+            /** @description The artifact's title; null if untitled. */
+            title: string | null;
+            /**
+             * @description The role this invite grants.
+             * @enum {string}
+             */
+            role: "viewer" | "commenter" | "editor" | "owner";
+            /** @description The email address the invite was addressed to. */
+            email: string;
+            /** @description The inviter's display name; null if unknown. */
+            inviter: string | null;
         };
         Follow: {
             id: string;

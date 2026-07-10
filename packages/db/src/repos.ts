@@ -1,6 +1,7 @@
 import type {
   AgentMentionRecord,
   AgentRecord,
+  ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
   AuditLogRecord,
@@ -29,6 +30,7 @@ import type {
   NewAgent,
   NewAgentMention,
   NewArtifact,
+  NewArtifactInvite,
   NewArtifactMember,
   NewAuditLog,
   NewCollection,
@@ -106,6 +108,7 @@ import {
   agentMention,
   artifact,
   artifactFavorite,
+  artifactInvite,
   artifactMember,
   artifactTag,
   auditLog,
@@ -200,6 +203,7 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  artifactInvite,
   invitation,
   oauthClientWorkspace,
   context,
@@ -238,6 +242,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   agent: true,
   agentMention: true,
   invitation: true,
+  artifactInvite: true,
   context: true,
   contextAsker: true,
   contextSession: true,
@@ -2227,6 +2232,50 @@ export function makeRepos(db: SqliteDb) {
       .run()
   }
 
+  // ---- Artifact invitations ------------------------------------------------
+  const createArtifactInvite = async (i: NewArtifactInvite): Promise<ArtifactInviteRecord> =>
+    (await db.insert(artifactInvite).values(i).returning().get()) as ArtifactInviteRecord
+  const getArtifactInviteByToken = async (
+    tokenHash: string,
+  ): Promise<ArtifactInviteRecord | null> =>
+    (await db.select().from(artifactInvite).where(eq(artifactInvite.token, tokenHash)).get()) ??
+    null
+  const listPendingArtifactInvites = async (artifactId: string): Promise<ArtifactInviteRecord[]> =>
+    db
+      .select()
+      .from(artifactInvite)
+      .where(and(eq(artifactInvite.artifact_id, artifactId), isNull(artifactInvite.accepted_at)))
+      .orderBy(desc(artifactInvite.created_at))
+      .all()
+  const deletePendingArtifactInvitesFor = async (
+    artifactId: string,
+    email: string,
+  ): Promise<void> => {
+    await db
+      .delete(artifactInvite)
+      .where(
+        and(
+          eq(artifactInvite.artifact_id, artifactId),
+          eq(artifactInvite.email, email),
+          isNull(artifactInvite.accepted_at),
+        ),
+      )
+      .run()
+  }
+  const deleteArtifactInvite = async (id: string, artifactId: string): Promise<void> => {
+    await db
+      .delete(artifactInvite)
+      .where(and(eq(artifactInvite.id, id), eq(artifactInvite.artifact_id, artifactId)))
+      .run()
+  }
+  const markArtifactInviteAccepted = async (id: string): Promise<void> => {
+    await db
+      .update(artifactInvite)
+      .set({ accepted_at: new Date().toISOString() })
+      .where(eq(artifactInvite.id, id))
+      .run()
+  }
+
   // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
   const deleteUserData = async (userId: string): Promise<void> => {
     // The user's own association rows go entirely.
@@ -2246,6 +2295,11 @@ export function makeRepos(db: SqliteDb) {
       .update(invitation)
       .set({ invited_by: null })
       .where(eq(invitation.invited_by, userId))
+      .run()
+    await db
+      .update(artifactInvite)
+      .set({ invited_by: null })
+      .where(eq(artifactInvite.invited_by, userId))
       .run()
     // Drop the personal workspace row (removes the "<name>'s Workspace" label).
     await db
@@ -2344,6 +2398,7 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(version).where(eq(version.artifact_id, id)).run()
     await db.delete(comment).where(eq(comment.artifact_id, id)).run()
     await db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()
+    await db.delete(artifactInvite).where(eq(artifactInvite.artifact_id, id)).run()
     await db.delete(artifactFavorite).where(eq(artifactFavorite.artifact_id, id)).run()
     await db.delete(artifactTag).where(eq(artifactTag.artifact_id, id)).run()
     await db.delete(collectionItem).where(eq(collectionItem.artifact_id, id)).run()
@@ -2593,6 +2648,12 @@ export function makeRepos(db: SqliteDb) {
     deletePendingInvitationsFor,
     deleteInvitation,
     markInvitationAccepted,
+    createArtifactInvite,
+    getArtifactInviteByToken,
+    listPendingArtifactInvites,
+    deletePendingArtifactInvitesFor,
+    deleteArtifactInvite,
+    markArtifactInviteAccepted,
     deleteUserData,
     createReport,
     getReport,

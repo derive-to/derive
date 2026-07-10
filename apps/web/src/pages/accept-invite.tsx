@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { getRouteApi, useNavigate } from "@tanstack/react-router"
-import { api, type InvitePreview } from "@/api"
+import { type ArtifactInvitePreview, api, type InvitePreview } from "@/api"
 import { Logo } from "@/components/shared/logo"
+import { ROLE_LABELS } from "@/components/shared/role-select"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
@@ -13,6 +14,7 @@ import { useDocumentTitle } from "@/lib/use-document-title"
 import { roleLabel } from "./settings/roles"
 
 const route = getRouteApi("/invite/$token")
+const artifactRoute = getRouteApi("/invite/a/$token")
 
 // The calm chrome-less shell shared with /login and /reset-password.
 function Shell({ children }: { children: React.ReactNode }) {
@@ -95,8 +97,16 @@ export function AcceptInvite() {
     )
 
   return (
-    <Invitation
-      preview={preview}
+    <InvitationPanel
+      heading={preview.inviter ? `${preview.inviter} invited you` : "You're invited"}
+      body={
+        <p className="text-sm text-pretty text-muted-foreground">
+          Join <span className="font-medium text-foreground">{preview.workspace}</span> on Derive as{" "}
+          <Badge variant="secondary">{roleLabel(preview.role)}</Badge>
+        </p>
+      }
+      invitedEmail={preview.email}
+      cta={{ idle: "Accept invitation", busy: "Joining…", signIn: "Sign in to accept" }}
       signedIn={!!me}
       accepting={acceptMut.isPending}
       err={acceptMut.error?.message ?? ""}
@@ -106,15 +116,111 @@ export function AcceptInvite() {
   )
 }
 
-function Invitation({
-  preview,
+// The artifact twin of AcceptInvite: same shell, same mismatch contract, but the
+// token grants ONE artifact (a per-artifact share) and accepting lands on it.
+export function AcceptArtifactInvite() {
+  useDocumentTitle("Invitation")
+  const { token } = artifactRoute.useParams()
+  const { me, loading } = useAuth()
+  const nav = useNavigate()
+
+  const {
+    data: preview,
+    isPending,
+    isError,
+  } = useQuery({
+    queryKey: ["artifact-invite", token],
+    queryFn: () => api.previewArtifactInvite(token),
+    retry: false,
+  })
+
+  const mismatch = !!(
+    me &&
+    preview?.email &&
+    preview.email.toLowerCase() !== me.email.toLowerCase()
+  )
+
+  const acceptMut = useApiMutation({
+    mutationFn: () => api.acceptArtifactInvite(token, mismatch),
+    errorToast: false,
+    onSuccess: (r) => nav({ to: "/artifacts/$ref", params: { ref: r.short_id } }),
+  })
+  const accept = () => {
+    if (!me) {
+      nav({ to: "/login", search: { return_to: `/invite/a/${token}` } })
+      return
+    }
+    acceptMut.mutate()
+  }
+
+  if (isPending || loading)
+    return (
+      <Shell>
+        <Spinner />
+      </Shell>
+    )
+
+  if (isError || !preview)
+    return (
+      <Shell>
+        <StatusPanel
+          tone="danger"
+          title="This invitation is invalid or has expired"
+          description="Ask the person who shared the document to send a new one."
+        />
+        <Button variant="outline" data-testid="invite-go-home" onClick={() => nav({ to: "/" })}>
+          Go to Derive
+        </Button>
+      </Shell>
+    )
+
+  return (
+    <InvitationPanel
+      heading={preview.inviter ? `${preview.inviter} invited you` : "You're invited"}
+      body={
+        <>
+          <p className="text-sm text-pretty text-muted-foreground">
+            Open{" "}
+            <span className="font-medium text-foreground">
+              {preview.title ?? "an untitled document"}
+            </span>{" "}
+            on Derive as <Badge variant="secondary">{ROLE_LABELS[preview.role]}</Badge>
+          </p>
+          <p className="text-sm text-pretty text-muted-foreground">
+            You'll only ever see what's shared with you.
+          </p>
+        </>
+      }
+      invitedEmail={preview.email}
+      cta={{ idle: "Open the document", busy: "Opening…", signIn: "Sign in to open" }}
+      signedIn={!!me}
+      accepting={acceptMut.isPending}
+      err={acceptMut.error?.message ?? ""}
+      mismatchEmail={mismatch ? (me?.email ?? null) : null}
+      onAccept={accept}
+    />
+  )
+}
+
+// One invitation surface for both invite kinds — workspace and artifact differ
+// only in the headline body, the CTA verbs, and where accepting lands; the
+// mismatch warning, error panel, and button skeleton are the shared contract
+// (and share the testids the e2e specs assert on).
+function InvitationPanel({
+  heading,
+  body,
+  invitedEmail,
+  cta,
   signedIn,
   accepting,
   err,
   mismatchEmail,
   onAccept,
 }: {
-  preview: InvitePreview
+  heading: string
+  body: React.ReactNode
+  invitedEmail: string
+  cta: { idle: string; busy: string; signIn: string }
   signedIn: boolean
   accepting: boolean
   err: string
@@ -126,19 +232,16 @@ function Invitation({
     <Shell>
       <div className="flex flex-col gap-2">
         <h1 className="font-serif text-2xl font-medium tracking-tight text-balance text-foreground">
-          {preview.inviter ? `${preview.inviter} invited you` : "You're invited"}
+          {heading}
         </h1>
-        <p className="text-sm text-pretty text-muted-foreground">
-          Join <span className="font-medium text-foreground">{preview.workspace}</span> on Derive as{" "}
-          <Badge variant="secondary">{roleLabel(preview.role)}</Badge>
-        </p>
+        {body}
       </div>
       {mismatchEmail && (
         <div data-testid="invite-mismatch" className="w-full">
           <StatusPanel
             tone="warning"
             layout="inline"
-            title={`This invite was sent to ${preview.email}`}
+            title={`This invite was sent to ${invitedEmail}`}
             description={`You're signed in as ${mismatchEmail}. You can accept anyway, or sign in with the invited address first.`}
           />
         </div>
@@ -157,11 +260,11 @@ function Invitation({
       >
         {signedIn
           ? accepting
-            ? "Joining…"
+            ? cta.busy
             : mismatchEmail
               ? "Accept anyway"
-              : "Accept invitation"
-          : "Sign in to accept"}
+              : cta.idle
+          : cta.signIn}
       </Button>
     </Shell>
   )

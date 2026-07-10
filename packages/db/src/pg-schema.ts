@@ -242,6 +242,26 @@ export const invitation = pgTable(
   ],
 )
 
+// A pending per-artifact share invitation (see schema.ts for the full note).
+export const artifactInvite = pgTable(
+  "artifact_invite",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id").notNull(),
+    email: text("email").notNull(),
+    role: text("role").$type<Role>().notNull().default("commenter"),
+    token: text("token").notNull(),
+    invited_by: text("invited_by"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    expires_at: text("expires_at").notNull(),
+    accepted_at: text("accepted_at"),
+  },
+  (t) => [
+    uniqueIndex("artifact_invite_token").on(t.token),
+    index("artifact_invite_artifact_email").on(t.artifact_id, t.email),
+  ],
+)
+
 export const agentMention = pgTable("agent_mention", {
   id: text("id").primaryKey(),
   agent_id: text("agent_id").notNull(),
@@ -609,6 +629,7 @@ const TABLES = [
   agent,
   agentMention,
   invitation,
+  artifactInvite,
   oauthClientWorkspace,
   artifactFavorite,
   follow,

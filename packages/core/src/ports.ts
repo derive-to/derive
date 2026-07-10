@@ -790,6 +790,22 @@ export interface AgentStore {
   deleteInvitation(id: string, orgId: string): Promise<void>
   /** Stamp accepted_at so the invite can't be redeemed twice. */
   markInvitationAccepted(id: string): Promise<void>
+
+  // ---- Artifact invitations (share-by-email → accept) ---------------------
+  /** Create a pending per-artifact invite. Any prior pending invite for the same
+   *  (artifact, email) should be replaced by the caller first. */
+  createArtifactInvite(i: NewArtifactInvite): Promise<ArtifactInviteRecord>
+  /** Resolve by hashed token (accept flow); null if unknown. */
+  getArtifactInviteByToken(tokenHash: string): Promise<ArtifactInviteRecord | null>
+  /** Pending (unaccepted) invites on an artifact — the share dialog's pending rows. */
+  listPendingArtifactInvites(artifactId: string): Promise<ArtifactInviteRecord[]>
+  /** Drop any pending invite for this (artifact, email) — supersede on re-invite,
+   *  and clear once the person holds a real membership. */
+  deletePendingArtifactInvitesFor(artifactId: string, email: string): Promise<void>
+  /** Revoke one pending invite, scoped to its artifact. */
+  deleteArtifactInvite(id: string, artifactId: string): Promise<void>
+  /** Stamp accepted_at so the invite can't be redeemed twice. */
+  markArtifactInviteAccepted(id: string): Promise<void>
   /** Queue a mention into an agent's pull inbox. */
   createAgentMention(m: NewAgentMention): Promise<void>
   /** Pending (unhandled) mentions for an agent, oldest first. */
@@ -1063,6 +1079,38 @@ export interface InvitationRecord {
 export interface NewInvitation {
   id: string
   org_id: string
+  email: string
+  role: Role
+  token: string
+  invited_by?: string | null
+  expires_at: string
+}
+
+/**
+ * A pending per-artifact share invitation: an email invited to one artifact at a
+ * role, redeemable via an emailed link before it expires. The share-to-a-stranger
+ * path — a per-artifact membership needs an existing account, so this carries the
+ * grant until they sign up. Token stored hashed; accepting creates the
+ * artifact_member row (never a workspace membership).
+ */
+export interface ArtifactInviteRecord {
+  id: string
+  artifact_id: string
+  /** Normalized (lowercased) invitee email. */
+  email: string
+  role: Role
+  /** SHA-256 of the redeem token (the raw token only ever rides the emailed link). */
+  token: string
+  /** Who sent it; null if their account was later removed. */
+  invited_by: string | null
+  created_at: string
+  expires_at: string
+  /** Set once redeemed; a non-null value means the invite is spent. */
+  accepted_at: string | null
+}
+export interface NewArtifactInvite {
+  id: string
+  artifact_id: string
   email: string
   role: Role
   token: string

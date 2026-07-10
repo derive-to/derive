@@ -1,6 +1,7 @@
 import type {
   AgentMentionRecord,
   AgentRecord,
+  ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
   AuditLogRecord,
@@ -31,6 +32,7 @@ import type {
   NewAgent,
   NewAgentMention,
   NewArtifact,
+  NewArtifactInvite,
   NewArtifactMember,
   NewAuditLog,
   NewCollection,
@@ -108,6 +110,7 @@ import {
   agentMention,
   artifact,
   artifactFavorite,
+  artifactInvite,
   artifactMember,
   artifactTag,
   auditLog,
@@ -175,6 +178,7 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  artifactInvite,
   invitation,
   oauthClientWorkspace,
   context,
@@ -213,6 +217,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   agent: true,
   agentMention: true,
   invitation: true,
+  artifactInvite: true,
   context: true,
   contextAsker: true,
   contextSession: true,
@@ -2261,6 +2266,48 @@ export class PgMetaStore implements MetaStore {
       .set({ accepted_at: new Date().toISOString() })
       .where(eq(invitation.id, id))
   }
+
+  // ---- Artifact invitations ------------------------------------------------
+  async createArtifactInvite(i: NewArtifactInvite): Promise<ArtifactInviteRecord> {
+    const rows = await this.db.insert(artifactInvite).values(i).returning()
+    return one(rows) as ArtifactInviteRecord
+  }
+  async getArtifactInviteByToken(tokenHash: string): Promise<ArtifactInviteRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(artifactInvite)
+      .where(eq(artifactInvite.token, tokenHash))
+    return (rows[0] as ArtifactInviteRecord | undefined) ?? null
+  }
+  listPendingArtifactInvites(artifactId: string): Promise<ArtifactInviteRecord[]> {
+    return this.db
+      .select()
+      .from(artifactInvite)
+      .where(and(eq(artifactInvite.artifact_id, artifactId), isNull(artifactInvite.accepted_at)))
+      .orderBy(desc(artifactInvite.created_at)) as Promise<ArtifactInviteRecord[]>
+  }
+  async deletePendingArtifactInvitesFor(artifactId: string, email: string): Promise<void> {
+    await this.db
+      .delete(artifactInvite)
+      .where(
+        and(
+          eq(artifactInvite.artifact_id, artifactId),
+          eq(artifactInvite.email, email),
+          isNull(artifactInvite.accepted_at),
+        ),
+      )
+  }
+  async deleteArtifactInvite(id: string, artifactId: string): Promise<void> {
+    await this.db
+      .delete(artifactInvite)
+      .where(and(eq(artifactInvite.id, id), eq(artifactInvite.artifact_id, artifactId)))
+  }
+  async markArtifactInviteAccepted(id: string): Promise<void> {
+    await this.db
+      .update(artifactInvite)
+      .set({ accepted_at: new Date().toISOString() })
+      .where(eq(artifactInvite.id, id))
+  }
   // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
   async deleteUserData(userId: string): Promise<void> {
     await this.db.delete(membership).where(eq(membership.user_id, userId))
@@ -2278,6 +2325,10 @@ export class PgMetaStore implements MetaStore {
       .update(invitation)
       .set({ invited_by: null })
       .where(eq(invitation.invited_by, userId))
+    await this.db
+      .update(artifactInvite)
+      .set({ invited_by: null })
+      .where(eq(artifactInvite.invited_by, userId))
     await this.db.delete(workspace).where(eq(workspace.id, `ws_p_${userId}`))
   }
   listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]> {
@@ -2395,6 +2446,7 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(version).where(eq(version.artifact_id, id))
       await tx.delete(comment).where(eq(comment.artifact_id, id))
       await tx.delete(artifactMember).where(eq(artifactMember.artifact_id, id))
+      await tx.delete(artifactInvite).where(eq(artifactInvite.artifact_id, id))
       await tx.delete(artifactFavorite).where(eq(artifactFavorite.artifact_id, id))
       await tx.delete(artifactTag).where(eq(artifactTag.artifact_id, id))
       await tx.delete(collectionItem).where(eq(collectionItem.artifact_id, id))

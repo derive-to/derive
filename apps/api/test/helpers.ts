@@ -264,7 +264,7 @@ export const makeAuthedApp = (
   name: string,
   users: TestUser[],
   defaultRole?: AppDeps["defaultRole"],
-  opts?: { isolated?: boolean },
+  opts?: { isolated?: boolean; deps?: Partial<AppDeps> },
 ) => {
   // Seed a shared "default" workspace so the user list collaborates (the single-
   // mode default before always-multi): users[0] is the Admin/owner, the rest take
@@ -286,6 +286,7 @@ export const makeAuthedApp = (
     auth: fakeAuth(users),
     defaultRole,
     defaultOrgId: "default",
+    ...opts?.deps,
   })
   return { app, meta: m }
 }

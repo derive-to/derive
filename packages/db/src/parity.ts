@@ -15,6 +15,7 @@
 import type {
   AgentMentionRecord,
   AgentRecord,
+  ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
   AuditLogRecord,
@@ -63,6 +64,7 @@ export interface TypedTables {
   reviewRound: ReviewRoundRecord
   agent: AgentRecord
   agentMention: AgentMentionRecord
+  artifactInvite: ArtifactInviteRecord
   invitation: InvitationRecord
   context: ContextRecord
   contextAsker: ContextAskerRecord

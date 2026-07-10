@@ -239,6 +239,7 @@ export function buildContext(deps: AppDeps) {
   const publishLimiter = deps.rateLimit ? limiters.publish : null
   const commentLimiter = deps.rateLimit ? limiters.comment : null
   const unlockLimiter = deps.rateLimit ? limiters.unlock : null
+  const inviteLimiter = deps.rateLimit ? limiters.invite : null
 
   // Fan an event to subscribed webhooks (enqueues to the outbox; the drainer
   // delivers). Awaited so the row is durable before we respond, but never fatal.
@@ -837,6 +838,7 @@ export function buildContext(deps: AppDeps) {
     publishLimiter,
     commentLimiter,
     unlockLimiter,
+    inviteLimiter,
     notify,
     notifyRender,
     background,
