@@ -31,6 +31,10 @@ export function useArtifactLive(opts: {
 }) {
   const { shortId, onComment, onVersion, onReview, onResync } = opts
   const [viewers, setViewers] = useState<Viewer[]>([])
+  // Whether the live stream is currently connected — so the UI can say "reconnecting"
+  // instead of silently showing a frozen collaborative view. Optimistic on mount (the data
+  // was just loaded); flips only on a real drop, and back on the next open.
+  const [connected, setConnected] = useState(true)
   // Whether ANY stream for this page has connected before — the first "ready" of
   // the first stream is the mount itself (the loader/query just fetched; nothing
   // to catch up on); every later "ready" means a gap just closed.
@@ -39,15 +43,39 @@ export function useArtifactLive(opts: {
   const { paintFrame } = cursors
   const visible = usePageVisible()
 
+  // Browser-level connectivity drives the "reconnecting" cue. `offline` is the fastest, most
+  // reliable drop signal (an EventSource `onerror` can lag a dead socket by seconds) → flip to
+  // disconnected. `online` bumps a nonce that RE-ESTABLISHES the stream below, because native
+  // EventSource auto-reconnect is unreliable across an offline→online cycle; a fresh stream
+  // guarantees a `ready` (which flips us back to connected + runs onResync). We never claim
+  // "live" on `online` alone — only when the stream's `ready` actually lands.
+  const [reconnectNonce, setReconnectNonce] = useState(0)
+  useEffect(() => {
+    const drop = () => setConnected(false)
+    const back = () => setReconnectNonce((n) => n + 1)
+    window.addEventListener("offline", drop)
+    window.addEventListener("online", back)
+    return () => {
+      window.removeEventListener("offline", drop)
+      window.removeEventListener("online", back)
+    }
+  }, [])
+
   // The live stream: comment churn + new versions refetch/reload; presence and
   // peer cursors paint directly. Closed while the tab is hidden (and reopened
   // on focus) so a backgrounded tab doesn't keep the artifact's room Durable
   // Object active.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reconnectNonce is a deliberate re-run trigger (bumped on `online`) to re-open a fresh stream; its value isn't read.
   useEffect(() => {
     if (!visible) return
     const ev = new EventSource(`${API_BASE}/v1/artifacts/${shortId}/events`, {
       withCredentials: true,
     })
+    // Connection health for the "reconnecting" cue: onerror flips us to disconnected when the
+    // socket drops. We flip back to connected on the server's `ready` hello (below), NOT on the
+    // raw `onopen` — `ready` is the definitive "the stream is live and the server acknowledged
+    // us" signal, and onopen proved unreliable at confirming a real reconnect.
+    ev.onerror = () => setConnected(false)
     ev.addEventListener("comment.created", onComment)
     ev.addEventListener("comment.resolved", onComment)
     ev.addEventListener("comment.outdated", onComment)
@@ -63,8 +91,10 @@ export function useArtifactLive(opts: {
       }
       onVersion(n)
     })
-    // "ready" is the server's hello on every (re)connect — see onResync.
+    // "ready" is the server's hello on every (re)connect — see onResync. It's also the live
+    // signal: reaching it means the stream is up and the server acknowledged us.
     ev.addEventListener("ready", () => {
+      setConnected(true)
       if (everConnected.current) onResync?.()
       everConnected.current = true
     })
@@ -88,7 +118,8 @@ export function useArtifactLive(opts: {
       }
     })
     return () => ev.close()
-  }, [shortId, onComment, onVersion, onReview, onResync, paintFrame, visible])
+    // reconnectNonce re-runs this to open a FRESH stream when the browser comes back online.
+  }, [shortId, onComment, onVersion, onReview, onResync, paintFrame, visible, reconnectNonce])
 
   // Announce we're viewing (anon shows up by their server handle — Google-Docs
   // style) and keep the heartbeat alive (TTL 45s). Paused while the tab is
@@ -116,6 +147,7 @@ export function useArtifactLive(opts: {
 
   return {
     viewers,
+    connected,
     onPointerMove: cursors.onPointerMove,
     onPointerLeave: cursors.onPointerLeave,
     onTap: cursors.onTap,
