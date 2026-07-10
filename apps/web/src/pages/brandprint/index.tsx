@@ -14,7 +14,7 @@ export function Brandprint() {
     <PageShell className="flex flex-col gap-8">
       <PageHeader
         title="Brandprint"
-        subtitle="The conventions your artifacts follow — how they look and how they read. Any agent connected to this workspace picks them up automatically."
+        subtitle="The conventions your artifacts follow: how they look and how they read. Any agent connected to this workspace picks them up automatically."
       />
       <BrandprintSection scope="workspace" />
       <BrandprintSection scope="account" />
@@ -23,12 +23,13 @@ export function Brandprint() {
 }
 
 // Deterministic silhouette: the header band, then two group-shaped blocks (title
-// line, description line, a row) matching the sections above.
+// line, description line, a row) matching the sections above. Announced by the
+// sr-only status line, the RailSkeleton idiom.
 const PENDING_GROUPS = ["workspace", "account"]
 
 export function BrandprintPending() {
   return (
-    <PageShell className="flex flex-col gap-8" aria-busy>
+    <PageShell className="flex flex-col gap-8">
       <span role="status" className="sr-only">
         Loading Brandprint…
       </span>

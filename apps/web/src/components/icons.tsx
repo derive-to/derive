@@ -68,7 +68,7 @@ const REG = {
   collections: Folders,
   collection: Folder,
   context: Bot,
-  // The team's conventions destination (a print of the brand — hence the mark).
+  // Brandprint — the brand's fingerprint.
   brandprint: Fingerprint,
   tag: Tag,
   search: Search,
