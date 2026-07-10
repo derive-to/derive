@@ -44,6 +44,8 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
   })
 
   const updateWorkspace = useApiMutation({
+    // The generated OrgSettings types brandprint non-nullable, but the PATCH takes null to
+    // clear it — widen to Partial so the clear case type-checks.
     mutationFn: (collectionId: string) =>
       api.updateWorkspaceSettings({
         brandprint: collectionId ? { collectionId } : null,
