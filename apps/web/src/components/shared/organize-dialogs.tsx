@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { artifactQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
 import { cn } from "@/lib/utils"
 
 // The two "organize" dialogs, shared by the artifact workbench's ⋯ menu and the
@@ -44,6 +45,10 @@ export function CollectionsDialog({
         .then((r) => setAll(r.collections))
         .catch(() => {})
   }, [open])
+  // Brandprint-pointed collections take docs through /brandprint only, not from
+  // an artifact's organize menu.
+  const brandprintIds = useBrandprintCollectionIds()
+  const pickable = all.filter((col) => !brandprintIds.has(col.id))
   const inSet = new Set(inCollections)
   // Toggle membership optimistically (via onChange); the primitive rolls it back and
   // toasts if the write fails. The settle-time invalidation reconciles the artifact
@@ -89,14 +94,14 @@ export function CollectionsDialog({
             members.
           </DialogDescription>
         </DialogHeader>
-        {all.length === 0 && (
+        {pickable.length === 0 && (
           <div className="text-sm text-muted-foreground">
             No collections yet — create one below.
           </div>
         )}
-        {all.length > 0 && (
+        {pickable.length > 0 && (
           <div className="flex max-h-64 flex-col gap-px overflow-auto">
-            {all.map((col) => (
+            {pickable.map((col) => (
               <button
                 key={col.id}
                 type="button"

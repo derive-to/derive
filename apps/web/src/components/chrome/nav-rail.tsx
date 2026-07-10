@@ -32,6 +32,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useAuth } from "@/ctx"
 import { prTitle } from "@/lib/pr"
 import { collectionsQuery, summaryQuery, workspacesQuery } from "@/lib/queries"
+import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
 import { cn } from "@/lib/utils"
 import type { LibrarySearch } from "@/pages/library/types"
 import { NotificationBell } from "./notification-bell"
@@ -330,11 +331,16 @@ export function NavRail() {
       return next
     })
 
+  // Brandprint-pointed collections are managed on /brandprint, not here — hiding
+  // them keeps the docs and their options in one place (see use-brandprint-ids).
+  const brandprintIds = useBrandprintCollectionIds()
+  const visibleCollections = collections.filter((col) => !brandprintIds.has(col.id))
+
   // Nest PR-preview collections under their repo. A "pr" collection with a known
   // parentId becomes a child; everything else (repos, manual, orphaned PRs) stays
   // top-level. Children sort newest-PR-first.
   const childPrsByRepo = new Map<string, typeof collections>()
-  const topCollections = collections.filter((col) => {
+  const topCollections = visibleCollections.filter((col) => {
     if (col.kind === "pr" && col.parentId && collections.some((p) => p.id === col.parentId)) {
       const arr = childPrsByRepo.get(col.parentId) ?? []
       arr.push(col)

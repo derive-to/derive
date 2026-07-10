@@ -16,6 +16,7 @@ import {
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 import { collectionsQuery, workspacesQuery } from "@/lib/queries"
+import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
@@ -97,7 +98,11 @@ export function CommandPalette() {
   }
 
   const q = query.trim().toLowerCase()
-  const matchedCollections = collections.filter((c) => c.title.toLowerCase().includes(q))
+  // Brandprint-pointed collections are managed on /brandprint, not jumped to here.
+  const brandprintIds = useBrandprintCollectionIds()
+  const matchedCollections = collections.filter(
+    (c) => !brandprintIds.has(c.id) && c.title.toLowerCase().includes(q),
+  )
   // Personal shows (and searches) under its display name, same as the user pod.
   const otherWorkspaces = (workspaces?.workspaces ?? [])
     .map((w) => ({ ...w, display: workspaceDisplayName(w) }))

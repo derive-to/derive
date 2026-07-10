@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { Upload } from "lucide-react"
 import { useRef, useState } from "react"
 import { api, type OrgSettings } from "@/api"
@@ -22,17 +23,20 @@ import {
   SelectMenuItem,
   SelectMenuTrigger,
 } from "@/components/ui/select-menu"
+import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import {
+  brandprintDocsQuery,
   collectionsQuery,
   summaryQuery,
   workspaceQuery,
   workspaceSettingsQuery,
 } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
+import { refFor } from "../artifact/parse-ref"
 
 // What the one-click intake reports back: how many docs made it in, which files
 // didn't, and (when it created the collection and set the pointer itself) the fresh
@@ -45,18 +49,17 @@ type ImportResult = {
   profile?: Awaited<ReturnType<typeof api.setProfile>>
 }
 
-// The two halves of a brand the upload tab asks for; `cat` labels each staged file.
+// The two halves of a brand the upload tab asks for; `cat` labels each staged file
+// and doubles as the verb in the well's heading ("How … artifacts should look/read").
 type DocCategory = "look" | "read"
-const UPLOAD_CATEGORIES: { cat: DocCategory; heading: string; blurb: string }[] = [
+const UPLOAD_CATEGORIES: { cat: DocCategory; blurb: string }[] = [
   {
     cat: "look",
-    heading: "How your artifacts should look",
     blurb:
       "Visual theming: brand and style guides, palettes, font specs, CSS tokens, or example HTML that carries the look.",
   },
   {
     cat: "read",
-    heading: "How your artifacts should read",
     blurb: "Voice and tone: grammar, warmth, structure, wording do’s and don’ts.",
   },
 ]
@@ -374,6 +377,9 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
               <Upload /> {importDocs.isPending ? "Uploading…" : "Upload docs"}
             </Button>
           </SettingRow>
+          {collectionId && (
+            <BrandprintDocs collectionId={collectionId} scope={scope} disabled={disabled} />
+          )}
         </>
       ) : (
         <SettingRow
@@ -414,7 +420,10 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
                       className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-3"
                     >
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-foreground">{c.heading}</p>
+                        <p className="text-sm font-medium text-foreground">
+                          How {scope === "workspace" ? "your team's" : "your"} artifacts should{" "}
+                          {c.cat}
+                        </p>
                         <p className="text-sm text-pretty text-muted-foreground">{c.blurb}</p>
                       </div>
                       <Button
@@ -535,5 +544,78 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
         </SettingRow>
       )}
     </SettingsGroup>
+  )
+}
+
+// The docs the Brandprint points at, managed here — the collection is hidden from
+// the general collection surfaces (rail, palette, organize; see use-brandprint-ids),
+// so this list is its one home. Removing drops the doc from the collection; the
+// artifact itself lives on in the library.
+function BrandprintDocs({
+  collectionId,
+  scope,
+  disabled,
+}: {
+  collectionId: string
+  scope: "workspace" | "account"
+  disabled: boolean
+}) {
+  const { data: docs, isError, refetch } = useQuery(brandprintDocsQuery(collectionId))
+  const removeDoc = useApiMutation({
+    mutationFn: (shortId: string) => api.removeFromCollection(collectionId, shortId),
+    pendingKey: (shortId) => shortId,
+    invalidate: [brandprintDocsQuery(collectionId).queryKey, collectionsQuery().queryKey],
+  })
+  return (
+    <div className="flex flex-col gap-2 py-3.5">
+      <p className="text-sm font-medium text-foreground">Documents</p>
+      {isError ? (
+        <p className="text-sm text-muted-foreground">
+          Couldn't load the docs.{" "}
+          <Button
+            variant="link"
+            size="xs"
+            className="px-0"
+            data-testid={`brandprint-docs-retry-${scope}`}
+            onClick={() => refetch()}
+          >
+            Try again
+          </Button>
+        </p>
+      ) : !docs ? (
+        <div className="flex flex-col gap-1.5">
+          <Skeleton className="h-4 w-56" />
+          <Skeleton className="h-4 w-40" />
+        </div>
+      ) : docs.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No docs yet. Upload some above.</p>
+      ) : (
+        <ul className="flex flex-col gap-1">
+          {docs.map((a) => (
+            <li key={a.short_id} className="flex items-center gap-2 text-sm">
+              <Link
+                to="/artifacts/$ref"
+                params={{ ref: refFor(a) }}
+                data-testid={`brandprint-doc-${a.short_id}`}
+                className="min-w-0 flex-1 truncate text-foreground underline-offset-4 hover:underline"
+              >
+                {a.title ?? a.short_id}
+              </Link>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Remove ${a.title ?? a.short_id} from the Brandprint`}
+                data-testid={`brandprint-doc-remove-${a.short_id}`}
+                disabled={disabled || removeDoc.isPendingFor(a.short_id)}
+                onClick={() => removeDoc.mutate(a.short_id)}
+                className="text-muted-foreground"
+              >
+                <Icon name="close" size={14} />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
