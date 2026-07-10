@@ -140,8 +140,8 @@ export const buildInviteEmail = (input: {
 }
 
 /** Render a per-artifact invitation email: who invited you, to which document, and a
- *  link to accept — the growth loop's first touch, so the copy explains Derive in a
- *  line. The link lands on the accept page (signed-in gate; signup included). */
+ *  link to accept. The recipient has likely never seen Derive, so the copy explains it
+ *  in a line. The link lands on the accept page (signed-in gate; signup included). */
 export const buildArtifactInviteEmail = (input: {
   to: string
   title: string

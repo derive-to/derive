@@ -1,9 +1,20 @@
+import type { Role } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 
 /** Shared response schemas — the ones several routers return, so they live in one place
  *  and surface as a single reusable component in the OpenAPI spec (and one generated web
  *  type). A router-local schema stays in its route file; only genuinely-shared shapes
  *  belong here. */
+
+/** The role vocabulary as a zod enum, shared by every router that takes or returns a
+ *  role. `satisfies` ties the members to core's `Role` union, so renaming a tier there
+ *  fails to compile here (adding one still needs a matching edit — keep them in step). */
+export const roleEnum = z.enum([
+  "viewer",
+  "commenter",
+  "editor",
+  "owner",
+] as const satisfies readonly Role[])
 
 /** A collaborator on an artifact or collection — identified by public @handle, never
  *  email. Returned by `sharing`, `collections` (members), and later `workspace` members,
@@ -19,9 +30,7 @@ export const ArtifactMember = z
       .nullable()
       .optional()
       .describe("Joined only on workspace-member payloads; absent on artifact/collection lists."),
-    role: z
-      .enum(["viewer", "commenter", "editor", "owner"])
-      .describe("Permission tier, ascending: viewer < commenter < editor < owner."),
+    role: roleEnum.describe("Permission tier, ascending: viewer < commenter < editor < owner."),
   })
   .openapi("ArtifactMember")
 

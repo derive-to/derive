@@ -11,8 +11,9 @@ const uniqueEmail = () => `e2e+${crypto.randomUUID()}@derive.test`
 
 // Fresh-DB signup. The first account on a throwaway database is the workspace
 // owner, so this also seeds an authenticated session for everything downstream.
-export async function signUp(page: Page, name = "E2E Tester"): Promise<string> {
-  const email = uniqueEmail()
+export async function signUp(page: Page, name = "E2E Tester", email?: string): Promise<string> {
+  // A caller-supplied email lets invite specs sign up as the invited address.
+  email ??= uniqueEmail()
   await page.goto("/login")
   await page.getByTestId("login-toggle").click() // switch from sign-in to create-account
   await page.getByTestId("login-name").fill(name)

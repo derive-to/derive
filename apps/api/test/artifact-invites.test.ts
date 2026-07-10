@@ -4,10 +4,10 @@ import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 // Share-by-email to someone with NO account: the PUT creates a pending invite
 // (emailed out-of-band), the token previews and accepts into a per-artifact
 // membership, and the share dialog's roster lists/revokes pending invites.
-// The growth loop's contract — replay, supersede, mismatch, and the
-// need-to-know gate on invitee emails are all pinned here. (The exact-email
-// happy path needs an account that signs up AFTER the invite — the fake auth
-// here can't mint one mid-test, so the share e2e covers it end to end.)
+// Replay, supersede, mismatch, and the need-to-know gate on invitee emails are
+// pinned here. (The exact-email happy path needs an account that signs up AFTER
+// the invite — the fake auth here can't mint one mid-test, so the share e2e
+// covers it end to end.)
 describe("artifact invites (share-by-email → accept)", () => {
   const owner: TestUser = { id: "u_ai_owner", email: "owner@ai.test", name: "Olive" }
   // An existing account that redeems tokens addressed to OTHER emails (the

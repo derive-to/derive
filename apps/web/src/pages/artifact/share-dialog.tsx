@@ -326,7 +326,7 @@ export function ShareButton({
       .listMembers(shortId)
       .then((r) => {
         setMembers(r.members)
-        setInvites(r.invites ?? [])
+        setInvites(r.invites)
       })
       .catch(() => {})
   // After a share change, refresh the local list AND the shared cache: the artifact
@@ -342,8 +342,8 @@ export function ShareButton({
     onSuccess: (res) => {
       setEmail("")
       // No account behind that email — the server minted a pending invite and
-      // emailed it. Say so: "added" would over-promise (nothing shows for them
-      // until they accept).
+      // emailed it. Nothing appears for the recipient until they accept, so
+      // don't announce them as added.
       if (res.kind === "invite") toast(`Invite sent to ${res.invite.email}.`)
       synced()
     },
@@ -795,7 +795,7 @@ export function ShareButton({
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium text-foreground">{i.email}</div>
                       <div className="truncate text-xs text-muted-foreground">
-                        Invited · joins as {ROLE_LABELS[i.role as Role] ?? i.role} once they accept
+                        Invited · joins as {ROLE_LABELS[i.role]} once they accept
                       </div>
                     </div>
                     {canManage && (

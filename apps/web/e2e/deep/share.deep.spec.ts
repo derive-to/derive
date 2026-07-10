@@ -1,4 +1,4 @@
-import { addComment, expect, publishArtifact, test } from "../fixtures"
+import { addComment, expect, publishArtifact, signUp, test } from "../fixtures"
 
 // The artifact share dialog (Dialog primitive + RoleSelect) in depth: a non-owner
 // has no share affordance; the owner shares, promotes, and removes a member.
@@ -42,9 +42,9 @@ test("owner shares an artifact, changes the role, and removes the member", async
   await expect(rows).toHaveCount(1)
 })
 
-// The growth loop: share to an email with NO account → pending invite row +
-// emailed accept link → the invitee signs up under that email → one click lands
-// them on the document with the granted role (commenter here — they comment).
+// Share to an email with NO account: a pending invite row appears and an accept
+// link goes out by email; the invitee signs up under that email and one click
+// lands them on the document at the granted role (commenter here — they comment).
 test("share to an unknown email invites; signup + accept lands on the doc", async ({
   owner,
   browser,
@@ -71,13 +71,7 @@ test("share to an unknown email invites; signup + accept lands on the doc", asyn
   // follows the emailed link. Exact email match: no mismatch warning.
   const ctx = await browser.newContext()
   const invitee = await ctx.newPage()
-  await invitee.goto("/login")
-  await invitee.getByTestId("login-toggle").click()
-  await invitee.getByTestId("login-name").fill("Fool Guest")
-  await invitee.getByTestId("login-email").fill(email)
-  await invitee.getByTestId("login-password").fill("e2e-pass-1234")
-  await invitee.getByTestId("login-submit").click()
-  await invitee.getByTestId("welcome-skip").click()
+  await signUp(invitee, "Fool Guest", email)
   await invitee.goto(new URL(res.accept_url).pathname)
   await expect(invitee.getByTestId("invite-accept")).toBeVisible()
   await expect(invitee.getByTestId("invite-mismatch")).toBeHidden()

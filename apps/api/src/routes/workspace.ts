@@ -3,17 +3,22 @@ import { type InvitationRecord, newId, type Role } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { sha256 } from "../lib/crypto"
+import { mintToken, sha256 } from "../lib/crypto"
 import { buildInviteEmail } from "../lib/email"
 import { bail, DEFAULT_WORKSPACE_NAME, fail, isWorkspaceRole, readJson } from "../lib/http"
+import {
+  emailMismatch409,
+  INVITE_TTL_MS,
+  inviteJson,
+  isLiveInvite,
+  looksLikeEmail,
+} from "../lib/invite"
 import { resolveUserRef } from "../lib/resolve-user"
-import { ArtifactMember } from "../schemas"
+import { ArtifactMember, roleEnum } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
 
 // A plausible email (loose check — the real gate is deliverability). Anything without a
 // single @ and a dotted domain is treated as a bad ref, not an invite.
-const looksLikeEmail = (s: string): boolean => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s)
-const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
 /** The workspace itself: name + members (Admin-managed), plus multi-workspace
  *  list / create / switch. A workspace always keeps at least one Admin. The Workspace /
@@ -32,8 +37,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
   } = ctx
   const { privateOwnerId, oauthGrant } = ctx
   const app = new OpenAPIHono<BlankEnv>()
-
-  const roleEnum = z.enum(["viewer", "commenter", "editor", "owner"])
 
   const WorkspaceSummary = z
     .object({
@@ -137,15 +140,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
       workspaces: z.array(WorkspaceSummary),
     })
     .openapi("Workspaces")
-
-  // A pending invite, minus the secret token (never leaves the server).
-  const inviteJson = (i: InvitationRecord) => ({
-    id: i.id,
-    email: i.email,
-    role: i.role,
-    created_at: i.created_at,
-    expires_at: i.expires_at,
-  })
 
   // A workspace must always keep at least one Admin, so it stays manageable:
   // demoting or removing the last owner is refused.
@@ -397,7 +391,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
 
       // A fresh token supersedes any prior pending invite for this email.
       await meta.deletePendingInvitationsFor(org, email)
-      const token = `dki_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
+      const token = mintToken("dki")
       const me = await currentUser(c)
       const invite = await meta.createInvitation({
         id: newId("inv"),
@@ -484,7 +478,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
     }),
     async (c) => {
       const inv = await meta.getInvitationByToken(sha256(c.req.param("token")))
-      if (!inv || inv.accepted_at || new Date(inv.expires_at).getTime() < Date.now())
+      if (!inv || !isLiveInvite(inv))
         return bail(fail(c, 404, "this invitation is invalid or has expired"))
       const ws = await meta.getWorkspace(inv.org_id)
       const inviter = inv.invited_by ? (await meta.getUsers([inv.invited_by]))[0] : undefined
@@ -518,20 +512,10 @@ export const workspaceRoutes = (ctx: AppContext) => {
       const me = await requireUser(c)
       if (me instanceof Response) return bail(me)
       const inv = await meta.getInvitationByToken(sha256(c.req.param("token")))
-      if (!inv || inv.accepted_at || new Date(inv.expires_at).getTime() < Date.now())
+      if (!inv || !isLiveInvite(inv))
         return bail(fail(c, 404, "this invitation is invalid or has expired"))
-      // Possession still authorizes (self-hosts without email verification must keep
-      // working), but a mismatched account is SURFACED, not silently joined: the
-      // holder must explicitly confirm they meant to accept under this identity.
-      // The web accept page pre-warns from the preview and sends the confirm with
-      // the click; the machine-readable 409 is for headless callers.
-      if (inv.email && inv.email.toLowerCase() !== me.email.toLowerCase()) {
-        const b = await readJson(c, z.object({ confirm_mismatch: z.boolean().optional() }))
-        // A malformed/absent body counts as "not confirmed", not a 400 — the 409
-        // carries the flow either way.
-        const confirmed = !(b instanceof Response) && b.confirm_mismatch === true
-        if (!confirmed) return bail(fail(c, 409, "email_mismatch", { invited_email: inv.email }))
-      }
+      const mismatch = await emailMismatch409(c, inv.email, me.email)
+      if (mismatch) return bail(mismatch)
       const existing = await meta.getMembership(inv.org_id, me.id)
       if (!existing)
         await meta.setMembership({
