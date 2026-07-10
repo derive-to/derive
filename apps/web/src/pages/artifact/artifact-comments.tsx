@@ -1,4 +1,11 @@
-import { type Dispatch, type ReactNode, type SetStateAction, useRef } from "react"
+import {
+  type Dispatch,
+  type ReactNode,
+  type RefObject,
+  type SetStateAction,
+  useEffect,
+  useRef,
+} from "react"
 import type { Comment, DirUser, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
@@ -13,11 +20,62 @@ import {
   type AgentTarget,
   type AnchorConf,
   type ComposerState,
+  type FrameGeom,
   type Panel,
   type PinItem,
   type Selection,
   selLabel,
 } from "./types"
+
+/**
+ * The floating "Comment · Ask agent" pill beside a text selection. Its vertical
+ * position TRACKS the document: the selection's Y is doc-absolute (`sel.docTop`),
+ * mapped to the screen against the live scroll via the geometry subscription — a
+ * direct style write, no re-render. (The old frozen viewport Y left the pill
+ * parked mid-screen while its selection scrolled away.) Horizontal stays where
+ * the selection was made; only vertical drifts with scroll.
+ */
+function SelectionPill({
+  sel,
+  frameRef,
+  subscribeGeom,
+  asideWidth,
+  children,
+}: {
+  sel: NonNullable<Selection>
+  frameRef: RefObject<HTMLIFrameElement | null>
+  subscribeGeom: (cb: (g: FrameGeom) => void) => () => void
+  asideWidth: number
+  children: ReactNode
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const docTop = sel.docTop
+  useEffect(() => {
+    return subscribeGeom((g) => {
+      const el = ref.current
+      const fr = frameRef.current?.getBoundingClientRect()
+      if (!el || !fr) return
+      el.style.top = `${clamp(fr.top + (docTop - g.scrollY) - 46, 64, window.innerHeight - 54)}px`
+    })
+  }, [subscribeGeom, frameRef, docTop])
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: onMouseDown only prevents the pill from stealing the selection; the real controls inside are buttons.
+    <div
+      ref={ref}
+      className="fixed z-50 flex items-center gap-1 rounded-full bg-card p-1 shadow-[var(--shadow)] ring-1 ring-border"
+      onMouseDown={(e) => e.preventDefault()}
+      style={{
+        // First paint from the selection-time snapshot; the subscription's
+        // immediate call corrects it before the user can scroll. A wider
+        // half-width offset accounts for the two-action row (Comment · Ask agent).
+        top: clamp(sel.vTop - 46, 64, window.innerHeight - 54),
+        left: clamp((sel.vLeft + sel.vRight) / 2 - 90, 12, window.innerWidth - asideWidth - 210),
+      }}
+    >
+      {children}
+    </div>
+  )
+}
 
 /**
  * All the comment surfaces for an artifact, in one place: the desktop margin aside,
@@ -40,7 +98,11 @@ export function ArtifactComments(p: {
   panel: Panel
   asideWidth: number
   openCount: number
-  scrollY: number
+  /** The rendered document's iframe — the pin layer and selection pill measure
+   *  their live position against it. */
+  frameRef: RefObject<HTMLIFrameElement | null>
+  /** Imperative scroll-geometry feed (see use-artifact-frame). */
+  subscribeGeom: (cb: (g: FrameGeom) => void) => () => void
   onScrollDoc: (dy: number) => void
   pinned: PinItem[]
   general: Comment[][]
@@ -81,7 +143,7 @@ export function ArtifactComments(p: {
   // no keyboard.)
   const primer = useRef<HTMLTextAreaElement>(null)
   const newGeneral = () => {
-    p.setComposer({ anchor: null, top: null })
+    p.setComposer({ anchor: null, docTop: null })
     p.setActiveThread(null)
   }
   const cancelNew = () => {
@@ -133,7 +195,9 @@ export function ArtifactComments(p: {
         {!isMobile && !isAnon && (
           <aside
             className={cn(
-              "flex min-h-0 shrink-0 grow-0 flex-col overflow-hidden bg-card transition-[width,flex-basis] duration-200",
+              // overflow-clip: focus scrolling must never shift this box — the pin
+              // layer's transform math assumes its ancestors stay put.
+              "flex min-h-0 shrink-0 grow-0 flex-col overflow-clip bg-card transition-[width,flex-basis] duration-200",
               panel !== "hidden" && "border-l border-border",
             )}
             style={{ width: p.asideWidth, flexBasis: p.asideWidth }}
@@ -141,7 +205,8 @@ export function ArtifactComments(p: {
             {panel !== "hidden" && (
               <OpenPanel
                 openCount={p.openCount}
-                scrollY={p.scrollY}
+                frameRef={p.frameRef}
+                subscribeGeom={p.subscribeGeom}
                 onScrollDoc={p.onScrollDoc}
                 pinned={p.pinned}
                 general={p.general}
@@ -181,21 +246,11 @@ export function ArtifactComments(p: {
           this would land under iOS's own selection menu, so mobile uses the bottom
           bar below instead. Clicking opens the panel and starts a pinned composer. */}
         {!isMobile && canComment && p.docLive && sel && !p.composer && (
-          // biome-ignore lint/a11y/noStaticElementInteractions: onMouseDown only prevents the pill from stealing the selection; the real controls inside are buttons.
-          <div
-            className="fixed z-50 flex items-center gap-1 rounded-full bg-card p-1 shadow-[var(--shadow)] ring-1 ring-border"
-            onMouseDown={(e) => e.preventDefault()}
-            style={{
-              // Float just above the selection, centered on it, clamped into the
-              // document column (left of the aside) and below the top header. A wider
-              // half-width offset accounts for the two-action row (Comment · Ask agent).
-              top: clamp(sel.vTop - 46, 64, window.innerHeight - 54),
-              left: clamp(
-                (sel.vLeft + sel.vRight) / 2 - 90,
-                12,
-                window.innerWidth - p.asideWidth - 210,
-              ),
-            }}
+          <SelectionPill
+            sel={sel}
+            frameRef={p.frameRef}
+            subscribeGeom={p.subscribeGeom}
+            asideWidth={p.asideWidth}
           >
             <Button
               variant="ghost"
@@ -218,7 +273,7 @@ export function ArtifactComments(p: {
                 p.startSelAgent(agent)
               }}
             />
-          </div>
+          </SelectionPill>
         )}
         {/* Phones: a selection (drag) OR a tapped paragraph surfaces this bottom bar,
           pinned below iOS's own selection menu and big enough to thumb. It shows

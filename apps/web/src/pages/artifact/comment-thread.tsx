@@ -9,7 +9,7 @@ import {
   type LucideIcon,
   Table2,
 } from "lucide-react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
@@ -26,26 +26,28 @@ import { quoteChipClass } from "./quote-chip"
 import {
   type ComposerState,
   type ElementSnapshotLite,
+  type FrameGeom,
   type PinItem,
   parseAnchor,
   selLabel,
 } from "./types"
+import { usePinLayer } from "./use-pin-layer"
 
 export function PinnedZone({
   pins,
-  scrollY,
+  frameRef,
+  subscribeGeom,
   onScrollDoc,
   composer,
   onSubmitNew,
   onCancelNew,
-  topInset = 0,
 }: {
   pins: PinItem[]
-  scrollY: number
-  /** Vertical gap between the pinned zone's top and the document's top (the panel
-   *  header sitting above it). Cards are anchored from the document top, so this is
-   *  subtracted to keep them lined up with their highlights. */
-  topInset?: number
+  /** The rendered document's iframe — the datum (zone top vs iframe top) is
+   *  MEASURED from it, so the review card / bundle bar / past-version banner can't
+   *  silently misalign the pins the way the old assumed header-only inset did. */
+  frameRef: RefObject<HTMLIFrameElement | null>
+  subscribeGeom: (cb: (g: FrameGeom) => void) => () => void
   onScrollDoc: (dy: number) => void
   composer: ComposerState
   onSubmitNew: (text: string, mentions?: Mention[]) => void
@@ -55,9 +57,14 @@ export function PinnedZone({
   // exact Y, z-order, opacity); it comes from the tree context, same as the cards read.
   const { activeThread, hoverThread } = useCommentTree()
   const [heights, setHeights] = useState<Record<string, number>>({})
+  // Created lazily in the ref callback (refs run during commit, BEFORE effects —
+  // an effect-created observer would miss any card mounting in the zone's own
+  // first commit). Disconnected on unmount.
   const obs = useRef<ResizeObserver | null>(null)
-  useEffect(() => {
-    obs.current = new ResizeObserver((entries) => {
+  useEffect(() => () => obs.current?.disconnect(), [])
+  const measure = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return
+    obs.current ??= new ResizeObserver((entries) => {
       setHeights((h) => {
         let changed = false
         const next = { ...h }
@@ -73,10 +80,18 @@ export function PinnedZone({
         return changed ? next : h
       })
     })
-    return () => obs.current?.disconnect()
-  }, [])
-  const measure = useCallback((el: HTMLDivElement | null) => {
-    if (el) obs.current?.observe(el)
+    obs.current.observe(el)
+    return () => {
+      obs.current?.unobserve(el)
+      // Drop the unmounted pin's height so the layout snapshot never grows stale ids.
+      const id = el.dataset.pin
+      if (id)
+        setHeights((h) => {
+          if (!(id in h)) return h
+          const { [id]: _gone, ...rest } = h
+          return rest
+        })
+    }
   }, [])
 
   // A composer for a new anchored comment joins the same layout as a pinned
@@ -85,114 +100,98 @@ export function PinnedZone({
   // Narrow once so the render below needs no non-null assertions: this is set
   // exactly when there's an anchored composer with a resolved position.
   const activeComposer =
-    composer?.anchor && composer.top != null
-      ? { top: composer.top, quote: selLabel(composer.anchor), agent: composer.agent }
+    composer?.anchor && composer.docTop != null
+      ? { docTop: composer.docTop, quote: selLabel(composer.anchor), agent: composer.agent }
       : null
-  // The pinned zone sits `topInset` px below the document's top (the panel header
-  // above it), so a card at desiredY (measured from the document top) must render
-  // that much higher to line up with its highlight. Clamp at 0 so cards anchored
-  // near the very top bunch just under the header rather than scroll out of reach.
-  const align = (y: number) => Math.max(0, y - topInset)
+  // Everything here is DOC-ABSOLUTE. The pin layer translates the whole stack by
+  // `datum − scrollY − offset` imperatively (see use-pin-layer), so a scroll never
+  // re-renders these cards — their translateY changes only when the layout itself
+  // does, which is exactly when the 200ms transition should fire.
   const items = pins.flatMap((p) => {
     const head = p.thread[0]
-    return head ? [{ id: head.thread_id, desiredY: align(p.desiredY) }] : []
+    return head ? [{ id: head.thread_id, desiredY: p.desiredY }] : []
   })
-  if (activeComposer) items.push({ id: COMPOSER_ID, desiredY: align(activeComposer.top) })
+  if (activeComposer) items.push({ id: COMPOSER_ID, desiredY: activeComposer.docTop })
   const activeId = activeComposer ? COMPOSER_ID : activeThread
   const pos = layoutPins(items, heights, activeId, 12)
-  // Tallest card bottom in the relaxed stack. When a dense cluster pushes this
-  // past the panel height, the panel scrolls to reveal the buried cards (the
-  // document alone can't surface them — they all anchor to the same spot).
   const maxBottom = items.reduce(
     (m, it) => Math.max(m, (pos[it.id] ?? it.desiredY) + (heights[it.id] ?? 116)),
     0,
   )
+  const minY = items.reduce((m, it) => Math.min(m, pos[it.id] ?? it.desiredY), 0)
+  const activeY = activeId != null ? (pos[activeId] ?? null) : null
 
-  const zoneRef = useRef<HTMLDivElement>(null)
-  // Set right before we forward a wheel tick to the document — distinguishes a
-  // scrollY change WE caused (spillover at the end of the local list) from one
-  // the user caused some other way (scrollbar, keyboard, a jump). Only the
-  // latter should discard the local scroll position; see the effect below.
-  const selfScrolled = useRef(false)
-  // Wheel over the panel scrolls the document (so cards glide with their text),
-  // but the panel consumes the gesture FIRST when it has its own overflow to show
-  // — native scroll-chaining, except the document is a cross-origin iframe so the
-  // hand-off is explicit. preventDefault needs a non-passive listener.
+  const { zoneRef, layerRef, reveal } = usePinLayer({
+    frameRef,
+    subscribeGeom,
+    onScrollDoc,
+    layout: { pos, heights, minY, maxBottom, activeY },
+  })
+
+  // Reveal the item the user just committed to. The composer reveals ONCE, at
+  // open: its selection is on-screen by definition (no jump accompanies it), and
+  // a delayed re-reveal would fight a user who scrolls right after opening it.
+  // Activation reveals now AND once more after the jump-to-anchor scroll settles
+  // (fastScrollTo runs 220ms) — a reveal computed mid-glide lands on stale
+  // geometry. Either way it's a one-shot nudge, not a lock: the next doc scroll
+  // unwinds any reveal offset (see use-pin-layer's clamp).
+  const composerOpen = !!activeComposer
   useEffect(() => {
-    const el = zoneRef.current
-    if (!el) return
-    const onWheel = (e: WheelEvent) => {
-      const down = e.deltaY > 0
-      const canConsume = down
-        ? el.scrollTop + el.clientHeight < el.scrollHeight - 1
-        : el.scrollTop > 0
-      if (canConsume) return // let the panel scroll natively to the buried cards
-      e.preventDefault()
-      selfScrolled.current = true
-      onScrollDoc(e.deltaY)
-    }
-    el.addEventListener("wheel", onWheel, { passive: false })
-    return () => el.removeEventListener("wheel", onWheel)
-  }, [onScrollDoc])
-  // A document scroll re-pins every card to a fresh viewport position, so the
-  // panel's own overflow scroll is no longer meaningful — snap it back to the top.
-  // EXCEPT when that scroll was our own spillover forward (the wheel handler
-  // above, at the exact moment a dense cluster's local scroll bottoms out): that
-  // scrollY nudge is a side-effect of the user reading THIS panel, not a reason
-  // to throw their scroll position away — that was the "reach the last comment,
-  // get bounced to the top" bug.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-pin only tracks scrollY changes.
+    if (composerOpen) reveal(COMPOSER_ID)
+  }, [composerOpen, reveal])
   useEffect(() => {
-    if (selfScrolled.current) {
-      selfScrolled.current = false
-      return
-    }
-    if (zoneRef.current) zoneRef.current.scrollTop = 0
-  }, [scrollY])
+    if (!activeThread) return
+    reveal(activeThread)
+    const t = setTimeout(() => reveal(activeThread), 350)
+    return () => clearTimeout(t)
+  }, [activeThread, reveal])
 
   return (
-    <div ref={zoneRef} className="absolute inset-0 overflow-y-auto overflow-x-hidden">
-      {/* Spacer gives the absolutely-placed cards a scrollable height. */}
-      <div aria-hidden="true" style={{ height: maxBottom }} />
-      {pins.map((p) => {
-        const head = p.thread[0]
-        if (!head) return null
-        const id = head.thread_id
-        const active = !activeComposer && activeThread === id
-        const y = pos[id] ?? align(p.desiredY)
-        return (
+    // overflow-clip, not hidden: a clip box is not a scroll container, so focus
+    // scrolling / scrollIntoView can't silently shift it out from under the layer
+    // transform. use-pin-layer's reveal() is the sanctioned way in.
+    <div ref={zoneRef} className="absolute inset-0 overflow-clip">
+      <div ref={layerRef} className="absolute inset-x-2.5 top-0 will-change-transform">
+        {pins.map((p) => {
+          const head = p.thread[0]
+          if (!head) return null
+          const id = head.thread_id
+          const active = !activeComposer && activeThread === id
+          const y = pos[id] ?? p.desiredY
+          return (
+            <div
+              key={id}
+              ref={measure}
+              data-pin={id}
+              className="absolute inset-x-0 top-0 transition-transform duration-200"
+              style={{
+                transform: `translateY(${Math.round(y)}px)`,
+                zIndex: active ? 6 : hoverThread === id ? 4 : 2,
+                opacity: p.located ? 1 : 0,
+              }}
+            >
+              <CommentCard thread={p.thread} inLayer />
+            </div>
+          )
+        })}
+        {activeComposer && (
           <div
-            key={id}
             ref={measure}
-            data-pin={id}
-            className="absolute inset-x-2.5 top-0 transition-transform duration-200"
+            data-pin={COMPOSER_ID}
+            className="absolute inset-x-0 top-0 z-10 transition-transform duration-200"
             style={{
-              transform: `translateY(${Math.round(y)}px)`,
-              zIndex: active ? 6 : hoverThread === id ? 4 : 2,
-              opacity: p.located ? 1 : 0,
+              transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? activeComposer.docTop)}px)`,
             }}
           >
-            <CommentCard thread={p.thread} />
+            <Composer
+              quote={activeComposer.quote}
+              agent={activeComposer.agent}
+              onSubmit={onSubmitNew}
+              onCancel={onCancelNew}
+            />
           </div>
-        )
-      })}
-      {activeComposer && (
-        <div
-          ref={measure}
-          data-pin={COMPOSER_ID}
-          className="absolute inset-x-2.5 top-0 z-10 transition-transform duration-200"
-          style={{
-            transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? align(activeComposer.top))}px)`,
-          }}
-        >
-          <Composer
-            quote={activeComposer.quote}
-            agent={activeComposer.agent}
-            onSubmit={onSubmitNew}
-            onCancel={onCancelNew}
-          />
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }
@@ -322,7 +321,7 @@ function roleGuess(snapshot: ElementSnapshotLite | undefined, label: string): st
 // thread, a reply box, and resolve controls. Its interaction state (active/hovered/
 // present) and handlers come from the CommentTree context — the card is the leaf, so a
 // render site is just `<CommentCard thread={t} />` with no drilled props.
-export function CommentCard({ thread }: { thread: Comment[] }) {
+export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: boolean }) {
   const { canComment, currentSlide, landedSlides, anchorConf, agentIds } = useCommentScope()
   const { activeThread, hoverThread, inDoc, onActivate, onHover, onResolve, onReply, onJump } =
     useCommentTree()
@@ -332,20 +331,19 @@ export function CommentCard({ thread }: { thread: Comment[] }) {
   const root = thread[0]
   const active = !!root && activeThread === root.thread_id
   const cardRef = useRef<HTMLDivElement>(null)
-  // Becoming active scrolls the card into view within whichever container it's
-  // in — the pinned zone's own overflow (a dense cluster the doc scroll alone
-  // can't reveal) or the general/resolved drawer (an unanchored thread has no
-  // doc position to scroll to at all). Selecting a comment should always land
-  // it in view, not just flip a state you have to go hunting for.
+  // Becoming active scrolls the card into view in the general/resolved drawer
+  // (an unanchored thread has no doc position to jump to). Selecting a comment
+  // should always land it in view, not just flip a state you have to go hunting
+  // for. Pinned cards opt OUT (`inLayer`): their zone is overflow-clip and its
+  // ancestors could still be shifted by scrollIntoView, silently breaking the
+  // layer transform — the pin layer's reveal() handles them instead.
   useEffect(() => {
     // Instant, not smooth: the document's own jump-to-anchor scroll is already
     // animating (fastScrollTo, anchor-client.ts) — a second, slower smooth
     // scroll running here at the same time is exactly the "dragging" feel to
-    // avoid. This is just a same-instant catch-up for whichever container
-    // (pinned zone or the general/resolved drawer) doesn't already have the
-    // card in view.
-    if (active) cardRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" })
-  }, [active])
+    // avoid.
+    if (active && !inLayer) cardRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" })
+  }, [active, inLayer])
   if (!root) return null
   const hovered = hoverThread === root.thread_id
   const present = inDoc[root.thread_id]
