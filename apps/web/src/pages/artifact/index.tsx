@@ -648,6 +648,19 @@ export function Artifact() {
               phone header (compact) so multiplayer identity never vanishes on mobile;
               the cursor picker stays desktop-only (no hovering cursor to style on touch). */}
           <div className="flex items-center gap-0.5">
+            {/* Live-stream health: surfaced ONLY while disconnected, so a dropped connection
+                reads as "reconnecting" instead of a silently-frozen collaborative view.
+                Comments/presence self-heal on reconnect (use-artifact-live's onResync). */}
+            {!live.connected && (
+              <span
+                data-testid="live-reconnecting"
+                title="Reconnecting to live updates — comments and presence may be briefly out of date"
+                className="mr-1.5 flex items-center gap-1.5 text-2xs text-muted-foreground"
+              >
+                <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/70" />
+                <span className="hidden sm:inline">Reconnecting…</span>
+              </span>
+            )}
             <Presence viewers={live.viewers} selfId={me?.id} compact={isMobile} />
             {!isMobile && <CursorButton />}
           </div>

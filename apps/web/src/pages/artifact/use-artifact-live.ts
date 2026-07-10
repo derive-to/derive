@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { API_BASE, api, type Viewer } from "@/api"
+import { useOnline } from "@/lib/use-online"
 import { usePageVisible } from "@/lib/use-page-visible"
 import { useLiveCursors } from "./cursors/use-live-cursors"
 
@@ -31,6 +32,16 @@ export function useArtifactLive(opts: {
 }) {
   const { shortId, onComment, onVersion, onReview, onResync } = opts
   const [viewers, setViewers] = useState<Viewer[]>([])
+  // The live-stream "reconnecting" cue: `connected` is false whenever the browser is offline OR
+  // the stream isn't confirmed live — so a dropped connection reads as reconnecting instead of a
+  // silently-frozen collaborative view. `streamReady` is optimistic on mount (the data was just
+  // loaded) and flips on the server's `ready` (up) / the socket's `onerror` (down). `online`
+  // covers the browser-offline case instantly AND — being a real dependency of the stream effect
+  // below — re-establishes the stream the moment the network returns (which native EventSource is
+  // documented not to do reliably), so there's no bespoke reconnect trigger to hand-roll.
+  const online = useOnline()
+  const [streamReady, setStreamReady] = useState(true)
+  const connected = online && streamReady
   // Whether ANY stream for this page has connected before — the first "ready" of
   // the first stream is the mount itself (the loader/query just fetched; nothing
   // to catch up on); every later "ready" means a gap just closed.
@@ -39,15 +50,22 @@ export function useArtifactLive(opts: {
   const { paintFrame } = cursors
   const visible = usePageVisible()
 
-  // The live stream: comment churn + new versions refetch/reload; presence and
-  // peer cursors paint directly. Closed while the tab is hidden (and reopened
-  // on focus) so a backgrounded tab doesn't keep the artifact's room Durable
-  // Object active.
+  // The live stream: comment churn + new versions refetch/reload; presence and peer cursors
+  // paint directly. Gated on `online` as well as `visible`, so it RE-ESTABLISHES the moment the
+  // browser returns online (the idiomatic reconnect — the effect just re-runs when its `online`
+  // dep flips; native EventSource is documented not to auto-reconnect reliably across that
+  // cycle). Also closed while the tab is hidden (reopened on focus) so a backgrounded tab
+  // doesn't keep the artifact's room Durable Object active — and a return-to-tab likewise
+  // re-establishes, which recovers the rarer server-error CLOSED case too.
   useEffect(() => {
-    if (!visible) return
+    if (!visible || !online) return
     const ev = new EventSource(`${API_BASE}/v1/artifacts/${shortId}/events`, {
       withCredentials: true,
     })
+    // Connection health for the cue: onerror flips to reconnecting; the server's `ready` hello
+    // (below) confirms we're live again — NOT the raw `onopen`, which proved unreliable at
+    // confirming a real reconnect.
+    ev.onerror = () => setStreamReady(false)
     ev.addEventListener("comment.created", onComment)
     ev.addEventListener("comment.resolved", onComment)
     ev.addEventListener("comment.outdated", onComment)
@@ -63,8 +81,10 @@ export function useArtifactLive(opts: {
       }
       onVersion(n)
     })
-    // "ready" is the server's hello on every (re)connect — see onResync.
+    // "ready" is the server's hello on every (re)connect — see onResync. It's also the live
+    // signal: reaching it means the stream is up and the server acknowledged us.
     ev.addEventListener("ready", () => {
+      setStreamReady(true)
       if (everConnected.current) onResync?.()
       everConnected.current = true
     })
@@ -88,7 +108,7 @@ export function useArtifactLive(opts: {
       }
     })
     return () => ev.close()
-  }, [shortId, onComment, onVersion, onReview, onResync, paintFrame, visible])
+  }, [shortId, onComment, onVersion, onReview, onResync, paintFrame, visible, online])
 
   // Announce we're viewing (anon shows up by their server handle — Google-Docs
   // style) and keep the heartbeat alive (TTL 45s). Paused while the tab is
@@ -116,6 +136,7 @@ export function useArtifactLive(opts: {
 
   return {
     viewers,
+    connected,
     onPointerMove: cursors.onPointerMove,
     onPointerLeave: cursors.onPointerLeave,
     onTap: cursors.onTap,
