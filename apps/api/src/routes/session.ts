@@ -213,6 +213,18 @@ export const sessionRoutes = (ctx: AppContext) => {
         }),
       )
       if (body instanceof Response) return bail(body)
+      // A Brandprint is a pointer to a conventions collection, so a NEW pointer
+      // must be OWNED by one of the caller's own workspaces — otherwise a
+      // hand-crafted collectionId could point at another tenant's collection
+      // and have its artifact bodies served over MCP (the store deliberately
+      // doesn't validate this; the route does). Clearing, or a theme-only
+      // patch, skips the check — it isn't pointing at anything new.
+      if (body.brandprint?.collectionId) {
+        const col = await meta.getCollection(body.brandprint.collectionId)
+        const mine = await meta.listWorkspaces(u.id)
+        if (!col || !mine.some((w) => w.id === col.org_id))
+          return bail(fail(c, 400, "brandprint collection not found"))
+      }
       // Normalize "" → null (clear) so the column is never an empty string.
       const patch: {
         profession?: string | null
