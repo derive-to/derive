@@ -32,7 +32,7 @@ The user-facing name is **Brandprint**. Anir's branch calls it "House Style" in 
 | `OrgSettings.houseStyle` | `OrgSettings.brandprint` |
 | profile field `houseStyle` | `brandprint` |
 | `MetaStore.getUserHouseStyle` | `getUserBrandprint` |
-| MCP resource `dock://house-style/<id>` | `dock://brandprint/<id>` |
+| MCP resource `dock://house-style/<id>` | `derive://brandprint/<id>` |
 | web `settings/house-style-section.tsx` | `settings/brandprint-section.tsx` |
 | tests `*house-style*` | `*brandprint*` |
 
@@ -64,7 +64,7 @@ Three layers, two of which already exist:
 ```
 Capture            Deliver (exists)              Apply
 --------           ----------------              -----
-intake ->  Brandprint pointer (collection)  ->  default: agent reads dock://brandprint/*
+intake ->  Brandprint pointer (collection)  ->  default: agent reads derive://brandprint/*
                                                           before authoring (auto)
                                                 Rework: ⋯ menu -> ask-agent inbox ->
                                                           agent revises -> new version
@@ -116,8 +116,8 @@ Unchanged from Anir's work except the rename. In `apps/api/src/mcp.ts`, `buildSe
 
 1. Resolves `brandprint` for the workspace, merged with the owner's personal `brandprint`.
 2. Pulls every artifact in the resolved collection(s).
-3. Registers each as a readable resource `dock://brandprint/<short_id>` (`audience: ["assistant"]`, `priority: 0.9`, body fetched lazily as the current version's text).
-4. Appends a one-line pointer to the server `instructions`: "This workspace has a Brandprint: N convention docs on how to build things here. Read the `dock://brandprint/*` resources before authoring; your personal Brandprint takes precedence."
+3. Registers each as a readable resource `derive://brandprint/<short_id>` (`audience: ["assistant"]`, `priority: 0.9`, body fetched lazily as the current version's text).
+4. Appends a one-line pointer to the server `instructions`: "This workspace has a Brandprint: N convention docs on how to build things here. Read the `derive://brandprint/*` resources before authoring; your personal Brandprint takes precedence."
 
 This is the default, automatic path. A connected agent reads the Brandprint on its own before it creates or revises, no user action required.
 
@@ -133,12 +133,12 @@ The artifact overflow (⋯) menu in `apps/web/src/pages/artifact/artifact-top-ba
 
 1. Resolves the workspace's registered agents (same source the existing `AskAgentButton` uses).
 2. **One agent:** fires immediately. **Several agents:** opens a small picker (mirrors `AskAgentButton`). **No agent:** routes to the shared Connect-an-agent surface (below) instead of firing.
-3. Firing posts an artifact-scoped request that @mentions the chosen agent with a canned instruction, which drops into that agent's MCP pull inbox. The agent reads the request, reads its `dock://brandprint/*` resources, revises the whole document, and publishes.
+3. Firing posts an artifact-scoped request that @mentions the chosen agent with a canned instruction, which drops into that agent's MCP pull inbox. The agent reads the request, reads its `derive://brandprint/*` resources, revises the whole document, and publishes.
 
 Canned instruction (kept server-side as the single source of truth):
 
 ```
-Rework this artifact to match our Brandprint. Read the dock://brandprint/*
+Rework this artifact to match our Brandprint. Read the derive://brandprint/*
 resources first, then revise the whole document so its voice, structure, and
 formatting match. Preserve the meaning and the facts; change how it reads,
 not what it says. Publish the result as a new version.
@@ -225,7 +225,7 @@ Bring Anir's Phase A onto current main without a 104-commit rebase. Main has sin
 
 - **Core:** `resolveBrandprint`, `parseBrandprint`, `brandprintInstructions` unit tests (ported and renamed).
 - **API:** `brandprint/seed` creates the artifact, collection, and pointer at each scope with no model; workspace and profile patches merge and clear correctly; `artifacts/:id/rework` composes the correct @mention and lands it in the agent inbox, and returns `needsAgent` when the workspace has none.
-- **MCP:** a seeded collection registers `dock://brandprint/*` resources and appends the pointer (ported from Anir's MCP test).
+- **MCP:** a seeded collection registers `derive://brandprint/*` resources and appends the pointer (ported from Anir's MCP test).
 - **Web:** onboarding Step 3 renders, saves, and skips; the Rework menu item shows the correct one of fire / picker / connect for zero, one, and several agents; the Settings section seeds and edits.
 
 ## Phasing
