@@ -1,3 +1,4 @@
+import { ArrowUp } from "lucide-react"
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -66,6 +67,7 @@ export function MentionField({
   className,
   style,
   testId,
+  sendTestId,
 }: {
   value: string
   onChange: (v: string) => void
@@ -80,6 +82,10 @@ export function MentionField({
   className?: string
   style?: CSSProperties
   testId?: string
+  /** Render an in-well ↑ send button (the thread reply grammar: the field carries
+   *  its own send, nothing floats outside the well). Replaces the emoji trigger —
+   *  the two share the right rail, and :shortcodes: still cover emoji here. */
+  sendTestId?: string
 }) {
   const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
@@ -314,29 +320,50 @@ export function MentionField({
         )}
       </div>
 
+      {/* In-well send (thread replies): the ↑ ink button rides the well's bottom-
+          right and tracks the field as it grows — Enter does the same thing. */}
+      {sendTestId && (
+        <Button
+          type="button"
+          variant="default"
+          size="icon-xs"
+          data-testid={sendTestId}
+          aria-label="Send"
+          disabled={!value.trim()}
+          // mousedown-preventDefault keeps the field focused through the click.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={submit}
+          className="absolute bottom-1 right-1 size-6 rounded-md"
+        >
+          <ArrowUp aria-hidden className="size-3.5" />
+        </Button>
+      )}
+
       {/* Emoji picker: a one-tap grid of the common emoji. Typing :shortcode:
           works too (rendered on display); this is the no-memorization path.
           A Tooltip (not a title attr) labels the icon-only trigger — safe here
           because the button is a plain toggle, not another asChild trigger. */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            data-testid="emoji-trigger"
-            aria-label="Add emoji"
-            aria-expanded={emojiOpen}
-            onClick={() => setEmojiOpen((o) => !o)}
-            className="absolute right-1 top-1 text-muted-foreground"
-          >
-            {/* Explicit size-4 class: icon-xs would otherwise downscale a bare svg. */}
-            <Icon name="react" className="size-4" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>Add emoji</TooltipContent>
-      </Tooltip>
-      {emojiOpen && (
+      {!sendTestId && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              data-testid="emoji-trigger"
+              aria-label="Add emoji"
+              aria-expanded={emojiOpen}
+              onClick={() => setEmojiOpen((o) => !o)}
+              className="absolute right-1 top-1 text-muted-foreground"
+            >
+              {/* Explicit size-4 class: icon-xs would otherwise downscale a bare svg. */}
+              <Icon name="react" className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Add emoji</TooltipContent>
+        </Tooltip>
+      )}
+      {!sendTestId && emojiOpen && (
         <>
           {/* click-catcher to dismiss */}
           <button

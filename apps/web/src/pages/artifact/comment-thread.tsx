@@ -518,42 +518,74 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
           )}
         </div>
       )}
-      {/* The anchored reference, inset with the card's own padding (a full-bleed
-          band here made every card lead with a gray slab). */}
-      {refLabel && (
-        <div className="px-3 pt-2.5">
-          {isEl ? (
-            <ElementRef
-              threadId={root.thread_id}
-              label={refLabel}
-              snapshot={snapshot}
-              present={textPresent && !resolved}
-              relocated={relocated}
-              onJump={onJump}
-            />
-          ) : textPresent && !resolved ? (
-            <button
-              type="button"
-              data-testid={`comment-jump-${root.thread_id}`}
-              onClick={(e) => {
-                e.stopPropagation()
-                onJump(root.thread_id)
-              }}
-              title="Jump to the highlighted text"
-              className={quoteChipClass({
-                className:
-                  "block w-full truncate outline-none hover:border-foreground/60 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-              })}
-            >
-              “{refLabel}”
-            </button>
-          ) : (
-            <div
-              title="The text this comment was attached to was edited or removed in this version"
-              className={quoteChipClass({ muted: true, className: "block w-full truncate" })}
-            >
-              “{refLabel}”
-            </div>
+      {/* The card's title bar: the anchored reference (inset — a full-bleed band
+          here made every card lead with a gray slab) and, when the thread is
+          open, its ONE state action: the resolve check, quiet at rest, success
+          on hover. The footer below stays purely about replying. */}
+      {(refLabel || active) && (
+        <div className="flex items-center gap-1.5 px-3 pt-2.5">
+          <div className="min-w-0 flex-1">
+            {refLabel &&
+              (isEl ? (
+                <ElementRef
+                  threadId={root.thread_id}
+                  label={refLabel}
+                  snapshot={snapshot}
+                  present={textPresent && !resolved}
+                  relocated={relocated}
+                  onJump={onJump}
+                />
+              ) : textPresent && !resolved ? (
+                <button
+                  type="button"
+                  data-testid={`comment-jump-${root.thread_id}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onJump(root.thread_id)
+                  }}
+                  title="Jump to the highlighted text"
+                  className={quoteChipClass({
+                    className:
+                      "block w-full truncate outline-none hover:border-foreground/60 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+                  })}
+                >
+                  “{refLabel}”
+                </button>
+              ) : (
+                <div
+                  title="The text this comment was attached to was edited or removed in this version"
+                  className={quoteChipClass({ muted: true, className: "block w-full truncate" })}
+                >
+                  “{refLabel}”
+                </div>
+              ))}
+          </div>
+          {active && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={resolved ? "Reopen" : "Resolve"}
+                  data-testid="comment-resolve"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onResolve(root)
+                  }}
+                  className={cn(
+                    "-mr-1 -mt-0.5 shrink-0 text-muted-foreground",
+                    resolved ? "hover:text-foreground" : "hover:bg-success/10 hover:text-success",
+                  )}
+                >
+                  {resolved ? (
+                    <RotateCcw aria-hidden className="size-4" />
+                  ) : (
+                    <Icon name="check" className="size-4" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{resolved ? "Reopen" : "Resolve"}</TooltipContent>
+            </Tooltip>
           )}
         </div>
       )}
@@ -603,80 +635,48 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
       {!active ? (
         <>
           <CommentRow c={root} compact />
-          {replies > 0 && (
-            <div className="px-3 pb-2.5 font-mono text-2xs font-medium tabular-nums text-muted-foreground">
-              {replies} repl{replies === 1 ? "y" : "ies"}
+          {replies > 0 ? (
+            // In the text column, like everything else in the thread.
+            <div className="px-3 pb-2 pt-0.5 font-mono text-2xs font-medium tabular-nums text-muted-foreground">
+              <span className="block pl-7">
+                {replies} repl{replies === 1 ? "y" : "ies"}
+              </span>
             </div>
+          ) : (
+            <div aria-hidden className="pb-1.5" />
           )}
         </>
       ) : (
         <>
-          <div className="max-h-90 overflow-auto">
-            {thread.map((c) => (
-              <CommentRow key={c.id} c={c} />
+          {/* No dividers between rows: consecutive same-author messages drop
+              their header entirely, so a run reads as one voice — the thread is
+              conversation, not stacked row-cards. */}
+          <div className="max-h-90 overflow-auto pb-1.5">
+            {thread.map((c, i) => (
+              <CommentRow key={c.id} c={c} grouped={i > 0 && thread[i - 1]?.author === c.author} />
             ))}
           </div>
-          {/* One quiet action row (the old card stacked a reply row AND a filled
-              status strip under it — three bands deep). Reply grows in place;
-              Resolve is the check at the end — the GDocs/Linear position —
-              still the success affordance (soft status fill, never filled ink). */}
-          <div className="flex items-end gap-1.5 border-t border-border-soft px-3 py-2">
-            {canComment ? (
-              <>
-                {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control */}
-                {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control */}
-                <div className="min-w-0 flex-1" onClick={(e) => e.stopPropagation()}>
-                  {/* Multiline like the composer: Shift+Enter breaks the line, the
-                      box grows with the text (capped, then scrolls) — a reply is
-                      prose, not a one-line form field. */}
-                  <MentionField
-                    multiline
-                    testId="comment-reply-input"
-                    className="field-sizing-content min-h-8 max-h-32"
-                    value={reply}
-                    onChange={setReply}
-                    mentions={replyMentions}
-                    onMentions={setReplyMentions}
-                    onSubmit={sendReply}
-                    placeholder="Reply… (@ to mention)"
-                    autoFocus
-                  />
-                </div>
-                {reply.trim() && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    data-testid="comment-reply-send"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      sendReply(replyMentions.filter((m) => reply.includes(`@${m.name}`)))
-                    }}
-                  >
-                    Reply
-                  </Button>
-                )}
-              </>
-            ) : (
-              <span className="flex-1" />
-            )}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant={resolved ? "outline" : "success"}
-                  size="icon-sm"
-                  aria-label={resolved ? "Reopen" : "Resolve"}
-                  data-testid="comment-resolve"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onResolve(root)
-                  }}
-                >
-                  {resolved ? <RotateCcw aria-hidden className="size-4" /> : <Icon name="check" />}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{resolved ? "Reopen" : "Resolve"}</TooltipContent>
-            </Tooltip>
-          </div>
+          {/* The reply well carries its own send (↑, in-field) — nothing floats
+              outside it to strand when the box grows. Enter sends too. */}
+          {canComment && (
+            // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control
+            // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control
+            <div className="border-t border-border-soft p-2" onClick={(e) => e.stopPropagation()}>
+              <MentionField
+                multiline
+                testId="comment-reply-input"
+                sendTestId="comment-reply-send"
+                className="field-sizing-content min-h-8 max-h-32"
+                value={reply}
+                onChange={setReply}
+                mentions={replyMentions}
+                onMentions={setReplyMentions}
+                onSubmit={sendReply}
+                placeholder="Reply…"
+                autoFocus
+              />
+            </div>
+          )}
         </>
       )}
     </div>
