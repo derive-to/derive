@@ -278,8 +278,12 @@
   a {
     color: var(--primary);
     text-decoration: none;
-    /* Links carry the pointer affordance on hover. */
-    cursor: pointer;
+    /* The arrow everywhere, Linear-style: links keep the default cursor instead
+       of the hand. Overrides the UA's a[href] pointer; buttons are already
+       arrow-by-default, and nothing else in the app opts into `cursor-pointer`.
+       Authored artifact content lives in its own iframe and keeps web-native
+       cursors. */
+    cursor: default;
   }
   /* Tighten heading tracking a hair — the "this was designed" tell. */
   h1,
