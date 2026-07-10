@@ -16,8 +16,10 @@ import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 import { useActions } from "./comment-actions"
 import { Composer, MentionField } from "./comment-composer"
@@ -364,7 +366,7 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
   const { canComment, currentSlide, landedSlides, anchorConf, agentIds } = useCommentScope()
   const { activeThread, hoverThread, inDoc, onActivate, onHover, onResolve, onReply, onJump } =
     useCommentTree()
-  const { openReview } = useActions()
+  const { openReview, meName } = useActions()
   const [reply, setReply] = useState("")
   const [replyMentions, setReplyMentions] = useState<Mention[]>([])
   const root = thread[0]
@@ -434,20 +436,20 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
       onMouseLeave={() => onHover(null)}
       onClick={() => !active && onActivate(root.thread_id)}
       className={cn(
-        // The house card register (rounded-xl, hairline, soft lift). No entrance
-        // animation: cards appear constantly (panel open, refetch, scroll into
-        // the margin) and motion there reads as churn, not delight — the pin
-        // layer's transform transition already carries all deliberate movement.
-        "overflow-hidden rounded-xl border bg-card shadow-[var(--shadow-sm)]",
+        // Tight radius, the QUIETEST edge that still separates: in light the
+        // soft hairline + shadow carry the lift; dark has no shadows and the
+        // panel shares the card fill, so the standard hairline stays there.
+        // No entrance animation: cards appear constantly (panel open, refetch,
+        // scroll into the margin) and motion there reads as churn — the pin
+        // layer's transform transition carries all deliberate movement.
+        "overflow-hidden rounded-lg border bg-card shadow-[var(--shadow-sm)]",
         // Active/hovered cards take neutral re-inked edges — never the accent
-        // (the ink accent marks actions and brand moments, not selection). Active
-        // reads by the expanded thread + a re-inked edge + one shadow step, not
-        // the popover-weight pop.
+        // (the ink accent marks actions and brand moments, not selection).
         active
-          ? "cursor-default border-foreground/30 shadow-[var(--shadow)]"
+          ? "cursor-default border-foreground/25 shadow-[var(--shadow)]"
           : hovered
             ? "border-foreground/15"
-            : "border-border",
+            : "border-border-soft dark:border-border",
         resolved && !active && "opacity-60",
       )}
     >
@@ -659,26 +661,32 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
               column like every other line; the ↑ send appears with the first
               character, and Enter sends too. */}
           {canComment && (
-            // pl-8 + the field's px-2 lands the reply text exactly on the text
-            // column (px-3 + pl-7 = 40px), so "Reply…" reads as the thread's
-            // next line.
+            // YOUR avatar leads the reply line — the row grammar completes
+            // (every line in the thread is avatar + text, and this one is you),
+            // and the empty gutter earns its keep. The field's text lands on
+            // the same column as the messages above.
             // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control
             // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control
-            <div className="pb-1.5 pl-8 pr-2" onClick={(e) => e.stopPropagation()}>
-              <MentionField
-                multiline
-                bare
-                testId="comment-reply-input"
-                sendTestId="comment-reply-send"
-                className="field-sizing-content max-h-32 min-h-8 resize-none px-2"
-                value={reply}
-                onChange={setReply}
-                mentions={replyMentions}
-                onMentions={setReplyMentions}
-                onSubmit={sendReply}
-                placeholder="Reply…"
-                autoFocus
-              />
+            <div className="flex gap-2 px-3 pb-1.5" onClick={(e) => e.stopPropagation()}>
+              <Avatar className="mt-1 size-5 shrink-0">
+                <AvatarFallback className="text-2xs">{getInitials(meName)}</AvatarFallback>
+              </Avatar>
+              <div className="min-w-0 flex-1">
+                <MentionField
+                  multiline
+                  bare
+                  testId="comment-reply-input"
+                  sendTestId="comment-reply-send"
+                  className="field-sizing-content max-h-32 min-h-8 resize-none px-1.5"
+                  value={reply}
+                  onChange={setReply}
+                  mentions={replyMentions}
+                  onMentions={setReplyMentions}
+                  onSubmit={sendReply}
+                  placeholder="Reply…"
+                  autoFocus
+                />
+              </div>
             </div>
           )}
         </>

@@ -472,7 +472,7 @@ export function Composer({
     <div
       data-testid={agent ? "agent-request-composer" : "comment-composer"}
       className={cn(
-        "overflow-hidden rounded-xl border bg-card shadow-[var(--shadow)]",
+        "overflow-hidden rounded-lg border bg-card shadow-[var(--shadow)]",
         // A request reads as a distinct, ink-tinted moment (the one place the accent
         // carries a "hand this to an agent" action), not a plain neutral comment box.
         agent ? "border-primary/40 ring-1 ring-primary/15" : "border-border",
