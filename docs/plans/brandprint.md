@@ -101,6 +101,8 @@ A Brandprint points at a **collection** of convention artifacts, so a team can g
 
 Brandprint is a top-level destination: `/brandprint`, in the rail directly under Contexts (Fingerprint mark). The page shows both halves in one place: **Workspace Brandprint** (Admin-gated writes) and **Your Brandprint** (personal, layered over the workspace's, yours wins). It replaced the original placement embedded in Settings → General and Settings → Profile, which split the feature across two screens.
 
+The page is also the docs' one home. The pointed collection is hidden from the general collection surfaces (rail, command palette, the organize dialogs), and the page carries a managed **Documents** list: open each doc, remove it from the Brandprint (the artifact lives on in the library), add more via upload. Hiding is client-side with no API change: your own pointers ride the session and the member-readable workspace settings, and a teammate's personal Brandprint collection is invite-only, so it never listed for you in the first place.
+
 ## Capture: the create dialog (shipped, #383)
 
 An empty scope shows one **Create Brandprint** button. Its dialog offers three ways in:
@@ -260,3 +262,4 @@ Resolved during review and build, reflected in the body above:
 5. **Capture asks for both halves of the brand** (#383). The upload intake splits into "how your artifacts should look" and "how your artifacts should read." Either alone works; both are first-class, and the look docs are the planned extraction source for Phase 3 theming.
 6. **No seed endpoint** (#383). The intake shipped as client-side composition of existing endpoints inside one governed mutation. `POST /v1/brandprint/seed` is revived only if the onboarding step wants a single atomic round-trip.
 7. **Rework gates on a Brandprint existing.** With none resolved, the ⋯ item reads "Set up your Brandprint" and routes to `/brandprint`; the canned instruction never fires against zero convention docs.
+8. **The Brandprint collection is not a Collection, to users.** It stays a collection in the data model (the delivery layer reads it unchanged), but it never surfaces in the rail, palette, or organize dialogs; its docs are managed on `/brandprint` only, so the files and the options have one home.
