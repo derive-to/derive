@@ -7,7 +7,7 @@ import type { BlankEnv } from "hono/types"
 import { OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { type AppDeps, buildContext } from "./context"
 import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
-import { observability } from "./lib/observability"
+import { observability, redactPath } from "./lib/observability"
 import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
 import { log } from "./log"
@@ -116,7 +116,7 @@ export function createApp(deps: AppDeps): Hono {
   app.onError((err, c) => {
     log.error("unhandled error", {
       method: c.req.method,
-      path: c.req.path,
+      path: redactPath(c.req.path),
       request_id: c.get("requestId"),
       error: err instanceof Error ? err.message : String(err),
     })

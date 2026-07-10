@@ -16,6 +16,12 @@ declare module "hono" {
 // real signal. (They still get a request id + the X-Request-Id header.)
 const SKIP_LOG = new Set(["/healthz", "/readyz"])
 
+/** Invite tokens ride URL paths (/invite/a/<t> → /v1/artifact-invites/<t>); the DB
+ *  only ever stores their hash, so the log must not become the one place the raw
+ *  bearer value persists. Redact anything token-shaped before a path is logged. */
+export const redactPath = (path: string): string =>
+  path.replace(/(dk[a-z_]*_)[A-Za-z0-9]{16,}/g, "$1[redacted]")
+
 /**
  * Tags every request with a stable id (honoring an inbound `X-Request-Id` from a
  * proxy/load balancer, else minting one), echoes it back as a response header, and
@@ -32,7 +38,7 @@ export const observability = (): MiddlewareHandler => async (c, next) => {
   if (SKIP_LOG.has(c.req.path)) return
   log.info("request", {
     method: c.req.method,
-    path: c.req.path,
+    path: redactPath(c.req.path),
     status: c.res.status,
     duration_ms: Date.now() - start,
     request_id: requestId,
