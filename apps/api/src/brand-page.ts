@@ -25,7 +25,8 @@ const STYLE = `<style>
   h1{font-family:var(--display);font-weight:600;font-size:23px;line-height:1.2;letter-spacing:-.02em;margin:0 0 7px}
   .sub{color:var(--ink-soft);font-size:14px;margin:0 0 20px}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-  .btn{display:inline-block;padding:10px 17px;border-radius:10px;font:600 14px var(--sans);cursor:pointer;
+  a{cursor:default} /* the arrow everywhere, Linear-style — same rule as the app's globals.css */
+  .btn{display:inline-block;padding:10px 17px;border-radius:10px;font:600 14px var(--sans);
     border:1px solid var(--accent);background:var(--accent);color:var(--accent-fg);text-decoration:none}
   .btn:hover{filter:brightness(1.07)}
   .btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
@@ -38,7 +39,7 @@ const STYLE = `<style>
   .code pre{margin:0;max-height:240px;overflow:auto;background:var(--paper);border:1px solid var(--line);
     border-radius:12px;padding:14px 15px;font-family:var(--mono);font-size:11.5px;line-height:1.5;color:var(--ink)}
   .code .copy{position:absolute;top:9px;right:9px;padding:5px 11px;border-radius:8px;font:600 12px var(--sans);
-    cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+    border:1px solid var(--line);background:var(--panel);color:var(--ink)}
   .code .copy:hover{border-color:var(--accent)}
 </style>`
 

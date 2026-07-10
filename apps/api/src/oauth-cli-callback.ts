@@ -41,7 +41,7 @@ const SHELL = (title: string, inner: { badge: string; body: string }): string =>
   .code{display:flex;gap:10px;align-items:center;border:1px solid var(--line);border-radius:13px;
     background:var(--panel-2);padding:13px 15px}
   .code code{flex:1;font:13px/1.45 var(--mono);word-break:break-all;color:var(--ink);letter-spacing:.01em}
-  .btn{padding:9px 15px;border-radius:10px;font:600 13px var(--sans);cursor:pointer;border:1px solid var(--accent);
+  .btn{padding:9px 15px;border-radius:10px;font:600 13px var(--sans);border:1px solid var(--accent);
     background:var(--accent);color:var(--accent-fg);flex:none;transition:transform .05s,filter .15s}
   .btn:active{transform:translateY(1px)} .btn:hover{filter:brightness(1.07)}
   .foot{color:var(--muted);font-size:12.5px;line-height:1.5;margin:20px 0 0}

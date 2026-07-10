@@ -193,6 +193,15 @@ padding.
   focus-visible:ring-2 focus-visible:ring-ring/40` — an **ink** border + soft glow, no
   offset (never `outline-offset` on inputs).
 
+## Cursor
+
+The arrow everywhere, Linear-style. Links and buttons keep the default cursor — no
+`cursor-pointer` in app chrome; hover states, not the hand, signal clickability
+(globals.css sets `a { cursor: default }` to override the browser's link pointer).
+Functional cursors stay: text fields keep the I-beam, resize handles keep resize
+cursors, drag surfaces keep grab. Authored artifact content renders in its own
+iframe and keeps web-native cursors — we're a guest in the author's document.
+
 ## Motion
 
 Fast and quiet. No hover color/background transitions — color changes are instant

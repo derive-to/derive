@@ -120,18 +120,19 @@ export function consentHTML(props: {
   .sub{color:var(--ink-soft);font-size:13.5px;margin:0 0 18px}
   .ws-label{display:block;font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.05em;
     text-transform:uppercase;color:var(--muted);margin:0 0 6px}
+  a{cursor:default} /* the arrow everywhere, Linear-style — same rule as the app's globals.css */
   select.ws{width:100%;margin:0 0 16px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;
-    background:var(--panel-2);color:var(--ink);font:500 14px var(--sans);cursor:pointer}
+    background:var(--panel-2);color:var(--ink);font:500 14px var(--sans)}
   select.ws:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
   .ws-access{margin:0 0 18px;padding:10px 14px;border:1px solid var(--line);border-radius:14px;background:var(--panel-2)}
   .ws-access .ws-label{margin:2px 0 4px}
-  .ws-opt{display:flex;gap:10px;align-items:flex-start;padding:7px 0;cursor:pointer}
+  .ws-opt{display:flex;gap:10px;align-items:flex-start;padding:7px 0}
   .ws-opt input{margin-top:2px;accent-color:var(--accent);flex:none;width:15px;height:15px}
   .ws-opt-t{display:flex;flex-direction:column;font-size:13.5px;font-weight:600;color:var(--ink)}
   .ws-opt-t small{font-weight:400;font-size:12px;color:var(--muted);margin-top:1px}
   .ws-list{margin:2px 0 4px 25px;padding-left:12px;border-left:1px solid var(--line);display:flex;flex-direction:column}
   .ws-list[hidden]{display:none}
-  .ws-check{display:flex;gap:9px;align-items:center;padding:6px 0;font-size:13.5px;color:var(--ink-soft);cursor:pointer}
+  .ws-check{display:flex;gap:9px;align-items:center;padding:6px 0;font-size:13.5px;color:var(--ink-soft)}
   .ws-check input{accent-color:var(--accent);flex:none;width:15px;height:15px}
   ul.scopes{list-style:none;margin:0 0 22px;padding:8px 16px;border:1px solid var(--line);border-radius:14px;background:var(--panel-2)}
   ul.scopes li{display:flex;gap:11px;align-items:flex-start;padding:9px 0;font-size:13.5px;color:var(--ink-soft)}
@@ -139,14 +140,14 @@ export function consentHTML(props: {
   .tick{color:var(--good);font-weight:700;flex:none;font-size:13px;line-height:1.5}
   .tick.w{color:var(--accent)}
   .row{display:flex;gap:10px}
-  .btn{flex:1;padding:12px 16px;border-radius:11px;font:600 14px var(--sans);cursor:pointer;border:1px solid var(--line);
+  .btn{flex:1;padding:12px 16px;border-radius:11px;font:600 14px var(--sans);border:1px solid var(--line);
     transition:transform .05s,background .15s,filter .15s}
   .btn:active{transform:translateY(1px)}
   .btn.ghost{background:transparent;color:var(--muted)}
   .btn.ghost:hover{background:var(--panel-2);color:var(--ink-soft)}
   .btn.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
   .btn.primary:hover{filter:brightness(1.07)}
-  .btn[disabled]{opacity:.55;cursor:default}
+  .btn[disabled]{opacity:.55}
   .foot{color:var(--muted);font-size:12px;text-align:center;margin:16px 0 0}
   .err{color:var(--bad);font-size:12.5px;text-align:center;margin:12px 0 0;min-height:0}
   .badge.ok{background:var(--good-soft);color:var(--good)}
