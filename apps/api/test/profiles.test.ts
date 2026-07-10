@@ -67,7 +67,11 @@ describe("usernames + public profiles", () => {
       jsonAs(as(ravi.email), { profession: " Builder ", about: "  ship features + docs  " }),
     )
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ profession: "Builder", about: "ship features + docs" })
+    expect(await res.json()).toEqual({
+      profession: "Builder",
+      about: "ship features + docs",
+      brandprint: null,
+    })
 
     // They come back on the public profile.
     const { user } = await (await app.request("/v1/users/ravi")).json()
@@ -75,7 +79,7 @@ describe("usernames + public profiles", () => {
 
     // An empty string clears a field; an omitted field is left untouched.
     const cleared = await app.request("/v1/me/profile", jsonAs(as(ravi.email), { profession: "" }))
-    expect(await cleared.json()).toEqual({ profession: null, about: null })
+    expect(await cleared.json()).toEqual({ profession: null, about: null, brandprint: null })
     const after = await (await app.request("/v1/users/ravi")).json()
     expect(after.user.profession).toBeNull()
     expect(after.user.about).toBe("ship features + docs") // untouched
@@ -91,6 +95,26 @@ describe("usernames + public profiles", () => {
     expect((await app.request("/v1/me/profile", jsonAs({}, { profession: "Design" }))).status).toBe(
       403,
     )
+  })
+
+  it("saves and returns a personal brandprint, and clears it with null", async () => {
+    const bo: TestUser = { id: "u_bo", email: "bo@derive.test", name: "Bo", username: "bo" }
+    const { app } = makeAuthedApp("profiles-brandprint", [bo])
+
+    const saved = await app.request(
+      "/v1/me/profile",
+      jsonAs(as(bo.email), { brandprint: { collectionId: "col_1" } }),
+    )
+    expect(saved.status).toBe(200)
+    expect(await saved.json()).toEqual({
+      profession: null,
+      about: null,
+      brandprint: { collectionId: "col_1" },
+    })
+
+    const cleared = await app.request("/v1/me/profile", jsonAs(as(bo.email), { brandprint: null }))
+    expect(cleared.status).toBe(200)
+    expect((await cleared.json()).brandprint).toBeNull()
   })
 
   it("404s an unclaimed handle", async () => {

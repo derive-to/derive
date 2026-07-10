@@ -29,6 +29,19 @@ export const sessionRoutes = (ctx: AppContext) => {
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
+  // A personal Brandprint: a pointer to a conventions collection, plus an optional
+  // visual theme for rendered docs. Mirrors the workspace-level shape (resolved
+  // profile-over-workspace); see packages/core/src/ports.ts Brandprint.
+  const BrandprintTheme = z.object({
+    palette: z.record(z.string(), z.string()).optional(),
+    fonts: z.record(z.string(), z.string()).optional(),
+    dark: z.object({ palette: z.record(z.string(), z.string()).optional() }).optional(),
+  })
+  const BrandprintSchema = z.object({
+    collectionId: z.string().trim().max(64).nullish(),
+    theme: BrandprintTheme.nullish(),
+  })
+
   // A public profile by @handle — email is intentionally omitted. The list surfaces
   // (search/people/followers/following) carry the top fields; the full /users/:handle
   // profile adds about/github_login/stats/followed_by_me.
@@ -179,6 +192,9 @@ export const sessionRoutes = (ctx: AppContext) => {
               schema: z.object({
                 profession: z.string().nullable().describe("Saved team role; null when cleared."),
                 about: z.string().nullable().describe("Saved bio; null when cleared."),
+                brandprint: BrandprintSchema.nullable().describe(
+                  "Saved personal Brandprint; null when cleared.",
+                ),
               }),
             },
           },
@@ -193,15 +209,26 @@ export const sessionRoutes = (ctx: AppContext) => {
         z.object({
           profession: z.string().trim().max(40).optional(),
           about: z.string().trim().max(280).optional(),
+          brandprint: BrandprintSchema.nullable().optional(),
         }),
       )
       if (body instanceof Response) return bail(body)
       // Normalize "" → null (clear) so the column is never an empty string.
-      const patch: { profession?: string | null; about?: string | null } = {}
+      const patch: {
+        profession?: string | null
+        about?: string | null
+        brandprint?: string | null
+      } = {}
       if (body.profession !== undefined) patch.profession = body.profession || null
       if (body.about !== undefined) patch.about = body.about || null
+      if (body.brandprint !== undefined)
+        patch.brandprint = body.brandprint ? JSON.stringify(body.brandprint) : null
       await meta.setUserProfile(u.id, patch)
-      return c.json({ profession: patch.profession ?? null, about: patch.about ?? null })
+      return c.json({
+        profession: patch.profession ?? null,
+        about: patch.about ?? null,
+        brandprint: body.brandprint ?? null,
+      })
     },
   )
 

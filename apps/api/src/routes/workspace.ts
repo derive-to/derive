@@ -33,6 +33,19 @@ export const workspaceRoutes = (ctx: AppContext) => {
   const { privateOwnerId, oauthGrant } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
+  // A workspace Brandprint: a pointer to a conventions collection, plus an optional
+  // visual theme for rendered docs. Mirrors the personal shape (resolved
+  // profile-over-workspace); see packages/core/src/ports.ts Brandprint.
+  const BrandprintTheme = z.object({
+    palette: z.record(z.string(), z.string()).optional(),
+    fonts: z.record(z.string(), z.string()).optional(),
+    dark: z.object({ palette: z.record(z.string(), z.string()).optional() }).optional(),
+  })
+  const BrandprintSchema = z.object({
+    collectionId: z.string().trim().max(64).nullish(),
+    theme: BrandprintTheme.nullish(),
+  })
+
   const roleEnum = z.enum(["viewer", "commenter", "editor", "owner"])
 
   const WorkspaceSummary = z
@@ -87,6 +100,9 @@ export const workspaceRoutes = (ctx: AppContext) => {
       defaultListed: z
         .enum(["none", "workspace", "public"])
         .describe("Listing a new publish lands with: none (default), workspace, or public."),
+      brandprint: BrandprintSchema.optional().describe(
+        "The workspace's Brandprint (conventions collection + theme); absent until set.",
+      ),
     })
     .openapi("OrgSettings")
 
@@ -593,13 +609,23 @@ export const workspaceRoutes = (ctx: AppContext) => {
             defaultWorkspaceAccess: z.enum(["none", "member"]),
             defaultLinkRole: z.enum(["none", "viewer", "commenter", "editor"]),
             defaultListed: z.enum(["none", "workspace", "public"]),
+            brandprint: BrandprintSchema.nullable(),
           })
           .partial(),
       )
       if (b instanceof Response) return bail(b)
       const org = await activeWorkspace(c)
-      // Merge over current (so a partial PATCH only flips the keys it sends).
-      const next = { ...(await meta.getOrgSettings(org)), ...b }
+      // Merge over current (so a partial PATCH only flips the keys it sends). Brandprint
+      // is pulled out and merged one level deep below, so setting collectionId alone
+      // doesn't wipe an existing theme (and vice versa).
+      const { brandprint, ...flat } = b
+      const cur = await meta.getOrgSettings(org)
+      const next = { ...cur, ...flat }
+      if (brandprint === null) next.brandprint = undefined
+      else if (brandprint) {
+        const m = { ...cur.brandprint, ...brandprint }
+        next.brandprint = { collectionId: m.collectionId ?? undefined, theme: m.theme ?? undefined }
+      }
       // The default access must satisfy the same listing preconditions a publish
       // would (see access-model.md) — otherwise every new publish that takes the
       // defaults would 400. Validate the MERGED result, so a partial PATCH can't
