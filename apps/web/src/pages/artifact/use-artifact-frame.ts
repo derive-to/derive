@@ -259,32 +259,40 @@ export function useArtifactFrame(p: {
   }, [deck, deckCmd])
 
   // Paint highlights for active (open or addressed), anchored threads whenever
-  // the doc or comments change. Resolved/outdated threads don't paint.
+  // the doc or comments change. RESOLVED threads ride along as `quiet` anchors:
+  // resolved in the doc (so "jump to context" works from their cards, with a
+  // one-time flash) but never painted, hover-lit, or pinned. Outdated threads
+  // stay out — their anchor is known-stale.
   const sendAnchors = useCallback(() => {
     const w = frame.current?.contentWindow
     if (!w) return
     const anchors = groupThreads(comments)
       .map((t) => t[0])
-      .filter((head): head is Comment => head?.state === "open" || head?.state === "addressed")
-      .map((head) => ({
-        id: head.thread_id,
-        sel: parseAnchor(head.anchor),
-      }))
-      .filter((x): x is { id: string; sel: NonNullable<ReturnType<typeof parseAnchor>> } => !!x.sel)
-      .map((x) =>
+      .filter(
+        (head): head is Comment =>
+          head?.state === "open" || head?.state === "addressed" || head?.state === "resolved",
+      )
+      .flatMap((head) => {
+        const sel = parseAnchor(head.anchor)
+        if (!sel) return []
+        const id = head.thread_id
+        const quiet = head.state === "resolved" ? true : undefined
         // Element anchor: hand the client the whole selector to relocate via the
         // cascade. Text anchor: the quote + context it greps for.
-        x.sel.element
-          ? { id: x.id, el: x.sel.element }
-          : {
-              id: x.id,
-              exact: x.sel.exact,
-              prefix: x.sel.prefix,
-              suffix: x.sel.suffix,
-              // The frame scopes resolution to this slide first (deck artifacts only).
-              slide: x.sel.slide,
-            },
-      )
+        return [
+          sel.element
+            ? { id, quiet, el: sel.element }
+            : {
+                id,
+                quiet,
+                exact: sel.exact,
+                prefix: sel.prefix,
+                suffix: sel.suffix,
+                // The frame scopes resolution to this slide first (deck artifacts only).
+                slide: sel.slide,
+              },
+        ]
+      })
     w.postMessage({ source: "derive-host", type: "anchors", anchors }, "*")
   }, [comments])
   // biome-ignore lint/correctness/useExhaustiveDependencies: frameReady is an intentional repaint trigger (re-send anchors when the iframe reloads).

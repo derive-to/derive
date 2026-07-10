@@ -532,11 +532,15 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
                   threadId={root.thread_id}
                   label={refLabel}
                   snapshot={snapshot}
-                  present={textPresent && !resolved}
+                  present={textPresent}
                   relocated={relocated}
                   onJump={onJump}
                 />
-              ) : textPresent && !resolved ? (
+              ) : textPresent ? (
+                // Jumpable whenever the text still exists — RESOLVED included
+                // (its anchor rides to the frame as a quiet, unpainted one):
+                // settled feedback still has a place in the document, muted at
+                // rest, re-inking on hover.
                 <button
                   type="button"
                   data-testid={`comment-jump-${root.thread_id}`}
@@ -544,8 +548,11 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
                     e.stopPropagation()
                     onJump(root.thread_id)
                   }}
-                  title="Jump to the highlighted text"
+                  title={
+                    resolved ? "Jump to the text this was about" : "Jump to the highlighted text"
+                  }
                   className={quoteChipClass({
+                    muted: resolved,
                     className:
                       "block w-full truncate outline-none hover:border-foreground/60 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
                   })}
