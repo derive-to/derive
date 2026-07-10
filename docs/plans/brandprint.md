@@ -15,9 +15,9 @@ Every team gets a **Brandprint**: their voice, style, and rules captured once, r
 | Phase 0: port + MCP delivery | Shipped (#378) |
 | Phase 1: capture (create dialog: upload look/read files, write notes, pick a collection) | Shipped (#383) |
 | Phase 1: Brandprint as a top-level page in the rail | Shipped (#384) |
-| Phase 1: shared Connect-an-agent surface | **Next up** |
-| Phase 1: onboarding step | **Next up** |
-| Phase 2: Rework button + endpoint + no-agent routing | **Next up, after Phase 1 remainder** |
+| Phase 1: shared Connect-an-agent surface | Built, in review (`feat/brandprint-connect`) |
+| Phase 1: onboarding step + owner home nudge | Built, in review (`feat/brandprint-connect`) |
+| Phase 2: Rework button + endpoint + no-agent routing | **Next up** |
 | Phase 3: enrichment, visual theme application, "Always review Reworks" | Later |
 
 Sections below marked **(shipped)** describe behavior now on main. Everything else is still spec, and it is what we build next.
@@ -247,8 +247,8 @@ To write with the remaining phases:
 ## Phasing
 
 - **Phase 0 (foundation): shipped** (#378). Anir's Phase A ported forward, renamed, with the cross-tenant ownership validation added in review.
-- **Phase 1 (capture): mostly shipped.** The intake shipped as the create dialog on the `/brandprint` page (#383, #384), client-side, no seed endpoint. **Remaining, and next up: the shared Connect-an-agent surface and the onboarding step.**
-- **Phase 2 (apply): after the Phase 1 remainder.** The Rework ⋯ item (gated on a Brandprint existing), the rework endpoint, and the no-agent routing.
+- **Phase 1 (capture): complete pending review.** The intake shipped as the create dialog on the `/brandprint` page (#383, #384), client-side, no seed endpoint. The shared ConnectAgent surface, the onboarding Step 3 (seeding through the same intake — the seed endpoint stayed unnecessary), the owner home nudge, and the /brandprint saved-but-inert nudge (keyed off connected OAuth agents) are on `feat/brandprint-connect`.
+- **Phase 2 (apply): next up.** The Rework ⋯ item (gated on a Brandprint existing), the rework endpoint, and the no-agent routing.
 - **Phase 3 (later, optional):** agent enrichment of the Brandprint doc, visual theme application (Anir's Phase B, fed by the "look" docs), and an "Always review Reworks" setting.
 
 ## Decisions log
