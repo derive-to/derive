@@ -11,6 +11,7 @@ import { type ReactNode, useEffect, useState } from "react"
 import { AgentPushListener } from "../components/chrome/agent-push"
 import { AppShell } from "../components/chrome/app-shell"
 import { BootShell } from "../components/chrome/boot-shell"
+import { GlobalProgress } from "../components/chrome/global-progress"
 import { Toaster } from "../components/ui/sonner"
 import { AuthProvider, CursorPrefProvider, ThemeProvider } from "../ctx"
 import { CHROMELESS_EXACT, CHROMELESS_PREFIX, isChromelessPath } from "../lib/chrome-routes"
@@ -91,6 +92,10 @@ function RootComponent() {
                 inside the router tree for navigation. */}
             <AgentPushListener />
           </AuthProvider>
+          {/* One app-wide loading cue for the SPA's stale-while-revalidate model: makes
+              every background refetch + cold nav legible, so cached data being refreshed
+              never looks identical to settled data. */}
+          <GlobalProgress />
           {/* Inside ThemeProvider so sonner's useTheme() tracks the app's forced
               theme rather than falling back to the OS preference. */}
           <Toaster />
