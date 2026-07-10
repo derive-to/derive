@@ -33,8 +33,9 @@ const persistOptions = {
   // so restores are instant across a normal work session but never resurrect yesterday's world.
   maxAge: 1000 * 60 * 60 * 24,
   // A fresh build busts the cache, so a deploy that changes a response shape never restores
-  // stale-shaped data into a component that no longer expects it.
-  buster: __BUILD_ID__,
+  // stale-shaped data into a component that no longer expects it. Vite replaces the token at
+  // build; the typeof guard keeps it defined in envs without the define (vitest, plain Node).
+  buster: typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "dev",
   dehydrateOptions: {
     // Persist data, but NEVER the session: `me` must re-resolve fresh on every boot so an
     // expired session can't restore as "logged in" (the route guards await a live one).
