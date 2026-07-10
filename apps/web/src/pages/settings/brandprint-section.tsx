@@ -1,11 +1,19 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Upload } from "lucide-react"
-import { useRef } from "react"
+import { useRef, useState } from "react"
 import { api, type OrgSettings } from "@/api"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import {
   SelectMenu,
   SelectMenuContent,
@@ -13,6 +21,8 @@ import {
   SelectMenuTrigger,
 } from "@/components/ui/select-menu"
 import { toast } from "@/components/ui/sonner"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import {
   collectionsQuery,
@@ -42,10 +52,11 @@ type ImportResult = {
  * sets the pointer back to none. Theme tokens are a later phase; this is the
  * collection pointer only.
  *
- * Setup is also one click: "Upload docs" publishes the picked files, gathers them
- * into the pointed collection (creating one when the Brandprint is empty), and sets
- * the pointer — so nobody has to publish from the library, build a collection by
- * hand, and come back here to select it.
+ * Setup happens in place: an empty scope shows one "Create Brandprint" button whose
+ * dialog offers three ways in (upload files, write the conventions from scratch, or
+ * point at an existing collection) — so nobody has to publish from the library,
+ * build a collection by hand, and come back here to select it. Once set, the section
+ * shows the pointer and takes more docs directly.
  */
 export function BrandprintSection({ scope }: { scope: "workspace" | "account" }) {
   const qc = useQueryClient()
@@ -177,6 +188,30 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
     if (files.length > 0) importDocs.mutate(files)
   }
 
+  // The create dialog (empty state only): three ways in — upload files (default),
+  // write the conventions from scratch, or point at an existing collection.
+  const [createOpen, setCreateOpen] = useState(false)
+  const [noteTitle, setNoteTitle] = useState("")
+  const [notes, setNotes] = useState("")
+  // Close on a successful create; a total failure keeps the dialog up to retry from.
+  const closeOnSuccess = (r: ImportResult) => {
+    if (r.ok > 0) {
+      setCreateOpen(false)
+      setNotes("")
+      setNoteTitle("")
+    }
+  }
+  const createFromNotes = () => {
+    const text = notes.trim()
+    if (!text) return
+    // The notes become a markdown doc through the same intake as a picked file; the
+    // filename carries the title (slashes would read as a path, so swap them out).
+    const name = (noteTitle.trim() || "Brand notes").replace(/[\\/]/g, "-")
+    importDocs.mutate([new File([text], `${name}.md`, { type: "text/markdown" })], {
+      onSuccess: closeOnSuccess,
+    })
+  }
+
   const title = scope === "workspace" ? "Workspace Brandprint" : "Your Brandprint"
   const description =
     scope === "workspace"
@@ -229,57 +264,182 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
 
   return (
     <SettingsGroup title={title} description={description}>
-      <SettingRow label="Conventions collection">
-        <SelectMenu value={collectionId} onValueChange={save}>
-          <SelectMenuTrigger
-            aria-label="Conventions collection"
-            data-testid={`brandprint-collection-${scope}`}
-            disabled={disabled}
+      {!ready || collectionId ? (
+        <>
+          <SettingRow label="Conventions collection">
+            <SelectMenu value={collectionId} onValueChange={save}>
+              <SelectMenuTrigger
+                aria-label="Conventions collection"
+                data-testid={`brandprint-collection-${scope}`}
+                disabled={disabled}
+              >
+                {!ready ? "Loading…" : (selected ?? "…")}
+              </SelectMenuTrigger>
+              <SelectMenuContent>
+                <SelectMenuItem value="">None</SelectMenuItem>
+                {(collections ?? []).map((c) => (
+                  <SelectMenuItem key={c.id} value={c.id}>
+                    {c.title}
+                  </SelectMenuItem>
+                ))}
+              </SelectMenuContent>
+            </SelectMenu>
+          </SettingRow>
+          <SettingRow
+            label="Upload documents"
+            description="New docs publish straight into this Brandprint's collection."
           >
-            {!ready ? "Loading…" : collectionId ? (selected ?? "…") : "None"}
-          </SelectMenuTrigger>
-          <SelectMenuContent>
-            <SelectMenuItem value="">None</SelectMenuItem>
-            {(collections ?? []).map((c) => (
-              <SelectMenuItem key={c.id} value={c.id}>
-                {c.title}
-              </SelectMenuItem>
-            ))}
-          </SelectMenuContent>
-        </SelectMenu>
-      </SettingRow>
-      <SettingRow
-        label="Upload documents"
-        description={
-          collectionId
-            ? "New docs publish straight into this Brandprint's collection."
-            : "Pick style guides, tone notes, or templates. Derive publishes them, gathers them into a new collection, and points your Brandprint at it."
-        }
-      >
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          accept=".md,.markdown,.txt,.html,.htm"
-          className="hidden"
-          data-testid={`brandprint-upload-input-${scope}`}
-          onChange={(e) => {
-            pickFiles(e.target.files)
-            // Reset so re-picking the same file fires change again.
-            e.target.value = ""
-          }}
-        />
-        <Button
-          variant="outline"
-          size="sm"
-          data-testid={`brandprint-upload-${scope}`}
-          disabled={disabled}
-          loading={importDocs.isPending}
-          onClick={() => fileRef.current?.click()}
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              accept=".md,.markdown,.txt,.html,.htm"
+              className="hidden"
+              data-testid={`brandprint-upload-input-${scope}`}
+              onChange={(e) => {
+                pickFiles(e.target.files)
+                // Reset so re-picking the same file fires change again.
+                e.target.value = ""
+              }}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid={`brandprint-upload-${scope}`}
+              disabled={disabled}
+              loading={importDocs.isPending}
+              onClick={() => fileRef.current?.click()}
+            >
+              <Upload /> {importDocs.isPending ? "Uploading…" : "Upload docs"}
+            </Button>
+          </SettingRow>
+        </>
+      ) : (
+        <SettingRow
+          label="Get started"
+          description="Upload docs, write your conventions from scratch, or use an existing collection."
         >
-          <Upload /> {importDocs.isPending ? "Uploading…" : "Upload docs"}
-        </Button>
-      </SettingRow>
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm" data-testid={`brandprint-create-${scope}`} disabled={disabled}>
+                Create Brandprint
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
+              <DialogHeader>
+                <DialogTitle>Create your Brandprint</DialogTitle>
+              </DialogHeader>
+              <Tabs defaultValue="upload">
+                <TabsList variant="line">
+                  <TabsTrigger value="upload" data-testid={`brandprint-tab-upload-${scope}`}>
+                    Upload files
+                  </TabsTrigger>
+                  <TabsTrigger value="write" data-testid={`brandprint-tab-write-${scope}`}>
+                    Write it
+                  </TabsTrigger>
+                  <TabsTrigger value="existing" data-testid={`brandprint-tab-existing-${scope}`}>
+                    Use a collection
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="upload" className="flex flex-col gap-3 pt-3">
+                  <p className="text-sm text-pretty text-muted-foreground">
+                    Style guides, tone notes, or templates (Markdown, HTML, or plain text). Derive
+                    publishes them, gathers them into a new collection, and points your Brandprint
+                    at it.
+                  </p>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    multiple
+                    accept=".md,.markdown,.txt,.html,.htm"
+                    className="hidden"
+                    data-testid={`brandprint-upload-input-${scope}`}
+                    onChange={(e) => {
+                      const files = e.target.files ? [...e.target.files] : []
+                      if (files.length > 0) importDocs.mutate(files, { onSuccess: closeOnSuccess })
+                      // Reset so re-picking the same file fires change again.
+                      e.target.value = ""
+                    }}
+                  />
+                  <Button
+                    className="self-start"
+                    variant="outline"
+                    data-testid={`brandprint-upload-${scope}`}
+                    loading={importDocs.isPending}
+                    onClick={() => fileRef.current?.click()}
+                  >
+                    <Upload /> {importDocs.isPending ? "Uploading…" : "Choose files…"}
+                  </Button>
+                </TabsContent>
+                <TabsContent value="write" className="flex flex-col gap-3 pt-3">
+                  <p className="text-sm text-pretty text-muted-foreground">
+                    Write or paste your conventions. Derive publishes them as a doc your Brandprint
+                    points at, editable any time.
+                  </p>
+                  <Input
+                    value={noteTitle}
+                    placeholder="Title (optional, e.g. Voice & tone)"
+                    aria-label="Doc title"
+                    data-testid={`brandprint-notes-title-${scope}`}
+                    onChange={(e) => setNoteTitle(e.target.value)}
+                  />
+                  <Textarea
+                    value={notes}
+                    rows={7}
+                    placeholder="Our voice is plain and direct. Headings in sentence case. Dark slate on off-white, brand accent sparingly. Screenshots always carry a caption…"
+                    aria-label="Your conventions"
+                    data-testid={`brandprint-notes-${scope}`}
+                    onChange={(e) => setNotes(e.target.value)}
+                  />
+                  <Button
+                    className="self-end"
+                    data-testid={`brandprint-notes-create-${scope}`}
+                    loading={importDocs.isPending}
+                    disabled={importDocs.isPending || !notes.trim()}
+                    onClick={createFromNotes}
+                  >
+                    {importDocs.isPending ? "Creating…" : "Create"}
+                  </Button>
+                </TabsContent>
+                <TabsContent value="existing" className="flex flex-col gap-3 pt-3">
+                  <p className="text-sm text-pretty text-muted-foreground">
+                    Already keep your conventions in a collection? Point your Brandprint at it.
+                  </p>
+                  {(collections ?? []).length > 0 ? (
+                    <SelectMenu
+                      value=""
+                      onValueChange={(v) => {
+                        if (!v) return
+                        save(v)
+                        setCreateOpen(false)
+                      }}
+                    >
+                      <SelectMenuTrigger
+                        aria-label="Choose a collection"
+                        data-testid={`brandprint-pick-collection-${scope}`}
+                        className="self-start"
+                      >
+                        Choose a collection…
+                      </SelectMenuTrigger>
+                      <SelectMenuContent>
+                        {(collections ?? []).map((c) => (
+                          <SelectMenuItem key={c.id} value={c.id}>
+                            {c.title}
+                          </SelectMenuItem>
+                        ))}
+                      </SelectMenuContent>
+                    </SelectMenu>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      No collections here yet. Upload files or write your conventions instead.
+                    </p>
+                  )}
+                </TabsContent>
+              </Tabs>
+            </DialogContent>
+          </Dialog>
+        </SettingRow>
+      )}
     </SettingsGroup>
   )
 }
