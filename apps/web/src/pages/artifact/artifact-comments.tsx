@@ -1,11 +1,4 @@
-import {
-  type Dispatch,
-  type ReactNode,
-  type RefObject,
-  type SetStateAction,
-  useEffect,
-  useRef,
-} from "react"
+import { type Dispatch, type ReactNode, type RefObject, type SetStateAction, useRef } from "react"
 import type { Comment, DirUser, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
@@ -14,8 +7,8 @@ import { AskAgentButton } from "./ask-agent"
 import { MobileComments, OpenPanel } from "./comment-panels"
 import { CommentScopeProvider } from "./lib/comment-scope"
 import { type CommentTree, CommentTreeProvider } from "./lib/comment-tree"
-import { clamp } from "./lib/layout"
 import { quoteChipClass } from "./quote-chip"
+import { SelectionMenu } from "./selection-menu"
 import {
   type AgentTarget,
   type AnchorConf,
@@ -26,56 +19,6 @@ import {
   type Selection,
   selLabel,
 } from "./types"
-
-/**
- * The floating "Comment · Ask agent" pill beside a text selection. Its vertical
- * position TRACKS the document: the selection's Y is doc-absolute (`sel.docTop`),
- * mapped to the screen against the live scroll via the geometry subscription — a
- * direct style write, no re-render. (The old frozen viewport Y left the pill
- * parked mid-screen while its selection scrolled away.) Horizontal stays where
- * the selection was made; only vertical drifts with scroll.
- */
-function SelectionPill({
-  sel,
-  frameRef,
-  subscribeGeom,
-  asideWidth,
-  children,
-}: {
-  sel: NonNullable<Selection>
-  frameRef: RefObject<HTMLIFrameElement | null>
-  subscribeGeom: (cb: (g: FrameGeom) => void) => () => void
-  asideWidth: number
-  children: ReactNode
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  const docTop = sel.docTop
-  useEffect(() => {
-    return subscribeGeom((g) => {
-      const el = ref.current
-      const fr = frameRef.current?.getBoundingClientRect()
-      if (!el || !fr) return
-      el.style.top = `${clamp(fr.top + (docTop - g.scrollY) - 46, 64, window.innerHeight - 54)}px`
-    })
-  }, [subscribeGeom, frameRef, docTop])
-  return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: onMouseDown only prevents the pill from stealing the selection; the real controls inside are buttons.
-    <div
-      ref={ref}
-      className="fixed z-50 flex items-center gap-1 rounded-full bg-card p-1 shadow-[var(--shadow)] ring-1 ring-border"
-      onMouseDown={(e) => e.preventDefault()}
-      style={{
-        // First paint from the selection-time snapshot; the subscription's
-        // immediate call corrects it before the user can scroll. A wider
-        // half-width offset accounts for the two-action row (Comment · Ask agent).
-        top: clamp(sel.vTop - 46, 64, window.innerHeight - 54),
-        left: clamp((sel.vLeft + sel.vRight) / 2 - 90, 12, window.innerWidth - asideWidth - 210),
-      }}
-    >
-      {children}
-    </div>
-  )
-}
 
 /**
  * All the comment surfaces for an artifact, in one place: the desktop margin aside,
@@ -241,39 +184,26 @@ export function ArtifactComments(p: {
             onHeightChange={p.onSheetHeight}
           />
         )}
-        {/* Desktop: the "comment on selection" pill floats beside the selection (the
-          mouse can reach it and there is no native callout in the way). On phones
-          this would land under iOS's own selection menu, so mobile uses the bottom
-          bar below instead. Clicking opens the panel and starts a pinned composer. */}
+        {/* Desktop: the anchored action menu above the selection (the mouse can
+          reach it and there is no native callout in the way). On phones this
+          would land under iOS's own selection menu, so mobile uses the bottom
+          bar below instead. Choosing opens the panel and starts a pinned composer. */}
         {!isMobile && canComment && p.docLive && sel && !p.composer && (
-          <SelectionPill
+          <SelectionMenu
             sel={sel}
             frameRef={p.frameRef}
             subscribeGeom={p.subscribeGeom}
             asideWidth={p.asideWidth}
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              className="rounded-full"
-              title="Comment on the selection"
-              data-testid="comment-on-selection"
-              onClick={() => {
-                if (panel !== "open") p.setPanel("open")
-                p.startSelComment()
-              }}
-            >
-              <Icon name="comments" size={16} /> Comment
-            </Button>
-            {/* The agent-native moat: hand the selected span to an agent to revise. */}
-            <AskAgentButton
-              agents={p.agents}
-              onPick={(agent) => {
-                if (panel !== "open") p.setPanel("open")
-                p.startSelAgent(agent)
-              }}
-            />
-          </SelectionPill>
+            agents={p.agents}
+            onComment={() => {
+              if (panel !== "open") p.setPanel("open")
+              p.startSelComment()
+            }}
+            onAgent={(agent) => {
+              if (panel !== "open") p.setPanel("open")
+              p.startSelAgent(agent)
+            }}
+          />
         )}
         {/* Phones: a selection (drag) OR a tapped paragraph surfaces this bottom bar,
           pinned below iOS's own selection menu and big enough to thumb. It shows
