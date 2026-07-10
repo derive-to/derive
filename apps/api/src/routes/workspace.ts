@@ -7,7 +7,7 @@ import { sha256 } from "../lib/crypto"
 import { buildInviteEmail } from "../lib/email"
 import { bail, DEFAULT_WORKSPACE_NAME, fail, isWorkspaceRole, readJson } from "../lib/http"
 import { resolveUserRef } from "../lib/resolve-user"
-import { ArtifactMember } from "../schemas"
+import { ArtifactMember, BrandprintSchema } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
 
 // A plausible email (loose check — the real gate is deliverability). Anything without a
@@ -32,19 +32,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
   } = ctx
   const { privateOwnerId, oauthGrant } = ctx
   const app = new OpenAPIHono<BlankEnv>()
-
-  // A workspace Brandprint: a pointer to a conventions collection, plus an optional
-  // visual theme for rendered docs. Mirrors the personal shape (resolved
-  // profile-over-workspace); see packages/core/src/ports.ts Brandprint.
-  const BrandprintTheme = z.object({
-    palette: z.record(z.string(), z.string()).optional(),
-    fonts: z.record(z.string(), z.string()).optional(),
-    dark: z.object({ palette: z.record(z.string(), z.string()).optional() }).optional(),
-  })
-  const BrandprintSchema = z.object({
-    collectionId: z.string().trim().max(64).nullish(),
-    theme: BrandprintTheme.nullish(),
-  })
 
   const roleEnum = z.enum(["viewer", "commenter", "editor", "owner"])
 
@@ -623,12 +610,10 @@ export const workspaceRoutes = (ctx: AppContext) => {
       const next = { ...cur, ...flat }
       if (brandprint === null) next.brandprint = undefined
       else if (brandprint) {
-        // A Brandprint is a pointer to a conventions collection, so a NEW
-        // pointer must be OWNED by this workspace — otherwise a hand-crafted
-        // collectionId could point at another tenant's collection and have its
-        // artifact bodies served over MCP (the store deliberately doesn't
-        // validate this; the route does). Clearing, or a theme-only patch,
-        // skips the check — it isn't pointing at anything new.
+        // A new collectionId pointer must be owned by this workspace: an unvalidated id
+        // could point at another tenant's collection and leak its bodies over MCP. The
+        // store doesn't check ownership, so the route does. (Clearing or a theme-only
+        // patch points at nothing new, so it skips the check.)
         if (brandprint.collectionId) {
           const col = await meta.getCollection(brandprint.collectionId)
           if (!col || col.org_id !== org)

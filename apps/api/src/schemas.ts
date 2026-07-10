@@ -274,3 +274,19 @@ export const Artifact = z
       .describe("Resolved current-author profile; preferred over the raw author_* fields."),
   })
   .openapi("Artifact")
+
+/** A Brandprint: a pointer to a conventions collection an agent reads as house style, plus
+ *  an optional visual theme for rendered docs. Shared by the workspace-settings and profile
+ *  PATCHes (resolved workspace ⊕ profile, profile first), so it's defined once here. Not
+ *  `.openapi()`'d — it rides inline inside OrgSettings and the profile body, not as its own
+ *  component. See packages/core/src/ports.ts Brandprint. */
+export const BrandprintSchema = z.object({
+  collectionId: z.string().trim().max(64).nullish(),
+  theme: z
+    .object({
+      palette: z.record(z.string(), z.string()).optional(),
+      fonts: z.record(z.string(), z.string()).optional(),
+      dark: z.object({ palette: z.record(z.string(), z.string()).optional() }).optional(),
+    })
+    .nullish(),
+})

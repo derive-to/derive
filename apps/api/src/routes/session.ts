@@ -6,7 +6,7 @@ import type { AppContext } from "../context"
 import { authorProfile, resolveHandles } from "../lib/author"
 import { bail, fail, IMMUTABLE_CACHE, readJson, toBody } from "../lib/http"
 import { MAX_AVATAR_BYTES, sniffImageType } from "../lib/image"
-import { Artifact } from "../schemas"
+import { Artifact, BrandprintSchema } from "../schemas"
 
 /** Session identity + the workspace member/agent directory for the @mention picker.
  *  PublicProfile + DirUser are generated for the web; `Me` stays a web-side mapped type
@@ -28,19 +28,6 @@ export const sessionRoutes = (ctx: AppContext) => {
     analyticsOn,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
-
-  // A personal Brandprint: a pointer to a conventions collection, plus an optional
-  // visual theme for rendered docs. Mirrors the workspace-level shape (resolved
-  // profile-over-workspace); see packages/core/src/ports.ts Brandprint.
-  const BrandprintTheme = z.object({
-    palette: z.record(z.string(), z.string()).optional(),
-    fonts: z.record(z.string(), z.string()).optional(),
-    dark: z.object({ palette: z.record(z.string(), z.string()).optional() }).optional(),
-  })
-  const BrandprintSchema = z.object({
-    collectionId: z.string().trim().max(64).nullish(),
-    theme: BrandprintTheme.nullish(),
-  })
 
   // A public profile by @handle — email is intentionally omitted. The list surfaces
   // (search/people/followers/following) carry the top fields; the full /users/:handle
@@ -213,12 +200,10 @@ export const sessionRoutes = (ctx: AppContext) => {
         }),
       )
       if (body instanceof Response) return bail(body)
-      // A Brandprint is a pointer to a conventions collection, so a NEW pointer
-      // must be OWNED by one of the caller's own workspaces — otherwise a
-      // hand-crafted collectionId could point at another tenant's collection
-      // and have its artifact bodies served over MCP (the store deliberately
-      // doesn't validate this; the route does). Clearing, or a theme-only
-      // patch, skips the check — it isn't pointing at anything new.
+      // A new collectionId pointer must be owned by one of the caller's own workspaces:
+      // an unvalidated id could point at another tenant's collection and leak its bodies
+      // over MCP. The store doesn't check ownership, so the route does. (Clearing or a
+      // theme-only patch points at nothing new, so it skips the check.)
       if (body.brandprint?.collectionId) {
         const col = await meta.getCollection(body.brandprint.collectionId)
         const mine = await meta.listWorkspaces(u.id)

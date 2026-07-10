@@ -312,8 +312,8 @@ async function buildServer(
       async (uri) => {
         const art = await ctx.meta.getByShortId(doc.short_id)
         const v = art ? await ctx.meta.getVersion(art.id, art.current_version) : null
-        const text = v ? await ctx.sourceText(v) : null
-        return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: text ?? "" }] }
+        const body = v ? await ctx.sourceText(v) : null
+        return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: body ?? "" }] }
       },
     )
   }
