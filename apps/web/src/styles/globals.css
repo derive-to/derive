@@ -326,12 +326,16 @@
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
   }
-  /* The live highlight behind the composer textarea (MentionField overlay). Must not
-     shift text metrics (padding out, equal negative margin back) so glyphs keep their
-     advance and the highlight stays under the caret. */
+  /* The live highlight behind the composer textarea (MentionField overlay). The
+     FIELD's own text is the visible text — so the caret can never detach from what
+     you read; this span paints only a soft tint box behind a tag (transparent text:
+     the clone exists for metrics alone). A solid ink fill would sit under the
+     field's foreground glyphs with no contrast; the tag takes its full .mention
+     pill once posted. Metric-neutral box (padding out, equal negative margin back)
+     so glyphs keep their advance and the box sits exactly under the field's text. */
   .mention-live {
-    color: var(--primary-foreground);
-    background: var(--primary);
+    color: transparent;
+    background: color-mix(in oklab, var(--primary) 15%, transparent);
     border-radius: 4px;
     padding: 0 3px;
     margin: 0 -3px;

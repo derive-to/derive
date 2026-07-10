@@ -37,6 +37,9 @@ interface ElWire {
 }
 
 // One anchor the host asks us to paint — a text quote OR an element selector.
+// `quiet` anchors (resolved threads) RESOLVE — so focus-anchor can jump to them
+// and flash the context once — but never paint a persistent highlight, never
+// hit-test for hover/click, and never report a top (nothing pins to them).
 interface Anchor {
   id: string
   exact?: string
@@ -44,6 +47,7 @@ interface Anchor {
   suffix?: string
   slide?: number
   el?: ElWire
+  quiet?: boolean
 }
 
 type Band = "high" | "medium" | "low"
@@ -820,8 +824,13 @@ interface ElReg {
   interface TextEntry {
     id: string
     range: Range
+    /** Resolved thread: locatable (jump/flash) but never painted or hit-tested. */
+    quiet?: boolean
   }
   let textEntries: TextEntry[] = []
+  /* quiet ELEMENT anchors: resolved threads pinned to elements — tracked only so
+     focus-anchor can scroll to them; no overlay, no badge. */
+  let quietEls: { id: string; el: Element }[] = []
   // biome-ignore lint/suspicious/noExplicitAny: the Highlight registry types vary by lib version; feature-detected + guarded.
   const hlReg: any =
     typeof CSS !== "undefined" && (CSS as unknown as { highlights?: unknown }).highlights
@@ -875,13 +884,14 @@ interface ElReg {
   }
   const clearText = () => {
     textEntries = []
+    quietEls = []
     baseHl?.clear()
     overlapHl?.clear()
     onHl?.clear()
     flashHl?.clear()
   }
-  const addText = (id: string, range: Range) => {
-    textEntries.push({ id, range })
+  const addText = (id: string, range: Range, quiet?: boolean) => {
+    textEntries.push({ id, range, quiet })
   }
   // Intersection of two ranges (the later start, the earlier end), or null if disjoint.
   const intersect = (a: Range, b: Range): Range | null => {
@@ -903,13 +913,13 @@ interface ElReg {
     if (!HL_SUPPORTED || !baseHl) return
     baseHl.clear()
     overlapHl?.clear()
-    for (const t of textEntries) baseHl.add(t.range)
+    for (const t of textEntries) if (!t.quiet) baseHl.add(t.range)
     if (overlapHl)
       for (let i = 0; i < textEntries.length; i++)
         for (let j = i + 1; j < textEntries.length; j++) {
           const a = textEntries[i]
           const b = textEntries[j]
-          if (!a || !b) continue
+          if (!a || !b || a.quiet || b.quiet) continue
           const inter = intersect(a.range, b.range)
           if (inter) overlapHl.add(inter)
         }
@@ -940,7 +950,8 @@ interface ElReg {
     const c = caretAt(x, y)
     if (!c) return null
     let best: { id: string; len: number } | null = null
-    for (const { id, range } of textEntries) {
+    for (const { id, range, quiet } of textEntries) {
+      if (quiet) continue // no visible highlight — nothing to click or hover
       try {
         if (range.comparePoint(c.node, c.offset) === 0) {
           const len = range.toString().length
@@ -997,7 +1008,8 @@ interface ElReg {
     const tops: Record<string, number> = {}
     const seen: Record<string, number> = {}
     const sy = scrollTop()
-    for (const { id, range } of textEntries) {
+    for (const { id, range, quiet } of textEntries) {
+      if (quiet) continue /* nothing pins to a resolved thread */
       if (seen[id]) continue
       seen[id] = 1
       tops[id] = range.getBoundingClientRect().top + sy
@@ -1009,17 +1021,20 @@ interface ElReg {
       seen[e.id] = 1
       tops[e.id] = e.el.getBoundingClientRect().top + sy
     }
-    const payload = {
+    /* Dedupe on the TOPS alone: tops are doc-absolute (scroll-invariant), and the
+       host gets scroll geometry from the scroll stream — including scrollY here
+       used to make an animating artifact re-post (and re-render the host) every
+       frame while the user scrolled, for identical tops. */
+    const sig = JSON.stringify(tops)
+    if (sig === lastRects) return /* nothing the host pins to changed — skip the re-render */
+    lastRects = sig
+    post({
       type: "anchor-rects",
       tops,
       scrollY: sy,
       viewH: window.innerHeight,
       docH: document.documentElement.scrollHeight,
-    }
-    const sig = JSON.stringify(payload)
-    if (sig === lastRects) return /* nothing the host pins to changed — skip the re-render */
-    lastRects = sig
-    post(payload)
+    })
   }
   const reportScroll = () =>
     post({
@@ -1049,7 +1064,9 @@ interface ElReg {
       if (a.el) {
         const m = resolveEl(a.el)
         if (m) {
-          paintEl(a.id, m.el, m.band)
+          /* quiet (resolved thread): track for focus-anchor only — no overlay. */
+          if (a.quiet) quietEls.push({ id: a.id, el: m.el })
+          else paintEl(a.id, m.el, m.band)
           resolved[a.id] = true
           landed[a.id] = slides.length ? slideOfEl(m.el, slides) : null
           conf[a.id] = { confidence: m.confidence, band: m.band, signals: m.signals }
@@ -1080,7 +1097,7 @@ interface ElReg {
           where = slides.length && range ? slideOfEl(rangeStartEl(range), slides) : null
         }
       }
-      if (range) addText(a.id, range)
+      if (range) addText(a.id, range, a.quiet)
       resolved[a.id] = !!range
       landed[a.id] = range ? where : null
     }
@@ -1285,7 +1302,11 @@ interface ElReg {
     else if (d.type === "focus-anchor") {
       const entry = textEntries.find((t) => t.id === d.id)
       const ovEl = document.querySelector<HTMLElement>(`.derive-el-hl[data-derive-id="${d.id}"]`)
-      const rect = entry ? entry.range.getBoundingClientRect() : ovEl?.getBoundingClientRect()
+      /* quiet element anchors have no overlay — the element itself carries the rect. */
+      const quietEl = quietEls.find((q) => q.id === d.id)
+      const rect = entry
+        ? entry.range.getBoundingClientRect()
+        : (ovEl ?? quietEl?.el)?.getBoundingClientRect()
       if (!rect) return
       /* bias (0..1) places the target at that fraction of the viewport instead of
          dead-center — phones pass ~0.28 so it lands above the comments sheet. */

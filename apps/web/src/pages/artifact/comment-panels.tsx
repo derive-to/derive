@@ -1,8 +1,8 @@
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react"
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
-import { Badge } from "@/components/ui/badge"
+import { Count } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -12,19 +12,18 @@ import { Composer } from "./comment-composer"
 import { CollapsibleThreadSection, CommentCard, PinnedZone } from "./comment-thread"
 import { useCommentScope } from "./lib/comment-scope"
 import { CommentTreeProvider, useCommentTree } from "./lib/comment-tree"
-import { type ComposerState, type PinItem, selLabel } from "./types"
+import { type ComposerState, type FrameGeom, type PinItem, selLabel } from "./types"
 
 // Touch has no hover, so the mobile sheet overrides the tree's onHover with this.
 const NO_HOVER = () => {}
 
-// The comments panel header: a label + the open-thread count (a neutral mono pill,
-// not an ink signal). This was a Comments|Personal tab switch until personal comments
-// were removed; a single surface needs only a heading.
+// The comments panel header: the label + the open-thread count in the machine
+// count register ("Comments · 3") — quieter than a pill blob beside the title.
 function CommentsHeading({ count }: { count: number }) {
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-1.5 pl-1.5">
+    <div className="flex min-w-0 flex-1 items-baseline gap-1 pl-1.5">
       <span className="text-sm font-medium text-foreground">Comments</span>
-      {count > 0 && <Badge shape="pill">{count}</Badge>}
+      {count > 0 && <Count>{count}</Count>}
     </div>
   )
 }
@@ -294,7 +293,8 @@ export function MobileComments({
 
 export function OpenPanel(props: {
   openCount: number
-  scrollY: number
+  frameRef: RefObject<HTMLIFrameElement | null>
+  subscribeGeom: (cb: (g: FrameGeom) => void) => () => void
   onScrollDoc: (dy: number) => void
   pinned: PinItem[]
   general: Comment[][]
@@ -308,7 +308,8 @@ export function OpenPanel(props: {
 }) {
   const {
     openCount,
-    scrollY,
+    frameRef,
+    subscribeGeom,
     onScrollDoc,
     pinned,
     general,
@@ -326,9 +327,7 @@ export function OpenPanel(props: {
   const empty = openCount === 0 && resolved.length === 0 && !composer
 
   // Prev/Next walks the SAME top-to-bottom order the sidebar itself renders:
-  // pinned threads (sorted by their document position — desiredY has the
-  // current scrollY already subtracted from every item alike, so the relative
-  // order is stable no matter where the doc is scrolled to) then the general
+  // pinned threads (sorted by their doc-absolute position) then the general
   // drawer, in the order it lists them. Resolved threads are settled, so
   // Prev/Next skips them — it's a tool for working through what's still open.
   const threadOrder = [...pinned]
@@ -348,28 +347,9 @@ export function OpenPanel(props: {
     if (id) onJump(id)
   }
 
-  // The panel now docks under the full-width top bar, so this header sits above
-  // the pinned zone. Cards are placed from the document's top, so feed the
-  // header's height down as `topInset` to shift them back into alignment with
-  // their highlights (see PinnedZone). Measured, so it tracks any header reflow.
-  const headerRef = useRef<HTMLDivElement>(null)
-  const [headerH, setHeaderH] = useState(0)
-  useLayoutEffect(() => {
-    const el = headerRef.current
-    if (!el) return
-    const sync = () => setHeaderH(el.offsetHeight)
-    sync()
-    const ro = new ResizeObserver(sync)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
-
   return (
     <>
-      <div
-        ref={headerRef}
-        className="flex items-center gap-1 border-b border-border-soft py-1.5 pl-2.5 pr-2"
-      >
+      <div className="flex items-center gap-1 border-b border-border-soft py-1.5 pl-2.5 pr-2">
         <CommentsHeading count={openCount} />
         {threadOrder.length > 1 && (
           <>
@@ -443,13 +423,17 @@ export function OpenPanel(props: {
           second pane crowding the document. */}
       {reviewCard}
 
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      {/* overflow-clip (not hidden): scrollIntoView / focus-scrolling must not be
+          able to shift this box — the pin layer's transform assumes it never moves. */}
+      <div className="relative min-h-0 flex-1 overflow-clip">
         {/* Pinned margin — cards (and a new-comment composer) float beside their
-            highlighted text, sharing one overlap-free layout. */}
+            highlighted text, sharing one overlap-free layout. The zone measures its
+            own datum against the iframe, so nothing above it (header, review card)
+            needs measuring here. */}
         <PinnedZone
           pins={pinned}
-          topInset={headerH}
-          scrollY={scrollY}
+          frameRef={frameRef}
+          subscribeGeom={subscribeGeom}
           onScrollDoc={onScrollDoc}
           composer={composer}
           onSubmitNew={onSubmitNew}

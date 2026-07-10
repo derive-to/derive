@@ -1,3 +1,4 @@
+import { ArrowUp } from "lucide-react"
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -9,8 +10,10 @@ import {
 import { api, type DirUser, type Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
+import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { PICKER_EMOJI } from "@/lib/emoji"
+import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
 import { useCommentScope } from "./lib/comment-scope"
 import { quoteChipClass } from "./quote-chip"
@@ -47,8 +50,9 @@ function splitMentions(text: string, mentions: Mention[]): Run[] {
  * popover (/v1/users); picking inserts "@Name " and records the user's id. The
  * picker — not a server-side @name parse — is the source of mention ids, so the
  * data is unambiguous. Mentions whose inserted "@Name" is later deleted from the
- * text are dropped at submit time. Single-line submits on Enter; multiline on
- * Cmd/Ctrl+Enter (matching the surrounding composer/reply conventions).
+ * text are dropped at submit time. Enter submits and Shift+Enter breaks the line
+ * (the Notion/Slack chat grammar) — one rule for the composer and replies alike,
+ * instead of the old Enter-newline/Cmd+Enter-submit split nobody could guess.
  */
 export function MentionField({
   value,
@@ -63,6 +67,8 @@ export function MentionField({
   className,
   style,
   testId,
+  sendTestId,
+  bare,
 }: {
   value: string
   onChange: (v: string) => void
@@ -77,10 +83,21 @@ export function MentionField({
   className?: string
   style?: CSSProperties
   testId?: string
+  /** Render an in-well ↑ send button (the thread reply grammar: the field carries
+   *  its own send, nothing floats outside the well). Appears once there's text.
+   *  Replaces the emoji trigger — the two share the right rail, and :shortcodes:
+   *  still cover emoji here. */
+  sendTestId?: string
+  /** No border/ring of its own — for a field living inside a container that
+   *  already draws the edge (the thread card's reply line). A bordered well
+   *  inside a bordered card stacked three edges in twenty pixels. Focus shows
+   *  as a quiet wash; the caret does the rest. */
+  bare?: boolean
 }) {
   const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
   const { shortId } = useCommentScope()
+  const isMobile = useIsMobile()
   const [menu, setMenu] = useState<{ at: number; end: number; q: string } | null>(null)
   const [results, setResults] = useState<DirUser[]>([])
   const [active, setActive] = useState(0)
@@ -198,18 +215,25 @@ export function MentionField({
       onCancel?.()
       return
     }
-    if (e.key === "Enter" && (!multiline || e.metaKey || e.ctrlKey)) {
+    // Enter sends; Shift+Enter inserts a newline (falls through to the textarea's
+    // default). Cmd/Ctrl+Enter still sends, for the muscle memory. On a PHONE the
+    // keyboard has no Shift+Enter, so Enter keeps its newline meaning there and
+    // the visible Comment/Reply button is the send.
+    if (e.key === "Enter" && !e.shiftKey && (!isMobile || !multiline)) {
       e.preventDefault()
       submit()
     }
   }
 
-  // The field's text is transparent; the highlight backdrop paints the same text
-  // (with lit-up mentions) directly underneath, so a tag glows live as you type or
-  // pick someone. Both share `textBox` exactly, or the highlight drifts off the caret.
+  // The FIELD's own text is the visible text — the caret and what you read are the
+  // same layout by construction and can never drift apart. The backdrop clones the
+  // text INVISIBLY (transparent) purely for metrics, painting only the tint boxes
+  // behind mention runs (see .mention-live). The old inverse arrangement (visible
+  // clone under a transparent field) put the caret one line off whenever the clone's
+  // scroll or wrap diverged. Both share `textBox` exactly, or a tint box drifts off
+  // its tag — now a cosmetic pixel, never a broken input.
   // 16px on phones so iOS doesn't zoom the page when the field focuses; the usual
-  // 14px control base from md up. Backdrop + field share this, so the highlight
-  // stays aligned.
+  // 14px control base from md up.
   const textBox = cn("px-2.5 py-1.5 pr-9 text-base md:text-sm", className)
   const handlers = {
     ref,
@@ -235,20 +259,45 @@ export function MentionField({
     style,
   }
   const fieldClass = cn(
-    "relative block w-full bg-transparent text-transparent caret-foreground outline-none placeholder:text-muted-foreground",
+    "relative block w-full bg-transparent outline-none placeholder:text-muted-foreground",
     textBox,
   )
 
+  // Sync the metrics clone's scroll AFTER React commits its new content, too. The
+  // field's scroll event alone loses a race: typing auto-scrolls the field and the
+  // event fires BEFORE the clone re-renders taller, so the sync clamps against the
+  // stale, shorter clone and nothing ever corrects it — that was the permanent
+  // one-line drift (then of the caret; now it could only nudge a tint box).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-sync on every value commit.
+  useLayoutEffect(() => {
+    const el = ref.current
+    const b = backdropRef.current
+    if (!el || !b) return
+    b.scrollTop = el.scrollTop
+    b.scrollLeft = el.scrollLeft
+  }, [value])
+
   return (
     <div className="relative">
-      {/* Editable focus grammar (mirrors ui/textarea): ink border + soft glow. */}
-      <div className="relative rounded-lg border border-input bg-transparent focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40 dark:bg-input/30">
+      {/* Editable focus grammar (mirrors ui/textarea): ink border + soft glow —
+          unless `bare`, where the surrounding card is the edge and focus is a
+          quiet wash. */}
+      <div
+        className={cn(
+          "relative rounded-lg",
+          bare
+            ? "focus-within:bg-secondary/60"
+            : "border border-input bg-transparent focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40 dark:bg-input/30",
+        )}
+      >
         <div
           ref={backdropRef}
           aria-hidden="true"
           className={cn(
-            "pointer-events-none absolute inset-0 overflow-hidden text-foreground",
-            multiline ? "whitespace-pre-wrap break-words" : "overflow-x-auto whitespace-pre",
+            // text-transparent: this clone exists for metrics only; the mention
+            // spans paint their tint boxes, the field paints the text.
+            "pointer-events-none absolute inset-0 overflow-hidden text-transparent",
+            multiline ? "whitespace-pre-wrap break-words" : "whitespace-pre",
             textBox,
           )}
         >
@@ -267,11 +316,14 @@ export function MentionField({
         {/* Raw elements (the mention backdrop needs them), so they carry the
             password-manager ignore set themselves — see ui/input for why. */}
         {multiline ? (
+          // break-words + no scrollbar: the field must wrap at EXACTLY the clone's
+          // width (the clone never shows a scrollbar), or a long token puts the
+          // tint boxes on the wrong line.
           <textarea
             {...handlers}
             data-1p-ignore="true"
             data-lpignore="true"
-            className={fieldClass}
+            className={cn(fieldClass, "break-words [scrollbar-width:none]")}
           />
         ) : (
           <input
@@ -284,29 +336,50 @@ export function MentionField({
         )}
       </div>
 
+      {/* In-well send (thread replies): the ↑ ink button rides the well's bottom-
+          right and tracks the field as it grows — Enter does the same thing. It
+          appears with the first character; an always-on disabled blob is noise. */}
+      {sendTestId && value.trim() && (
+        <Button
+          type="button"
+          variant="default"
+          size="icon-xs"
+          data-testid={sendTestId}
+          aria-label="Send"
+          // mousedown-preventDefault keeps the field focused through the click.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={submit}
+          className="absolute bottom-1 right-1 size-6 rounded-md"
+        >
+          <ArrowUp aria-hidden className="size-3.5" />
+        </Button>
+      )}
+
       {/* Emoji picker: a one-tap grid of the common emoji. Typing :shortcode:
           works too (rendered on display); this is the no-memorization path.
           A Tooltip (not a title attr) labels the icon-only trigger — safe here
           because the button is a plain toggle, not another asChild trigger. */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            data-testid="emoji-trigger"
-            aria-label="Add emoji"
-            aria-expanded={emojiOpen}
-            onClick={() => setEmojiOpen((o) => !o)}
-            className="absolute right-1 top-1 text-muted-foreground"
-          >
-            {/* Explicit size-4 class: icon-xs would otherwise downscale a bare svg. */}
-            <Icon name="react" className="size-4" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>Add emoji</TooltipContent>
-      </Tooltip>
-      {emojiOpen && (
+      {!sendTestId && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              data-testid="emoji-trigger"
+              aria-label="Add emoji"
+              aria-expanded={emojiOpen}
+              onClick={() => setEmojiOpen((o) => !o)}
+              className="absolute right-1 top-1 text-muted-foreground"
+            >
+              {/* Explicit size-4 class: icon-xs would otherwise downscale a bare svg. */}
+              <Icon name="react" className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Add emoji</TooltipContent>
+        </Tooltip>
+      )}
+      {!sendTestId && emojiOpen && (
         <>
           {/* click-catcher to dismiss */}
           <button
@@ -412,14 +485,17 @@ export function Composer({
         </div>
       )}
       {quote && (
+        // Inset with the card's padding (the reference is context, not a banner).
         // Phones get a longer multi-line preview of what you're commenting on; the
         // desktop margin composer stays a tight single line.
-        <div
-          className={quoteChipClass({
-            className: "block w-full break-words line-clamp-4 md:line-clamp-1",
-          })}
-        >
-          “{quote}”
+        <div className="px-3 pt-2.5">
+          <div
+            className={quoteChipClass({
+              className: "block w-full break-words line-clamp-4 md:line-clamp-1",
+            })}
+          >
+            “{quote}”
+          </div>
         </div>
       )}
       <div className="p-2.5">
@@ -427,7 +503,10 @@ export function Composer({
           multiline
           autoFocus
           testId="composer-input"
-          className="min-h-14 resize-y"
+          // field-sizing-content: the box grows with the text (to a cap, then
+          // scrolls) instead of trapping a multi-line comment in a two-line
+          // window. resize-y stays as the manual override.
+          className="field-sizing-content min-h-14 max-h-48 resize-y"
           value={text}
           onChange={setText}
           mentions={mentions}
@@ -442,19 +521,25 @@ export function Composer({
                 : "Add a comment… (@ to mention)"
           }
         />
-        <div className="mt-1.5 flex gap-1.5">
+        {/* The send is right-aligned and compact (a full-width filled bar made the
+            composer bottom-heavy); the ↵ hint teaches the chat grammar quietly.
+            Phones hide it — Enter is a newline there and the button is the send. */}
+        <div className="mt-2 flex items-center gap-1.5">
+          <span className="inline-flex select-none items-center gap-1 font-mono text-2xs text-muted-foreground max-sm:hidden">
+            <Kbd>↵</Kbd> to send
+          </span>
+          <span className="flex-1" />
+          <Button variant="ghost" size="sm" data-testid="composer-cancel" onClick={onCancel}>
+            Cancel
+          </Button>
           <Button
             variant="default"
             size="sm"
-            className="flex-1"
             disabled={!text.trim()}
             data-testid="composer-submit"
             onClick={() => submit(mentions.filter((m) => text.includes(`@${m.name}`)))}
           >
             {agent ? "Send request" : "Comment"}
-          </Button>
-          <Button variant="outline" size="sm" data-testid="composer-cancel" onClick={onCancel}>
-            Cancel
           </Button>
         </div>
       </div>

@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest"
 import type { Comment } from "@/api"
-import { type BucketInput, bucketThreads, clamp, groupThreads, layoutPins } from "./layout"
+import {
+  type BucketInput,
+  bucketThreads,
+  clamp,
+  consumeWheel,
+  groupThreads,
+  layoutPins,
+  normalizeWheel,
+  pinOffsetBounds,
+} from "./layout"
 
 describe("clamp", () => {
   it("bounds a value to [lo, hi]", () => {
@@ -84,19 +93,18 @@ describe("bucketThreads", () => {
     inDoc: {},
     landedSlides: {},
     anchorTops: {},
-    scrollY: 0,
   }
 
-  it("pins an anchored, present thread at its highlight top minus scroll", () => {
+  it("pins an anchored, present thread at its highlight's doc-absolute top", () => {
     const r = bucketThreads({
       ...base,
       comments: [thread("t1")],
       inDoc: { t1: true },
       anchorTops: { t1: 500 },
-      scrollY: 120,
     })
     expect(r.pinned).toHaveLength(1)
-    expect(r.pinned[0]?.desiredY).toBe(380) // 500 - 120
+    // Doc-absolute: scroll is the pin layer's business, never the bucketer's.
+    expect(r.pinned[0]?.desiredY).toBe(500)
     expect(r.pinned[0]?.located).toBe(true)
     expect(r.general).toHaveLength(0)
     expect(r.openCount).toBe(1)
@@ -178,5 +186,68 @@ describe("bucketThreads", () => {
     })
     expect(elsewhere.pinned).toHaveLength(0)
     expect(elsewhere.general).toHaveLength(1)
+  })
+})
+
+describe("normalizeWheel", () => {
+  it("passes pixel-mode deltas through and scales line/page modes", () => {
+    expect(normalizeWheel(120, 0, 800)).toBe(120)
+    expect(normalizeWheel(3, 1, 800)).toBe(48) // Firefox line-mode mice: ~16px/line
+    expect(normalizeWheel(1, 2, 800)).toBe(800) // page mode
+  })
+})
+
+describe("pinOffsetBounds", () => {
+  const base = { minY: 200, maxBottom: 3000, activeY: null, datum: -80, scrollY: 500, zoneH: 600 }
+
+  it("allows positive offset up to the stack's overflow below the zone", () => {
+    // Stack bottom at zone-local 3000 - 80 - 500 = 2420; zone shows 600.
+    expect(pinOffsetBounds(base)).toEqual({ min: 0, max: 1820 })
+  })
+
+  it("never allows negative offset mid-document without an active item", () => {
+    // Wheel-up mid-doc must forward to the document, not slide cards down.
+    expect(pinOffsetBounds({ ...base, minY: -400 }).min).toBe(0)
+  })
+
+  it("opens the above-zone band at the doc top", () => {
+    // At scrollY 0 the topmost card sits at 20 - 80 = -60 (zone starts below the
+    // iframe top by the header/review-card band) — reachable only by negative offset.
+    const b = pinOffsetBounds({ ...base, minY: 20, scrollY: 0 })
+    expect(b.min).toBe(-60)
+  })
+
+  it("extends the floor to keep a clipped ACTIVE item revealable at any scroll", () => {
+    // A composer opened on a selection near the viewport's top: its layer Y is
+    // 400 - 80 - 500 = -180; the clamp-on-notify must not crush its reveal.
+    const b = pinOffsetBounds({ ...base, activeY: 400 })
+    expect(b.min).toBe(-180)
+  })
+
+  it("clamps both bounds at zero when everything already fits", () => {
+    expect(pinOffsetBounds({ ...base, maxBottom: 700, scrollY: 200 })).toEqual({ min: 0, max: 0 })
+  })
+})
+
+describe("consumeWheel", () => {
+  it("absorbs a delta fully while the offset has room", () => {
+    expect(consumeWheel(0, 100, 0, 500)).toEqual({ offset: 100, forward: 0 })
+  })
+
+  it("splits the tick that exhausts the room, forwarding the remainder", () => {
+    expect(consumeWheel(450, 100, 0, 500)).toEqual({ offset: 500, forward: 50 })
+  })
+
+  it("forwards everything when the offset is pinned at a bound", () => {
+    expect(consumeWheel(500, 100, 0, 500)).toEqual({ offset: 500, forward: 100 })
+    expect(consumeWheel(0, -100, 0, 500)).toEqual({ offset: 0, forward: -100 })
+  })
+
+  it("unwinds a positive offset before forwarding an upward gesture", () => {
+    expect(consumeWheel(30, -100, 0, 500)).toEqual({ offset: 0, forward: -70 })
+  })
+
+  it("consumes into the negative band when the floor is open (doc at top)", () => {
+    expect(consumeWheel(0, -100, -60, 500)).toEqual({ offset: -60, forward: -40 })
   })
 })

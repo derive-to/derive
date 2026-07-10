@@ -58,12 +58,20 @@ export type Sel = {
 export const selLabel = (s: Sel | null | undefined): string | null =>
   s?.exact ?? s?.snapshot?.label ?? null
 
+// The frame's live scroll geometry (its scroll offset + document/visible height).
+// Delivered imperatively via `subscribeGeom` — never React state, so nothing
+// re-renders per scroll frame.
+export type FrameGeom = { scrollY: number; docH: number; viewH: number }
+
 // The active text selection reported by the sandboxed artifact frame — the W3C
-// selector plus its viewport geometry, used to place the new-comment composer and its
-// pin. Null when the selection clears.
+// selector plus its geometry, used to place the new-comment composer and its
+// pin. `top` is frame-viewport-relative AT SELECTION TIME (frozen); `docTop` is
+// doc-absolute (stamped at receive), the value anything that must track the
+// document through later scrolling should use. Null when the selection clears.
 export type Selection = {
   selector: Sel
   top: number
+  docTop: number
   vTop: number
   vBottom: number
   vLeft: number
@@ -76,11 +84,13 @@ export type Selection = {
 export type AgentTarget = { id: string; name: string }
 
 // A pending new-comment composer: the anchor it pins to (null = a general, unanchored
-// comment) and its resolved Y in the pinned margin (null until measured). `agent` is set
-// when this is a revision REQUEST addressed to an agent, not a plain comment.
+// comment) and the DOC-ABSOLUTE Y of that anchor (null for a general comment). Doc
+// coordinates, same as every pin, so the composer glides with its highlight when the
+// document scrolls — a viewport Y here was the "composer parks while cards glide" bug.
+// `agent` is set when this is a revision REQUEST addressed to an agent.
 export type ComposerState = {
   anchor: Sel | null
-  top: number | null
+  docTop: number | null
   agent?: AgentTarget
 } | null
 
@@ -121,5 +131,7 @@ export type AnchorConf = Record<string, { band: "high" | "medium" | "low"; confi
 // Comments UI mode: full panel, collapsed rail of dots, or hidden.
 export type Panel = "open" | "hidden"
 
-// A thread positioned in the pinned margin beside its highlight.
+// A thread positioned in the pinned margin beside its highlight. `desiredY` is
+// DOC-ABSOLUTE (the highlight's top in the document) — the pin layer, not each
+// card, subtracts the live scroll.
 export type PinItem = { thread: Comment[]; desiredY: number; located: boolean }

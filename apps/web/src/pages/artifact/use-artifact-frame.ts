@@ -2,7 +2,17 @@ import type { Dispatch, SetStateAction } from "react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Comment } from "@/api"
 import { groupThreads } from "./lib/layout"
-import { type AnchorConf, type Panel, parseAnchor, type Selection } from "./types"
+import { type AnchorConf, type FrameGeom, type Panel, parseAnchor, type Selection } from "./types"
+
+// Two `anchor-rects` posts with identical tops must not re-render the page: the
+// frame's dedupe signature includes scrollY, so an ANIMATING artifact (a ticker,
+// a live chart) re-posts unchanged tops every frame during scroll.
+const sameTops = (a: Record<string, number>, b: Record<string, number>): boolean => {
+  const ka = Object.keys(a)
+  if (ka.length !== Object.keys(b).length) return false
+  for (const k of ka) if (a[k] !== b[k]) return false
+  return true
+}
 
 /**
  * The entire conversation with the sandboxed artifact iframe, kept out of the
@@ -69,12 +79,30 @@ export function useArtifactFrame(p: {
   // the frame so a card can show a quiet "moved" marker on an uncertain relocation.
   const [anchorConf, setAnchorConf] = useState<AnchorConf>({})
   const [anchorTops, setAnchorTops] = useState<Record<string, number>>({})
-  const [scrollY, setScrollY] = useState(0)
-  // The frame's own document height + visible height, reported alongside scroll.
-  // The live-cursor layer needs both to map a peer's document position to a screen
-  // position in this viewport (and decide who's scrolled off-screen).
-  const [docH, setDocH] = useState(0)
-  const [viewH, setViewH] = useState(0)
+  // The frame's scroll offset + document/visible height. NOT React state: it changes
+  // per scroll frame, and nothing should re-render on scroll — the pin layer, the
+  // selection pill, and the cursor layer all consume it imperatively through
+  // `subscribeGeom` (immediate call with the current value; returns unsubscribe).
+  const geomRef = useRef<FrameGeom>({ scrollY: 0, docH: 0, viewH: 0 })
+  const geomSubs = useRef(new Set<(g: FrameGeom) => void>())
+  const updateGeom = useCallback((g: Partial<FrameGeom>) => {
+    const cur = geomRef.current
+    const next: FrameGeom = {
+      scrollY: typeof g.scrollY === "number" ? g.scrollY : cur.scrollY,
+      docH: typeof g.docH === "number" ? g.docH : cur.docH,
+      viewH: typeof g.viewH === "number" ? g.viewH : cur.viewH,
+    }
+    if (next.scrollY === cur.scrollY && next.docH === cur.docH && next.viewH === cur.viewH) return
+    geomRef.current = next
+    for (const cb of geomSubs.current) cb(next)
+  }, [])
+  const subscribeGeom = useCallback((cb: (g: FrameGeom) => void) => {
+    geomSubs.current.add(cb)
+    cb(geomRef.current)
+    return () => {
+      geomSubs.current.delete(cb)
+    }
+  }, [])
   // Set when the artifact announces itself as a deck (derive-deck protocol).
   const [deck, setDeck] = useState<{ i: number; total: number } | null>(null)
   // The deck position read inside the message handler (a stable closure that never
@@ -115,6 +143,12 @@ export function useArtifactFrame(p: {
           setSel({
             selector,
             top: d.rect.top,
+            // Doc-absolute Y, stamped at receive: the frame posts the rect in ITS
+            // viewport coords, so add its current scroll. This is what keeps the
+            // composer/pill attached to the selection when the doc scrolls later
+            // (a frozen viewport Y was the old "composer parks mid-scroll" bug).
+            // Worst case it's one rAF-throttled scroll message stale.
+            docTop: d.rect.top + geomRef.current.scrollY,
             vTop: ft + d.rect.top,
             vBottom: ft + d.rect.bottom,
             // left/right are sent by the current anchor client; guard against a
@@ -132,14 +166,11 @@ export function useArtifactFrame(p: {
         // a card can flag a relocation; text/older clients omit it.
         setAnchorConf(d.conf ?? {})
       } else if (d.type === "anchor-rects") {
-        setAnchorTops(d.tops ?? {})
-        if (typeof d.scrollY === "number") setScrollY(d.scrollY)
-        if (typeof d.docH === "number") setDocH(d.docH)
-        if (typeof d.viewH === "number") setViewH(d.viewH)
+        const tops: Record<string, number> = d.tops ?? {}
+        setAnchorTops((prev) => (sameTops(prev, tops) ? prev : tops))
+        updateGeom(d)
       } else if (d.type === "scroll") {
-        if (typeof d.scrollY === "number") setScrollY(d.scrollY)
-        if (typeof d.docH === "number") setDocH(d.docH)
-        if (typeof d.viewH === "number") setViewH(d.viewH)
+        updateGeom(d)
       } else if (d.type === "anchor-hover") setHoverThread(d.id ?? null)
       else if (d.type === "anchor-click") {
         setActiveThread(d.id)
@@ -170,6 +201,7 @@ export function useArtifactFrame(p: {
     onNavigate,
     onEsc,
     onOpenExternal,
+    updateGeom,
   ])
 
   // Two-way hover: emphasize the matching highlight in the doc when a comment
@@ -227,32 +259,40 @@ export function useArtifactFrame(p: {
   }, [deck, deckCmd])
 
   // Paint highlights for active (open or addressed), anchored threads whenever
-  // the doc or comments change. Resolved/outdated threads don't paint.
+  // the doc or comments change. RESOLVED threads ride along as `quiet` anchors:
+  // resolved in the doc (so "jump to context" works from their cards, with a
+  // one-time flash) but never painted, hover-lit, or pinned. Outdated threads
+  // stay out — their anchor is known-stale.
   const sendAnchors = useCallback(() => {
     const w = frame.current?.contentWindow
     if (!w) return
     const anchors = groupThreads(comments)
       .map((t) => t[0])
-      .filter((head): head is Comment => head?.state === "open" || head?.state === "addressed")
-      .map((head) => ({
-        id: head.thread_id,
-        sel: parseAnchor(head.anchor),
-      }))
-      .filter((x): x is { id: string; sel: NonNullable<ReturnType<typeof parseAnchor>> } => !!x.sel)
-      .map((x) =>
+      .filter(
+        (head): head is Comment =>
+          head?.state === "open" || head?.state === "addressed" || head?.state === "resolved",
+      )
+      .flatMap((head) => {
+        const sel = parseAnchor(head.anchor)
+        if (!sel) return []
+        const id = head.thread_id
+        const quiet = head.state === "resolved" ? true : undefined
         // Element anchor: hand the client the whole selector to relocate via the
         // cascade. Text anchor: the quote + context it greps for.
-        x.sel.element
-          ? { id: x.id, el: x.sel.element }
-          : {
-              id: x.id,
-              exact: x.sel.exact,
-              prefix: x.sel.prefix,
-              suffix: x.sel.suffix,
-              // The frame scopes resolution to this slide first (deck artifacts only).
-              slide: x.sel.slide,
-            },
-      )
+        return [
+          sel.element
+            ? { id, quiet, el: sel.element }
+            : {
+                id,
+                quiet,
+                exact: sel.exact,
+                prefix: sel.prefix,
+                suffix: sel.suffix,
+                // The frame scopes resolution to this slide first (deck artifacts only).
+                slide: sel.slide,
+              },
+        ]
+      })
     w.postMessage({ source: "derive-host", type: "anchors", anchors }, "*")
   }, [comments])
   // biome-ignore lint/correctness/useExhaustiveDependencies: frameReady is an intentional repaint trigger (re-send anchors when the iframe reloads).
@@ -263,7 +303,17 @@ export function useArtifactFrame(p: {
   return {
     frame,
     presentWrap,
-    onFrameLoad: () => setFrameReady((n) => n + 1),
+    // The iframe (re)loaded. That's not only a shortId/version change: a live
+    // version auto-swap, the reader-mode toggle, and a RenderStage retry all
+    // reload the frame with the SAME key — so the fresh document starts at
+    // scrollY 0 and the OLD doc's anchor tops are meaningless. Reset both here
+    // (pins go unlocated/invisible until the new doc reports) instead of pinning
+    // stale cards over the new document.
+    onFrameLoad: () => {
+      updateGeom({ scrollY: 0, docH: 0, viewH: 0 })
+      setAnchorTops({})
+      setFrameReady((n) => n + 1)
+    },
     post,
     scrollBy,
     deck,
@@ -275,8 +325,6 @@ export function useArtifactFrame(p: {
     landedSlides,
     anchorConf,
     anchorTops,
-    scrollY,
-    docH,
-    viewH,
+    subscribeGeom,
   }
 }

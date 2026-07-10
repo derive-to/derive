@@ -223,9 +223,7 @@ export function Artifact() {
     landedSlides,
     anchorConf,
     anchorTops,
-    scrollY,
-    docH,
-    viewH,
+    subscribeGeom,
   } = useArtifactFrame({
     // Paint the open/addressed thread anchors in the doc; a click focuses the thread.
     comments,
@@ -283,10 +281,9 @@ export function Artifact() {
 
   // Feed our live iframe geometry to the cursor layer, so peers render at their
   // document position (mapped against our scroll) and scrolled-off peers collapse
-  // into the top/bottom edge indicators.
-  useEffect(() => {
-    live.setGeom({ scrollY, docH, viewH })
-  }, [live.setGeom, scrollY, docH, viewH])
+  // into the top/bottom edge indicators. Imperative (setGeom is a ref write) —
+  // geometry changes per scroll frame and must never re-render the page.
+  useEffect(() => subscribeGeom(live.setGeom), [subscribeGeom, live.setGeom])
 
   // Tell the cursor layer which slide we're viewing, so peers on other slides are
   // hidden. null on a plain document → everyone shows (no filtering).
@@ -497,7 +494,8 @@ export function Artifact() {
 
   // Sort threads into pinned (anchored & present in this live doc), general
   // (unanchored / orphaned / off-slide), and resolved — pure, from the frame's
-  // reported geometry. Pins drive the margin cards; general waits in the drawer.
+  // reported geometry. Pins carry DOC-ABSOLUTE Ys; the pin layer maps them to the
+  // screen imperatively, so this (and the page) never recomputes on scroll.
   const docLive = !editing && view === "preview"
   const { openThreads, resolvedThreads, pinned, general, openCount } = bucketThreads({
     comments,
@@ -506,7 +504,6 @@ export function Artifact() {
     inDoc,
     landedSlides,
     anchorTops,
-    scrollY,
   })
 
   // Activating a thread from the panel: on a deck, first flip to the slide it
@@ -826,7 +823,8 @@ export function Artifact() {
               panel={panel}
               asideWidth={asideWidth}
               openCount={openCount}
-              scrollY={scrollY}
+              frameRef={frame}
+              subscribeGeom={subscribeGeom}
               onScrollDoc={scrollBy}
               pinned={pinned}
               general={general}

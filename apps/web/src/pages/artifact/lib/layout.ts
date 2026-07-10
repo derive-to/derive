@@ -78,8 +78,6 @@ export type BucketInput = {
   landedSlides: Record<string, number | null>
   /** Per-thread: the doc-absolute top of its painted highlight. */
   anchorTops: Record<string, number>
-  /** The frame's current scroll offset. */
-  scrollY: number
 }
 
 export type ThreadBuckets = {
@@ -108,9 +106,11 @@ export function bucketThreads(p: BucketInput): ThreadBuckets {
   const resolvedThreads = all.filter((t) => t[0]?.state === "resolved")
   const pinned: PinItem[] = []
   const general: Comment[][] = []
+  // desiredY is DOC-ABSOLUTE — the pin layer subtracts the live scroll once for
+  // everyone, so buckets (and the page) never recompute on scroll.
   const pinHere = (t: Comment[], id: string) => {
     const top = p.anchorTops[id]
-    pinned.push({ thread: t, desiredY: top != null ? top - p.scrollY : 0, located: top != null })
+    pinned.push({ thread: t, desiredY: top != null ? top : 0, located: top != null })
   }
   for (const t of openThreads) {
     const head = t[0]
@@ -139,4 +139,64 @@ export function bucketThreads(p: BucketInput): ThreadBuckets {
     }
   }
   return { openThreads, resolvedThreads, pinned, general, openCount: openThreads.length }
+}
+
+/* === Pin-layer local offset (pure math; the imperative half lives in use-pin-layer) ===
+   Cards sit at doc-absolute Ys inside a layer translated by `datum − scrollY − offset`.
+   `offset` is the panel's own scroll-like term: positive shifts cards up (revealing a
+   dense cluster buried below the panel), negative shifts them down (revealing cards
+   anchored in the doc's first pixels, which start above the zone because the zone sits
+   `−datum` below the iframe's top — a comment on the title is unreachable otherwise). */
+
+/** A wheel delta in pixels: line-mode (Firefox mice) and page-mode deltas scaled. */
+export const normalizeWheel = (deltaY: number, deltaMode: number, pageH: number): number =>
+  deltaMode === 1 ? deltaY * 16 : deltaMode === 2 ? deltaY * pageH : deltaY
+
+/**
+ * The offset's legal range at the current geometry.
+ * - max reveals the bottom of the relaxed stack (`maxBottom` doc-absolute).
+ * - min goes negative in exactly two cases:
+ *   (a) the doc is at its top — mid-document, wheel-up must scroll the doc
+ *       (forwarding), not slide cards down; at the top there is nothing left to
+ *       forward, so the remaining gesture may reveal the above-zone band
+ *       (`minY + datum` = the topmost card's zone-local Y at scrollY 0);
+ *   (b) the ACTIVE item (an open composer, the selected thread) sits above the
+ *       zone's top at the current scroll — its reveal must survive the
+ *       clamp-on-notify, or a composer opened on a selection near the viewport's
+ *       top would be clipped away by the very next scroll message.
+ */
+export function pinOffsetBounds(p: {
+  /** Topmost card's layout Y (doc-absolute). */
+  minY: number
+  /** Bottom of the lowest card in the relaxed stack (doc-absolute). */
+  maxBottom: number
+  /** The active item's layout Y (doc-absolute), if any. */
+  activeY: number | null
+  datum: number
+  scrollY: number
+  zoneH: number
+}): { min: number; max: number } {
+  return {
+    min: Math.min(
+      0,
+      p.scrollY <= 1 ? p.minY + p.datum : 0,
+      p.activeY != null ? p.activeY + p.datum - p.scrollY : 0,
+    ),
+    max: Math.max(0, p.maxBottom + p.datum - p.scrollY - p.zoneH),
+  }
+}
+
+/**
+ * Split a wheel delta: the part the local offset absorbs (bounded) and the remainder
+ * forwarded to the document. Splitting one event is deliberate — today's all-or-nothing
+ * hand-off dropped the tail of the tick that exhausted the local room.
+ */
+export function consumeWheel(
+  offset: number,
+  delta: number,
+  min: number,
+  max: number,
+): { offset: number; forward: number } {
+  const next = clamp(offset + delta, min, max)
+  return { offset: next, forward: delta - (next - offset) }
 }

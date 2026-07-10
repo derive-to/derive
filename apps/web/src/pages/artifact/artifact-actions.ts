@@ -215,7 +215,7 @@ export function useArtifactActions(p: {
   }
   const startSelComment = () => {
     if (!p.sel) return
-    p.setComposer({ anchor: p.sel.selector, top: p.sel.top })
+    p.setComposer({ anchor: p.sel.selector, docTop: p.sel.docTop })
     p.setActiveThread(null)
   }
   // Open the composer as a revision REQUEST addressed to `agent` (the "ask an agent to
@@ -223,7 +223,7 @@ export function useArtifactActions(p: {
   // the posted note lands in the agent's MCP pull inbox.
   const startSelAgent = (agent: AgentTarget) => {
     if (!p.sel) return
-    p.setComposer({ anchor: p.sel.selector, top: p.sel.top, agent })
+    p.setComposer({ anchor: p.sel.selector, docTop: p.sel.docTop, agent })
     p.setActiveThread(null)
   }
 

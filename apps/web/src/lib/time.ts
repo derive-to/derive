@@ -7,3 +7,14 @@ export const ago = (iso: string): string => {
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`
   return `${Math.floor(s / 86400)}d ago`
 }
+
+// Terse variant for dense repeated rows (the comment thread): "now", "5m", "3h",
+// "2d" — "ago" is noise multiplied by every row. Pair with a title attr carrying
+// the full date, so precision is a hover away.
+export const agoShort = (iso: string): string => {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
+  if (s < 60) return "now"
+  if (s < 3600) return `${Math.floor(s / 60)}m`
+  if (s < 86400) return `${Math.floor(s / 3600)}h`
+  return `${Math.floor(s / 86400)}d`
+}

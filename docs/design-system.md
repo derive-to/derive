@@ -424,10 +424,14 @@ variants.
 - **SyncChip** — a soft **ink**-tinted chip (`border-primary/30 bg-primary/5`, hover `/10`)
   — a sanctioned brand/machine moment (a running sync = "this matters"); its progress bar
   and spinner head ride `bg-primary` / `border-t-primary` ink.
-- **Mentions** (globals.css `.mention`, `.mention-live`) — **solid ink tags**, not soft
-  chips: a full `--primary` fill with `--primary-foreground` text at weight 700, so a
-  tagged person can't miss it (and with a monochrome accent there's no CTA fill for it to
-  clash with).
+- **Mentions** (globals.css `.mention`, `.mention-live`) — a RENDERED mention is a
+  **solid ink tag**, not a soft chip: a full `--primary` fill with `--primary-foreground`
+  text at weight 700, so a tagged person can't miss it (and with a monochrome accent
+  there's no CTA fill for it to clash with). The LIVE composer tag (`.mention-live`) is
+  different by necessity: the field's own text is the visible text (the caret must never
+  detach from what you read — see MentionField), so the overlay can only paint a box
+  *behind* foreground-colored glyphs — a soft ink tint (`color-mix` ~15% primary), which
+  a solid fill would swallow. The tag takes its full pill the moment it's posted.
 - **Artifact header** — the workbench top bar is an identity-led *document header*, not an
   action row. The left leads with the artifact title (`font-serif`) over a machine-register
   state line (`{TYPE} · v{n} · updated {ago}`, mono `text-2xs` muted) — the bar states WHAT

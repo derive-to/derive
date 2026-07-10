@@ -14,7 +14,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Textarea } from "@/components/ui/textarea"
 import { getInitials } from "@/lib/initials"
-import { ago } from "@/lib/time"
+import { agoShort } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useActions } from "./comment-actions"
 import { mdToHtml } from "./lib/markdown"
@@ -70,7 +70,18 @@ function CommentBody({ html, compact }: { html: string; compact?: boolean }) {
   )
 }
 
-export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
+export function CommentRow({
+  c,
+  compact,
+  grouped,
+}: {
+  c: Comment
+  compact?: boolean
+  /** A consecutive message from the SAME author: the identity header drops and
+   *  the body continues in the text column — "Rob, Rob, Rob" collapses to one
+   *  voice (the thread reads as conversation, not stacked row-cards). */
+  grouped?: boolean
+}) {
   const A = useActions()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(c.body_md)
@@ -81,8 +92,8 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
 
   if (c.deleted)
     return (
-      <div className={cn("px-3 py-2.5", !compact && "border-b border-border-soft")}>
-        <span className="text-sm italic text-muted-foreground">Comment deleted</span>
+      <div className={cn("px-3 pt-1 pb-1.5", !grouped && "pt-2.5")}>
+        <span className="pl-7 text-sm italic text-muted-foreground">Comment deleted</span>
       </div>
     )
 
@@ -91,27 +102,36 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
       data-testid="comment-row"
       // An optimistic (not-yet-saved) comment carries a `temp-` id; dim it slightly
       // until the server row swaps in, so "sending" vs "sent" reads at a glance.
+      // No divider between rows — the thread is one object; rhythm comes from
+      // spacing (a grouped follow-up sits tight under its predecessor).
       className={cn(
-        "group relative px-3 py-2.5",
-        !compact && "border-b border-border-soft",
+        "group relative px-3 pb-1",
+        grouped ? "pt-0.5" : "pt-2.5",
         c.id.startsWith("temp-") && "opacity-60",
       )}
     >
-      <div className="mb-1 flex items-center gap-1.5">
-        <Avatar className="size-5">
-          <AvatarFallback className="text-2xs">{getInitials(c.author)}</AvatarFallback>
-        </Avatar>
-        <span className="text-sm font-medium text-foreground">{c.author}</span>
-        <span className="ml-auto font-mono text-2xs text-muted-foreground">
-          {ago(c.created_at)}
-          {c.edited ? " · edited" : ""}
-        </span>
-      </div>
+      {!grouped && (
+        <div className="mb-0.5 flex items-center gap-2">
+          <Avatar className="size-5">
+            <AvatarFallback className="text-2xs">{getInitials(c.author)}</AvatarFallback>
+          </Avatar>
+          <span className="min-w-0 truncate text-sm font-medium text-foreground">{c.author}</span>
+          {/* Terse: "1h", not "1h ago" — repeated per row, the word is noise; the
+              precise date is a hover away. */}
+          <span
+            title={new Date(c.created_at).toLocaleString()}
+            className="font-mono text-2xs tabular-nums text-muted-foreground/80"
+          >
+            {agoShort(c.created_at)}
+            {c.edited ? " · edited" : ""}
+          </span>
+        </div>
+      )}
 
       {editing ? (
         // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control
         // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control
-        <div onClick={(e) => e.stopPropagation()}>
+        <div className="pl-7" onClick={(e) => e.stopPropagation()}>
           <Textarea
             value={draft}
             autoFocus
@@ -156,11 +176,15 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
           </div>
         </div>
       ) : (
-        <CommentBody html={mdToHtml(c.body_md, c.mentions)} compact={compact} />
+        // The body lives in the TEXT COLUMN (past the avatar gutter), so every
+        // line in the thread — names and prose alike — shares one left edge.
+        <div className="pl-7">
+          <CommentBody html={mdToHtml(c.body_md, c.mentions)} compact={compact} />
+        </div>
       )}
 
       {Object.keys(reactions).length > 0 && (
-        <div className="mt-1.5 flex flex-wrap gap-1">
+        <div className="mt-1 flex flex-wrap gap-1 pl-7">
           {Object.entries(reactions).map(([emoji, who]) => {
             const reacted = who.includes(A.meName)
             return (
@@ -209,8 +233,11 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
           // dead toolbar when the row remounts under a stationary pointer (the
           // comments refetch after an edit) — :hover isn't re-applied to a
           // replaced node until the mouse moves.
+          // Straddles ITS row's top edge (each row is its own hover group), so
+          // the actions visibly belong to the message under the pointer; flat
+          // card language (bg-card + hairline), not popover chrome.
           className={cn(
-            "absolute right-2 top-1.5 z-6 flex gap-px rounded-lg bg-popover p-0.5 shadow-[var(--shadow)] ring-1 ring-foreground/10 transition-opacity",
+            "-top-2 absolute right-3 z-6 flex rounded-md bg-card ring-1 ring-border transition-opacity",
             open
               ? "opacity-100"
               : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
@@ -221,11 +248,11 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
             <PopoverTrigger asChild>
               <Button
                 variant="ghost"
-                size="icon-sm"
+                size="icon-xs"
                 aria-label="Add reaction"
                 data-testid="comment-react"
               >
-                <Icon name="react" size={16} />
+                <Icon name="react" className="size-4" />
               </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-auto p-1">
@@ -252,11 +279,11 @@ export function CommentRow({ c, compact }: { c: Comment; compact?: boolean }) {
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
-                size="icon-sm"
+                size="icon-xs"
                 aria-label="Comment actions"
                 data-testid="comment-more"
               >
-                <Icon name="more" size={16} />
+                <Icon name="more" className="size-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">

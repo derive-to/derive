@@ -2,23 +2,29 @@ import {
   Box,
   Braces,
   ChartNoAxesColumn,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   Clapperboard,
   Image as ImageGlyph,
   Link2,
   type LucideIcon,
+  RotateCcw,
   Table2,
 } from "lucide-react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 import { useActions } from "./comment-actions"
 import { Composer, MentionField } from "./comment-composer"
 import { CommentRow } from "./comment-row"
+import { FloatingControl } from "./floating-control"
 import { useCommentScope } from "./lib/comment-scope"
 import { useCommentTree } from "./lib/comment-tree"
 import { COMPOSER_ID, layoutPins } from "./lib/layout"
@@ -26,26 +32,28 @@ import { quoteChipClass } from "./quote-chip"
 import {
   type ComposerState,
   type ElementSnapshotLite,
+  type FrameGeom,
   type PinItem,
   parseAnchor,
   selLabel,
 } from "./types"
+import { usePinLayer } from "./use-pin-layer"
 
 export function PinnedZone({
   pins,
-  scrollY,
+  frameRef,
+  subscribeGeom,
   onScrollDoc,
   composer,
   onSubmitNew,
   onCancelNew,
-  topInset = 0,
 }: {
   pins: PinItem[]
-  scrollY: number
-  /** Vertical gap between the pinned zone's top and the document's top (the panel
-   *  header sitting above it). Cards are anchored from the document top, so this is
-   *  subtracted to keep them lined up with their highlights. */
-  topInset?: number
+  /** The rendered document's iframe — the datum (zone top vs iframe top) is
+   *  MEASURED from it, so the review card / bundle bar / past-version banner can't
+   *  silently misalign the pins the way the old assumed header-only inset did. */
+  frameRef: RefObject<HTMLIFrameElement | null>
+  subscribeGeom: (cb: (g: FrameGeom) => void) => () => void
   onScrollDoc: (dy: number) => void
   composer: ComposerState
   onSubmitNew: (text: string, mentions?: Mention[]) => void
@@ -53,11 +61,17 @@ export function PinnedZone({
 }) {
   // The active/hover state drives this zone's layout math (which card is pinned to its
   // exact Y, z-order, opacity); it comes from the tree context, same as the cards read.
-  const { activeThread, hoverThread } = useCommentTree()
+  // onJump powers the offscreen-pin pills ("N more ↓" → scroll the doc to the nearest).
+  const { activeThread, hoverThread, onJump } = useCommentTree()
   const [heights, setHeights] = useState<Record<string, number>>({})
+  // Created lazily in the ref callback (refs run during commit, BEFORE effects —
+  // an effect-created observer would miss any card mounting in the zone's own
+  // first commit). Disconnected on unmount.
   const obs = useRef<ResizeObserver | null>(null)
-  useEffect(() => {
-    obs.current = new ResizeObserver((entries) => {
+  useEffect(() => () => obs.current?.disconnect(), [])
+  const measure = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return
+    obs.current ??= new ResizeObserver((entries) => {
       setHeights((h) => {
         let changed = false
         const next = { ...h }
@@ -73,10 +87,18 @@ export function PinnedZone({
         return changed ? next : h
       })
     })
-    return () => obs.current?.disconnect()
-  }, [])
-  const measure = useCallback((el: HTMLDivElement | null) => {
-    if (el) obs.current?.observe(el)
+    obs.current.observe(el)
+    return () => {
+      obs.current?.unobserve(el)
+      // Drop the unmounted pin's height so the layout snapshot never grows stale ids.
+      const id = el.dataset.pin
+      if (id)
+        setHeights((h) => {
+          if (!(id in h)) return h
+          const { [id]: _gone, ...rest } = h
+          return rest
+        })
+    }
   }, [])
 
   // A composer for a new anchored comment joins the same layout as a pinned
@@ -85,113 +107,129 @@ export function PinnedZone({
   // Narrow once so the render below needs no non-null assertions: this is set
   // exactly when there's an anchored composer with a resolved position.
   const activeComposer =
-    composer?.anchor && composer.top != null
-      ? { top: composer.top, quote: selLabel(composer.anchor), agent: composer.agent }
+    composer?.anchor && composer.docTop != null
+      ? { docTop: composer.docTop, quote: selLabel(composer.anchor), agent: composer.agent }
       : null
-  // The pinned zone sits `topInset` px below the document's top (the panel header
-  // above it), so a card at desiredY (measured from the document top) must render
-  // that much higher to line up with its highlight. Clamp at 0 so cards anchored
-  // near the very top bunch just under the header rather than scroll out of reach.
-  const align = (y: number) => Math.max(0, y - topInset)
+  // Everything here is DOC-ABSOLUTE. The pin layer translates the whole stack by
+  // `datum − scrollY − offset` imperatively (see use-pin-layer), so a scroll never
+  // re-renders these cards — their translateY changes only when the layout itself
+  // does, which is exactly when the 200ms transition should fire.
   const items = pins.flatMap((p) => {
     const head = p.thread[0]
-    return head ? [{ id: head.thread_id, desiredY: align(p.desiredY) }] : []
+    return head ? [{ id: head.thread_id, desiredY: p.desiredY }] : []
   })
-  if (activeComposer) items.push({ id: COMPOSER_ID, desiredY: align(activeComposer.top) })
+  if (activeComposer) items.push({ id: COMPOSER_ID, desiredY: activeComposer.docTop })
   const activeId = activeComposer ? COMPOSER_ID : activeThread
   const pos = layoutPins(items, heights, activeId, 12)
-  // Tallest card bottom in the relaxed stack. When a dense cluster pushes this
-  // past the panel height, the panel scrolls to reveal the buried cards (the
-  // document alone can't surface them — they all anchor to the same spot).
   const maxBottom = items.reduce(
     (m, it) => Math.max(m, (pos[it.id] ?? it.desiredY) + (heights[it.id] ?? 116)),
     0,
   )
+  const minY = items.reduce((m, it) => Math.min(m, pos[it.id] ?? it.desiredY), 0)
+  const activeY = activeId != null ? (pos[activeId] ?? null) : null
+  const located: Record<string, boolean> = { [COMPOSER_ID]: true }
+  for (const p of pins) {
+    const head = p.thread[0]
+    if (head) located[head.thread_id] = p.located
+  }
 
-  const zoneRef = useRef<HTMLDivElement>(null)
-  // Set right before we forward a wheel tick to the document — distinguishes a
-  // scrollY change WE caused (spillover at the end of the local list) from one
-  // the user caused some other way (scrollbar, keyboard, a jump). Only the
-  // latter should discard the local scroll position; see the effect below.
-  const selfScrolled = useRef(false)
-  // Wheel over the panel scrolls the document (so cards glide with their text),
-  // but the panel consumes the gesture FIRST when it has its own overflow to show
-  // — native scroll-chaining, except the document is a cross-origin iframe so the
-  // hand-off is explicit. preventDefault needs a non-passive listener.
+  const { zoneRef, layerRef, reveal, offscreen } = usePinLayer({
+    frameRef,
+    subscribeGeom,
+    onScrollDoc,
+    layout: { pos, heights, located, minY, maxBottom, activeY },
+  })
+
+  // Reveal the item the user just committed to. The composer reveals ONCE, at
+  // open: its selection is on-screen by definition (no jump accompanies it), and
+  // a delayed re-reveal would fight a user who scrolls right after opening it.
+  // Activation reveals now AND once more after the jump-to-anchor scroll settles
+  // (fastScrollTo runs 220ms) — a reveal computed mid-glide lands on stale
+  // geometry. Either way it's a one-shot nudge, not a lock: the next doc scroll
+  // unwinds any reveal offset (see use-pin-layer's clamp).
+  const composerOpen = !!activeComposer
   useEffect(() => {
-    const el = zoneRef.current
-    if (!el) return
-    const onWheel = (e: WheelEvent) => {
-      const down = e.deltaY > 0
-      const canConsume = down
-        ? el.scrollTop + el.clientHeight < el.scrollHeight - 1
-        : el.scrollTop > 0
-      if (canConsume) return // let the panel scroll natively to the buried cards
-      e.preventDefault()
-      selfScrolled.current = true
-      onScrollDoc(e.deltaY)
-    }
-    el.addEventListener("wheel", onWheel, { passive: false })
-    return () => el.removeEventListener("wheel", onWheel)
-  }, [onScrollDoc])
-  // A document scroll re-pins every card to a fresh viewport position, so the
-  // panel's own overflow scroll is no longer meaningful — snap it back to the top.
-  // EXCEPT when that scroll was our own spillover forward (the wheel handler
-  // above, at the exact moment a dense cluster's local scroll bottoms out): that
-  // scrollY nudge is a side-effect of the user reading THIS panel, not a reason
-  // to throw their scroll position away — that was the "reach the last comment,
-  // get bounced to the top" bug.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-pin only tracks scrollY changes.
+    if (composerOpen) reveal(COMPOSER_ID)
+  }, [composerOpen, reveal])
   useEffect(() => {
-    if (selfScrolled.current) {
-      selfScrolled.current = false
-      return
-    }
-    if (zoneRef.current) zoneRef.current.scrollTop = 0
-  }, [scrollY])
+    if (!activeThread) return
+    reveal(activeThread)
+    const t = setTimeout(() => reveal(activeThread), 350)
+    return () => clearTimeout(t)
+  }, [activeThread, reveal])
 
   return (
-    <div ref={zoneRef} className="absolute inset-0 overflow-y-auto overflow-x-hidden">
-      {/* Spacer gives the absolutely-placed cards a scrollable height. */}
-      <div aria-hidden="true" style={{ height: maxBottom }} />
-      {pins.map((p) => {
-        const head = p.thread[0]
-        if (!head) return null
-        const id = head.thread_id
-        const active = !activeComposer && activeThread === id
-        const y = pos[id] ?? align(p.desiredY)
-        return (
+    // overflow-clip, not hidden: a clip box is not a scroll container, so focus
+    // scrolling / scrollIntoView can't silently shift it out from under the layer
+    // transform. use-pin-layer's reveal() is the sanctioned way in.
+    <div ref={zoneRef} className="absolute inset-0 overflow-clip">
+      <div ref={layerRef} className="absolute inset-x-2.5 top-0 will-change-transform">
+        {pins.map((p) => {
+          const head = p.thread[0]
+          if (!head) return null
+          const id = head.thread_id
+          const active = !activeComposer && activeThread === id
+          const y = pos[id] ?? p.desiredY
+          return (
+            <div
+              key={id}
+              ref={measure}
+              data-pin={id}
+              className="absolute inset-x-0 top-0 transition-transform duration-200"
+              style={{
+                transform: `translateY(${Math.round(y)}px)`,
+                zIndex: active ? 6 : hoverThread === id ? 4 : 2,
+                opacity: p.located ? 1 : 0,
+              }}
+            >
+              <CommentCard thread={p.thread} inLayer />
+            </div>
+          )
+        })}
+        {activeComposer && (
           <div
-            key={id}
             ref={measure}
-            data-pin={id}
-            className="absolute inset-x-2.5 top-0 transition-transform duration-200"
+            data-pin={COMPOSER_ID}
+            className="absolute inset-x-0 top-0 z-10 transition-transform duration-200"
             style={{
-              transform: `translateY(${Math.round(y)}px)`,
-              zIndex: active ? 6 : hoverThread === id ? 4 : 2,
-              opacity: p.located ? 1 : 0,
+              transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? activeComposer.docTop)}px)`,
             }}
           >
-            <CommentCard thread={p.thread} />
+            <Composer
+              quote={activeComposer.quote}
+              agent={activeComposer.agent}
+              onSubmit={onSubmitNew}
+              onCancel={onCancelNew}
+            />
           </div>
-        )
-      })}
-      {activeComposer && (
-        <div
-          ref={measure}
-          data-pin={COMPOSER_ID}
-          className="absolute inset-x-2.5 top-0 z-10 transition-transform duration-200"
-          style={{
-            transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? align(activeComposer.top))}px)`,
-          }}
+        )}
+      </div>
+      {/* Comments outside the panel's view announce themselves at the edge they're
+          past (Miro/Figma edge-indicator grammar — the cursor layer's offscreen
+          peers work the same way). One click jumps the document to the nearest. */}
+      {offscreen.above && (
+        <FloatingControl
+          size="sm"
+          data-testid="pins-above-jump"
+          title="Jump to the nearest comment above"
+          onClick={() => offscreen.above && onJump(offscreen.above.id)}
+          className="absolute left-1/2 top-2 z-20 -translate-x-1/2 tabular-nums"
         >
-          <Composer
-            quote={activeComposer.quote}
-            agent={activeComposer.agent}
-            onSubmit={onSubmitNew}
-            onCancel={onCancelNew}
-          />
-        </div>
+          <ChevronUp aria-hidden className="size-3.5" />
+          {offscreen.above.count} more
+        </FloatingControl>
+      )}
+      {offscreen.below && (
+        <FloatingControl
+          size="sm"
+          data-testid="pins-below-jump"
+          title="Jump to the nearest comment below"
+          onClick={() => offscreen.below && onJump(offscreen.below.id)}
+          className="absolute bottom-2 left-1/2 z-20 -translate-x-1/2 tabular-nums"
+        >
+          <ChevronDown aria-hidden className="size-3.5" />
+          {offscreen.below.count} more
+        </FloatingControl>
       )}
     </div>
   )
@@ -235,6 +273,8 @@ function ElementRef({
   const Glyph = ROLE_GLYPH[snapshot?.tag === "table" ? "table" : roleGuess(snapshot, label)] ?? Box
   if (present) {
     return (
+      // Same quiet edge-marked grammar as the text quote (see quoteChipClass) —
+      // a reference line, not a filled band; hover re-inks to say "jumpable".
       <button
         type="button"
         data-testid={`comment-jump-${threadId}`}
@@ -243,9 +283,9 @@ function ElementRef({
           onJump(threadId)
         }}
         title={relocated ? "Jump to the element (moved — approximate)" : "Jump to the element"}
-        className="flex w-full items-center gap-1.5 border-l-[3px] border-foreground/25 bg-accent px-2.5 py-1.5 text-left text-sm font-medium text-foreground outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+        className="flex w-full items-center gap-1.5 border-l-2 border-foreground/25 py-0.5 pl-2.5 pr-2 text-left text-sm font-medium text-muted-foreground outline-none hover:border-foreground/60 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >
-        <Glyph aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        <Glyph aria-hidden className="size-4 shrink-0" />
         <span className="truncate">{label}</span>
         {relocated && (
           // A minor, muted "moved" marker — a small dot + word, not an alarm.
@@ -266,7 +306,7 @@ function ElementRef({
     <div
       title="The element this comment was attached to was edited or removed in this version"
       data-testid={`comment-orphan-${threadId}`}
-      className="flex w-full items-center gap-2 border-l-[3px] border-border bg-secondary px-2.5 py-1.5 text-left text-sm text-muted-foreground"
+      className="flex w-full items-center gap-2 border-l-2 border-border py-0.5 pl-2.5 pr-2 text-left text-sm text-muted-foreground"
     >
       {thumb ? (
         <img
@@ -322,30 +362,29 @@ function roleGuess(snapshot: ElementSnapshotLite | undefined, label: string): st
 // thread, a reply box, and resolve controls. Its interaction state (active/hovered/
 // present) and handlers come from the CommentTree context — the card is the leaf, so a
 // render site is just `<CommentCard thread={t} />` with no drilled props.
-export function CommentCard({ thread }: { thread: Comment[] }) {
+export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: boolean }) {
   const { canComment, currentSlide, landedSlides, anchorConf, agentIds } = useCommentScope()
   const { activeThread, hoverThread, inDoc, onActivate, onHover, onResolve, onReply, onJump } =
     useCommentTree()
-  const { openReview } = useActions()
+  const { openReview, meName } = useActions()
   const [reply, setReply] = useState("")
   const [replyMentions, setReplyMentions] = useState<Mention[]>([])
   const root = thread[0]
   const active = !!root && activeThread === root.thread_id
   const cardRef = useRef<HTMLDivElement>(null)
-  // Becoming active scrolls the card into view within whichever container it's
-  // in — the pinned zone's own overflow (a dense cluster the doc scroll alone
-  // can't reveal) or the general/resolved drawer (an unanchored thread has no
-  // doc position to scroll to at all). Selecting a comment should always land
-  // it in view, not just flip a state you have to go hunting for.
+  // Becoming active scrolls the card into view in the general/resolved drawer
+  // (an unanchored thread has no doc position to jump to). Selecting a comment
+  // should always land it in view, not just flip a state you have to go hunting
+  // for. Pinned cards opt OUT (`inLayer`): their zone is overflow-clip and its
+  // ancestors could still be shifted by scrollIntoView, silently breaking the
+  // layer transform — the pin layer's reveal() handles them instead.
   useEffect(() => {
     // Instant, not smooth: the document's own jump-to-anchor scroll is already
     // animating (fastScrollTo, anchor-client.ts) — a second, slower smooth
     // scroll running here at the same time is exactly the "dragging" feel to
-    // avoid. This is just a same-instant catch-up for whichever container
-    // (pinned zone or the general/resolved drawer) doesn't already have the
-    // card in view.
-    if (active) cardRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" })
-  }, [active])
+    // avoid.
+    if (active && !inLayer) cardRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" })
+  }, [active, inLayer])
   if (!root) return null
   const hovered = hoverThread === root.thread_id
   const present = inDoc[root.thread_id]
@@ -397,16 +436,20 @@ export function CommentCard({ thread }: { thread: Comment[] }) {
       onMouseLeave={() => onHover(null)}
       onClick={() => !active && onActivate(root.thread_id)}
       className={cn(
-        "animate-in fade-in slide-in-from-bottom-1 duration-200 overflow-hidden rounded-lg border bg-card",
+        // Tight radius, the QUIETEST edge that still separates: in light the
+        // soft hairline + shadow carry the lift; dark has no shadows and the
+        // panel shares the card fill, so the standard hairline stays there.
+        // No entrance animation: cards appear constantly (panel open, refetch,
+        // scroll into the margin) and motion there reads as churn — the pin
+        // layer's transform transition carries all deliberate movement.
+        "overflow-hidden rounded-lg border bg-card shadow-[var(--shadow-sm)]",
         // Active/hovered cards take neutral re-inked edges — never the accent
-        // (the ink accent marks actions and brand moments, not selection). Active
-        // reads unmistakably: full-strength edge + the popover-weight shadow, not
-        // a subtle tint you have to look for.
+        // (the ink accent marks actions and brand moments, not selection).
         active
-          ? "cursor-default border-foreground/40 shadow-[var(--shadow-pop)]"
+          ? "cursor-default border-foreground/25 shadow-[var(--shadow)]"
           : hovered
-            ? " border-foreground/15 shadow-[var(--shadow-sm)]"
-            : " border-border",
+            ? "border-foreground/15"
+            : "border-border-soft dark:border-border",
         resolved && !active && "opacity-60",
       )}
     >
@@ -476,137 +519,183 @@ export function CommentCard({ thread }: { thread: Comment[] }) {
           )}
         </div>
       )}
-      {isEl
-        ? refLabel && (
-            <ElementRef
-              threadId={root.thread_id}
-              label={refLabel}
-              snapshot={snapshot}
-              present={textPresent && !resolved}
-              relocated={relocated}
-              onJump={onJump}
-            />
-          )
-        : refLabel &&
-          (textPresent && !resolved ? (
-            <button
-              type="button"
-              data-testid={`comment-jump-${root.thread_id}`}
-              onClick={(e) => {
-                e.stopPropagation()
-                onJump(root.thread_id)
-              }}
-              title="Jump to the highlighted text"
-              className={quoteChipClass({
-                className:
-                  "block w-full truncate outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-              })}
-            >
-              “{refLabel}”
-            </button>
-          ) : (
-            <div
-              title="The text this comment was attached to was edited or removed in this version"
-              className={quoteChipClass({ muted: true, className: "block w-full truncate" })}
-            >
-              “{refLabel}”
-            </div>
-          ))}
-
-      {!active ? (
-        <>
-          <CommentRow c={root} compact />
-          {replies > 0 && (
-            <div className="px-3 pb-2.5 font-mono text-2xs font-medium tabular-nums text-muted-foreground">
-              {replies} repl{replies === 1 ? "y" : "ies"}
-            </div>
-          )}
-        </>
-      ) : (
-        <>
-          <div className="max-h-90 overflow-auto">
-            {thread.map((c) => (
-              <CommentRow key={c.id} c={c} />
-            ))}
-          </div>
-          {canComment && (
-            <div className="flex gap-1.5 border-t border-border-soft px-3 py-2">
-              {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control */}
-              {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control */}
-              <div className="flex-1" onClick={(e) => e.stopPropagation()}>
-                <MentionField
-                  testId="comment-reply-input"
-                  value={reply}
-                  onChange={setReply}
-                  mentions={replyMentions}
-                  onMentions={setReplyMentions}
-                  onSubmit={sendReply}
-                  placeholder="Reply… (@ to mention)"
-                  autoFocus
+      {/* The card's title bar: the anchored reference (inset — a full-bleed band
+          here made every card lead with a gray slab) and, when the thread is
+          open, its ONE state action: the resolve check, quiet at rest, success
+          on hover. The footer below stays purely about replying. */}
+      {(refLabel || active) && (
+        <div className="flex items-center gap-1.5 px-3 pt-2.5">
+          <div className="min-w-0 flex-1">
+            {refLabel &&
+              (isEl ? (
+                <ElementRef
+                  threadId={root.thread_id}
+                  label={refLabel}
+                  snapshot={snapshot}
+                  present={textPresent}
+                  relocated={relocated}
+                  onJump={onJump}
                 />
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!reply.trim()}
-                data-testid="comment-reply-send"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  sendReply(replyMentions.filter((m) => reply.includes(`@${m.name}`)))
-                }}
-              >
-                Reply
-              </Button>
-            </div>
-          )}
-          <div className="flex items-center gap-1.5 bg-secondary px-3 py-1.5">
-            {/* Status tones are success/warning/neutral — the ink accent is reserved, so
-                addressed and open both take the neutral wash; the label text and
-                title tooltip carry the distinction. An agent request shows its state in
-                the ribbon above, so the plain badge is suppressed to avoid doubling up. */}
-            {!requestStage && (
-              <Badge
-                shape="pill"
-                variant={resolved ? "success" : outdated ? "warning" : "default"}
-                title={
-                  outdated
-                    ? "The text this thread was attached to changed in a later version — this feedback may no longer apply"
-                    : addressed
-                      ? "A proposed revision addressing this thread is pending review"
-                      : undefined
-                }
-              >
-                {resolved ? "resolved" : outdated ? "outdated" : addressed ? "addressed" : "open"}
-              </Badge>
-            )}
-            {refLabel && !textPresent && !resolved && !outdated && !addressed && (
-              <Badge
-                shape="pill"
-                variant="warning"
-                title={
-                  isEl
-                    ? "The element this comment was attached to was edited or removed in this version"
-                    : "The text this comment was attached to was edited or removed in this version"
-                }
-              >
-                {isEl ? "element changed" : "text changed"}
-              </Badge>
-            )}
-            {/* Resolve is a success affordance (the soft status fill, never a
-                filled ink); Reopen goes back to a quiet outline. */}
+              ) : textPresent ? (
+                // Jumpable whenever the text still exists — RESOLVED included
+                // (its anchor rides to the frame as a quiet, unpainted one):
+                // settled feedback still has a place in the document, muted at
+                // rest, re-inking on hover.
+                <button
+                  type="button"
+                  data-testid={`comment-jump-${root.thread_id}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onJump(root.thread_id)
+                  }}
+                  title={
+                    resolved ? "Jump to the text this was about" : "Jump to the highlighted text"
+                  }
+                  className={quoteChipClass({
+                    muted: resolved,
+                    className:
+                      "block w-full truncate outline-none hover:border-foreground/60 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+                  })}
+                >
+                  “{refLabel}”
+                </button>
+              ) : (
+                <div
+                  title="The text this comment was attached to was edited or removed in this version"
+                  className={quoteChipClass({ muted: true, className: "block w-full truncate" })}
+                >
+                  “{refLabel}”
+                </div>
+              ))}
+          </div>
+          {active && (
+            // Labeled, not icon-only: at launch, "Resolve" has to teach itself.
+            // Still quiet in the title bar (ghost, muted → success on hover) —
+            // the verb carries the meaning, no tooltip needed.
             <Button
-              variant={resolved ? "outline" : "success"}
-              size="sm"
-              className="ml-auto"
+              variant="ghost"
+              size="xs"
               data-testid="comment-resolve"
               onClick={(e) => {
                 e.stopPropagation()
                 onResolve(root)
               }}
+              className={cn(
+                "-my-1 -mr-1.5 shrink-0 text-muted-foreground",
+                resolved ? "hover:text-foreground" : "hover:bg-success/10 hover:text-success",
+              )}
             >
+              {resolved ? (
+                <RotateCcw aria-hidden className="size-3.5" />
+              ) : (
+                <Icon name="check" className="size-3.5" />
+              )}
               {resolved ? "Reopen" : "Resolve"}
             </Button>
+          )}
+        </div>
+      )}
+
+      {/* Status, only when it's NOT the default: "open" was a pill on every
+          active card, labeling the ordinary state. An agent request shows its
+          state in the ribbon above, so the plain badge is suppressed there too. */}
+      {active &&
+        (() => {
+          const changed = refLabel && !textPresent && !resolved && !outdated && !addressed
+          const statused = !requestStage && (resolved || outdated || addressed)
+          if (!changed && !statused) return null
+          return (
+            <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2">
+              {statused && (
+                <Badge
+                  shape="pill"
+                  variant={resolved ? "success" : outdated ? "warning" : "default"}
+                  title={
+                    outdated
+                      ? "The text this thread was attached to changed in a later version — this feedback may no longer apply"
+                      : addressed
+                        ? "A proposed revision addressing this thread is pending review"
+                        : undefined
+                  }
+                >
+                  {resolved ? "resolved" : outdated ? "outdated" : "addressed"}
+                </Badge>
+              )}
+              {changed && (
+                <Badge
+                  shape="pill"
+                  variant="warning"
+                  title={
+                    isEl
+                      ? "The element this comment was attached to was edited or removed in this version"
+                      : "The text this comment was attached to was edited or removed in this version"
+                  }
+                >
+                  {isEl ? "element changed" : "text changed"}
+                </Badge>
+              )}
+            </div>
+          )
+        })()}
+
+      {!active ? (
+        <>
+          <CommentRow c={root} compact />
+          {replies > 0 ? (
+            // In the text column, like everything else in the thread.
+            <div className="px-3 pb-2 pt-0.5 font-mono text-2xs font-medium tabular-nums text-muted-foreground">
+              <span className="block pl-7">
+                {replies} repl{replies === 1 ? "y" : "ies"}
+              </span>
+            </div>
+          ) : (
+            <div aria-hidden className="pb-1.5" />
+          )}
+        </>
+      ) : (
+        <>
+          {/* No dividers between rows: consecutive same-author messages drop
+              their header entirely, so a run reads as one voice — the thread is
+              conversation, not stacked row-cards. */}
+          <div className="max-h-90 overflow-auto pb-1.5">
+            {thread.map((c, i) => (
+              <CommentRow key={c.id} c={c} grouped={i > 0 && thread[i - 1]?.author === c.author} />
+            ))}
           </div>
+          {/* The reply line: BARE — the card is the container, so the field draws
+              no box of its own (a bordered well under a divider inside a bordered
+              card stacked three edges in twenty pixels). It sits in the text
+              column like every other line; the ↑ send appears with the first
+              character, and Enter sends too. */}
+          {canComment && (
+            // YOUR avatar leads the reply line — the row grammar completes
+            // (every line in the thread is avatar + text, and this one is you),
+            // and the empty gutter earns its keep. The field's text lands on
+            // the same column as the messages above.
+            // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control
+            // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control
+            <div className="flex gap-2 px-3 pb-1.5" onClick={(e) => e.stopPropagation()}>
+              <Avatar className="mt-1 size-5 shrink-0">
+                <AvatarFallback className="text-2xs">{getInitials(meName)}</AvatarFallback>
+              </Avatar>
+              <div className="min-w-0 flex-1">
+                <MentionField
+                  multiline
+                  bare
+                  testId="comment-reply-input"
+                  sendTestId="comment-reply-send"
+                  className="field-sizing-content max-h-32 min-h-8 resize-none px-1.5"
+                  value={reply}
+                  onChange={setReply}
+                  mentions={replyMentions}
+                  onMentions={setReplyMentions}
+                  onSubmit={sendReply}
+                  placeholder="Reply…"
+                  autoFocus
+                />
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
