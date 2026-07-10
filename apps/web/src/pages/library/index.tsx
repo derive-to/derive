@@ -130,12 +130,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
   }
   const { query: feed, items, listQuery, toggleFavorite, deleteArtifact } = useLibraryFeed(params)
   const { isPending, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = feed
-  // keepPreviousData holds the OLD grid while a new filter/tab/search loads, and `isPending`
-  // is false then — so without this the previous (wrong) grid shows with no cue. Dim it during
-  // the transition (mirrors people.tsx), so switching to e.g. "Created by me" reads as loading.
-  const transitioning = feed.isPlaceholderData
-  // Hold the skeleton back ~150 ms so a cache-warm / fast first load flashes nothing
-  // (keepPreviousData already keeps the current grid across filter changes).
+  // keepPreviousData holds the OLD grid while a new filter/tab/search loads. With the cache
+  // persisted to IndexedDB (lib/persist.ts), a switch to a view you've already seen resolves
+  // from cache instantly — the previous grid is simply replaced with no flash, no ceremony.
+  // Hold the skeleton back ~150 ms so a cache-warm / fast first load flashes nothing.
   const showSkeleton = useDelayedPending(isPending)
 
   // A synced repo/PR collection gets the folder/flat treatment. Derive this from the
@@ -490,26 +488,24 @@ function LibraryBody({ view }: { view: LibraryView }) {
           <EmptyState {...emptyProps} />
         )
       ) : isSyncedCollection ? (
-        <div className={cn(transitioning && "opacity-60 transition-opacity")}>
-          <SyncedCollection
-            items={recencyItems}
-            showFolders={showFolders}
-            onToggle={setShowFolders}
-            hasNextPage={!!hasNextPage}
-            isFetchingNextPage={isFetchingNextPage}
-            onLoadMore={() => fetchNextPage()}
-            onOpen={(a) => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })}
-            onToggleFavorite={toggleFavorite}
-            onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-            onPickAuthor={pickAuthor}
-            onEditTags={setPendingTags}
-            onAddToCollection={setPendingCollections}
-            onDelete={setPendingDelete}
-            onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
-          />
-        </div>
+        <SyncedCollection
+          items={recencyItems}
+          showFolders={showFolders}
+          onToggle={setShowFolders}
+          hasNextPage={!!hasNextPage}
+          isFetchingNextPage={isFetchingNextPage}
+          onLoadMore={() => fetchNextPage()}
+          onOpen={(a) => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })}
+          onToggleFavorite={toggleFavorite}
+          onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+          onPickAuthor={pickAuthor}
+          onEditTags={setPendingTags}
+          onAddToCollection={setPendingCollections}
+          onDelete={setPendingDelete}
+          onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+        />
       ) : (
-        <div className={cn(transitioning && "opacity-60 transition-opacity")}>
+        <>
           <ArtifactGrid
             items={items}
             scrollRef={scrollRef}
@@ -529,7 +525,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
               <Spinner />
             </div>
           )}
-        </div>
+        </>
       )}
 
       {shareCol && (
