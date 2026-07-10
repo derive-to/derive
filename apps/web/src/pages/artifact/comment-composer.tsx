@@ -68,6 +68,7 @@ export function MentionField({
   style,
   testId,
   sendTestId,
+  bare,
 }: {
   value: string
   onChange: (v: string) => void
@@ -83,9 +84,15 @@ export function MentionField({
   style?: CSSProperties
   testId?: string
   /** Render an in-well ↑ send button (the thread reply grammar: the field carries
-   *  its own send, nothing floats outside the well). Replaces the emoji trigger —
-   *  the two share the right rail, and :shortcodes: still cover emoji here. */
+   *  its own send, nothing floats outside the well). Appears once there's text.
+   *  Replaces the emoji trigger — the two share the right rail, and :shortcodes:
+   *  still cover emoji here. */
   sendTestId?: string
+  /** No border/ring of its own — for a field living inside a container that
+   *  already draws the edge (the thread card's reply line). A bordered well
+   *  inside a bordered card stacked three edges in twenty pixels. Focus shows
+   *  as a quiet wash; the caret does the rest. */
+  bare?: boolean
 }) {
   const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
@@ -272,8 +279,17 @@ export function MentionField({
 
   return (
     <div className="relative">
-      {/* Editable focus grammar (mirrors ui/textarea): ink border + soft glow. */}
-      <div className="relative rounded-lg border border-input bg-transparent focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40 dark:bg-input/30">
+      {/* Editable focus grammar (mirrors ui/textarea): ink border + soft glow —
+          unless `bare`, where the surrounding card is the edge and focus is a
+          quiet wash. */}
+      <div
+        className={cn(
+          "relative rounded-lg",
+          bare
+            ? "focus-within:bg-secondary/60"
+            : "border border-input bg-transparent focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40 dark:bg-input/30",
+        )}
+      >
         <div
           ref={backdropRef}
           aria-hidden="true"
@@ -321,15 +337,15 @@ export function MentionField({
       </div>
 
       {/* In-well send (thread replies): the ↑ ink button rides the well's bottom-
-          right and tracks the field as it grows — Enter does the same thing. */}
-      {sendTestId && (
+          right and tracks the field as it grows — Enter does the same thing. It
+          appears with the first character; an always-on disabled blob is noise. */}
+      {sendTestId && value.trim() && (
         <Button
           type="button"
           variant="default"
           size="icon-xs"
           data-testid={sendTestId}
           aria-label="Send"
-          disabled={!value.trim()}
           // mousedown-preventDefault keeps the field focused through the click.
           onMouseDown={(e) => e.preventDefault()}
           onClick={submit}

@@ -18,7 +18,6 @@ import { Icon } from "@/components/icons"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { useActions } from "./comment-actions"
 import { Composer, MentionField } from "./comment-composer"
@@ -561,31 +560,29 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
               ))}
           </div>
           {active && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={resolved ? "Reopen" : "Resolve"}
-                  data-testid="comment-resolve"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onResolve(root)
-                  }}
-                  className={cn(
-                    "-mr-1 -mt-0.5 shrink-0 text-muted-foreground",
-                    resolved ? "hover:text-foreground" : "hover:bg-success/10 hover:text-success",
-                  )}
-                >
-                  {resolved ? (
-                    <RotateCcw aria-hidden className="size-4" />
-                  ) : (
-                    <Icon name="check" className="size-4" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{resolved ? "Reopen" : "Resolve"}</TooltipContent>
-            </Tooltip>
+            // Labeled, not icon-only: at launch, "Resolve" has to teach itself.
+            // Still quiet in the title bar (ghost, muted → success on hover) —
+            // the verb carries the meaning, no tooltip needed.
+            <Button
+              variant="ghost"
+              size="xs"
+              data-testid="comment-resolve"
+              onClick={(e) => {
+                e.stopPropagation()
+                onResolve(root)
+              }}
+              className={cn(
+                "-my-1 -mr-1.5 shrink-0 text-muted-foreground",
+                resolved ? "hover:text-foreground" : "hover:bg-success/10 hover:text-success",
+              )}
+            >
+              {resolved ? (
+                <RotateCcw aria-hidden className="size-3.5" />
+              ) : (
+                <Icon name="check" className="size-3.5" />
+              )}
+              {resolved ? "Reopen" : "Resolve"}
+            </Button>
           )}
         </div>
       )}
@@ -656,17 +653,24 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
               <CommentRow key={c.id} c={c} grouped={i > 0 && thread[i - 1]?.author === c.author} />
             ))}
           </div>
-          {/* The reply well carries its own send (↑, in-field) — nothing floats
-              outside it to strand when the box grows. Enter sends too. */}
+          {/* The reply line: BARE — the card is the container, so the field draws
+              no box of its own (a bordered well under a divider inside a bordered
+              card stacked three edges in twenty pixels). It sits in the text
+              column like every other line; the ↑ send appears with the first
+              character, and Enter sends too. */}
           {canComment && (
+            // pl-8 + the field's px-2 lands the reply text exactly on the text
+            // column (px-3 + pl-7 = 40px), so "Reply…" reads as the thread's
+            // next line.
             // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control
             // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control
-            <div className="border-t border-border-soft p-2" onClick={(e) => e.stopPropagation()}>
+            <div className="pb-1.5 pl-8 pr-2" onClick={(e) => e.stopPropagation()}>
               <MentionField
                 multiline
+                bare
                 testId="comment-reply-input"
                 sendTestId="comment-reply-send"
-                className="field-sizing-content min-h-8 max-h-32"
+                className="field-sizing-content max-h-32 min-h-8 resize-none px-2"
                 value={reply}
                 onChange={setReply}
                 mentions={replyMentions}

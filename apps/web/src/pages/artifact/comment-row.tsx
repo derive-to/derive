@@ -233,8 +233,11 @@ export function CommentRow({
           // dead toolbar when the row remounts under a stationary pointer (the
           // comments refetch after an edit) — :hover isn't re-applied to a
           // replaced node until the mouse moves.
+          // Straddles ITS row's top edge (each row is its own hover group), so
+          // the actions visibly belong to the message under the pointer; flat
+          // card language (bg-card + hairline), not popover chrome.
           className={cn(
-            "absolute right-2 top-1.5 z-6 flex gap-px rounded-lg bg-popover p-0.5 shadow-[var(--shadow)] ring-1 ring-foreground/10 transition-opacity",
+            "-top-2 absolute right-3 z-6 flex rounded-md bg-card ring-1 ring-border transition-opacity",
             open
               ? "opacity-100"
               : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
@@ -245,11 +248,11 @@ export function CommentRow({
             <PopoverTrigger asChild>
               <Button
                 variant="ghost"
-                size="icon-sm"
+                size="icon-xs"
                 aria-label="Add reaction"
                 data-testid="comment-react"
               >
-                <Icon name="react" size={16} />
+                <Icon name="react" className="size-4" />
               </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-auto p-1">
@@ -276,11 +279,11 @@ export function CommentRow({
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
-                size="icon-sm"
+                size="icon-xs"
                 aria-label="Comment actions"
                 data-testid="comment-more"
               >
-                <Icon name="more" size={16} />
+                <Icon name="more" className="size-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
