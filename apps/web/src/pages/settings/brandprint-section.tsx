@@ -2,9 +2,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Upload } from "lucide-react"
 import { useRef, useState } from "react"
 import { api, type OrgSettings } from "@/api"
+import { Icon } from "@/components/icons"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusPanel } from "@/components/shared/status-panel"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -193,13 +195,38 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
   const [createOpen, setCreateOpen] = useState(false)
   const [noteTitle, setNoteTitle] = useState("")
   const [notes, setNotes] = useState("")
+  // The upload tab STAGES picks instead of firing per pick: files arrive from two
+  // category pickers (look / read), and the first mutation would set the pointer,
+  // flip the section out of its empty state, and unmount the dialog under the
+  // second picker. One batch, one create.
+  const [staged, setStaged] = useState<{ id: number; file: File; cat: "look" | "read" }[]>([])
+  const stageCat = useRef<"look" | "read">("look")
+  // Monotonic row ids — names can repeat across picks, so they can't key the list.
+  const stagedSeq = useRef(0)
+  const stageFiles = (list: FileList | null) => {
+    const files = list ? [...list] : []
+    const cat = stageCat.current
+    if (files.length > 0)
+      setStaged((prev) => [
+        ...prev,
+        ...files.map((file) => ({ id: stagedSeq.current++, file, cat })),
+      ])
+  }
   // Close on a successful create; a total failure keeps the dialog up to retry from.
   const closeOnSuccess = (r: ImportResult) => {
     if (r.ok > 0) {
       setCreateOpen(false)
+      setStaged([])
       setNotes("")
       setNoteTitle("")
     }
+  }
+  const createFromStaged = () => {
+    if (staged.length === 0) return
+    importDocs.mutate(
+      staged.map((s) => s.file),
+      { onSuccess: closeOnSuccess },
+    )
   }
   const createFromNotes = () => {
     const text = notes.trim()
@@ -215,7 +242,7 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
   const title = scope === "workspace" ? "Workspace Brandprint" : "Your Brandprint"
   const description =
     scope === "workspace"
-      ? "Your team's voice and design conventions: the tone, structure, and visual style your work should follow. Agents read these docs before building anything in this workspace, so everything they produce stays on brand."
+      ? "Your team's design and voice conventions: the visual style, tone, and structure your work should follow. Agents read these docs before building anything in this workspace, so everything they produce stays on brand."
       : "Your personal conventions, layered over the workspace's when an agent acts as you (yours wins)."
 
   if (scope === "account" && !me) return null
@@ -287,13 +314,13 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
           </SettingRow>
           <SettingRow
             label="Upload documents"
-            description="New docs publish straight into this Brandprint's collection."
+            description="More look or read docs publish straight into this Brandprint's collection."
           >
             <input
               ref={fileRef}
               type="file"
               multiple
-              accept=".md,.markdown,.txt,.html,.htm"
+              accept=".md,.markdown,.txt,.html,.htm,.css"
               className="hidden"
               data-testid={`brandprint-upload-input-${scope}`}
               onChange={(e) => {
@@ -317,7 +344,7 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
       ) : (
         <SettingRow
           label="Get started"
-          description="Upload docs, write your conventions from scratch, or use an existing collection."
+          description="Upload files for how your work should look and read, write your conventions from scratch, or use an existing collection."
         >
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
@@ -343,38 +370,106 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
                 </TabsList>
                 <TabsContent value="upload" className="flex flex-col gap-3 pt-3">
                   <p className="text-sm text-pretty text-muted-foreground">
-                    Style guides, tone notes, or templates (Markdown, HTML, or plain text). Derive
-                    publishes them, gathers them into a new collection, and points your Brandprint
-                    at it.
+                    Give it both sides of the brand, or start with one. Derive publishes the files,
+                    gathers them into a new collection, and points your Brandprint at it.
                   </p>
                   <input
                     ref={fileRef}
                     type="file"
                     multiple
-                    accept=".md,.markdown,.txt,.html,.htm"
+                    accept=".md,.markdown,.txt,.html,.htm,.css"
                     className="hidden"
                     data-testid={`brandprint-upload-input-${scope}`}
                     onChange={(e) => {
-                      const files = e.target.files ? [...e.target.files] : []
-                      if (files.length > 0) importDocs.mutate(files, { onSuccess: closeOnSuccess })
+                      stageFiles(e.target.files)
                       // Reset so re-picking the same file fires change again.
                       e.target.value = ""
                     }}
                   />
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground">
+                        How your artifacts should look
+                      </p>
+                      <p className="text-sm text-pretty text-muted-foreground">
+                        Visual theming: brand and style guides, palettes, font specs, CSS tokens, or
+                        example HTML that carries the look.
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid={`brandprint-upload-look-${scope}`}
+                      disabled={importDocs.isPending}
+                      onClick={() => {
+                        stageCat.current = "look"
+                        fileRef.current?.click()
+                      }}
+                    >
+                      <Upload /> Choose files
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground">
+                        How your artifacts should read
+                      </p>
+                      <p className="text-sm text-pretty text-muted-foreground">
+                        Voice and tone: grammar, warmth, structure, wording do&rsquo;s and
+                        don&rsquo;ts.
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid={`brandprint-upload-read-${scope}`}
+                      disabled={importDocs.isPending}
+                      onClick={() => {
+                        stageCat.current = "read"
+                        fileRef.current?.click()
+                      }}
+                    >
+                      <Upload /> Choose files
+                    </Button>
+                  </div>
+                  {staged.length > 0 && (
+                    <ul className="flex flex-col gap-1">
+                      {staged.map((s) => (
+                        <li key={s.id} className="flex items-center gap-2 text-sm">
+                          <Badge variant="secondary" shape="pill">
+                            {s.cat === "look" ? "Look" : "Read"}
+                          </Badge>
+                          <span className="min-w-0 flex-1 truncate text-foreground">
+                            {s.file.name}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label={`Remove ${s.file.name}`}
+                            data-testid="brandprint-staged-remove"
+                            onClick={() => setStaged((prev) => prev.filter((x) => x.id !== s.id))}
+                          >
+                            <Icon name="close" size={14} />
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   <Button
-                    className="self-start"
-                    variant="outline"
-                    data-testid={`brandprint-upload-${scope}`}
+                    className="self-end"
+                    data-testid={`brandprint-upload-create-${scope}`}
                     loading={importDocs.isPending}
-                    onClick={() => fileRef.current?.click()}
+                    disabled={importDocs.isPending || staged.length === 0}
+                    onClick={createFromStaged}
                   >
-                    <Upload /> {importDocs.isPending ? "Uploading…" : "Choose files…"}
+                    {importDocs.isPending ? "Creating…" : "Create Brandprint"}
                   </Button>
                 </TabsContent>
                 <TabsContent value="write" className="flex flex-col gap-3 pt-3">
                   <p className="text-sm text-pretty text-muted-foreground">
-                    Write or paste your conventions. Derive publishes them as a doc your Brandprint
-                    points at, editable any time.
+                    Write or paste your conventions, both how things should look (palette, fonts,
+                    layout) and how they should read (voice, grammar, warmth). Derive publishes them
+                    as a doc your Brandprint points at, editable any time.
                   </p>
                   <Input
                     value={noteTitle}
