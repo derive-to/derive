@@ -204,12 +204,15 @@ export function MentionField({
     }
   }
 
-  // The field's text is transparent; the highlight backdrop paints the same text
-  // (with lit-up mentions) directly underneath, so a tag glows live as you type or
-  // pick someone. Both share `textBox` exactly, or the highlight drifts off the caret.
+  // The FIELD's own text is the visible text — the caret and what you read are the
+  // same layout by construction and can never drift apart. The backdrop clones the
+  // text INVISIBLY (transparent) purely for metrics, painting only the tint boxes
+  // behind mention runs (see .mention-live). The old inverse arrangement (visible
+  // clone under a transparent field) put the caret one line off whenever the clone's
+  // scroll or wrap diverged. Both share `textBox` exactly, or a tint box drifts off
+  // its tag — now a cosmetic pixel, never a broken input.
   // 16px on phones so iOS doesn't zoom the page when the field focuses; the usual
-  // 14px control base from md up. Backdrop + field share this, so the highlight
-  // stays aligned.
+  // 14px control base from md up.
   const textBox = cn("px-2.5 py-1.5 pr-9 text-base md:text-sm", className)
   const handlers = {
     ref,
@@ -235,9 +238,23 @@ export function MentionField({
     style,
   }
   const fieldClass = cn(
-    "relative block w-full bg-transparent text-transparent caret-foreground outline-none placeholder:text-muted-foreground",
+    "relative block w-full bg-transparent outline-none placeholder:text-muted-foreground",
     textBox,
   )
+
+  // Sync the metrics clone's scroll AFTER React commits its new content, too. The
+  // field's scroll event alone loses a race: typing auto-scrolls the field and the
+  // event fires BEFORE the clone re-renders taller, so the sync clamps against the
+  // stale, shorter clone and nothing ever corrects it — that was the permanent
+  // one-line drift (then of the caret; now it could only nudge a tint box).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-sync on every value commit.
+  useLayoutEffect(() => {
+    const el = ref.current
+    const b = backdropRef.current
+    if (!el || !b) return
+    b.scrollTop = el.scrollTop
+    b.scrollLeft = el.scrollLeft
+  }, [value])
 
   return (
     <div className="relative">
@@ -247,8 +264,10 @@ export function MentionField({
           ref={backdropRef}
           aria-hidden="true"
           className={cn(
-            "pointer-events-none absolute inset-0 overflow-hidden text-foreground",
-            multiline ? "whitespace-pre-wrap break-words" : "overflow-x-auto whitespace-pre",
+            // text-transparent: this clone exists for metrics only; the mention
+            // spans paint their tint boxes, the field paints the text.
+            "pointer-events-none absolute inset-0 overflow-hidden text-transparent",
+            multiline ? "whitespace-pre-wrap break-words" : "whitespace-pre",
             textBox,
           )}
         >
@@ -267,11 +286,14 @@ export function MentionField({
         {/* Raw elements (the mention backdrop needs them), so they carry the
             password-manager ignore set themselves — see ui/input for why. */}
         {multiline ? (
+          // break-words + no scrollbar: the field must wrap at EXACTLY the clone's
+          // width (the clone never shows a scrollbar), or a long token puts the
+          // tint boxes on the wrong line.
           <textarea
             {...handlers}
             data-1p-ignore="true"
             data-lpignore="true"
-            className={fieldClass}
+            className={cn(fieldClass, "break-words [scrollbar-width:none]")}
           />
         ) : (
           <input
