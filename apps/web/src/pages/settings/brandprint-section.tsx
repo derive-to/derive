@@ -1,18 +1,95 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { Upload } from "lucide-react"
+import { useRef, useState } from "react"
 import { api, type OrgSettings } from "@/api"
+import { Icon } from "@/components/icons"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusPanel } from "@/components/shared/status-panel"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import {
   SelectMenu,
   SelectMenuContent,
   SelectMenuItem,
   SelectMenuTrigger,
 } from "@/components/ui/select-menu"
+import { toast } from "@/components/ui/sonner"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
-import { collectionsQuery, workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
+import {
+  collectionsQuery,
+  summaryQuery,
+  workspaceQuery,
+  workspaceSettingsQuery,
+} from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
+
+// What the one-click intake reports back: how many docs made it in, which files
+// didn't, and (when it created the collection and set the pointer itself) the fresh
+// server state to sync the caches from.
+type ImportResult = {
+  created: boolean
+  ok: number
+  failed: string[]
+  settings?: Awaited<ReturnType<typeof api.updateWorkspaceSettings>>
+  profile?: Awaited<ReturnType<typeof api.setProfile>>
+}
+
+// The two halves of a brand the upload tab asks for; `cat` labels each staged file.
+type DocCategory = "look" | "read"
+const UPLOAD_CATEGORIES: { cat: DocCategory; heading: string; blurb: string }[] = [
+  {
+    cat: "look",
+    heading: "How your artifacts should look",
+    blurb:
+      "Visual theming: brand and style guides, palettes, font specs, CSS tokens, or example HTML that carries the look.",
+  },
+  {
+    cat: "read",
+    heading: "How your artifacts should read",
+    blurb: "Voice and tone: grammar, warmth, structure, wording do’s and don’ts.",
+  },
+]
+
+const DOC_FILE_TYPES = ".md,.markdown,.txt,.html,.htm,.css"
+
+// The intake's hidden file input — one recipe for its two surfaces (the set-state
+// row and the create dialog's upload tab, never mounted together), so the accept
+// list and the value reset that lets the same file be re-picked can't drift apart.
+function DocFileInput({
+  inputRef,
+  scope,
+  onPick,
+}: {
+  inputRef: React.RefObject<HTMLInputElement | null>
+  scope: "workspace" | "account"
+  onPick: (files: FileList | null) => void
+}) {
+  return (
+    <input
+      ref={inputRef}
+      type="file"
+      multiple
+      accept={DOC_FILE_TYPES}
+      className="hidden"
+      data-testid={`brandprint-upload-input-${scope}`}
+      onChange={(e) => {
+        onPick(e.target.files)
+        e.target.value = ""
+      }}
+    />
+  )
+}
 
 /**
  * Point this scope's Brandprint at a conventions collection — the docs/skills that
@@ -22,6 +99,12 @@ import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
  * workspace defaults in General); account scope saves to your own profile. Clearing
  * sets the pointer back to none. Theme tokens are a later phase; this is the
  * collection pointer only.
+ *
+ * Setup happens in place: an empty scope shows one "Create Brandprint" button whose
+ * dialog offers three ways in (upload files, write the conventions from scratch, or
+ * point at an existing collection) — so nobody has to publish from the library,
+ * build a collection by hand, and come back here to select it. Once set, the section
+ * shows the pointer and takes more docs directly.
  */
 export function BrandprintSection({ scope }: { scope: "workspace" | "account" }) {
   const qc = useQueryClient()
@@ -42,6 +125,11 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
     ...workspaceSettingsQuery(),
     enabled: scope === "workspace",
   })
+
+  const collectionId =
+    scope === "workspace"
+      ? (settings?.brandprint?.collectionId ?? "")
+      : (me?.brandprint?.collectionId ?? "")
 
   const updateWorkspace = useApiMutation({
     // The generated OrgSettings types brandprint non-nullable, but the PATCH takes null to
@@ -75,10 +163,132 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
     success: "Brandprint updated",
   })
 
+  // The one-click intake: publish each picked file, gather them into the pointed
+  // collection (creating one when the Brandprint is empty), and set the pointer.
+  // Composed from existing endpoints inside one governed mutation (the welcome.tsx
+  // save pattern). Per-file failures don't abort the batch; the pointer is only set
+  // once at least one doc made it in, so a total failure leaves nothing half-set.
+  const fileRef = useRef<HTMLInputElement>(null)
+  const importDocs = useApiMutation({
+    mutationFn: async (files: File[]): Promise<ImportResult> => {
+      let target = collectionId
+      let created = false
+      if (!target) {
+        const col = await api.createCollection(
+          scope === "workspace" ? "Brandprint" : "Personal Brandprint",
+        )
+        target = col.id
+        created = true
+      }
+      let ok = 0
+      const failed: string[] = []
+      for (const f of files) {
+        try {
+          // No title field — the server derives one from the doc's heading or filename.
+          const a = await api.publish(f)
+          await api.addToCollection(target, a.short_id)
+          ok++
+        } catch {
+          failed.push(f.name)
+        }
+      }
+      if (created && ok === 0) {
+        // Nothing made it in — drop the empty collection so a retry starts clean.
+        await api.deleteCollection(target).catch(() => {})
+        return { created: false, ok, failed }
+      }
+      if (!created) return { created, ok, failed }
+      if (scope === "workspace") {
+        // Conventions are for the whole team: open the collection to the workspace so
+        // members can read the docs (collection access propagates to its contents).
+        // Best-effort — MCP delivery reads under the workspace grant either way.
+        await api.setCollectionAccess(target, "member").catch(() => {})
+        const settings = await api.updateWorkspaceSettings({
+          brandprint: { collectionId: target },
+        })
+        return { created, ok, failed, settings }
+      }
+      const profile = await api.setProfile({ brandprint: { collectionId: target } })
+      return { created, ok, failed, profile }
+    },
+    success: (r) =>
+      r.ok === 0
+        ? undefined
+        : r.created
+          ? `Brandprint created with ${r.ok} doc${r.ok === 1 ? "" : "s"}`
+          : `${r.ok} doc${r.ok === 1 ? "" : "s"} added to your Brandprint`,
+    onSuccess: (r) => {
+      if (r.settings) qc.setQueryData(workspaceSettingsQuery().queryKey, r.settings)
+      if (r.profile && me) setMe({ ...me, brandprint: r.profile.brandprint })
+      if (r.failed.length > 0) {
+        // The mutation itself settled fine, so the global safety net stays quiet —
+        // name the files that fell out of the batch here.
+        const msg = `Couldn't publish ${r.failed.join(", ")}`
+        if (r.ok === 0)
+          toast.error(msg) // mutation-ignore: per-file outcome, not a rejected mutation
+        else toast.warning(msg)
+      }
+    },
+    invalidate: [collectionsQuery().queryKey, summaryQuery().queryKey, ["artifacts"]],
+  })
+  const pickFiles = (list: FileList | null) => {
+    const files = list ? [...list] : []
+    if (files.length > 0) importDocs.mutate(files)
+  }
+
+  // The create dialog (empty state only): three ways in — upload files (default),
+  // write the conventions from scratch, or point at an existing collection.
+  const [createOpen, setCreateOpen] = useState(false)
+  const [noteTitle, setNoteTitle] = useState("")
+  const [notes, setNotes] = useState("")
+  // The upload tab STAGES picks instead of firing per pick: files arrive from two
+  // category pickers (look / read), and the first mutation would set the pointer,
+  // flip the section out of its empty state, and unmount the dialog under the
+  // second picker. One batch, one create.
+  const [staged, setStaged] = useState<{ id: number; file: File; cat: DocCategory }[]>([])
+  const stageCat = useRef<DocCategory>("look")
+  // Monotonic row ids — names can repeat across picks, so they can't key the list.
+  const stagedSeq = useRef(0)
+  const stageFiles = (list: FileList | null) => {
+    const files = list ? [...list] : []
+    const cat = stageCat.current
+    if (files.length > 0)
+      setStaged((prev) => [
+        ...prev,
+        ...files.map((file) => ({ id: stagedSeq.current++, file, cat })),
+      ])
+  }
+  // Close on a successful create; a total failure keeps the dialog up to retry from.
+  const closeOnSuccess = (r: ImportResult) => {
+    if (r.ok > 0) {
+      setCreateOpen(false)
+      setStaged([])
+      setNotes("")
+      setNoteTitle("")
+    }
+  }
+  const createFromStaged = () => {
+    if (staged.length === 0) return
+    importDocs.mutate(
+      staged.map((s) => s.file),
+      { onSuccess: closeOnSuccess },
+    )
+  }
+  const createFromNotes = () => {
+    const text = notes.trim()
+    if (!text) return
+    // The notes become a markdown doc through the same intake as a picked file; the
+    // filename carries the title (slashes would read as a path, so swap them out).
+    const name = (noteTitle.trim() || "Brand notes").replace(/[\\/]/g, "-")
+    importDocs.mutate([new File([text], `${name}.md`, { type: "text/markdown" })], {
+      onSuccess: closeOnSuccess,
+    })
+  }
+
   const title = scope === "workspace" ? "Workspace Brandprint" : "Your Brandprint"
   const description =
     scope === "workspace"
-      ? "The conventions collection agents read before building artifacts in this workspace."
+      ? "Your team's design and voice conventions: the visual style, tone, and structure your work should follow. Agents read these docs before building anything in this workspace, so everything they produce stays on brand."
       : "Your personal conventions, layered over the workspace's when an agent acts as you (yours wins)."
 
   if (scope === "account" && !me) return null
@@ -116,13 +326,10 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
     )
 
   const isAdmin = ws?.role === "owner"
-  const collectionId =
-    scope === "workspace"
-      ? (settings?.brandprint?.collectionId ?? "")
-      : (me?.brandprint?.collectionId ?? "")
   const ready = scope === "workspace" ? !!settings : true
   const disabled =
     !ready ||
+    importDocs.isPending ||
     (scope === "workspace" ? !isAdmin || updateWorkspace.isPending : updateAccount.isPending)
   const save = (next: string) =>
     scope === "workspace" ? updateWorkspace.mutate(next) : updateAccount.mutate(next)
@@ -130,25 +337,203 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
 
   return (
     <SettingsGroup title={title} description={description}>
-      <SettingRow label="Conventions collection">
-        <SelectMenu value={collectionId} onValueChange={save}>
-          <SelectMenuTrigger
-            aria-label="Conventions collection"
-            data-testid={`brandprint-collection-${scope}`}
-            disabled={disabled}
+      {!ready || collectionId ? (
+        <>
+          <SettingRow label="Conventions collection">
+            <SelectMenu value={collectionId} onValueChange={save}>
+              <SelectMenuTrigger
+                aria-label="Conventions collection"
+                data-testid={`brandprint-collection-${scope}`}
+                disabled={disabled}
+              >
+                {!ready ? "Loading…" : (selected ?? "…")}
+              </SelectMenuTrigger>
+              <SelectMenuContent>
+                <SelectMenuItem value="">None</SelectMenuItem>
+                {(collections ?? []).map((c) => (
+                  <SelectMenuItem key={c.id} value={c.id}>
+                    {c.title}
+                  </SelectMenuItem>
+                ))}
+              </SelectMenuContent>
+            </SelectMenu>
+          </SettingRow>
+          <SettingRow
+            label="Upload documents"
+            description="More look or read docs publish straight into this Brandprint's collection."
           >
-            {!ready ? "Loading…" : collectionId ? (selected ?? "…") : "None"}
-          </SelectMenuTrigger>
-          <SelectMenuContent>
-            <SelectMenuItem value="">None</SelectMenuItem>
-            {(collections ?? []).map((c) => (
-              <SelectMenuItem key={c.id} value={c.id}>
-                {c.title}
-              </SelectMenuItem>
-            ))}
-          </SelectMenuContent>
-        </SelectMenu>
-      </SettingRow>
+            <DocFileInput inputRef={fileRef} scope={scope} onPick={pickFiles} />
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid={`brandprint-upload-${scope}`}
+              disabled={disabled}
+              loading={importDocs.isPending}
+              onClick={() => fileRef.current?.click()}
+            >
+              <Upload /> {importDocs.isPending ? "Uploading…" : "Upload docs"}
+            </Button>
+          </SettingRow>
+        </>
+      ) : (
+        <SettingRow
+          label="Get started"
+          description="Upload files for how your work should look and read, write your conventions from scratch, or use an existing collection."
+        >
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm" data-testid={`brandprint-create-${scope}`} disabled={disabled}>
+                Create Brandprint
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
+              <DialogHeader>
+                <DialogTitle>Create your Brandprint</DialogTitle>
+              </DialogHeader>
+              <Tabs defaultValue="upload">
+                <TabsList variant="line">
+                  <TabsTrigger value="upload" data-testid={`brandprint-tab-upload-${scope}`}>
+                    Upload files
+                  </TabsTrigger>
+                  <TabsTrigger value="write" data-testid={`brandprint-tab-write-${scope}`}>
+                    Write it
+                  </TabsTrigger>
+                  <TabsTrigger value="existing" data-testid={`brandprint-tab-existing-${scope}`}>
+                    Use a collection
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="upload" className="flex flex-col gap-3 pt-3">
+                  <p className="text-sm text-pretty text-muted-foreground">
+                    Give it both sides of the brand, or start with one. Derive publishes the files,
+                    gathers them into a new collection, and points your Brandprint at it.
+                  </p>
+                  <DocFileInput inputRef={fileRef} scope={scope} onPick={stageFiles} />
+                  {UPLOAD_CATEGORIES.map((c) => (
+                    <div
+                      key={c.cat}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-foreground">{c.heading}</p>
+                        <p className="text-sm text-pretty text-muted-foreground">{c.blurb}</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid={`brandprint-upload-${c.cat}-${scope}`}
+                        disabled={importDocs.isPending}
+                        onClick={() => {
+                          stageCat.current = c.cat
+                          fileRef.current?.click()
+                        }}
+                      >
+                        <Upload /> Choose files
+                      </Button>
+                    </div>
+                  ))}
+                  {staged.length > 0 && (
+                    <ul className="flex flex-col gap-1">
+                      {staged.map((s) => (
+                        <li key={s.id} className="flex items-center gap-2 text-sm">
+                          <Badge variant="secondary" shape="pill">
+                            {s.cat === "look" ? "Look" : "Read"}
+                          </Badge>
+                          <span className="min-w-0 flex-1 truncate text-foreground">
+                            {s.file.name}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label={`Remove ${s.file.name}`}
+                            data-testid="brandprint-staged-remove"
+                            onClick={() => setStaged((prev) => prev.filter((x) => x.id !== s.id))}
+                          >
+                            <Icon name="close" size={14} />
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <Button
+                    className="self-end"
+                    data-testid={`brandprint-upload-create-${scope}`}
+                    loading={importDocs.isPending}
+                    disabled={importDocs.isPending || staged.length === 0}
+                    onClick={createFromStaged}
+                  >
+                    {importDocs.isPending ? "Creating…" : "Create Brandprint"}
+                  </Button>
+                </TabsContent>
+                <TabsContent value="write" className="flex flex-col gap-3 pt-3">
+                  <p className="text-sm text-pretty text-muted-foreground">
+                    Write or paste your conventions, both how things should look (palette, fonts,
+                    layout) and how they should read (voice, grammar, warmth). Derive publishes them
+                    as a doc your Brandprint points at, editable any time.
+                  </p>
+                  <Input
+                    value={noteTitle}
+                    placeholder="Title (optional, e.g. Voice & tone)"
+                    aria-label="Doc title"
+                    data-testid={`brandprint-notes-title-${scope}`}
+                    onChange={(e) => setNoteTitle(e.target.value)}
+                  />
+                  <Textarea
+                    value={notes}
+                    rows={7}
+                    placeholder="Our voice is plain and direct. Headings in sentence case. Dark slate on off-white, brand accent sparingly. Screenshots always carry a caption…"
+                    aria-label="Your conventions"
+                    data-testid={`brandprint-notes-${scope}`}
+                    onChange={(e) => setNotes(e.target.value)}
+                  />
+                  <Button
+                    className="self-end"
+                    data-testid={`brandprint-notes-create-${scope}`}
+                    loading={importDocs.isPending}
+                    disabled={importDocs.isPending || !notes.trim()}
+                    onClick={createFromNotes}
+                  >
+                    {importDocs.isPending ? "Creating…" : "Create"}
+                  </Button>
+                </TabsContent>
+                <TabsContent value="existing" className="flex flex-col gap-3 pt-3">
+                  <p className="text-sm text-pretty text-muted-foreground">
+                    Already keep your conventions in a collection? Point your Brandprint at it.
+                  </p>
+                  {(collections ?? []).length > 0 ? (
+                    <SelectMenu
+                      value=""
+                      onValueChange={(v) => {
+                        if (!v) return
+                        save(v)
+                        setCreateOpen(false)
+                      }}
+                    >
+                      <SelectMenuTrigger
+                        aria-label="Choose a collection"
+                        data-testid={`brandprint-pick-collection-${scope}`}
+                        className="self-start"
+                      >
+                        Choose a collection…
+                      </SelectMenuTrigger>
+                      <SelectMenuContent>
+                        {(collections ?? []).map((c) => (
+                          <SelectMenuItem key={c.id} value={c.id}>
+                            {c.title}
+                          </SelectMenuItem>
+                        ))}
+                      </SelectMenuContent>
+                    </SelectMenu>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      No collections here yet. Upload files or write your conventions instead.
+                    </p>
+                  )}
+                </TabsContent>
+              </Tabs>
+            </DialogContent>
+          </Dialog>
+        </SettingRow>
+      )}
     </SettingsGroup>
   )
 }
