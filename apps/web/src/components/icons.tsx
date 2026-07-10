@@ -22,6 +22,7 @@ import {
   Code,
   Ellipsis,
   Eye,
+  Fingerprint,
   Flag,
   Folder,
   Folders,
@@ -67,6 +68,8 @@ const REG = {
   collections: Folders,
   collection: Folder,
   context: Bot,
+  // Brandprint — the brand's fingerprint.
+  brandprint: Fingerprint,
   tag: Tag,
   search: Search,
   settings: Settings,

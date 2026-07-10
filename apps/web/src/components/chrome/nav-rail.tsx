@@ -109,7 +109,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/favorites" | "/following" | "/shared" | "/people" | "/contexts"
+  to: "/favorites" | "/following" | "/shared" | "/people" | "/contexts" | "/brandprint"
   active: boolean
   testId?: string
 }) {
@@ -311,6 +311,7 @@ export function NavRail() {
   // People + its Activity sub-view (the /following feed) are one tab; the row lights for both.
   const onPeople = loc.pathname === "/people" || loc.pathname === "/following"
   const onContexts = loc.pathname.startsWith("/contexts")
+  const onBrandprint = loc.pathname === "/brandprint"
   const onSettings = loc.pathname.startsWith("/settings")
   const tags = summary?.tags ?? []
 
@@ -414,6 +415,13 @@ export function NavRail() {
                 to="/contexts"
                 active={onContexts}
                 testId="nav-contexts"
+              />
+              <NavItem
+                icon="brandprint"
+                label="Brandprint"
+                to="/brandprint"
+                active={onBrandprint}
+                testId="nav-brandprint"
               />
             </SidebarMenu>
           </SidebarGroupContent>
