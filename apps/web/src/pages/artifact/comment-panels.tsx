@@ -2,7 +2,7 @@ import { type ReactNode, type RefObject, useEffect, useRef, useState } from "rea
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
-import { Badge } from "@/components/ui/badge"
+import { Count } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -17,14 +17,13 @@ import { type ComposerState, type FrameGeom, type PinItem, selLabel } from "./ty
 // Touch has no hover, so the mobile sheet overrides the tree's onHover with this.
 const NO_HOVER = () => {}
 
-// The comments panel header: a label + the open-thread count (a neutral mono pill,
-// not an ink signal). This was a Comments|Personal tab switch until personal comments
-// were removed; a single surface needs only a heading.
+// The comments panel header: the label + the open-thread count in the machine
+// count register ("Comments · 3") — quieter than a pill blob beside the title.
 function CommentsHeading({ count }: { count: number }) {
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-1.5 pl-1.5">
+    <div className="flex min-w-0 flex-1 items-baseline gap-1 pl-1.5">
       <span className="text-sm font-medium text-foreground">Comments</span>
-      {count > 0 && <Badge shape="pill">{count}</Badge>}
+      {count > 0 && <Count>{count}</Count>}
     </div>
   )
 }

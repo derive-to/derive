@@ -9,6 +9,7 @@ import {
 import { api, type DirUser, type Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
+import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { PICKER_EMOJI } from "@/lib/emoji"
 import { useIsMobile } from "@/lib/use-is-mobile"
@@ -428,7 +429,7 @@ export function Composer({
     <div
       data-testid={agent ? "agent-request-composer" : "comment-composer"}
       className={cn(
-        "overflow-hidden rounded-lg border bg-card shadow-[var(--shadow)]",
+        "overflow-hidden rounded-xl border bg-card shadow-[var(--shadow)]",
         // A request reads as a distinct, ink-tinted moment (the one place the accent
         // carries a "hand this to an agent" action), not a plain neutral comment box.
         agent ? "border-primary/40 ring-1 ring-primary/15" : "border-border",
@@ -441,14 +442,17 @@ export function Composer({
         </div>
       )}
       {quote && (
+        // Inset with the card's padding (the reference is context, not a banner).
         // Phones get a longer multi-line preview of what you're commenting on; the
         // desktop margin composer stays a tight single line.
-        <div
-          className={quoteChipClass({
-            className: "block w-full break-words line-clamp-4 md:line-clamp-1",
-          })}
-        >
-          “{quote}”
+        <div className="px-3 pt-2.5">
+          <div
+            className={quoteChipClass({
+              className: "block w-full break-words line-clamp-4 md:line-clamp-1",
+            })}
+          >
+            “{quote}”
+          </div>
         </div>
       )}
       <div className="p-2.5">
@@ -474,19 +478,25 @@ export function Composer({
                 : "Add a comment… (@ to mention)"
           }
         />
-        <div className="mt-1.5 flex gap-1.5">
+        {/* The send is right-aligned and compact (a full-width filled bar made the
+            composer bottom-heavy); the ↵ hint teaches the chat grammar quietly.
+            Phones hide it — Enter is a newline there and the button is the send. */}
+        <div className="mt-2 flex items-center gap-1.5">
+          <span className="inline-flex select-none items-center gap-1 font-mono text-2xs text-muted-foreground max-sm:hidden">
+            <Kbd>↵</Kbd> to send
+          </span>
+          <span className="flex-1" />
+          <Button variant="ghost" size="sm" data-testid="composer-cancel" onClick={onCancel}>
+            Cancel
+          </Button>
           <Button
             variant="default"
             size="sm"
-            className="flex-1"
             disabled={!text.trim()}
             data-testid="composer-submit"
             onClick={() => submit(mentions.filter((m) => text.includes(`@${m.name}`)))}
           >
             {agent ? "Send request" : "Comment"}
-          </Button>
-          <Button variant="outline" size="sm" data-testid="composer-cancel" onClick={onCancel}>
-            Cancel
           </Button>
         </div>
       </div>

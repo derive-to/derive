@@ -9,6 +9,7 @@ import {
   Image as ImageGlyph,
   Link2,
   type LucideIcon,
+  RotateCcw,
   Table2,
 } from "lucide-react"
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
@@ -17,6 +18,7 @@ import { Icon } from "@/components/icons"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { useActions } from "./comment-actions"
 import { Composer, MentionField } from "./comment-composer"
@@ -270,6 +272,8 @@ function ElementRef({
   const Glyph = ROLE_GLYPH[snapshot?.tag === "table" ? "table" : roleGuess(snapshot, label)] ?? Box
   if (present) {
     return (
+      // Same quiet edge-marked grammar as the text quote (see quoteChipClass) —
+      // a reference line, not a filled band; hover re-inks to say "jumpable".
       <button
         type="button"
         data-testid={`comment-jump-${threadId}`}
@@ -278,9 +282,9 @@ function ElementRef({
           onJump(threadId)
         }}
         title={relocated ? "Jump to the element (moved — approximate)" : "Jump to the element"}
-        className="flex w-full items-center gap-1.5 border-l-[3px] border-foreground/25 bg-accent px-2.5 py-1.5 text-left text-sm font-medium text-foreground outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+        className="flex w-full items-center gap-1.5 border-l-2 border-foreground/25 py-0.5 pl-2.5 pr-2 text-left text-sm font-medium text-muted-foreground outline-none hover:border-foreground/60 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >
-        <Glyph aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        <Glyph aria-hidden className="size-4 shrink-0" />
         <span className="truncate">{label}</span>
         {relocated && (
           // A minor, muted "moved" marker — a small dot + word, not an alarm.
@@ -301,7 +305,7 @@ function ElementRef({
     <div
       title="The element this comment was attached to was edited or removed in this version"
       data-testid={`comment-orphan-${threadId}`}
-      className="flex w-full items-center gap-2 border-l-[3px] border-border bg-secondary px-2.5 py-1.5 text-left text-sm text-muted-foreground"
+      className="flex w-full items-center gap-2 border-l-2 border-border py-0.5 pl-2.5 pr-2 text-left text-sm text-muted-foreground"
     >
       {thumb ? (
         <img
@@ -431,16 +435,20 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
       onMouseLeave={() => onHover(null)}
       onClick={() => !active && onActivate(root.thread_id)}
       className={cn(
-        "animate-in fade-in slide-in-from-bottom-1 duration-200 overflow-hidden rounded-lg border bg-card",
+        // The house card register (rounded-xl, hairline, soft lift). No entrance
+        // animation: cards appear constantly (panel open, refetch, scroll into
+        // the margin) and motion there reads as churn, not delight — the pin
+        // layer's transform transition already carries all deliberate movement.
+        "overflow-hidden rounded-xl border bg-card shadow-[var(--shadow-sm)]",
         // Active/hovered cards take neutral re-inked edges — never the accent
         // (the ink accent marks actions and brand moments, not selection). Active
-        // reads unmistakably: full-strength edge + the popover-weight shadow, not
-        // a subtle tint you have to look for.
+        // reads by the expanded thread + a re-inked edge + one shadow step, not
+        // the popover-weight pop.
         active
-          ? "cursor-default border-foreground/40 shadow-[var(--shadow-pop)]"
+          ? "cursor-default border-foreground/30 shadow-[var(--shadow)]"
           : hovered
-            ? " border-foreground/15 shadow-[var(--shadow-sm)]"
-            : " border-border",
+            ? "border-foreground/15"
+            : "border-border",
         resolved && !active && "opacity-60",
       )}
     >
@@ -510,8 +518,11 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
           )}
         </div>
       )}
-      {isEl
-        ? refLabel && (
+      {/* The anchored reference, inset with the card's own padding (a full-bleed
+          band here made every card lead with a gray slab). */}
+      {refLabel && (
+        <div className="px-3 pt-2.5">
+          {isEl ? (
             <ElementRef
               threadId={root.thread_id}
               label={refLabel}
@@ -520,9 +531,7 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
               relocated={relocated}
               onJump={onJump}
             />
-          )
-        : refLabel &&
-          (textPresent && !resolved ? (
+          ) : textPresent && !resolved ? (
             <button
               type="button"
               data-testid={`comment-jump-${root.thread_id}`}
@@ -533,7 +542,7 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
               title="Jump to the highlighted text"
               className={quoteChipClass({
                 className:
-                  "block w-full truncate outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+                  "block w-full truncate outline-none hover:border-foreground/60 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
               })}
             >
               “{refLabel}”
@@ -545,7 +554,51 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
             >
               “{refLabel}”
             </div>
-          ))}
+          )}
+        </div>
+      )}
+
+      {/* Status, only when it's NOT the default: "open" was a pill on every
+          active card, labeling the ordinary state. An agent request shows its
+          state in the ribbon above, so the plain badge is suppressed there too. */}
+      {active &&
+        (() => {
+          const changed = refLabel && !textPresent && !resolved && !outdated && !addressed
+          const statused = !requestStage && (resolved || outdated || addressed)
+          if (!changed && !statused) return null
+          return (
+            <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2">
+              {statused && (
+                <Badge
+                  shape="pill"
+                  variant={resolved ? "success" : outdated ? "warning" : "default"}
+                  title={
+                    outdated
+                      ? "The text this thread was attached to changed in a later version — this feedback may no longer apply"
+                      : addressed
+                        ? "A proposed revision addressing this thread is pending review"
+                        : undefined
+                  }
+                >
+                  {resolved ? "resolved" : outdated ? "outdated" : "addressed"}
+                </Badge>
+              )}
+              {changed && (
+                <Badge
+                  shape="pill"
+                  variant="warning"
+                  title={
+                    isEl
+                      ? "The element this comment was attached to was edited or removed in this version"
+                      : "The text this comment was attached to was edited or removed in this version"
+                  }
+                >
+                  {isEl ? "element changed" : "text changed"}
+                </Badge>
+              )}
+            </div>
+          )
+        })()}
 
       {!active ? (
         <>
@@ -563,89 +616,66 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
               <CommentRow key={c.id} c={c} />
             ))}
           </div>
-          {canComment && (
-            // items-end: the Reply button hugs the bottom as the box grows.
-            <div className="flex items-end gap-1.5 border-t border-border-soft px-3 py-2">
-              {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control */}
-              {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control */}
-              <div className="min-w-0 flex-1" onClick={(e) => e.stopPropagation()}>
-                {/* Multiline like the composer: Shift+Enter breaks the line, the box
-                    grows with the text (capped, then scrolls) — a reply is prose,
-                    not a one-line form field. */}
-                <MentionField
-                  multiline
-                  testId="comment-reply-input"
-                  className="field-sizing-content min-h-8 max-h-32"
-                  value={reply}
-                  onChange={setReply}
-                  mentions={replyMentions}
-                  onMentions={setReplyMentions}
-                  onSubmit={sendReply}
-                  placeholder="Reply… (@ to mention)"
-                  autoFocus
-                />
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!reply.trim()}
-                data-testid="comment-reply-send"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  sendReply(replyMentions.filter((m) => reply.includes(`@${m.name}`)))
-                }}
-              >
-                Reply
-              </Button>
-            </div>
-          )}
-          <div className="flex items-center gap-1.5 bg-secondary px-3 py-1.5">
-            {/* Status tones are success/warning/neutral — the ink accent is reserved, so
-                addressed and open both take the neutral wash; the label text and
-                title tooltip carry the distinction. An agent request shows its state in
-                the ribbon above, so the plain badge is suppressed to avoid doubling up. */}
-            {!requestStage && (
-              <Badge
-                shape="pill"
-                variant={resolved ? "success" : outdated ? "warning" : "default"}
-                title={
-                  outdated
-                    ? "The text this thread was attached to changed in a later version — this feedback may no longer apply"
-                    : addressed
-                      ? "A proposed revision addressing this thread is pending review"
-                      : undefined
-                }
-              >
-                {resolved ? "resolved" : outdated ? "outdated" : addressed ? "addressed" : "open"}
-              </Badge>
+          {/* One quiet action row (the old card stacked a reply row AND a filled
+              status strip under it — three bands deep). Reply grows in place;
+              Resolve is the check at the end — the GDocs/Linear position —
+              still the success affordance (soft status fill, never filled ink). */}
+          <div className="flex items-end gap-1.5 border-t border-border-soft px-3 py-2">
+            {canComment ? (
+              <>
+                {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control */}
+                {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control */}
+                <div className="min-w-0 flex-1" onClick={(e) => e.stopPropagation()}>
+                  {/* Multiline like the composer: Shift+Enter breaks the line, the
+                      box grows with the text (capped, then scrolls) — a reply is
+                      prose, not a one-line form field. */}
+                  <MentionField
+                    multiline
+                    testId="comment-reply-input"
+                    className="field-sizing-content min-h-8 max-h-32"
+                    value={reply}
+                    onChange={setReply}
+                    mentions={replyMentions}
+                    onMentions={setReplyMentions}
+                    onSubmit={sendReply}
+                    placeholder="Reply… (@ to mention)"
+                    autoFocus
+                  />
+                </div>
+                {reply.trim() && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    data-testid="comment-reply-send"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      sendReply(replyMentions.filter((m) => reply.includes(`@${m.name}`)))
+                    }}
+                  >
+                    Reply
+                  </Button>
+                )}
+              </>
+            ) : (
+              <span className="flex-1" />
             )}
-            {refLabel && !textPresent && !resolved && !outdated && !addressed && (
-              <Badge
-                shape="pill"
-                variant="warning"
-                title={
-                  isEl
-                    ? "The element this comment was attached to was edited or removed in this version"
-                    : "The text this comment was attached to was edited or removed in this version"
-                }
-              >
-                {isEl ? "element changed" : "text changed"}
-              </Badge>
-            )}
-            {/* Resolve is a success affordance (the soft status fill, never a
-                filled ink); Reopen goes back to a quiet outline. */}
-            <Button
-              variant={resolved ? "outline" : "success"}
-              size="sm"
-              className="ml-auto"
-              data-testid="comment-resolve"
-              onClick={(e) => {
-                e.stopPropagation()
-                onResolve(root)
-              }}
-            >
-              {resolved ? "Reopen" : "Resolve"}
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={resolved ? "outline" : "success"}
+                  size="icon-sm"
+                  aria-label={resolved ? "Reopen" : "Resolve"}
+                  data-testid="comment-resolve"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onResolve(root)
+                  }}
+                >
+                  {resolved ? <RotateCcw aria-hidden className="size-4" /> : <Icon name="check" />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{resolved ? "Reopen" : "Resolve"}</TooltipContent>
+            </Tooltip>
           </div>
         </>
       )}
