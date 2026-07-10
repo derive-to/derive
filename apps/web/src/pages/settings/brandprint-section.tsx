@@ -45,6 +45,52 @@ type ImportResult = {
   profile?: Awaited<ReturnType<typeof api.setProfile>>
 }
 
+// The two halves of a brand the upload tab asks for; `cat` labels each staged file.
+type DocCategory = "look" | "read"
+const UPLOAD_CATEGORIES: { cat: DocCategory; heading: string; blurb: string }[] = [
+  {
+    cat: "look",
+    heading: "How your artifacts should look",
+    blurb:
+      "Visual theming: brand and style guides, palettes, font specs, CSS tokens, or example HTML that carries the look.",
+  },
+  {
+    cat: "read",
+    heading: "How your artifacts should read",
+    blurb: "Voice and tone: grammar, warmth, structure, wording do’s and don’ts.",
+  },
+]
+
+const DOC_FILE_TYPES = ".md,.markdown,.txt,.html,.htm,.css"
+
+// The intake's hidden file input — one recipe for its two surfaces (the set-state
+// row and the create dialog's upload tab, never mounted together), so the accept
+// list and the value reset that lets the same file be re-picked can't drift apart.
+function DocFileInput({
+  inputRef,
+  scope,
+  onPick,
+}: {
+  inputRef: React.RefObject<HTMLInputElement | null>
+  scope: "workspace" | "account"
+  onPick: (files: FileList | null) => void
+}) {
+  return (
+    <input
+      ref={inputRef}
+      type="file"
+      multiple
+      accept={DOC_FILE_TYPES}
+      className="hidden"
+      data-testid={`brandprint-upload-input-${scope}`}
+      onChange={(e) => {
+        onPick(e.target.files)
+        e.target.value = ""
+      }}
+    />
+  )
+}
+
 /**
  * Point this scope's Brandprint at a conventions collection — the docs/skills that
  * describe how artifacts should be built here. An agent connected over MCP resolves
@@ -175,8 +221,8 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
       if (r.settings) qc.setQueryData(workspaceSettingsQuery().queryKey, r.settings)
       if (r.profile && me) setMe({ ...me, brandprint: r.profile.brandprint })
       if (r.failed.length > 0) {
-        // The batch itself succeeded (governed above); this names which FILES didn't
-        // make it in — a per-item outcome report the primitive can't know about.
+        // The mutation itself settled fine, so the global safety net stays quiet —
+        // name the files that fell out of the batch here.
         const msg = `Couldn't publish ${r.failed.join(", ")}`
         if (r.ok === 0)
           toast.error(msg) // mutation-ignore: per-file outcome, not a rejected mutation
@@ -199,8 +245,8 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
   // category pickers (look / read), and the first mutation would set the pointer,
   // flip the section out of its empty state, and unmount the dialog under the
   // second picker. One batch, one create.
-  const [staged, setStaged] = useState<{ id: number; file: File; cat: "look" | "read" }[]>([])
-  const stageCat = useRef<"look" | "read">("look")
+  const [staged, setStaged] = useState<{ id: number; file: File; cat: DocCategory }[]>([])
+  const stageCat = useRef<DocCategory>("look")
   // Monotonic row ids — names can repeat across picks, so they can't key the list.
   const stagedSeq = useRef(0)
   const stageFiles = (list: FileList | null) => {
@@ -316,19 +362,7 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
             label="Upload documents"
             description="More look or read docs publish straight into this Brandprint's collection."
           >
-            <input
-              ref={fileRef}
-              type="file"
-              multiple
-              accept=".md,.markdown,.txt,.html,.htm,.css"
-              className="hidden"
-              data-testid={`brandprint-upload-input-${scope}`}
-              onChange={(e) => {
-                pickFiles(e.target.files)
-                // Reset so re-picking the same file fires change again.
-                e.target.value = ""
-              }}
-            />
+            <DocFileInput inputRef={fileRef} scope={scope} onPick={pickFiles} />
             <Button
               variant="outline"
               size="sm"
@@ -373,65 +407,30 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
                     Give it both sides of the brand, or start with one. Derive publishes the files,
                     gathers them into a new collection, and points your Brandprint at it.
                   </p>
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    multiple
-                    accept=".md,.markdown,.txt,.html,.htm,.css"
-                    className="hidden"
-                    data-testid={`brandprint-upload-input-${scope}`}
-                    onChange={(e) => {
-                      stageFiles(e.target.files)
-                      // Reset so re-picking the same file fires change again.
-                      e.target.value = ""
-                    }}
-                  />
-                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-foreground">
-                        How your artifacts should look
-                      </p>
-                      <p className="text-sm text-pretty text-muted-foreground">
-                        Visual theming: brand and style guides, palettes, font specs, CSS tokens, or
-                        example HTML that carries the look.
-                      </p>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      data-testid={`brandprint-upload-look-${scope}`}
-                      disabled={importDocs.isPending}
-                      onClick={() => {
-                        stageCat.current = "look"
-                        fileRef.current?.click()
-                      }}
+                  <DocFileInput inputRef={fileRef} scope={scope} onPick={stageFiles} />
+                  {UPLOAD_CATEGORIES.map((c) => (
+                    <div
+                      key={c.cat}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-3"
                     >
-                      <Upload /> Choose files
-                    </Button>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-foreground">
-                        How your artifacts should read
-                      </p>
-                      <p className="text-sm text-pretty text-muted-foreground">
-                        Voice and tone: grammar, warmth, structure, wording do&rsquo;s and
-                        don&rsquo;ts.
-                      </p>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-foreground">{c.heading}</p>
+                        <p className="text-sm text-pretty text-muted-foreground">{c.blurb}</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid={`brandprint-upload-${c.cat}-${scope}`}
+                        disabled={importDocs.isPending}
+                        onClick={() => {
+                          stageCat.current = c.cat
+                          fileRef.current?.click()
+                        }}
+                      >
+                        <Upload /> Choose files
+                      </Button>
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      data-testid={`brandprint-upload-read-${scope}`}
-                      disabled={importDocs.isPending}
-                      onClick={() => {
-                        stageCat.current = "read"
-                        fileRef.current?.click()
-                      }}
-                    >
-                      <Upload /> Choose files
-                    </Button>
-                  </div>
+                  ))}
                   {staged.length > 0 && (
                     <ul className="flex flex-col gap-1">
                       {staged.map((s) => (
