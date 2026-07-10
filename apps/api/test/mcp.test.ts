@@ -53,7 +53,7 @@ function appWithGrant(
     token: "tok",
     ...extra,
   })
-  return { app, token: `tok_${name}` }
+  return { app, token: `tok_${name}`, meta }
 }
 
 type App = ReturnType<typeof createApp>
@@ -161,6 +161,50 @@ describe("remote MCP endpoint (/mcp)", () => {
       "read_section",
     ])
       expect(names).not.toContain(gone)
+  })
+
+  it("exposes the workspace's Brandprint as resources + an instructions pointer", async () => {
+    const { app, token, meta } = appWithGrant("brandprint", "openid derive:read derive:publish")
+    const shortId = (await (await publish(app, token, "How we write Markdown")).json()).short_id
+    const art = await meta.getByShortId(shortId)
+    if (!art) throw new Error("no artifact")
+    // Seed a Brandprint collection containing the convention doc, point the workspace at it.
+    const collectionId = "col_bp"
+    await meta.createCollection({
+      id: collectionId,
+      org_id: art.org_id,
+      title: "Brandprint",
+      created_by: "u_o",
+    })
+    await meta.addCollectionItem(collectionId, art.id)
+    await meta.setOrgSettings(art.org_id, {
+      ...(await meta.getOrgSettings(art.org_id)),
+      brandprint: { collectionId },
+    })
+
+    // Instructions carry the pointer (progressive disclosure — not the full text).
+    const init = await rpc(app, token, initBody)
+    const result = init.parsed?.result as { instructions?: string }
+    expect(result.instructions).toContain("This workspace has a Brandprint:")
+    expect(result.instructions).toContain("1 convention doc")
+    expect(result.instructions).toContain("derive://brandprint/*")
+
+    // The convention doc is a readable resource, fetched lazily.
+    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
+    const uris = (
+      (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
+    ).map((r) => r.uri)
+    expect(uris).toContain(`derive://brandprint/${shortId}`)
+
+    const read = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "resources/read",
+      params: { uri: `derive://brandprint/${shortId}` },
+    })
+    const text = (read.parsed?.result as { contents?: { text: string }[] } | undefined)
+      ?.contents?.[0]?.text
+    expect(text).toContain("How we write Markdown")
   })
 
   it("list_artifacts + read see the agent's own published artifact", async () => {

@@ -372,6 +372,10 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
         // is only a fast-path cache. Defaults false (new accounts land on /welcome); set
         // true via POST /v1/me/onboarded. input:false, server-set only.
         onboarded: { type: "boolean", required: false, defaultValue: false, input: false },
+        // Your personal Brandprint: how YOU like artifacts built. Stored as a JSON string
+        // ({ collectionId?, theme? }); layered over the workspace Brandprint (profile wins)
+        // when an agent acts as you. input:false, server-set via POST /v1/me/profile.
+        brandprint: { type: "string", required: false, input: false },
       },
     },
     socialProviders,

@@ -76,6 +76,29 @@ describe("sqlite store: user directory (Better Auth `user` table)", () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it("round-trips a user brandprint (set, read, clear)", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs")
+    const { tmpdir } = await import("node:os")
+    const { join } = await import("node:path")
+    const dir = mkdtempSync(join(tmpdir(), "derive-db-brandprint-"))
+    const path = join(dir, "store.db")
+    const s = new SqliteMetaStore(path)
+    const raw = new Database(path)
+    raw.exec(
+      `CREATE TABLE user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT, brandprint TEXT)`,
+    )
+    raw.prepare(`INSERT INTO user (id, email, name) VALUES (?,?,?)`).run("u1", "amy@x.com", "Amy")
+    raw.close()
+
+    await s.setUserProfile("u1", { brandprint: JSON.stringify({ collectionId: "col_x" }) })
+    expect(await s.getUserBrandprint("u1")).toBe(JSON.stringify({ collectionId: "col_x" }))
+    await s.setUserProfile("u1", { brandprint: null })
+    expect(await s.getUserBrandprint("u1")).toBeNull()
+
+    s.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   it("maps GitHub account ids to Derive users (account → user join); tolerates absent tables", async () => {
     // Absent Better Auth tables → graceful empty (fresh store); empty input short-circuits.
     const fresh = new SqliteMetaStore(":memory:")

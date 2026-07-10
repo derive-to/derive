@@ -24,6 +24,7 @@ import {
   type ArtifactRecord,
   artifactUrl,
   type BundleManifest,
+  brandprintInstructions,
   capRole,
   diffLines,
   EditError,
@@ -34,9 +35,11 @@ import {
   outlineOf,
   PublishError,
   pageText,
+  parseBrandprint,
   propose as proposeChange,
   publish as publishVersion,
   type Role,
+  resolveBrandprint,
   roleAllows,
   sectionOf,
   toMarkdown,
@@ -223,7 +226,7 @@ const changeCount = (c: ReturnType<typeof bundleFileChanges>) =>
  * Identity rides in the server `instructions` (below), not a `whoami` tool — it's a
  * one-shot fact, not a per-call action.
  */
-function buildServer(
+async function buildServer(
   ctx: AppContext,
   agent: AgentRecord,
   actingFor: { id: string; name: string | null } | null,
@@ -240,7 +243,7 @@ function buildServer(
   // clamps list_workspaces + the `workspace` arg + cross-workspace read to
   // exactly those: workspaces outside the grant are invisible and unreachable.
   boundWorkspaces: string[],
-): McpServer {
+): Promise<McpServer> {
   // Steer the write guidance by what this grant can actually do: a publish-capable
   // grant gets the direct-publish path; a lower grant is told its writes go to review.
   const writeGuidance = roleAllows(agent.role, "publish")
@@ -248,6 +251,27 @@ function buildServer(
       `it goes live immediately. Pass for_review:true to file it as a proposal a human approves instead. `
     : `Use publish to submit a revision — at your role it is filed as a proposal a human approves before it ` +
       `goes live; you cannot publish directly. `
+
+  // Resolve the Brandprint for this actor: the workspace's conventions merged with the
+  // owner's personal ones (profile wins). Each convention doc becomes a readable resource;
+  // a one-line pointer goes in the instructions (bodies load lazily on read).
+  const wsBrandprint = (await ctx.meta.getOrgSettings(agent.org_id)).brandprint
+  const profileBrandprint = parseBrandprint(
+    ownerId ? await ctx.meta.getUserBrandprint(ownerId) : null,
+  )
+  const resolved = resolveBrandprint(wsBrandprint, profileBrandprint)
+  const conventionDocs: ArtifactRecord[] = []
+  const seenBp = new Set<string>()
+  for (const collectionId of resolved.collectionIds) {
+    const ids = await ctx.meta.collectionArtifactIds(collectionId)
+    for (const a of ids.length ? await ctx.meta.listArtifacts({ ids }) : []) {
+      if (!seenBp.has(a.short_id)) {
+        seenBp.add(a.short_id)
+        conventionDocs.push(a)
+      }
+    }
+  }
+
   const server = new McpServer(
     { name: "derive", version: "1.0.0" },
     {
@@ -268,9 +292,32 @@ function buildServer(
         `This one login reaches the workspaces in your grant — call list_workspaces to see them, ` +
         `then pass a workspace id or name as the "workspace" argument to act in another one (read, ` +
         `catch_up, comment, publish, list_artifacts). read/catch_up/comment also find a short_id in ` +
-        `any of them automatically, so you never need to switch just to open a doc.`,
+        `any of them automatically, so you never need to switch just to open a doc.` +
+        brandprintInstructions(conventionDocs.length),
     },
   )
+
+  // Brandprint conventions as resources: derive://brandprint/<short_id>, bodies fetched
+  // lazily (the current version's text). audience:["assistant"], context for the agent.
+  for (const doc of conventionDocs) {
+    server.registerResource(
+      `brandprint:${doc.short_id}`,
+      `derive://brandprint/${doc.short_id}`,
+      {
+        title: doc.title ?? doc.short_id,
+        description: "A Brandprint convention: how this workspace likes its stuff built.",
+        mimeType: "text/markdown",
+        annotations: { audience: ["assistant"], priority: 0.9 },
+      },
+      async (uri) => {
+        const art = await ctx.meta.getByShortId(doc.short_id)
+        const v = art ? await ctx.meta.getVersion(art.id, art.current_version) : null
+        const body = v ? await ctx.sourceText(v) : null
+        return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: body ?? "" }] }
+      },
+    )
+  }
+
   const defaultOrg = agent.org_id
   const defaultRole = agent.role
 
@@ -1514,7 +1561,7 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
     const grant = await ctx.oauthGrant(c)
     const scopeForCap = grant?.scopeRole ?? agent.role
     const boundWorkspaces = grant?.boundWorkspaces ?? []
-    const server = buildServer(ctx, agent, actingFor, ownerId, scopeForCap, boundWorkspaces)
+    const server = await buildServer(ctx, agent, actingFor, ownerId, scopeForCap, boundWorkspaces)
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
     return transport.handleRequest(c)

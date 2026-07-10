@@ -7,7 +7,7 @@ import { sha256 } from "../lib/crypto"
 import { buildInviteEmail } from "../lib/email"
 import { bail, DEFAULT_WORKSPACE_NAME, fail, isWorkspaceRole, readJson } from "../lib/http"
 import { resolveUserRef } from "../lib/resolve-user"
-import { ArtifactMember } from "../schemas"
+import { ArtifactMember, BrandprintSchema } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
 
 // A plausible email (loose check — the real gate is deliverability). Anything without a
@@ -87,6 +87,9 @@ export const workspaceRoutes = (ctx: AppContext) => {
       defaultListed: z
         .enum(["none", "workspace", "public"])
         .describe("Listing a new publish lands with: none (default), workspace, or public."),
+      brandprint: BrandprintSchema.optional().describe(
+        "The workspace's Brandprint (conventions collection + theme); absent until set.",
+      ),
     })
     .openapi("OrgSettings")
 
@@ -593,13 +596,32 @@ export const workspaceRoutes = (ctx: AppContext) => {
             defaultWorkspaceAccess: z.enum(["none", "member"]),
             defaultLinkRole: z.enum(["none", "viewer", "commenter", "editor"]),
             defaultListed: z.enum(["none", "workspace", "public"]),
+            brandprint: BrandprintSchema.nullable(),
           })
           .partial(),
       )
       if (b instanceof Response) return bail(b)
       const org = await activeWorkspace(c)
-      // Merge over current (so a partial PATCH only flips the keys it sends).
-      const next = { ...(await meta.getOrgSettings(org)), ...b }
+      // Merge over current (so a partial PATCH only flips the keys it sends). Brandprint
+      // is pulled out and merged one level deep below, so setting collectionId alone
+      // doesn't wipe an existing theme (and vice versa).
+      const { brandprint, ...flat } = b
+      const cur = await meta.getOrgSettings(org)
+      const next = { ...cur, ...flat }
+      if (brandprint === null) next.brandprint = undefined
+      else if (brandprint) {
+        // A new collectionId pointer must be owned by this workspace: an unvalidated id
+        // could point at another tenant's collection and leak its bodies over MCP. The
+        // store doesn't check ownership, so the route does. (Clearing or a theme-only
+        // patch points at nothing new, so it skips the check.)
+        if (brandprint.collectionId) {
+          const col = await meta.getCollection(brandprint.collectionId)
+          if (!col || col.org_id !== org)
+            return bail(fail(c, 400, "brandprint collection not found in this workspace"))
+        }
+        const m = { ...cur.brandprint, ...brandprint }
+        next.brandprint = { collectionId: m.collectionId ?? undefined, theme: m.theme ?? undefined }
+      }
       // The default access must satisfy the same listing preconditions a publish
       // would (see access-model.md) — otherwise every new publish that takes the
       // defaults would 400. Validate the MERGED result, so a partial PATCH can't

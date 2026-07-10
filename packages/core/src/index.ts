@@ -1,4 +1,5 @@
 export * from "./anchor"
+export * from "./brandprint"
 export * from "./cross-doc"
 export * from "./diff"
 export * from "./doc-text"

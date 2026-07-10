@@ -6,7 +6,7 @@ import type { AppContext } from "../context"
 import { authorProfile, resolveHandles } from "../lib/author"
 import { bail, fail, IMMUTABLE_CACHE, readJson, toBody } from "../lib/http"
 import { MAX_AVATAR_BYTES, sniffImageType } from "../lib/image"
-import { Artifact } from "../schemas"
+import { Artifact, BrandprintSchema } from "../schemas"
 
 /** Session identity + the workspace member/agent directory for the @mention picker.
  *  PublicProfile + DirUser are generated for the web; `Me` stays a web-side mapped type
@@ -179,6 +179,9 @@ export const sessionRoutes = (ctx: AppContext) => {
               schema: z.object({
                 profession: z.string().nullable().describe("Saved team role; null when cleared."),
                 about: z.string().nullable().describe("Saved bio; null when cleared."),
+                brandprint: BrandprintSchema.nullable().describe(
+                  "Saved personal Brandprint; null when cleared.",
+                ),
               }),
             },
           },
@@ -193,15 +196,36 @@ export const sessionRoutes = (ctx: AppContext) => {
         z.object({
           profession: z.string().trim().max(40).optional(),
           about: z.string().trim().max(280).optional(),
+          brandprint: BrandprintSchema.nullable().optional(),
         }),
       )
       if (body instanceof Response) return bail(body)
+      // A new collectionId pointer must be owned by one of the caller's own workspaces:
+      // an unvalidated id could point at another tenant's collection and leak its bodies
+      // over MCP. The store doesn't check ownership, so the route does. (Clearing or a
+      // theme-only patch points at nothing new, so it skips the check.)
+      if (body.brandprint?.collectionId) {
+        const col = await meta.getCollection(body.brandprint.collectionId)
+        const mine = await meta.listWorkspaces(u.id)
+        if (!col || !mine.some((w) => w.id === col.org_id))
+          return bail(fail(c, 400, "brandprint collection not found"))
+      }
       // Normalize "" → null (clear) so the column is never an empty string.
-      const patch: { profession?: string | null; about?: string | null } = {}
+      const patch: {
+        profession?: string | null
+        about?: string | null
+        brandprint?: string | null
+      } = {}
       if (body.profession !== undefined) patch.profession = body.profession || null
       if (body.about !== undefined) patch.about = body.about || null
+      if (body.brandprint !== undefined)
+        patch.brandprint = body.brandprint ? JSON.stringify(body.brandprint) : null
       await meta.setUserProfile(u.id, patch)
-      return c.json({ profession: patch.profession ?? null, about: patch.about ?? null })
+      return c.json({
+        profession: patch.profession ?? null,
+        about: patch.about ?? null,
+        brandprint: body.brandprint ?? null,
+      })
     },
   )
 

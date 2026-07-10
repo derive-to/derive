@@ -862,6 +862,46 @@
               "public"
             ],
             "description": "Listing a new publish lands with: none (default), workspace, or public."
+          },
+          "brandprint": {
+            "type": "object",
+            "properties": {
+              "collectionId": {
+                "type": "string",
+                "nullable": true,
+                "maxLength": 64
+              },
+              "theme": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "palette": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "fonts": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "dark": {
+                    "type": "object",
+                    "properties": {
+                      "palette": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "description": "The workspace's Brandprint (conventions collection + theme); absent until set."
           }
         },
         "required": [
@@ -2730,11 +2770,53 @@
                       "type": "string",
                       "nullable": true,
                       "description": "Saved bio; null when cleared."
+                    },
+                    "brandprint": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "collectionId": {
+                          "type": "string",
+                          "nullable": true,
+                          "maxLength": 64
+                        },
+                        "theme": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "palette": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string"
+                              }
+                            },
+                            "fonts": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string"
+                              }
+                            },
+                            "dark": {
+                              "type": "object",
+                              "properties": {
+                                "palette": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "description": "Saved personal Brandprint; null when cleared."
                     }
                   },
                   "required": [
                     "profession",
-                    "about"
+                    "about",
+                    "brandprint"
                   ]
                 }
               }

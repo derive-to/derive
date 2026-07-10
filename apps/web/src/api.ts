@@ -1,5 +1,29 @@
 import type { components } from "./api-types"
 
+/** A pointer to the conventions collection a workspace or an account likes its
+ *  artifacts built from, plus an optional visual theme for rendered docs. Mirrors
+ *  packages/core/src/ports.ts Brandprint. Not itself a named OpenAPI schema — the
+ *  workspace's copy rides OrgSettings.brandprint (generated), but the personal copy
+ *  is a Better Auth additionalField (a JSON string) surfaced through the hand-mapped
+ *  `Me`, same as profession/about below. */
+export interface Brandprint {
+  collectionId?: string | null
+  theme?: {
+    palette?: Record<string, string>
+    fonts?: Record<string, string>
+    dark?: { palette?: Record<string, string> }
+  } | null
+}
+/** Parse a Me.brandprint / SessionUser.brandprint JSON string; null if absent/malformed. */
+export const parseBrandprint = (raw: string | null | undefined): Brandprint | null => {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as Brandprint
+  } catch {
+    return null
+  }
+}
+
 export interface Me {
   id: string
   email: string
@@ -22,6 +46,9 @@ export interface Me {
   emailVerified: boolean
   /** Is TOTP two-factor enabled? Drives the Security-hub enable/disable state. */
   twoFactorEnabled: boolean
+  /** Your personal Brandprint (conventions collection + theme); null if unset. Layers over
+   *  the workspace's (yours wins) when an agent acts as you. */
+  brandprint: Brandprint | null
 }
 /** What sign-in methods + auth flows THIS instance actually has (capability-adaptive:
  *  a bare self-host reports fewer than a fully-wired hosted deploy). Drives the login
@@ -229,6 +256,8 @@ type SessionUser = {
   onboarded?: boolean
   emailVerified?: boolean
   twoFactorEnabled?: boolean
+  /** JSON string ({ collectionId?, theme? }); the Better Auth additionalField. */
+  brandprint?: string | null
 }
 const mapMe = (u: SessionUser): Me => ({
   id: u.id,
@@ -245,6 +274,7 @@ const mapMe = (u: SessionUser): Me => ({
   onboarded: u.onboarded === true,
   emailVerified: u.emailVerified === true,
   twoFactorEnabled: u.twoFactorEnabled === true,
+  brandprint: parseBrandprint(u.brandprint),
 })
 
 export const api = {
@@ -286,12 +316,14 @@ export const api = {
     }).then(j)
   },
   // People who follow / are followed by this user (public profiles; no ids or email).
-  // Set your team role + "what you do" blurb (onboarding + Settings → Profile).
-  // Omitted fields are left untouched; "" clears a field.
+  // Set your team role + "what you do" blurb (onboarding + Settings → Profile), and/or
+  // your personal Brandprint (Settings → Brandprint). Omitted fields are left untouched;
+  // "" clears profession/about, null clears brandprint.
   setProfile: (fields: {
     profession?: string
     about?: string
-  }): Promise<{ profession: string | null; about: string | null }> =>
+    brandprint?: Brandprint | null
+  }): Promise<{ profession: string | null; about: string | null; brandprint: Brandprint | null }> =>
     f("/v1/me/profile", opts(fields)).then(j),
   // Opt in/out of people search.
   setDiscoverable: (discoverable: boolean): Promise<{ discoverable: boolean }> =>
