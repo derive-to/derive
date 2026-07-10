@@ -7,6 +7,7 @@ import { useAuth } from "@/ctx"
 import { reportsQuery } from "@/lib/queries"
 import { AgentsSection } from "./agents-section"
 import { AppearanceSection } from "./appearance-section"
+import { BrandprintSection } from "./brandprint-section"
 import { CustomDomainsSection } from "./custom-domains-section"
 import { GeneralSection } from "./general-section"
 import { GithubSection } from "./github-section"
@@ -110,10 +111,20 @@ export function Settings() {
           </div>
 
           <div className="min-w-0">
-            {active === "profile" && <ProfileSection />}
+            {active === "profile" && (
+              <div className="flex flex-col gap-8">
+                <ProfileSection />
+                <BrandprintSection scope="account" />
+              </div>
+            )}
             {active === "security" && <SecuritySection />}
             {active === "appearance" && <AppearanceSection />}
-            {active === "general" && <GeneralSection />}
+            {active === "general" && (
+              <div className="flex flex-col gap-8">
+                <GeneralSection />
+                <BrandprintSection scope="workspace" />
+              </div>
+            )}
             {active === "members" && <MembersSection meId={me.id} />}
             {active === "integrations" && <IntegrationsSection />}
             {active === "github" && <GithubSection />}
