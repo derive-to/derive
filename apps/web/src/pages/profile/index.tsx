@@ -20,6 +20,7 @@ import { useAuth } from "@/ctx"
 import { colorForName } from "@/lib/avatar-tints"
 import { getInitials } from "@/lib/initials"
 import { profileArtifactsQuery, profileQuery } from "@/lib/queries"
+import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { ProfilePending, ProfileWorkSkeleton } from "./skeleton"
 import { ProfileWorkCard, ProfileWorkRow } from "./work-card"
@@ -248,6 +249,9 @@ function ProfileWork({
   const { data, isPending, isError, fetchNextPage, hasNextPage, isFetchingNextPage, refetch } =
     useInfiniteQuery(profileArtifactsQuery(handle))
   const items = data?.pages.flatMap((p) => p.artifacts) ?? []
+  // Same delayed-pending discipline as the library + people feeds: a cache-warm/fast load
+  // flashes nothing rather than strobing the grid skeleton.
+  const showWork = useDelayedPending(isPending)
   const sentinel = useRef<HTMLDivElement>(null)
   const [view, setView] = useState<"grid" | "list">("grid")
 
@@ -291,10 +295,13 @@ function ProfileWork({
         )}
       </div>
       {isPending ? (
-        <div role="status">
-          <span className="sr-only">Loading work…</span>
-          <ProfileWorkSkeleton />
-        </div>
+        // Hold blank for the show-delay so a fast load doesn't flash the skeleton.
+        showWork ? (
+          <div role="status">
+            <span className="sr-only">Loading work…</span>
+            <ProfileWorkSkeleton />
+          </div>
+        ) : null
       ) : isError ? (
         <StatusPanel
           tone="danger"
