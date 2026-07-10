@@ -101,6 +101,10 @@ test("capture comment panel states", async ({ owner: page }) => {
     s?.addRange(r)
     document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }))
   })
+  // The anchored selection menu, before choosing an action.
+  await expect(page.getByTestId("selection-menu")).toBeVisible()
+  await page.waitForTimeout(300)
+  await shoot("selection-menu-light")
   await page.getByTestId("comment-on-selection").click()
   await expect(page.getByTestId("composer-input")).toBeVisible()
   await page.getByTestId("composer-input").pressSequentially("What if we framed this as @")
