@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual escape hatch: lets CI be dispatched by API when GitHub drops a
+  # push/pull_request event (it happens; runs are never retro-created).
+  workflow_dispatch:
 
 permissions:
   contents: read
