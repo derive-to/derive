@@ -85,6 +85,17 @@ export const needsFeedbackArtifactsQuery = () =>
       api.listArtifacts({ scope: "needs_feedback", limit: 12 }).then((r) => r.artifacts),
   })
 
+// The docs a Brandprint's collection holds, for the /brandprint page's managed list.
+// Keyed under the ["artifacts"] prefix so the intake's settle-time invalidation
+// refreshes this list the moment an upload lands. Flat and capped — a conventions
+// collection is a handful of docs, not a feed.
+export const brandprintDocsQuery = (collectionId: string) =>
+  queryOptions({
+    queryKey: ["artifacts", "brandprint-docs", collectionId] as const,
+    queryFn: () =>
+      api.listArtifacts({ collection: collectionId, limit: 100 }).then((r) => r.artifacts),
+  })
+
 // A small, flat slice of the Following feed — recent work from the people you follow —
 // for the "Recent activity" preview on the People tab. The full feed lives at /following
 // (the infinite libraryArtifactsQuery({ scope: "following" })); this is the peek.
