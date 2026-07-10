@@ -1,5 +1,5 @@
-import { type RefObject, useCallback, useEffect, useRef } from "react"
-import { clamp, consumeWheel, normalizeWheel, pinOffsetBounds } from "./lib/layout"
+import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
+import { COMPOSER_ID, clamp, consumeWheel, normalizeWheel, pinOffsetBounds } from "./lib/layout"
 import type { FrameGeom } from "./types"
 
 /**
@@ -30,12 +30,21 @@ export type PinLayout = {
   /** Card layout Ys (doc-absolute), keyed by pin id (incl. the composer). */
   pos: Record<string, number>
   heights: Record<string, number>
+  /** Which pins have a real position (an unlocated pin renders invisible). */
+  located: Record<string, boolean>
   /** Topmost card's layout Y (doc-absolute). */
   minY: number
   /** Bottom of the lowest card in the relaxed stack (doc-absolute). */
   maxBottom: number
   /** The active item's (composer / selected thread) layout Y, if any. */
   activeY: number | null
+}
+
+/** Pins currently outside the zone's viewport, per edge: how many, and the
+ *  nearest one to jump to. Null when that edge has none. */
+export type OffscreenPins = {
+  above: { count: number; id: string } | null
+  below: { count: number; id: string } | null
 }
 
 const DEFAULT_CARD_H = 116
@@ -66,11 +75,57 @@ export function usePinLayer(p: {
   const offset = useRef(0)
   const layout = useRef<PinLayout>(p.layout)
 
+  // Which pins sit outside the zone right now (and the nearest one per edge, for
+  // the jump pills). Computed on every reposition but pushed to React ONLY when
+  // the membership changes — an edge crossing, not a scroll frame (the cursor
+  // layer's offscreenKey pattern), so scroll still never re-renders per frame.
+  const [offscreen, setOffscreen] = useState<OffscreenPins>({ above: null, below: null })
+  const offscreenKey = useRef("")
+  const updateOffscreen = useCallback(() => {
+    const l = layout.current
+    if (!zoneH.current) return
+    const base = datum.current - geom.current.scrollY - offset.current
+    let aboveCount = 0
+    let aboveId = ""
+    let aboveY = Number.NEGATIVE_INFINITY
+    let belowCount = 0
+    let belowId = ""
+    let belowY = Number.POSITIVE_INFINITY
+    for (const id in l.pos) {
+      // The composer is never "a comment you're missing"; unlocated pins have no
+      // real position to report.
+      if (id === COMPOSER_ID || l.located[id] === false) continue
+      const y = (l.pos[id] ?? 0) + base
+      const h = l.heights[id] ?? DEFAULT_CARD_H
+      if (y + h < 8) {
+        aboveCount++
+        if (y > aboveY) {
+          aboveY = y
+          aboveId = id
+        }
+      } else if (y > zoneH.current - 8) {
+        belowCount++
+        if (y < belowY) {
+          belowY = y
+          belowId = id
+        }
+      }
+    }
+    const key = `${aboveCount}:${aboveId}|${belowCount}:${belowId}`
+    if (key === offscreenKey.current) return
+    offscreenKey.current = key
+    setOffscreen({
+      above: aboveCount ? { count: aboveCount, id: aboveId } : null,
+      below: belowCount ? { count: belowCount, id: belowId } : null,
+    })
+  }, [])
+
   const apply = useCallback(() => {
     const el = layerRef.current
     if (!el) return
     el.style.transform = `translate3d(0, ${Math.round(datum.current - geom.current.scrollY - offset.current)}px, 0)`
-  }, [])
+    updateOffscreen()
+  }, [updateOffscreen])
 
   // `withActive` keeps the floor open for a revealed active item (an open
   // composer, the selected thread): layout/datum re-fits must not yank it. A
@@ -215,5 +270,5 @@ export function usePinLayer(p: {
     return () => layer.removeEventListener("focusin", onFocus)
   }, [reveal])
 
-  return { zoneRef, layerRef, reveal }
+  return { zoneRef, layerRef, reveal, offscreen }
 }

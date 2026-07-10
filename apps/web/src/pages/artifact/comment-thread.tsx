@@ -2,7 +2,9 @@ import {
   Box,
   Braces,
   ChartNoAxesColumn,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   Clapperboard,
   Image as ImageGlyph,
   Link2,
@@ -19,6 +21,7 @@ import { cn } from "@/lib/utils"
 import { useActions } from "./comment-actions"
 import { Composer, MentionField } from "./comment-composer"
 import { CommentRow } from "./comment-row"
+import { FloatingControl } from "./floating-control"
 import { useCommentScope } from "./lib/comment-scope"
 import { useCommentTree } from "./lib/comment-tree"
 import { COMPOSER_ID, layoutPins } from "./lib/layout"
@@ -55,7 +58,8 @@ export function PinnedZone({
 }) {
   // The active/hover state drives this zone's layout math (which card is pinned to its
   // exact Y, z-order, opacity); it comes from the tree context, same as the cards read.
-  const { activeThread, hoverThread } = useCommentTree()
+  // onJump powers the offscreen-pin pills ("N more ↓" → scroll the doc to the nearest).
+  const { activeThread, hoverThread, onJump } = useCommentTree()
   const [heights, setHeights] = useState<Record<string, number>>({})
   // Created lazily in the ref callback (refs run during commit, BEFORE effects —
   // an effect-created observer would miss any card mounting in the zone's own
@@ -120,12 +124,17 @@ export function PinnedZone({
   )
   const minY = items.reduce((m, it) => Math.min(m, pos[it.id] ?? it.desiredY), 0)
   const activeY = activeId != null ? (pos[activeId] ?? null) : null
+  const located: Record<string, boolean> = { [COMPOSER_ID]: true }
+  for (const p of pins) {
+    const head = p.thread[0]
+    if (head) located[head.thread_id] = p.located
+  }
 
-  const { zoneRef, layerRef, reveal } = usePinLayer({
+  const { zoneRef, layerRef, reveal, offscreen } = usePinLayer({
     frameRef,
     subscribeGeom,
     onScrollDoc,
-    layout: { pos, heights, minY, maxBottom, activeY },
+    layout: { pos, heights, located, minY, maxBottom, activeY },
   })
 
   // Reveal the item the user just committed to. The composer reveals ONCE, at
@@ -192,6 +201,33 @@ export function PinnedZone({
           </div>
         )}
       </div>
+      {/* Comments outside the panel's view announce themselves at the edge they're
+          past (Miro/Figma edge-indicator grammar — the cursor layer's offscreen
+          peers work the same way). One click jumps the document to the nearest. */}
+      {offscreen.above && (
+        <FloatingControl
+          size="sm"
+          data-testid="pins-above-jump"
+          title="Jump to the nearest comment above"
+          onClick={() => offscreen.above && onJump(offscreen.above.id)}
+          className="absolute left-1/2 top-2 z-20 -translate-x-1/2 tabular-nums"
+        >
+          <ChevronUp aria-hidden className="size-3.5" />
+          {offscreen.above.count} more
+        </FloatingControl>
+      )}
+      {offscreen.below && (
+        <FloatingControl
+          size="sm"
+          data-testid="pins-below-jump"
+          title="Jump to the nearest comment below"
+          onClick={() => offscreen.below && onJump(offscreen.below.id)}
+          className="absolute bottom-2 left-1/2 z-20 -translate-x-1/2 tabular-nums"
+        >
+          <ChevronDown aria-hidden className="size-3.5" />
+          {offscreen.below.count} more
+        </FloatingControl>
+      )}
     </div>
   )
 }
@@ -528,12 +564,18 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
             ))}
           </div>
           {canComment && (
-            <div className="flex gap-1.5 border-t border-border-soft px-3 py-2">
+            // items-end: the Reply button hugs the bottom as the box grows.
+            <div className="flex items-end gap-1.5 border-t border-border-soft px-3 py-2">
               {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control */}
               {/* biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control */}
-              <div className="flex-1" onClick={(e) => e.stopPropagation()}>
+              <div className="min-w-0 flex-1" onClick={(e) => e.stopPropagation()}>
+                {/* Multiline like the composer: Shift+Enter breaks the line, the box
+                    grows with the text (capped, then scrolls) — a reply is prose,
+                    not a one-line form field. */}
                 <MentionField
+                  multiline
                   testId="comment-reply-input"
+                  className="field-sizing-content min-h-8 max-h-32"
                   value={reply}
                   onChange={setReply}
                   mentions={replyMentions}

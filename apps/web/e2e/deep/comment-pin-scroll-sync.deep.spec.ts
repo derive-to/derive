@@ -225,6 +225,36 @@ test.describe("comment pins track the document", () => {
     await expect.poll(() => topOf(card), { timeout: 3000 }).toBeGreaterThan(zoneTop - 2)
   })
 
+  test("an offscreen pin announces itself at the edge, and the pill jumps to it", async ({
+    owner: page,
+  }) => {
+    const shortId = await publishHtml(page, html)
+    await anchorComment(page, shortId, "Near the top", "Paragraph 2 scrolls the quick brown fox")
+    await anchorComment(page, shortId, "Way down here", "Paragraph 35 scrolls the quick brown fox")
+    await openArtifact(page, shortId)
+
+    // At the top of the doc: the p35 pin is far below the panel's view — the
+    // edge pill says so.
+    const below = page.getByTestId("pins-below-jump")
+    await expect(below).toBeVisible()
+    await expect(below).toContainText("1 more")
+
+    // One click scrolls the document to it (jump + activate)…
+    await below.click()
+    await expect(page.getByTestId("comment-resolve")).toBeVisible({ timeout: 5000 })
+    const cards = page.getByTestId("comment-card")
+    await expect
+      .poll(async () => {
+        const box = await cards.nth(1).boundingBox()
+        return box ? box.y : -1
+      })
+      .toBeGreaterThan(0)
+
+    // …and the edges swap: nothing below anymore, the p2 pin is now above.
+    await expect(below).toHaveCount(0)
+    await expect(page.getByTestId("pins-above-jump")).toBeVisible()
+  })
+
   test("wheel over an active card's thread list scrolls the list, not the document", async ({
     owner: page,
   }) => {

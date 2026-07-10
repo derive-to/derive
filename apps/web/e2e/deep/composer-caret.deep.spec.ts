@@ -46,6 +46,25 @@ test.describe("composer caret layers", () => {
       .toBeLessThan(2)
   })
 
+  test("Enter sends, Shift+Enter breaks the line (desktop chat grammar)", async ({
+    owner: page,
+  }) => {
+    const shortId = await publishArtifact(page)
+    await openArtifact(page, shortId)
+    await page.getByTestId("comment-new").click()
+
+    const input = page.getByTestId("composer-input")
+    await input.pressSequentially("first line")
+    await input.press("Shift+Enter")
+    await input.pressSequentially("second line")
+    await expect(input).toHaveValue("first line\nsecond line")
+
+    await input.press("Enter")
+    // Posted: the composer closes and the comment (both lines) renders as a card.
+    await expect(page.getByTestId("composer-input")).toHaveCount(0)
+    await expect(page.getByTestId("comment-card")).toContainText("first line")
+  })
+
   test("picking a mention paints a tint box in the clone behind the visible tag", async ({
     owner: page,
   }) => {

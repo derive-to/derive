@@ -11,6 +11,7 @@ import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { PICKER_EMOJI } from "@/lib/emoji"
+import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
 import { useCommentScope } from "./lib/comment-scope"
 import { quoteChipClass } from "./quote-chip"
@@ -47,8 +48,9 @@ function splitMentions(text: string, mentions: Mention[]): Run[] {
  * popover (/v1/users); picking inserts "@Name " and records the user's id. The
  * picker — not a server-side @name parse — is the source of mention ids, so the
  * data is unambiguous. Mentions whose inserted "@Name" is later deleted from the
- * text are dropped at submit time. Single-line submits on Enter; multiline on
- * Cmd/Ctrl+Enter (matching the surrounding composer/reply conventions).
+ * text are dropped at submit time. Enter submits and Shift+Enter breaks the line
+ * (the Notion/Slack chat grammar) — one rule for the composer and replies alike,
+ * instead of the old Enter-newline/Cmd+Enter-submit split nobody could guess.
  */
 export function MentionField({
   value,
@@ -81,6 +83,7 @@ export function MentionField({
   const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
   const { shortId } = useCommentScope()
+  const isMobile = useIsMobile()
   const [menu, setMenu] = useState<{ at: number; end: number; q: string } | null>(null)
   const [results, setResults] = useState<DirUser[]>([])
   const [active, setActive] = useState(0)
@@ -198,7 +201,11 @@ export function MentionField({
       onCancel?.()
       return
     }
-    if (e.key === "Enter" && (!multiline || e.metaKey || e.ctrlKey)) {
+    // Enter sends; Shift+Enter inserts a newline (falls through to the textarea's
+    // default). Cmd/Ctrl+Enter still sends, for the muscle memory. On a PHONE the
+    // keyboard has no Shift+Enter, so Enter keeps its newline meaning there and
+    // the visible Comment/Reply button is the send.
+    if (e.key === "Enter" && !e.shiftKey && (!isMobile || !multiline)) {
       e.preventDefault()
       submit()
     }
@@ -449,7 +456,10 @@ export function Composer({
           multiline
           autoFocus
           testId="composer-input"
-          className="min-h-14 resize-y"
+          // field-sizing-content: the box grows with the text (to a cap, then
+          // scrolls) instead of trapping a multi-line comment in a two-line
+          // window. resize-y stays as the manual override.
+          className="field-sizing-content min-h-14 max-h-48 resize-y"
           value={text}
           onChange={setText}
           mentions={mentions}
