@@ -45,8 +45,10 @@ const BOOT_FRAME = `(function(){try{var p=location.pathname;var authed=localStor
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   // Gate ALL route loading on the IndexedDB cache restore, so a loader's ensureQueryData reads
   // the persisted data instead of fetching cold before it lands — the ordering that lets a
-  // reload paint from cache like a nav. Resolved-instant after the first boot.
-  beforeLoad: () => cacheRestored,
+  // reload paint from cache like a nav. Resolved-instant after the first boot; never rejects.
+  beforeLoad: async () => {
+    await cacheRestored
+  },
   head: () => ({
     meta: [
       { charSet: "utf-8" },

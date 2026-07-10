@@ -1,11 +1,11 @@
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister"
-import { defaultShouldDehydrateQuery, type QueryClient } from "@tanstack/react-query"
+import { defaultShouldDehydrateQuery, type Query, type QueryClient } from "@tanstack/react-query"
 import {
   persistQueryClientRestore,
   persistQueryClientSubscribe,
 } from "@tanstack/react-query-persist-client"
 import { del, get, set } from "idb-keyval"
-import { queryClient } from "./query-client"
+import { CACHE_MAX_AGE, queryClient } from "./query-client"
 
 // Persist the query cache to IndexedDB so a refresh restores the last-known data and paints
 // instantly — the same warm cache an in-app navigation already runs against. This erases the
@@ -29,9 +29,9 @@ const queryPersister = createAsyncStoragePersister({
 const persistOptions = {
   queryClient,
   persister: queryPersister,
-  // How long a persisted cache may be restored before it's discarded as too old — a full day,
-  // so restores are instant across a normal work session but never resurrect yesterday's world.
-  maxAge: 1000 * 60 * 60 * 24,
+  // How long a persisted cache may be restored before it's discarded as too old. Shared with
+  // the client's gcTime so an inactive query survives in memory as long as its persisted copy.
+  maxAge: CACHE_MAX_AGE,
   // A fresh build busts the cache, so a deploy that changes a response shape never restores
   // stale-shaped data into a component that no longer expects it. Vite replaces the token at
   // build; the typeof guard keeps it defined in envs without the define (vitest, plain Node).
@@ -39,9 +39,7 @@ const persistOptions = {
   dehydrateOptions: {
     // Persist data, but NEVER the session: `me` must re-resolve fresh on every boot so an
     // expired session can't restore as "logged in" (the route guards await a live one).
-    shouldDehydrateQuery: (q: { queryKey: readonly unknown[] }) =>
-      q.queryKey[0] !== "me" &&
-      defaultShouldDehydrateQuery(q as Parameters<typeof defaultShouldDehydrateQuery>[0]),
+    shouldDehydrateQuery: (q: Query) => q.queryKey[0] !== "me" && defaultShouldDehydrateQuery(q),
   },
 }
 
@@ -50,12 +48,17 @@ const persistOptions = {
 // before the disk cache has hydrated — that ordering is what lets a reload paint from cache
 // like a nav instead of gating on a cold loader fetch. A no-op-fast path when nothing's stored.
 // Guarded to the browser: the SPA shell prerenders in Node, where IndexedDB doesn't exist.
+// The library silently discards an expired/busted/corrupt cache, but a blocked IndexedDB
+// (private mode, quota, a locked DB) can still reject — so swallow it and boot cold rather
+// than fail the root beforeLoad and take down the whole app.
 export const cacheRestored: Promise<void> =
   typeof indexedDB === "undefined"
     ? Promise.resolve()
-    : persistQueryClientRestore(persistOptions).then(() => {
-        persistQueryClientSubscribe(persistOptions)
-      })
+    : persistQueryClientRestore(persistOptions)
+        .then(() => {
+          persistQueryClientSubscribe(persistOptions)
+        })
+        .catch(() => {})
 
 // Logout is a client nav, not a hard reload, so nothing clears the caches on its own — wipe
 // BOTH the in-memory client and the IndexedDB copy so the next person on this browser can't

@@ -54,6 +54,12 @@ export const toastMessageFor = (err: unknown): string => {
     : "Something went wrong. Check your connection and try again."
 }
 
+// How long the cache is persisted AND kept in memory. gcTime MUST equal (or exceed) the
+// persister's maxAge (lib/persist.ts reuses this) — otherwise garbage collection evicts an
+// inactive query from memory before its persisted copy expires, dropping it from the next
+// dehydrate, so a reload wouldn't restore anything you hadn't touched in the last gcTime window.
+export const CACHE_MAX_AGE = 1000 * 60 * 60 * 24
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -61,6 +67,8 @@ export const queryClient = new QueryClient({
       retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
       refetchOnWindowFocus: false,
       staleTime: 30_000,
+      // Retain inactive queries long enough for the persisted cache to stay complete (see above).
+      gcTime: CACHE_MAX_AGE,
     },
     // Writes are never auto-retried: many are non-idempotent (publishing a version,
     // posting a comment), and a failed write must surface at once rather than
