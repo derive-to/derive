@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { inMemoryLimiter, inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // Share-by-email to someone with NO account: the PUT creates a pending invite
@@ -140,5 +141,33 @@ describe("artifact invites — invitee emails are need-to-know", () => {
       await app.request(`/v1/artifacts/${sid}/members`, { headers: as(owner.email) })
     ).json()
     expect(asOwner.invites).toHaveLength(1)
+  })
+})
+
+// Every invite emails an arbitrary address with caller-influenced content, so
+// creation is rate-limited per actor. Pinned with a 2/min limiter: the third
+// invite in the window 429s; direct shares to existing accounts stay ungated.
+describe("artifact invites — creation is rate-limited", () => {
+  const owner: TestUser = { id: "u_airl_owner", email: "owner@airl.test", name: "Olive" }
+  const peer: TestUser = { id: "u_airl_peer", email: "peer@airl.test", name: "Pete" }
+  const { app } = makeAuthedApp("artifact-invites-rl", [owner, peer], "editor", {
+    deps: {
+      rateLimit: true,
+      rateLimiters: { ...inMemoryRateLimiters(), invite: inMemoryLimiter(60_000, 2) },
+    },
+  })
+
+  it("the third invite in the window 429s; direct shares don't count", async () => {
+    const sid = (await (await publishAs(app, "<h1>d</h1>", {}, as(owner.email))).json()).short_id
+    const invite = (email: string) =>
+      app.request(`/v1/artifacts/${sid}/members`, {
+        ...jsonAs(as(owner.email), { email, role: "viewer" }),
+        method: "PUT",
+      })
+    expect((await invite("a@rl.test")).status).toBe(201)
+    expect((await invite("b@rl.test")).status).toBe(201)
+    expect((await invite("c@rl.test")).status).toBe(429)
+    // A direct share to an existing account is not an email cannon — ungated.
+    expect((await invite(peer.email)).status).toBe(201)
   })
 })

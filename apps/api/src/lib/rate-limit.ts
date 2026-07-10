@@ -55,6 +55,10 @@ export interface RateLimiters {
   publish: Limiter
   comment: Limiter
   unlock: Limiter
+  /** Invite creation (workspace + artifact). Each request emails an arbitrary,
+   *  possibly unwilling address with caller-influenced content (the artifact
+   *  title rides the subject) — cap it well below the general write rate. */
+  invite: Limiter
 }
 
 /**
@@ -76,6 +80,9 @@ export function inMemoryRateLimiters(
     publish: inMemoryLimiter(60_000, opts.publishRate ?? 30),
     comment: inMemoryLimiter(60_000, opts.commentRate ?? 60),
     unlock: inMemoryLimiter(5 * 60_000, 5),
+    // 10 invite emails per minute per actor: a whole team invited in one sitting
+    // clears it; a spam cannon doesn't.
+    invite: inMemoryLimiter(60_000, 10),
   }
 }
 

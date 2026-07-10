@@ -31,7 +31,18 @@ import { enqueueChannelDelivery } from "../webhooks"
  *  (editor+, GDocs model); the share's role beats the caller's workspace baseline.
  *  Members are returned as the shared ArtifactMember shape (generated web type). */
 export const sharingRoutes = (ctx: AppContext) => {
-  const { meta, deps, defaultRole, authorize, actorFor, actingUser, requireUser, bus } = ctx
+  const {
+    meta,
+    deps,
+    defaultRole,
+    authorize,
+    actorFor,
+    actingUser,
+    requireUser,
+    bus,
+    inviteLimiter,
+    limited,
+  } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   // A sharer can never grant — or remove — a role above their own. An editor (who
@@ -199,6 +210,10 @@ export const sharingRoutes = (ctx: AppContext) => {
         const email = ref.trim().toLowerCase()
         if (!looksLikeEmail(email))
           return bail(fail(c, 404, "no Derive user with that username or email"))
+        // Each invite emails an arbitrary address with the caller's artifact title
+        // in the subject — rate-limited so an account can't run a spam cannon.
+        const rl = await limited(c, inviteLimiter)
+        if (rl) return bail(rl)
         // A fresh token supersedes any prior pending invite for this (artifact, email).
         await meta.deletePendingArtifactInvitesFor(artifact.id, email)
         const token = mintToken("dka")

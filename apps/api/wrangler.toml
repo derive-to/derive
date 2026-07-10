@@ -137,6 +137,15 @@ namespace_id = "1005"
   limit = 3
   period = 60
 
+# Invite creation (workspace + artifact): each request emails an arbitrary address
+# with caller-influenced content, so it gets its own cap below the write rate.
+[[ratelimits]]
+name = "RL_INVITE"
+namespace_id = "1007"
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
 # Retry/crash backstop for webhook delivery: the outbox DO self-reschedules while busy
 # and is poked on each new event, then goes idle. This wakes it every minute so a retry
 # scheduled during an idle gap (or a missed poke) still drains. The leased claim makes

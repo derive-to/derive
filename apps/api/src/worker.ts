@@ -98,6 +98,7 @@ export interface Env {
   RL_PUBLISH: RateLimit
   RL_COMMENT: RateLimit
   RL_STRICT: RateLimit
+  RL_INVITE: RateLimit
   // The static-assets binding: lets the Worker read the SPA shell to inject unfurl
   // meta into /artifacts/:ref (the share URL). Declared in wrangler.toml `[assets] binding`.
   ASSETS: Fetcher
@@ -227,6 +228,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           // Both ride RL_STRICT (3/60); the prefix keeps their counts separate.
           unlock: nativeLimiter(env.RL_STRICT, 60, "unlock"),
           oauthRegister: nativeLimiter(env.RL_STRICT, 60, "oauth-register"),
+          invite: nativeLimiter(env.RL_INVITE, 60),
         },
         // Deliver freshly enqueued events now: poke the outbox DO so its alarm fires,
         // riding waitUntil so the subrequest isn't cancelled when the response is sent.

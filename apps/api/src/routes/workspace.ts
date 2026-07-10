@@ -35,7 +35,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
     workspaceRole,
     workspaceCan,
   } = ctx
-  const { privateOwnerId, oauthGrant } = ctx
+  const { privateOwnerId, oauthGrant, inviteLimiter, limited } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const WorkspaceSummary = z
@@ -388,6 +388,9 @@ export const workspaceRoutes = (ctx: AppContext) => {
       const email = ref.toLowerCase()
       if (!looksLikeEmail(email))
         return bail(fail(c, 404, "no Derive user with that username or email"))
+      // Same cap as artifact invites: this branch emails an arbitrary address.
+      const rl = await limited(c, inviteLimiter)
+      if (rl) return bail(rl)
 
       // A fresh token supersedes any prior pending invite for this email.
       await meta.deletePendingInvitationsFor(org, email)
