@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { ConnectAgentButton } from "@/components/shared/connect-agent"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
@@ -31,6 +32,7 @@ import { cn } from "@/lib/utils"
 import { refFor } from "../artifact/parse-ref"
 import { ArtifactGrid } from "./artifact-grid"
 import { ArtifactRow, byRecency } from "./artifact-row"
+import { BrandprintNudge } from "./brandprint-nudge"
 import { CollectionBar } from "./collection-bar"
 import { FolderGroups } from "./folder-groups"
 import { FollowingStrip } from "./following-strip"
@@ -433,6 +435,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
         </div>
       )}
 
+      {/* One-time, dismissible: the owner of a Brandprint-less workspace gets the
+          "first on the team" setup nudge here (spec: Onboarding / Timing). */}
+      {homeView && <BrandprintNudge />}
+
       {filter.kind === "collection" ? (
         <>
           <CollectionBar
@@ -752,14 +758,10 @@ function emptyStateFor(
         description:
           "Publish something, or connect an agent — everything you or your agents create shows up here, whatever its audience.",
         action: (
-          <Button
-            variant="outline"
-            size="sm"
-            data-testid="library-empty-connect-agent"
-            onClick={() => nav({ to: "/settings/$section", params: { section: "agents" } })}
-          >
-            Connect an agent
-          </Button>
+          // The shared ConnectAgent surface, right here in a dialog — this used to
+          // land on Settings -> Agents (the workspace-bot token form), a different
+          // concept that dead-ended the one activation moment.
+          <ConnectAgentButton variant="outline" size="sm" testId="library-empty-connect-agent" />
         ),
       }
     case "feedback":

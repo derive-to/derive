@@ -1,9 +1,10 @@
+import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Copy } from "lucide-react"
 import { useEffect, useState } from "react"
 import { ApiError, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { AvatarPicker } from "@/components/shared/avatar-picker"
+import { ConnectAgent } from "@/components/shared/connect-agent"
 import { fieldError } from "@/components/shared/field-error"
 import { FormField } from "@/components/shared/form-field"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
@@ -24,16 +25,17 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
-import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import { authClient } from "@/lib/auth-client"
 import { getInitials } from "@/lib/initials"
 import { OTHER, PROFESSIONS, presetFor } from "@/lib/professions"
+import { workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { normalizeUsername, usernameError } from "@/lib/username"
+import { notesAsDoc, useBrandprintImport } from "@/pages/brandprint/use-brandprint-import"
 
 // A present account — the stateful onboarding body only mounts once `me` resolves
 // (see Welcome's guard), so the profile fields can safely initialize from it.
@@ -54,49 +56,9 @@ export const markOnboarded = () => {
   }
 }
 
-// The public origin to hand an agent. A deployed Derive instance's own origin IS its
-// public URL, so that's what we embed — except in local dev (localhost), where we
-// fall back to a clearly-editable placeholder so nobody copies an unreachable URL.
-const PLACEHOLDER_URL = "https://your-derive-server.com"
-const publicUrlOf = (origin: string) =>
-  /localhost|127\.0\.0\.1|\[::1\]/.test(origin) ? PLACEHOLDER_URL : origin
-
-// Hosted: Derive is already running (this instance, or any you point at). The fastest
-// on-ramp — Derive is itself a remote MCP server, so one line connects an agent and it
-// gets every Derive tool. No CLI needed for the publish/review loop.
-const hostedPrompt = (url: string) =>
-  `Connect me to Derive, a living-docs tool that hosts pages/docs at permanent, versioned URLs with inline review comments. Derive is a remote MCP server.
-
-Derive is running at: ${url}
-
-Please:
-1. Add it over MCP. In Claude Code run:
-     claude mcp add --transport http derive ${url}/mcp
-   In another harness, add an HTTP/streamable MCP server named "derive" at ${url}/mcp.
-   The first call opens a browser consent (OAuth); the scope I grant maps to my Derive role.
-2. Confirm it's connected by calling the "whoami" MCP tool, then "list_artifacts".
-
-Once connected you can publish a page, read its review comments, and run the propose -> review -> revise loop — all over MCP.`
-
-// Self-host: run Derive yourself first, then connect. Mirrors DEPLOY.md's single-
-// container quickstart; the MCP endpoint is always <your BASE_URL>/mcp.
-const selfHostPrompt = () =>
-  `Set up a self-hosted Derive for me, then connect this agent to it. Derive is an open-source living-docs tool (permanent versioned URLs + inline review comments) that is itself a remote MCP server.
-
-Please:
-1. From a Derive checkout (the directory with deploy/Dockerfile), run the single-container image (state lives in the derive_data volume):
-     docker build -f deploy/Dockerfile -t derive .
-     docker run -d -p 8080:8080 -v derive_data:/data \\
-       -e DERIVE_AUTH_SECRET="$(openssl rand -hex 32)" \\
-       -e BASE_URL="https://derive.example.com" \\
-       derive
-   Set BASE_URL to the public https URL I'll actually reach it at (behind a TLS proxy — not localhost). For a quick local-only trial, BASE_URL=http://localhost:8080 works.
-2. Connect over MCP, using that same BASE_URL:
-     claude mcp add --transport http derive <BASE_URL>/mcp
-   The first call opens a browser consent (OAuth).
-3. Confirm by calling the "whoami" MCP tool, then "list_artifacts".
-
-Then you can publish, read review comments, and run the propose -> review -> revise loop over MCP.`
+// Distinguishes a failed Brandprint seed from a failed profile save in the one
+// Continue action, so the inline error says which half to retry.
+const BRANDPRINT_FAILED = "brandprint-seed-failed"
 
 // Gate on the session BEFORE the stateful body so the profile fields initialize from
 // a resolved account (a direct visit to /welcome renders once with me=null first).
@@ -110,8 +72,6 @@ export function Welcome() {
 function Onboarding({ me }: { me: Account }) {
   const { setMe } = useAuth()
   const nav = useNavigate()
-  // Self-host mode swaps the connect snippet for run-it-yourself instructions.
-  const [devMode, setDevMode] = useState(false)
 
   // Profile state lives on the page (not a child) so the single primary action —
   // "Continue to Derive" — persists it and advances in one step. The old flow had a
@@ -123,11 +83,22 @@ function Onboarding({ me }: { me: Account }) {
     me.profession && presetFor(me.profession) === OTHER ? me.profession : "",
   )
   const [about, setAbout] = useState(me.about ?? "")
+  const [brandNotes, setBrandNotes] = useState("")
 
-  const publicUrl =
-    typeof window !== "undefined" ? publicUrlOf(window.location.origin) : PLACEHOLDER_URL
-  const hostedText = hostedPrompt(publicUrl)
-  const devText = selfHostPrompt()
+  // Step 3 shows only to the person who'd be setting up this workspace's Brandprint
+  // for the first time: an owner of a workspace that has none (the spec's "first on
+  // the team" rule — everyone else inherits it over MCP with nothing to set up).
+  // Degrade-by-design: the step is optional, so a failed read hides it rather than
+  // blocking onboarding behind a retry.
+  const { data: ws, isError: wsError } = useQuery(workspaceQuery())
+  const { data: wsSettings, isError: settingsError } = useQuery(workspaceSettingsQuery())
+  const showBrandprint =
+    !wsError &&
+    !settingsError &&
+    ws?.role === "owner" &&
+    !!wsSettings &&
+    !wsSettings.brandprint?.collectionId
+  const seedBrandprint = useBrandprintImport("workspace", "")
 
   const firstName = (me.name ?? me.username ?? me.email).split(/[@\s]/)[0]
   const initials = getInitials(me.name ?? me.email)
@@ -156,6 +127,16 @@ function Onboarding({ me }: { me: Account }) {
 
   const save = useApiMutation({
     mutationFn: async () => {
+      // The Brandprint seeds FIRST: a failure keeps the user here with their notes
+      // intact (nothing else has saved yet). On retry the settings cache already
+      // shows the pointer, so a seeded Brandprint is never doubled.
+      if (showBrandprint && brandNotes.trim()) {
+        try {
+          await seedBrandprint.mutateAsync([notesAsDoc(brandNotes)])
+        } catch {
+          throw new Error(BRANDPRINT_FAILED)
+        }
+      }
       let username = me.username
       // Only claim when it actually changed (claiming your own handle is a no-op, but
       // skipping avoids a needless round-trip).
@@ -176,9 +157,11 @@ function Onboarding({ me }: { me: Account }) {
   // Preserve the original message logic: the server's message for a known ApiError, a
   // friendly fallback for anything else.
   const saveErr = save.error
-    ? save.error instanceof ApiError
-      ? save.error.message
-      : "Could not save your profile."
+    ? save.error.message === BRANDPRINT_FAILED
+      ? "Couldn't save your Brandprint. Try again, or clear the box to skip it for now."
+      : save.error instanceof ApiError
+        ? save.error.message
+        : "Could not save your profile."
     : ""
   const continueToApp = () => {
     if (!handleErr) save.mutate()
@@ -315,33 +298,15 @@ function Onboarding({ me }: { me: Account }) {
             phishing-resistant one-tap sign-in now, or skip and do it later in Settings. */}
         <PasskeyNudge />
 
-        {/* Step 2 — Connect an agent: the activation moment (paste-into-an-agent). */}
+        {/* Step 2 — Connect an agent: the activation moment. The block itself is the
+            shared ConnectAgent surface (also behind the library's connect empty state
+            and the Brandprint nudge), so every entry point renders the same thing. */}
         <section className="flex flex-col gap-4">
           <SectionEyebrow as="h2">Step 2 · Connect an agent</SectionEyebrow>
-          <p className="text-sm text-pretty text-muted-foreground">
-            {devMode
-              ? "Spin up your own Derive, then connect your agent to it. Paste this into Claude Code, Codex, or any agent."
-              : "Paste this into Claude Code, Codex, ChatGPT, or any agent — it connects Derive so the agent can publish, review, and revise for you."}
-          </p>
-          <div className="flex flex-col gap-2">
-            {/* The self-host switch rides just above the snippet it swaps — a rarely-
-                touched option, so it sits quiet and right-aligned, not in the header. */}
-            <label className="flex items-center gap-1.5 self-end text-sm font-medium text-muted-foreground">
-              <span>Self-host mode</span>
-              <Switch
-                checked={devMode}
-                aria-label="Self-host mode"
-                data-testid="welcome-dev-toggle"
-                onCheckedChange={setDevMode}
-              />
-            </label>
-            <PromptBlock
-              key={devMode ? "dev" : "hosted"}
-              text={devMode ? devText : hostedText}
-              testid="welcome-prompt"
-            />
-          </div>
+          <ConnectAgent testidPrefix="welcome" />
         </section>
+
+        {showBrandprint && <BrandprintStep notes={brandNotes} onNotes={setBrandNotes} />}
 
         {/* Finish — one primary action that saves the profile and enters; skip leaves
             now without saving. */}
@@ -372,6 +337,38 @@ function Onboarding({ me }: { me: Account }) {
         </p>
       </div>
     </div>
+  )
+}
+
+// Step 3 — the workspace Brandprint, seeded from pasted notes (spec: onboarding is
+// workspace-scoped and conditional; the caller gates rendering). Deliberately one
+// textarea: files, look/read categories, and the collection picker live on the
+// /brandprint page — this step is the lightest useful capture, saved by the page's
+// single Continue action so nothing needs its own save button.
+function BrandprintStep({ notes, onNotes }: { notes: string; onNotes: (v: string) => void }) {
+  return (
+    <section className="flex flex-col gap-4">
+      <SectionEyebrow as="h2">Step 3 · Your team's Brandprint (optional)</SectionEyebrow>
+      <p className="text-sm text-pretty text-muted-foreground">
+        A Brandprint is your team's style in one place: your tone of voice, formatting rules, words
+        to use or avoid, and colors. Every agent that works in Derive reads it automatically before
+        it creates or revises anything, so the work matches your brand from the first draft, with no
+        one re-explaining it each time. Set it once here and everyone who joins your team inherits
+        it.
+      </p>
+      <Textarea
+        value={notes}
+        rows={5}
+        placeholder="Paste your brand guidelines, or a sample doc that already sounds right…"
+        aria-label="Your team's brand notes"
+        data-testid="welcome-brandprint"
+        onChange={(e) => onNotes(e.target.value)}
+      />
+      <p className="text-sm text-muted-foreground">
+        Saves when you continue, and starts applying the moment an agent is connected. Refine it
+        anytime on the Brandprint page.
+      </p>
+    </section>
   )
 }
 
@@ -426,43 +423,6 @@ function PasskeyNudge() {
         data-testid="welcome-add-passkey"
       >
         {busy ? "Waiting…" : "Add passkey"}
-      </Button>
-    </div>
-  )
-}
-
-// A copyable prompt block: the scrollable text + a copy button that owns its own
-// "copied" tick, so each tab's block has independent state.
-function PromptBlock({ text, testid }: { text: string; testid: string }) {
-  const [copied, setCopied] = useState(false)
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      toast.success("Copied — paste it into your agent")
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      toast.error("Couldn't copy; select the text and copy it manually")
-    }
-  }
-  return (
-    <div className="relative">
-      {/* The machine register on a quiet well: mono text, bg-secondary, hairline edge. */}
-      <pre
-        data-testid={testid}
-        className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border bg-secondary p-3 pr-12 font-mono text-sm text-foreground"
-      >
-        {text}
-      </pre>
-      <Button
-        variant="outline"
-        size="icon-sm"
-        data-testid={`${testid}-copy`}
-        aria-label="Copy setup prompt"
-        className="absolute right-2 top-2"
-        onClick={copy}
-      >
-        {copied ? <Icon name="check" className="text-success" /> : <Copy className="size-4" />}
       </Button>
     </div>
   )

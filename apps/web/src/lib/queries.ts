@@ -105,6 +105,15 @@ export const followingPreviewQuery = () =>
     queryFn: () => api.listArtifacts({ scope: "following", limit: 6 }).then((r) => r.artifacts),
   })
 
+// The OAuth clients (MCP agents) the CALLER has authorized to act as them — the
+// honest "have I connected an agent yet" signal. Read by Security's revocation list
+// and the connect-an-agent nudges (Brandprint, library empty state).
+export const connectedAgentsQuery = () =>
+  queryOptions({
+    queryKey: ["connected-agents"] as const,
+    queryFn: () => api.connectedAgents().then((r) => r.agents),
+  })
+
 // The caller's follows (GitHub authors + repo path prefixes) for the active
 // workspace. Drives the Following-feed empty state, the manage strip, and the
 // isFollowing* sets that toggle the Follow buttons. One source of truth: every
