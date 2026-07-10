@@ -73,7 +73,11 @@ export default defineConfig({
           command: `rm -rf apps/api/.e2e-data && pnpm --filter @derive/web build && PORT=${API_PORT} DATA_DIR=.e2e-data DERIVE_MULTI_WORKSPACE=true DERIVE_WEB_ORIGIN=${ORIGIN} DERIVE_RATE_LIMIT=false pnpm --filter @derive/api start`,
           url: `${ORIGIN}/healthz`,
           cwd: "../..",
-          timeout: 180_000,
+          // A full prod build (import-protection dominates) + API start on the free 2-vCPU
+          // runner creeps toward the old 180s ceiling as the app grows — locally it's ~15s, but
+          // under CI CPU pressure it occasionally overran and flaked. 300s is headroom, not a
+          // real wait: on success the server is ready in well under a minute.
+          timeout: 300_000,
           reuseExistingServer: false,
         },
       ]
