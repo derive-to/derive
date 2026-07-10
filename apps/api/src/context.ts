@@ -58,6 +58,8 @@ export interface SessionUser {
   /** Has the account's email been verified? Better Auth native field; soft-nudge only
    *  (never gates sign-in), surfaced as a dismissible banner in the app. */
   emailVerified: boolean
+  /** Personal Brandprint as a JSON string ({ collectionId?, theme? }); null if unset. */
+  brandprint: string | null
 }
 
 export interface AppDeps {
@@ -315,6 +317,7 @@ export function buildContext(deps: AppDeps) {
           about?: string | null
           onboarded?: boolean | number | null
           emailVerified?: boolean | number | null
+          brandprint?: string | null
         }
       | undefined
     const u: SessionUser | null = su
@@ -330,6 +333,7 @@ export function buildContext(deps: AppDeps) {
           // Onboarded only when explicitly set (off by default; unset/null = not yet).
           onboarded: su.onboarded === true || su.onboarded === 1,
           emailVerified: su.emailVerified === true || su.emailVerified === 1,
+          brandprint: su.brandprint ?? null,
         }
       : null
     userCache.set(c, u)

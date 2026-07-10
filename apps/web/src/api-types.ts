@@ -130,6 +130,23 @@ export interface paths {
                             profession: string | null;
                             /** @description Saved bio; null when cleared. */
                             about: string | null;
+                            /** @description Saved personal Brandprint; null when cleared. */
+                            brandprint: {
+                                collectionId?: string | null;
+                                theme?: {
+                                    palette?: {
+                                        [key: string]: string;
+                                    };
+                                    fonts?: {
+                                        [key: string]: string;
+                                    };
+                                    dark?: {
+                                        palette?: {
+                                            [key: string]: string;
+                                        };
+                                    };
+                                } | null;
+                            } | null;
                         };
                     };
                 };
@@ -5137,6 +5154,23 @@ export interface components {
              * @enum {string}
              */
             defaultListed: "none" | "workspace" | "public";
+            /** @description The workspace's Brandprint (conventions collection + theme); absent until set. */
+            brandprint?: {
+                collectionId?: string | null;
+                theme?: {
+                    palette?: {
+                        [key: string]: string;
+                    };
+                    fonts?: {
+                        [key: string]: string;
+                    };
+                    dark?: {
+                        palette?: {
+                            [key: string]: string;
+                        };
+                    };
+                } | null;
+            };
         };
         Workspaces: {
             /** @description Whether multi-workspace mode is enabled. */

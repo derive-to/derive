@@ -8,6 +8,11 @@ import { defineConfig } from "vite"
 
 const API = process.env.DERIVE_API ?? "http://localhost:8090"
 
+// A build identity that changes when the app does — the persisted-cache buster (lib/persist.ts):
+// a deploy that alters a response shape must never restore stale-shaped data. Commit SHA in CI,
+// a per-start timestamp locally.
+const BUILD_ID = process.env.GITHUB_SHA?.slice(0, 8) ?? String(Date.now())
+
 // `ANALYZE=1 pnpm build` writes a gzip treemap to dist/stats.html for spotting
 // what's heavy. Off by default so normal builds don't open a browser tab.
 const analyze = process.env.ANALYZE
@@ -19,6 +24,8 @@ const analyze = process.env.ANALYZE
 // The Hono API stays a separate origin; the dev proxy keeps it same-origin so
 // session cookies work locally.
 export default defineConfig({
+  // Compile-time constant read by lib/persist.ts as the query-cache buster.
+  define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },

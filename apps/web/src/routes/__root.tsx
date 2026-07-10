@@ -1,5 +1,4 @@
-import type { QueryClient } from "@tanstack/react-query"
-import { QueryClientProvider } from "@tanstack/react-query"
+import { type QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import {
   createRootRouteWithContext,
   HeadContent,
@@ -14,6 +13,7 @@ import { BootShell } from "../components/chrome/boot-shell"
 import { Toaster } from "../components/ui/sonner"
 import { AuthProvider, CursorPrefProvider, ThemeProvider } from "../ctx"
 import { CHROMELESS_EXACT, CHROMELESS_PREFIX, isChromelessPath } from "../lib/chrome-routes"
+import { cacheRestored } from "../lib/persist"
 import { queryClient } from "../lib/query-client"
 import { STORAGE_KEYS } from "../lib/storage-keys"
 import { reportWebVitals } from "../lib/vitals"
@@ -43,6 +43,12 @@ const BOOT_FRAME = `(function(){try{var p=location.pathname;var authed=localStor
 )};var b=!authed||e.indexOf(p)>=0||f.some(function(x){return p.indexOf(x)===0});document.documentElement.setAttribute("data-boot",b?"bare":"rail")}catch(_){}})()`
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+  // Gate ALL route loading on the IndexedDB cache restore, so a loader's ensureQueryData reads
+  // the persisted data instead of fetching cold before it lands — the ordering that lets a
+  // reload paint from cache like a nav. Resolved-instant after the first boot; never rejects.
+  beforeLoad: async () => {
+    await cacheRestored
+  },
   head: () => ({
     meta: [
       { charSet: "utf-8" },
@@ -80,6 +86,8 @@ function RootComponent() {
   }, [])
   return (
     <RootDocument>
+      {/* The cache is persisted to IndexedDB (lib/persist.ts) and restored before any route
+          loads (the root beforeLoad), so a reload paints from the same warm cache as a nav. */}
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
           <AuthProvider>

@@ -67,7 +67,11 @@ describe("usernames + public profiles", () => {
       jsonAs(as(ravi.email), { profession: " Builder ", about: "  ship features + docs  " }),
     )
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ profession: "Builder", about: "ship features + docs" })
+    expect(await res.json()).toEqual({
+      profession: "Builder",
+      about: "ship features + docs",
+      brandprint: null,
+    })
 
     // They come back on the public profile.
     const { user } = await (await app.request("/v1/users/ravi")).json()
@@ -75,7 +79,7 @@ describe("usernames + public profiles", () => {
 
     // An empty string clears a field; an omitted field is left untouched.
     const cleared = await app.request("/v1/me/profile", jsonAs(as(ravi.email), { profession: "" }))
-    expect(await cleared.json()).toEqual({ profession: null, about: null })
+    expect(await cleared.json()).toEqual({ profession: null, about: null, brandprint: null })
     const after = await (await app.request("/v1/users/ravi")).json()
     expect(after.user.profession).toBeNull()
     expect(after.user.about).toBe("ship features + docs") // untouched
@@ -91,6 +95,60 @@ describe("usernames + public profiles", () => {
     expect((await app.request("/v1/me/profile", jsonAs({}, { profession: "Design" }))).status).toBe(
       403,
     )
+  })
+
+  it("saves and returns a personal brandprint, and clears it with null", async () => {
+    const bo: TestUser = { id: "u_bo", email: "bo@derive.test", name: "Bo", username: "bo" }
+    const { app } = makeAuthedApp("profiles-brandprint", [bo])
+
+    // A Brandprint must point at a real collection the caller can reach — seed
+    // one via the route (bo is the sole/owner member of the seeded workspace).
+    const col = await (
+      await app.request("/v1/collections", jsonAs(as(bo.email), { title: "Brandprint" }))
+    ).json()
+
+    const saved = await app.request(
+      "/v1/me/profile",
+      jsonAs(as(bo.email), { brandprint: { collectionId: col.id } }),
+    )
+    expect(saved.status).toBe(200)
+    expect(await saved.json()).toEqual({
+      profession: null,
+      about: null,
+      brandprint: { collectionId: col.id },
+    })
+
+    const cleared = await app.request("/v1/me/profile", jsonAs(as(bo.email), { brandprint: null }))
+    expect(cleared.status).toBe(200)
+    expect((await cleared.json()).brandprint).toBeNull()
+  })
+
+  it("rejects a personal brandprint pointing at a collection the caller can't reach", async () => {
+    const cam: TestUser = { id: "u_cam", email: "cam@derive.test", name: "Cam", username: "cam" }
+    const { app, meta } = makeAuthedApp("profiles-brandprint-foreign", [cam])
+
+    // A totally unknown id is rejected...
+    const unknown = await app.request(
+      "/v1/me/profile",
+      jsonAs(as(cam.email), { brandprint: { collectionId: "col_does_not_exist" } }),
+    )
+    expect(unknown.status).toBe(400)
+
+    // ...and so is a real collection owned by a workspace cam isn't a member of.
+    // This is the cross-tenant read gap the fix closes: without ownership
+    // validation, a hand-crafted call could point a personal Brandprint at
+    // another tenant's collection and have its artifact bodies served over MCP.
+    await meta.createCollection({
+      id: "col_foreign",
+      org_id: "org_someone_else",
+      title: "Not Yours",
+      created_by: "u_stranger",
+    })
+    const foreign = await app.request(
+      "/v1/me/profile",
+      jsonAs(as(cam.email), { brandprint: { collectionId: "col_foreign" } }),
+    )
+    expect(foreign.status).toBe(400)
   })
 
   it("404s an unclaimed handle", async () => {
