@@ -86,6 +86,10 @@ export type Invite = components["schemas"]["Invite"]
 export type InviteResult = components["schemas"]["InviteResult"]
 /** What the accept page shows before you join. */
 export type InvitePreview = components["schemas"]["InvitePreview"]
+export type ArtifactInvite = components["schemas"]["ArtifactInvite"]
+export type ArtifactInvitePreview = components["schemas"]["ArtifactInvitePreview"]
+/** PUT members result: shared directly (existing account) or invited by email. */
+export type ShareResult = components["schemas"]["ShareResult"]
 /** Per-workspace integration switches. Generated from the OpenAPI spec. */
 export type OrgSettings = components["schemas"]["OrgSettings"]
 /** Slack connection status for a workspace. Generated from the OpenAPI spec. */
@@ -496,11 +500,30 @@ export const api = {
   withdrawProposal: (id: string, proposalId: string): Promise<Proposal> =>
     f(`/v1/artifacts/${id}/proposals/${proposalId}/withdraw`, opts({})).then(j),
 
-  listMembers: (id: string): Promise<{ default_role: Role; members: ArtifactMember[] }> =>
+  listMembers: (
+    id: string,
+  ): Promise<{ default_role: Role; members: ArtifactMember[]; invites: ArtifactInvite[] }> =>
     f(`/v1/artifacts/${id}/members`, opts()).then(j),
-  // `user` is a @username or an email; the server resolves either to the account.
-  setMember: (id: string, user: string, role: Role): Promise<ArtifactMember> =>
+  // `user` is a @username or an email; an email with no account behind it becomes a
+  // pending emailed invite (kind: "invite") instead of a member.
+  setMember: (id: string, user: string, role: Role): Promise<ShareResult> =>
     f(`/v1/artifacts/${id}/members`, { ...opts({ user, role }), method: "PUT" }).then(j),
+  revokeArtifactInvite: (id: string, inviteId: string): Promise<void> =>
+    f(`/v1/artifacts/${id}/invites/${inviteId}`, {
+      method: "DELETE",
+      credentials: "include",
+    }).then(() => undefined),
+  // The artifact-invite accept page: preview by token, then accept into the share.
+  previewArtifactInvite: (token: string): Promise<ArtifactInvitePreview> =>
+    f(`/v1/artifact-invites/${encodeURIComponent(token)}`, opts()).then(j),
+  acceptArtifactInvite: (
+    token: string,
+    confirmMismatch?: boolean,
+  ): Promise<{ short_id: string; role: Role }> =>
+    f(
+      `/v1/artifact-invites/${encodeURIComponent(token)}/accept`,
+      opts(confirmMismatch ? { confirm_mismatch: true } : {}),
+    ).then(j),
   removeMember: (id: string, userId: string): Promise<void> =>
     f(`/v1/artifacts/${id}/members/${userId}`, { method: "DELETE", credentials: "include" }).then(
       () => undefined,

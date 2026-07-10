@@ -4,6 +4,7 @@ import { useRef, useState } from "react"
 import {
   API_BASE,
   type ArtifactDomain,
+  type ArtifactInvite,
   type ArtifactMember,
   api,
   type CollectionGrant,
@@ -129,6 +130,9 @@ export function ShareButton({
   const qc = useQueryClient()
   const { me } = useAuth()
   const [members, setMembers] = useState<ArtifactMember[]>([])
+  // Pending emailed invites (share-capable callers only; the server omits them
+  // otherwise). Each row revokes; accepting one turns it into a member row.
+  const [invites, setInvites] = useState<ArtifactInvite[]>([])
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<Role>("editor")
   // A ref, not just the add mutation's async `isPending`: state updates are batched, so a
@@ -322,6 +326,7 @@ export function ShareButton({
       .listMembers(shortId)
       .then((r) => {
         setMembers(r.members)
+        setInvites(r.invites ?? [])
       })
       .catch(() => {})
   // After a share change, refresh the local list AND the shared cache: the artifact
@@ -334,8 +339,12 @@ export function ShareButton({
 
   const addMut = useApiMutation({
     mutationFn: (addr: string) => api.setMember(shortId, addr, role),
-    onSuccess: () => {
+    onSuccess: (res) => {
       setEmail("")
+      // No account behind that email — the server minted a pending invite and
+      // emailed it. Say so: "added" would over-promise (nothing shows for them
+      // until they accept).
+      if (res.kind === "invite") toast(`Invite sent to ${res.invite.email}.`)
       synced()
     },
   })
@@ -362,6 +371,11 @@ export function ShareButton({
   const change = (m: ArtifactMember, next: Role) => {
     if (next !== m.role && m.handle) changeMut.mutate({ handle: m.handle, next })
   }
+  const revokeInviteMut = useApiMutation({
+    mutationFn: (inviteId: string) => api.revokeArtifactInvite(shortId, inviteId),
+    success: "Invite revoked",
+    onSuccess: () => synced(),
+  })
   const removeMut = useApiMutation({
     mutationFn: (m: ArtifactMember) => api.removeMember(shortId, m.user_id),
     onSuccess: () => synced(),
@@ -759,6 +773,41 @@ export function ShareButton({
                       >
                         {ROLE_LABELS[m.role]}
                       </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Pending emailed invites: not members yet — a quiet mail row with the
+                granted role and a revoke. Accepting turns the row into a member. */}
+            {invites.length > 0 && (
+              <div className="-mx-2 mt-1 flex flex-col">
+                {invites.map((i) => (
+                  <div
+                    key={i.id}
+                    data-testid={`share-invite-row-${i.id}`}
+                    className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-secondary"
+                  >
+                    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-secondary">
+                      <Icon name="mail" size={16} className="text-muted-foreground" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-foreground">{i.email}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        Invited · joins as {ROLE_LABELS[i.role as Role] ?? i.role} once they accept
+                      </div>
+                    </div>
+                    {canManage && (
+                      <Button
+                        data-testid={`share-invite-revoke-${i.id}`}
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => revokeInviteMut.mutate(i.id)}
+                        aria-label={`Revoke the invite to ${i.email}`}
+                      >
+                        <Icon name="close" />
+                      </Button>
                     )}
                   </div>
                 ))}

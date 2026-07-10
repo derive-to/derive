@@ -272,6 +272,31 @@ export const invitation = sqliteTable(
   ],
 )
 
+// A pending per-artifact share invitation: an email invited to ONE artifact at a
+// role, redeemable by token — the share dialog's answer to "no Derive user with
+// that email". Accepting creates the artifact_member row; workspace membership is
+// never involved (see `invitation` above for that flow).
+export const artifactInvite = sqliteTable(
+  "artifact_invite",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id").notNull(),
+    email: text("email").notNull(),
+    role: text("role").$type<Role>().notNull().default("commenter"),
+    token: text("token").notNull(),
+    invited_by: text("invited_by"),
+    created_at: text("created_at").notNull().default(now),
+    expires_at: text("expires_at").notNull(),
+    accepted_at: text("accepted_at"),
+  },
+  (t) => [
+    uniqueIndex("artifact_invite_token").on(t.token),
+    // One live invite per (artifact, email): the route deletes any prior pending
+    // row before inserting, so a re-invite supersedes rather than duplicating.
+    index("artifact_invite_artifact_email").on(t.artifact_id, t.email),
+  ],
+)
+
 // An agent's pull inbox: one row per mention directed at the agent.
 export const agentMention = sqliteTable("agent_mention", {
   id: text("id").primaryKey(),
@@ -726,6 +751,7 @@ const TABLES = [
   agent,
   agentMention,
   invitation,
+  artifactInvite,
   oauthClientWorkspace,
   artifactFavorite,
   follow,
