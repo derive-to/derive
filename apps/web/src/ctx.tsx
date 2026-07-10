@@ -4,6 +4,7 @@ import { createContext, type ReactNode, useContext, useEffect, useState } from "
 import type { Me } from "./api"
 import { writeAuthHint } from "./lib/auth-hint"
 import { type CursorPref, defaultPrefFor, normalizePref } from "./lib/cursors"
+import { clearPersistedCache } from "./lib/persist"
 import { meQuery } from "./lib/queries"
 import { STORAGE_KEYS } from "./lib/storage-keys"
 
@@ -32,8 +33,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // see no session and bounce to /login. Login/logout are the source of truth for
     // `me`, not a background refetch, so cancel then set (the idiomatic optimistic
     // guard). A no-op when nothing is in flight.
+    const had = qc.getQueryData<Me | null>(meQuery().queryKey)
     qc.cancelQueries({ queryKey: meQuery().queryKey })
     qc.setQueryData(meQuery().queryKey, m)
+    // Logout (a real session → none): wipe the persisted + in-memory cache so the next
+    // person on this browser can't read the signed-out user's data. Logout is a client
+    // nav, not a hard reload, so nothing else clears it. Read the prior value from the
+    // cache (not a closure) so the transition is detected regardless of memoization.
+    if (m === null && had) void clearPersistedCache(qc)
   }
   // Mirror the resolved session into the per-browser boot hint — but never during the
   // loading window (so a mid-load reload keeps the last known state). The pre-paint

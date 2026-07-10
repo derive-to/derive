@@ -26,7 +26,6 @@ import {
 import { ago } from "@/lib/time"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { useDocumentTitle } from "@/lib/use-document-title"
-import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
 
 // The People tab — the people you work with. It folds the old Following nav item
@@ -48,7 +47,7 @@ export function People() {
 
   // Search filters within your workmates server-side; browse shows who you follow
   // + the rest of your teammates, so the query only runs while searching.
-  const { data, isError, isFetching, isPlaceholderData, refetch } = useQuery({
+  const { data, isError, isFetching, refetch } = useQuery({
     ...peopleQuery(debounced),
     enabled: searching,
   })
@@ -148,14 +147,9 @@ export function People() {
           />
         </div>
       ) : (
-        // Stale results stay visible but dim while the next search loads (placeholder
-        // data), so the list never blanks mid-type.
-        <div
-          className={cn(
-            "flex flex-col gap-6",
-            isPlaceholderData && "opacity-60 transition-opacity",
-          )}
-        >
+        // keepPreviousData holds the prior results while the next search loads, so the list
+        // never blanks mid-type; a cache-warm result swaps in instantly with no ceremony.
+        <div className="flex flex-col gap-6">
           {searching ? (
             <PeopleGroup label="Results" people={results} testId="people-results" />
           ) : (
