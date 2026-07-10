@@ -67,8 +67,11 @@ export const queryClient = new QueryClient({
       retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
       refetchOnWindowFocus: false,
       staleTime: 30_000,
-      // Retain inactive queries long enough for the persisted cache to stay complete (see above).
-      gcTime: CACHE_MAX_AGE,
+      // Retain inactive queries long enough for the persisted cache to stay complete (see above)
+      // — but ONLY in the browser. React Query's gc timer isn't unref'd, so a 24h timer scheduled
+      // during the SSR/prerender build would keep the Node process alive and hang `vite build`
+      // (the prerender never exits). SSR has no persistence, so a short gc there is harmless.
+      gcTime: typeof window === "undefined" ? 5_000 : CACHE_MAX_AGE,
     },
     // Writes are never auto-retried: many are non-idempotent (publishing a version,
     // posting a comment), and a failed write must surface at once rather than
