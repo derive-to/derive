@@ -292,6 +292,7 @@ function PageLabel({ pathname }: { pathname: string }) {
   if (pathname === "/following") return "Following"
   if (pathname === "/people") return "People"
   if (pathname === "/new") return "New artifact"
+  if (pathname === "/brandprint") return "Brandprint"
   if (pathname.startsWith("/settings")) return "Settings"
   if (pathname.startsWith("/artifacts/")) return "Artifact"
   if (pathname.startsWith("/users/")) return "Profile"

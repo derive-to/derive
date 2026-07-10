@@ -21,6 +21,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as FollowingRouteImport } from './routes/following'
 import { Route as FeedbackRouteImport } from './routes/feedback'
 import { Route as FavoritesRouteImport } from './routes/favorites'
+import { Route as BrandprintRouteImport } from './routes/brandprint'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
 import { Route as ContextsIndexRouteImport } from './routes/contexts.index'
@@ -91,6 +92,11 @@ const FavoritesRoute = FavoritesRouteImport.update({
   path: '/favorites',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BrandprintRoute = BrandprintRouteImport.update({
+  id: '/brandprint',
+  path: '/brandprint',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -139,6 +145,7 @@ const InviteATokenRoute = InviteATokenRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/brandprint': typeof BrandprintRoute
   '/favorites': typeof FavoritesRoute
   '/feedback': typeof FeedbackRoute
   '/following': typeof FollowingRoute
@@ -162,6 +169,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/brandprint': typeof BrandprintRoute
   '/favorites': typeof FavoritesRoute
   '/feedback': typeof FeedbackRoute
   '/following': typeof FollowingRoute
@@ -185,6 +193,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/brandprint': typeof BrandprintRoute
   '/favorites': typeof FavoritesRoute
   '/feedback': typeof FeedbackRoute
   '/following': typeof FollowingRoute
@@ -210,6 +219,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/brandprint'
     | '/favorites'
     | '/feedback'
     | '/following'
@@ -233,6 +243,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/brandprint'
     | '/favorites'
     | '/feedback'
     | '/following'
@@ -255,6 +266,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/brandprint'
     | '/favorites'
     | '/feedback'
     | '/following'
@@ -279,6 +291,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  BrandprintRoute: typeof BrandprintRoute
   FavoritesRoute: typeof FavoritesRoute
   FeedbackRoute: typeof FeedbackRoute
   FollowingRoute: typeof FollowingRoute
@@ -385,6 +398,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FavoritesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/brandprint': {
+      id: '/brandprint'
+      path: '/brandprint'
+      fullPath: '/brandprint'
+      preLoaderRoute: typeof BrandprintRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -467,6 +487,7 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  BrandprintRoute: BrandprintRoute,
   FavoritesRoute: FavoritesRoute,
   FeedbackRoute: FeedbackRoute,
   FollowingRoute: FollowingRoute,

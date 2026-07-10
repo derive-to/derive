@@ -95,8 +95,8 @@ function DocFileInput({
  * Point this scope's Brandprint at a conventions collection — the docs/skills that
  * describe how artifacts should be built here. An agent connected over MCP resolves
  * workspace ⊕ account (account wins) and reads those docs as Brandprint context.
- * Workspace scope saves to the workspace settings (Admin only — mirrors the other
- * workspace defaults in General); account scope saves to your own profile. Clearing
+ * Workspace scope saves to the workspace settings (Admin only, like the workspace
+ * defaults in Settings → General); account scope saves to your own profile. Clearing
  * sets the pointer back to none. Theme tokens are a later phase; this is the
  * collection pointer only.
  *
@@ -114,8 +114,8 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
     isError: collectionsError,
     refetch: refetchCollections,
   } = useQuery(collectionsQuery())
-  // Shared cache entry with the General section (staleTime Infinity) — mounting
-  // this here doesn't add a second network request when General is also open.
+  // Shared cache entry with Settings → General (staleTime Infinity), so this page
+  // and that section never double-fetch the same workspace record.
   const { data: ws } = useQuery({ ...workspaceQuery(), enabled: scope === "workspace" })
   const {
     data: settings,
