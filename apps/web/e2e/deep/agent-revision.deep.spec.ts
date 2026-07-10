@@ -135,7 +135,7 @@ test.describe("agent revision requests — the select→agent→propose→review
     await expect(page.getByTestId("agent-request-applied")).toBeVisible({ timeout: 10_000 })
   })
 
-  test("with several agents, each is a row in the selection menu — no nested picker", async ({
+  test("with several agents, the affordance opens a picker to choose whom to ask", async ({
     owner,
   }) => {
     const a1 = await createAgent(owner.request, "Reviser")
@@ -144,7 +144,8 @@ test.describe("agent revision requests — the select→agent→propose→review
     await owner.goto(`/artifacts/doc-${shortId}`)
     await selectFirstParagraph(owner)
 
-    // With >1 agent the anchored menu lists each as its own row, directly.
+    // With >1 agent the pill opens a picker (not a direct fire); both agents are listed.
+    await owner.getByTestId("ask-agent").click()
     await expect(owner.getByTestId(`ask-agent-${a1.id}`)).toBeVisible()
     await expect(owner.getByTestId(`ask-agent-${a2.id}`)).toBeVisible()
 

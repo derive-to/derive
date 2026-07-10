@@ -38,22 +38,23 @@ export function AskAgentButton({
   const label = single && size === "default" ? `Ask ${single.name.split(/\s+/)[0]}` : "Ask an agent"
 
   // One Button recipe, whether it fires directly (single agent) or triggers the picker
-  // (several) — so the pill's look can't drift between the two paths. onMouseDown
+  // (several) — so the affordance's look can't drift between the two paths. Desktop
+  // sits inside the selection bar's popover surface, so it takes the same flat ghost
+  // item as Comment; the mobile bar keeps its standalone rounded pill. onMouseDown
   // preventDefault keeps it from stealing the document selection it acts on.
   const trigger = (extra?: React.ComponentProps<typeof Button>) => (
     <Button
-      variant="outline"
+      variant={size === "bar" ? "outline" : "ghost"}
       size="sm"
       data-testid="ask-agent"
       onMouseDown={(e) => e.preventDefault()}
       className={cn(
-        "rounded-full border-primary/30 text-foreground hover:border-primary/50",
-        size === "bar" && "shrink-0",
+        size === "bar" && "shrink-0 rounded-full border-primary/30 hover:border-primary/50",
         className,
       )}
       {...extra}
     >
-      <Icon name="sparkles" size={16} className="text-primary" />
+      <Icon name="sparkles" size={size === "bar" ? 16 : 15} className="text-primary" />
       {label}
     </Button>
   )
