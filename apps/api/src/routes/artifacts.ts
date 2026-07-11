@@ -9,6 +9,7 @@ import {
   diffLines,
   EditError,
   effectiveRole,
+  elideDataUris,
   formatDiff,
   groupSessions,
   isHtmlLike,
@@ -1368,7 +1369,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const present = (source: string, contentType: string): string => {
       if (!format) return source
       if (format === "text") return isHtmlLike(contentType) ? pageText(source) : source
-      return toMarkdown(source, contentType)
+      return elideDataUris(toMarkdown(source, contentType))
     }
 
     c.header("Access-Control-Allow-Origin", "*")

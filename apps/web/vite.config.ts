@@ -55,6 +55,7 @@ export default defineConfig({
         "/v1",
         "/api",
         "/raw",
+        "/blob",
         "/healthz",
         "/oauth",
         "/mcp",

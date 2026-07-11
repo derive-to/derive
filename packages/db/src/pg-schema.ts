@@ -603,6 +603,22 @@ export const auditLog = pgTable("audit_log", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
+// A staged binary image asset (POST /v1/assets): content-addressed by `hash`, so
+// re-uploading identical bytes is a no-op. This row is what makes GET /blob/:hash
+// servable at all — the blob store also holds bundle manifests and page HTML, and
+// this table is the allowlist keeping the public route from ever serving those.
+export const asset = pgTable(
+  "asset",
+  {
+    hash: text("hash").primaryKey(),
+    org_id: text("org_id").notNull(),
+    content_type: text("content_type").notNull(),
+    size_bytes: integer("size_bytes").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [index("asset_org").on(t.org_id)],
+)
+
 // Schema parity is enforced in pg.ts, where the pg `schema` object lives — it
 // checks these table defs (via `Exhaustive`/`Shapes` in ./parity) against the
 // same core Record types the sqlite dialect uses, so the two dialects can't
@@ -653,6 +669,7 @@ const TABLES = [
   sessionMessage,
   report,
   auditLog,
+  asset,
 ]
 
 /** Build the Postgres boot DDL: generated table/index CREATEs + placeholder tables

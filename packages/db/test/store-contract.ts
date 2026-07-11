@@ -1810,4 +1810,61 @@ export function runStoreContract(
       expect((await store.getArtifactById(theirs.id))?.author_id).toBe(other)
     })
   })
+
+  describe(`${label}: standalone image assets (POST /v1/assets -> GET /blob/:hash)`, () => {
+    it("stages an asset, reads it back by hash, and is idempotent on re-upload", async () => {
+      const hash = uuid().replace(/-/g, "").padEnd(64, "0")
+      const created = await store.createAsset({
+        hash,
+        org_id: ORG,
+        content_type: "image/png",
+        size_bytes: 1234,
+      })
+      expect(created).toMatchObject({
+        hash,
+        org_id: ORG,
+        content_type: "image/png",
+        size_bytes: 1234,
+      })
+      expect(await store.getAsset(hash)).toMatchObject({ hash, content_type: "image/png" })
+
+      // Re-uploading the exact same bytes (same hash) is a no-op, not a duplicate
+      // or an error — it just returns the existing row unchanged.
+      const again = await store.createAsset({
+        hash,
+        org_id: ORG,
+        content_type: "image/png",
+        size_bytes: 1234,
+      })
+      expect(again).toMatchObject({ hash, org_id: ORG, size_bytes: 1234 })
+    })
+
+    it("returns null for a hash that was never staged", async () => {
+      expect(await store.getAsset(uuid().replace(/-/g, "").padEnd(64, "0"))).toBeNull()
+    })
+
+    it("sums an org's staged assets, scoped away from another org's", async () => {
+      const otherOrg = `org_${uuid()}`
+      const h1 = uuid().replace(/-/g, "").padEnd(64, "1")
+      const h2 = uuid().replace(/-/g, "").padEnd(64, "2")
+      const hOther = uuid().replace(/-/g, "").padEnd(64, "3")
+      await store.createAsset({ hash: h1, org_id: ORG, content_type: "image/png", size_bytes: 100 })
+      await store.createAsset({
+        hash: h2,
+        org_id: ORG,
+        content_type: "image/jpeg",
+        size_bytes: 250,
+      })
+      await store.createAsset({
+        hash: hOther,
+        org_id: otherOrg,
+        content_type: "image/png",
+        size_bytes: 999,
+      })
+
+      expect(await store.assetStorageBytes(ORG)).toBeGreaterThanOrEqual(350)
+      const otherTotal = await store.assetStorageBytes(otherOrg)
+      expect(otherTotal).toBe(999)
+    })
+  })
 }

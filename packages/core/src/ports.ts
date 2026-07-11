@@ -883,6 +883,36 @@ export interface ModerationStore {
  * area can depend on the narrower sub-store instead. Splitting the definition keeps a
  * change to one feature from visually touching the others.
  */
+export interface AssetRecord {
+  /** The blob's sha256 hex — same key as BlobStore.put/get, and the exact
+   *  `asset:<hash>` handle the client already has. */
+  hash: string
+  org_id: string
+  content_type: string
+  size_bytes: number
+  created_at: string
+}
+export interface NewAsset {
+  hash: string
+  org_id: string
+  content_type: string
+  size_bytes: number
+}
+
+export interface AssetStore {
+  // ---- Standalone image assets (POST /v1/assets), servable at GET /blob/:hash ----
+  /** Record a staged upload's metadata. Content-addressed: re-uploading the same
+   *  bytes is a no-op (ON CONFLICT DO NOTHING) — the row already describes them. */
+  createAsset(a: NewAsset): Promise<AssetRecord>
+  /** One asset by hash, org-unscoped — `/blob/:hash` is a public capability URL
+   *  (unguessable, not access-gated), so serving it never needs the caller's org. */
+  getAsset(hash: string): Promise<AssetRecord | null>
+  /** Distinct bytes staged by an org's uploads (whether or not they've been
+   *  embedded anywhere yet) — folded into storageBytes so a permanent public
+   *  URL counts against quota from the moment it exists, not just once referenced. */
+  assetStorageBytes(orgId: string): Promise<number>
+}
+
 export interface MetaStore
   extends ArtifactStore,
     CommentStore,
@@ -896,7 +926,8 @@ export interface MetaStore
     ContextStore,
     DirectoryStore,
     AgentStore,
-    ModerationStore {}
+    ModerationStore,
+    AssetStore {}
 
 /** What a user follows: a GitHub author (`target` = the login), a repo path prefix
  *  (`target` = a path prefix, e.g. "docs/plans"), or a Derive person (`target` = their

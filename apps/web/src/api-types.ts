@@ -1581,7 +1581,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Stage a binary image asset (raw or multipart) and get its asset:<hash> handle. */
+        /** Stage a binary image asset and get a permanent URL + its asset:<hash> handle. */
         post: {
             parameters: {
                 query?: never;
@@ -1591,7 +1591,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The stored asset's content-addressed handle. */
+                /** @description The stored asset's public URL and content-addressed handle. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -5219,6 +5219,8 @@ export interface components {
         AssetRef: {
             /** @description The blob hash (content-addressed storage key) */
             key: string;
+            /** @description A permanent public URL for these bytes — embed it in any artifact's content */
+            url: string;
             /** @description The exact "asset:<hash>" string to drop into a publish files map */
             ref: string;
             /**

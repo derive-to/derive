@@ -599,6 +599,19 @@ export const isHtmlLike = (contentType: string): boolean => {
 export const toMarkdown = (source: string, contentType: string): string =>
   isHtmlLike(contentType) ? htmlToMarkdown(source) : source
 
+// A base64 data: URI tokenizes at roughly 1 token/char — a single modest screenshot
+// can cost 100k+ tokens to read back through an agent-facing surface. Only ever
+// applied to the markdown/agent-readable form (never the exact HTML source, which
+// `edits` matches byte-for-byte against); anything over ~200 base64 chars (~150
+// bytes) is worth collapsing.
+const DATA_URI_RE = /data:([a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)/g
+export const elideDataUris = (s: string): string =>
+  s.replace(DATA_URI_RE, (m, mime: string, b64: string) =>
+    b64.length > 200
+      ? `data:${mime};base64,[elided — ${Math.round((b64.length * 3) / 4 / 1024)}KB inline image. Re-upload via POST /v1/assets and swap in its url to make this doc cheap to read]`
+      : m,
+  )
+
 /** Outline for any text source (h1–h3 for HTML, ATX `#`–`###` for markdown). */
 export const outlineOf = (source: string, contentType: string): OutlineSection[] => {
   if (isHtmlLike(contentType)) return docOutline(source)

@@ -28,6 +28,7 @@ import {
   capRole,
   diffLines,
   EditError,
+  elideDataUris,
   formatDiff,
   isHtmlLike,
   newId,
@@ -122,10 +123,12 @@ const doc = (meta: Record<string, string | number | null | undefined>, body: str
 type ReadFormat = "markdown" | "html" | "text"
 const baseType = (t: string) => t.split(";")[0]?.trim() ?? t
 const isTextType = (t: string) => baseType(t) === "text/html" || baseType(t) === "text/markdown"
+// Only the `markdown` format elides data: URIs (never `html`, which `edits` matches
+// byte-for-byte against, or `text`, the comment-anchor source) — see elideDataUris.
 const present = (source: string, contentType: string, format: ReadFormat): string => {
   if (format === "html") return source
   if (format === "text") return isHtmlLike(contentType) ? pageText(source) : source
-  return toMarkdown(source, contentType)
+  return elideDataUris(toMarkdown(source, contentType))
 }
 const formatLabel = (contentType: string, format: ReadFormat): string => {
   if (format === "markdown")
@@ -1061,13 +1064,13 @@ async function buildServer(
           .string()
           .optional()
           .describe(
-            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both.",
+            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. To embed an image CHEAPLY (no base64 in this call), upload the raw bytes to POST /v1/assets first — the response's `url` is a permanent public link; paste it straight into an `<img src>` or markdown `![]()`. Never inline a base64 data: URI here — it tokenizes at roughly 1 token/char, so one modest screenshot can cost 100k+ tokens to pass through this call.",
           ),
         files: z
           .record(z.string(), z.string())
           .optional()
           .describe(
-            'A MULTI-PAGE bundle as a map of path → content — the whole site. Each value is one of: a text page (plain string); a base64 data: URI for a small inline binary ("shot.png":"data:image/png;base64,iVBORw0K…"); or — PREFERRED for real images — an "asset:<hash>" handle returned by uploading the raw bytes to POST /v1/assets first ("shot.png":"asset:9f86d0818…"). The asset handle keeps the call tiny: stream each screenshot up as raw binary (no base64 transcription), then reference the handles here. Example: {"index.html":"<img src=shot.png>","styles.css":"…","shot.png":"asset:9f86d0818…","logo.png":"data:image/png;base64,iVBORw0K…"}. The root index.html (else the shallowest .html) becomes the entry page; pages reference assets by relative path. Served content-type comes from the file extension, so give binary entries a real extension (.png/.jpg/.webp/.woff2). A plain republish REPLACES the bundle (include every page and asset). Keep each call to a few MB; for many/large images, upload them to /v1/assets and reference the handles (or publish pages first, then `merge` asset batches).',
+            'A MULTI-PAGE bundle as a map of path → content — the whole site. Each value is one of: a text page (plain string); a base64 data: URI for a small inline binary ("shot.png":"data:image/png;base64,iVBORw0K…"); or — PREFERRED for real images — an "asset:<hash>" handle returned by uploading the raw bytes to POST /v1/assets first ("shot.png":"asset:9f86d0818…"). The asset handle keeps the call tiny: stream each screenshot up as raw binary (no base64 transcription), then reference the handles here. Example: {"index.html":"<img src=shot.png>","styles.css":"…","shot.png":"asset:9f86d0818…","logo.png":"data:image/png;base64,iVBORw0K…"}. The root index.html (else the shallowest .html) becomes the entry page; pages reference assets by relative path. Served content-type comes from the file extension, so give binary entries a real extension (.png/.jpg/.webp/.woff2). A plain republish REPLACES the bundle (include every page and asset). Keep each call to a few MB; for many/large images, upload them to /v1/assets and reference the handles (or publish pages first, then `merge` asset batches). Each published page is also readable directly at /raw/<short_id>/v/<n>/<path> once live.',
           ),
         title: z
           .string()
@@ -1501,6 +1504,18 @@ async function buildServer(
             ctx.bus.publish(channel, pushed)
           }
         }
+        // Each bundle page (including any bound images) is directly fetchable once
+        // live — surfacing the URLs here is the fix for an agent that can't find
+        // them otherwise and falls back to inlining base64 (see the "cheap image
+        // embedding" handoff): no separate call needed to learn where a page serves.
+        const pageUrls = isBundle
+          ? Object.fromEntries(
+              Object.keys(files as Record<string, string>).map((p) => [
+                cleanPath(p),
+                `${ctx.deps.baseUrl}/raw/${artifact.short_id}/v/${version.n}/${cleanPath(p)}`,
+              ]),
+            )
+          : null
         return json({
           published: true,
           short_id: artifact.short_id,
@@ -1508,6 +1523,7 @@ async function buildServer(
           kind: artifact.kind,
           version: version.n,
           url,
+          ...(pageUrls ? { page_urls: pageUrls } : {}),
           title: artifact.title,
           workspace_access: artifact.workspace_access,
           link_role: artifact.link_role,

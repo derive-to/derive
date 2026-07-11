@@ -527,8 +527,14 @@ export function buildContext(deps: AppDeps) {
     return rateLimited(c, r.retryAfter)
   }
   // Would storing `incoming` more bytes push THIS workspace over its storage cap?
+  // Sums published content (storageBytes) and staged /v1/assets uploads
+  // (assetStorageBytes) separately — an asset baked into a bundle can double-count
+  // against its staged row, a deliberate over-count: a permanent public /blob/:hash
+  // URL must count from the moment it exists, not just once some doc embeds it.
   const overStorage = async (orgId: string, incoming: number): Promise<boolean> =>
-    !!deps.maxBytes && (await meta.storageBytes(orgId)) + incoming > deps.maxBytes
+    !!deps.maxBytes &&
+    (await meta.storageBytes(orgId)) + (await meta.assetStorageBytes(orgId)) + incoming >
+      deps.maxBytes
 
   // Lazy provisioning: the first member of a workspace is its owner; everyone
   // else joins at the default role. Returns the caller's role in that workspace.

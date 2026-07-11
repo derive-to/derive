@@ -1063,6 +1063,10 @@
             "type": "string",
             "description": "The blob hash (content-addressed storage key)"
           },
+          "url": {
+            "type": "string",
+            "description": "A permanent public URL for these bytes — embed it in any artifact's content"
+          },
           "ref": {
             "type": "string",
             "description": "The exact \"asset:<hash>\" string to drop into a publish files map"
@@ -1084,6 +1088,7 @@
         },
         "required": [
           "key",
+          "url",
           "ref",
           "type",
           "size"
@@ -4230,10 +4235,10 @@
         "tags": [
           "Assets"
         ],
-        "summary": "Stage a binary image asset (raw or multipart) and get its asset:<hash> handle.",
+        "summary": "Stage a binary image asset and get a permanent URL + its asset:<hash> handle.",
         "responses": {
           "200": {
-            "description": "The stored asset's content-addressed handle.",
+            "description": "The stored asset's public URL and content-addressed handle.",
             "content": {
               "application/json": {
                 "schema": {

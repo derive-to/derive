@@ -467,6 +467,16 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS asset (
+  hash TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS asset_org ON asset (org_id);
+
 CREATE TABLE IF NOT EXISTS principal (
     id TEXT PRIMARY KEY,
     org_id TEXT NOT NULL,

@@ -4,6 +4,7 @@ import type {
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
+  AssetRecord,
   AuditLogRecord,
   CollectionMemberRecord,
   CollectionRecord,
@@ -34,6 +35,7 @@ import type {
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
+  NewAsset,
   NewAuditLog,
   NewCollection,
   NewCollectionMember,
@@ -113,6 +115,7 @@ import {
   artifactInvite,
   artifactMember,
   artifactTag,
+  asset,
   auditLog,
   collection,
   collectionItem,
@@ -194,6 +197,7 @@ export const schema = {
   domain,
   report,
   auditLog,
+  asset,
 }
 
 // Compile-time schema parity (see ./parity), same classification as the sqlite
@@ -230,6 +234,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   domain: true,
   report: true,
   auditLog: true,
+  asset: true,
 }
 void _schemaExhaustive
 void _schemaShapes
@@ -2506,6 +2511,26 @@ export class PgMetaStore implements MetaStore {
       )
       .orderBy(desc(auditLog.created_at))
     return opts?.limit ? q.limit(opts.limit) : q
+  }
+
+  // ---- Standalone image assets (POST /v1/assets -> GET /blob/:hash) ------
+  async createAsset(a: NewAsset): Promise<AssetRecord> {
+    const rows = await this.db.insert(asset).values(a).onConflictDoNothing().returning()
+    // Content-addressed: a conflict means these exact bytes are already staged.
+    return rows[0] ?? ((await this.getAsset(a.hash)) as AssetRecord)
+  }
+  async getAsset(hash: string): Promise<AssetRecord | null> {
+    const rows = await this.db.select().from(asset).where(eq(asset.hash, hash))
+    return rows[0] ?? null
+  }
+  async assetStorageBytes(orgId: string): Promise<number> {
+    // `hash` is the primary key, so unlike storageBytes there's no per-org
+    // dedup to do — each row is already one distinct blob.
+    const rows = await this.db
+      .select({ s: sql<number>`coalesce(sum(${asset.size_bytes}), 0)` })
+      .from(asset)
+      .where(eq(asset.org_id, orgId))
+    return Number(rows[0]?.s ?? 0)
   }
 
   async close(): Promise<void> {

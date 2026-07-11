@@ -15,7 +15,7 @@ import type { Hono } from "hono"
  *  · prefixes match the path and any subpath (`/v1`, `/v1/artifacts`, …)
  *  · exact paths match only themselves (`/healthz`)
  */
-const API_PREFIXES = ["/v1", "/api", "/raw", "/oauth"] as const
+const API_PREFIXES = ["/v1", "/api", "/raw", "/blob", "/oauth"] as const
 // Exact server-owned paths. The OAuth 2.0 discovery docs (RFC 8414 / RFC 9728) the
 // Worker must answer with JSON, else SPA not_found_handling shadows them. `/mcp` is
 // EXACT, not a prefix: the MCP Streamable-HTTP endpoint is hit at exactly /mcp with
