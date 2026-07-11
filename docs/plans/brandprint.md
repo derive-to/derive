@@ -1,6 +1,6 @@
 # Brandprint
 
-Status: living spec. Phases 0 and 1 have shipped end to end. Phase 2, the brand profile (our take on tasteprofile.io), is the active build; Rework moves to Phase 3.
+Status: living spec. Phases 0 and 1 have shipped end to end. Phase 2, the brand profile (our take on tasteprofile.io), is built and in review (#392); Rework (Phase 3) is the next build.
 Owner: Connor
 Related prior art: `feat/house-style` (Anir, unmerged; ported forward as Phase 0)
 
@@ -18,11 +18,11 @@ Every team gets a **Brandprint**: their voice, style, and rules captured once, d
 | Phase 1: docs managed on `/brandprint` only (collection hidden from Collections) + team-scope dialog copy | Shipped (#386) |
 | Phase 1: shared Connect-an-agent surface | Shipped (#388) |
 | Phase 1: onboarding step + owner home nudge | Shipped (#388) |
-| Phase 2: the brand profile (agent-generated, tasteprofile take) | **Next up** |
-| Phase 3: Rework button + endpoint + no-agent routing | After Phase 2 |
+| Phase 2: the brand profile (agent-generated, tasteprofile take) | Built, in review (#392) |
+| Phase 3: Rework button + endpoint + no-agent routing | **Next up** |
 | Phase 4: enrichment, visual theming from profile tokens, "Always review Reworks" | Later |
 
-Sections below marked **(shipped)** describe behavior now on main. Everything else is still spec, and it is what we build next.
+Sections below marked **(shipped)** describe behavior now on main; sections marked **(built, in review #392)** are built and awaiting merge. Everything else is still spec, and it is what we build next.
 
 ## Why this exists
 
@@ -156,9 +156,9 @@ Step 3 in `apps/web/src/pages/welcome.tsx`, after Step 2 (Connect an agent), ful
 
 ---
 
-Everything below this line is **not yet built**. It is the roadmap, in build order.
+Everything below this line is **not yet on main**. The brand profile is built and awaiting merge (#392); the rest is the roadmap, in build order.
 
-## The brand profile (next, Phase 2)
+## The brand profile (built, in review #392)
 
 Our take on tasteprofile.io ("Brand guides are PDFs. AI tools need data."): every Brandprint culminates in one generated, beautiful, machine-readable HTML page, the **brand profile**, assembled by the user's own agent. Derive ships reference material and plumbing only; it never runs inference and never owns an agent.
 
@@ -179,6 +179,8 @@ Proposals can only revise an existing artifact (creation requires publish rights
 ### Data model
 
 The Brandprint pointer gains one field: `{ collectionId?, profileId? }`. JSON in org settings, no schema change. `profileId` is validated server-side like `collectionId` (must name an artifact in the pointed collection's workspace).
+
+Two contract details settled in the build: the personal route's request and response use a scoped schema that omits `profileId` (a sent one strips like any unknown key, so the generated client types never advertise a field the server can't return there), and the live-from-version-2 rule has one server home, core's `profileState`, with the web carrying the standard client mirror.
 
 **`BrandprintTheme` is removed.** It has been stored, merged, validated, and typed since Phase 0 with zero consumers, and the profile's embedded tokens supersede it permanently. Delete the type from `ports.ts`, `mergeTheme` from core, the `theme` field from `BrandprintSchema`, the deep-merge handling in `workspace.ts`, and the theme cases in core tests. Phase 4 theming, if built, reads tokens from the profile artifact.
 
@@ -273,7 +275,7 @@ Shipped (#378):
 
 Not built, still specced:
 
-- Phase 2 (brand profile) adds **no endpoints**: the placeholder rides the existing publish path, `profileId` rides the existing settings/profile PATCH routes (with the same tenancy validation), and approval is the existing proposals route. The reference resources are MCP-only.
+- Phase 2 (brand profile) adds **no endpoints**, held in #392: the placeholder rides the existing publish path, `profileId` rides the existing settings/profile PATCH routes (with the same tenancy validation), and approval is the existing proposals route. The reference resources are MCP-only.
 - `POST /v1/artifacts/:shortId/rework` (Phase 3): compose and post the canned @mention request to a chosen or sole registered agent; `409 needsAgent` when none.
 - `POST /v1/brandprint/seed`: superseded by the shipped client-side composition. The onboarding step (#388) shipped without it, settling the open question (Decisions log #6); dead unless a future caller needs a single atomic round-trip.
 
@@ -289,13 +291,13 @@ Shipped:
 - `pages/welcome.tsx` (#388): skippable Step 3 with the Brandprint explainer and notes intake via the shared `useBrandprintImport` hook.
 - `pages/library/brandprint-nudge.tsx` (#388): one-time dismissible owner nudge on the home library.
 
-Next (Phase 2):
+In review (#392):
 
-- Create dialog (workspace scope): final step becomes the hand-off card (brief + ConnectAgent); intake also creates the placeholder profile artifact and stores `profileId`.
-- `pages/brandprint/`: the five profile states (empty / finish-with-agent / reveal / approved / no-agent), full-bleed proposal preview with Approve and comments, Regenerate.
+- `pages/brandprint/profile-panel.tsx`: the hand-off card (three-line brief through the shared PromptBlock, ConnectAgent one tap away), the polled reveal (full-width proposal preview, Approve, Review & comment), and the live profile with Regenerate. The page mounts it instead of the inert nudge whenever `profileId` is set.
+- `pages/brandprint/profile-placeholder.ts` + `use-brandprint-import.ts`: every workspace pointer-write (intake, picker, or the dialog's collection tab) seeds the placeholder and stores `profileId`; the docs list hides the profile artifact, since the panel is its home.
 - Onboarding Step 3: closing copy points at the Brandprint page to finish (one string).
 
-Then (Phase 3):
+Next (Phase 3):
 
 - `pages/artifact/artifact-top-bar.tsx`: "Rework with Brandprint" ⋯ item, four-state per the gate above.
 
@@ -310,7 +312,7 @@ Shipped coverage (#378, #383):
 
 To write with the remaining phases:
 
-- **Phase 2:** the brand profile section carries its own testing list (placeholder intake, `profileId` tenancy, the MCP serving matrix, the five page states).
+- **Phase 2: written in #392** — `profileId` tenancy on both routes, the MCP serving matrix (pending and live states, reference resources), and `profileState`. Still standing: the page states carry testids for the e2e follow-up, and the agent-in-the-loop run (brief → proposal → approve → next session reads the profile) is a manual pre-merge pass.
 - **API (Phase 3):** `artifacts/:id/rework` composes the correct @mention, lands it in the agent inbox, and returns `needsAgent` when the workspace has none.
 - **Web:** onboarding Step 3 renders, saves, and skips; the Rework item shows the correct one of set-up / connect / fire / picker for its four states; an e2e over the create dialog.
 
@@ -318,8 +320,8 @@ To write with the remaining phases:
 
 - **Phase 0 (foundation): shipped** (#378). Anir's Phase A ported forward, renamed, with the cross-tenant ownership validation added in review.
 - **Phase 1 (capture): shipped** (#383, #384, #386, #388). The create dialog on the `/brandprint` page, the docs' one home, the shared ConnectAgent surface, onboarding Step 3, and both nudges. No seed endpoint, settled.
-- **Phase 2 (the brand profile): next up.** The hand-off flow, the placeholder-proposal mechanics, the two reference resources, the five page states, profile-first delivery, and the `BrandprintTheme` removal.
-- **Phase 3 (apply): after the profile.** The Rework ⋯ item (gated on a Brandprint existing), the rework endpoint, and the no-agent routing.
+- **Phase 2 (the brand profile): built, in review** (#392). The hand-off flow, the placeholder-proposal mechanics, the two reference resources, the page states, profile-first delivery, and the `BrandprintTheme` removal.
+- **Phase 3 (apply): next up.** The Rework ⋯ item (gated on a Brandprint existing), the rework endpoint, and the no-agent routing.
 - **Phase 4 (later, optional):** agent enrichment of the Brandprint doc, visual theme application fed by the profile's embedded tokens, and an "Always review Reworks" setting.
 
 ## Decisions log
@@ -338,5 +340,5 @@ Resolved during review and build, reflected in the body above:
 10. **Derive never runs inference and never solicits.** The Derive side of generation is static reference resources over MCP plus factual, user-conditioned instructions. No Derive-owned agents, no inbox pushes for generation, no pitching in unrelated sessions; the persistent hand-off card on `/brandprint` is the backstop.
 11. **One HTML file carries both audiences.** The profile embeds its tokens as CSS custom properties plus a JSON island, so humans get the beautiful page and machines get structured data from the same artifact. `BrandprintTheme` is removed as superseded, having shipped in Phase 0 with zero consumers.
 12. **The placeholder is the recognition contract.** Created at intake time, its short_id rides the brief and the proposal, so which artifact is THE profile is never inferred from conventions.
-13. **Personal Brandprint stays a preferences layer.** Profiles are workspace-only; the personal half keeps raw-docs behavior and doc-level precedence. Two generated profiles per session would have no sane merge rule.
+13. **Personal Brandprint stays a preferences layer.** Profiles are workspace-only; the personal half keeps raw-docs behavior and doc-level precedence. Two generated profiles per session would have no sane merge rule. Shipped in #392 as a scoped schema: the personal route's request and response omit `profileId`.
 14. **Rework moves to Phase 3.** The profile outranks it: it upgrades what every agent session reads by default, while Rework upgrades one artifact on demand, and Rework's canned instruction gets better the moment a profile exists.
