@@ -588,7 +588,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
       const org = await activeWorkspace(c)
       // Merge over current (so a partial PATCH only flips the keys it sends). Brandprint
       // is pulled out and merged one level deep below, so setting collectionId alone
-      // doesn't wipe an existing theme (and vice versa).
+      // doesn't wipe an existing profileId (and vice versa).
       const { brandprint, ...flat } = b
       const cur = await meta.getOrgSettings(org)
       const next = { ...cur, ...flat }
@@ -596,15 +596,25 @@ export const workspaceRoutes = (ctx: AppContext) => {
       else if (brandprint) {
         // A new collectionId pointer must be owned by this workspace: an unvalidated id
         // could point at another tenant's collection and leak its bodies over MCP. The
-        // store doesn't check ownership, so the route does. (Clearing or a theme-only
-        // patch points at nothing new, so it skips the check.)
+        // store doesn't check ownership, so the route does. (Clearing or a partial patch
+        // points at nothing new, so it skips the check.)
         if (brandprint.collectionId) {
           const col = await meta.getCollection(brandprint.collectionId)
           if (!col || col.org_id !== org)
             return bail(fail(c, 400, "brandprint collection not found in this workspace"))
         }
+        // Same tenancy rule for the brand profile: it becomes the workspace's headline
+        // MCP resource, so a hand-crafted short_id must not reach another org's artifact.
+        if (brandprint.profileId) {
+          const art = await meta.getByShortId(brandprint.profileId)
+          if (!art || art.org_id !== org)
+            return bail(fail(c, 400, "brandprint profile not found in this workspace"))
+        }
         const m = { ...cur.brandprint, ...brandprint }
-        next.brandprint = { collectionId: m.collectionId ?? undefined, theme: m.theme ?? undefined }
+        next.brandprint = {
+          collectionId: m.collectionId ?? undefined,
+          profileId: m.profileId ?? undefined,
+        }
       }
       // The default access must satisfy the same listing preconditions a publish
       // would (see access-model.md) — otherwise every new publish that takes the

@@ -123,6 +123,22 @@ describe("usernames + public profiles", () => {
     expect((await cleared.json()).brandprint).toBeNull()
   })
 
+  it("rejects a personal brandprint carrying a profileId (workspace-only)", async () => {
+    const pi: TestUser = { id: "u_pi", email: "pi@derive.test", name: "Pi", username: "pi" }
+    const { app } = makeAuthedApp("profiles-brandprint-profileid", [pi])
+    const col = await (
+      await app.request("/v1/collections", jsonAs(as(pi.email), { title: "Brandprint" }))
+    ).json()
+
+    // The brand profile is a team property (spec: personal is a preferences layer);
+    // the personal route refuses the field outright rather than silently dropping it.
+    const r = await app.request(
+      "/v1/me/profile",
+      jsonAs(as(pi.email), { brandprint: { collectionId: col.id, profileId: "s_whatever" } }),
+    )
+    expect(r.status).toBe(400)
+  })
+
   it("rejects a personal brandprint pointing at a collection the caller can't reach", async () => {
     const cam: TestUser = { id: "u_cam", email: "cam@derive.test", name: "Cam", username: "cam" }
     const { app, meta } = makeAuthedApp("profiles-brandprint-foreign", [cam])

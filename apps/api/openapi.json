@@ -871,34 +871,10 @@
                 "nullable": true,
                 "maxLength": 64
               },
-              "theme": {
-                "type": "object",
+              "profileId": {
+                "type": "string",
                 "nullable": true,
-                "properties": {
-                  "palette": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "type": "string"
-                    }
-                  },
-                  "fonts": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "type": "string"
-                    }
-                  },
-                  "dark": {
-                    "type": "object",
-                    "properties": {
-                      "palette": {
-                        "type": "object",
-                        "additionalProperties": {
-                          "type": "string"
-                        }
-                      }
-                    }
-                  }
-                }
+                "maxLength": 64
               }
             },
             "description": "The workspace's Brandprint (conventions collection + theme); absent until set."
@@ -2903,34 +2879,10 @@
                           "nullable": true,
                           "maxLength": 64
                         },
-                        "theme": {
-                          "type": "object",
+                        "profileId": {
+                          "type": "string",
                           "nullable": true,
-                          "properties": {
-                            "palette": {
-                              "type": "object",
-                              "additionalProperties": {
-                                "type": "string"
-                              }
-                            },
-                            "fonts": {
-                              "type": "object",
-                              "additionalProperties": {
-                                "type": "string"
-                              }
-                            },
-                            "dark": {
-                              "type": "object",
-                              "properties": {
-                                "palette": {
-                                  "type": "object",
-                                  "additionalProperties": {
-                                    "type": "string"
-                                  }
-                                }
-                              }
-                            }
-                          }
+                          "maxLength": 64
                         }
                       },
                       "description": "Saved personal Brandprint; null when cleared."

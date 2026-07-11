@@ -133,19 +133,7 @@ export interface paths {
                             /** @description Saved personal Brandprint; null when cleared. */
                             brandprint: {
                                 collectionId?: string | null;
-                                theme?: {
-                                    palette?: {
-                                        [key: string]: string;
-                                    };
-                                    fonts?: {
-                                        [key: string]: string;
-                                    };
-                                    dark?: {
-                                        palette?: {
-                                            [key: string]: string;
-                                        };
-                                    };
-                                } | null;
+                                profileId?: string | null;
                             } | null;
                         };
                     };
@@ -5157,19 +5145,7 @@ export interface components {
             /** @description The workspace's Brandprint (conventions collection + theme); absent until set. */
             brandprint?: {
                 collectionId?: string | null;
-                theme?: {
-                    palette?: {
-                        [key: string]: string;
-                    };
-                    fonts?: {
-                        [key: string]: string;
-                    };
-                    dark?: {
-                        palette?: {
-                            [key: string]: string;
-                        };
-                    };
-                } | null;
+                profileId?: string | null;
             };
         };
         Workspaces: {

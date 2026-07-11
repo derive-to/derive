@@ -200,10 +200,14 @@ export const sessionRoutes = (ctx: AppContext) => {
         }),
       )
       if (body instanceof Response) return bail(body)
+      // The brand profile is a team property (spec: personal is a preferences layer),
+      // so the personal route refuses the field outright rather than silently dropping it.
+      if (body.brandprint?.profileId)
+        return bail(fail(c, 400, "brandprint profileId is workspace-only"))
       // A new collectionId pointer must be owned by one of the caller's own workspaces:
       // an unvalidated id could point at another tenant's collection and leak its bodies
       // over MCP. The store doesn't check ownership, so the route does. (Clearing or a
-      // theme-only patch points at nothing new, so it skips the check.)
+      // partial patch points at nothing new, so it skips the check.)
       if (body.brandprint?.collectionId) {
         const col = await meta.getCollection(body.brandprint.collectionId)
         const mine = await meta.listWorkspaces(u.id)
