@@ -2132,6 +2132,50 @@
           "ask_policy"
         ]
       },
+      "BrandprintConfig": {
+        "type": "object",
+        "properties": {
+          "profile_short_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "The workspace brand-profile artifact (an HTML page carrying theme tokens), when set; null otherwise. Not in `members` — it is the headline read, not a note."
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "short_id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "version": {
+                  "type": "number",
+                  "description": "The member's current version at fetch time (provenance)."
+                },
+                "is_skill": {
+                  "type": "boolean",
+                  "description": "A skill bundle (materialize into skills/) vs a prose note."
+                }
+              },
+              "required": [
+                "short_id",
+                "title",
+                "version",
+                "is_skill"
+              ]
+            },
+            "description": "Convention artifacts: skills to materialize, notes to read. Excludes the profile."
+          }
+        },
+        "required": [
+          "profile_short_id",
+          "members"
+        ]
+      },
       "Session": {
         "type": "object",
         "properties": {
@@ -6267,6 +6311,9 @@
                         "manifest_md": {
                           "type": "string",
                           "nullable": true
+                        },
+                        "brandprint": {
+                          "$ref": "#/components/schemas/BrandprintConfig"
                         }
                       }
                     }

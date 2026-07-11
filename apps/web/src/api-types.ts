@@ -3698,6 +3698,7 @@ export interface paths {
                         "application/json": components["schemas"]["ContextInfo"] & {
                             manifest_version?: number;
                             manifest_md?: string | null;
+                            brandprint?: components["schemas"]["BrandprintConfig"];
                         };
                     };
                 };
@@ -5587,6 +5588,19 @@ export interface components {
              * @enum {string}
              */
             ask_policy: "workspace" | "invited";
+        };
+        BrandprintConfig: {
+            /** @description The workspace brand-profile artifact (an HTML page carrying theme tokens), when set; null otherwise. Not in `members` — it is the headline read, not a note. */
+            profile_short_id: string | null;
+            /** @description Convention artifacts: skills to materialize, notes to read. Excludes the profile. */
+            members: {
+                short_id: string;
+                title: string | null;
+                /** @description The member's current version at fetch time (provenance). */
+                version: number;
+                /** @description A skill bundle (materialize into skills/) vs a prose note. */
+                is_skill: boolean;
+            }[];
         };
         Session: {
             id: string;
