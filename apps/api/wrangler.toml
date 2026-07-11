@@ -7,6 +7,16 @@ compatibility_date = "2024-11-01"
 # (GOOGLE_*, GITHUB_LOGIN_*, OIDC_*) there, same as on Node.
 compatibility_flags = ["nodejs_compat", "nodejs_compat_populate_process_env"]
 
+# Workers Logs: persist + index every invocation's structured logs (queryable in the
+# dashboard; retention per plan). Without this block console output is live-tail-only
+# and "what happened yesterday" is unanswerable. log.ts emits JSON on workerd, so
+# request_id / duration_ms / actor index as fields. Sample everything — volume is
+# modest, and a sampled-away incident costs more than the log spend. Longer retention
+# → add a Logpush job to a dedicated R2 bucket (NOT derive-blobs).
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 [[d1_databases]]
 binding = "DB"
 database_name = "derive"

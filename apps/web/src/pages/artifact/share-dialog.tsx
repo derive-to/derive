@@ -334,7 +334,8 @@ export function ShareButton({
         setMembers(r.members)
         setInvites(r.invites)
       })
-      .catch(() => {})
+      // A failed load must not read as "no one has access" — say so instead of blanking.
+      .catch(() => toast.error("Couldn't load who has access"))
   // After a share change, refresh the local list AND the shared cache: the artifact
   // query holds `my_role` (drives the toolbar), and the library reflects access.
   const synced = async () => {

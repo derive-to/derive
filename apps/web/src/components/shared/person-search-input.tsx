@@ -50,6 +50,7 @@ export function PersonSearchInput({
             setActive(-1)
           }
         })
+        // frontend-ignore: debounced typeahead — clearing on an aborted/failed keystroke is intended, not a hidden load failure
         .catch(() => alive && setSuggest([]))
     }, 180)
     return () => {

@@ -15,7 +15,7 @@ import {
 import type { Backplane } from "../bus"
 import type { WebhookEvent } from "../events"
 import { releaseAddressed } from "./addressed"
-import { publishSweepEvents } from "./anchor-sweep"
+import { emitVersionBump } from "./after-publish"
 
 export interface ProposalActionDeps {
   meta: MetaStore
@@ -38,10 +38,9 @@ export const approveProposalAction = async (
   const { meta, blobs, bus, notify, notifyRender } = deps
   const version = await approveProposal(meta, blobs, proposal, approver, note)
   bus.publish(artifact.id, { type: "proposal.approved", proposal_id: proposal.id, n: version.n })
-  bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
-  // The approved candidate is now live content — re-anchor existing threads so feedback on
-  // changed text flips to `outdated`.
-  await publishSweepEvents(meta, blobs, bus, artifact.id, version)
+  // The approved candidate is now live content: run the shared version-bump core (announce
+  // the version so open tabs reload, enqueue the preview render, re-anchor existing threads).
+  await emitVersionBump({ meta, blobs, bus, notifyRender }, artifact, version)
   // Threads this proposal addressed are now settled.
   for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "resolved"))
     bus.publish(artifact.id, { type: "comment.addressed", thread_id: threadId, state: "resolved" })
@@ -50,7 +49,6 @@ export const approveProposalAction = async (
     version: version.n,
     approver,
   })
-  notifyRender?.(artifact, version.n)
   return version
 }
 
