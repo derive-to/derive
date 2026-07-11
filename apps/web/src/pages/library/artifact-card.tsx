@@ -235,6 +235,13 @@ export function ArtifactCard({
                 <Icon name="lock" size={12} /> Private
               </Badge>
             )}
+            {/* A skill is reusable agent procedure (a bundle with a SKILL.md) — call it
+                out wherever it surfaces so the shelf is spottable in the grid. */}
+            {a.current_content_type === "derive/skill" && (
+              <Badge shape="pill" variant="secondary" title="A skill: reusable agent procedure">
+                Skill
+              </Badge>
+            )}
             {/* Review queue, then discussion, then passive views — most-actionable first. */}
             <ProposalSignal artifact={a} size={12} />
             <CommentSignal artifact={a} size={12} compact />
