@@ -787,6 +787,86 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(read).not.toContain("Revised")
   })
 
+  // The sniffer types by filename first, so a bare index.html fallback silently
+  // re-types a markdown artifact as HTML on any revision that omits `filename` —
+  // the browser then parses the raw markdown as markup and swallows tag-like text.
+  // These three pin every no-filename path: full-content republish, new-artifact
+  // sniff, and the proposal route.
+  it("publish: a full-content republish without a filename keeps a markdown doc markdown", async () => {
+    const { app, token } = appWithGrant("retype", "openid derive:read derive:publish")
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Doc",
+          content: "# Doc\n\nfirst body\n",
+          filename: "doc.md",
+        }),
+      ),
+    )
+    await call(app, token, "publish", {
+      short_id: created.short_id,
+      content: "# Doc\n\nrevised body\n",
+    })
+    const read = toolText(await call(app, token, "read", { short_id: created.short_id }))
+    expect(read).toContain("version: 2 (current)")
+    expect(read).toContain("format: markdown (source)")
+    expect(read).toContain("revised body")
+  })
+
+  it("publish: a new single-file artifact without a filename is sniffed, not defaulted to HTML", async () => {
+    const { app, token } = appWithGrant("sniff", "openid derive:read derive:publish")
+    const md = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "Plain", content: "# Plain\n\nno filename\n" }),
+      ),
+    )
+    const readMd = toolText(await call(app, token, "read", { short_id: md.short_id }))
+    expect(readMd).toContain("format: markdown (source)")
+    // A real HTML document still lands as HTML — the sniff is conservative, not a
+    // markdown default.
+    const html = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Page",
+          content: "<!doctype html><html><body><h1>Page</h1></body></html>",
+        }),
+      ),
+    )
+    const readHtml = toolText(await call(app, token, "read", { short_id: html.short_id }))
+    expect(readHtml).toContain("markdown (converted from text/html)")
+  })
+
+  it("publish: an approved no-filename proposal keeps a markdown doc markdown", async () => {
+    const { app, token } = appWithGrant("retypeprop", "openid derive:read derive:publish")
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Spec",
+          content: "# Spec\n\ndraft\n",
+          filename: "spec.md",
+        }),
+      ),
+    )
+    const p = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: created.short_id,
+          content: "# Spec\n\nproposed body\n",
+          for_review: true,
+        }),
+      ),
+    )
+    const approved = await app.request(
+      `/v1/artifacts/${created.short_id}/proposals/${p.proposal_id}/approve`,
+      { method: "POST", headers: { authorization: `Bearer ${token}` } },
+    )
+    expect(approved.status).toBe(200)
+    const read = toolText(await call(app, token, "read", { short_id: created.short_id }))
+    expect(read).toContain("version: 2 (current)")
+    expect(read).toContain("format: markdown (source)")
+    expect(read).toContain("proposed body")
+  })
+
   it("surfaces outdated feedback after a republish drops the quoted text", async () => {
     const { app, token } = appWithGrant("stale", "openid derive:read derive:comment derive:publish")
     const shortId = (await (await publish(app, token, "alpha beta gamma")).json()).short_id

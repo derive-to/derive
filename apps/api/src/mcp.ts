@@ -31,6 +31,7 @@ import {
   elideDataUris,
   formatDiff,
   isHtmlLike,
+  looksLikeHtmlDocument,
   newId,
   type OutlineSection,
   outlineOf,
@@ -62,7 +63,7 @@ import {
   zipBundleFiles,
 } from "./lib/bundle"
 import { parseMeta, quoteOf, REACTIONS } from "./lib/comments"
-import { type MaterializedEdits, materializeEdits } from "./lib/edits"
+import { type MaterializedEdits, materializeEdits, preservingFilename } from "./lib/edits"
 import { buildReviewEmail } from "./lib/email"
 import { MAX_UPLOAD_BYTES } from "./lib/http"
 import { notifyCommentBells } from "./lib/notify-comment"
@@ -1337,7 +1338,9 @@ async function buildServer(
         try {
           const { proposal } = await proposeChange(ctx.meta, ctx.blobs, short_id as string, {
             bytes: new TextEncoder().encode(content as string),
-            filename: filename ?? "index.html",
+            // The sniffer types by filename first: a bare index.html default would
+            // re-type a markdown artifact as HTML when the proposal is approved.
+            filename: filename ?? preservingFilename(existing.current_content_type),
             isBundle: false,
             message: message ?? "Proposed revision",
             author: agent.name,
@@ -1414,12 +1417,25 @@ async function buildServer(
           return text("A workspace-listed artifact must grant workspace access.")
         if (!short_id && resolvedListed === "public" && resolvedLinkRole === "none")
           return text("A publicly-listed artifact must grant at least a viewer link.")
+        // No filename on a single-file publish must never blindly default to
+        // index.html: the sniffer types by filename first, so that default silently
+        // re-types an existing markdown doc as HTML — the browser then parses the
+        // raw markdown as markup and swallows tag-like text. A republish preserves
+        // the artifact's current type; a new artifact is sniffed, so markdown
+        // content without a filename hint lands as markdown.
+        const singleFileFallback = existing
+          ? preservingFilename(existing.current_content_type)
+          : looksLikeHtmlDocument((content as string | undefined) ?? "")
+            ? "index.html"
+            : "index.md"
         const { artifact, version } = await publishVersion(
           ctx.meta,
           ctx.blobs,
           {
             bytes,
-            filename: isBundle ? `${title?.trim() || "bundle"}.zip` : (filename ?? "index.html"),
+            filename: isBundle
+              ? `${title?.trim() || "bundle"}.zip`
+              : (filename ?? singleFileFallback),
             isBundle,
             spa: bundleSpa,
             title: title?.trim(),
