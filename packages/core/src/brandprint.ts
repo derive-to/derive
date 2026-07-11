@@ -1,38 +1,27 @@
 /**
  * Brandprint resolution. A workspace and a profile each declare how they like their
- * stuff built — a conventions collection (docs/skills agents read) + a visual theme.
- * When an agent acts as a user in a workspace, the two layers merge: workspace is the
- * base, the user's profile refines it (profile wins). Pure (no I/O) so it's unit-tested;
- * the caller loads the actual collection artifacts.
+ * stuff built — a conventions collection (docs/skills agents read); the workspace layer
+ * additionally carries the generated brand profile. When an agent acts as a user in a
+ * workspace, the two layers merge: workspace is the base, the user's profile refines it
+ * (profile wins at doc level). Pure (no I/O) so it's unit-tested; the caller loads the
+ * actual collection artifacts.
  */
-import type { Brandprint, BrandprintTheme } from "./ports"
+import type { Brandprint } from "./ports"
 
 export interface ResolvedBrandprint {
   /** Conventions collection ids to pull docs from, in precedence order, deduped
    *  (workspace first, the profile's appended). */
   collectionIds: string[]
-  /** Visual theme: workspace tokens as the base, profile tokens overriding per key.
-   *  Undefined when neither layer set one. */
-  theme?: BrandprintTheme
-}
-
-const mergeTheme = (ws?: BrandprintTheme, prof?: BrandprintTheme): BrandprintTheme | undefined => {
-  if (!ws && !prof) return undefined
-  const palette = { ...ws?.palette, ...prof?.palette }
-  const fonts = { ...ws?.fonts, ...prof?.fonts }
-  const darkPalette = { ...ws?.dark?.palette, ...prof?.dark?.palette }
-  const theme: BrandprintTheme = {}
-  if (Object.keys(palette).length) theme.palette = palette
-  if (Object.keys(fonts).length) theme.fonts = fonts
-  if (Object.keys(darkPalette).length) theme.dark = { palette: darkPalette }
-  return Object.keys(theme).length ? theme : undefined
+  /** The workspace's brand-profile artifact short_id, when set. The profile is a
+   *  team property, so a personal layer never contributes one. */
+  profileId?: string
 }
 
 /** Resolve the workspace + profile Brandprint into the collections to read and the
- *  merged theme (profile over workspace). */
+ *  workspace's brand-profile pointer. */
 export const resolveBrandprint = (ws?: Brandprint, profile?: Brandprint): ResolvedBrandprint => {
   const ids = [ws?.collectionId, profile?.collectionId].filter((id): id is string => !!id)
-  return { collectionIds: [...new Set(ids)], theme: mergeTheme(ws?.theme, profile?.theme) }
+  return { collectionIds: [...new Set(ids)], profileId: ws?.profileId }
 }
 
 /** Parse a profile's stored Brandprint JSON string; null / malformed → undefined. */
@@ -46,9 +35,36 @@ export const parseBrandprint = (json: string | null | undefined): Brandprint | u
   }
 }
 
-/** The one-line pointer appended to the MCP server `instructions` when conventions
- *  exist. Progressive disclosure: the agent reads the full docs from the resources. */
-export const brandprintInstructions = (docCount: number): string =>
-  docCount > 0
-    ? ` This workspace has a Brandprint: ${docCount} convention ${docCount === 1 ? "doc" : "docs"} on how to build things here. Read the derive://brandprint/* resources before authoring; your personal Brandprint takes precedence.`
-    : ""
+/**
+ * The pointer appended to the MCP server `instructions`. Progressive disclosure: the
+ * agent reads the full docs from the resources. Three states:
+ * - live profile: the profile is the headline read, sources back it.
+ * - pending profile: the sources line plus a FACTUAL, user-conditioned note — the agent
+ *   acts only "if the user asks", never volunteers (spec: no solicitation, ever).
+ * - no profile: the sources line alone (the pre-Phase-2 behavior).
+ */
+export const brandprintInstructions = (
+  docCount: number,
+  profile?: { state: "pending" | "live"; shortId: string },
+): string => {
+  if (profile?.state === "live")
+    return (
+      ` This workspace has a Brandprint profile: read derive://brandprint/profile before` +
+      ` authoring; your personal Brandprint takes precedence.` +
+      (docCount > 0
+        ? ` ${docCount} source doc${docCount === 1 ? "" : "s"} back it (derive://brandprint/*).`
+        : "")
+    )
+  const docs =
+    docCount > 0
+      ? ` This workspace has a Brandprint: ${docCount} convention ${docCount === 1 ? "doc" : "docs"} on how to build things here. Read the derive://brandprint/* resources before authoring; your personal Brandprint takes precedence.`
+      : ""
+  if (profile?.state === "pending")
+    return (
+      docs +
+      ` Its brand profile has not been generated yet. If the user asks to build or finish` +
+      ` their Brandprint, read derive://brandprint/reference and derive://brandprint/template` +
+      ` plus the source docs, then publish the profile with for_review:true to artifact ${profile.shortId}.`
+    )
+  return docs
+}

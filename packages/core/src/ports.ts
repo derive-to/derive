@@ -1602,32 +1602,22 @@ export interface OrgSettings {
   defaultLinkRole: LinkRole
   defaultListed: Listed
   /** The workspace's Brandprint: a conventions collection agents pull as context, plus
-   *  a visual theme for rendered docs. Absent until set. Mirrored on a profile (user
-   *  layer); resolved profile-over-workspace. */
+   *  the generated brand profile. Absent until set. Mirrored on a profile (user layer);
+   *  resolved profile-over-workspace. */
   brandprint?: Brandprint
 }
 
 /** How a workspace/profile likes its stuff built: a pointer to a "conventions"
- *  collection (docs/skills agents read) and an optional visual theme for rendered docs. */
+ *  collection (docs/skills agents read) and, at workspace scope, the generated brand
+ *  profile. */
 export interface Brandprint {
   /** Collection of convention artifacts (the Brandprint docs). */
   collectionId?: string
-  /** Visual theme applied to shell-rendered markdown/skill docs. */
-  theme?: BrandprintTheme
-}
-
-/** Design tokens for the rendered-doc shell — emitted as CSS custom properties. Every
- *  field optional; unset tokens fall back to Derive's defaults. `dark` overrides for dark mode. */
-export interface BrandprintTheme {
-  palette?: Partial<
-    Record<"paper" | "panel" | "ink" | "soft" | "muted" | "line" | "accent", string>
-  >
-  fonts?: Partial<Record<"body" | "display" | "mono", string>>
-  dark?: {
-    palette?: Partial<
-      Record<"paper" | "panel" | "ink" | "soft" | "muted" | "line" | "accent", string>
-    >
-  }
+  /** short_id of the workspace's brand-profile artifact — the one self-contained HTML
+   *  page the user's agent generates from the source docs. Version 1 is always the
+   *  intake's stub; the profile counts as live from version 2. Workspace-only: a
+   *  personal Brandprint never sets it. */
+  profileId?: string
 }
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
