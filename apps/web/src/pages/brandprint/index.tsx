@@ -7,6 +7,7 @@ import { useAuth } from "@/ctx"
 import { connectedAgentsQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { BrandprintSection } from "./brandprint-section"
+import { ProfilePanel } from "./profile-panel"
 
 // The Brandprint page: /brandprint — the workspace's conventions and your personal
 // layer, one destination in the rail (a peer of Contexts). Promoted out of Settings:
@@ -20,6 +21,7 @@ export function Brandprint() {
         title="Brandprint"
         subtitle="The conventions your artifacts follow: how they look and how they read. Any agent connected to this workspace picks them up automatically."
       />
+      <ProfilePanel />
       <ApplyNudge />
       <BrandprintSection scope="workspace" />
       <BrandprintSection scope="account" />
@@ -30,12 +32,15 @@ export function Brandprint() {
 // The saved-but-inert state: a Brandprint exists but the caller has never authorized
 // an agent, so nothing is reading it. The honest framing from the spec — captured and
 // saved now, applied the moment an agent connects — with the shared Connect surface
-// one tap away. Ambient: any load failure just keeps the band hidden.
+// one tap away. Ambient: any load failure just keeps the band hidden. When a brand
+// profile exists, the ProfilePanel's states carry the connect story instead, so this
+// band stands down rather than double-banding the page.
 function ApplyNudge() {
   const { me } = useAuth()
   const { data: settings } = useQuery({ ...workspaceSettingsQuery(), enabled: !!me })
   const { data: agents, isError } = useQuery({ ...connectedAgentsQuery(), enabled: !!me })
   const hasBrandprint = !!settings?.brandprint?.collectionId || !!me?.brandprint?.collectionId
+  if (settings?.brandprint?.profileId) return null
   if (isError || !hasBrandprint || !agents || agents.length > 0) return null
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-3">

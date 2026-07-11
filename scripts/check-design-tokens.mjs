@@ -26,6 +26,9 @@ const ALLOW_FILES = new Set([
   "pages/artifact/cursors/glyph.tsx",
   "pages/artifact/cursors/cursor-switch.tsx",
   "pages/artifact/cursors/cursor-layer.tsx",
+  // A self-contained HTML document published as an artifact, not app UI — its
+  // colors ship inside the document and can't reference the token system.
+  "pages/brandprint/profile-placeholder.ts",
 ])
 
 const PALETTE =

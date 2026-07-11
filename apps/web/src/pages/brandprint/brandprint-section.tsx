@@ -35,7 +35,12 @@ import {
 } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { refFor } from "../artifact/parse-ref"
-import { type ImportResult, notesAsDoc, useBrandprintImport } from "./use-brandprint-import"
+import {
+  ensureProfilePlaceholder,
+  type ImportResult,
+  notesAsDoc,
+  useBrandprintImport,
+} from "./use-brandprint-import"
 
 // The two halves of a brand the upload tab asks for; `cat` labels each staged file
 // and doubles as the verb in the well's heading ("How … artifacts should look/read").
@@ -153,6 +158,21 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
     },
     success: "Brandprint updated",
   })
+  // Adopting an existing collection (workspace scope) still seeds the profile
+  // placeholder, so the hand-off beat has an address to propose against. Best-effort:
+  // a placeholder failure adopts the collection anyway, and a later upload heals it.
+  const adoptCollection = useApiMutation({
+    mutationFn: async (target: string) => {
+      const profileId = settings?.brandprint?.profileId
+        ? undefined
+        : await ensureProfilePlaceholder(target).catch(() => undefined)
+      return api.updateWorkspaceSettings({
+        brandprint: { collectionId: target, ...(profileId ? { profileId } : {}) },
+      } as Partial<OrgSettings>)
+    },
+    onSuccess: (s) => qc.setQueryData(workspaceSettingsQuery().queryKey, s),
+    success: "Brandprint updated",
+  })
 
   // The one-click intake, shared with onboarding's Brandprint step — see
   // use-brandprint-import for the composition and its failure semantics.
@@ -256,7 +276,9 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
   const disabled =
     !ready ||
     importDocs.isPending ||
-    (scope === "workspace" ? !isAdmin || updateWorkspace.isPending : updateAccount.isPending)
+    (scope === "workspace"
+      ? !isAdmin || updateWorkspace.isPending || adoptCollection.isPending
+      : updateAccount.isPending)
   const save = (next: string) =>
     scope === "workspace" ? updateWorkspace.mutate(next) : updateAccount.mutate(next)
   const selected = collections?.find((c) => c.id === collectionId)?.title
@@ -301,7 +323,14 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
             </Button>
           </SettingRow>
           {collectionId && (
-            <BrandprintDocs collectionId={collectionId} scope={scope} disabled={disabled} />
+            <BrandprintDocs
+              collectionId={collectionId}
+              scope={scope}
+              disabled={disabled}
+              profileId={
+                scope === "workspace" ? (settings?.brandprint?.profileId ?? undefined) : undefined
+              }
+            />
           )}
         </>
       ) : (
@@ -436,7 +465,8 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
                       value=""
                       onValueChange={(v) => {
                         if (!v) return
-                        save(v)
+                        if (scope === "workspace") adoptCollection.mutate(v)
+                        else save(v)
                         setCreateOpen(false)
                       }}
                     >
@@ -473,17 +503,21 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
 // The docs the Brandprint points at, managed here — the collection is hidden from
 // the general collection surfaces (rail, palette, organize; see use-brandprint-ids),
 // so this list is its one home. Removing drops the doc from the collection; the
-// artifact itself lives on in the library.
+// artifact itself lives on in the library. The brand-profile artifact rides in the
+// collection too but has its own home (the panel above), so it's not listed here.
 function BrandprintDocs({
   collectionId,
   scope,
   disabled,
+  profileId,
 }: {
   collectionId: string
   scope: "workspace" | "account"
   disabled: boolean
+  profileId?: string
 }) {
-  const { data: docs, isError, refetch } = useQuery(brandprintDocsQuery(collectionId))
+  const { data: allDocs, isError, refetch } = useQuery(brandprintDocsQuery(collectionId))
+  const docs = allDocs?.filter((a) => a.short_id !== profileId)
   const removeDoc = useApiMutation({
     mutationFn: (shortId: string) => api.removeFromCollection(collectionId, shortId),
     pendingKey: (shortId) => shortId,

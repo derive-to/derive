@@ -23,7 +23,7 @@ import { Switch } from "@/components/ui/switch"
 // public URL, so that's what we embed — except in local dev (localhost), where we
 // fall back to a clearly-editable placeholder so nobody copies an unreachable URL.
 const PLACEHOLDER_URL = "https://your-derive-server.com"
-const publicUrlOf = (origin: string) =>
+export const publicUrlOf = (origin: string) =>
   /localhost|127\.0\.0\.1|\[::1\]/.test(origin) ? PLACEHOLDER_URL : origin
 
 // Hosted: Derive is already running (this instance, or any you point at). The fastest

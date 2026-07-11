@@ -365,8 +365,8 @@ function BrandprintStep({ notes, onNotes }: { notes: string; onNotes: (v: string
         onChange={(e) => onNotes(e.target.value)}
       />
       <p className="text-sm text-muted-foreground">
-        Saves when you continue, and starts applying the moment an agent is connected. Refine it
-        anytime on the Brandprint page.
+        Saves when you continue, and starts guiding agents the moment one is connected. Your agent
+        then assembles your team's brand profile from it — finish on the Brandprint page.
       </p>
     </section>
   )
