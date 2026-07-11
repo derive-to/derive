@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { getRouteApi, useNavigate } from "@tanstack/react-router"
-import { type ArtifactInvitePreview, api, type InvitePreview } from "@/api"
+import { api } from "@/api"
 import { Logo } from "@/components/shared/logo"
 import { ROLE_LABELS } from "@/components/shared/role-select"
 import { Spinner } from "@/components/shared/spinner"
@@ -47,6 +47,8 @@ export function AcceptInvite() {
     queryKey: ["invite", token],
     queryFn: () => api.previewInvite(token),
     retry: false,
+    // Keyed by the invite token (a capability secret) — never write it to IndexedDB.
+    meta: { persist: false },
   })
 
   // The invite named an email; the signed-in account has a different one. The
@@ -132,6 +134,8 @@ export function AcceptArtifactInvite() {
     queryKey: ["artifact-invite", token],
     queryFn: () => api.previewArtifactInvite(token),
     retry: false,
+    // Keyed by the invite token (a capability secret) — never write it to IndexedDB.
+    meta: { persist: false },
   })
 
   const mismatch = !!(

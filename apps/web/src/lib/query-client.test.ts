@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest"
-import { isTransient, retryQuery, shouldToastError, toastMessageFor } from "./query-client"
+import {
+  isTransient,
+  retryQuery,
+  shouldPersistQuery,
+  shouldToastError,
+  toastMessageFor,
+} from "./query-client"
 
 // The resilience seam: transient failures self-heal, client errors fail fast.
 const apiErr = (status: number) => Object.assign(new Error(`HTTP ${status}`), { status })
@@ -37,6 +43,17 @@ describe("shouldToastError", () => {
   })
   it("stays silent only when a mutation explicitly opts out (errorToast:false)", () => {
     expect(shouldToastError({ errorToast: false })).toBe(false)
+  })
+})
+
+describe("shouldPersistQuery", () => {
+  it("persists a query's data to IndexedDB by default", () => {
+    expect(shouldPersistQuery(undefined)).toBe(true)
+    expect(shouldPersistQuery({})).toBe(true)
+    expect(shouldPersistQuery({ persist: true })).toBe(true)
+  })
+  it("skips only when a query explicitly opts out (persist:false — session, token-keyed)", () => {
+    expect(shouldPersistQuery({ persist: false })).toBe(false)
   })
 })
 
