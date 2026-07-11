@@ -10,12 +10,13 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { refFor } from "../artifact/parse-ref"
 
 /**
- * The workspace brand profile's home on /brandprint — the spec's five states, three of
- * which live here (the page covers "empty" and "no agent yet"; the latter is this
- * panel's hand-off card with Connect leading):
+ * The workspace brand profile's home on /brandprint. Renders the panel's three states:
  * - hand-off: sources saved, profile still the stub, no proposal — the copyable brief.
+ *   Doubles as the spec's no-agent state; ConnectAgent rides the card.
  * - reveal: the agent's proposal is in — full-width preview, Approve, comments.
  * - live: an approved profile fronts the page; Regenerate re-surfaces the brief.
+ * The page owns the remaining spec states: "empty" is the section's create flow, and
+ * without a profileId it mounts ApplyNudge instead of this panel.
  */
 const profileProposalsQuery = (profileId: string) =>
   queryOptions({

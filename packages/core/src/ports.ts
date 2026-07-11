@@ -1615,7 +1615,7 @@ export interface Brandprint {
   collectionId?: string
   /** short_id of the workspace's brand-profile artifact — the one self-contained HTML
    *  page the user's agent generates from the source docs. Version 1 is always the
-   *  intake's stub; the profile counts as live from version 2. Workspace-only: a
+   *  intake's stub (`profileState` derives live/pending from that). Workspace-only: a
    *  personal Brandprint never sets it. */
   profileId?: string
 }

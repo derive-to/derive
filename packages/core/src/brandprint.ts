@@ -45,8 +45,8 @@ export const parseBrandprint = (json: string | null | undefined): Brandprint | u
  * The pointer appended to the MCP server `instructions`. Progressive disclosure: the
  * agent reads the full docs from the resources. Three states:
  * - live profile: the profile is the headline read, sources back it.
- * - pending profile: the sources line plus a FACTUAL, user-conditioned note — the agent
- *   acts only "if the user asks", never volunteers (spec: no solicitation, ever).
+ * - pending profile: the sources line plus a factual note conditioned on the user
+ *   asking, so no unrelated session gets pitched (spec: "No solicitation, ever").
  * - no profile: the sources line alone (the pre-Phase-2 behavior).
  */
 export const brandprintInstructions = (

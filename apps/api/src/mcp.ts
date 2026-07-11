@@ -337,9 +337,9 @@ async function buildServer(
       },
     )
   }
-  // The generation reference: how to build the brand profile + the neutral benchmark
-  // page. Static, versioned like code, served whenever a Brandprint exists — ALL of
-  // Derive's side of generation lives in these two files (the user's agent assembles).
+  // The generation reference: the build guide + the neutral benchmark page, served
+  // whenever a Brandprint exists. Derive runs no inference, so these two static files
+  // are its entire side of profile generation; the user's agent does the assembling.
   if (resolved.collectionIds.length > 0) {
     server.registerResource(
       "brandprint:reference",
