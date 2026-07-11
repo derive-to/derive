@@ -7,8 +7,8 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { placeholderFile } from "./profile-placeholder"
 
 // What the intake reports back: how many docs made it in, which files didn't, and
-// (when it created the collection and set the pointer itself) the fresh server
-// state to sync the caches from.
+// (when this run wrote the pointer — a fresh create, or a heal that seeded the
+// missing placeholder) the fresh server state to sync the caches from.
 export type ImportResult = {
   created: boolean
   ok: number
