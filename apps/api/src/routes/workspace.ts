@@ -28,9 +28,9 @@ export const workspaceRoutes = (ctx: AppContext) => {
     requireUser,
     currentUser,
     activeWorkspace,
+    requireWorkspace,
     setWsCookie,
     workspaceRole,
-    workspaceCan,
   } = ctx
   const { privateOwnerId, oauthGrant, inviteLimiter, limited } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -205,14 +205,15 @@ export const workspaceRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       const b = await readJson(
         c,
         z.object({ name: z.string().refine((s) => s.trim() !== "", "name required") }),
       )
       if (b instanceof Response) return bail(b)
       const name = b.name.trim().slice(0, 80)
-      const ws = await meta.setWorkspace(await activeWorkspace(c), name)
+      const ws = await meta.setWorkspace(org, name)
       return c.json({ name: ws.name })
     },
   )
@@ -232,7 +233,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       const b = await readJson(
         c,
         z
@@ -247,7 +249,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
       const id = await resolveUserRef(meta, (b.user ?? b.email) as string)
       const [user] = id ? await meta.getUsers([id]) : []
       if (!user) return bail(fail(c, 404, "no Derive user with that username or email"))
-      const org = await activeWorkspace(c)
       // This route both adds and re-roles, so it must honor the same last-Admin
       // guard as PATCH — otherwise an Admin could demote the sole Admin via PUT.
       const existing = await meta.getMembership(org, user.id)
@@ -290,14 +291,14 @@ export const workspaceRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       const userId = c.req.param("userId")
       const b = await readJson(
         c,
         z.object({ role: z.custom<Role>(isWorkspaceRole, "a valid role is required") }),
       )
       if (b instanceof Response) return bail(b)
-      const org = await activeWorkspace(c)
       const existing = await meta.getMembership(org, userId)
       if (!existing) return bail(fail(c, 404, "not a member"))
       if (existing.role === "owner" && b.role !== "owner" && (await isLastOwner(org, userId)))
@@ -318,9 +319,9 @@ export const workspaceRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "The member was removed (idempotent)." } },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       const userId = c.req.param("userId")
-      const org = await activeWorkspace(c)
       const existing = await meta.getMembership(org, userId)
       if (!existing) return c.body(null, 204)
       if (existing.role === "owner" && (await isLastOwner(org, userId)))
@@ -345,7 +346,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       const b = await readJson(
         c,
         z.object({
@@ -354,7 +356,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
         }),
       )
       if (b instanceof Response) return bail(b)
-      const org = await activeWorkspace(c)
       const ref = b.email.trim()
 
       // Existing account → add directly (and clear any stale pending invite for them).
@@ -441,8 +442,9 @@ export const workspaceRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
-      const invites = await meta.listPendingInvitations(await activeWorkspace(c))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      const invites = await meta.listPendingInvitations(org)
       return c.json({ invites: invites.map(inviteJson) })
     },
   )
@@ -458,8 +460,9 @@ export const workspaceRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "The invitation was revoked." } },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
-      await meta.deleteInvitation(c.req.param("id"), await activeWorkspace(c))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      await meta.deleteInvitation(c.req.param("id"), org)
       return c.body(null, 204)
     },
   )
@@ -567,7 +570,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       const b = await readJson(
         c,
         z
@@ -585,7 +589,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
           .partial(),
       )
       if (b instanceof Response) return bail(b)
-      const org = await activeWorkspace(c)
       // Merge over current (so a partial PATCH only flips the keys it sends). Brandprint
       // is pulled out and merged one level deep below, so setting collectionId alone
       // doesn't wipe an existing theme (and vice versa).

@@ -29,7 +29,7 @@ const EXT_FOR_TYPE: Record<string, string> = {
  * own visibility. That trade-off is deliberate — see docs/decisions on asset URLs.
  */
 export const assetRoutes = (ctx: AppContext) => {
-  const { meta, blobs, workspaceCan, activeWorkspace, overStorage, deps } = ctx
+  const { meta, blobs, requireWorkspace, overStorage, deps } = ctx
   // Contract-first: the *request* is a raw/multipart binary upload (read by hand
   // below, no JSON body schema), but the *response* is a typed handle that agents /
   // the CLI / MCP consume — so it gets a schema like every other JSON response.
@@ -68,7 +68,8 @@ export const assetRoutes = (ctx: AppContext) => {
     async (c) => {
       // Anyone who can publish to their workspace can stage an asset for it. (The
       // anonymous write-lockdown already blocks unauthenticated POSTs.)
-      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "publish")
+      if (org instanceof Response) return bail(org)
 
       const declared = Number(c.req.header("content-length") ?? 0)
       if (declared > MAX_ASSET_BYTES + 4096) return bail(fail(c, 413, "asset too large (max 25MB)"))
@@ -95,7 +96,6 @@ export const assetRoutes = (ctx: AppContext) => {
       const type = sniffImageType(bytes)
       if (!type) return bail(fail(c, 400, "unsupported asset (use PNG, JPEG, GIF, or WebP)"))
 
-      const org = await activeWorkspace(c)
       if (await overStorage(org, bytes.byteLength))
         return bail(fail(c, 413, "storage quota exceeded"))
 

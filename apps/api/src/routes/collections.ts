@@ -35,6 +35,21 @@ export const collectionRoutes = (ctx: AppContext) => {
   const canManageCollection = async (c: Context, col: CollectionRecord, action: Action) =>
     roleAllows((await collectionRole(c, col)) ?? "viewer", action)
 
+  // Resolve the :id collection and gate it — 404 missing, 403 present-but-
+  // unauthorized (unlike an artifact's read gate, a collection you can't manage is
+  // still worth knowing exists, so this doesn't hide it behind a 404). The
+  // getCollection + canManageCollection pair every mutating route below opens with.
+  const requireCollection = async (
+    c: Context,
+    action: Action,
+  ): Promise<CollectionRecord | Response> => {
+    const id = c.req.param("id")
+    const col = id ? await meta.getCollection(id) : null
+    if (!col) return fail(c, 404, "not found")
+    if (!(await canManageCollection(c, col, action))) return fail(c, 403, "forbidden")
+    return col
+  }
+
   // A collection as it goes out: the stored row + its item `count` + where it came from
   // (`kind` = manual/repo/pr, with the repo/PR details). Origin is DERIVED here, not
   // stored. Every collection-returning endpoint emits this one shape.
@@ -204,9 +219,8 @@ export const collectionRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const col = await meta.getCollection(c.req.param("id"))
-      if (!col) return bail(fail(c, 404, "not found"))
-      if (!(await canManageCollection(c, col, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const col = await requireCollection(c, "publish")
+      if (col instanceof Response) return bail(col)
       const body = await readJson(c, z.object({ title: z.string().optional() }))
       if (body instanceof Response) return bail(body)
       const updated = await meta.updateCollection(col.id, {
@@ -255,9 +269,8 @@ export const collectionRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const col = await meta.getCollection(c.req.param("id"))
-      if (!col) return bail(fail(c, 404, "not found"))
-      if (!(await canManageCollection(c, col, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const col = await requireCollection(c, "manage")
+      if (col instanceof Response) return bail(col)
       const b = await readJson(c, z.object({ workspaceAccess: z.enum(["none", "member"]) }))
       if (b instanceof Response) return bail(b)
       await meta.setCollectionAccess(col.id, b.workspaceAccess)
@@ -275,9 +288,8 @@ export const collectionRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "The collection was deleted." } },
     }),
     async (c) => {
-      const col = await meta.getCollection(c.req.param("id"))
-      if (!col) return bail(fail(c, 404, "not found"))
-      if (!(await canManageCollection(c, col, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const col = await requireCollection(c, "manage")
+      if (col instanceof Response) return bail(col)
       await meta.deleteCollection(col.id)
       return c.body(null, 204)
     },
@@ -298,9 +310,8 @@ export const collectionRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const col = await meta.getCollection(c.req.param("id"))
-      if (!col) return bail(fail(c, 404, "not found"))
-      if (!(await canManageCollection(c, col, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const col = await requireCollection(c, "publish")
+      if (col instanceof Response) return bail(col)
       const art = await meta.getByShortId(c.req.param("shortId"))
       // Adding to a collection re-shares the artifact (the collection's members inherit
       // a role on it), so the caller must be able to SHARE the artifact — not merely
@@ -326,9 +337,8 @@ export const collectionRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "The artifact was removed." } },
     }),
     async (c) => {
-      const col = await meta.getCollection(c.req.param("id"))
-      if (!col) return bail(fail(c, 404, "not found"))
-      if (!(await canManageCollection(c, col, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const col = await requireCollection(c, "publish")
+      if (col instanceof Response) return bail(col)
       const art = await meta.getByShortId(c.req.param("shortId"))
       // Curation of your own collection; same-workspace guard mirrors the add path.
       if (!art || art.org_id !== col.org_id) return bail(fail(c, 404, "artifact not found"))
@@ -393,9 +403,8 @@ export const collectionRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const col = await meta.getCollection(c.req.param("id"))
-      if (!col) return bail(fail(c, 404, "not found"))
-      if (!(await canManageCollection(c, col, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const col = await requireCollection(c, "manage")
+      if (col instanceof Response) return bail(col)
       const b = await readJson(
         c,
         z
@@ -434,9 +443,8 @@ export const collectionRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "The member was removed." } },
     }),
     async (c) => {
-      const col = await meta.getCollection(c.req.param("id"))
-      if (!col) return bail(fail(c, 404, "not found"))
-      if (!(await canManageCollection(c, col, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const col = await requireCollection(c, "manage")
+      if (col instanceof Response) return bail(col)
       // The creator stays owner via created_by regardless of member rows; removing the
       // row wouldn't revoke their access, it would just orphan the roster — refuse it.
       if (c.req.param("userId") === col.created_by)

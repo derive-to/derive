@@ -11,7 +11,7 @@ import { WEBHOOK_EVENTS, type WebhookEvent } from "../webhooks"
  *  Webhook + Delivery response schemas are the single source for the web client's
  *  types (generated from the OpenAPI spec). */
 export const webhookRoutes = (ctx: AppContext) => {
-  const { meta, deps, workspaceCan, activeWorkspace } = ctx
+  const { meta, deps, requireWorkspace } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   // Strip the signing secret on the way out, preserving every other field's type (so the
@@ -78,8 +78,9 @@ export const webhookRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
-      const hooks = await meta.listWebhooks(await activeWorkspace(c))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      const hooks = await meta.listWebhooks(org)
       return c.json({ webhooks: hooks.map(publicWebhook) })
     },
   )
@@ -98,8 +99,8 @@ export const webhookRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
-      const org = await activeWorkspace(c)
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       const b = await readJson(
         c,
         z.object({
@@ -151,8 +152,9 @@ export const webhookRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "The webhook was deleted." } },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
-      await meta.deleteWebhook(c.req.param("id"), await activeWorkspace(c))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      await meta.deleteWebhook(c.req.param("id"), org)
       return c.body(null, 204)
     },
   )
@@ -172,8 +174,9 @@ export const webhookRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
-      const w = await meta.getWebhook(c.req.param("id"), await activeWorkspace(c))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      const w = await meta.getWebhook(c.req.param("id"), org)
       if (!w) return bail(fail(c, 404, "not found"))
       const rows = await meta.recentDeliveries(w.id, 20)
       return c.json({
@@ -204,8 +207,9 @@ export const webhookRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
-      const w = await meta.getWebhook(c.req.param("id"), await activeWorkspace(c))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      const w = await meta.getWebhook(c.req.param("id"), org)
       if (!w) return bail(fail(c, 404, "not found"))
       const sample = JSON.stringify({
         event: "version.published",

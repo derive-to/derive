@@ -24,7 +24,7 @@ import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
  *  routes (not typed JSON). */
 export const slackRoutes = (ctx: AppContext) => {
   const { meta, deps, bus, requireUser } = ctx
-  const { activeWorkspace, workspaceCan } = ctx
+  const { activeWorkspace, workspaceCan, requireWorkspace } = ctx
   const app = new OpenAPIHono<BlankEnv>()
   const slack = deps.slack
   const redirectUri = new URL("/v1/slack/oauth/callback", deps.baseUrl).toString()
@@ -62,10 +62,11 @@ export const slackRoutes = (ctx: AppContext) => {
   // install to this workspace + user via signed state (same pattern as GitHub install).
   app.get("/v1/slack/install", async (c) => {
     if (!slack || !deps.encryptionKey) return fail(c, 404, "Slack is not configured")
-    if (!(await workspaceCan(c, "manage"))) return fail(c, 403, "forbidden")
+    const org = await requireWorkspace(c, "manage")
+    if (org instanceof Response) return org
     const me = await requireUser(c)
     if (me instanceof Response) return me
-    const state = signState({ org: await activeWorkspace(c), uid: me.id }, deps.encryptionKey)
+    const state = signState({ org, uid: me.id }, deps.encryptionKey)
     return c.redirect(slackAuthorizeUrl(slack.clientId, redirectUri, state))
   })
 
@@ -262,8 +263,8 @@ export const slackRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
-      const org = await activeWorkspace(c)
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       const install = await meta.getSlackInstall(org)
       if (!install) return bail(fail(c, 404, "Slack is not connected"))
       const b = await readJson(c, z.object({ default_channel: z.string().nullable() }))
@@ -284,8 +285,9 @@ export const slackRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "Slack was disconnected." } },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
-      await meta.deleteSlackInstall(await activeWorkspace(c))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      await meta.deleteSlackInstall(org)
       return c.body(null, 204)
     },
   )

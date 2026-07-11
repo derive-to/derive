@@ -344,9 +344,8 @@ export const commentRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
+      const artifact = await requireArtifact(c, "comment", { split: true })
+      if (artifact instanceof Response) return bail(artifact)
       const cm = await meta.getComment(c.req.param("commentId"))
       if (!cm || cm.artifact_id !== artifact.id) return bail(fail(c, 404, "not found"))
       const body = await readJson(c, z.object({ state: z.string().optional() }))

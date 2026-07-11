@@ -10,7 +10,7 @@ import { bail, fail, readJson, str } from "../lib/http"
  *  routes; a terminal "go" records the same call. Humans never resolve threads.
  *  The ReviewRound response schema is the single source for the web client's type. */
 export const reviewRoutes = (ctx: AppContext) => {
-  const { meta, bus, authorize, currentUser } = ctx
+  const { meta, bus, currentUser, requireArtifact } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const ReviewRound = z
@@ -60,9 +60,8 @@ export const reviewRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
+      const artifact = await requireArtifact(c, "comment", { split: true })
+      if (artifact instanceof Response) return bail(artifact)
       const body = await readJson(c, z.object({ note: z.unknown().optional() }))
       if (body instanceof Response) return bail(body)
       const me = await currentUser(c)
@@ -94,9 +93,8 @@ export const reviewRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "approve", artifact))) return bail(fail(c, 403, "forbidden"))
+      const artifact = await requireArtifact(c, "approve", { split: true })
+      if (artifact instanceof Response) return bail(artifact)
       const body = await readJson(c, z.object({ note: z.unknown().optional() }))
       if (body instanceof Response) return bail(body)
       const me = await currentUser(c)
@@ -138,9 +136,8 @@ export const reviewRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "read", artifact))) return bail(fail(c, 404, "not found"))
+      const artifact = await requireArtifact(c, "read")
+      if (artifact instanceof Response) return bail(artifact)
       const me = await currentUser(c)
       const [rounds, pending] = await Promise.all([
         meta.listReviewRounds(artifact.id),

@@ -5,7 +5,7 @@ import { streamSSE } from "hono/streaming"
 import type { BlankEnv } from "hono/types"
 import type { Viewer } from "../bus"
 import type { AppContext } from "../context"
-import { anonName, bail, fail, readJson } from "../lib/http"
+import { anonName, bail, readJson } from "../lib/http"
 
 /** Live updates per artifact (SSE) + ephemeral presence (who's viewing now). The
  *  Viewer response schema is the single source for the web client's type; the SSE
@@ -21,6 +21,7 @@ export const realtimeRoutes = (ctx: AppContext) => {
     currentUser,
     actorFor,
     anonViewerId,
+    requireArtifact,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
@@ -121,9 +122,8 @@ export const realtimeRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact || !(await authorize(c, "read", artifact)))
-        return bail(fail(c, 404, "not found"))
+      const artifact = await requireArtifact(c, "read")
+      if (artifact instanceof Response) return bail(artifact)
       const viewer = await deriveViewer(c, artifact)
       const viewers = await presence.heartbeat(artifact.id, viewer, Date.now())
       bus.publish(artifact.id, { type: "presence", viewers })
@@ -143,9 +143,8 @@ export const realtimeRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "Fanned out (ephemeral; nothing stored)." } },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact || !(await authorize(c, "read", artifact)))
-        return bail(fail(c, 404, "not found"))
+      const artifact = await requireArtifact(c, "read")
+      if (artifact instanceof Response) return bail(artifact)
       const body = await readJson(
         c,
         z.object({

@@ -86,7 +86,7 @@ interface GitHubWebhookPayload {
  * (a GitHub server-to-server callback) stay plain routes.
  */
 export const syncRoutes = (ctx: AppContext) => {
-  const { meta, deps, bus, currentUser, activeWorkspace, workspaceCan, background } = ctx
+  const { meta, deps, bus, currentUser, activeWorkspace, requireWorkspace, background } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const RepoSource = z
@@ -356,10 +356,10 @@ export const syncRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "publish")
+      if (org instanceof Response) return bail(org)
       const loaded = await loadApp()
       if (!loaded) return bail(fail(c, 409, "GitHub App is not set up yet"))
-      const org = await activeWorkspace(c)
       const uid = (await currentUser(c))?.id ?? "anon"
       try {
         const installs = await listAppInstallations(loaded.app.app_id, loaded.pem)
@@ -394,8 +394,8 @@ export const syncRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "comment"))) return bail(fail(c, 403, "forbidden"))
-      const org = await activeWorkspace(c)
+      const org = await requireWorkspace(c, "comment")
+      if (org instanceof Response) return bail(org)
       const [sources, installs, loaded] = await Promise.all([
         meta.listRepoSources(org),
         meta.listGithubInstallations(org),
@@ -469,10 +469,10 @@ export const syncRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "publish")
+      if (org instanceof Response) return bail(org)
       const loaded = await loadApp()
       if (!loaded) return bail(fail(c, 409, "GitHub App is not set up yet"))
-      const org = await activeWorkspace(c)
       const uid = (await currentUser(c))?.id ?? "anon"
       const state = signState({ org, uid }, deps.encryptionKey as string)
       const url = `https://github.com/apps/${encodeURIComponent(
@@ -543,8 +543,8 @@ export const syncRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
-      const org = await activeWorkspace(c)
+      const org = await requireWorkspace(c, "publish")
+      if (org instanceof Response) return bail(org)
       const installationId = c.req.param("id")
       const inst = await meta.getGithubInstallation(installationId)
       // Scope: only an installation owned by the caller's workspace is listable.
@@ -582,8 +582,8 @@ export const syncRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
-      const org = await activeWorkspace(c)
+      const org = await requireWorkspace(c, "publish")
+      if (org instanceof Response) return bail(org)
       const installationId = c.req.param("id")
       const inst = await meta.getGithubInstallation(installationId)
       if (!inst || inst.org_id !== org) return bail(fail(c, 404, "not found"))
@@ -640,7 +640,8 @@ export const syncRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "publish")
+      if (org instanceof Response) return bail(org)
       const body = await readJson(
         c,
         z.object({
@@ -655,7 +656,6 @@ export const syncRoutes = (ctx: AppContext) => {
       const parsed = parseRepo(body.repo)
       if (!parsed) return bail(fail(c, 400, "repo must be owner/name"))
       const repo = `${parsed.owner}/${parsed.name}`
-      const org = await activeWorkspace(c)
       const createdBy = (await currentUser(c))?.id ?? "anon"
 
       // Dedup: one BRANCH source (and one collection) per repo in a workspace.
@@ -739,8 +739,8 @@ export const syncRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
-      const org = await activeWorkspace(c)
+      const org = await requireWorkspace(c, "publish")
+      if (org instanceof Response) return bail(org)
       const source = await meta.getRepoSource(c.req.param("id"), org)
       if (!source) return bail(fail(c, 404, "not found"))
       if (deps.maxArtifacts && (await meta.countArtifacts(org)) >= deps.maxArtifacts)
@@ -784,8 +784,8 @@ export const syncRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "comment"))) return bail(fail(c, 403, "forbidden"))
-      const org = await activeWorkspace(c)
+      const org = await requireWorkspace(c, "comment")
+      if (org instanceof Response) return bail(org)
       const source = await meta.getRepoSource(c.req.param("id"), org)
       if (!source) return bail(fail(c, 404, "not found"))
       const view = toJson(source)
@@ -818,8 +818,8 @@ export const syncRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "comment"))) return bail(fail(c, 403, "forbidden"))
-      const org = await activeWorkspace(c)
+      const org = await requireWorkspace(c, "comment")
+      if (org instanceof Response) return bail(org)
       const active = (await meta.listRepoSources(org)).filter(isSyncing).map(toJson)
       return c.json({ active })
     },
@@ -836,8 +836,8 @@ export const syncRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "The source was disconnected." } },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
-      const org = await activeWorkspace(c)
+      const org = await requireWorkspace(c, "publish")
+      if (org instanceof Response) return bail(org)
       const source = await meta.getRepoSource(c.req.param("id"), org)
       if (!source) return bail(fail(c, 404, "not found"))
       if (c.req.query("wipe") === "true") {
