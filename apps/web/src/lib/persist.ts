@@ -5,7 +5,7 @@ import {
   persistQueryClientSubscribe,
 } from "@tanstack/react-query-persist-client"
 import { del, get, set } from "idb-keyval"
-import { CACHE_MAX_AGE, queryClient } from "./query-client"
+import { CACHE_MAX_AGE, queryClient, shouldPersistQuery } from "./query-client"
 
 // Persist the query cache to IndexedDB so a refresh restores the last-known data and paints
 // instantly — the same warm cache an in-app navigation already runs against. This erases the
@@ -37,9 +37,11 @@ const persistOptions = {
   // build; the typeof guard keeps it defined in envs without the define (vitest, plain Node).
   buster: typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "dev",
   dehydrateOptions: {
-    // Persist data, but NEVER the session: `me` must re-resolve fresh on every boot so an
-    // expired session can't restore as "logged in" (the route guards await a live one).
-    shouldDehydrateQuery: (q: Query) => q.queryKey[0] !== "me" && defaultShouldDehydrateQuery(q),
+    // Persist successful queries EXCEPT those that opted out with `meta.persist: false` — the
+    // session (auth re-resolves fresh) and anything keyed by a secret/capability token. The
+    // opt-out is declared at each query, not listed here (see AppQueryMeta in query-client.ts).
+    shouldDehydrateQuery: (q: Query) =>
+      shouldPersistQuery(q.meta) && defaultShouldDehydrateQuery(q),
   },
 }
 

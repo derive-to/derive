@@ -32,9 +32,17 @@ export const retryQuery = (failureCount: number, err: unknown): boolean =>
 // declared, so a typo like `errorTost` is a compile error, not a silent no-op.
 export type AppMutationMeta = { errorToast?: boolean }
 
+// Query meta the app understands. `persist: false` opts a query OUT of the IndexedDB cache
+// (lib/persist.ts) — for the session (auth must re-resolve fresh) and for anything keyed by a
+// secret/capability token (invite previews), which has no reason to sit on disk. Declarative +
+// colocated with the query, so a new sensitive query opts out at its definition, not in a
+// central list someone has to remember to update.
+export type AppQueryMeta = { persist?: boolean }
+
 declare module "@tanstack/react-query" {
   interface Register {
     mutationMeta: AppMutationMeta
+    queryMeta: AppQueryMeta
   }
 }
 
@@ -42,6 +50,11 @@ declare module "@tanstack/react-query" {
  *  it opted out to handle the failure inline. Pure + exported so it's unit-tested. */
 export const shouldToastError = (meta: AppMutationMeta | undefined): boolean =>
   meta?.errorToast !== false
+
+/** Whether a query's data may be persisted to IndexedDB: yes UNLESS it opted out via
+ *  `meta.persist: false`. Pure + exported so it's unit-tested. */
+export const shouldPersistQuery = (meta: AppQueryMeta | undefined): boolean =>
+  meta?.persist !== false
 
 /** The user-facing text for a mutation failure. A server error (ApiError) carries a numeric
  *  `status` and a human message worth showing; a network/unknown failure throws a raw browser

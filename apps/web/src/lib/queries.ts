@@ -12,6 +12,9 @@ export const meQuery = () =>
     queryKey: ["me"] as const,
     queryFn: () => api.session(),
     staleTime: Number.POSITIVE_INFINITY,
+    // Never persist the session — auth must re-resolve fresh on every boot so an expired
+    // session can't restore as "logged in" (the route guards await a live one).
+    meta: { persist: false },
   })
 
 // Nav-rail data (counts + tag list, collections, workspaces). Warmed
