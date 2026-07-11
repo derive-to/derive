@@ -31,7 +31,7 @@ import type { Context } from "hono"
 import { setCookie } from "hono/cookie"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { publishSweepEvents } from "../lib/anchor-sweep"
+import { afterPublish } from "../lib/after-publish"
 import { authorProfile, resolveHandles, resolveUserBylines } from "../lib/author"
 import { cleanPath, manifestOf } from "../lib/bundle"
 import { hashPassword, signState, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
@@ -651,51 +651,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           user_id: ownerId,
           role: "owner",
         })
-      bus.publish(artifact.id, {
-        type: "version.published",
-        n: version.n,
-        message: version.message,
-      })
-      await notify(artifact, "version.published", {
-        version: version.n,
-        message: version.message,
-        author: version.author,
-      })
-      notifyRender(artifact, version.n)
-      // Fan out to the publisher's followers: "someone you follow published X". Gated
-      // to a known HUMAN behind the publish (their followers are who care — an agent
-      // publish fans out to the followers of the person it acts for), a publicly-
-      // visible artifact (a follow never surfaces a private title), and a NEW artifact
-      // only — `shortId` means a republish/new version, which would otherwise spam
-      // followers on every edit. Done in the background so a popular author's fan-out
-      // never adds to publish latency (like the comment-mention fan-out).
-      if (!shortId && onBehalf && artifact.listed === "public") {
-        background(
-          (async () => {
-            const [author] = await meta.getUsers([onBehalf])
-            if (!author) return
-            const followers = await meta.listFollowers(author.id, 200)
-            // One bulk insert for the whole fan-out, not a createNotification per follower.
-            await meta.createNotifications(
-              followers
-                .filter((follower) => follower.id !== author.id)
-                .map((follower) => ({
-                  id: newId("ntf"),
-                  user_id: follower.id,
-                  actor: author.name ?? author.username ?? "Someone",
-                  kind: "publish",
-                  artifact_id: artifact.id,
-                  artifact_short_id: artifact.short_id,
-                  artifact_title: artifact.title,
-                  thread_id: "",
-                  comment_id: "",
-                  preview: artifact.title ?? "published something new",
-                })),
-            )
-          })(),
-        )
-      }
-      // Republish can resolve comment threads in the same call.
+      // Republish can resolve comment threads in the same call: map the given comment
+      // ids to their threads, keeping only ones that belong to this artifact.
+      const toResolve: string[] = []
       const resolves = body["resolves"]
       if (shortId && typeof resolves === "string" && resolves) {
         for (const cid of resolves
@@ -703,15 +661,21 @@ export const artifactRoutes = (ctx: AppContext) => {
           .map((s) => s.trim())
           .filter(Boolean)) {
           const cm = await meta.getComment(cid)
-          if (cm && cm.artifact_id === artifact.id) {
-            await meta.setThreadState(artifact.id, cm.thread_id, "resolved")
-            bus.publish(artifact.id, { type: "comment.resolved", thread_id: cm.thread_id })
-          }
+          if (cm && cm.artifact_id === artifact.id) toResolve.push(cm.thread_id)
         }
       }
-      // Re-anchor existing threads against the new version: feedback whose quoted
-      // text changed flips to `outdated` (and back to `open` if it reappears).
-      await publishSweepEvents(meta, blobs, bus, artifact.id, version)
+      // Webhook + follower fan-out + thread resolves + realtime/render/re-anchor, all via
+      // the one shared helper so this path can never drift from MCP publish or restore.
+      await afterPublish(
+        { meta, blobs, bus, notify, notifyRender, background },
+        artifact,
+        version,
+        {
+          isNew: !shortId,
+          onBehalf,
+          resolves: toResolve,
+        },
+      )
       // Open a review round if the publisher asked for one (the /derive loop). The
       // reviewer is the human behind the publish (onBehalf covers both a session
       // user and an agent's registrant); falls back to the workspace's first owner
@@ -1319,19 +1283,17 @@ export const artifactRoutes = (ctx: AppContext) => {
         message: `Restored v${src.n}`,
         name: null,
       })
-      await notify(artifact, "version.published", {
-        version: version.n,
-        message: version.message,
-        author: version.author,
-      })
-      notifyRender(artifact, version.n)
-      bus.publish(artifact.id, {
-        type: "version.published",
-        n: version.n,
-        message: version.message,
-      })
-      // Restoring an old blob is a content change too — re-anchor threads against it.
-      await publishSweepEvents(meta, blobs, bus, artifact.id, version)
+      // A restore is a version bump too: same webhook + realtime + re-anchor as a publish,
+      // but never a new artifact, so no follower fan-out and no thread resolves.
+      await afterPublish(
+        { meta, blobs, bus, notify, notifyRender, background },
+        artifact,
+        version,
+        {
+          isNew: false,
+          onBehalf: null,
+        },
+      )
       const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord
       const versions = await meta.listVersions(artifact.id)
       return c.json(
