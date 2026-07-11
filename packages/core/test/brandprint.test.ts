@@ -20,7 +20,9 @@ describe("resolveBrandprint", () => {
         { collectionId: "c2", profileId: "nope" },
       ),
     ).toEqual({ collectionIds: ["c1", "c2"], profileId: "p1" })
-    expect(resolveBrandprint({ collectionId: "c1" }, { profileId: "nope" }).profileId).toBeUndefined()
+    expect(
+      resolveBrandprint({ collectionId: "c1" }, { profileId: "nope" }).profileId,
+    ).toBeUndefined()
   })
 })
 
