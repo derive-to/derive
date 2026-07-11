@@ -22,6 +22,13 @@ export interface MaterializedEdits {
   filename: string
 }
 
+/** A filename that round-trips `contentType` through the publish sniffer (which types
+ *  by filename first). Any revision of an existing single-file artifact that doesn't
+ *  carry an explicit filename must go through this — an `index.html` default silently
+ *  re-types a markdown doc as HTML, and the browser then swallows its text as markup. */
+export const preservingFilename = (contentType: string | null): string =>
+  (contentType ?? "").split(";")[0]?.trim() === "text/markdown" ? "index.md" : "index.html"
+
 /**
  * Turn an `edits` request into stored-revision bytes: validate the artifact can take
  * edits at all (single-file, `base_version` still fresh), load its current source,
@@ -57,11 +64,7 @@ export async function materializeEdits(
   const content = applyEdits(src, edits)
   // Keep the artifact's content type: the sniffer types by filename first, and the
   // default index.html would silently re-type an edited markdown doc as HTML.
-  const filename =
-    (cur.content_type.split(";")[0]?.trim() ?? cur.content_type) === "text/markdown"
-      ? "index.md"
-      : "index.html"
-  return { content, filename }
+  return { content, filename: preservingFilename(cur.content_type) }
 }
 
 /** Parse a `base_version` value from an untyped form field: `undefined` when absent,
