@@ -15,6 +15,7 @@ import { artifactTypeLabel, dirOf } from "@/lib/artifact"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { CommentSignal } from "./comment-signal"
+import { ProposalSignal } from "./proposal-signal"
 
 /**
  * A compact list row for the library (the default for collections / synced repos,
@@ -60,6 +61,10 @@ export function ArtifactRow({
   const author = a.author ?? null
   const authorLogin = author?.login ?? a.author_login ?? null
   const hasAuthor = !!(author?.name || authorLogin || a.author_name)
+  // Proposals you can act on (owner/editor) soft-ink the row edge — the same
+  // "needs you" accent as a thread you're in (see ProposalSignal + ArtifactCard).
+  const awaitingReview =
+    (a.my_role === "owner" || a.my_role === "editor") && (a.open_proposals ?? 0) > 0
 
   return (
     <div
@@ -68,7 +73,7 @@ export function ArtifactRow({
         // Needs-your-feedback accents — the ink accent is the sanctioned attention signal.
         a.mentions_me
           ? "border-primary ring-1 ring-primary/30"
-          : a.i_participated
+          : a.i_participated || awaitingReview
             ? "border-primary/60"
             : "border-border",
       )}
@@ -105,13 +110,14 @@ export function ArtifactRow({
               {dir}/
             </span>
           )}
+          <ProposalSignal artifact={a} size={12} className="relative z-20" />
+          <CommentSignal artifact={a} size={12} className="relative z-20" />
           {a.views !== undefined && a.views > 0 && (
             <span className="inline-flex items-center gap-1" title={`${a.views} viewers`}>
               <Icon name="views" size={12} />
               {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
             </span>
           )}
-          <CommentSignal artifact={a} size={12} className="relative z-20" />
         </span>
       </button>
 

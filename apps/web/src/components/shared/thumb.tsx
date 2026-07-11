@@ -15,21 +15,19 @@ import { thumbMedia } from "./thumb-media"
 // visibly flashes, which is why cards never lift.
 //
 // One machine-register placard rides the bottom-left over a fixed scrim (legible
-// over any screenshot, both themes): the type, and the version when there's
-// history — `HTML · v3`. One chip, not a badge per fact.
+// over any screenshot, both themes): the artifact's type — `HTML`. The version and
+// freshness live in the card's caption state line, so the placard stays a single
+// category tag over the render.
 export function Thumb({
   id,
   v,
   typeLabel,
-  version,
   hasPreview,
   className,
 }: {
   id: string
   v: number
   typeLabel?: string
-  /** The current version ordinal — shown only when there's history (chain > 1). */
-  version?: number
   /** When true, render the static PNG from /v1/og/:id instead of the live iframe. */
   hasPreview?: boolean
   className?: string
@@ -81,11 +79,8 @@ export function Thumb({
         />
       )}
       {typeLabel && (
-        <span className="pointer-events-none absolute bottom-2 left-2 z-10 inline-flex items-center gap-1 rounded-md bg-scrim/85 px-1.5 py-0.5 font-mono text-2xs text-scrim-foreground ring-1 ring-scrim-foreground/15">
-          <span className="uppercase tracking-wide">{typeLabel}</span>
-          {version !== undefined && (
-            <span className="tabular-nums text-scrim-foreground/70">· v{version}</span>
-          )}
+        <span className="pointer-events-none absolute bottom-2 left-2 z-10 rounded-md bg-scrim/85 px-1.5 py-0.5 font-mono text-2xs uppercase tracking-wide text-scrim-foreground ring-1 ring-scrim-foreground/15">
+          {typeLabel}
         </span>
       )}
     </div>

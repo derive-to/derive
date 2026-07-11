@@ -313,6 +313,10 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Per-artifact comment signals for the viewer (open-thread count + tagged/authored
       // flags) — drives the inline comment badge and the "needs your feedback" featuring.
       const feedback = me ? await meta.commentSignals(pageIds, me.id) : {}
+      // Open-proposal counts per artifact — the review queue. Same batched, no-N+1
+      // enrichment as the comment signals above (viewer-independent, so no `me` gate),
+      // so a card can badge "N proposals" on the feed the way the detail view does.
+      const proposalCounts = await meta.openProposalCounts(pageIds)
       // The viewer's per-artifact shares across the page, one query — folded into
       // my_role below so shared and private rows gate their quick actions correctly.
       // For a linked agent these are the registrant's rows, so the cap applies.
@@ -350,6 +354,8 @@ export const artifactRoutes = (ctx: AppContext) => {
           author: authorProfile(a, handleByGhId, bylineByUserId),
           // open_threads + mentions_me + i_participated (defaults for anon / no signals).
           ...(feedback[a.id] ?? { open_threads: 0, mentions_me: false, i_participated: false }),
+          // The review queue — proposals awaiting a decision (owner/editor acts on them).
+          open_proposals: proposalCounts[a.id] ?? 0,
         })),
         next_cursor,
         ...(collectionInfo ? { collection: collectionInfo } : {}),

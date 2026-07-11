@@ -16,19 +16,18 @@ import { artifactTypeLabel, dirOf } from "@/lib/artifact"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { CommentSignal } from "./comment-signal"
+import { ProposalSignal } from "./proposal-signal"
 
-// One card in the library grid, rebuilt preview-first: the live render bleeds to
-// the card's top edge as the hero, carrying a single machine-register `TYPE · vN`
-// chip; a hairline-divided caption below holds the title and one split meta row —
-// identity (who · when) on the left, signals (feedback · views) on the right.
-// The card is clean at rest and reveals its actions (star, ⋯ menu) on hover.
+// One card in the library grid, preview-first. The live render is the hero (bleeds to
+// the top edge, carrying a single machine-register TYPE placard); a hairline-divided
+// caption below holds the title in voice, a mono state line (version · freshness), and
+// one split meta row — who made it on the left, activity (review · comments · views)
+// on the right. Clean at rest; the actions (star, ⋯) reveal on hover, and the ink edge
+// accent (a persistent "needs you" state) shows at rest.
 //
-// Stretched-link pattern: the open button's ::after covers the whole card, so a
-// click anywhere (preview included) opens it, while the star / menu / author / tag
-// chips sit above (z-20) and stay independently clickable. Hover is an instant
-// hairline-strengthen + the preview waking — no transitioned shadow (a paint prop,
-// not a sanctioned move/scale/fade) and no transform (either would repaint the
-// iframe); the resting soft shadow carries the card's lift.
+// Stretched-link pattern: the open button's ::after covers the whole card (preview
+// included), while the actions / author / tag chips sit above it (z-20) and stay
+// independently clickable.
 export function ArtifactCard({
   artifact: a,
   onOpen,
@@ -60,25 +59,35 @@ export function ArtifactCard({
   const author = a.author ?? null
   const hasAuthor = !!(author?.name || author?.login || a.author_login || a.author_name)
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
-  // The list endpoint sends `versions: []`, so history reads off `current_version`
-  // (the stable head ordinal). > 1 means "there is history here" → show the vN.
   const versionDepth = Math.max(a.current_version, a.versions.length)
+  const sourceDir = a.source_path ? dirOf(a.source_path) : ""
   const tags = a.tags ?? []
+  const isPrivate = a.workspace_access === "none" && (a.link_role ?? "none") === "none"
+  // Proposals you can act on (owner/editor) are a "needs you" signal — they soft-ink
+  // the card edge (the `i_participated` tier) and the review count.
+  const awaitingReview =
+    (a.my_role === "owner" || a.my_role === "editor") && (a.open_proposals ?? 0) > 0
+
+  // Machine-register state line under the title (house " · " join, matching the
+  // workbench header): a synced file's folder, else its version when there's history,
+  // then how fresh it is. The TYPE rides the placard, so it isn't repeated here.
+  const stateLine = [
+    sourceDir ? `${sourceDir}/` : versionDepth > 1 ? `v${a.current_version}` : "",
+    updated ? `updated ${ago(updated)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ")
 
   return (
     <Card
       className={cn(
-        // Full-bleed preview: no mat, no inner padding — the caption owns its own.
-        // A resting soft shadow (zeroed in dark by the theme token) gives the card
-        // its lift; hover is the instant hairline-strengthen + preview wake, with no
-        // transitioned shadow and no transform (either repaints the iframe).
         "group relative isolate flex flex-col gap-0 overflow-hidden p-0 shadow-(--shadow-sm)",
-        // Needs-your-feedback items stand out: a tagged item gets the full accent +
-        // ring; one you're just in the thread on gets a softer accent border (the
-        // ink accent = "this matters", the sanctioned attention signal, like unread).
+        // A direct @mention gets the full accent + ring; a thread you're in — or
+        // proposals waiting on your review — gets a softer accent border. The ink
+        // accent is the sanctioned attention signal, shown at rest.
         a.mentions_me
           ? "border-primary ring-1 ring-primary/30"
-          : a.i_participated
+          : a.i_participated || awaitingReview
             ? "border-primary/60"
             : "border-border hover:border-foreground/25",
       )}
@@ -88,14 +97,12 @@ export function ArtifactCard({
           id={a.short_id}
           v={a.current_version}
           typeLabel={artifactTypeLabel(a)}
-          version={versionDepth > 1 ? a.current_version : undefined}
           hasPreview={a.has_preview}
         />
-        {/* Action cluster — one top-right corner above the stretched link (z-20).
-            Revealed on hover/focus for fine pointers, ALWAYS shown on coarse (touch)
-            pointers (no hover to reveal them). A favourited star also persists at
-            rest. Adaptive translucent pills read over any render, both themes. */}
-        <div className="absolute right-2 top-2 z-20 flex items-center gap-1.5">
+        {/* Actions — top-right over the render, revealed on hover/focus (always shown
+            on touch; a favourited star persists). Translucent pills read over any
+            render, both themes. */}
+        <div className="absolute top-2 right-2 z-20 flex items-center gap-1.5">
           {showMenu && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -163,13 +170,9 @@ export function ArtifactCard({
             }}
             className={cn(
               "relative border-border-soft bg-card transition-opacity focus-visible:opacity-100 pointer-coarse:opacity-100",
-              // A favourited star always shows; an unfavourited one reveals on
-              // hover/focus so the resting wall of previews stays calm.
               !a.favorite && "opacity-0 group-hover:opacity-100",
             )}
           >
-            {/* A favorited star keeps the brand ink — pinned/favorited is a
-                sanctioned ink moment. */}
             <Icon
               name="star"
               size={16}
@@ -194,61 +197,46 @@ export function ArtifactCard({
           aria-label={`Open ${a.title ?? a.short_id}`}
           className="flex w-full min-w-0 flex-col gap-0.5 text-left outline-none after:absolute after:inset-0 after:z-1 after:rounded-xl after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
         >
-          {/* The title is the work, not the tool — Geist voice, sized to caption so
-              the preview stays the hero. */}
+          {/* The title is the work — Geist voice, sized to the caption so the preview
+              stays the hero. */}
           <span className="truncate font-serif text-base font-medium tracking-tight text-foreground">
             {a.title ?? a.short_id}
           </span>
-          {/* For a synced file: its folder location (the path lives in source_path). */}
-          {a.source_path && dirOf(a.source_path) && (
+          {stateLine && (
             <span
-              className="truncate font-mono text-2xs text-muted-foreground"
-              title={a.source_path}
+              className="truncate font-mono text-2xs tabular-nums text-muted-foreground"
+              title={sourceDir ? (a.source_path ?? undefined) : undefined}
             >
-              {dirOf(a.source_path)}/
+              {stateLine}
             </span>
           )}
         </button>
 
-        {/* Meta row, two glanceable clusters: provenance (who · when) left, activity
-            (feedback · views) right. The author is avatar-only — a repeated name on
-            a wall of your own work is noise, but the tint still says "who" for
-            shared/synced items (name in its tooltip). It's the one interactive
-            island here (z-20); the rest clicks through to open. Mono throughout.
-            mt-auto pins it (and any tags) to the card's bottom edge, so equal-height
-            grid rows anchor their meta rather than float empty space below it. */}
-        <div className="mt-auto flex min-w-0 items-center gap-2 font-mono text-2xs tabular-nums text-muted-foreground">
-          <span className="flex min-w-0 items-center gap-1.5">
-            {hasAuthor && (
-              <AuthorChip
-                name={author?.name ?? a.author_name ?? null}
-                login={author?.login ?? a.author_login ?? null}
-                avatar={author?.avatar ?? a.author_avatar ?? null}
-                handle={author?.handle ?? null}
-                size="xs"
-                showName={false}
-                className="relative z-20 shrink-0"
-                data-testid={`artifact-card-author-${a.short_id}`}
-              />
-            )}
-            {updated && (
-              <time
-                dateTime={new Date(updated).toISOString()}
-                title={new Date(updated).toLocaleString()}
-                className="truncate"
-              >
-                {ago(updated)}
-              </time>
-            )}
-          </span>
-          <span className="ml-auto inline-flex shrink-0 items-center gap-2.5">
+        {/* People + activity: who made it on the left (avatar + name), the activity
+            cluster on the right. The author is the one interactive island here (z-20);
+            the rest clicks through to open. */}
+        <div className="flex min-w-0 items-center gap-2 font-mono text-2xs tabular-nums text-muted-foreground">
+          {hasAuthor && (
+            <AuthorChip
+              name={author?.name ?? a.author_name ?? null}
+              login={author?.login ?? a.author_login ?? null}
+              avatar={author?.avatar ?? a.author_avatar ?? null}
+              handle={author?.handle ?? null}
+              size="xs"
+              className="relative z-20 min-w-0"
+              data-testid={`artifact-card-author-${a.short_id}`}
+            />
+          )}
+          <span className={cn("inline-flex shrink-0 items-center gap-2.5", hasAuthor && "ml-auto")}>
             {/* Invite-only work is invisible to everyone but its members — the chip
                 says so wherever the doc DOES surface (your library, Created by me). */}
-            {a.workspace_access === "none" && (a.link_role ?? "none") === "none" && (
+            {isPrivate && (
               <Badge shape="pill" variant="outline" title="Only you and people you add">
                 <Icon name="lock" size={12} /> Private
               </Badge>
             )}
+            {/* Review queue, then discussion, then passive views — most-actionable first. */}
+            <ProposalSignal artifact={a} size={12} />
             <CommentSignal artifact={a} size={12} compact />
             {a.views !== undefined && a.views > 0 && (
               <span className="inline-flex items-center gap-1" title={`${a.views} viewers`}>
@@ -262,8 +250,8 @@ export function ArtifactCard({
 
         {tags.length > 0 && (
           // One row only — chips are `nowrap` + clipped so a heavily-tagged artifact
-          // can't grow the card taller than its siblings (steady grid rhythm). The
-          // first three are interactive filter chips; a trailing "+N" counts the rest.
+          // can't grow the card taller than its siblings. First three are interactive
+          // filter chips; a trailing "+N" counts the rest.
           <div className="relative z-20 flex min-w-0 items-center gap-1.5 overflow-hidden">
             {tags.slice(0, 3).map((t) => (
               <Badge

@@ -25,6 +25,16 @@ function Views({ n }: { n: number }) {
 // artifact. Mirrors the library card's look so the two read as one design.
 export function ProfileWorkCard({ artifact: a }: { artifact: Artifact }) {
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
+  const dir = a.source_path ? dirOf(a.source_path) : ""
+  const versionDepth = Math.max(a.current_version, a.versions.length)
+  // Machine-register state line, house " · " join — a synced file's folder, else its
+  // version when there's history, then freshness. The TYPE rides the placard.
+  const stateLine = [
+    dir ? `${dir}/` : versionDepth > 1 ? `v${a.current_version}` : "",
+    updated ? `updated ${ago(updated)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ")
   return (
     <Link
       to="/artifacts/$ref"
@@ -40,34 +50,26 @@ export function ProfileWorkCard({ artifact: a }: { artifact: Artifact }) {
         id={a.short_id}
         v={a.current_version}
         typeLabel={artifactTypeLabel(a)}
-        // Match the library card's gating: the list endpoint sends versions: [], so
-        // history reads off current_version (versions.length alone never fires here).
-        version={Math.max(a.current_version, a.versions.length) > 1 ? a.current_version : undefined}
         hasPreview={a.has_preview}
       />
       <div className="flex min-w-0 flex-col gap-2 border-t border-border-soft p-3.5">
-        {/* The artifact title is the work — Geist voice, sized to the card caption. */}
+        {/* The artifact title is the work — Geist voice, sized to the caption. */}
         <span className="truncate font-serif text-base font-medium tracking-tight text-foreground">
           {a.title ?? a.short_id}
         </span>
-        {a.source_path && dirOf(a.source_path) && (
-          <span className="truncate font-mono text-2xs text-muted-foreground" title={a.source_path}>
-            {dirOf(a.source_path)}/
-          </span>
-        )}
-        <span className="flex items-center gap-2 font-mono text-2xs text-muted-foreground">
-          {updated && (
-            <span>
-              updated{" "}
-              <time
-                dateTime={new Date(updated).toISOString()}
-                title={new Date(updated).toLocaleString()}
-              >
-                {ago(updated)}
-              </time>
+        {/* Machine-register state line, mirroring ArtifactCard (minus the library-only
+            author/review chrome), with any view count trailing right. */}
+        <span className="flex min-w-0 items-center gap-2 font-mono text-2xs tabular-nums text-muted-foreground">
+          {stateLine && (
+            <span className="truncate" title={dir ? (a.source_path ?? undefined) : undefined}>
+              {stateLine}
             </span>
           )}
-          {a.views !== undefined && a.views > 0 && <Views n={a.views} />}
+          {a.views !== undefined && a.views > 0 && (
+            <span className="ml-auto shrink-0">
+              <Views n={a.views} />
+            </span>
+          )}
         </span>
       </div>
     </Link>
