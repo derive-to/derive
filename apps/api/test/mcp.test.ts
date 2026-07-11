@@ -207,6 +207,119 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(text).toContain("How we write Markdown")
   })
 
+  it("serves the build reference and a pending note while the profile is a stub", async () => {
+    const { app, token, meta } = appWithGrant(
+      "brandprint-pending",
+      "openid derive:read derive:publish",
+    )
+    const srcId = (await (await publish(app, token, "Voice and tone")).json()).short_id
+    const profId = (await (await publish(app, token, "Brand profile")).json()).short_id
+    const src = await meta.getByShortId(srcId)
+    const prof = await meta.getByShortId(profId)
+    if (!src || !prof) throw new Error("no artifacts")
+    const collectionId = "col_bp_pending"
+    await meta.createCollection({
+      id: collectionId,
+      org_id: src.org_id,
+      title: "Brandprint",
+      created_by: "u_o",
+    })
+    await meta.addCollectionItem(collectionId, src.id)
+    await meta.addCollectionItem(collectionId, prof.id)
+    await meta.setOrgSettings(src.org_id, {
+      ...(await meta.getOrgSettings(src.org_id)),
+      brandprint: { collectionId, profileId: profId },
+    })
+
+    // Factual, user-conditioned pending note — never a solicitation.
+    const init = await rpc(app, token, initBody)
+    const inst = (init.parsed?.result as { instructions?: string }).instructions ?? ""
+    expect(inst).toContain("has not been generated yet")
+    expect(inst).toContain("If the user asks")
+    expect(inst).toContain(profId)
+
+    // Reference + template are served; the stub is neither a source nor the profile.
+    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
+    const uris = (
+      (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
+    ).map((r) => r.uri)
+    expect(uris).toContain("derive://brandprint/reference")
+    expect(uris).toContain("derive://brandprint/template")
+    expect(uris).toContain(`derive://brandprint/${srcId}`)
+    expect(uris).not.toContain("derive://brandprint/profile")
+    expect(uris).not.toContain(`derive://brandprint/${profId}`)
+
+    const ref = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "resources/read",
+      params: { uri: "derive://brandprint/reference" },
+    })
+    const refText =
+      (ref.parsed?.result as { contents?: { text: string }[] } | undefined)?.contents?.[0]?.text ??
+      ""
+    expect(refText).toContain("for_review")
+    expect(refText).toContain("brandprint-tokens")
+  })
+
+  it("serves the live profile as the headline resource once it has a real version", async () => {
+    const { app, token, meta } = appWithGrant(
+      "brandprint-live",
+      "openid derive:read derive:publish",
+    )
+    const profId = (await (await publish(app, token, "Brand profile")).json()).short_id
+    const prof = await meta.getByShortId(profId)
+    if (!prof) throw new Error("no artifact")
+    const collectionId = "col_bp_live"
+    await meta.createCollection({
+      id: collectionId,
+      org_id: prof.org_id,
+      title: "Brandprint",
+      created_by: "u_o",
+    })
+    await meta.addCollectionItem(collectionId, prof.id)
+    await meta.setOrgSettings(prof.org_id, {
+      ...(await meta.getOrgSettings(prof.org_id)),
+      brandprint: { collectionId, profileId: profId },
+    })
+
+    // The agent's generated profile lands as version 2 — the stub is v1, so v2 flips live.
+    const form = new FormData()
+    form.append(
+      "file",
+      new Blob([new TextEncoder().encode("<h1>Acme brand profile</h1>")]),
+      "index.html",
+    )
+    const rep = await app.request(`/v1/artifacts/${profId}/versions`, {
+      method: "POST",
+      body: form,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(rep.status).toBe(201)
+
+    const init = await rpc(app, token, initBody)
+    const inst = (init.parsed?.result as { instructions?: string }).instructions ?? ""
+    expect(inst).toContain("Brandprint profile")
+    expect(inst).toContain("derive://brandprint/profile")
+    expect(inst).not.toContain("has not been generated yet")
+
+    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
+    const uris = (
+      (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
+    ).map((r) => r.uri)
+    expect(uris).toContain("derive://brandprint/profile")
+
+    const read = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "resources/read",
+      params: { uri: "derive://brandprint/profile" },
+    })
+    const text = (read.parsed?.result as { contents?: { text: string }[] } | undefined)
+      ?.contents?.[0]?.text
+    expect(text).toContain("Acme brand profile")
+  })
+
   it("list_artifacts + read see the agent's own published artifact", async () => {
     const { app, token } = appWithGrant("read", "openid derive:read derive:publish")
     const pub = await publish(app, token, "My Plan")
