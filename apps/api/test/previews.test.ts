@@ -11,7 +11,13 @@ import type {
 } from "@derive/core"
 import { sha256Hex } from "@derive/core"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { enqueueRender, MAX_ATTEMPTS, runRenderTick, startPreviewWorker } from "../src/previews"
+import {
+  enqueueRender,
+  MAX_ATTEMPTS,
+  runRenderTick,
+  startPreviewWorker,
+  sweepMissingRenders,
+} from "../src/previews"
 
 // ---------------------------------------------------------------------------
 // Fake BlobStore (content-addressed, Map-backed)
@@ -138,6 +144,22 @@ const makeFakes = (): FakeMeta => {
         created_at: new Date().toISOString(),
       }
       jobs.set(j.id, rec)
+    },
+    versionsMissingPreview: async (
+      limit: number,
+    ): Promise<Array<{ artifact_id: string; n: number }>> => {
+      const out: Array<{ artifact_id: string; n: number }> = []
+      for (const a of artifacts.values()) {
+        if (out.length >= limit) break
+        if (a.removed_at !== null) continue
+        const v = versions.get(`${a.id}:${a.current_version}`)
+        if (!v || v.preview_status !== null) continue
+        const pending = [...jobs.values()].some(
+          (j) => j.artifact_id === a.id && j.status === "pending",
+        )
+        if (!pending) out.push({ artifact_id: a.id, n: a.current_version })
+      }
+      return out
     },
     claimDueRenderJobs: async (
       _now: string,
@@ -443,6 +465,59 @@ describe("previews: enqueueRender + runRenderTick", () => {
       secret: "s",
     })
     expect(n).toBe(0)
+  })
+})
+
+describe("sweepMissingRenders", () => {
+  it("enqueues a job for a never-rendered current version, and the next tick renders it", async () => {
+    const fakes = makeFakes()
+    // Published without ever enqueuing a render (e.g. an MCP publish before the fix).
+    await seedArtifact(fakes, { id: "s1", shortId: "sshort1", versionN: 1 })
+    expect(fakes.jobs.size).toBe(0)
+
+    const swept = await sweepMissingRenders(fakes.meta)
+    expect(swept).toBe(1)
+    expect(fakes.jobs.size).toBe(1)
+
+    const renderer = { screenshot: async () => new Uint8Array([9]) }
+    await runRenderTick({
+      meta: fakes.meta,
+      blobs: makeBlobs(),
+      renderer,
+      baseUrl: "https://d.to",
+      secret: "s",
+    })
+    expect(fakes.versions.get("s1:1")?.preview_status).toBe("ready")
+  })
+
+  it("does not duplicate a version that already has a pending job", async () => {
+    const fakes = makeFakes()
+    await seedArtifact(fakes, { id: "s2", shortId: "sshort2", versionN: 1 })
+    await enqueueRender(fakes.meta, "s2", 1)
+
+    expect(await sweepMissingRenders(fakes.meta)).toBe(0)
+    expect(fakes.jobs.size).toBe(1)
+  })
+
+  it("never resurrects a version that rendered and failed", async () => {
+    const fakes = makeFakes()
+    await seedArtifact(fakes, { id: "s3", shortId: "sshort3", versionN: 1 })
+    await fakes.meta.setVersionPreview("s3", 1, {
+      preview_status: "failed",
+      preview_error: "boom",
+    })
+
+    expect(await sweepMissingRenders(fakes.meta)).toBe(0)
+    expect(fakes.jobs.size).toBe(0)
+  })
+
+  it("respects the limit", async () => {
+    const fakes = makeFakes()
+    await seedArtifact(fakes, { id: "s4", shortId: "sshort4", versionN: 1 })
+    await seedArtifact(fakes, { id: "s5", shortId: "sshort5", versionN: 1 })
+
+    expect(await sweepMissingRenders(fakes.meta, 1)).toBe(1)
+    expect(fakes.jobs.size).toBe(1)
   })
 })
 

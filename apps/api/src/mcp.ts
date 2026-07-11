@@ -1460,6 +1460,7 @@ async function buildServer(
           message: version.message,
           author: version.author,
         })
+        ctx.notifyRender(artifact, version.n)
         // Re-anchor existing threads: feedback whose quoted text changed flips to
         // `outdated` (and back to `open` if the text reappears). Same sweep the
         // HTTP route runs — MCP publish must call it too.

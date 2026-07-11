@@ -99,6 +99,7 @@ import {
   lt,
   lte,
   ne,
+  notExists,
   or,
   type SQL,
   sql,
@@ -860,6 +861,30 @@ export function makeRepos(db: SqliteDb) {
   const enqueueRenderJob = async (j: NewRenderJob): Promise<void> => {
     await db.insert(renderJob).values(j).run()
   }
+  const versionsMissingPreview = async (
+    limit: number,
+  ): Promise<Array<{ artifact_id: string; n: number }>> =>
+    db
+      .select({ artifact_id: version.artifact_id, n: version.n })
+      .from(artifact)
+      .innerJoin(
+        version,
+        and(eq(version.artifact_id, artifact.id), eq(version.n, artifact.current_version)),
+      )
+      .where(
+        and(
+          isNull(artifact.removed_at),
+          isNull(version.preview_status),
+          notExists(
+            db
+              .select({ one: sql`1` })
+              .from(renderJob)
+              .where(and(eq(renderJob.artifact_id, artifact.id), eq(renderJob.status, "pending"))),
+          ),
+        ),
+      )
+      .limit(limit)
+      .all()
   const claimDueRenderJobs = async (
     now: string,
     limit: number,
@@ -2534,6 +2559,7 @@ export function makeRepos(db: SqliteDb) {
     updateDelivery,
     recentDeliveries,
     enqueueRenderJob,
+    versionsMissingPreview,
     claimDueRenderJobs,
     updateRenderJob,
     getMembership,

@@ -49,7 +49,9 @@ export function Thumb({
     >
       {thumbMedia(hasPreview, imgFailed) === "img" ? (
         <img
-          src={`${API_BASE}/v1/og/${id}`}
+          // Keyed by version so a republish busts the browser's cached screenshot
+          // of the previous one (the og route serves long max-age per URL).
+          src={`${API_BASE}/v1/og/${id}?v=${v}`}
           alt=""
           aria-hidden
           loading="lazy"

@@ -1264,4 +1264,49 @@ describe("remote MCP endpoint (/mcp)", () => {
     })
     expect(toolText(asFile)).toContain("bundle")
   })
+
+  it("publish enqueues a preview render job (parity with the HTTP route)", async () => {
+    const { app, token, meta } = appWithGrant("pubrender", "openid derive:read derive:publish", {
+      renderPreviews: true,
+    })
+    const created = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Card", content: "<h1>v1</h1>" })),
+    )
+    expect(created.published).toBe(true)
+    // notifyRender is fire-and-forget — give the enqueue promise a tick to settle.
+    await new Promise((r) => setTimeout(r, 20))
+    const lease = new Date(Date.now() + 60_000).toISOString()
+    const due = await meta.claimDueRenderJobs(new Date().toISOString(), 10, lease)
+    expect(due).toHaveLength(1)
+    expect(due[0]?.version_n).toBe(1)
+
+    // A republish enqueues for the NEW version.
+    await call(app, token, "publish", { short_id: created.short_id, content: "<h1>v2</h1>" })
+    await new Promise((r) => setTimeout(r, 20))
+    const due2 = await meta.claimDueRenderJobs(new Date().toISOString(), 10, lease)
+    expect(due2).toHaveLength(1)
+    expect(due2[0]?.version_n).toBe(2)
+  })
+
+  it("publish with for_review (a proposal) does NOT enqueue a render job", async () => {
+    const { app, token, meta } = appWithGrant("proprender", "openid derive:read derive:publish", {
+      renderPreviews: true,
+    })
+    const created = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Base", content: "<h1>v1</h1>" })),
+    )
+    await new Promise((r) => setTimeout(r, 20))
+    // Drain the publish's own job so the assertion below isolates the proposal.
+    const lease = new Date(Date.now() + 60_000).toISOString()
+    await meta.claimDueRenderJobs(new Date().toISOString(), 10, lease)
+
+    const proposed = await call(app, token, "publish", {
+      short_id: created.short_id,
+      content: "<h1>proposed</h1>",
+      for_review: true,
+    })
+    expect(JSON.parse(toolText(proposed)).proposed).toBe(true)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(await meta.claimDueRenderJobs(new Date().toISOString(), 10, lease)).toHaveLength(0)
+  })
 })
