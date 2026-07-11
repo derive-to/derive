@@ -11,6 +11,12 @@
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs"
 import { dirname, join } from "node:path"
+import {
+  conventionsBlock,
+  materializeNotes,
+  materializeSkills,
+  mergeSkillLayers,
+} from "./skills.js"
 
 // ---- config -----------------------------------------------------------------
 
@@ -117,6 +123,34 @@ export class DeriveClient {
     return res.json()
   }
 
+  // A raw GET (not JSON-parsed) — the content API returns file bytes/text, not JSON.
+  async callRaw(path) {
+    const res = await fetch(`${this.server}${path}`, {
+      signal: AbortSignal.timeout(30_000),
+      headers: { authorization: `Bearer ${this.token}` },
+    })
+    if (!res.ok) throw new Error(`${path} → ${res.status}`)
+    return res
+  }
+
+  /** The skills.js `api`: enumerate a bundle version, fetch one file (bytes, so binary
+   *  assets survive), and read a single-file doc's source — all pinned by version. */
+  skillApi() {
+    return {
+      outline: (id, version) => this.call(`/v1/artifacts/${id}/content?outline=1&v=${version}`),
+      file: async (id, path, version) =>
+        Buffer.from(
+          await (
+            await this.callRaw(
+              `/v1/artifacts/${id}/content?section=${encodeURIComponent(path)}&v=${version}`,
+            )
+          ).arrayBuffer(),
+        ),
+      content: async (id, version) =>
+        (await this.callRaw(`/v1/artifacts/${id}/content?v=${version}`)).text(),
+    }
+  }
+
   getContext(contextId) {
     return this.call(`/v1/contexts/${contextId}`)
   }
@@ -176,27 +210,41 @@ export class DeriveClient {
  *  manifest without frontmatter passes through untouched. */
 export function parseManifest(md) {
   const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/)
-  if (!m) return { body: md, repos: [] }
+  if (!m) return { body: md, repos: [], skills: [], brandprint: "live" }
   const unquote = (v) => {
     const t = v.trim()
     const q = t[0]
     return t.length >= 2 && (q === '"' || q === "'") && t.at(-1) === q ? t.slice(1, -1) : t
   }
   const repos = []
-  let inRepos = false
+  const skills = []
+  // Which list a `- item:` line belongs to; a top-level key line closes both.
+  let into = null // "repos" | "skills" | null
   let cur = null
+  let brandprint = "live" // ambient workspace conventions on by default
   for (const line of (m[1] ?? "").split(/\r?\n/)) {
     if (/^repos:\s*$/.test(line)) {
-      inRepos = true
+      into = "repos"
       continue
     }
-    if (inRepos && /^\S/.test(line)) inRepos = false // next top-level key
-    if (!inRepos) continue
+    if (/^skills:\s*$/.test(line)) {
+      into = "skills"
+      continue
+    }
+    // A top-level scalar: `brandprint: off` opts a context out of the ambient layer.
+    const bp = line.match(/^brandprint:\s*(\S+)/)
+    if (bp) {
+      into = null
+      brandprint = unquote(bp[1]) === "off" ? "off" : "live"
+      continue
+    }
+    if (into && /^\S/.test(line)) into = null // next top-level key
+    if (!into) continue
     const item = line.match(/^\s*-\s+(\w+):\s*(.+)$/)
     const kv = line.match(/^\s+(\w+):\s*(.+)$/)
     if (item) {
       cur = { [item[1]]: unquote(item[2]) }
-      repos.push(cur)
+      ;(into === "repos" ? repos : skills).push(cur)
     } else if (kv && cur) cur[kv[1]] = unquote(kv[2])
   }
   return {
@@ -206,6 +254,15 @@ export function parseManifest(md) {
         (r) => typeof r.url === "string" && /^(https:\/\/|ssh:\/\/|git@|file:\/\/)/.test(r.url),
       )
       .map((r) => ({ url: r.url, ref: r.ref ?? null, description: r.description ?? "" })),
+    // A skill needs an id; version is pinned by `derive context push`, but tolerate a
+    // hand-written manifest with none (current is fetched, logged unpinned).
+    skills: skills
+      .filter((s) => typeof s.id === "string" && s.id)
+      .map((s) => ({
+        id: s.id,
+        version: Number.isFinite(Number(s.version)) ? Number(s.version) : null,
+      })),
+    brandprint,
   }
 }
 
@@ -534,7 +591,7 @@ const MOCK_ANSWER = {
   artifact: null,
 }
 
-async function serveSession(client, session, manifest, cfg, repoMeta = []) {
+async function serveSession(client, session, manifest, cfg, repoMeta = [], skillMeta = []) {
   const asked = session.messages.at(-1)?.body_md?.slice(0, 80) ?? "?"
   console.log(`[runner] session ${session.id}: "${asked}"`)
   const result = cfg.mock
@@ -560,6 +617,9 @@ async function serveSession(client, session, manifest, cfg, repoMeta = []) {
     // Provenance: which corpus tips this answer was computed against — the
     // difference between "the data says X" and "the data as of ab12cd3 says X".
     ...(repoMeta.length ? { repos: repoMeta } : {}),
+    // And which skill versions were on disk for this run (the ambient Brandprint
+    // layer is live-at-boot, so its versions are only knowable per-run).
+    ...(skillMeta.length ? { skills: skillMeta } : {}),
     ...(a.escalate ? { escalation_reason: a.escalation_reason ?? "escalated" } : {}),
   }
   // Publish the answer's visual, if it produced one. A publish failure demotes
@@ -626,6 +686,32 @@ export async function serve(cfg) {
   const catalog = await syncRepos(boot.repos, cfg.cwd)
   const repoMeta = catalog.filter((r) => r.sha).map((r) => ({ url: r.url, sha: r.sha }))
 
+  // Conventions materialize at boot, like repos: the workspace Brandprint (ambient,
+  // unless `brandprint: off`) plus the manifest's own pinned skills. Skills land in
+  // .claude/skills/ (the spawned claude auto-discovers them); notes land in brandprint/.
+  // The Brandprint rides on the same config fetch as the manifest (info.brandprint) —
+  // the runner's only window into workspace settings.
+  const api = client.skillApi()
+  const bp = boot.brandprint !== "off" ? (info.brandprint ?? null) : null
+  const bpSkills = (bp?.members ?? [])
+    .filter((mbr) => mbr.is_skill)
+    .map((mbr) => ({ id: mbr.short_id, version: mbr.version }))
+  const bpNotes = (bp?.members ?? [])
+    .filter((mbr) => !mbr.is_skill)
+    .map((mbr) => ({ short_id: mbr.short_id, title: mbr.title, version: mbr.version }))
+  // Dedup across the two layers: a skill named in BOTH the ambient Brandprint and the
+  // manifest's own `skills:` materializes ONCE (manifest pin wins), never twice under a
+  // collided dir.
+  const skillCatalog = await materializeSkills(
+    api,
+    mergeSkillLayers(bpSkills, boot.skills),
+    join(cfg.cwd, ".claude", "skills"),
+  )
+  const noteCatalog = await materializeNotes(api, bpNotes, join(cfg.cwd, "brandprint"))
+  const conventions = conventionsBlock(skillCatalog, noteCatalog)
+  // Provenance, alongside the repo SHAs: which skill versions this run had on disk.
+  const skillMeta = skillCatalog.filter((s) => s.ok).map((s) => ({ id: s.id, version: s.version }))
+
   for (;;) {
     try {
       // An open session ending on an agent turn is one of two things: a settle
@@ -647,13 +733,13 @@ export async function serve(cfg) {
         const md = cfg.manifestFile
           ? readFileSync(cfg.manifestFile, "utf8")
           : ((await client.getContext(cfg.contextId)).manifest_md ?? info.manifest_md ?? "")
-        const manifest = parseManifest(md).body + repoCatalogBlock(catalog)
+        const manifest = parseManifest(md).body + repoCatalogBlock(catalog) + conventions
         // Sequential on purpose: one runner, one model, no fan-out — fairness
         // comes from the queue's oldest-first order. One session's failure must
         // not starve the rest of the batch.
         for (const s of sessions) {
           try {
-            await serveSession(client, s, manifest, cfg, repoMeta)
+            await serveSession(client, s, manifest, cfg, repoMeta, skillMeta)
           } catch (err) {
             console.error(`[runner] session ${s.id}: ${err.message}`)
           }

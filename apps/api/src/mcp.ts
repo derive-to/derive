@@ -25,6 +25,7 @@ import {
   artifactUrl,
   type BundleManifest,
   brandprintInstructions,
+  bundleDoc,
   capRole,
   diffLines,
   EditError,
@@ -38,12 +39,14 @@ import {
   PublishError,
   pageText,
   parseBrandprint,
+  parseFrontmatter,
   profileState,
   propose as proposeChange,
   publish as publishVersion,
   type Role,
   resolveBrandprint,
   roleAllows,
+  SKILL_CONTENT_TYPE,
   sectionOf,
   toMarkdown,
   type VersionRecord,
@@ -165,6 +168,10 @@ const summarizeArtifact = (a: ArtifactRecord) => ({
   short_id: a.short_id,
   title: a.title,
   kind: a.kind,
+  // Skill-ness rides the denormalized content type — a skill is a bundle, so `kind`
+  // alone can't distinguish it from a docs/site bundle. Surfaced so an agent can spot
+  // reusable procedure without opening each bundle.
+  is_skill: a.current_content_type === SKILL_CONTENT_TYPE,
   version: a.current_version,
   workspace_access: a.workspace_access,
   link_role: a.link_role,
@@ -318,19 +325,66 @@ async function buildServer(
     },
   )
 
-  // Brandprint conventions as resources: derive://brandprint/<short_id>, bodies fetched
-  // lazily (the current version's text). audience:["assistant"], context for the agent.
+  const GENERIC_CONVENTION = "A Brandprint convention: how this workspace likes its stuff built."
+
+  // A Brandprint member's resource shape. A SKILL bundle carries its own identity in
+  // SKILL.md frontmatter — name + description ARE progressive disclosure, so they must
+  // reach the resource list (not a generic label), and its auxiliary files (scripts/,
+  // references/) are announced so the agent knows to `read` them. Reading the skill's
+  // entry at connect is what surfaces that identity; a plain doc reads nothing here and
+  // keeps loading its body lazily on read. `body` set ⇒ prepared at connect (skill:
+  // frontmatter stripped, file footer appended); undefined ⇒ fetched lazily below.
+  const brandprintMember = async (
+    doc: ArtifactRecord,
+  ): Promise<{ title: string; description: string; mimeType: "text/markdown"; body?: string }> => {
+    const generic = {
+      title: doc.title ?? doc.short_id,
+      description: GENERIC_CONVENTION,
+      mimeType: "text/markdown" as const,
+    }
+    if (doc.current_content_type !== SKILL_CONTENT_TYPE) return generic
+    // This runs at CONNECT (to surface the skill's frontmatter identity), so a read
+    // failure here must NEVER break the whole connection — fall back to the generic
+    // descriptor + the lazy body path, exactly as a non-skill member behaves.
+    try {
+      const v = await ctx.meta.getVersion(doc.id, doc.current_version)
+      const manifest = v ? await manifestOf(ctx, v) : null
+      const entry = v ? await ctx.sourceText(v) : null // the SKILL.md, frontmatter intact
+      if (!manifest || entry === null) return generic
+      const info = bundleDoc(manifest, entry)
+      const others = info.files.map((f) => f.path).filter((p) => p !== info.entry)
+      const footer = others.length
+        ? `\n\n---\nOther files in this skill — read them with the read tool ` +
+          `(read short_id:"${doc.short_id}" section:"${others[0]}"): ${others.join(", ")}`
+        : ""
+      return {
+        title: info.name ?? doc.title ?? doc.short_id,
+        description: info.description ?? GENERIC_CONVENTION,
+        mimeType: "text/markdown",
+        body: parseFrontmatter(entry).body + footer,
+      }
+    } catch {
+      return generic
+    }
+  }
+
+  // Brandprint conventions as resources: derive://brandprint/<short_id>. A plain doc's
+  // body is fetched lazily (the current version's text); a skill's is prepared at connect
+  // (we read its entry anyway to surface the frontmatter identity). audience:["assistant"].
   for (const doc of bpSources) {
+    const m = await brandprintMember(doc)
     server.registerResource(
       `brandprint:${doc.short_id}`,
       `derive://brandprint/${doc.short_id}`,
       {
-        title: doc.title ?? doc.short_id,
-        description: "A Brandprint convention: how this workspace likes its stuff built.",
-        mimeType: "text/markdown",
+        title: m.title,
+        description: m.description,
+        mimeType: m.mimeType,
         annotations: { audience: ["assistant"], priority: 0.9 },
       },
       async (uri) => {
+        if (m.body !== undefined)
+          return { contents: [{ uri: uri.href, mimeType: m.mimeType, text: m.body }] }
         const art = await ctx.meta.getByShortId(doc.short_id)
         const v = art ? await ctx.meta.getVersion(art.id, art.current_version) : null
         const body = v ? await ctx.sourceText(v) : null
@@ -506,13 +560,17 @@ async function buildServer(
     "list_artifacts",
     {
       description:
-        "List the artifacts (docs, plans, sites) in a workspace — short id, title, kind, current version, access (workspace_access/link_role/listed). Defaults to your current workspace; pass `workspace` (id or name from list_workspaces) to list another one. Includes your own unlisted publishes — out of the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
+        "List the artifacts (docs, plans, sites, skills) in a workspace — short id, title, kind, is_skill, current version, access (workspace_access/link_role/listed). Defaults to your current workspace; pass `workspace` (id or name from list_workspaces) to list another one. Pass skills:true to list only skills (reusable agent procedure). Includes your own unlisted publishes — out of the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
       inputSchema: {
         query: z.string().optional().describe("Optional title search filter."),
+        skills: z
+          .boolean()
+          .optional()
+          .describe("Only list skills (bundles with a SKILL.md — reusable agent procedure)."),
         workspace: wsArg,
       },
     },
-    async ({ query, workspace }) => {
+    async ({ query, skills, workspace }) => {
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
       // viewerId keeps private rows scoped to the agent's human (mirrors `reach`) —
@@ -523,7 +581,10 @@ async function buildServer(
         q: query,
         viewerId: actingFor?.id ?? agent.id,
       })
-      return json({ workspace: t.org, count: arts.length, artifacts: arts.map(summarizeArtifact) })
+      // Skill-ness isn't a store-level filter (it's the denormalized content type), so
+      // narrow here — a title `query` still composes with it.
+      const rows = skills ? arts.filter((a) => a.current_content_type === SKILL_CONTENT_TYPE) : arts
+      return json({ workspace: t.org, count: rows.length, artifacts: rows.map(summarizeArtifact) })
     },
   )
 

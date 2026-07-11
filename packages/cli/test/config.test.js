@@ -31,6 +31,7 @@ import {
   TEMPLATES,
   writeContextConfig,
   writeId,
+  writeSkillPin,
 } from "../src/config.js"
 
 const dirs = []
@@ -176,6 +177,24 @@ describe("writeContextConfig", () => {
       id: "abc",
       context: { id: "ctx_1", agent_id: "ag_1", name: "T" },
     })
+  })
+})
+
+describe("writeSkillPin", () => {
+  it("appends a pin, and a re-add for the same id repins instead of duplicating", () => {
+    const d = tmp()
+    writeFileSync(join(d, CONFIG_FILE), JSON.stringify({ title: "T", entry: "context" }))
+    writeSkillPin(d, { id: "sk1", version: 3, name: "chart-style" })
+    let cfg = writeSkillPin(d, { id: "sk2", version: 1 })
+    expect(cfg.skills).toEqual([
+      { id: "sk1", version: 3, name: "chart-style" },
+      { id: "sk2", version: 1 },
+    ])
+    // Re-adding sk1 at a new version replaces it in place (still 2 entries).
+    cfg = writeSkillPin(d, { id: "sk1", version: 4, name: "chart-style" })
+    expect(cfg.skills).toHaveLength(2)
+    expect(cfg.skills.find((s) => s.id === "sk1").version).toBe(4)
+    expect(cfg.title).toBe("T") // untouched
   })
 })
 

@@ -1,3 +1,4 @@
+import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
@@ -514,5 +515,100 @@ describe("runner liveness: the queue poll stamps runner_seen_at, throttled", () 
     // Both user-facing reads carry the stamp (the console + directory render it).
     const list = await (await app.request("/v1/contexts", { headers: as(owner.email) })).json()
     expect(list.contexts[0].runner_seen_at).toBe(await seenAt())
+  })
+})
+
+// WP3: the runner's config fetch carries the resolved Brandprint — its only window
+// into workspace conventions. Agent-branch only; a human never sees runner config.
+describe("contexts: the config fetch carries the resolved Brandprint", () => {
+  const owner: TestUser = { id: "u_bp_own", email: "bpown@derive.test", name: "Owner" }
+  const { app, meta } = makeAuthedApp("contexts-brandprint", [owner], "editor")
+
+  const uploadZip = (files: Record<string, string>, headers: Record<string, string>) => {
+    const zipped = zipSync(
+      Object.fromEntries(
+        Object.entries(files).map(([k, v]) => [k, new TextEncoder().encode(v)] as const),
+      ),
+    )
+    const form = new FormData()
+    form.append("file", new Blob([zipped]), "skill.zip")
+    return app.request("/v1/artifacts", { method: "POST", body: form, headers })
+  }
+
+  it("agent GET carries skills + notes; human GET does not; unset omits it", async () => {
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const ag = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Analyst", role: "editor" }))
+    ).json()
+    const manifestShortId = (await (await publishAs(app, "# Manifest", {}, as(owner.email))).json())
+      .short_id
+    const x = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "Analytics",
+          agent_id: ag.id,
+          manifest_short_id: manifestShortId,
+        }),
+      )
+    ).json()
+
+    // Before any Brandprint is set, the agent config fetch omits the block entirely.
+    const bare = await (
+      await app.request(`/v1/contexts/${x.id}`, { headers: bearer(ag.token) })
+    ).json()
+    expect(bare.manifest_md).toContain("# Manifest")
+    expect(bare.brandprint).toBeUndefined()
+
+    // Seed a Brandprint: a prose note + a real skill bundle in one collection.
+    const noteId = (await (await publishAs(app, "# Voice\n\nBe warm.", {}, as(owner.email))).json())
+      .short_id
+    const skillId = (
+      await (
+        await uploadZip(
+          {
+            "SKILL.md":
+              "---\nname: chart-style\ndescription: House charts.\n---\n\n# Chart style\n",
+            "scripts/x.sh": "echo hi\n",
+          },
+          as(owner.email),
+        )
+      ).json()
+    ).short_id
+    const noteArt = await meta.getByShortId(noteId)
+    const skillArt = await meta.getByShortId(skillId)
+    if (!noteArt || !skillArt) throw new Error("no artifacts")
+    expect(skillArt.current_content_type).toBe("derive/skill")
+
+    const collectionId = "col_ctx_bp"
+    await meta.createCollection({
+      id: collectionId,
+      org_id: noteArt.org_id,
+      title: "Brandprint",
+      created_by: owner.id,
+    })
+    await meta.addCollectionItem(collectionId, noteArt.id)
+    await meta.addCollectionItem(collectionId, skillArt.id)
+    await meta.setOrgSettings(noteArt.org_id, {
+      ...(await meta.getOrgSettings(noteArt.org_id)),
+      brandprint: { collectionId },
+    })
+
+    // The agent config fetch now carries both members, the skill flagged, with versions.
+    const cfg = await (
+      await app.request(`/v1/contexts/${x.id}`, { headers: bearer(ag.token) })
+    ).json()
+    expect(cfg.brandprint.profile_short_id).toBeNull()
+    const member = (id: string) =>
+      cfg.brandprint.members.find((m: { short_id: string }) => m.short_id === id)
+    expect(member(noteId)).toMatchObject({ is_skill: false, version: 1 })
+    expect(member(skillId)).toMatchObject({ is_skill: true, version: 1 })
+
+    // The human branch (the creator can read it) never carries runner config.
+    const human = await (
+      await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(human.brandprint).toBeUndefined()
+    expect(human.manifest_md).toBeUndefined()
   })
 })

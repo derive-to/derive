@@ -2,9 +2,12 @@ import {
   type ContextAskerRecord,
   type ContextRecord,
   newId,
+  parseBrandprint,
+  resolveBrandprint,
   type SessionMessageRecord,
   type SessionRecord,
   type SessionState,
+  SKILL_CONTENT_TYPE,
   type UserDir,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
@@ -66,6 +69,37 @@ export const contextRoutes = (ctx: AppContext) => {
         ),
     })
     .openapi("ContextInfo")
+
+  // The resolved Brandprint handed to the context's runner (agent branch of GET only).
+  // The runner materializes skill members into its skills dir and reads notes + theme;
+  // it is the runner's ONLY window into workspace conventions — a context has no other
+  // config channel. Members are the workspace + owner-profile collection artifacts, deduped.
+  const BrandprintConfig = z
+    .object({
+      profile_short_id: z
+        .string()
+        .nullable()
+        .describe(
+          "The workspace brand-profile artifact (an HTML page carrying theme tokens), when set; null otherwise. Not in `members` — it is the headline read, not a note.",
+        ),
+      members: z
+        .array(
+          z.object({
+            short_id: z.string(),
+            title: z.string().nullable(),
+            version: z
+              .number()
+              .describe("The member's current version at fetch time (provenance)."),
+            is_skill: z
+              .boolean()
+              .describe("A skill bundle (materialize into skills/) vs a prose note."),
+          }),
+        )
+        .describe(
+          "Convention artifacts: skills to materialize, notes to read. Excludes the profile.",
+        ),
+    })
+    .openapi("BrandprintConfig")
 
   // The runner's structured payload on an agent message (parsed server-side).
   const SessionMeta = z
@@ -182,6 +216,43 @@ export const contextRoutes = (ctx: AppContext) => {
     return manifest ? { context: x, manifest } : null
   }
 
+  // Resolve the context's Brandprint: the workspace conventions merged with the
+  // context CREATOR's personal ones (profile wins) — the same resolution mcp.ts does
+  // for a connected agent, but keyed to the runner owner (created_by) rather than a
+  // live session user. Returns undefined when no Brandprint is set, so the field is
+  // simply omitted. A member the runner can't read still appears (it discovers the
+  // 404 at materialize time and reports it, mirroring a failed repo clone).
+  const resolveContextBrandprint = async (x: ContextRecord) => {
+    const wsBrandprint = (await meta.getOrgSettings(x.org_id)).brandprint
+    const profileBrandprint = parseBrandprint(await meta.getUserBrandprint(x.created_by))
+    const resolved = resolveBrandprint(wsBrandprint, profileBrandprint)
+    if (resolved.collectionIds.length === 0) return undefined
+    const seen = new Set<string>()
+    const members: {
+      short_id: string
+      title: string | null
+      version: number
+      is_skill: boolean
+    }[] = []
+    for (const collectionId of resolved.collectionIds) {
+      const ids = await meta.collectionArtifactIds(collectionId)
+      for (const a of ids.length ? await meta.listArtifacts({ ids }) : []) {
+        if (seen.has(a.short_id)) continue
+        seen.add(a.short_id)
+        // The brand profile rides in the collection but is not a note to materialize —
+        // it's the headline read, surfaced separately (mirrors mcp.ts's bpSources filter).
+        if (a.short_id === resolved.profileId) continue
+        members.push({
+          short_id: a.short_id,
+          title: a.title,
+          version: a.current_version,
+          is_skill: a.current_content_type === SKILL_CONTENT_TYPE,
+        })
+      }
+    }
+    return { profile_short_id: resolved.profileId ?? null, members }
+  }
+
   // Create a context: wire an agent to a manifest artifact. Editor+ in the
   // workspace, and share-standing on the manifest (creating a context exposes the
   // manifest's identity to askers, so it's a sharing decision). Who can ASK is a
@@ -287,6 +358,7 @@ export const contextRoutes = (ctx: AppContext) => {
               schema: ContextInfo.extend({
                 manifest_version: z.number().optional(),
                 manifest_md: z.string().nullable().optional(),
+                brandprint: BrandprintConfig.optional(),
               }),
             },
           },
@@ -306,13 +378,16 @@ export const contextRoutes = (ctx: AppContext) => {
       const allowed = agent ? agent.id === x.agent_id : await canAskContext(c, x)
       if (!allowed) return bail(fail(c, 404, "not found"))
       // The runner's one config fetch: its system prompt is the manifest's current
-      // source, so a manifest edit reconfigures the runner with no deploy.
+      // source, so a manifest edit reconfigures the runner with no deploy. The resolved
+      // Brandprint rides along here too — the runner's only window into workspace
+      // conventions (a context has no other config channel).
       if (agent && manifest) {
         const v = await meta.getVersion(manifest.id, manifest.current_version)
         return c.json({
           ...contextJson(x, manifest.short_id),
           manifest_version: manifest.current_version,
           manifest_md: v ? await sourceText(v) : null,
+          brandprint: await resolveContextBrandprint(x),
         })
       }
       return c.json(contextJson(x, manifest?.short_id ?? null))

@@ -207,6 +207,65 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(text).toContain("How we write Markdown")
   })
 
+  it("delivers a Brandprint SKILL member with its own name/description, stripped body, and file footer", async () => {
+    const { app, token, meta } = appWithGrant("bpskill", "openid derive:read derive:publish")
+    // A real skill bundle: SKILL.md entry (no html ⇒ derive/skill) plus an aux script.
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "ignored — frontmatter name wins",
+          files: {
+            "SKILL.md":
+              "---\nname: chart-style\ndescription: How this workspace builds charts.\n---\n\n# Chart style\n\nUse the house palette and Space Grotesk.\n",
+            "scripts/build.sh": "#!/usr/bin/env bash\necho chart\n",
+          },
+        }),
+      ),
+    )
+    const art = await meta.getByShortId(created.short_id)
+    if (!art) throw new Error("no artifact")
+    expect(art.current_content_type).toBe("derive/skill")
+
+    const collectionId = "col_bp_skill"
+    await meta.createCollection({
+      id: collectionId,
+      org_id: art.org_id,
+      title: "Brandprint",
+      created_by: "u_o",
+    })
+    await meta.addCollectionItem(collectionId, art.id)
+    await meta.setOrgSettings(art.org_id, {
+      ...(await meta.getOrgSettings(art.org_id)),
+      brandprint: { collectionId },
+    })
+
+    // The resource descriptor carries the skill's OWN identity, not a generic label.
+    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
+    const resource = (
+      (
+        listed.parsed?.result as {
+          resources?: { uri: string; title?: string; description?: string }[]
+        }
+      )?.resources ?? []
+    ).find((r) => r.uri === `derive://brandprint/${created.short_id}`)
+    expect(resource?.title).toBe("chart-style")
+    expect(resource?.description).toBe("How this workspace builds charts.")
+
+    // The body is the SKILL.md sans frontmatter, plus a footer pointing at the aux files.
+    const read = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "resources/read",
+      params: { uri: `derive://brandprint/${created.short_id}` },
+    })
+    const body = (read.parsed?.result as { contents?: { text: string }[] } | undefined)
+      ?.contents?.[0]?.text
+    expect(body).toContain("# Chart style")
+    expect(body).toContain("Use the house palette")
+    expect(body).not.toContain("name: chart-style") // frontmatter stripped
+    expect(body).toContain("scripts/build.sh") // aux files announced
+  })
+
   it("serves the build reference and a pending note while the profile is a stub", async () => {
     const { app, token, meta } = appWithGrant(
       "brandprint-pending",
@@ -335,6 +394,38 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(read).toContain("title: My Plan")
     expect(read).toContain("# My Plan")
     expect(read).not.toContain("\\n")
+  })
+
+  it("list_artifacts marks skills and filters to them with skills:true", async () => {
+    const { app, token } = appWithGrant("listskills", "openid derive:read derive:publish")
+    const doc = (await (await publish(app, token, "A plain doc")).json()).short_id
+    const skill = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "A skill",
+          files: {
+            "SKILL.md": "---\nname: my-skill\ndescription: does a thing.\n---\n\n# My skill\n",
+          },
+        }),
+      ),
+    ).short_id
+
+    // Unfiltered: both present; is_skill distinguishes them.
+    const all = JSON.parse(toolText(await call(app, token, "list_artifacts")))
+    const rowOf = (id: string) =>
+      all.artifacts.find((a: { short_id: string }) => a.short_id === id) as
+        | { is_skill: boolean }
+        | undefined
+    expect(rowOf(skill)?.is_skill).toBe(true)
+    expect(rowOf(doc)?.is_skill).toBe(false)
+
+    // Filtered: only the skill.
+    const onlySkills = JSON.parse(
+      toolText(await call(app, token, "list_artifacts", { skills: true })),
+    )
+    const ids = onlySkills.artifacts.map((a: { short_id: string }) => a.short_id)
+    expect(ids).toContain(skill)
+    expect(ids).not.toContain(doc)
   })
 
   it("publish fires the version.published webhook — parity with the HTTP route", async () => {

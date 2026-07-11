@@ -160,8 +160,10 @@ other_key: ignored
 ---
 
 # The manifest body`
-    const { body, repos } = parseManifest(md)
+    const { body, repos, skills, brandprint } = parseManifest(md)
     expect(body).toBe("\n# The manifest body")
+    expect(skills).toEqual([])
+    expect(brandprint).toBe("live")
     expect(repos).toEqual([
       {
         url: "https://github.com/churnkey/churnkey-labs",
@@ -173,7 +175,12 @@ other_key: ignored
   })
 
   it("passes a manifest without frontmatter through untouched", () => {
-    expect(parseManifest("# Plain")).toEqual({ body: "# Plain", repos: [] })
+    expect(parseManifest("# Plain")).toEqual({
+      body: "# Plain",
+      repos: [],
+      skills: [],
+      brandprint: "live",
+    })
   })
 
   it("the scaffolded example stays inert (commented) and junk urls are dropped", () => {
@@ -181,6 +188,33 @@ other_key: ignored
     expect(parseManifest(commented).repos).toEqual([])
     const junk = "---\nrepos:\n  - url: not-a-url\n---\nbody"
     expect(parseManifest(junk).repos).toEqual([])
+  })
+
+  it("parses a pinned skills list and the brandprint opt-out alongside repos", () => {
+    const md = `---
+repos:
+  - url: https://github.com/acme/warehouse
+skills:
+  - id: x7km2p4q
+    version: 3
+  - id: j9rw8n2v
+brandprint: off
+---
+
+# Body`
+    const { skills, brandprint, repos } = parseManifest(md)
+    expect(repos).toHaveLength(1)
+    expect(skills).toEqual([
+      { id: "x7km2p4q", version: 3 },
+      { id: "j9rw8n2v", version: null }, // unpinned until push resolves it
+    ])
+    expect(brandprint).toBe("off")
+  })
+
+  it("brandprint defaults to live when the scalar is absent", () => {
+    expect(parseManifest("---\nskills:\n  - id: a1b2c3d4\n    version: 1\n---\nx").brandprint).toBe(
+      "live",
+    )
   })
 
   it("slugs are owner-repo so same-named repos from different owners don't collide", () => {
