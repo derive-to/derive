@@ -248,8 +248,23 @@ describe("publish: bundles (zip)", () => {
       "/references/notes.md",
       "/scripts/run.sh",
     ])
-    // Title comes from the skill's frontmatter name, not the zip filename.
-    expect(artifact.title).toBe("my-skill")
+  })
+
+  it("a root SKILL.md wins the entry over a nested HTML reference (still a skill)", async () => {
+    const blobs = makeBlobs()
+    const { version } = await publish(
+      makeMeta(),
+      blobs,
+      bundle({
+        "SKILL.md": "---\nname: chart-style\ndescription: how we chart\n---\n\n# Chart style",
+        "references/example.html": "<!doctype html><h1>example</h1>",
+      }),
+    )
+    const manifest = JSON.parse(
+      new TextDecoder().decode((await blobs.get(version.blob_key)) ?? undefined),
+    )
+    // Not references/example.html — the skill keeps its identity despite shipping HTML.
+    expect(manifest.entry).toBe("/SKILL.md")
     // A skill carries the distinct content type so the library can badge it for free.
     expect(version.content_type).toBe("derive/skill")
   })

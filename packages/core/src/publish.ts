@@ -98,9 +98,13 @@ export const pickBundleEntry = (paths: string[]): string | null => {
   const shallowest = (pred: (p: string) => boolean): string | undefined =>
     paths.filter(pred).sort((a, b) => a.split("/").length - b.split("/").length)[0]
   if (paths.includes("/index.html")) return "/index.html"
+  // A root SKILL.md wins over any NON-root HTML: a skill folder is a skill even when it
+  // ships an HTML reference (references/example.html is exactly what a chart-style skill
+  // carries) — otherwise that reference would steal the entry and the bundle would lose
+  // its skill identity. An html site is still picked below when there's no root SKILL.md.
+  if (paths.includes("/SKILL.md")) return "/SKILL.md"
   const html = shallowest((p) => p.endsWith(".html"))
   if (html) return html
-  if (paths.includes("/SKILL.md")) return "/SKILL.md"
   if (paths.includes("/MANIFEST.md")) return "/MANIFEST.md"
   if (paths.includes("/README.md")) return "/README.md"
   return shallowest((p) => /\.(md|markdown)$/i.test(p)) ?? null
