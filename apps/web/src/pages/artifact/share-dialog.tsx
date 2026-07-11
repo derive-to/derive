@@ -300,16 +300,22 @@ export function ShareButton({
         listed: on ? "public" : "none",
       })
   }
+  // The current triple, untouched, with the world-link password set to the given
+  // value — shared by the two calls below that change only the password.
+  const currentTripleWithPassword = (password: string): AccessDraft => ({
+    workspaceAccess: wsAccess,
+    linkRole: lRole,
+    listed: lst,
+    password,
+  })
   // The lock checkbox: checking reveals the password input (applies on Set);
   // unchecking clears the lock immediately (an explicit empty password).
   const toggleLock = (on: boolean) => {
     if (on) setLockDraft(true)
-    else if (hasLock)
-      void applyAccess({ workspaceAccess: wsAccess, linkRole: lRole, listed: lst, password: "" })
+    else if (hasLock) void applyAccess(currentTripleWithPassword(""))
     else setLockDraft(false)
   }
-  const setPassword = (password: string) =>
-    void applyAccess({ workspaceAccess: wsAccess, linkRole: lRole, listed: lst, password })
+  const setPassword = (password: string) => void applyAccess(currentTripleWithPassword(password))
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(shareUrl)

@@ -52,6 +52,7 @@
   },
   "devDependencies": {
     "@derive/api": "workspace:*",
+    "@derive/core": "workspace:*",
     "@derive/db": "workspace:*",
     "@derive/storage": "workspace:*",
     "@hono/node-server": "^2.0.5",
