@@ -106,39 +106,57 @@ The `filename` parameter is a hint for content type detection:
 
 ---
 
+## Images in ANY artifact (the cheap way)
+
+Never inline a base64 `data:` URI to embed a screenshot — it tokenizes at roughly 1
+token/char, so one modest PNG can cost 100k+ tokens to pass through a tool call or
+read back. Instead, upload the raw bytes once and get a permanent public URL:
+
+```
+# 1. Stream the bytes up as binary — no base64, nothing to transcribe.
+curl -s -X POST "$DERIVE_URL/v1/assets" \
+  -H "authorization: Bearer $DERIVE_TOKEN" \
+  -H "content-type: image/png" \
+  --data-binary @shot.png
+# → { "key": "9f86d081…", "url": "https://derive.to/blob/9f86d081….png",
+#     "ref": "asset:9f86d081…", "type": "image/png", "size": 20531 }
+
+# 2. Paste the url straight into the content — works in a SINGLE-FILE artifact,
+#    a bundle page, or markdown — it's just a normal <img src> / ![]() target:
+publish(content = '<img src="https://derive.to/blob/9f86d081….png">')
+```
+
+`url` is a permanent, content-addressed capability link (the hash is unguessable, so
+it's effectively private, but it's not gated by the artifact's own visibility the way
+`/raw/...` bytes are — don't use it for anything that must stay strictly access-controlled).
+It never expires and never changes for the same bytes (re-uploading identical bytes is a
+free no-op). `POST /v1/assets` accepts a raw binary body (as above) or a multipart `file`
+field. Supported: PNG, JPEG, GIF, WebP (max 25 MB each; SVG is rejected).
+
 ## Images & binary assets in a bundle
 
 A bundle's `files` map carries binary assets (screenshots, images, fonts) alongside the
 HTML/CSS/JS pages. Each `files` value is one of:
 
 - **text** — a plain string (a page).
-- **base64 data URI** — `"shot.png": "data:image/png;base64,iVBORw0K…"`. Fine for a small
-  icon, but a real screenshot balloons the tool call and you have to transcribe the
-  base64 exactly.
-- **asset handle (preferred for real images)** — upload the raw bytes first, then
-  reference the returned handle:
+- **base64 data URI** — `"shot.png": "data:image/png;base64,iVBORw0K…"`. Avoid for real
+  screenshots (see above) — fine only for a tiny inline icon.
+- **the same `url` from above**, used as any page's `<img src>` — works in a bundle too.
+- **asset handle** — `"shot.png": "asset:9f86d081…"` (the same upload's `ref`), baked
+  into the bundle as its own file at that path instead of linked externally:
 
   ```
-  # 1. Stream the bytes up as binary — no base64, nothing to transcribe.
-  curl -s -X POST "$DERIVE_URL/v1/assets" \
-    -H "authorization: Bearer $DERIVE_TOKEN" \
-    -H "content-type: image/png" \
-    --data-binary @shot.png
-  # → { "key": "9f86d081…", "ref": "asset:9f86d081…", "type": "image/png", "size": 20531 }
-
-  # 2. Reference the handle in publish (the map stays tiny):
   publish(files = {
     "index.html": "<img src=shot.png>",
     "shot.png":   "asset:9f86d081…"
   })
   ```
 
-  `POST /v1/assets` accepts a raw binary body (as above) or a multipart `file` field, and
-  stores the bytes content-addressed (identical bytes dedup to one blob; re-uploading is
-  free). Supported: PNG, JPEG, GIF, WebP (max 25 MB each; SVG is rejected). The asset is
-  served with the doc's own visibility once published — it is not a public URL on its own.
+  Once published, that page serves at `https://derive.to/raw/<short_id>/v/<n>/shot.png`
+  (gated by the doc's own visibility, unlike the public `/blob/...` url above).
 
-  Mix and match: base64 for a tiny inline icon, `asset:` handles for the screenshots.
+  Mix and match as needed: the public `url` for the simple case, `asset:` handles when
+  the image must inherit the doc's own access control.
 
 ---
 

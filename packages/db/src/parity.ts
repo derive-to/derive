@@ -18,6 +18,7 @@ import type {
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
+  AssetRecord,
   AuditLogRecord,
   CollectionMemberRecord,
   CollectionRecord,
@@ -78,6 +79,7 @@ export interface TypedTables {
   domain: DomainRecord
   report: ReportRecord
   auditLog: AuditLogRecord
+  asset: AssetRecord
 }
 
 /**

@@ -16,6 +16,7 @@ import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
 import { assetRoutes } from "./routes/assets"
+import { blobRoutes } from "./routes/blob"
 import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
 import { contextRoutes } from "./routes/contexts"
@@ -354,6 +355,7 @@ export function createApp(deps: AppDeps): Hono {
     agentRoutes,
     artifactRoutes,
     assetRoutes,
+    blobRoutes,
     sharingRoutes,
     favoriteRoutes,
     followRoutes,

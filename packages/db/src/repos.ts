@@ -4,6 +4,7 @@ import type {
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
+  AssetRecord,
   AuditLogRecord,
   CollectionMemberRecord,
   CollectionRecord,
@@ -32,6 +33,7 @@ import type {
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
+  NewAsset,
   NewAuditLog,
   NewCollection,
   NewCollectionMember,
@@ -111,6 +113,7 @@ import {
   artifactInvite,
   artifactMember,
   artifactTag,
+  asset,
   auditLog,
   collection,
   collectionItem,
@@ -219,6 +222,7 @@ export const schema = {
   domain,
   report,
   auditLog,
+  asset,
 }
 
 // Compile-time schema parity (see ./parity): every table must be classified, and
@@ -255,6 +259,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   domain: true,
   report: true,
   auditLog: true,
+  asset: true,
 }
 void _schemaExhaustive
 void _schemaShapes
@@ -2463,6 +2468,25 @@ export function makeRepos(db: SqliteDb) {
     return (opts?.limit ? q.limit(opts.limit) : q).all()
   }
 
+  // ---- Standalone image assets (POST /v1/assets -> GET /blob/:hash) ------
+  const createAsset = async (a: NewAsset): Promise<AssetRecord> => {
+    const inserted = await db.insert(asset).values(a).onConflictDoNothing().returning().get()
+    // Content-addressed: a conflict means these exact bytes are already staged.
+    return (inserted ?? (await getAsset(a.hash))) as AssetRecord
+  }
+  const getAsset = async (hash: string): Promise<AssetRecord | null> =>
+    (await db.select().from(asset).where(eq(asset.hash, hash)).get()) ?? null
+  const assetStorageBytes = async (orgId: string): Promise<number> => {
+    // `hash` is the primary key, so unlike storageBytes there's no per-org
+    // dedup to do — each row is already one distinct blob.
+    const row = await db
+      .select({ s: sql<number>`coalesce(sum(${asset.size_bytes}), 0)` })
+      .from(asset)
+      .where(eq(asset.org_id, orgId))
+      .get()
+    return Number(row?.s ?? 0)
+  }
+
   return {
     createArtifact,
     setAccess,
@@ -2663,6 +2687,9 @@ export function makeRepos(db: SqliteDb) {
     createAuditLog,
     takedownArtifact,
     listAuditLog,
+    createAsset,
+    getAsset,
+    assetStorageBytes,
   }
 }
 

@@ -727,6 +727,22 @@ export const auditLog = sqliteTable("audit_log", {
   created_at: text("created_at").notNull().default(now),
 })
 
+// A staged binary image asset (POST /v1/assets): content-addressed by `hash`, so
+// re-uploading identical bytes is a no-op. This row is what makes GET /blob/:hash
+// servable at all — the blob store also holds bundle manifests and page HTML, and
+// this table is the allowlist keeping the public route from ever serving those.
+export const asset = sqliteTable(
+  "asset",
+  {
+    hash: text("hash").primaryKey(),
+    org_id: text("org_id").notNull(),
+    content_type: text("content_type").notNull(),
+    size_bytes: integer("size_bytes").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [index("asset_org").on(t.org_id)],
+)
+
 // user/session/account/verification tables are owned and migrated by Better Auth
 // (see apps/api/src/auth-config.ts) — not declared here.
 
@@ -775,6 +791,7 @@ const TABLES = [
   sessionMessage,
   report,
   auditLog,
+  asset,
 ]
 
 const ddl = generateDdl(TABLES, getTableConfig, {

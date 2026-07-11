@@ -21,7 +21,7 @@ const postAsset = (body: BodyInit, contentType?: string) =>
   })
 
 describe("POST /v1/assets", () => {
-  it("stores raw-binary image bytes and returns a content-addressed asset handle", async () => {
+  it("stores raw-binary image bytes and returns a content-addressed asset handle + public url", async () => {
     const res = await postAsset(PNG_BYTES, "image/png")
     expect(res.status).toBe(200)
     const body = await res.json()
@@ -29,12 +29,19 @@ describe("POST /v1/assets", () => {
     expect(body.size).toBe(PNG_BYTES.byteLength)
     expect(body.key).toMatch(/^[0-9a-f]{64}$/)
     expect(body.ref).toBe(`asset:${body.key}`)
+    expect(body.url).toBe(`http://derive.test/blob/${body.key}.png`)
 
     // The exact bytes are stored at that key, ready for a publish to reference.
     const blobs = new FsBlobStore(join(dir, "blobs"))
     const stored = await blobs.get(body.key)
     expect(stored).toBeTruthy()
     expect(new Uint8Array(stored as Uint8Array)).toEqual(PNG_BYTES)
+
+    // And the returned `url` actually serves those bytes back.
+    const served = await app.request(new URL(body.url).pathname)
+    expect(served.status).toBe(200)
+    expect(served.headers.get("content-type")).toBe("image/png")
+    expect(new Uint8Array(await served.arrayBuffer())).toEqual(PNG_BYTES)
   })
 
   it("accepts a multipart file field and dedups identical bytes to the same key", async () => {
@@ -44,7 +51,9 @@ describe("POST /v1/assets", () => {
     const res = await postAsset(fd)
     expect(res.status).toBe(200)
     // Content-addressed: the same bytes hash to the same key regardless of transport.
-    expect((await res.json()).key).toBe(raw.key)
+    const body = await res.json()
+    expect(body.key).toBe(raw.key)
+    expect(body.url).toBe(raw.url)
   })
 
   it("trusts the bytes, not the type — rejects a non-image with a 400", async () => {

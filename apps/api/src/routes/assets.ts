@@ -4,31 +4,46 @@ import type { AppContext } from "../context"
 import { bail, fail } from "../lib/http"
 import { MAX_ASSET_BYTES, sniffImageType } from "../lib/image"
 
+const EXT_FOR_TYPE: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+}
+
 /**
- * Standalone binary assets for bundles. An agent uploads the raw bytes of a
- * screenshot here (a plain binary POST — no base64 transcription), gets back a
- * content-addressed `asset:<hash>` handle, and references that handle in a `publish`
- * `files` map (resolved by decodeBundleFiles). This is the images-without-base64 path:
- * the transport that can't carry megabytes of binary in a JSON tool call streams them
- * as bytes instead, and the tiny handle rides the publish.
+ * Standalone binary image assets. An agent uploads the raw bytes of a screenshot
+ * here (a plain binary POST — no base64 transcription) and gets back:
  *
- * Bytes are stored content-addressed (identical bytes dedup to one blob) but not yet
- * attached to any version — the storage quota only counts them once a publish
- * references them, so an unused upload costs nothing.
+ *  - `url`: a permanent, unguessable public link (GET /blob/<hash>.<ext>) — paste it
+ *    into ANY artifact's content (single-file HTML, markdown, a bundle page) or
+ *    anywhere else (Slack, GitHub). This is the images-without-base64 path: the
+ *    transport that can't carry megabytes of binary in a JSON tool call streams
+ *    them as bytes instead, and the ~70-char URL rides in the doc's own text.
+ *  - `ref` (`asset:<hash>`): the older handle for a bundle `publish` `files` map
+ *    (resolved by decodeBundleFiles), kept for that existing path.
+ *
+ * Both point at the same content-addressed bytes — `url`'s hash IS `ref`'s hash.
+ * `url` is a capability URL, not access-gated: the hash is unguessable (sha256 of
+ * the bytes), but anyone who has it can fetch it, independent of the artifact's
+ * own visibility. That trade-off is deliberate — see docs/decisions on asset URLs.
  */
 export const assetRoutes = (ctx: AppContext) => {
-  const { blobs, workspaceCan, activeWorkspace, overStorage } = ctx
+  const { meta, blobs, workspaceCan, activeWorkspace, overStorage, deps } = ctx
   // Contract-first: the *request* is a raw/multipart binary upload (read by hand
   // below, no JSON body schema), but the *response* is a typed handle that agents /
   // the CLI / MCP consume — so it gets a schema like every other JSON response.
   const app = new OpenAPIHono<BlankEnv>()
 
-  // The content-addressed handle: `key` is the blob hash, `ref` is the exact
-  // `asset:<hash>` string to drop into a publish `files` value, `type` is the sniffed
-  // image MIME (the closed ImageType set), `size` the byte length.
+  // The content-addressed handle: `key` is the blob hash, `url` a permanent public
+  // link to the same bytes, `ref` the exact `asset:<hash>` string for a bundle
+  // `files` value, `type` the sniffed image MIME, `size` the byte length.
   const AssetRef = z
     .object({
       key: z.string().describe("The blob hash (content-addressed storage key)"),
+      url: z
+        .string()
+        .describe("A permanent public URL for these bytes — embed it in any artifact's content"),
       ref: z.string().describe('The exact "asset:<hash>" string to drop into a publish files map'),
       type: z
         .enum(["image/png", "image/jpeg", "image/gif", "image/webp"])
@@ -42,10 +57,10 @@ export const assetRoutes = (ctx: AppContext) => {
       method: "post",
       path: "/v1/assets",
       tags: ["Assets"],
-      summary: "Stage a binary image asset (raw or multipart) and get its asset:<hash> handle.",
+      summary: "Stage a binary image asset and get a permanent URL + its asset:<hash> handle.",
       responses: {
         200: {
-          description: "The stored asset's content-addressed handle.",
+          description: "The stored asset's public URL and content-addressed handle.",
           content: { "application/json": { schema: AssetRef } },
         },
       },
@@ -85,8 +100,17 @@ export const assetRoutes = (ctx: AppContext) => {
         return bail(fail(c, 413, "storage quota exceeded"))
 
       const key = await blobs.put(bytes)
-      // `ref` is the exact string to drop into a publish `files` value.
-      return c.json({ key, ref: `asset:${key}`, type, size: bytes.byteLength })
+      // Content-addressed row: this is the allowlist that makes GET /blob/:hash
+      // servable at all (the blob store also holds manifests/HTML the route must
+      // never serve) — see routes/blob.ts. A re-upload of the same bytes is a no-op.
+      await meta.createAsset({
+        hash: key,
+        org_id: org,
+        content_type: type,
+        size_bytes: bytes.byteLength,
+      })
+      const url = `${deps.baseUrl.replace(/\/$/, "")}/blob/${key}.${EXT_FOR_TYPE[type]}`
+      return c.json({ key, url, ref: `asset:${key}`, type, size: bytes.byteLength })
     },
   )
 
