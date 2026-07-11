@@ -36,6 +36,7 @@ export const contextRoutes = (ctx: AppContext) => {
     currentUser,
     managementPrincipal,
     requireUser,
+    requireWorkspace,
     sourceText,
     workspaceCan,
   } = ctx
@@ -207,7 +208,8 @@ export const contextRoutes = (ctx: AppContext) => {
       // still applies on top with the grant's membership-capped role.
       const owner = await managementPrincipal(c)
       if (!owner) return bail(fail(c, 401, "unauthenticated"))
-      if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "publish")
+      if (org instanceof Response) return bail(org)
       const b = await readJson(
         c,
         z.object({
@@ -217,7 +219,6 @@ export const contextRoutes = (ctx: AppContext) => {
         }),
       )
       if (b instanceof Response) return bail(b)
-      const org = await activeWorkspace(c)
       const agents = await meta.listAgents(org)
       if (!agents.some((a) => a.id === b.agent_id)) return bail(fail(c, 404, "no such agent"))
       const manifest = await meta.getByShortId(b.manifest_short_id)
@@ -257,8 +258,9 @@ export const contextRoutes = (ctx: AppContext) => {
       // wiring (agent ids, creators), which GET /:id deliberately hides from
       // agents that aren't the context's own.
       if (!(await managementPrincipal(c))) return bail(fail(c, 401, "unauthenticated"))
-      if (!(await workspaceCan(c, "read"))) return bail(fail(c, 403, "forbidden"))
-      const rows = await meta.listContexts(await activeWorkspace(c))
+      const org = await requireWorkspace(c, "read")
+      if (org instanceof Response) return bail(org)
+      const rows = await meta.listContexts(org)
       // Resolve every context's manifest artifact in ONE query, then map id → short_id —
       // not a getArtifactById per row.
       const manifests = await meta.getArtifactsByIds(rows.map((x) => x.manifest_artifact_id))

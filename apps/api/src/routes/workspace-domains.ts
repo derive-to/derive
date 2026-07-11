@@ -28,7 +28,7 @@ const parseRecords = (v: string | null): DnsRecord[] | undefined => {
  * web client's types.
  */
 export const workspaceDomainRoutes = (ctx: AppContext) => {
-  const { meta, activeWorkspace, workspaceCan } = ctx
+  const { meta, activeWorkspace, requireWorkspace } = ctx
   const cd = ctx.deps.customDomains
   const app = new OpenAPIHono<BlankEnv>()
 
@@ -133,8 +133,8 @@ export const workspaceDomainRoutes = (ctx: AppContext) => {
     }),
     async (c) => {
       if (!cd) return bail(fail(c, 501, "custom domains are not enabled on this server"))
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
-      const org = await activeWorkspace(c)
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       const body = await readJson(c, z.object({ host: z.string() }))
       if (body instanceof Response) return bail(body)
       const host = body.host
@@ -190,8 +190,8 @@ export const workspaceDomainRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
-      const org = await activeWorkspace(c)
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       const existing = await meta.getDomain(c.req.param("host").toLowerCase())
       if (!existing || existing.org_id !== org || existing.artifact_id)
         return bail(fail(c, 404, "not found"))
@@ -225,8 +225,8 @@ export const workspaceDomainRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
-      const org = await activeWorkspace(c)
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       const host = c.req.param("host").toLowerCase()
       const existing = await meta.getDomain(host)
       if (!existing || existing.org_id !== org || existing.artifact_id)

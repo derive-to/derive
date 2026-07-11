@@ -1,5 +1,8 @@
 /** HTTP client for a Derive server. Shared by the MCP server and any tooling. */
 
+import type { LinkRole, Listed, WorkspaceAccess } from "@derive/core"
+import { buildPublishForm } from "@derive-to/cli/publish"
+
 /** One exact-match search/replace edit (the Edit-tool contract). */
 export interface DocEdit {
   old_str: string
@@ -16,9 +19,9 @@ export interface PublishArgs {
   message?: string
   /** The v2 access triple for a NEW artifact (see access-model.md); ignored on a
    *  republish. */
-  workspaceAccess?: "none" | "member"
-  linkRole?: "none" | "viewer" | "commenter" | "editor"
-  listed?: "none" | "workspace" | "public"
+  workspaceAccess?: WorkspaceAccess
+  linkRole?: LinkRole
+  listed?: Listed
   /** A lock on the world link (optional). */
   password?: string
   /** When set, publishes a new version of this artifact instead of a new one. */
@@ -245,28 +248,29 @@ export function createClient(opts: ClientOptions): DeriveClient {
     },
 
     async publish(args) {
-      const form = new FormData()
-      if (args.edits) {
-        // Surgical revision: no file upload, the server materializes it from the
-        // current stored source. Requires an existing artifact (args.id).
-        form.append("edits", JSON.stringify(args.edits))
-        if (args.baseVersion != null) form.append("base_version", String(args.baseVersion))
-        if (args.filename) form.append("filename", args.filename)
-      } else {
-        const bytes =
-          typeof args.content === "string" ? new TextEncoder().encode(args.content) : args.content
-        form.append("file", new Blob([bytes as BlobPart]), args.filename ?? "index.html")
-      }
-      if (args.title) form.append("title", args.title)
-      if (args.slug) form.append("slug", args.slug)
-      if (args.message) form.append("message", args.message)
-      if (args.workspaceAccess) form.append("workspace_access", args.workspaceAccess)
-      if (args.linkRole) form.append("link_role", args.linkRole)
-      if (args.listed) form.append("listed", args.listed)
-      if (args.password) form.append("password", args.password)
-      if (args.spa) form.append("spa", "true")
-      if (args.resolves?.length) form.append("resolves", args.resolves.join(","))
-      if (args.requestReview) form.append("request_review", "true")
+      // Surgical revision (args.edits) needs no file upload — the server materializes
+      // it from the current stored source (requires an existing artifact, args.id).
+      const bytes = args.edits
+        ? undefined
+        : typeof args.content === "string"
+          ? new TextEncoder().encode(args.content)
+          : args.content
+      const form = buildPublishForm({
+        bytes: bytes as Uint8Array | undefined,
+        filename: args.filename,
+        edits: args.edits,
+        baseVersion: args.baseVersion,
+        title: args.title,
+        slug: args.slug,
+        spa: args.spa,
+        message: args.message,
+        workspaceAccess: args.workspaceAccess,
+        linkRole: args.linkRole,
+        listed: args.listed,
+        password: args.password,
+        resolves: args.resolves,
+        requestReview: args.requestReview,
+      })
       const url = args.id ? `${base}/v1/artifacts/${args.id}/versions` : `${base}/v1/artifacts`
       return ok(
         await f(url, { method: "POST", body: form, headers: authHeaders }),

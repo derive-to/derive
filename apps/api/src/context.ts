@@ -789,17 +789,30 @@ export function buildContext(deps: AppDeps) {
 
   // ---- Route guard helpers: the return-or-Response idiom (mirrors `limited`), so a
   // route opens with `const x = await require*(c); if (x instanceof Response) return x`.
-  // Resolve the :shortId artifact and gate it — 404 for BOTH missing and unauthorized,
-  // so a gated artifact you can't read is indistinguishable from one that isn't there
-  // (existence never leaks). Returns the artifact, or the Response to return.
+  // Resolve the :shortId artifact and gate it. Default: 404 for BOTH missing and
+  // unauthorized, so a gated artifact you can't read is indistinguishable from one
+  // that isn't there (existence never leaks) — right for `read`. Pass
+  // `{ split: true }` for actions where the caller SHOULD learn "it exists but you
+  // can't <action> it" (comment/propose/share/approve/manage) — 404 missing, 403
+  // unauthorized. Returns the artifact, or the Response to return.
   const requireArtifact = async (
     c: Context,
     action: Action,
+    opts?: { split?: boolean },
   ): Promise<ArtifactRecord | Response> => {
     const shortId = c.req.param("shortId")
     const a = shortId ? await meta.getByShortId(shortId) : null
-    if (!a || !(await authorize(c, action, a))) return fail(c, 404, "not found")
+    if (!a) return fail(c, 404, "not found")
+    if (!(await authorize(c, action, a))) {
+      return opts?.split ? fail(c, 403, "forbidden") : fail(c, 404, "not found")
+    }
     return a
+  }
+  // The caller's active-workspace org id, or the 403 to return — collapses the
+  // `workspaceCan` + `activeWorkspace` pair every workspace-scoped route opens with.
+  const requireWorkspace = async (c: Context, action: Action): Promise<string | Response> => {
+    if (!(await workspaceCan(c, action))) return fail(c, 403, "forbidden")
+    return activeWorkspace(c)
   }
   // The signed-in user, or the 401 to return — the guard every authed route opens with.
   const requireUser = async (c: Context): Promise<SessionUser | Response> =>
@@ -873,6 +886,7 @@ export function buildContext(deps: AppDeps) {
     collectionRole,
     sourceText,
     requireArtifact,
+    requireWorkspace,
     requireUser,
     isToken,
     isMember,

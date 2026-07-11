@@ -56,8 +56,37 @@ const ROW_ICON =
 // SidebarMenuBadge itself; only the muted tint is a call-site choice.
 const COUNT_BADGE = "top-1.5 text-muted-foreground"
 
-// One filter-nav row: sets the library filter via URL search. A zero count is
-// noise — the badge earns its ink only once it's nonzero.
+// The row's inner glyph — icon, label, and the ink-earning count badge — shared by
+// FilterItem and NavItem below (a zero count is noise, so the badge only renders
+// once it's nonzero).
+function RowGlyph({ icon, label, count }: { icon: IconName; label: string; count?: number }) {
+  return (
+    <>
+      <Icon name={icon} />
+      <span>{label}</span>
+      {(count ?? 0) > 0 && <SidebarMenuBadge className={COUNT_BADGE}>{count}</SidebarMenuBadge>}
+    </>
+  )
+}
+
+// The attributes every rail row's <Link> shares, regardless of where it points.
+function useRowLinkProps(
+  label: string,
+  active: boolean,
+  testId: string | undefined,
+  count: number | undefined,
+) {
+  const { setOpenMobile } = useSidebar()
+  return {
+    "aria-label": label,
+    "data-testid": testId,
+    "aria-current": active ? ("page" as const) : undefined,
+    onClick: () => setOpenMobile(false),
+    className: cn(ROW_ICON, (count ?? 0) > 0 && "pr-7"),
+  }
+}
+
+// One filter-nav row: sets the library filter via URL search.
 function FilterItem({
   icon,
   label,
@@ -73,22 +102,12 @@ function FilterItem({
   active: boolean
   testId?: string
 }) {
-  const { setOpenMobile } = useSidebar()
+  const linkProps = useRowLinkProps(label, active, testId, count)
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={active} tooltip={label}>
-        <Link
-          to="/"
-          search={search}
-          aria-label={label}
-          data-testid={testId}
-          aria-current={active ? "page" : undefined}
-          onClick={() => setOpenMobile(false)}
-          className={cn(ROW_ICON, (count ?? 0) > 0 && "pr-7")}
-        >
-          <Icon name={icon} />
-          <span>{label}</span>
-          {(count ?? 0) > 0 && <SidebarMenuBadge className={COUNT_BADGE}>{count}</SidebarMenuBadge>}
+        <Link to="/" search={search} {...linkProps}>
+          <RowGlyph icon={icon} label={label} count={count} />
         </Link>
       </SidebarMenuButton>
     </SidebarMenuItem>
@@ -98,7 +117,7 @@ function FilterItem({
 // A fixed-feed nav row: navigates to a top-level ROUTE (a named feed like /favorites
 // or /following, or the /people directory) rather than a library filter. The path IS
 // the destination — the FilterItem counterpart for feeds that earned their own route
-// (docs/decisions/0002). The optional count badge only inks once nonzero (a zero is noise).
+// (docs/decisions/0002).
 function NavItem({
   icon,
   label,
@@ -114,21 +133,12 @@ function NavItem({
   active: boolean
   testId?: string
 }) {
-  const { setOpenMobile } = useSidebar()
+  const linkProps = useRowLinkProps(label, active, testId, count)
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={active} tooltip={label}>
-        <Link
-          to={to}
-          aria-label={label}
-          data-testid={testId}
-          aria-current={active ? "page" : undefined}
-          onClick={() => setOpenMobile(false)}
-          className={cn(ROW_ICON, (count ?? 0) > 0 && "pr-7")}
-        >
-          <Icon name={icon} />
-          <span>{label}</span>
-          {(count ?? 0) > 0 && <SidebarMenuBadge className={COUNT_BADGE}>{count}</SidebarMenuBadge>}
+        <Link to={to} {...linkProps}>
+          <RowGlyph icon={icon} label={label} count={count} />
         </Link>
       </SidebarMenuButton>
     </SidebarMenuItem>

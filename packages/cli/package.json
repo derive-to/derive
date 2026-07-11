@@ -29,6 +29,10 @@
     "./config": {
       "types": "./src/config.d.ts",
       "default": "./src/config.js"
+    },
+    "./publish": {
+      "types": "./src/publish.d.ts",
+      "default": "./src/publish.js"
     }
   },
   "files": [

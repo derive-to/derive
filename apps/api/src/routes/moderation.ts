@@ -9,7 +9,7 @@ import { clientIp } from "../lib/rate-limit"
  *  artifact keeps its record but serves no content (410). The Report response schema
  *  is the single source for the web client's type. */
 export const moderationRoutes = (ctx: AppContext) => {
-  const { meta, actingUser, workspaceCan, activeWorkspace, isSuperAdmin } = ctx
+  const { meta, actingUser, workspaceCan, activeWorkspace, requireWorkspace, isSuperAdmin } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const Report = z
@@ -171,11 +171,12 @@ export const moderationRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       const artifact = await meta.getByShortId(c.req.param("shortId"))
       // A super-admin (operator) takes down any artifact globally; a workspace
       // Admin only within their own workspace.
-      if (!artifact || (!(await isSuperAdmin(c)) && artifact.org_id !== (await activeWorkspace(c))))
+      if (!artifact || (!(await isSuperAdmin(c)) && artifact.org_id !== org))
         return bail(fail(c, 404, "not found"))
       const who = (await actingUser(c))?.name ?? "owner"
       const b = await readJson(c, z.object({ note: z.unknown().optional() }))
@@ -218,9 +219,10 @@ export const moderationRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact || (!(await isSuperAdmin(c)) && artifact.org_id !== (await activeWorkspace(c))))
+      if (!artifact || (!(await isSuperAdmin(c)) && artifact.org_id !== org))
         return bail(fail(c, 404, "not found"))
       const who = (await actingUser(c))?.name ?? "owner"
       await meta.setArtifactRemoved(artifact.id, null)

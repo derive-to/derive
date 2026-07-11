@@ -35,10 +35,10 @@ export const sharingRoutes = (ctx: AppContext) => {
     meta,
     deps,
     defaultRole,
-    authorize,
     actorFor,
     actingUser,
     requireUser,
+    requireArtifact,
     bus,
     inviteLimiter,
     limited,
@@ -130,9 +130,8 @@ export const sharingRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact || !(await authorize(c, "read", artifact)))
-        return bail(fail(c, 404, "not found"))
+      const artifact = await requireArtifact(c, "read")
+      if (artifact instanceof Response) return bail(artifact)
       // The member roster is for collaborators, not the public. A caller who only has
       // read access via the artifact's visibility (no membership and no share) gets
       // nothing — mirrors the collection-members gate, and stops a stranger reading a
@@ -182,9 +181,8 @@ export const sharingRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "share", artifact))) return bail(fail(c, 403, "forbidden"))
+      const artifact = await requireArtifact(c, "share", { split: true })
+      if (artifact instanceof Response) return bail(artifact)
       const b = await readJson(
         c,
         z
@@ -330,9 +328,8 @@ export const sharingRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "The collaborator was removed." } },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "share", artifact))) return bail(fail(c, 403, "forbidden"))
+      const artifact = await requireArtifact(c, "share", { split: true })
+      if (artifact instanceof Response) return bail(artifact)
       const members = await meta.listArtifactMembers(artifact.id)
       const target = members.find((m) => m.user_id === c.req.param("userId"))
       if (target && rank(target.role) > (await callerRank(c, artifact)))
@@ -357,9 +354,8 @@ export const sharingRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "The invite was revoked." } },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "share", artifact))) return bail(fail(c, 403, "forbidden"))
+      const artifact = await requireArtifact(c, "share", { split: true })
+      if (artifact instanceof Response) return bail(artifact)
       const target = (await meta.listPendingArtifactInvites(artifact.id)).find(
         (i) => i.id === c.req.param("id"),
       )

@@ -1,4 +1,11 @@
+import type { LinkRole, Listed, Role, WorkspaceAccess } from "@derive/core"
 import type { components } from "./api-types"
+
+/** The role vocabulary and the v2 access model's three single-purpose fields are
+ *  canonical in @derive/core (roles.ts); imported here as type-only (clients never
+ *  import core at runtime — see .dependency-cruiser.mjs) and re-exported so this
+ *  stays the one place other web modules name them from. */
+export type { LinkRole, Listed, Role, WorkspaceAccess }
 
 /** A pointer to the conventions collection a workspace or an account likes its
  *  artifacts built from, plus an optional visual theme for rendered docs. Mirrors
@@ -62,13 +69,6 @@ export type ConnectedAgent = components["schemas"]["ConnectedAgent"]
 export type PublicProfile = components["schemas"]["PublicProfile"]
 /** Time-grouped view of an artifact's versions. Generated from the OpenAPI spec. */
 export type VersionSession = components["schemas"]["VersionSession"]
-export type Role = "viewer" | "commenter" | "editor" | "owner"
-/** The v2 access model's three single-purpose fields (see access-model.md), as
- *  standalone aliases for the share controls — they match the generated Artifact's
- *  inline enums. */
-export type LinkRole = "none" | "viewer" | "commenter" | "editor"
-export type WorkspaceAccess = "none" | "member"
-export type Listed = "none" | "workspace" | "public"
 /** The artifact view-model — the largest, most-composed shape in the client. Generated
  *  from the OpenAPI spec (apps/api/openapi.json). `my_role` is `Role | null`;
  *  workspace_access/link_role/listed are the v2 access enums (see access-model.md). */

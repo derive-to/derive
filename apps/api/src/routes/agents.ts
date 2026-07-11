@@ -11,7 +11,7 @@ import { bail, fail, readJson } from "../lib/http"
  *  (generated from the OpenAPI spec). The agent inbox endpoints (bearer-authed, consumed
  *  by agents not the web UI) stay plain routes. */
 export const agentRoutes = (ctx: AppContext) => {
-  const { meta, activeWorkspace, agentFor, privateOwnerId, requireUser, workspaceCan } = ctx
+  const { meta, agentFor, privateOwnerId, requireUser, requireWorkspace } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const agentJson = (a: AgentRecord) => ({
@@ -61,8 +61,9 @@ export const agentRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
-      const agents = await meta.listAgents(await activeWorkspace(c))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      const agents = await meta.listAgents(org)
       return c.json({ agents: agents.map(agentJson) })
     },
   )
@@ -86,7 +87,8 @@ export const agentRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       const b = await readJson(
         c,
         z.object({
@@ -102,7 +104,7 @@ export const agentRoutes = (ctx: AppContext) => {
       try {
         const agent = await meta.createAgent({
           id: newId("ag"),
-          org_id: await activeWorkspace(c),
+          org_id: org,
           name,
           token: sha256(token),
           role,
@@ -130,10 +132,11 @@ export const agentRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "The agent was deleted." } },
     }),
     async (c) => {
-      if (!(await workspaceCan(c, "manage"))) return bail(fail(c, 403, "forbidden"))
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
       // Scope the delete to the caller's workspace: deleteAgent is keyed by
       // (id, org) so an Admin can't delete another workspace's agent by id.
-      await meta.deleteAgent(c.req.param("id"), await activeWorkspace(c))
+      await meta.deleteAgent(c.req.param("id"), org)
       return c.body(null, 204)
     },
   )

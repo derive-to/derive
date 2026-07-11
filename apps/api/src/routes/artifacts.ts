@@ -106,6 +106,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     agentFor,
     authorize,
     authorizeStanding,
+    requireArtifact,
     workspaceCan,
     collectionRole,
     limited,
@@ -1182,9 +1183,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "The artifact was deleted." } },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "manage", artifact))) return bail(fail(c, 403, "forbidden"))
+      const artifact = await requireArtifact(c, "manage", { split: true })
+      if (artifact instanceof Response) return bail(artifact)
       await meta.deleteArtifact(artifact.id, artifact.org_id)
       return c.body(null, 204)
     },
@@ -1209,9 +1209,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "manage", artifact))) return bail(fail(c, 403, "forbidden"))
+      const artifact = await requireArtifact(c, "manage", { split: true })
+      if (artifact instanceof Response) return bail(artifact)
       const b = await readJson(c, z.object({ targetOrgId: z.string().min(1) }))
       if (b instanceof Response) return bail(b)
       if (b.targetOrgId === artifact.org_id) return bail(fail(c, 400, "already in that workspace"))
@@ -1295,9 +1294,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "publish", artifact))) return bail(fail(c, 403, "forbidden"))
+      const artifact = await requireArtifact(c, "publish", { split: true })
+      if (artifact instanceof Response) return bail(artifact)
       const body = await readJson(c, z.object({ version: z.number().int("version required") }))
       if (body instanceof Response) return bail(body)
       const src = await meta.getVersion(artifact.id, body.version)
