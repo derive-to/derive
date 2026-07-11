@@ -9,7 +9,7 @@ import { R2BlobStore } from "@derive/storage"
 import { tickStore } from "./edge-pg"
 import { log } from "./log"
 import { cfBrowserRenderer } from "./preview-cf"
-import { runRenderTick } from "./previews"
+import { runRenderTick, sweepMissingRenders } from "./previews"
 
 // While the render queue has work, re-tick on this cadence so a burst drains
 // promptly and near-term retries fire on time — mirroring the webhook outbox.
@@ -78,6 +78,9 @@ export class PreviewRenderer {
           "preview renderer: BASE_URL unset, defaulting to https://derive.to — set BASE_URL for non-prod deploys",
         )
       const baseUrl = this.env.BASE_URL ?? "https://derive.to"
+      // Sweep first so a never-rendered version (pre-pipeline publish, or a path
+      // that missed the enqueue) is claimed by the very tick that finds it.
+      await sweepMissingRenders(opened.store)
       const claimed = await runRenderTick({
         meta: opened.store,
         blobs,

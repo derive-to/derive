@@ -40,6 +40,9 @@ export const RENDER_TIMEOUT_MS = 20_000
 /** Maximum jobs to claim per tick (concurrency budget: jobs are sequential). */
 export const RENDER_CLAIM_LIMIT = 3
 
+/** Maximum missing-preview versions the self-heal sweep enqueues per tick. */
+export const SWEEP_LIMIT = 50
+
 // ---------------------------------------------------------------------------
 // Interfaces
 // ---------------------------------------------------------------------------
@@ -117,6 +120,24 @@ export const enqueueRender = async (
  * On failure: marks the version failed with a short error, then either retries
  * with exponential backoff or dead-letters after MAX_ATTEMPTS.
  */
+/**
+ * Self-heal sweep: enqueue a render job for every live artifact whose current
+ * version was never rendered (it predates the pipeline, or its publish path
+ * missed the enqueue) and has no pending job. Versions that rendered and FAILED
+ * keep their own job's retry/dead-letter state — the sweep never resurrects
+ * them, so it converges instead of hammering a broken render. Runs ahead of the
+ * claim in both workers (the Node interval and the edge DO alarm), so a swept
+ * version renders on the same tick that found it. Returns the number enqueued.
+ */
+export const sweepMissingRenders = async (
+  meta: MetaStore,
+  limit = SWEEP_LIMIT,
+): Promise<number> => {
+  const missing = await meta.versionsMissingPreview(limit)
+  for (const m of missing) await enqueueRender(meta, m.artifact_id, m.n)
+  return missing.length
+}
+
 export const runRenderTick = async (
   deps: RenderTickDeps,
   limit = RENDER_CLAIM_LIMIT,
@@ -220,6 +241,9 @@ export const startPreviewWorker = (deps: RenderTickDeps, intervalMs = 1500): Pre
     if (stopped || running) return
     running = true
     try {
+      // Sweep first so a never-rendered version found now is claimed this tick.
+      // Cheap when there's nothing missing (one bounded SELECT on a local DB).
+      await sweepMissingRenders(deps.meta)
       await runRenderTick(deps)
     } catch (err) {
       // A bad tick must not kill the loop, but it must not vanish either —

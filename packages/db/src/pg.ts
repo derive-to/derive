@@ -101,6 +101,7 @@ import {
   isNull,
   lte,
   ne,
+  notExists,
   or,
   sql,
 } from "drizzle-orm"
@@ -786,6 +787,28 @@ export class PgMetaStore implements MetaStore {
   // ---- Render-job queue --------------------------------------------------
   async enqueueRenderJob(j: NewRenderJob): Promise<void> {
     await this.db.insert(renderJob).values(j)
+  }
+  versionsMissingPreview(limit: number): Promise<Array<{ artifact_id: string; n: number }>> {
+    return this.db
+      .select({ artifact_id: version.artifact_id, n: version.n })
+      .from(artifact)
+      .innerJoin(
+        version,
+        and(eq(version.artifact_id, artifact.id), eq(version.n, artifact.current_version)),
+      )
+      .where(
+        and(
+          isNull(artifact.removed_at),
+          isNull(version.preview_status),
+          notExists(
+            this.db
+              .select({ one: sql`1` })
+              .from(renderJob)
+              .where(and(eq(renderJob.artifact_id, artifact.id), eq(renderJob.status, "pending"))),
+          ),
+        ),
+      )
+      .limit(limit)
   }
   claimDueRenderJobs(now: string, limit: number, leaseUntil: string): Promise<RenderJobRecord[]> {
     const due = this.db

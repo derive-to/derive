@@ -245,6 +245,15 @@ export interface ArtifactStore {
    * to `leaseUntil`), then returns the claimed rows.
    */
   claimDueRenderJobs(now: string, limit: number, leaseUntil: string): Promise<RenderJobRecord[]>
+  /**
+   * Up to `limit` live artifacts whose CURRENT version has never been rendered
+   * (preview_status is null) and has no pending render job. Feeds the self-heal
+   * sweep: publishes that predate the render pipeline — or that slipped past the
+   * enqueue (a crashed request, a code path that missed notifyRender) — get their
+   * screenshot on the next tick instead of never. Versions that already ran and
+   * failed ("failed"/dead-lettered) are excluded: they had their retries.
+   */
+  versionsMissingPreview(limit: number): Promise<Array<{ artifact_id: string; n: number }>>
   updateRenderJob(
     id: string,
     fields: {
