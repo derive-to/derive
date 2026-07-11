@@ -343,21 +343,28 @@ async function buildServer(
       mimeType: "text/markdown" as const,
     }
     if (doc.current_content_type !== SKILL_CONTENT_TYPE) return generic
-    const v = await ctx.meta.getVersion(doc.id, doc.current_version)
-    const manifest = v ? await manifestOf(ctx, v) : null
-    const entry = v ? await ctx.sourceText(v) : null // the SKILL.md, frontmatter intact
-    if (!manifest || entry === null) return generic // never throw during connect
-    const info = bundleDoc(manifest, entry)
-    const others = info.files.map((f) => f.path).filter((p) => p !== info.entry)
-    const footer = others.length
-      ? `\n\n---\nOther files in this skill — read them with the read tool ` +
-        `(read short_id:"${doc.short_id}" section:"${others[0]}"): ${others.join(", ")}`
-      : ""
-    return {
-      title: info.name ?? doc.title ?? doc.short_id,
-      description: info.description ?? GENERIC_CONVENTION,
-      mimeType: "text/markdown",
-      body: parseFrontmatter(entry).body + footer,
+    // This runs at CONNECT (to surface the skill's frontmatter identity), so a read
+    // failure here must NEVER break the whole connection — fall back to the generic
+    // descriptor + the lazy body path, exactly as a non-skill member behaves.
+    try {
+      const v = await ctx.meta.getVersion(doc.id, doc.current_version)
+      const manifest = v ? await manifestOf(ctx, v) : null
+      const entry = v ? await ctx.sourceText(v) : null // the SKILL.md, frontmatter intact
+      if (!manifest || entry === null) return generic
+      const info = bundleDoc(manifest, entry)
+      const others = info.files.map((f) => f.path).filter((p) => p !== info.entry)
+      const footer = others.length
+        ? `\n\n---\nOther files in this skill — read them with the read tool ` +
+          `(read short_id:"${doc.short_id}" section:"${others[0]}"): ${others.join(", ")}`
+        : ""
+      return {
+        title: info.name ?? doc.title ?? doc.short_id,
+        description: info.description ?? GENERIC_CONVENTION,
+        mimeType: "text/markdown",
+        body: parseFrontmatter(entry).body + footer,
+      }
+    } catch {
+      return generic
     }
   }
 

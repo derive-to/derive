@@ -11,7 +11,12 @@
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { conventionsBlock, materializeNotes, materializeSkills } from "./skills.js"
+import {
+  conventionsBlock,
+  materializeNotes,
+  materializeSkills,
+  mergeSkillLayers,
+} from "./skills.js"
 
 // ---- config -----------------------------------------------------------------
 
@@ -694,9 +699,12 @@ export async function serve(cfg) {
   const bpNotes = (bp?.members ?? [])
     .filter((mbr) => !mbr.is_skill)
     .map((mbr) => ({ short_id: mbr.short_id, title: mbr.title, version: mbr.version }))
+  // Dedup across the two layers: a skill named in BOTH the ambient Brandprint and the
+  // manifest's own `skills:` materializes ONCE (manifest pin wins), never twice under a
+  // collided dir.
   const skillCatalog = await materializeSkills(
     api,
-    [...bpSkills, ...boot.skills],
+    mergeSkillLayers(bpSkills, boot.skills),
     join(cfg.cwd, ".claude", "skills"),
   )
   const noteCatalog = await materializeNotes(api, bpNotes, join(cfg.cwd, "brandprint"))

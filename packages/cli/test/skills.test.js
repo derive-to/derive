@@ -6,6 +6,7 @@ import {
   conventionsBlock,
   materializeNotes,
   materializeSkills,
+  mergeSkillLayers,
   pinManifestSkills,
   skillNameFrom,
   skillSlug,
@@ -43,6 +44,26 @@ describe("skillNameFrom + skillSlug", () => {
     expect(skillSlug("Chart Style!")).toBe("Chart-Style")
     expect(skillSlug("a/../b")).toBe("a-..-b")
     expect(skillSlug("***")).toBeNull()
+  })
+})
+
+describe("mergeSkillLayers", () => {
+  it("dedupes a shared id once, with the manifest pin winning over the Brandprint", () => {
+    const merged = mergeSkillLayers(
+      [
+        { id: "shared", version: 3 },
+        { id: "bp-only", version: 1 },
+      ],
+      [
+        { id: "shared", version: 5 }, // manifest pins a newer version
+        { id: "manifest-only", version: 2 },
+      ],
+    )
+    expect(merged).toEqual([
+      { id: "shared", version: 5 }, // once, manifest's version
+      { id: "bp-only", version: 1 },
+      { id: "manifest-only", version: 2 },
+    ])
   })
 })
 

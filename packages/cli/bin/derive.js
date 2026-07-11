@@ -1171,7 +1171,9 @@ if (cmd === "brandprint") {
   const skills = []
   const notes = []
   for (const id of collectionIds) {
-    const page = await getJson(`/v1/artifacts?collection=${id}`)
+    // limit=100 is the endpoint's max; a curated Brandprint is far smaller, but cap
+    // explicitly rather than inherit the default 30 and silently drop members.
+    const page = await getJson(`/v1/artifacts?collection=${id}&limit=100`)
     for (const a of page?.artifacts ?? []) {
       if (seen.has(a.short_id)) continue
       seen.add(a.short_id)

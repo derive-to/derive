@@ -65,6 +65,16 @@ export function writeSkill(destRoot, dir, files) {
   }
 }
 
+/** Merge the ambient Brandprint skill layer with the manifest's own `skills:` into one
+ *  deduped list. A skill named in BOTH must materialize ONCE (not twice under a collided
+ *  dir); the manifest pin wins — it's the deliberate, context-specific choice over the
+ *  ambient default. Order follows first appearance (Brandprint, then new manifest ids). */
+export function mergeSkillLayers(brandprintSkills, manifestSkills) {
+  const byId = new Map()
+  for (const s of [...brandprintSkills, ...manifestSkills]) byId.set(s.id, s)
+  return [...byId.values()]
+}
+
 /** Materialize a set of pinned skills into destRoot, deduping directory names by short
  *  id (two skills whose frontmatter name collides get `<name>-<id>`). A failed skill is
  *  loud but NON-fatal — the runner still answers and the catalog marks it unavailable,
