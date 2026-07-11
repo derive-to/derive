@@ -99,6 +99,18 @@ export const brandprintDocsQuery = (collectionId: string) =>
       api.listArtifacts({ collection: collectionId, limit: 100 }).then((r) => r.artifacts),
   })
 
+// The active workspace's skills (bundles with a SKILL.md) — the shelf the Brandprint
+// "Add a skill" picker chooses from. Skill-ness rides the denormalized content type,
+// so this is a client-side narrow of the ordinary library listing.
+export const workspaceSkillsQuery = () =>
+  queryOptions({
+    queryKey: ["artifacts", "workspace-skills"] as const,
+    queryFn: () =>
+      api
+        .listArtifacts({ limit: 100 })
+        .then((r) => r.artifacts.filter((a) => a.current_content_type === "derive/skill")),
+  })
+
 // A small, flat slice of the Following feed — recent work from the people you follow —
 // for the "Recent activity" preview on the People tab. The full feed lives at /following
 // (the infinite libraryArtifactsQuery({ scope: "following" })); this is the peek.

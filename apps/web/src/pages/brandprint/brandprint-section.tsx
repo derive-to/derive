@@ -32,6 +32,7 @@ import {
   collectionsQuery,
   workspaceQuery,
   workspaceSettingsQuery,
+  workspaceSkillsQuery,
 } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { refFor } from "../artifact/parse-ref"
@@ -315,6 +316,14 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
             </Button>
           </SettingRow>
           {collectionId && (
+            <SettingRow
+              label="Add a skill"
+              description="Put a published skill (how agents build things) into this Brandprint."
+            >
+              <AddSkill collectionId={collectionId} scope={scope} disabled={disabled} />
+            </SettingRow>
+          )}
+          {collectionId && (
             <BrandprintDocs
               collectionId={collectionId}
               scope={scope}
@@ -494,6 +503,65 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
 // so this list is its one home. Removing drops the doc from the collection; the
 // artifact itself lives on in the library. The brand-profile artifact rides in the
 // collection too but has its own home (the panel above), so it's not listed here.
+// The "Add a skill" picker: pick one of the workspace's skills into the Brandprint's
+// collection. Skills are ordinary artifacts, so this is add-to-collection — the same
+// endpoint the upload path uses — over the skill-filtered library listing.
+function AddSkill({
+  collectionId,
+  scope,
+  disabled,
+}: {
+  collectionId: string
+  scope: "workspace" | "account"
+  disabled: boolean
+}) {
+  const { data: skills, isError, refetch } = useQuery(workspaceSkillsQuery())
+  const addSkill = useApiMutation({
+    mutationFn: (shortId: string) => api.addToCollection(collectionId, shortId),
+    invalidate: [brandprintDocsQuery(collectionId).queryKey, collectionsQuery().queryKey],
+  })
+  if (isError)
+    return (
+      <p className="text-sm text-muted-foreground">
+        Couldn't load skills.{" "}
+        <Button
+          variant="link"
+          size="xs"
+          className="px-0"
+          data-testid={`brandprint-skills-retry-${scope}`}
+          onClick={() => refetch()}
+        >
+          Try again
+        </Button>
+      </p>
+    )
+  const available = skills ?? []
+  return (
+    <SelectMenu value="" onValueChange={(v) => v && addSkill.mutate(v)}>
+      <SelectMenuTrigger
+        aria-label="Add a skill"
+        data-testid={`brandprint-add-skill-${scope}`}
+        disabled={disabled || !skills || addSkill.isPending}
+      >
+        {!skills ? "Loading…" : addSkill.isPending ? "Adding…" : "Pick a skill"}
+      </SelectMenuTrigger>
+      <SelectMenuContent>
+        {available.length === 0 ? (
+          <SelectMenuItem value="" disabled>
+            No skills yet — publish one with `derive init --template skill`
+          </SelectMenuItem>
+        ) : (
+          available.map((s) => (
+            <SelectMenuItem key={s.short_id} value={s.short_id}>
+              {s.title ?? s.short_id}
+            </SelectMenuItem>
+          ))
+        )}
+      </SelectMenuContent>
+    </SelectMenu>
+  )
+}
+
 function BrandprintDocs({
   collectionId,
   scope,
@@ -547,6 +615,11 @@ function BrandprintDocs({
               >
                 {a.title ?? a.short_id}
               </Link>
+              {a.current_content_type === "derive/skill" && (
+                <Badge variant="secondary" shape="pill">
+                  Skill
+                </Badge>
+              )}
               <Button
                 variant="ghost"
                 size="icon-xs"
