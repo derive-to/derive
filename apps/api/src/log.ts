@@ -6,7 +6,12 @@
  */
 type Level = "info" | "warn" | "error"
 
-const isProd = process.env.NODE_ENV === "production"
+// JSON when the Node container says production, and ALWAYS on Cloudflare Workers —
+// the deployed edge tier never sets NODE_ENV, and pretty-format lines there defeat
+// Workers Logs' field indexing. The UA string is the canonical workerd detection.
+const isProd =
+  process.env.NODE_ENV === "production" ||
+  (typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers")
 const TAG: Record<Level, string> = { info: "·", warn: "⚠", error: "✖" }
 
 const emit = (level: Level, msg: string, fields?: Record<string, unknown>): void => {
