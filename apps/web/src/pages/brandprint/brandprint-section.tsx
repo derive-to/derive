@@ -157,7 +157,11 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
   // The one-click intake, shared with onboarding's Brandprint step — see
   // use-brandprint-import for the composition and its failure semantics.
   const fileRef = useRef<HTMLInputElement>(null)
-  const importDocs = useBrandprintImport(scope, collectionId)
+  const importDocs = useBrandprintImport(
+    scope,
+    collectionId,
+    scope === "workspace" ? (settings?.brandprint?.profileId ?? undefined) : undefined,
+  )
   const pickFiles = (list: FileList | null) => {
     const files = list ? [...list] : []
     if (files.length > 0) importDocs.mutate(files)
