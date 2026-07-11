@@ -867,6 +867,56 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(read).toContain("proposed body")
   })
 
+  // End-to-end through the RENDER pipeline (not just the stored-type label): publish
+  // markdown with no filename, then fetch the served /raw/ page and prove it is
+  // rendered markdown with tag-like tokens intact — the exact failure that flattened
+  // a real doc to raw-source soup and ate its `<...>` placeholders. Reproduces the
+  // production round-trip: fresh publish, then a full-content republish with no
+  // filename (the step that flipped the artifact to text/html and broke the render).
+  it("render e2e: a no-filename markdown publish renders as markdown, tokens intact, across a republish", async () => {
+    const { app, token } = appWithGrant("rendere2e", "openid derive:read derive:publish")
+    // A heading (proves it gets RENDERED, not served as source) and a tag-like token
+    // in a code span (proves it SURVIVES, escaped, instead of vanishing as a phantom tag).
+    const v1 =
+      "# Skills across Derive\n\n## The idea\n\nGet it as a `derive://brandprint/<short_id>` resource; put files in `<cwd>/.claude/skills/`.\n"
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Skills across Derive",
+          content: v1,
+          link_role: "viewer", // world-link readable so the anonymous /raw/ GET renders it
+        }),
+      ),
+    )
+
+    // Anonymous fetch of the SERVED page — the real serveContent → renderMarkdown chain.
+    const page1 = await app.request(`/raw/${created.short_id}/v/1/`)
+    expect(page1.status).toBe(200)
+    expect(page1.headers.get("content-type")).toContain("text/html")
+    const html1 = await page1.text()
+    // Rendered, not dumped: the `##` became a real heading element.
+    expect(html1).toContain("<h1")
+    expect(html1).toContain("<h2")
+    expect(html1).toContain("The idea")
+    // The token survived as escaped text inside the code span…
+    expect(html1).toContain("&lt;short_id&gt;")
+    // …and the raw markdown source is NOT what got served (the soup failure mode).
+    expect(html1).not.toContain("## The idea")
+
+    // The production round-trip: a full-content republish with NO filename. This is the
+    // exact step that re-typed the artifact to text/html and broke it.
+    const v2 =
+      "# Skills across Derive\n\n## The idea\n\nRevised: `derive://brandprint/<short_id>` still resolves; skills land in `<cwd>/.claude/skills/`.\n"
+    await call(app, token, "publish", { short_id: created.short_id, content: v2 })
+    const page2 = await app.request(`/raw/${created.short_id}/v/2/`)
+    expect(page2.status).toBe(200)
+    const html2 = await page2.text()
+    expect(html2).toContain("<h2")
+    expect(html2).toContain("Revised")
+    expect(html2).toContain("&lt;short_id&gt;")
+    expect(html2).not.toContain("## The idea")
+  })
+
   it("surfaces outdated feedback after a republish drops the quoted text", async () => {
     const { app, token } = appWithGrant("stale", "openid derive:read derive:comment derive:publish")
     const shortId = (await (await publish(app, token, "alpha beta gamma")).json()).short_id
