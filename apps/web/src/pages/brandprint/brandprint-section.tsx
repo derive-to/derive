@@ -24,30 +24,18 @@ import {
   SelectMenuTrigger,
 } from "@/components/ui/select-menu"
 import { Skeleton } from "@/components/ui/skeleton"
-import { toast } from "@/components/ui/sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import {
   brandprintDocsQuery,
   collectionsQuery,
-  summaryQuery,
   workspaceQuery,
   workspaceSettingsQuery,
 } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { refFor } from "../artifact/parse-ref"
-
-// What the one-click intake reports back: how many docs made it in, which files
-// didn't, and (when it created the collection and set the pointer itself) the fresh
-// server state to sync the caches from.
-type ImportResult = {
-  created: boolean
-  ok: number
-  failed: string[]
-  settings?: Awaited<ReturnType<typeof api.updateWorkspaceSettings>>
-  profile?: Awaited<ReturnType<typeof api.setProfile>>
-}
+import { type ImportResult, notesAsDoc, useBrandprintImport } from "./use-brandprint-import"
 
 // The two halves of a brand the upload tab asks for; `cat` labels each staged file
 // and doubles as the verb in the well's heading ("How … artifacts should look/read").
@@ -166,74 +154,10 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
     success: "Brandprint updated",
   })
 
-  // The one-click intake: publish each picked file, gather them into the pointed
-  // collection (creating one when the Brandprint is empty), and set the pointer.
-  // Composed from existing endpoints inside one governed mutation (the welcome.tsx
-  // save pattern). Per-file failures don't abort the batch; the pointer is only set
-  // once at least one doc made it in, so a total failure leaves nothing half-set.
+  // The one-click intake, shared with onboarding's Brandprint step — see
+  // use-brandprint-import for the composition and its failure semantics.
   const fileRef = useRef<HTMLInputElement>(null)
-  const importDocs = useApiMutation({
-    mutationFn: async (files: File[]): Promise<ImportResult> => {
-      let target = collectionId
-      let created = false
-      if (!target) {
-        const col = await api.createCollection(
-          scope === "workspace" ? "Brandprint" : "Personal Brandprint",
-        )
-        target = col.id
-        created = true
-      }
-      let ok = 0
-      const failed: string[] = []
-      for (const f of files) {
-        try {
-          // No title field — the server derives one from the doc's heading or filename.
-          const a = await api.publish(f)
-          await api.addToCollection(target, a.short_id)
-          ok++
-        } catch {
-          failed.push(f.name)
-        }
-      }
-      if (created && ok === 0) {
-        // Nothing made it in — drop the empty collection so a retry starts clean.
-        await api.deleteCollection(target).catch(() => {})
-        return { created: false, ok, failed }
-      }
-      if (!created) return { created, ok, failed }
-      if (scope === "workspace") {
-        // Conventions are for the whole team: open the collection to the workspace so
-        // members can read the docs (collection access propagates to its contents).
-        // Best-effort — MCP delivery reads under the workspace grant either way.
-        await api.setCollectionAccess(target, "member").catch(() => {})
-        const settings = await api.updateWorkspaceSettings({
-          brandprint: { collectionId: target },
-        })
-        return { created, ok, failed, settings }
-      }
-      const profile = await api.setProfile({ brandprint: { collectionId: target } })
-      return { created, ok, failed, profile }
-    },
-    success: (r) =>
-      r.ok === 0
-        ? undefined
-        : r.created
-          ? `Brandprint created with ${r.ok} doc${r.ok === 1 ? "" : "s"}`
-          : `${r.ok} doc${r.ok === 1 ? "" : "s"} added to your Brandprint`,
-    onSuccess: (r) => {
-      if (r.settings) qc.setQueryData(workspaceSettingsQuery().queryKey, r.settings)
-      if (r.profile && me) setMe({ ...me, brandprint: r.profile.brandprint })
-      if (r.failed.length > 0) {
-        // The mutation itself settled fine, so the global safety net stays quiet —
-        // name the files that fell out of the batch here.
-        const msg = `Couldn't publish ${r.failed.join(", ")}`
-        if (r.ok === 0)
-          toast.error(msg) // mutation-ignore: per-file outcome, not a rejected mutation
-        else toast.warning(msg)
-      }
-    },
-    invalidate: [collectionsQuery().queryKey, summaryQuery().queryKey, ["artifacts"]],
-  })
+  const importDocs = useBrandprintImport(scope, collectionId)
   const pickFiles = (list: FileList | null) => {
     const files = list ? [...list] : []
     if (files.length > 0) importDocs.mutate(files)
@@ -280,12 +204,7 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
   const createFromNotes = () => {
     const text = notes.trim()
     if (!text) return
-    // The notes become a markdown doc through the same intake as a picked file; the
-    // filename carries the title (slashes would read as a path, so swap them out).
-    const name = (noteTitle.trim() || "Brand notes").replace(/[\\/]/g, "-")
-    importDocs.mutate([new File([text], `${name}.md`, { type: "text/markdown" })], {
-      onSuccess: closeOnSuccess,
-    })
+    importDocs.mutate([notesAsDoc(text, noteTitle)], { onSuccess: closeOnSuccess })
   }
 
   const title = scope === "workspace" ? "Workspace Brandprint" : "Your Brandprint"

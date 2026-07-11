@@ -30,6 +30,7 @@ import {
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { authClient } from "@/lib/auth-client"
+import { connectedAgentsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
@@ -86,25 +87,17 @@ const SCOPE_LABEL: Record<string, string> = {
 // always see what may act as you, and cut it off. The moat's human-facing trust surface.
 function ConnectedAgents() {
   const qc = useQueryClient()
-  const {
-    data: agents,
-    isPending,
-    isError,
-    refetch,
-  } = useQuery({
-    queryKey: ["connected-agents"],
-    queryFn: () => api.connectedAgents().then((r) => r.agents),
-  })
+  const { data: agents, isPending, isError, refetch } = useQuery(connectedAgentsQuery())
   const [confirming, setConfirming] = useState<string | null>(null)
 
   const revokeMut = useApiMutation({
     mutationFn: (clientId: string) => api.revokeConnectedAgent(clientId),
     onSuccess: (_data, clientId) =>
-      qc.setQueryData(["connected-agents"], (list: { clientId: string }[] | undefined) =>
+      qc.setQueryData(connectedAgentsQuery().queryKey, (list) =>
         list?.filter((a) => a.clientId !== clientId),
       ),
     success: "Access revoked — the agent must be re-authorized to act again",
-    invalidate: [["connected-agents"]],
+    invalidate: [connectedAgentsQuery().queryKey],
   })
   const revoke = (clientId: string) => revokeMut.mutate(clientId)
 

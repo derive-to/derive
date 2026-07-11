@@ -18,4 +18,7 @@ export const STORAGE_KEYS = {
   // saved onboarding flag / folder pref survives the rename.
   onboarded: "derive:onboarded",
   libraryFolders: "derive:show-folders",
+  // Dismissal of the home's one-time "set up your team's Brandprint" nudge (owners
+  // of a Brandprint-less workspace; see pages/library/brandprint-nudge).
+  brandprintNudge: "derive:brandprint-nudge",
 } as const
