@@ -24,6 +24,12 @@ export const resolveBrandprint = (ws?: Brandprint, profile?: Brandprint): Resolv
   return { collectionIds: [...new Set(ids)], profileId: ws?.profileId }
 }
 
+/** The brand profile is live once it has a real version — version 1 is always the
+ *  intake's stub. The rule's one home on the server; the web mirrors it (the SPA
+ *  doesn't import @derive/core). */
+export const profileState = (currentVersion: number): "pending" | "live" =>
+  currentVersion >= 2 ? "live" : "pending"
+
 /** Parse a profile's stored Brandprint JSON string; null / malformed → undefined. */
 export const parseBrandprint = (json: string | null | undefined): Brandprint | undefined => {
   if (!json) return undefined

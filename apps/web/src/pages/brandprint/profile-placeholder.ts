@@ -2,7 +2,7 @@
 // artifact, published by the intake so the agent has a fixed short_id to file its
 // proposal against (spec: the placeholder is the recognition contract). The profile
 // counts as live from version 2, so this stub is what renders until then.
-export const PROFILE_PLACEHOLDER_HTML = `<!doctype html>
+const PROFILE_PLACEHOLDER_HTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">

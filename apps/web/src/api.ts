@@ -1,18 +1,13 @@
 import type { components } from "./api-types"
 
 /** A pointer to the conventions collection a workspace or an account likes its
- *  artifacts built from, plus an optional visual theme for rendered docs. Mirrors
- *  packages/core/src/ports.ts Brandprint. Not itself a named OpenAPI schema — the
- *  workspace's copy rides OrgSettings.brandprint (generated), but the personal copy
- *  is a Better Auth additionalField (a JSON string) surfaced through the hand-mapped
- *  `Me`, same as profession/about below. */
+ *  artifacts built from. The personal layer is collection-only — the brand profile
+ *  (`profileId`) is workspace scope and rides the generated OrgSettings.brandprint.
+ *  Mirrors packages/core/src/ports.ts Brandprint. Not itself a named OpenAPI schema —
+ *  the personal copy is a Better Auth additionalField (a JSON string) surfaced through
+ *  the hand-mapped `Me`, same as profession/about below. */
 export interface Brandprint {
   collectionId?: string | null
-  theme?: {
-    palette?: Record<string, string>
-    fonts?: Record<string, string>
-    dark?: { palette?: Record<string, string> }
-  } | null
 }
 /** Parse a Me.brandprint / SessionUser.brandprint JSON string; null if absent/malformed. */
 export const parseBrandprint = (raw: string | null | undefined): Brandprint | null => {
@@ -46,7 +41,7 @@ export interface Me {
   emailVerified: boolean
   /** Is TOTP two-factor enabled? Drives the Security-hub enable/disable state. */
   twoFactorEnabled: boolean
-  /** Your personal Brandprint (conventions collection + theme); null if unset. Layers over
+  /** Your personal Brandprint (conventions collection); null if unset. Layers over
    *  the workspace's (yours wins) when an agent acts as you. */
   brandprint: Brandprint | null
 }

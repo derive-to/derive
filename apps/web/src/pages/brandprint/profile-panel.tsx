@@ -1,53 +1,39 @@
-import { useQuery } from "@tanstack/react-query"
+import { queryOptions, useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { Copy } from "lucide-react"
 import { useState } from "react"
 import { API_BASE, api } from "@/api"
-import { Icon } from "@/components/icons"
-import { ConnectAgentButton, publicUrlOf } from "@/components/shared/connect-agent"
+import { ConnectAgentButton, PromptBlock, publicUrl } from "@/components/shared/connect-agent"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { toast } from "@/components/ui/sonner"
-import { useAuth } from "@/ctx"
-import { workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
+import { artifactQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { refFor } from "../artifact/parse-ref"
 
 /**
  * The workspace brand profile's home on /brandprint — the spec's five states, three of
- * which live here (the section below covers "empty", and "no agent yet" is this panel's
- * hand-off card with Connect leading):
+ * which live here (the page covers "empty" and "no agent yet"; the latter is this
+ * panel's hand-off card with Connect leading):
  * - hand-off: sources saved, profile still the stub, no proposal — the copyable brief.
  * - reveal: the agent's proposal is in — full-width preview, Approve, comments.
  * - live: an approved profile fronts the page; Regenerate re-surfaces the brief.
- * Renders nothing without a profileId (legacy Brandprints keep the pre-profile page).
  */
-export function ProfilePanel() {
-  const { me } = useAuth()
-  const { data: settings } = useQuery({ ...workspaceSettingsQuery(), enabled: !!me })
-  const profileId = settings?.brandprint?.profileId ?? undefined
-  if (!profileId) return null
-  return <ProfileStates profileId={profileId} />
-}
+const profileProposalsQuery = (profileId: string) =>
+  queryOptions({
+    queryKey: ["brandprint-profile-proposals", profileId] as const,
+    queryFn: () => api.listProposals(profileId, "open").then((r) => r.proposals),
+  })
 
-const profileArtifactQuery = (profileId: string) => ({
-  queryKey: ["artifacts", "brandprint-profile", profileId] as const,
-  queryFn: () => api.getArtifact(profileId),
-})
-const profileProposalsQuery = (profileId: string) => ({
-  queryKey: ["brandprint-profile-proposals", profileId] as const,
-  queryFn: () => api.listProposals(profileId, "open").then((r) => r.proposals),
-})
-
-function ProfileStates({ profileId }: { profileId: string }) {
+export function ProfilePanel({ profileId }: { profileId: string }) {
   const { data: ws } = useQuery(workspaceQuery())
-  const { data: art, isError: artError } = useQuery(profileArtifactQuery(profileId))
+  const { data: art, isError: artError } = useQuery(artifactQuery(profileId))
+  // Client mirror of packages/core/src/brandprint.ts profileState — v1 is always the
+  // intake's stub (the SPA deliberately doesn't import @derive/core).
   const live = (art?.current_version ?? 0) >= 2
-  // While we wait on the agent, poll for the proposal so the reveal fires the moment
-  // it lands — the page flips from "building" to the preview without a reload.
+  // Poll only while we actually wait on the agent: profile not live, no proposal in
+  // yet. Once the reveal is up (or the profile is live) the interval stands down.
   const { data: proposals } = useQuery({
     ...profileProposalsQuery(profileId),
-    refetchInterval: art && !live ? 5000 : false,
+    refetchInterval: (q) => (art && !live && !q.state.data?.length ? 5000 : false),
   })
   const open = proposals?.[0]
   const [showBrief, setShowBrief] = useState(false)
@@ -56,10 +42,7 @@ function ProfileStates({ profileId }: { profileId: string }) {
     mutationFn: (proposalId: string) => api.approveProposal(profileId, proposalId),
     success: "Brand profile approved — agents read it from now on",
     onSuccess: () => setShowBrief(false),
-    invalidate: [
-      profileArtifactQuery(profileId).queryKey,
-      profileProposalsQuery(profileId).queryKey,
-    ],
+    invalidate: [artifactQuery(profileId).queryKey, profileProposalsQuery(profileId).queryKey],
   })
 
   // An unreadable profile artifact degrades to nothing rather than a broken band —
@@ -145,12 +128,10 @@ function ProfileStates({ profileId }: { profileId: string }) {
       </section>
     )
 
+  // Regenerating a live profile is the same card with an exit; first-time hand-off
+  // has nothing to go back to.
   return (
-    <HandoffCard
-      profileId={profileId}
-      regenerating={live}
-      onDismiss={live ? () => setShowBrief(false) : undefined}
-    />
+    <HandoffCard profileId={profileId} onDismiss={live ? () => setShowBrief(false) : undefined} />
   )
 }
 
@@ -165,29 +146,10 @@ const briefFor = (url: string, profileId: string) =>
 
 // The hand-off card: the spec's state 2 (and state 5, where Connect leads because no
 // agent was ever authorized — ConnectAgentButton is one tap away either way). Persistent
-// and calm; the MCP never pitches, this card is the human-facing backstop.
-function HandoffCard({
-  profileId,
-  regenerating,
-  onDismiss,
-}: {
-  profileId: string
-  regenerating: boolean
-  onDismiss?: () => void
-}) {
-  const [copied, setCopied] = useState(false)
-  const url = typeof window !== "undefined" ? publicUrlOf(window.location.origin) : ""
-  const brief = briefFor(url, profileId)
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(brief)
-      setCopied(true)
-      toast.success("Copied — paste it into your agent")
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      toast.error("Couldn't copy; select the text and copy it manually")
-    }
-  }
+// and calm; the MCP never pitches, this card is the human-facing backstop. `onDismiss`
+// present means a live profile exists and this is a regenerate.
+function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: () => void }) {
+  const regenerating = !!onDismiss
   return (
     <section
       className="flex flex-col gap-3 rounded-lg border bg-secondary/40 px-4 py-3"
@@ -218,24 +180,11 @@ function HandoffCard({
           <ConnectAgentButton variant="outline" size="sm" testId="brandprint-handoff-connect" />
         </div>
       </div>
-      <div className="relative">
-        <pre
-          data-testid="brandprint-brief"
-          className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border bg-secondary p-3 pr-12 font-mono text-sm text-foreground"
-        >
-          {brief}
-        </pre>
-        <Button
-          variant="outline"
-          size="icon-sm"
-          data-testid="brandprint-brief-copy"
-          aria-label="Copy the brief"
-          className="absolute right-2 top-2"
-          onClick={copy}
-        >
-          {copied ? <Icon name="check" className="text-success" /> : <Copy className="size-4" />}
-        </Button>
-      </div>
+      <PromptBlock
+        text={briefFor(publicUrl(), profileId)}
+        testid="brandprint-brief"
+        copyLabel="Copy the brief"
+      />
     </section>
   )
 }

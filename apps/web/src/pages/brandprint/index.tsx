@@ -11,18 +11,22 @@ import { ProfilePanel } from "./profile-panel"
 
 // The Brandprint page: /brandprint — the workspace's conventions and your personal
 // layer, one destination in the rail (a peer of Contexts). Promoted out of Settings:
-// a Brandprint is something a team sets up and returns to, not a preference. The two
-// sections own their data, states, and writes; this page is composition only.
+// a Brandprint is something a team sets up and returns to, not a preference. The
+// sections own their data, states, and writes; this page is composition only. The
+// top band is exclusive by construction: the brand profile's panel when one exists,
+// else the saved-but-inert nudge.
 export function Brandprint() {
   useDocumentTitle("Brandprint")
+  const { me } = useAuth()
+  const { data: settings } = useQuery({ ...workspaceSettingsQuery(), enabled: !!me })
+  const profileId = settings?.brandprint?.profileId ?? undefined
   return (
     <PageShell className="flex flex-col gap-8">
       <PageHeader
         title="Brandprint"
         subtitle="The conventions your artifacts follow: how they look and how they read. Any agent connected to this workspace picks them up automatically."
       />
-      <ProfilePanel />
-      <ApplyNudge />
+      {profileId ? <ProfilePanel profileId={profileId} /> : <ApplyNudge />}
       <BrandprintSection scope="workspace" />
       <BrandprintSection scope="account" />
     </PageShell>
@@ -32,15 +36,14 @@ export function Brandprint() {
 // The saved-but-inert state: a Brandprint exists but the caller has never authorized
 // an agent, so nothing is reading it. The honest framing from the spec — captured and
 // saved now, applied the moment an agent connects — with the shared Connect surface
-// one tap away. Ambient: any load failure just keeps the band hidden. When a brand
-// profile exists, the ProfilePanel's states carry the connect story instead, so this
-// band stands down rather than double-banding the page.
+// one tap away. Ambient: any load failure just keeps the band hidden. Only mounted
+// when no brand profile exists (the page branches above); the panel's states carry
+// the connect story otherwise.
 function ApplyNudge() {
   const { me } = useAuth()
   const { data: settings } = useQuery({ ...workspaceSettingsQuery(), enabled: !!me })
   const { data: agents, isError } = useQuery({ ...connectedAgentsQuery(), enabled: !!me })
   const hasBrandprint = !!settings?.brandprint?.collectionId || !!me?.brandprint?.collectionId
-  if (settings?.brandprint?.profileId) return null
   if (isError || !hasBrandprint || !agents || agents.length > 0) return null
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-3">

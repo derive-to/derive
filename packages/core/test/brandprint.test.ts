@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest"
-import { brandprintInstructions, parseBrandprint, resolveBrandprint } from "../src/brandprint"
+import {
+  brandprintInstructions,
+  parseBrandprint,
+  profileState,
+  resolveBrandprint,
+} from "../src/brandprint"
+
+describe("profileState", () => {
+  it("is pending on the intake stub (v1) and live from v2", () => {
+    expect(profileState(1)).toBe("pending")
+    expect(profileState(2)).toBe("live")
+    expect(profileState(5)).toBe("live")
+  })
+})
 
 describe("resolveBrandprint", () => {
   it("collects collection ids workspace-first, profile appended, deduped", () => {

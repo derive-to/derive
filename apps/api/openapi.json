@@ -877,7 +877,7 @@
                 "maxLength": 64
               }
             },
-            "description": "The workspace's Brandprint (conventions collection + theme); absent until set."
+            "description": "The workspace's Brandprint (conventions collection + brand-profile artifact); absent until set."
           }
         },
         "required": [
@@ -2878,14 +2878,9 @@
                           "type": "string",
                           "nullable": true,
                           "maxLength": 64
-                        },
-                        "profileId": {
-                          "type": "string",
-                          "nullable": true,
-                          "maxLength": 64
                         }
                       },
-                      "description": "Saved personal Brandprint; null when cleared."
+                      "description": "Saved personal Brandprint (collection-only; the brand profile is workspace scope); null when cleared."
                     }
                   },
                   "required": [

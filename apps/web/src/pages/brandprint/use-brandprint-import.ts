@@ -8,15 +8,13 @@ import { placeholderFile } from "./profile-placeholder"
 
 // What the intake reports back: how many docs made it in, which files didn't, and
 // (when it created the collection and set the pointer itself) the fresh server
-// state to sync the caches from. `profileId` is the workspace's brand-profile
-// placeholder when this run ensured one.
+// state to sync the caches from.
 export type ImportResult = {
   created: boolean
   ok: number
   failed: string[]
   settings?: Awaited<ReturnType<typeof api.updateWorkspaceSettings>>
   profile?: Awaited<ReturnType<typeof api.setProfile>>
-  profileId?: string
 }
 
 /** Publish the brand-profile placeholder into the collection and return its short_id —
@@ -84,15 +82,18 @@ export function useBrandprintImport(
         // Best-effort — MCP delivery reads under the workspace grant either way.
         await api.setCollectionAccess(target, "member").catch(() => {})
       }
-      // Ensure the brand-profile placeholder exists, best-effort — losing it costs the
-      // hand-off beat, not the docs (a later upload run heals it).
-      const profileId =
-        currentProfileId ?? (await ensureProfilePlaceholder(target).catch(() => undefined))
-      if (!created && profileId === currentProfileId) return { created, ok, failed }
+      // Seed the brand-profile placeholder on the first run that lacks one, best-effort
+      // — losing it costs the hand-off beat, not the docs (a later run heals it).
+      const newProfileId = currentProfileId
+        ? undefined
+        : await ensureProfilePlaceholder(target).catch(() => undefined)
+      // Doc-adds to an already-pointed, already-profiled Brandprint change nothing
+      // pointer-side, so skip the no-op PATCH.
+      if (!created && !newProfileId) return { created, ok, failed }
       const settings = await api.updateWorkspaceSettings({
-        brandprint: { collectionId: target, ...(profileId ? { profileId } : {}) },
+        brandprint: { collectionId: target, ...(newProfileId ? { profileId: newProfileId } : {}) },
       })
-      return { created, ok, failed, settings, profileId }
+      return { created, ok, failed, settings }
     },
     success: (r) =>
       r.ok === 0

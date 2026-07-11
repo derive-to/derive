@@ -37,6 +37,7 @@ import {
   PublishError,
   pageText,
   parseBrandprint,
+  profileState,
   propose as proposeChange,
   publish as publishVersion,
   type Role,
@@ -275,17 +276,17 @@ async function buildServer(
       }
     }
   }
-  // The brand profile: version 1 is always the intake's stub, so it counts as live
-  // from version 2 (a direct publish by a publish-capable agent flips it live the same
-  // way an approved proposal does). Tenancy is enforced on write, but re-check the org
-  // here so a stale pointer can never serve another workspace's artifact.
-  const profileArt = resolved.profileId ? await ctx.meta.getByShortId(resolved.profileId) : null
+  // The brand profile. The placeholder is published into the Brandprint collection,
+  // so its record normally arrived with the loop above; the getByShortId fallback
+  // covers a pointer set outside the collection. Tenancy is enforced on write, but
+  // re-check the org so a stale pointer can never serve another workspace's artifact.
+  const profileArt = resolved.profileId
+    ? (conventionDocs.find((d) => d.short_id === resolved.profileId) ??
+      (await ctx.meta.getByShortId(resolved.profileId)))
+    : null
   const bpProfile =
     profileArt && profileArt.org_id === agent.org_id && resolved.profileId
-      ? ({
-          state: profileArt.current_version >= 2 ? "live" : "pending",
-          shortId: resolved.profileId,
-        } as const)
+      ? ({ state: profileState(profileArt.current_version), shortId: resolved.profileId } as const)
       : undefined
   // The profile artifact rides in the Brandprint collection but is not a source doc:
   // pending it's an empty stub, live it's served as derive://brandprint/profile below.
@@ -370,7 +371,8 @@ async function buildServer(
   }
   // The live brand profile is the headline read — one page that carries the whole
   // brand, humans and machines alike (tokens ride in it as CSS variables + JSON island).
-  if (bpProfile?.state === "live") {
+  // The server is per-request, so the record fetched above is fresh enough to reuse.
+  if (bpProfile?.state === "live" && profileArt) {
     server.registerResource(
       "brandprint:profile",
       "derive://brandprint/profile",
@@ -381,8 +383,7 @@ async function buildServer(
         annotations: { audience: ["assistant"], priority: 1 },
       },
       async (uri) => {
-        const art = await ctx.meta.getByShortId(bpProfile.shortId)
-        const v = art ? await ctx.meta.getVersion(art.id, art.current_version) : null
+        const v = await ctx.meta.getVersion(profileArt.id, profileArt.current_version)
         const body = v ? await ctx.sourceText(v) : null
         return { contents: [{ uri: uri.href, mimeType: "text/html", text: body ?? "" }] }
       },

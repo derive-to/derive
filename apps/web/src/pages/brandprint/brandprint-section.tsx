@@ -93,8 +93,8 @@ function DocFileInput({
  * workspace ⊕ account (account wins) and reads those docs as Brandprint context.
  * Workspace scope saves to the workspace settings (Admin only, like the workspace
  * defaults in Settings → General); account scope saves to your own profile. Clearing
- * sets the pointer back to none. Theme tokens are a later phase; this is the
- * collection pointer only.
+ * sets the pointer back to none. The generated brand profile has its own home (the
+ * panel on this page); here it only means workspace pointer-writes seed its placeholder.
  *
  * Setup happens in place: an empty scope shows one "Create Brandprint" button whose
  * dialog offers three ways in (upload files, write the conventions from scratch, or
@@ -126,14 +126,28 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
     scope === "workspace"
       ? (settings?.brandprint?.collectionId ?? "")
       : (me?.brandprint?.collectionId ?? "")
+  // The workspace's brand-profile pointer. The settings query is disabled on account
+  // scope, so this is always undefined there — no scope branch needed.
+  const profileId = settings?.brandprint?.profileId ?? undefined
 
   const updateWorkspace = useApiMutation({
+    // Any workspace pointer-write also seeds the brand-profile placeholder when one is
+    // missing, so the hand-off beat always has an address to propose against — whether
+    // the collection came from the main picker or the dialog's "Use a collection" tab.
+    // Best-effort: a placeholder failure still sets the pointer; a later write heals it.
     // The generated OrgSettings types brandprint non-nullable, but the PATCH takes null to
     // clear it — widen to Partial so the clear case type-checks.
-    mutationFn: (collectionId: string) =>
-      api.updateWorkspaceSettings({
-        brandprint: collectionId ? { collectionId } : null,
-      } as Partial<OrgSettings>),
+    mutationFn: async (collectionId: string) => {
+      const seeded =
+        collectionId && !profileId
+          ? await ensureProfilePlaceholder(collectionId).catch(() => undefined)
+          : undefined
+      return api.updateWorkspaceSettings({
+        brandprint: collectionId
+          ? { collectionId, ...(seeded ? { profileId: seeded } : {}) }
+          : null,
+      } as Partial<OrgSettings>)
+    },
     optimistic: (collectionId, client) => {
       const qk = workspaceSettingsQuery().queryKey
       const rollback = snapshot(client, qk)
@@ -158,30 +172,10 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
     },
     success: "Brandprint updated",
   })
-  // Adopting an existing collection (workspace scope) still seeds the profile
-  // placeholder, so the hand-off beat has an address to propose against. Best-effort:
-  // a placeholder failure adopts the collection anyway, and a later upload heals it.
-  const adoptCollection = useApiMutation({
-    mutationFn: async (target: string) => {
-      const profileId = settings?.brandprint?.profileId
-        ? undefined
-        : await ensureProfilePlaceholder(target).catch(() => undefined)
-      return api.updateWorkspaceSettings({
-        brandprint: { collectionId: target, ...(profileId ? { profileId } : {}) },
-      } as Partial<OrgSettings>)
-    },
-    onSuccess: (s) => qc.setQueryData(workspaceSettingsQuery().queryKey, s),
-    success: "Brandprint updated",
-  })
-
   // The one-click intake, shared with onboarding's Brandprint step — see
   // use-brandprint-import for the composition and its failure semantics.
   const fileRef = useRef<HTMLInputElement>(null)
-  const importDocs = useBrandprintImport(
-    scope,
-    collectionId,
-    scope === "workspace" ? (settings?.brandprint?.profileId ?? undefined) : undefined,
-  )
+  const importDocs = useBrandprintImport(scope, collectionId, profileId)
   const pickFiles = (list: FileList | null) => {
     const files = list ? [...list] : []
     if (files.length > 0) importDocs.mutate(files)
@@ -276,9 +270,7 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
   const disabled =
     !ready ||
     importDocs.isPending ||
-    (scope === "workspace"
-      ? !isAdmin || updateWorkspace.isPending || adoptCollection.isPending
-      : updateAccount.isPending)
+    (scope === "workspace" ? !isAdmin || updateWorkspace.isPending : updateAccount.isPending)
   const save = (next: string) =>
     scope === "workspace" ? updateWorkspace.mutate(next) : updateAccount.mutate(next)
   const selected = collections?.find((c) => c.id === collectionId)?.title
@@ -327,9 +319,7 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
               collectionId={collectionId}
               scope={scope}
               disabled={disabled}
-              profileId={
-                scope === "workspace" ? (settings?.brandprint?.profileId ?? undefined) : undefined
-              }
+              profileId={profileId}
             />
           )}
         </>
@@ -465,8 +455,7 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
                       value=""
                       onValueChange={(v) => {
                         if (!v) return
-                        if (scope === "workspace") adoptCollection.mutate(v)
-                        else save(v)
+                        save(v)
                         setCreateOpen(false)
                       }}
                     >

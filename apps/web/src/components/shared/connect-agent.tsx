@@ -23,8 +23,12 @@ import { Switch } from "@/components/ui/switch"
 // public URL, so that's what we embed — except in local dev (localhost), where we
 // fall back to a clearly-editable placeholder so nobody copies an unreachable URL.
 const PLACEHOLDER_URL = "https://your-derive-server.com"
-export const publicUrlOf = (origin: string) =>
+const publicUrlOf = (origin: string) =>
   /localhost|127\.0\.0\.1|\[::1\]/.test(origin) ? PLACEHOLDER_URL : origin
+/** This instance's public origin, placeholder-substituted — for any copy an agent will
+ *  paste (the connect prompt here, the Brandprint brief). */
+export const publicUrl = () =>
+  typeof window !== "undefined" ? publicUrlOf(window.location.origin) : PLACEHOLDER_URL
 
 // Hosted: Derive is already running (this instance, or any you point at). The fastest
 // on-ramp — Derive is itself a remote MCP server, so one line connects an agent and it
@@ -72,8 +76,7 @@ Then you can publish, read review comments, and run the propose -> review -> rev
 export function ConnectAgent({ testidPrefix = "connect-agent" }: { testidPrefix?: string }) {
   // Self-host mode swaps the connect snippet for run-it-yourself instructions.
   const [devMode, setDevMode] = useState(false)
-  const publicUrl =
-    typeof window !== "undefined" ? publicUrlOf(window.location.origin) : PLACEHOLDER_URL
+  const url = publicUrl()
   return (
     <div className="flex flex-col gap-2">
       <p className="text-sm text-pretty text-muted-foreground">
@@ -94,7 +97,7 @@ export function ConnectAgent({ testidPrefix = "connect-agent" }: { testidPrefix?
       </label>
       <PromptBlock
         key={devMode ? "dev" : "hosted"}
-        text={devMode ? selfHostPrompt() : hostedPrompt(publicUrl)}
+        text={devMode ? selfHostPrompt() : hostedPrompt(url)}
         testid={`${testidPrefix}-prompt`}
       />
     </div>
@@ -134,8 +137,17 @@ export function ConnectAgentButton({
 }
 
 // A copyable prompt block: the scrollable text + a copy button that owns its own
-// "copied" tick, so each block has independent state.
-function PromptBlock({ text, testid }: { text: string; testid: string }) {
+// "copied" tick, so each block has independent state. Shared with the Brandprint
+// hand-off brief, so the copy UX can't drift between the two.
+export function PromptBlock({
+  text,
+  testid,
+  copyLabel = "Copy setup prompt",
+}: {
+  text: string
+  testid: string
+  copyLabel?: string
+}) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
     try {
@@ -160,7 +172,7 @@ function PromptBlock({ text, testid }: { text: string; testid: string }) {
         variant="outline"
         size="icon-sm"
         data-testid={`${testid}-copy`}
-        aria-label="Copy setup prompt"
+        aria-label={copyLabel}
         className="absolute right-2 top-2"
         onClick={copy}
       >

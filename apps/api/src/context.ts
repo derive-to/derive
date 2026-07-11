@@ -58,7 +58,7 @@ export interface SessionUser {
   /** Has the account's email been verified? Better Auth native field; soft-nudge only
    *  (never gates sign-in), surfaced as a dismissible banner in the app. */
   emailVerified: boolean
-  /** Personal Brandprint as a JSON string ({ collectionId?, theme? }); null if unset. */
+  /** Personal Brandprint as a JSON string ({ collectionId? }); null if unset. */
   brandprint: string | null
 }
 
