@@ -334,6 +334,7 @@ export const syncRoutes = (ctx: AppContext) => {
   const { upsertPrPreview, previewCommentBody, removePrPreview, graduatePreview } = makePrPreview({
     meta,
     blobs: deps.blobs,
+    bus,
     baseUrl: deps.baseUrl,
     launch,
   })

@@ -5,12 +5,14 @@ import {
   type RepoSourceRecord,
   type VersionRecord,
 } from "@derive/core"
+import type { Backplane } from "../bus"
 import { log } from "../log"
-import { sweepAnchors } from "./anchor-sweep"
+import { publishSweepEvents } from "./anchor-sweep"
 
 interface PrPreviewDeps {
   meta: MetaStore
   blobs: BlobStore
+  bus: Backplane
   baseUrl: string
   /** Queue a source for a mirror run — the sync-trigger wrapper owned by syncRoutes. */
   launch: (source: RepoSourceRecord, inlineFallback: boolean) => Promise<void>
@@ -24,7 +26,7 @@ interface PrPreviewDeps {
  * source's installation + include globs, and the engine scopes the mirror to just the PR's
  * changed docs. Created on open/synchronize, torn down on close, graduated on merge.
  */
-export function makePrPreview({ meta, blobs, baseUrl, launch }: PrPreviewDeps) {
+export function makePrPreview({ meta, blobs, bus, baseUrl, launch }: PrPreviewDeps) {
   // Upsert a preview to the PR's current head. An existing preview is re-pointed at the
   // new head sha (its file map is kept, so the engine updates artifacts in place and
   // tombstones docs the PR no longer touches); a missing one is created fresh.
@@ -163,8 +165,9 @@ export function makePrPreview({ meta, blobs, baseUrl, launch }: PrPreviewDeps) {
     }
     // Re-anchor the canonical doc's threads (incl. the migrated ones) against its new
     // current version — quoted text that survived the merge stays anchored, the rest flips
-    // to `outdated` (Derive's normal post-version-bump behavior).
-    if (latest) await sweepAnchors(meta, blobs, canonicalId, latest)
+    // to `outdated` (Derive's normal post-version-bump behavior). Announce the transitions
+    // on the bus too, so a tab open on the canonical doc live-updates after a PR graduates.
+    if (latest) await publishSweepEvents(meta, blobs, bus, canonicalId, latest)
     // The preview copy is now redundant — hard-delete it (cascades its versions + comments).
     await meta.deleteArtifact(previewId, preview.org_id)
   }

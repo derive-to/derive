@@ -428,6 +428,38 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(ids).not.toContain(doc)
   })
 
+  it("publish fires the version.published webhook — parity with the HTTP route", async () => {
+    // The bug this guards against: an MCP publish that skips the webhook outbox because its
+    // side-effect chain drifted from the HTTP route's. Both now share lib/after-publish.ts.
+    const { app, token, meta } = appWithGrant("mcpwebhook", "openid derive:read derive:publish")
+    await rpc(app, token, initBody)
+    // Publish once to discover the agent's workspace, subscribe a webhook there, then
+    // republish — the republish is the event we assert reaches the outbox.
+    const first = await call(app, token, "publish", { title: "Hook Me", content: "<h1>v1</h1>" })
+    const shortId = JSON.parse(toolText(first)).short_id as string
+    const art = await meta.getByShortId(shortId)
+    if (!art) throw new Error("published artifact not found")
+    await meta.createWebhook({
+      id: "wh_mcp",
+      org_id: art.org_id,
+      url: "http://example.com/hook",
+      secret: "s",
+      kind: "generic",
+      events: "version.published",
+    })
+    await call(app, token, "publish", { short_id: shortId, content: "<h1>v2</h1>", message: "v2" })
+
+    const due = await meta.claimDueDeliveries(
+      new Date(Date.now() + 1000).toISOString(),
+      10,
+      new Date(Date.now() + 60_000).toISOString(),
+    )
+    const forThis = due.filter((d) => JSON.parse(d.payload).artifact.short_id === shortId)
+    expect(forThis.length).toBe(1)
+    expect(forThis[0]?.event_type).toBe("version.published")
+    expect(forThis[0]?.url).toBe("http://example.com/hook")
+  })
+
   it("catch_up reports what changed, with the line diff folded in", async () => {
     const { app, token } = appWithGrant("catchup", "openid derive:read derive:publish")
     const shortId = (await (await publish(app, token, "V1 Title")).json()).short_id

@@ -120,6 +120,9 @@ export function createApp(deps: AppDeps): Hono {
       path: redactPath(c.req.path),
       request_id: c.get("requestId"),
       error: err instanceof Error ? err.message : String(err),
+      // Server log only (never the client) — a production 500 without a stack is
+      // a message with no location.
+      stack: err instanceof Error ? err.stack : undefined,
     })
     return c.json({ error: "internal error" }, 500)
   })

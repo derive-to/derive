@@ -58,7 +58,7 @@ import { z } from "zod"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "./brandprint-reference"
 import type { AppContext } from "./context"
 import { markAddressed } from "./lib/addressed"
-import { publishSweepEvents } from "./lib/anchor-sweep"
+import { afterPublish } from "./lib/after-publish"
 import {
   cleanPath,
   mergeBundleZip,
@@ -1524,36 +1524,24 @@ async function buildServer(
             user_id: actingFor?.id ?? agent.id,
             role: "owner",
           })
-        // Event parity with the HTTP publish route: the artifact channel makes a
-        // tab viewing this doc live-reload; the webhook outbox fans out to
-        // integrations. Without these an MCP publish is invisible to open tabs.
-        ctx.bus.publish(artifact.id, {
-          type: "version.published",
-          n: version.n,
-          message: version.message,
-        })
-        await ctx.notify(artifact, "version.published", {
-          version: version.n,
-          message: version.message,
-          author: version.author,
-        })
-        ctx.notifyRender(artifact, version.n)
-        // Re-anchor existing threads: feedback whose quoted text changed flips to
-        // `outdated` (and back to `open` if the text reappears). Same sweep the
-        // HTTP route runs — MCP publish must call it too.
-        await publishSweepEvents(ctx.meta, ctx.blobs, ctx.bus, artifact.id, version)
-        // A live publish that fixes feedback resolves those threads directly (no
-        // approval step to wait on, unlike a proposal's `addressed`).
-        const resolved: string[] = []
-        for (const threadId of addresses ?? []) {
-          await ctx.meta.setThreadState(artifact.id, threadId, "resolved")
-          ctx.bus.publish(artifact.id, {
-            type: "comment.resolved",
-            thread_id: threadId,
-            state: "resolved",
-          })
-          resolved.push(threadId)
-        }
+        // Webhook + follower fan-out + thread resolves + realtime/render/re-anchor, via the
+        // one shared helper — event parity with the HTTP publish route (an open tab
+        // live-reloads, the webhook outbox reaches integrations) with no chance to drift.
+        // A live publish that fixes feedback resolves those threads directly here (no
+        // approval step, unlike a proposal's `addressed`).
+        const { resolved } = await afterPublish(
+          {
+            meta: ctx.meta,
+            blobs: ctx.blobs,
+            bus: ctx.bus,
+            notify: ctx.notify,
+            notifyRender: ctx.notifyRender,
+            background: ctx.background,
+          },
+          artifact,
+          version,
+          { isNew: !short_id, onBehalf: actingFor?.id ?? null, resolves: addresses ?? [] },
+        )
         // The /derive loop: ask the human to review this live version.
         let review_round: string | null = null
         if (request_review && actingFor) {
