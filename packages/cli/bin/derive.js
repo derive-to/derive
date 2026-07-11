@@ -28,7 +28,7 @@
 //   derive context push|dev                ship a context dir as its manifest / tune it live
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
-import { existsSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { createInterface } from "node:readline"
 import { fileURLToPath } from "node:url"
@@ -58,9 +58,12 @@ import {
   TEMPLATES,
   writeContextConfig,
   writeId,
+  writeSkillPin,
 } from "../src/config.js"
 import { createAgent, createContext, saveAgentToken } from "../src/context.js"
 import { readTarget, uploadArtifact } from "../src/publish.js"
+import { DeriveClient, parseManifest } from "../src/runner.js"
+import { materializeNotes, materializeSkills, pinManifestSkills } from "../src/skills.js"
 
 const args = process.argv.slice(2)
 const cmd = args.shift()
@@ -801,6 +804,35 @@ if (cmd === "context") {
       console.error("error: not signed in — run `derive login` first")
       process.exit(1)
     }
+    // Lockfile step: pin any unpinned `skills:` entry to its current version before the
+    // manifest ships, so the pushed config is deterministic and an upgrade is a visible,
+    // deliberate manifest edit (never a silent drift under a permission-skipping runner).
+    const manifestPath = join(target, "MANIFEST.md")
+    if (existsSync(manifestPath)) {
+      const text = readFileSync(manifestPath, "utf8")
+      const unpinned = parseManifest(text).skills.filter((s) => s.version == null)
+      if (unpinned.length) {
+        const versions = new Map()
+        for (const s of unpinned) {
+          try {
+            const detail = await (
+              await fetch(`${p.server}/v1/artifacts/${s.id}`, {
+                headers: { authorization: `Bearer ${p.token}` },
+              })
+            ).json()
+            if (Number.isFinite(detail?.current_version)) versions.set(s.id, detail.current_version)
+          } catch {
+            /* leave unpinned — the runner fetches current and logs it unpinned */
+          }
+        }
+        const { text: pinnedText, pinned } = pinManifestSkills(text, versions)
+        if (pinned.length) {
+          writeFileSync(manifestPath, pinnedText)
+          for (const pn of pinned) console.log(`  · pinned skill ${pn.id} → v${pn.version}`)
+        }
+      }
+    }
+
     let up
     try {
       // repos/ is the runner's clone workspace — pointer state, never source.
@@ -1037,6 +1069,129 @@ if (LOOP.includes(cmd)) {
   process.exit(0)
 }
 
+// ---- derive skill (add) -----------------------------------------------------
+// The consumption half of the skill loop: author with `init --template skill` +
+// `publish`, then INSTALL a published skill into ./.claude/skills/<name>/ where
+// this project's agent auto-discovers it. Pinned in derive.json so an update is a
+// deliberate `derive skill add` re-run, never silent drift.
+if (cmd === "skill") {
+  const sub = positional.shift()
+  const shortId = positional[0]
+  if (sub !== "add" || !shortId) {
+    console.error("usage: derive skill add <short_id>   materialize a skill into ./.claude/skills/")
+    process.exit(cmd ? 1 : 0)
+  }
+  let cfg = null
+  try {
+    cfg = loadConfig(".")
+  } catch {
+    /* no derive.json yet — the pin creates one */
+  }
+  const r = resolvePublish(flags, cfg)
+  r.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(r.server, r.accountId))
+  if (!r.token) {
+    console.error("error: not signed in — run `derive login` first")
+    process.exit(1)
+  }
+  const auth = {
+    authorization: `Bearer ${r.token}`,
+    ...(r.workspaceId ? { "x-derive-workspace": r.workspaceId } : {}),
+  }
+  const detail = await (await fetch(`${r.server}/v1/artifacts/${shortId}`, { headers: auth }))
+    .json()
+    .catch(() => null)
+  if (!detail?.current_version) {
+    console.error(`error: no such artifact ${shortId}`)
+    process.exit(1)
+  }
+  if (!detail.bundle?.isSkill) {
+    console.error(`error: ${shortId} is not a skill (a bundle with a SKILL.md)`)
+    process.exit(1)
+  }
+  const version = detail.current_version
+  const api = new DeriveClient(r.server, r.token).skillApi()
+  const cat = await materializeSkills(
+    api,
+    [{ id: shortId, version }],
+    join(".", ".claude", "skills"),
+  )
+  const done = cat.find((s) => s.ok)
+  if (!done) {
+    console.error("error: could not materialize the skill")
+    process.exit(1)
+  }
+  writeSkillPin(".", { id: shortId, version, name: done.name })
+  console.log(`✓ .claude/skills/${done.dir} — ${done.name} @v${version} (pinned in ${CONFIG_FILE})`)
+  process.exit(0)
+}
+
+// ---- derive brandprint (pull) -----------------------------------------------
+// Take the team's whole Brandprint into THIS repo in one command: skills into
+// .claude/skills/, prose notes into ./brandprint/. The workspace layer plus the
+// signed-in user's personal layer (profile wins), resolved the same way the server
+// does for a connected agent — but landed on disk for any repo, not just a runner.
+if (cmd === "brandprint") {
+  const sub = positional.shift()
+  if (sub !== "pull") {
+    console.error(
+      "usage: derive brandprint pull   materialize the workspace + your Brandprint here",
+    )
+    process.exit(cmd ? 1 : 0)
+  }
+  let cfg = null
+  try {
+    cfg = loadConfig(".")
+  } catch {
+    /* no derive.json — fine, we only read */
+  }
+  const r = resolvePublish(flags, cfg)
+  r.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(r.server, r.accountId))
+  if (!r.token) {
+    console.error("error: not signed in — run `derive login` first")
+    process.exit(1)
+  }
+  const auth = {
+    authorization: `Bearer ${r.token}`,
+    ...(r.workspaceId ? { "x-derive-workspace": r.workspaceId } : {}),
+  }
+  const getJson = async (path) =>
+    (await fetch(`${r.server}${path}`, { headers: auth })).json().catch(() => null)
+  // Resolve both layers' collection ids (workspace base, personal on top).
+  const ws = await getJson("/v1/workspace/settings")
+  const me = await getJson("/v1/me")
+  const collectionIds = [
+    ...new Set([ws?.brandprint?.collectionId, me?.brandprint?.collectionId].filter(Boolean)),
+  ]
+  if (collectionIds.length === 0) {
+    console.error("no Brandprint set on this workspace or your profile — nothing to pull")
+    process.exit(0)
+  }
+  // Gather members across the collections, deduped, split skills vs notes.
+  const seen = new Set()
+  const skills = []
+  const notes = []
+  for (const id of collectionIds) {
+    const page = await getJson(`/v1/artifacts?collection=${id}`)
+    for (const a of page?.artifacts ?? []) {
+      if (seen.has(a.short_id)) continue
+      seen.add(a.short_id)
+      if (a.current_content_type === "derive/skill")
+        skills.push({ id: a.short_id, version: a.current_version })
+      else notes.push({ short_id: a.short_id, title: a.title, version: a.current_version })
+    }
+  }
+  const api = new DeriveClient(r.server, r.token).skillApi()
+  const skillCat = await materializeSkills(api, skills, join(".", ".claude", "skills"))
+  const noteCat = await materializeNotes(api, notes, join(".", "brandprint"))
+  const okSkills = skillCat.filter((s) => s.ok).length
+  const okNotes = noteCat.filter((n) => n.ok).length
+  console.log(
+    `✓ pulled ${okSkills} skill${okSkills === 1 ? "" : "s"} into .claude/skills/ and ` +
+      `${okNotes} note${okNotes === 1 ? "" : "s"} into brandprint/`,
+  )
+  process.exit(0)
+}
+
 if (cmd !== "publish") {
   console.error(`usage:
   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
@@ -1066,7 +1221,9 @@ if (cmd !== "publish") {
   derive send-back [--id X] [--note m]     (human) return your answers to the waiting agent
   derive approve [--id X] [--note m]       (human) approve — the build go-signal
   derive runner serve|doctor|install       run a context's answer daemon (\`derive runner\` for flags)
-  derive context push|dev                  ship a context dir as its manifest / tune it on the working tree`)
+  derive context push|dev                  ship a context dir as its manifest / tune it on the working tree
+  derive skill add <short_id>              materialize a published skill into ./.claude/skills/ (pinned)
+  derive brandprint pull                   materialize the workspace + your Brandprint into this repo`)
   process.exit(cmd ? 1 : 0)
 }
 

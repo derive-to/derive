@@ -582,6 +582,18 @@ export function writeContextConfig(dir, patch) {
   return config
 }
 
+/** Record (or replace) a skill pin in derive.json's top-level `skills` array — the
+ *  lockfile `derive skill add` maintains, so a later `update` is an explicit, diffable
+ *  act rather than silent drift. Same id ⇒ overwrite (a re-add repins). */
+export function writeSkillPin(dir, { id, version, name }) {
+  const path = join(dir, CONFIG_FILE)
+  const config = loadConfig(dir) ?? defaultConfig()
+  const kept = Array.isArray(config.skills) ? config.skills.filter((s) => s.id !== id) : []
+  config.skills = [...kept, { id, version, ...(name ? { name } : {}) }]
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`)
+  return config
+}
+
 // Each template's entry (what `derive publish` targets) + the starter file(s) it
 // writes. `site` is a multi-file bundle (entry is a directory). derive.json,
 // derive.schema.json, and AGENTS.md are added to every template.
