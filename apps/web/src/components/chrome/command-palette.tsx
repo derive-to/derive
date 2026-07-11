@@ -58,6 +58,7 @@ export function CommandPalette() {
       api
         .listArtifacts({ q: query.trim() || undefined, limit: 8 })
         .then((r) => alive && setResults(r.artifacts))
+        // frontend-ignore: debounced typeahead — clearing on an aborted/failed keystroke is intended, not a hidden load failure
         .catch(() => alive && setResults([]))
         .finally(() => alive && setLoading(false))
     }, 180)
@@ -83,6 +84,7 @@ export function CommandPalette() {
       api
         .searchPeople(term)
         .then((r) => alive && setPeople(r.users))
+        // frontend-ignore: debounced typeahead — clearing on an aborted/failed keystroke is intended, not a hidden load failure
         .catch(() => alive && setPeople([]))
         .finally(() => alive && setPeopleLoading(false))
     }, 180)

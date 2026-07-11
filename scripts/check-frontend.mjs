@@ -15,6 +15,15 @@ const RULES = [
     re: /\b(?:local|session)Storage\.(?:get|set|remove)Item\(\s*["'`]/,
     msg: "storage key must come from STORAGE_KEYS (lib/storage-keys.ts), not a string literal",
   },
+  {
+    // A load that catches its error into an empty array renders "request failed" as
+    // "zero items" — the blank-list-means-broken bug. Surface an error state (or use
+    // React Query's error state via lib/queries.ts) instead of swallowing to []. A
+    // debounced search that intentionally clears on an aborted keystroke is the one
+    // legitimate case: annotate it with `frontend-ignore` and a reason.
+    re: /\.catch\(\(\)\s*=>\s*(?:[\w.]+\s*&&\s*)?set\w*\(\s*\[\s*\]\s*\)/,
+    msg: "a failed load is not an empty result — surface an error state, don't .catch(() => setX([]))",
+  },
 ]
 
 const stripIgnorable = (line) => line.replace(/\/\/.*$/, "").replace(/\/\*.*?\*\//g, "")
@@ -35,23 +44,24 @@ const violations = []
 for (const file of walk(WEB_SRC)) {
   const rel = relative(WEB_SRC, file)
   if (rel === STORAGE_KEYS_FILE) continue
-  readFileSync(file, "utf8")
-    .split("\n")
-    .forEach((raw, i) => {
-      if (raw.includes("frontend-ignore")) return
-      const line = stripIgnorable(raw)
-      for (const rule of RULES) {
-        const m = rule.re.exec(line)
-        if (m)
-          violations.push({
-            rel,
-            line: i + 1,
-            col: m.index + 1,
-            snippet: m[0].trim(),
-            msg: rule.msg,
-          })
-      }
-    })
+  const lines = readFileSync(file, "utf8").split("\n")
+  lines.forEach((raw, i) => {
+    // A `frontend-ignore` on the flagged line OR the line just above suppresses it
+    // (biome-ignore style), so the reason can sit on its own comment line.
+    if (raw.includes("frontend-ignore") || lines[i - 1]?.includes("frontend-ignore")) return
+    const line = stripIgnorable(raw)
+    for (const rule of RULES) {
+      const m = rule.re.exec(line)
+      if (m)
+        violations.push({
+          rel,
+          line: i + 1,
+          col: m.index + 1,
+          snippet: m[0].trim(),
+          msg: rule.msg,
+        })
+    }
+  })
 }
 
 if (violations.length === 0) {

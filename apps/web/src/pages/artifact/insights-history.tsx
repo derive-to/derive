@@ -98,12 +98,14 @@ export function Insights({
   onOpenChange: (open: boolean) => void
 }) {
   const [data, setData] = useState<Analytics | null>(null)
+  const [failed, setFailed] = useState(false)
   useEffect(() => {
     if (open && !data)
       api
         .analytics(shortId)
         .then(setData)
-        .catch(() => {})
+        // Without this a failed load shows the loading skeleton forever — say it failed.
+        .catch(() => setFailed(true))
   }, [open, data, shortId])
 
   const max = data ? Math.max(1, ...data.daily.map((d) => d.count)) : 1
@@ -119,7 +121,13 @@ export function Insights({
           <DialogTitle>Insights{title ? ` · ${title}` : ""}</DialogTitle>
         </DialogHeader>
         {!data ? (
-          <InsightsSkeleton />
+          failed ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              Couldn't load insights. Close and reopen to try again.
+            </div>
+          ) : (
+            <InsightsSkeleton />
+          )
         ) : (
           <div className="flex flex-col gap-5">
             <div className="flex flex-wrap items-end gap-6">
