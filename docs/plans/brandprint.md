@@ -1,6 +1,6 @@
 # Brandprint
 
-Status: living spec. Phase 0 and the capture surface have shipped; the unshipped rows in the Status table below are the active roadmap.
+Status: living spec. Phase 0 and all of Phase 1's capture surfaces have shipped; the Phase 1 remainder is in review (#388). Phase 2 (Rework) is the active roadmap.
 Owner: Connor
 Related prior art: `feat/house-style` (Anir, unmerged; ported forward as Phase 0)
 
@@ -15,12 +15,13 @@ Every team gets a **Brandprint**: their voice, style, and rules captured once, r
 | Phase 0: port + MCP delivery | Shipped (#378) |
 | Phase 1: capture (create dialog: upload look/read files, write notes, pick a collection) | Shipped (#383) |
 | Phase 1: Brandprint as a top-level page in the rail | Shipped (#384) |
-| Phase 1: shared Connect-an-agent surface | Built, in review (`feat/brandprint-connect`) |
-| Phase 1: onboarding step + owner home nudge | Built, in review (`feat/brandprint-connect`) |
+| Phase 1: docs managed on `/brandprint` only (collection hidden from Collections) + team-scope dialog copy | Shipped (#386) |
+| Phase 1: shared Connect-an-agent surface | In review (#388) |
+| Phase 1: onboarding step + owner home nudge | In review (#388) |
 | Phase 2: Rework button + endpoint + no-agent routing | **Next up** |
 | Phase 3: enrichment, visual theme application, "Always review Reworks" | Later |
 
-Sections below marked **(shipped)** describe behavior now on main. Everything else is still spec, and it is what we build next.
+Sections below marked **(shipped)** describe behavior now on main; sections marked **(built, in review #388)** are built and awaiting merge. Everything else is still spec, and it is what we build next.
 
 ## Why this exists
 
@@ -101,7 +102,7 @@ A Brandprint points at a **collection** of convention artifacts, so a team can g
 
 Brandprint is a top-level destination: `/brandprint`, in the rail directly under Contexts (Fingerprint mark). The page shows both halves in one place: **Workspace Brandprint** (Admin-gated writes) and **Your Brandprint** (personal, layered over the workspace's, yours wins). It replaced the original placement embedded in Settings → General and Settings → Profile, which split the feature across two screens.
 
-The page is also the docs' one home. The pointed collection is hidden from the general collection surfaces (rail, command palette, the organize dialogs), and the page carries a managed **Documents** list: open each doc, remove it from the Brandprint (the artifact lives on in the library), add more via upload. Hiding is client-side with no API change: your own pointers ride the session and the member-readable workspace settings, and a teammate's personal Brandprint collection is invite-only, so it never listed for you in the first place.
+The page is also the docs' one home (#386). The pointed collection is hidden from the general collection surfaces (rail, command palette, the organize dialogs), and the page carries a managed **Documents** list: open each doc, remove it from the Brandprint (the artifact lives on in the library), add more via upload. Hiding is client-side with no API change: your own pointers ride the session and the member-readable workspace settings, and a teammate's personal Brandprint collection is invite-only, so it never listed for you in the first place.
 
 ## Capture: the create dialog (shipped, #383)
 
@@ -110,7 +111,7 @@ An empty scope shows one **Create Brandprint** button. Its dialog offers three w
 1. **Upload files** (default), split into the two halves of a brand:
    - *How your artifacts should look*: brand and style guides, palettes, font specs, CSS tokens, or example HTML that carries the look.
    - *How your artifacts should read*: voice and tone, grammar, warmth, structure, wording do's and don'ts.
-   Picks stage into one labeled batch (Look/Read pills, removable) and a single action creates everything. Either category alone works; the split is UX framing today and becomes the extraction source for Phase 3 theme work. Accepted types: `.md`, `.markdown`, `.txt`, `.html`, `.htm`, `.css`.
+   Picks stage into one labeled batch (Look/Read pills, removable) and a single action creates everything. Either category alone works; the split is UX framing today and becomes the extraction source for Phase 3 theme work. Accepted types: `.md`, `.markdown`, `.txt`, `.html`, `.htm`, `.css`. At workspace scope the headings read "How your **team's** artifacts should look/read" (#386); personal scope keeps "your artifacts". The category value itself is the heading's final verb, so the copy and the category can't drift apart.
 2. **Write it**: type or paste conventions into a textarea (optional title); they publish as a normal, editable markdown doc.
 3. **Use a collection**: the picker, for teams that already keep convention docs together.
 
@@ -136,7 +137,25 @@ This is the default, automatic path. A connected agent reads the Brandprint on i
 
 ---
 
-Everything below this line is **not yet built**. It is the roadmap, in build order.
+Everything below this line is **not yet on main**. Sections marked *in review* are built and awaiting merge (#388); the rest is the roadmap, in build order.
+
+## No agent connected: one shared surface (built, in review #388)
+
+Built once, reused everywhere the feature would otherwise dead-end. `components/shared/connect-agent.tsx` holds the paste-into-your-agent block extracted from `welcome.tsx` Step 2 (hosted prompt, self-host toggle, copy button), plus a one-line `ConnectAgentButton` that opens it in a dialog from anywhere. Welcome's e2e testids were preserved via a prefix parameter.
+
+Four entry points render the same surface: onboarding Step 2, the library's "Connect an agent" empty state (which previously dead-ended on the workspace-bot token form in Settings → Agents, the known IA gap, now fixed), the owner home nudge (below), and the `/brandprint` saved-but-inert band. The Rework menu item (Phase 2) becomes the fifth.
+
+The honest framing shown to the user: Brandprint is captured and saved immediately, but it has nobody to *apply* it until an agent is connected. When a Brandprint exists but the caller has never authorized an MCP agent, the `/brandprint` page says so plainly, with the Connect surface one tap away. The signal is the OAuth connected-agents list, a query now shared with Security's revocation section rather than duplicated there.
+
+## Onboarding (built, in review #388)
+
+Step 3 in `apps/web/src/pages/welcome.tsx`, after Step 2 (Connect an agent), fully skippable in the same way the profile fields and passkey nudge already are. Skipping leaves Brandprint for the `/brandprint` page and sets nothing.
+
+**Who sees it.** Only the person setting up a workspace's Brandprint for the first time: the user is an owner or admin of their active workspace and that workspace has no Brandprint yet (which includes every fresh signup, by design). It creates the **workspace** Brandprint, so everyone who later joins that team inherits it. Someone joining a workspace that already has a Brandprint never sees the step; they inherit the team's Brandprint automatically over MCP. Detection is client-side from the active workspace's settings and the user's role in it.
+
+**Timing.** Derive creates team workspaces at first need, often after onboarding. So a one-time, dismissible nudge on the home library ("Set up your team's Brandprint") catches owners whose Brandprint-less workspace was created after onboarding, so the "first on the team" moment is caught wherever it actually happens, not only at signup.
+
+**What shipped.** The step leads with the plain-language explainer (eyebrow: "Step 3 · Your team's Brandprint (optional)") and one optional textarea, the lightest useful capture. Pasted notes seed the workspace Brandprint through the exact same intake as the create dialog, extracted into a shared `useBrandprintImport` hook rather than duplicated. It rides the page's single Continue action per welcome's no-per-section-save philosophy; seeding runs *before* the profile writes, so a failure keeps the user on the page with their notes intact and a specific inline error, and retries can't double-seed because the settings cache flips the step off after success. That failure/retry design settled the open spec question: `POST /v1/brandprint/seed` stays unnecessary (Decisions log #6). If no agent is connected, the quiet "saves now, applies when an agent connects" line points at the shared Connect surface.
 
 ## Apply on demand: the Rework button (next, Phase 2)
 
@@ -151,7 +170,7 @@ The artifact overflow (⋯) menu in `apps/web/src/pages/artifact/artifact-top-ba
 The item resolves two things: whether a Brandprint exists, then which agents are registered.
 
 1. **No Brandprint resolved** (neither workspace nor personal): the item renders as "Set up your Brandprint" and routes to `/brandprint` instead of firing. Firing the canned instruction with zero `derive://brandprint/*` resources behind it would hand the agent an empty brief. Detection is client-side from the same sources the Brandprint page reads (workspace settings + `me.brandprint`).
-2. **Brandprint set, no agent registered:** routes to the shared Connect-an-agent surface (below) instead of firing.
+2. **Brandprint set, no agent registered:** routes to the shared Connect-an-agent surface (above) instead of firing.
 3. **One agent:** fires immediately. **Several agents:** opens a small picker (mirrors `AskAgentButton`).
 4. Firing posts an artifact-scoped request that @mentions the chosen agent with a canned instruction, which drops into that agent's MCP pull inbox. The agent reads the request, reads its `derive://brandprint/*` resources, revises the whole document, and publishes.
 
@@ -178,32 +197,6 @@ The agent produces a **new version**, following its grant: a publish-capable age
 
 A future "Always review Reworks" workspace setting could force the proposal path even for publish-capable agents. Out of scope for v1; the grant default covers it.
 
-## No agent connected: one shared surface (next, Phase 1 remainder)
-
-New, built once, reused three times: the Rework menu item, the Brandprint page's saved-but-inert state, and onboarding. All three lead to the same place when no agent is registered.
-
-A `<ConnectAgent>` surface (dialog or panel) reuses the content that already lives in `welcome.tsx` Step 2: the paste-into-your-agent prompt for hosted, with the self-host toggle. Extracting that block from `welcome.tsx` into a shared component is part of this work, so onboarding and these two new entry points render the same thing. (This also fixes a known IA gap: the library's "Connect an agent" empty-state button currently lands on Settings → Agents, the workspace-bot token form, not the MCP connect prompt. Point it here.)
-
-The honest framing shown to the user: Brandprint is captured and saved immediately, but it has nobody to *apply* it until an agent is connected. Both the default path and Rework depend on a connected agent, so the connect prompt appears wherever Brandprint would otherwise act.
-
-## Onboarding (next, Phase 1 remainder)
-
-New step in `apps/web/src/pages/welcome.tsx`, after Step 2 (Connect an agent), fully skippable in the same way the profile fields and passkey nudge already are. Skipping leaves Brandprint for the `/brandprint` page and sets nothing.
-
-**Who sees it.** The step is shown only to the person setting up a workspace's Brandprint for the first time: the user is an owner or admin of their active workspace and that workspace has no Brandprint yet. It creates the **workspace** Brandprint (`scope: "workspace"`), so everyone who later joins that team inherits it. Someone joining a workspace that already has a Brandprint does not see the step at all; they inherit the team's Brandprint automatically over MCP, with nothing to set up. Detection uses the active workspace's settings (whether `brandprint` is set) and the user's role in it, both already available to the client.
-
-**Timing.** Derive creates team workspaces at first need, often after onboarding. So the same one-time, dismissible prompt also appears the first time an owner lands in a Brandprint-less team workspace, so the "first on the team" moment is caught wherever it actually happens, not only at signup.
-
-The step leads with a plain-language explanation so there is no confusion about what Brandprint is:
-
-- Eyebrow: "Step 3 · Your team's Brandprint (optional)"
-- Explainer: "A Brandprint is your team's style in one place: your tone of voice, formatting rules, words to use or avoid, and colors. Every agent that works in Derive reads it automatically before it creates or revises anything, so the work matches your brand from the first draft, with no one re-explaining it each time. Set it once here and everyone who joins your team inherits it."
-- Intake: reuse the shipped create-dialog intake (the write tab's textarea at minimum; the look/read upload if it fits the step). Same composition, workspace scope.
-- If no agent is connected at this point: a quiet line, "Your Brandprint saves now and starts applying the moment an agent is connected," with the shared Connect surface one tap away.
-- Secondary action: "Skip for now."
-
-If this step wants a single atomic call instead of the client-side composition, that is the one reason to revive `POST /v1/brandprint/seed` (Decisions log #6).
-
 ## API surface summary
 
 Shipped (#378):
@@ -214,7 +207,7 @@ Shipped (#378):
 Not built, still specced:
 
 - `POST /v1/artifacts/:shortId/rework` (Phase 2): compose and post the canned @mention request to a chosen or sole registered agent; `409 needsAgent` when none.
-- `POST /v1/brandprint/seed`: superseded by the shipped client-side composition; revive only for onboarding atomicity (Decisions log #6).
+- `POST /v1/brandprint/seed`: superseded by the shipped client-side composition. The onboarding step (#388) shipped without it, settling the open question (Decisions log #6); dead unless a future caller needs a single atomic round-trip.
 
 Any new endpoint is defined in the contract-first Zod spec (#331), so the web client is regenerated rather than hand-written.
 
@@ -222,12 +215,16 @@ Any new endpoint is defined in the contract-first Zod spec (#331), so the web cl
 
 Shipped:
 
-- `pages/brandprint/` (#383, #384): the `/brandprint` page composing both scopes; the section with the create dialog (upload look/read, write, pick) and the add-docs row; rail item `nav-brandprint` under Contexts.
+- `pages/brandprint/` (#383, #384, #386): the `/brandprint` page composing both scopes; the section with the create dialog (upload look/read, write, pick) and the add-docs row; the managed Documents list (the pointed collection is hidden from Collections everywhere else); rail item `nav-brandprint` under Contexts.
+
+In review (#388):
+
+- `components/shared/connect-agent.tsx`: shared Connect surface extracted from `welcome.tsx` Step 2, plus `ConnectAgentButton`; backs onboarding, the library empty state, the home nudge, and the `/brandprint` inert band.
+- `pages/welcome.tsx`: skippable Step 3 with the Brandprint explainer and notes intake via the shared `useBrandprintImport` hook.
+- `pages/library/brandprint-nudge.tsx`: one-time dismissible owner nudge on the home library.
 
 Next:
 
-- `components/shared/connect-agent.tsx`: shared Connect surface extracted from `welcome.tsx` Step 2 (Phase 1 remainder).
-- `pages/welcome.tsx`: skippable Step 3 with the Brandprint explainer and intake (Phase 1 remainder).
 - `pages/artifact/artifact-top-bar.tsx`: "Rework with Brandprint" ⋯ item, four-state per the gate above (Phase 2).
 
 ## Testing
@@ -247,7 +244,7 @@ To write with the remaining phases:
 ## Phasing
 
 - **Phase 0 (foundation): shipped** (#378). Anir's Phase A ported forward, renamed, with the cross-tenant ownership validation added in review.
-- **Phase 1 (capture): complete pending review.** The intake shipped as the create dialog on the `/brandprint` page (#383, #384), client-side, no seed endpoint. The shared ConnectAgent surface, the onboarding Step 3 (seeding through the same intake — the seed endpoint stayed unnecessary), the owner home nudge, and the /brandprint saved-but-inert nudge (keyed off connected OAuth agents) are on `feat/brandprint-connect`.
+- **Phase 1 (capture): complete pending review.** The intake shipped as the create dialog on the `/brandprint` page (#383, #384), client-side, no seed endpoint; the docs got their one home on `/brandprint` (#386). The shared ConnectAgent surface, the onboarding Step 3 (seeding through the same intake — the seed endpoint stayed unnecessary), the owner home nudge, and the /brandprint saved-but-inert nudge (keyed off connected OAuth agents) are in review (#388).
 - **Phase 2 (apply): next up.** The Rework ⋯ item (gated on a Brandprint existing), the rework endpoint, and the no-agent routing.
 - **Phase 3 (later, optional):** agent enrichment of the Brandprint doc, visual theme application (Anir's Phase B, fed by the "look" docs), and an "Always review Reworks" setting.
 
@@ -260,6 +257,6 @@ Resolved during review and build, reflected in the body above:
 3. **Enrichment is deferred.** "Expand my notes into a fuller style guide" waits for a later phase (Phase 3). v1 stores raw pasted notes, which are a valid Brandprint on their own.
 4. **Brandprint is a top-level destination** (#384). Promoted out of Settings to `/brandprint` in the rail, a peer of Contexts, so the workspace and personal halves read as one feature.
 5. **Capture asks for both halves of the brand** (#383). The upload intake splits into "how your artifacts should look" and "how your artifacts should read." Either alone works; both are first-class, and the look docs are the planned extraction source for Phase 3 theming.
-6. **No seed endpoint** (#383). The intake shipped as client-side composition of existing endpoints inside one governed mutation. `POST /v1/brandprint/seed` is revived only if the onboarding step wants a single atomic round-trip.
+6. **No seed endpoint** (#383, settled in #388). The intake shipped as client-side composition of existing endpoints inside one governed mutation, and the onboarding step seeds through the same shared hook, so `POST /v1/brandprint/seed` stays unbuilt.
 7. **Rework gates on a Brandprint existing.** With none resolved, the ⋯ item reads "Set up your Brandprint" and routes to `/brandprint`; the canned instruction never fires against zero convention docs.
-8. **The Brandprint collection is not a Collection, to users.** It stays a collection in the data model (the delivery layer reads it unchanged), but it never surfaces in the rail, palette, or organize dialogs; its docs are managed on `/brandprint` only, so the files and the options have one home.
+8. **The Brandprint collection is not a Collection, to users** (#386). It stays a collection in the data model (the delivery layer reads it unchanged), but it never surfaces in the rail, palette, or organize dialogs; its docs are managed on `/brandprint` only, so the files and the options have one home.
