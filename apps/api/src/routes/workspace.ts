@@ -88,7 +88,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
         .enum(["none", "workspace", "public"])
         .describe("Listing a new publish lands with: none (default), workspace, or public."),
       brandprint: BrandprintSchema.optional().describe(
-        "The workspace's Brandprint (conventions collection + theme); absent until set.",
+        "The workspace's Brandprint (conventions collection + brand-profile artifact); absent until set.",
       ),
     })
     .openapi("OrgSettings")
@@ -591,23 +591,30 @@ export const workspaceRoutes = (ctx: AppContext) => {
       if (b instanceof Response) return bail(b)
       // Merge over current (so a partial PATCH only flips the keys it sends). Brandprint
       // is pulled out and merged one level deep below, so setting collectionId alone
-      // doesn't wipe an existing theme (and vice versa).
+      // doesn't wipe an existing profileId (and vice versa).
       const { brandprint, ...flat } = b
       const cur = await meta.getOrgSettings(org)
       const next = { ...cur, ...flat }
       if (brandprint === null) next.brandprint = undefined
       else if (brandprint) {
-        // A new collectionId pointer must be owned by this workspace: an unvalidated id
-        // could point at another tenant's collection and leak its bodies over MCP. The
-        // store doesn't check ownership, so the route does. (Clearing or a theme-only
-        // patch points at nothing new, so it skips the check.)
-        if (brandprint.collectionId) {
-          const col = await meta.getCollection(brandprint.collectionId)
-          if (!col || col.org_id !== org)
-            return bail(fail(c, 400, "brandprint collection not found in this workspace"))
-        }
+        // Both pointers must be owned by this workspace: an unvalidated id could point
+        // at another tenant's collection (or make its artifact the headline MCP
+        // resource) and leak bodies over MCP. The store doesn't check ownership, so
+        // the route does. Clearing or a partial patch points at nothing new and skips
+        // the lookups; the two checks are independent, so they run together.
+        const [col, art] = await Promise.all([
+          brandprint.collectionId ? meta.getCollection(brandprint.collectionId) : null,
+          brandprint.profileId ? meta.getByShortId(brandprint.profileId) : null,
+        ])
+        if (brandprint.collectionId && (!col || col.org_id !== org))
+          return bail(fail(c, 400, "brandprint collection not found in this workspace"))
+        if (brandprint.profileId && (!art || art.org_id !== org))
+          return bail(fail(c, 400, "brandprint profile not found in this workspace"))
         const m = { ...cur.brandprint, ...brandprint }
-        next.brandprint = { collectionId: m.collectionId ?? undefined, theme: m.theme ?? undefined }
+        next.brandprint = {
+          collectionId: m.collectionId ?? undefined,
+          profileId: m.profileId ?? undefined,
+        }
       }
       // The default access must satisfy the same listing preconditions a publish
       // would (see access-model.md) — otherwise every new publish that takes the

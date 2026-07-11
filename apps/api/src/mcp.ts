@@ -37,6 +37,7 @@ import {
   PublishError,
   pageText,
   parseBrandprint,
+  profileState,
   propose as proposeChange,
   publish as publishVersion,
   type Role,
@@ -50,6 +51,7 @@ import { StreamableHTTPTransport } from "@hono/mcp"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { Hono } from "hono"
 import { z } from "zod"
+import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "./brandprint-reference"
 import type { AppContext } from "./context"
 import { markAddressed } from "./lib/addressed"
 import { publishSweepEvents } from "./lib/anchor-sweep"
@@ -274,6 +276,21 @@ async function buildServer(
       }
     }
   }
+  // The brand profile. The placeholder is published into the Brandprint collection,
+  // so its record normally arrived with the loop above; the getByShortId fallback
+  // covers a pointer set outside the collection. Tenancy is enforced on write, but
+  // re-check the org so a stale pointer can never serve another workspace's artifact.
+  const profileArt = resolved.profileId
+    ? (conventionDocs.find((d) => d.short_id === resolved.profileId) ??
+      (await ctx.meta.getByShortId(resolved.profileId)))
+    : null
+  const bpProfile =
+    profileArt && profileArt.org_id === agent.org_id && resolved.profileId
+      ? ({ state: profileState(profileArt.current_version), shortId: resolved.profileId } as const)
+      : undefined
+  // The profile artifact rides in the Brandprint collection but is not a source doc:
+  // pending it's an empty stub, live it's served as derive://brandprint/profile below.
+  const bpSources = conventionDocs.filter((d) => d.short_id !== resolved.profileId)
 
   const server = new McpServer(
     { name: "derive", version: "1.0.0" },
@@ -296,13 +313,13 @@ async function buildServer(
         `then pass a workspace id or name as the "workspace" argument to act in another one (read, ` +
         `catch_up, comment, publish, list_artifacts). read/catch_up/comment also find a short_id in ` +
         `any of them automatically, so you never need to switch just to open a doc.` +
-        brandprintInstructions(conventionDocs.length),
+        brandprintInstructions(bpSources.length, bpProfile),
     },
   )
 
   // Brandprint conventions as resources: derive://brandprint/<short_id>, bodies fetched
   // lazily (the current version's text). audience:["assistant"], context for the agent.
-  for (const doc of conventionDocs) {
+  for (const doc of bpSources) {
     server.registerResource(
       `brandprint:${doc.short_id}`,
       `derive://brandprint/${doc.short_id}`,
@@ -317,6 +334,58 @@ async function buildServer(
         const v = art ? await ctx.meta.getVersion(art.id, art.current_version) : null
         const body = v ? await ctx.sourceText(v) : null
         return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: body ?? "" }] }
+      },
+    )
+  }
+  // The generation reference: the build guide + the neutral benchmark page, served
+  // whenever a Brandprint exists. Derive runs no inference, so these two static files
+  // are its entire side of profile generation; the user's agent does the assembling.
+  if (resolved.collectionIds.length > 0) {
+    server.registerResource(
+      "brandprint:reference",
+      "derive://brandprint/reference",
+      {
+        title: "How to build this workspace's brand profile",
+        description: "The build guide: required sections, extraction rules, output contract.",
+        mimeType: "text/markdown",
+        annotations: { audience: ["assistant"], priority: 0.8 },
+      },
+      async (uri) => ({
+        contents: [{ uri: uri.href, mimeType: "text/markdown", text: BRANDPRINT_REFERENCE }],
+      }),
+    )
+    server.registerResource(
+      "brandprint:template",
+      "derive://brandprint/template",
+      {
+        title: "Brand profile template (neutral benchmark)",
+        description:
+          "A complete brand-neutral profile page — the structural and quality benchmark; restyle everything.",
+        mimeType: "text/html",
+        annotations: { audience: ["assistant"], priority: 0.8 },
+      },
+      async (uri) => ({
+        contents: [{ uri: uri.href, mimeType: "text/html", text: BRANDPRINT_TEMPLATE }],
+      }),
+    )
+  }
+  // The live brand profile is the headline read — one page that carries the whole
+  // brand, humans and machines alike (tokens ride in it as CSS variables + JSON island).
+  // The server is per-request, so the record fetched above is fresh enough to reuse.
+  if (bpProfile?.state === "live" && profileArt) {
+    server.registerResource(
+      "brandprint:profile",
+      "derive://brandprint/profile",
+      {
+        title: "Brand profile",
+        description: "This workspace's brand profile — read before authoring.",
+        mimeType: "text/html",
+        annotations: { audience: ["assistant"], priority: 1 },
+      },
+      async (uri) => {
+        const v = await ctx.meta.getVersion(profileArt.id, profileArt.current_version)
+        const body = v ? await ctx.sourceText(v) : null
+        return { contents: [{ uri: uri.href, mimeType: "text/html", text: body ?? "" }] }
       },
     )
   }

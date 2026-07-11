@@ -6,7 +6,7 @@ import type { AppContext } from "../context"
 import { authorProfile, resolveHandles } from "../lib/author"
 import { bail, fail, IMMUTABLE_CACHE, readJson, toBody } from "../lib/http"
 import { MAX_AVATAR_BYTES, sniffImageType } from "../lib/image"
-import { Artifact, BrandprintSchema } from "../schemas"
+import { Artifact, PersonalBrandprintSchema } from "../schemas"
 
 /** Session identity + the workspace member/agent directory for the @mention picker.
  *  PublicProfile + DirUser are generated for the web; `Me` stays a web-side mapped type
@@ -179,8 +179,8 @@ export const sessionRoutes = (ctx: AppContext) => {
               schema: z.object({
                 profession: z.string().nullable().describe("Saved team role; null when cleared."),
                 about: z.string().nullable().describe("Saved bio; null when cleared."),
-                brandprint: BrandprintSchema.nullable().describe(
-                  "Saved personal Brandprint; null when cleared.",
+                brandprint: PersonalBrandprintSchema.nullable().describe(
+                  "Saved personal Brandprint (collection-only; the brand profile is workspace scope); null when cleared.",
                 ),
               }),
             },
@@ -196,14 +196,16 @@ export const sessionRoutes = (ctx: AppContext) => {
         z.object({
           profession: z.string().trim().max(40).optional(),
           about: z.string().trim().max(280).optional(),
-          brandprint: BrandprintSchema.nullable().optional(),
+          // The personal schema omits profileId — the brand profile is a team property,
+          // so a sent one strips like any unknown key (the workspace route owns it).
+          brandprint: PersonalBrandprintSchema.nullable().optional(),
         }),
       )
       if (body instanceof Response) return bail(body)
       // A new collectionId pointer must be owned by one of the caller's own workspaces:
       // an unvalidated id could point at another tenant's collection and leak its bodies
       // over MCP. The store doesn't check ownership, so the route does. (Clearing or a
-      // theme-only patch points at nothing new, so it skips the check.)
+      // partial patch points at nothing new, so it skips the check.)
       if (body.brandprint?.collectionId) {
         const col = await meta.getCollection(body.brandprint.collectionId)
         const mine = await meta.listWorkspaces(u.id)

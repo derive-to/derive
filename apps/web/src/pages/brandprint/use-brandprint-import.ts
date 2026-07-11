@@ -4,16 +4,26 @@ import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { collectionsQuery, summaryQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { placeholderFile } from "./profile-placeholder"
 
 // What the intake reports back: how many docs made it in, which files didn't, and
-// (when it created the collection and set the pointer itself) the fresh server
-// state to sync the caches from.
+// (when this run wrote the pointer — a fresh create, or a heal that seeded the
+// missing placeholder) the fresh server state to sync the caches from.
 export type ImportResult = {
   created: boolean
   ok: number
   failed: string[]
   settings?: Awaited<ReturnType<typeof api.updateWorkspaceSettings>>
   profile?: Awaited<ReturnType<typeof api.setProfile>>
+}
+
+/** Publish the brand-profile placeholder into the collection and return its short_id —
+ *  the fixed address the agent's proposal files against. Callers treat a failure as
+ *  "no placeholder yet" (the docs themselves must never be lost to it). */
+export async function ensureProfilePlaceholder(collectionId: string): Promise<string> {
+  const a = await api.publish(placeholderFile())
+  await api.addToCollection(collectionId, a.short_id)
+  return a.short_id
 }
 
 /**
@@ -25,7 +35,11 @@ export type ImportResult = {
  * pointer is only set once at least one doc made it in, so a total failure leaves
  * nothing half-set.
  */
-export function useBrandprintImport(scope: "workspace" | "account", collectionId: string) {
+export function useBrandprintImport(
+  scope: "workspace" | "account",
+  collectionId: string,
+  currentProfileId?: string,
+) {
   const qc = useQueryClient()
   const { me, setMe } = useAuth()
   return useApiMutation({
@@ -56,19 +70,30 @@ export function useBrandprintImport(scope: "workspace" | "account", collectionId
         await api.deleteCollection(target).catch(() => {})
         return { created: false, ok, failed }
       }
-      if (!created) return { created, ok, failed }
-      if (scope === "workspace") {
+      if (scope === "account") {
+        // Personal scope is a preferences layer: docs only, never a profile placeholder.
+        if (!created) return { created, ok, failed }
+        const profile = await api.setProfile({ brandprint: { collectionId: target } })
+        return { created, ok, failed, profile }
+      }
+      if (created) {
         // Conventions are for the whole team: open the collection to the workspace so
         // members can read the docs (collection access propagates to its contents).
         // Best-effort — MCP delivery reads under the workspace grant either way.
         await api.setCollectionAccess(target, "member").catch(() => {})
-        const settings = await api.updateWorkspaceSettings({
-          brandprint: { collectionId: target },
-        })
-        return { created, ok, failed, settings }
       }
-      const profile = await api.setProfile({ brandprint: { collectionId: target } })
-      return { created, ok, failed, profile }
+      // Seed the brand-profile placeholder on the first run that lacks one, best-effort
+      // — losing it costs the hand-off beat, not the docs (a later run heals it).
+      const newProfileId = currentProfileId
+        ? undefined
+        : await ensureProfilePlaceholder(target).catch(() => undefined)
+      // Doc-adds to an already-pointed, already-profiled Brandprint change nothing
+      // pointer-side, so skip the no-op PATCH.
+      if (!created && !newProfileId) return { created, ok, failed }
+      const settings = await api.updateWorkspaceSettings({
+        brandprint: { collectionId: target, ...(newProfileId ? { profileId: newProfileId } : {}) },
+      })
+      return { created, ok, failed, settings }
     },
     success: (r) =>
       r.ok === 0
