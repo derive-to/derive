@@ -130,7 +130,6 @@ export function Artifact() {
   const [surface, setSurface] = useState<null | "insights" | "history">(null)
   const [proposeMsg, setProposeMsg] = useState("")
   const [message, setMessage] = useState("")
-  const [reader, setReader] = useState(false)
   const [src, setSrc] = useState("")
   // See the `rawSrc` construction below: pins the raw-content token per (shortId,
   // version) so a metadata refetch doesn't force the preview iframe to reload.
@@ -437,9 +436,6 @@ export function Artifact() {
 
   const shown = version ?? art.current_version
   const editable = art.kind === "file" && shown === art.current_version
-  // Reader view re-renders a non-responsive HTML artifact clean + mobile-friendly
-  // (server applies it on `?reader=1`). Off by default; the top-bar toggle flips it.
-  //
   // The `t/:raw_token` segment is the sandboxed iframe's own proof of access: it has no
   // `allow-same-origin` (by design — the content must never touch our cookies/storage),
   // so it has no origin to send our session cookie back on, and Chrome refuses to attach
@@ -468,7 +464,7 @@ export function Artifact() {
   const rawBase = rawToken
     ? `${API_BASE}/raw/${shortId}/v/${shown}/t/${rawToken}`
     : `${API_BASE}/raw/${shortId}/v/${shown}`
-  const rawSrc = `${rawBase}/index.html${reader ? "?reader=1" : ""}`
+  const rawSrc = `${rawBase}/index.html`
   // Editors publish directly; commenters propose a candidate for review.
   const canPublish = art.my_role === "editor" || art.my_role === "owner"
   // md vs html drives syntax highlighting + how the live preview renders.
@@ -694,16 +690,6 @@ export function Artifact() {
               showEdit={editable && canPropose && !editing && !art.managed}
               editLabel={effectiveCanPublish ? "Edit source (dev)" : "Propose change (dev)"}
               isDeck={!!deck || art.current_content_type === "text/x-derive-deck"}
-              // Reader only helps non-responsive HTML — not markdown (already responsive)
-              // or decks (slides). Hidden while viewing a diff.
-              showReader={
-                format === "html" &&
-                !deck &&
-                art.current_content_type !== "text/x-derive-deck" &&
-                view !== "diff"
-              }
-              reader={reader}
-              onReaderToggle={() => setReader((r) => !r)}
               canLock={canLock}
               canMove={canMove}
               locked={isLocked}

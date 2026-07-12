@@ -58,54 +58,6 @@ const hasViewportMeta = (html: string): boolean => /<meta[^>]+name=["']?viewport
  *  is therefore a reflow candidate. Exported for serve-time gating + telemetry. */
 export const needsReflow = (html: string): boolean => !hasViewportMeta(html)
 
-// ---- Reader view ----------------------------------------------------------
-// "Reader" strips the authored layout entirely and re-renders the content in Derive's
-// responsive document shell — the universal answer for pages auto-reflow can't fix (hard
-// fixed-pixel layouts) and the one that also works inside the in-app iframe viewer, where
-// the viewport tag is ignored. Deliberately dependency-free (no Readability/DOM lib, so it
-// stays edge-safe): pull out the <body>, drop <head>/<script>/<style>, and sanitize — which
-// also removes inline style/class, so the author's fixed widths are gone and the content
-// flows into the clean column. Best for the doc/report artifacts Derive holds (no nav/ads to
-// strip); not a full article-extraction.
-
-const stripBlocks = (html: string): string =>
-  html
-    .replace(/<head[\s\S]*?<\/head>/gi, "")
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<!--[\s\S]*?-->/g, "")
-
-/** The document's title: <title> if present, else the first <h1>, else null. */
-export const extractTitle = (html: string): string | null => {
-  const t = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]
-  if (t?.trim()) return t.replace(/\s+/g, " ").trim()
-  const h1 = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1]
-  return h1
-    ? h1
-        .replace(/<[^>]+>/g, "")
-        .replace(/\s+/g, " ")
-        .trim() || null
-    : null
-}
-
-/**
- * Render an HTML document as a clean, responsive Reader view: extract its body content,
- * strip layout/head/scripts, sanitize (which removes inline styles + classes), and wrap it
- * in Derive's responsive shell. `render` is injected (renderDocShell) and `sanitize`
- * (sanitizeHtml) from the markdown module, so this stays a pure string transform that the
- * serve layer wires up.
- */
-export const readerView = (
-  html: string,
-  render: (bodyHtml: string, title: string | null) => string,
-  sanitize: (html: string) => string,
-): string => {
-  const title = extractTitle(html)
-  const stripped = stripBlocks(html)
-  const body = stripped.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? stripped
-  return render(sanitize(body), title)
-}
-
 /**
  * Inject the viewport tag + reflow CSS into a served HTML document, unless it already
  * declares a viewport. Inserts right after `<head>` (so the viewport is early and the reset

@@ -5,12 +5,9 @@ import {
   looksLikeHtmlDocument,
   mimeFor,
   parseFrontmatter,
-  readerView,
   reflowHtml,
-  renderDocShell,
   renderMarkdown,
   SELECTION_SCRIPT,
-  sanitizeHtml,
 } from "@derive/core"
 import type { Context } from "hono"
 import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
@@ -49,18 +46,13 @@ export const serveContent = async (
    *  serve the document exactly as authored. Never applied to markdown-rendered output,
    *  which is already responsive. */
   reflow = true,
-  /** Reader view: strip the authored layout and re-render the content in Derive's responsive
-   *  shell (the universal "make it readable" mode, used by the in-app toggle via `?reader`).
-   *  Wins over `reflow` for HTML; markdown is already in the shell, so it's unaffected. */
-  reader = false,
 ) => {
   const headers = { ...RAW_HEADERS, "Cache-Control": cacheControl }
   const tx = (doc: string) => (transformHtml ? transformHtml(doc) : Promise.resolve(doc))
   const rf = (doc: string) => (reflow ? reflowHtml(doc) : doc)
-  // Produce the final HTML body for a document: Reader re-renders it clean + responsive;
-  // otherwise apply cross-doc rewrite + auto-reflow and append the anchor client.
-  const htmlBody = async (doc: string): Promise<string> =>
-    reader ? readerView(doc, renderDocShell, sanitizeHtml) : rf(await tx(doc)) + SELECTION_SCRIPT
+  // Produce the final HTML body for a document: cross-doc rewrite + auto-reflow, then append
+  // the anchor client (for comment anchoring + live cursors).
+  const htmlBody = async (doc: string): Promise<string> => rf(await tx(doc)) + SELECTION_SCRIPT
   let path = rawPath
   if (isBundleContentType(content.content_type)) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -81,11 +73,7 @@ export const serveContent = async (
     if (entry.type.startsWith("text/html") || entry.type.startsWith("text/css")) {
       const rewritten = rewriteAbsoluteUrls(new TextDecoder().decode(data), prefix.slice(0, -1))
       // Bundle pages get the anchor client too — comments stick everywhere.
-      const out = entry.type.startsWith("text/html")
-        ? reader
-          ? readerView(rewritten, renderDocShell, sanitizeHtml)
-          : rf(rewritten) + SELECTION_SCRIPT
-        : rewritten
+      const out = entry.type.startsWith("text/html") ? rf(rewritten) + SELECTION_SCRIPT : rewritten
       return c.body(out, 200, { ...headers, "Content-Type": entry.type })
     }
     // Markdown pages (a skill's SKILL.md, a doc bundle's pages) render through the

@@ -40,8 +40,6 @@ export const rawRoutes = (ctx: AppContext) => {
     const version = await meta.getVersion(artifact.id, n)
     if (!version) return c.text("not found", 404)
     const path = decodeURIComponent(c.req.path.slice(prefix.length))
-    // `?reader=1` (the in-app Reader toggle) re-renders the content clean + responsive.
-    const reader = ["1", "true"].includes(c.req.query("reader") ?? "")
     return serveContent(
       c,
       blobs,
@@ -59,8 +57,6 @@ export const rawRoutes = (ctx: AppContext) => {
       // so a tab like `walkthrough.html` navigates to the walkthrough artifact instead
       // of re-serving this page. No-op unless this artifact is GitHub-synced.
       crossDocTransform(meta, artifact),
-      true,
-      reader,
     )
   }
 

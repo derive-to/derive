@@ -270,7 +270,6 @@ const ICONS: IconName[] = [
   "review",
   "pin",
   "views",
-  "reader",
   "present",
   "lock",
   "bell",

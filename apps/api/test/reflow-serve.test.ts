@@ -41,23 +41,3 @@ describe("serve-time HTML auto-reflow", () => {
     expect(body).toContain("<h1") // it really did render markdown
   })
 })
-
-describe("serve-time Reader view (?reader=1)", () => {
-  const rawReader = async (shortId: string) =>
-    (await app.request(`/raw/${shortId}/v/1/index.html?reader=1`)).text()
-
-  it("re-renders a fixed-layout page clean + responsive, dropping author layout", async () => {
-    const html =
-      "<!doctype html><html><head><title>Spec</title>" +
-      "<style>.page{width:1100px}</style></head>" +
-      '<body><div class="page" style="width:1100px"><h2>Heading</h2>' +
-      "<p>readable body text</p></div></body></html>"
-    const id = await publish("spec.html", html)
-    const body = await rawReader(id)
-    expect(body).toContain("width=device-width") // Derive responsive shell
-    expect(body).toContain("<main>")
-    expect(body).toContain("Heading")
-    expect(body).toContain("readable body text")
-    expect(body).not.toContain("1100px") // author fixed layout gone
-  })
-})
