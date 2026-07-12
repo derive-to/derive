@@ -6,7 +6,6 @@ import { Count } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { useFocusTrap } from "@/lib/use-focus-trap"
 import { cn } from "@/lib/utils"
 import { Composer } from "./comment-composer"
 import { CollapsibleThreadSection, CommentCard, PinnedZone } from "./comment-thread"
@@ -37,7 +36,6 @@ export function MobileComments({
   openThreads,
   resolved,
   composer,
-  onClose,
   onNewGeneral,
   onSubmitNew,
   onCancelNew,
@@ -47,7 +45,6 @@ export function MobileComments({
   openThreads: Comment[][]
   resolved: Comment[][]
   composer: ComposerState
-  onClose: () => void
   onNewGeneral: () => void
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
@@ -57,15 +54,16 @@ export function MobileComments({
    *  is left below it. */
   onHeightChange?: (px: number) => void
 }) {
-  // Two states only: peek (a slim "Comments (N)" bar — the default) and full (the
-  // list). Composing overrides both with a compact composer bar pinned above the
-  // keyboard (see the height + `kb` style below), so the box sits flush above the
-  // keyboard with the document visible above — no awkward half-height middle state.
+  // The sheet is ALWAYS docked on a phone (peek is the floor — there is no hidden
+  // state and no scrim; the doc above stays live). Two resting sizes: peek (the slim
+  // bar, one line taller when it can preview the latest comment) and full (the list,
+  // content-weighted up to half the screen). Composing overrides both with a compact
+  // composer bar pinned above the keyboard (see the height + `kb` style below), so
+  // the box sits flush above the keyboard with the document visible above.
   const { canComment } = useCommentScope()
   const tree = useCommentTree()
   const [size, setSize] = useState<"peek" | "full">("peek")
   const sheetRef = useRef<HTMLDivElement>(null)
-  useFocusTrap(sheetRef, open)
   useEffect(() => {
     if (open) setSize("peek")
   }, [open])
@@ -147,96 +145,179 @@ export function MobileComments({
       for (const c of t) if (c.body_md && (!best || c.created_at > best.created_at)) best = c
     return best
   }, [openThreads])
-  // The grip toggles peek <-> full.
-  const grip = () => setSize((s) => (s === "peek" ? "full" : "peek"))
-  // Jumping to text: drop to the peek bar so the highlight is visible in the doc.
-  const jumpToText = (id: string) => {
-    setSize("peek")
-    tree.onJump(id)
+  // The grip (tap) toggles peek <-> expanded.
+  const grip = () => {
+    if (moved.current) {
+      // A drag just ended on this element — the trailing click isn't a tap.
+      moved.current = false
+      return
+    }
+    setSize((s) => (s === "peek" ? "full" : "peek"))
   }
-  // The sheet's cards read this overridden tree: jumping also collapses the sheet, and
-  // touch has no hover (so no emphasis state) — everything else is the page's tree.
+  // Jumping to text keeps the sheet where it is: expanded is capped at half the
+  // screen, so the highlight always lands visible in the doc strip above. (The old
+  // collapse-to-peek was a workaround for the full-screen sheet covering the doc.)
+  const jumpToText = (id: string) => tree.onJump(id)
+  // The sheet's cards read this overridden tree: touch has no hover (so no emphasis
+  // state) — everything else is the page's tree.
   const sheetTree = { ...tree, hoverThread: null, onHover: NO_HOVER, onJump: jumpToText }
+
+  // --- drag: the grip/header drags between the two resting sizes -----------------
+  // Feedback is a direct `translate` style write per move (no re-render, transition
+  // suspended); release restores the class transition so the settle animates, and
+  // only a past-threshold drag (or a fling) flips the size. Peek is the FLOOR —
+  // dragging down from peek rubber-bands instead of dismissing (the docked bar is
+  // the comments entry point) — and expanded rubber-bands upward past its cap.
+  // Disabled while the keyboard owns the sheet's position (kb) or while composing.
+  const drag = useRef<{ y0: number; t0: number; dy: number } | null>(null)
+  const moved = useRef(false)
+  const dragStart = (e: React.PointerEvent) => {
+    if (kb || composer) return
+    if ((e.target as HTMLElement).closest("button")) return // buttons keep their taps
+    drag.current = { y0: e.clientY, t0: e.timeStamp, dy: 0 }
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    const el = sheetRef.current
+    if (el) el.style.transition = "none"
+  }
+  const dragMove = (e: React.PointerEvent) => {
+    const d = drag.current
+    const el = sheetRef.current
+    if (!d || !el) return
+    d.dy = e.clientY - d.y0
+    const resisted =
+      size === "peek"
+        ? d.dy > 0
+          ? d.dy / 4 // floor: resist downward
+          : Math.max(d.dy, -96) // follow upward a bit, then the flip takes over
+        : d.dy < 0
+          ? d.dy / 4 // cap: resist upward
+          : d.dy
+    el.style.translate = `0 ${resisted}px`
+  }
+  const dragEnd = (e: React.PointerEvent) => {
+    const d = drag.current
+    const el = sheetRef.current
+    drag.current = null
+    if (!d || !el) return
+    moved.current = Math.abs(d.dy) > 5
+    el.style.transition = ""
+    el.style.translate = ""
+    const fling = Math.abs(d.dy) / Math.max(1, e.timeStamp - d.t0) > 0.5
+    if (size === "peek" && (d.dy < -60 || (fling && d.dy < 0))) setSize("full")
+    else if (size === "full" && (d.dy > 60 || (fling && d.dy > 0))) setSize("peek")
+  }
+
+  // --- stepper: walk the open threads one at a time ------------------------------
+  // Each step scrolls the thread's card into view in the list AND, for an anchored
+  // thread, scrolls the document to its highlight — which stays visible because the
+  // sheet never exceeds half the screen.
+  const [step, setStep] = useState(0)
+  const stepIdx = Math.min(step, Math.max(0, openThreads.length - 1))
+  const stepTo = (i: number) => {
+    const n = openThreads.length
+    if (n === 0) return
+    const idx = (i + n) % n
+    setStep(idx)
+    const head = openThreads[idx]?.[0]
+    if (!head) return
+    sheetRef.current
+      ?.querySelector(`[data-thread-id="${head.thread_id}"]`)
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" })
+    if (head.anchor) tree.onJump(head.thread_id)
+  }
   return (
     <>
-      {/* Backdrop only at full height (reading mode). At half the document above
-          stays tappable/scrollable, so no dimming layer intercepts it. */}
-      <button
-        type="button"
-        data-testid="comments-sheet-backdrop"
-        aria-label="Collapse comments"
-        tabIndex={open && !composer && size === "full" ? 0 : -1}
-        onClick={() => setSize("peek")}
-        className={cn(
-          "fixed inset-0 z-60 bg-scrim/50 transition-opacity",
-          open && !composer && size === "full" ? "opacity-100" : "pointer-events-none opacity-0",
-        )}
-      />
-      <div
+      <aside
         ref={sheetRef}
         className={cn(
-          "fixed inset-x-0 bottom-0 z-61 flex flex-col rounded-t-2xl border-t border-border bg-card shadow-[var(--shadow-pop)] duration-200 ease-out",
           // The slide rides the `translate` property (translate-y-full/0), so the
           // transition MUST target `translate` — not `transform` — or the sheet jumps
-          // in and out instead of sliding. Don't animate height while the keyboard
-          // repositions the sheet.
-          kb ? "transition-[translate]" : "transition-[translate,height]",
-          // Composing: a compact bar sized to its content (capped), so the box sits
-          // flush above the keyboard rather than high up in a tall sheet.
-          // Peek grows a little to preview the latest comment; a bare header when empty.
-          composer ? "max-h-[80vh]" : size === "full" ? "h-[88vh]" : latest ? "h-24" : "h-18.5",
+          // in and out instead of sliding. Height changes snap (auto isn't
+          // animatable); the drag handlers suspend/restore this transition inline.
+          "fixed inset-x-0 bottom-0 z-61 flex flex-col rounded-t-2xl border-t border-border bg-card shadow-[var(--shadow-pop)] transition-[translate] duration-200 ease-out",
+          // Heights are CONTENT-WEIGHTED: composing is a compact bar above the
+          // keyboard; expanded hugs its comments up to half the screen (the doc
+          // strip above stays visible and live — no reading mode that owns the
+          // whole screen); peek is a slim bar, one line taller with a preview.
+          composer ? "max-h-[80vh]" : size === "full" ? "max-h-[50vh]" : latest ? "h-24" : "h-18.5",
           open ? "translate-y-0" : "translate-y-full",
         )}
         // While the keyboard is up, lift the sheet's bottom to just above it and cap
         // its height to the visible band — so the half-height composer sits in view
         // (with a sliver of document above) instead of behind/under the keyboard.
         style={kb ? { bottom: kb.inset, maxHeight: kb.height } : undefined}
-        role="dialog"
+        // Non-modal by design: the document above stays visible and interactive in
+        // every state, so this is an aside, not a dialog (no focus trap, no scrim).
         aria-label="Comments"
       >
-        {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: grip resizes the sheet; ✕ closes. */}
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: the grip/header strip is a drag handle (pointer events) with tap-to-toggle; the real controls inside are buttons. */}
         <div
-          data-testid="comments-sheet-grip"
-          className="flex shrink-0 cursor-grab justify-center pb-1 pt-2"
-          onClick={grip}
-          title="Resize"
+          className="shrink-0 touch-none"
+          onPointerDown={dragStart}
+          onPointerMove={dragMove}
+          onPointerUp={dragEnd}
+          onPointerCancel={dragEnd}
         >
-          <div className="h-1 w-10 rounded-full bg-border" />
-        </div>
-        <div className="flex items-center gap-2 border-b border-border-soft pb-3 pl-3 pr-2.5 pt-2">
-          <CommentsHeading count={openThreads.length} />
-          {canComment && (
+          {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: grip toggles the sheet size; keyboard users have the labeled caret button below. */}
+          <div
+            data-testid="comments-sheet-grip"
+            className="flex cursor-grab justify-center pb-1 pt-2"
+            onClick={grip}
+            title="Resize"
+          >
+            <div className="h-1 w-10 rounded-full bg-border" />
+          </div>
+          <div className="flex items-center gap-2 border-b border-border-soft pb-3 pl-3 pr-2.5 pt-2">
+            <CommentsHeading count={openThreads.length} />
+            {size === "full" && openThreads.length > 1 && (
+              // Step through the discussion one thread at a time: the card scrolls
+              // into view and an anchored thread scrolls the doc to its highlight.
+              <div className="flex items-center gap-0.5 font-mono text-xs tabular-nums text-muted-foreground">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Previous comment"
+                  data-testid="comments-step-prev"
+                  onClick={() => stepTo(stepIdx - 1)}
+                >
+                  <Icon name="caret" className="size-4 rotate-90" />
+                </Button>
+                {stepIdx + 1}/{openThreads.length}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Next comment"
+                  data-testid="comments-step-next"
+                  onClick={() => stepTo(stepIdx + 1)}
+                >
+                  <Icon name="caret" className="size-4 -rotate-90" />
+                </Button>
+              </div>
+            )}
+            {canComment && (
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="comments-sheet-new"
+                onClick={() => {
+                  setSize("full")
+                  onNewGeneral()
+                }}
+              >
+                <Icon name="plus" size={16} />
+                New
+              </Button>
+            )}
             <Button
-              variant="outline"
-              size="sm"
-              data-testid="comments-sheet-new"
-              onClick={() => {
-                setSize("full")
-                onNewGeneral()
-              }}
+              variant="ghost"
+              size="icon"
+              aria-label={size === "peek" ? "Expand" : "Collapse"}
+              data-testid="comments-sheet-resize"
+              onClick={() => setSize(size === "peek" ? "full" : "peek")}
             >
-              <Icon name="plus" size={16} />
-              New
+              <Icon name="caret" className={cn("size-4", size === "peek" && "rotate-180")} />
             </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={size === "peek" ? "Expand" : "Collapse"}
-            data-testid="comments-sheet-resize"
-            onClick={() => setSize(size === "peek" ? "full" : "peek")}
-          >
-            <Icon name="caret" className={cn("size-4", size === "peek" && "rotate-180")} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Close comments"
-            data-testid="comments-sheet-close"
-            onClick={onClose}
-          >
-            <Icon name="close" className="size-4" />
-          </Button>
+          </div>
         </div>
         {composer ? (
           // Composing ("half open"): just the composer, so the sheet is a compact bar
@@ -285,7 +366,7 @@ export function MobileComments({
                 const head = t[0]
                 if (!head) return null
                 return (
-                  <div key={head.thread_id} className="mb-2.5">
+                  <div key={head.thread_id} data-thread-id={head.thread_id} className="mb-2.5">
                     <CommentCard thread={t} />
                   </div>
                 )
@@ -316,7 +397,7 @@ export function MobileComments({
             </span>
           </button>
         ) : null}
-      </div>
+      </aside>
     </>
   )
 }

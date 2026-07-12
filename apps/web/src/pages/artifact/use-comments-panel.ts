@@ -17,18 +17,24 @@ const loadPanel = (): Panel => {
  * The comments panel's open/hidden state and its two side effects: it's persisted
  * per device across visits, and the `c` hotkey toggles it. Escape is wired through
  * the same keydown listener (it routes to the page's composer cancel via
- * `onEscape`) so the page keeps one listener, not two. Phones start hidden
- * (document-first); desktop restores the saved state.
+ * `onEscape`) so the page keeps one listener, not two. Phones are ALWAYS open:
+ * the sheet's docked peek bar is the sole comments entry point on a phone (no
+ * top-bar toggle, no `c` key), so hidden is not a reachable state there — they
+ * start open, and the page clamps with `effectivePanel` against a persisted
+ * desktop "hidden" leaking across a resize. Desktop restores the saved state.
  */
 export function useCommentsPanel(onEscape: () => void) {
   const [panel, setPanel] = useState<Panel>(() =>
     typeof window !== "undefined" && window.matchMedia("(max-width:640px)").matches
-      ? "hidden"
+      ? "open"
       : loadPanel(),
   )
 
-  // Persist the collapse state.
+  // Persist the collapse state — desktop only. On a phone-width viewport the panel
+  // is forced open (above), and writing that would clobber a desktop "hidden"
+  // preference the moment a desktop window got narrowed below the breakpoint.
   useEffect(() => {
+    if (window.matchMedia("(max-width:640px)").matches) return
     try {
       localStorage.setItem(PANEL_KEY, panel)
     } catch {

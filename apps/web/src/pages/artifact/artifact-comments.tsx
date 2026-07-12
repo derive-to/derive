@@ -173,10 +173,6 @@ export function ArtifactComments(p: {
             openThreads={p.openThreads}
             resolved={p.resolved}
             composer={p.composer}
-            onClose={() => {
-              p.setPanel("hidden")
-              cancelNew()
-            }}
             onNewGeneral={newGeneral}
             onSubmitNew={p.submitNew}
             onCancelNew={cancelNew}
