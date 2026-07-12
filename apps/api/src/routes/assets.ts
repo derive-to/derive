@@ -2,18 +2,21 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { bail, fail } from "../lib/http"
-import { MAX_ASSET_BYTES, sniffImageType } from "../lib/image"
+import { MAX_ASSET_BYTES, sniffAssetType } from "../lib/image"
 
 const EXT_FOR_TYPE: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
   "image/gif": "gif",
   "image/webp": "webp",
+  "font/woff2": "woff2",
+  "font/woff": "woff",
 }
 
 /**
- * Standalone binary image assets. An agent uploads the raw bytes of a screenshot
- * here (a plain binary POST — no base64 transcription) and gets back:
+ * Standalone binary assets — raster images and web fonts. An agent uploads the raw
+ * bytes of a screenshot or a woff2 here (a plain binary POST — no base64
+ * transcription) and gets back:
  *
  *  - `url`: a permanent, unguessable public link (GET /blob/<hash>.<ext>) — paste it
  *    into ANY artifact's content (single-file HTML, markdown, a bundle page) or
@@ -46,8 +49,8 @@ export const assetRoutes = (ctx: AppContext) => {
         .describe("A permanent public URL for these bytes — embed it in any artifact's content"),
       ref: z.string().describe('The exact "asset:<hash>" string to drop into a publish files map'),
       type: z
-        .enum(["image/png", "image/jpeg", "image/gif", "image/webp"])
-        .describe("The sniffed image MIME type (PNG, JPEG, GIF, or WebP)"),
+        .enum(["image/png", "image/jpeg", "image/gif", "image/webp", "font/woff2", "font/woff"])
+        .describe("The sniffed MIME type (PNG, JPEG, GIF, WebP, WOFF2, or WOFF)"),
       size: z.number().describe("The asset's size in bytes"),
     })
     .openapi("AssetRef")
@@ -57,7 +60,8 @@ export const assetRoutes = (ctx: AppContext) => {
       method: "post",
       path: "/v1/assets",
       tags: ["Assets"],
-      summary: "Stage a binary image asset and get a permanent URL + its asset:<hash> handle.",
+      summary:
+        "Stage a binary asset (image or web font) and get a permanent URL + its asset:<hash> handle.",
       responses: {
         200: {
           description: "The stored asset's public URL and content-addressed handle.",
@@ -91,10 +95,12 @@ export const assetRoutes = (ctx: AppContext) => {
       if (bytes.byteLength > MAX_ASSET_BYTES)
         return bail(fail(c, 413, "asset too large (max 25MB)"))
 
-      // Trust the bytes, not the declared type — and only store a plain raster image (no
-      // SVG: served from our origin it could carry script), mirroring the avatar path.
-      const type = sniffImageType(bytes)
-      if (!type) return bail(fail(c, 400, "unsupported asset (use PNG, JPEG, GIF, or WebP)"))
+      // Trust the bytes, not the declared type — and only store non-executable formats:
+      // plain raster images and packaged web fonts (no SVG/HTML: served from our origin
+      // they could carry script).
+      const type = sniffAssetType(bytes)
+      if (!type)
+        return bail(fail(c, 400, "unsupported asset (use PNG, JPEG, GIF, WebP, or WOFF/WOFF2)"))
 
       if (await overStorage(org, bytes.byteLength))
         return bail(fail(c, 413, "storage quota exceeded"))

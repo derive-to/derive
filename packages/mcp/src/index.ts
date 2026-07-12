@@ -550,12 +550,14 @@ server.registerTool(
   "publish",
   {
     description:
-      "Publish a single-file artifact and get a permanent URL. OMIT short_id to create a NEW artifact (title recommended); PASS short_id to publish a new version (same URL). To CHANGE PART of an existing artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything via `content`. Pass for_review:true to file it as a PROPOSAL a human approves instead of going live. Pass `addresses` with the thread ids this revision resolves. (Multi-page bundles are published via the web app or the remote /mcp server.)",
+      "Publish a single-file artifact and get a permanent URL. OMIT short_id to create a NEW artifact (title recommended); PASS short_id to publish a new version (same URL). To CHANGE PART of an existing artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything via `content`. Pass for_review:true to file it as a PROPOSAL a human approves instead of going live. Pass `addresses` with the thread ids this revision resolves. (Multi-page bundles are published via the web app or the remote /mcp server.) FULLY-STYLED HTML renders as-authored (own <style>/scripts/fonts) in the sandboxed viewer — declare your own <meta name=\"viewport\"> to skip the mobile-reflow injection, and self-host binaries via POST /v1/assets (images and woff2 fonts) instead of inlining base64. The response echoes content_sha256 of the stored bytes — verify it when the content passed through your context.",
     inputSchema: {
       content: z
         .string()
         .optional()
-        .describe("The artifact's full text content (HTML or Markdown). Use this OR `edits`."),
+        .describe(
+          "The artifact's full text content (HTML or Markdown). Use this OR `edits`. For images or web fonts, upload the raw bytes to POST /v1/assets (no base64 — binaries carried through a tool call can be silently mistranscribed) and reference the returned URL.",
+        ),
       edits: z
         .array(
           z.object({

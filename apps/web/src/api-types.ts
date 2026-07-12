@@ -1568,7 +1568,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Stage a binary image asset and get a permanent URL + its asset:<hash> handle. */
+        /** Stage a binary asset (image or web font) and get a permanent URL + its asset:<hash> handle. */
         post: {
             parameters: {
                 query?: never;
@@ -5206,10 +5206,10 @@ export interface components {
             /** @description The exact "asset:<hash>" string to drop into a publish files map */
             ref: string;
             /**
-             * @description The sniffed image MIME type (PNG, JPEG, GIF, or WebP)
+             * @description The sniffed MIME type (PNG, JPEG, GIF, WebP, WOFF2, or WOFF)
              * @enum {string}
              */
-            type: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+            type: "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "font/woff2" | "font/woff";
             /** @description The asset's size in bytes */
             size: number;
         };

@@ -1053,9 +1053,11 @@
               "image/png",
               "image/jpeg",
               "image/gif",
-              "image/webp"
+              "image/webp",
+              "font/woff2",
+              "font/woff"
             ],
-            "description": "The sniffed image MIME type (PNG, JPEG, GIF, or WebP)"
+            "description": "The sniffed MIME type (PNG, JPEG, GIF, WebP, WOFF2, or WOFF)"
           },
           "size": {
             "type": "number",
@@ -4226,7 +4228,7 @@
         "tags": [
           "Assets"
         ],
-        "summary": "Stage a binary image asset and get a permanent URL + its asset:<hash> handle.",
+        "summary": "Stage a binary asset (image or web font) and get a permanent URL + its asset:<hash> handle.",
         "responses": {
           "200": {
             "description": "The stored asset's public URL and content-addressed handle.",

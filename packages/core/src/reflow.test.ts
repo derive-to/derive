@@ -55,6 +55,15 @@ describe("reflowHtml", () => {
     expect(out).not.toMatch(/html\{[^}]*overflow[^}]*hidden/) // never hide content
   })
 
+  it("carves out data-reflow-exempt subtrees from the media caps (sprite crops etc.)", () => {
+    const out = reflowHtml("<html><head></head><body><img src=x></body></html>")
+    // The cap must not apply to an exempt element or anything inside one — a component
+    // that deliberately oversizes media (e.g. a 140%-wide <img> in an overflow-hidden
+    // crop frame) opts out per-element without giving up the page-wide guarantee.
+    expect(out).toContain("img:not([data-reflow-exempt],[data-reflow-exempt] *)")
+    expect(out).toMatch(/iframe:not\(\[data-reflow-exempt\]/)
+  })
+
   it("falls back to creating a <head> after <html> when none exists", () => {
     const out = reflowHtml("<html><body>only a body</body></html>")
     expect(out).toMatch(/<html><head>.*name="viewport"/s)

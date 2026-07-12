@@ -134,6 +134,18 @@ describe("publish html file", () => {
     expect(json.current_version).toBe(1)
   })
 
+  it("echoes the stored content's sha256 so a caller can verify byte integrity", async () => {
+    const content = "<h1>Checksum me</h1>"
+    const res = await upload("sum.html", content, { title: "Sum" })
+    const json = await res.json()
+    const expected = Buffer.from(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content)),
+    ).toString("hex")
+    // Computed independently here: the echoed hash must be the sha256 of the
+    // exact bytes stored, not of anything the server re-encoded.
+    expect(json.content_sha256).toBe(expected)
+  })
+
   it("serves artifact metadata and sandboxed raw content", async () => {
     // The viewer at /artifacts/:ref is the SPA (client-rendered); the server exposes the
     // artifact's metadata over the data API and the bytes over the sandboxed /raw.

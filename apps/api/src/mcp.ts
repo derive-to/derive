@@ -308,7 +308,10 @@ async function buildServer(
           actingFor ? ` on behalf of ${actingFor.name ?? "your user"}` : ""
         }, acting in workspace ${agent.org_id} ` +
         `with ${agent.role} permissions. Derive hosts living documents and plans with versioned ` +
-        `history, text-anchored review comments, and a publish → review → revise loop. ` +
+        `history, text-anchored review comments, and a publish → review → revise loop. Fully-styled ` +
+        `HTML pages are first-class too: a single-file artifact with its own <style>, scripts, fonts ` +
+        `and images renders as-authored in a sandboxed viewer — publish real designed pages, not just ` +
+        `prose. ` +
         `Start a session with catch_up to re-sync on what changed and what feedback is open; use ` +
         `read to view content — it returns Markdown by default (HTML is converted) and an outline ` +
         `first for large documents or bundles, so pull sections by heading slug or page path once ` +
@@ -593,7 +596,7 @@ async function buildServer(
     "read",
     {
       description:
-        "Read an artifact's CONTENT by short id, as Markdown by default (HTML is converted; the styling noise is dropped). Small docs return whole; a LARGE doc returns its heading OUTLINE first — call again with a `section` slug for just that part. Multi-page bundle: omit `section` for the page outline, then pass a page path (optionally `page.html#slug`). Pass format:'html' for the exact source (required before publish `edits`), or a past `version` for history. (For what CHANGED, or the comment threads, use catch_up.)",
+        "Read an artifact's CONTENT by short id, as Markdown by default (HTML is converted to its readable text — note a styled page renders fully to VIEWERS; only this reading view flattens it). Small docs return whole; a LARGE doc returns its heading OUTLINE first — call again with a `section` slug for just that part. Multi-page bundle: omit `section` for the page outline, then pass a page path (optionally `page.html#slug`). Pass format:'html' for the exact source (required before publish `edits`), or a past `version` for history. (For what CHANGED, or the comment threads, use catch_up.)",
       inputSchema: {
         short_id: z.string().describe("The artifact's short id, e.g. nk0dsral."),
         section: z
@@ -1189,13 +1192,13 @@ async function buildServer(
     "publish",
     {
       description:
-        "Save a revision of an artifact. It goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or whenever you pass for_review:true — it is filed as a PROPOSAL a human approves before it goes live. To CHANGE PART of a single-file artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything. Otherwise provide the full `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE (a whole site, images and any binary asset). OMIT short_id to create a NEW artifact (`title` required); PASS short_id to add a version to one you own, matching its kind. A bundle republish REPLACES the whole bundle, so include EVERY page and asset (or use `merge`). Pass `addresses` with the thread ids (from catch_up) this revision resolves. (Proposals are single-file only; bundles must be published directly.)",
+        "Save a revision of an artifact. It goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or whenever you pass for_review:true — it is filed as a PROPOSAL a human approves before it goes live. To CHANGE PART of a single-file artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything. Otherwise provide the full `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE (a whole site, images and any binary asset). OMIT short_id to create a NEW artifact (`title` required); PASS short_id to add a version to one you own, matching its kind. A bundle republish REPLACES the whole bundle, so include EVERY page and asset (or use `merge`). Pass `addresses` with the thread ids (from catch_up) this revision resolves. (Proposals are single-file only; bundles must be published directly.) FULLY-STYLED HTML renders as-authored (own <style>/scripts/fonts) in the sandboxed viewer — two rules: declare your own <meta name=\"viewport\"> (pages without one get a mobile-reflow injection whose media caps can fight intentional layouts; `data-reflow-exempt` on an element is the per-component escape hatch), and self-host binaries via POST /v1/assets (images AND woff2 fonts) instead of base64. The response echoes `content_sha256` of the stored bytes — verify it when the content passed through your context.",
       inputSchema: {
         content: z
           .string()
           .optional()
           .describe(
-            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. To embed an image CHEAPLY (no base64 in this call), upload the raw bytes to POST /v1/assets first — the response's `url` is a permanent public link; paste it straight into an `<img src>` or markdown `![]()`. Never inline a base64 data: URI here — it tokenizes at roughly 1 token/char, so one modest screenshot can cost 100k+ tokens to pass through this call.",
+            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. To embed an image OR a web font CHEAPLY (no base64 in this call), upload the raw bytes to POST /v1/assets first (PNG/JPEG/GIF/WebP/WOFF/WOFF2) — the response's `url` is a permanent public link; paste it into an `<img src>`, a CSS `url()`, or markdown `![]()`. Never inline a base64 data: URI here — it tokenizes at roughly 1 token/char (one modest screenshot can cost 100k+ tokens), and content carried through your context can be silently mistranscribed; binaries should travel as bytes. If you have shell access and the file is large, you can also POST it directly to /v1/artifacts (raw body) with your bearer token — zero tokens through this call.",
           ),
         files: z
           .record(z.string(), z.string())
@@ -1658,6 +1661,10 @@ async function buildServer(
           kind: artifact.kind,
           version: version.n,
           url,
+          // Single-file publishes report the stored bytes' sha256 (the content-
+          // addressed blob key) so callers can verify what landed matches what
+          // they sent.
+          ...(artifact.kind === "file" ? { content_sha256: version.blob_key } : {}),
           ...(pageUrls ? { page_urls: pageUrls } : {}),
           title: artifact.title,
           workspace_access: artifact.workspace_access,
