@@ -46,14 +46,15 @@ function appWithGrant(
     new Date(Date.now() + 3_600_000).toISOString(),
   )
   db.close()
+  const blobs = new FsBlobStore(join(dir, `${name}-blobs`))
   const app = createApp({
     meta,
-    blobs: new FsBlobStore(join(dir, `${name}-blobs`)),
+    blobs,
     baseUrl: "http://derive.test",
     token: "tok",
     ...extra,
   })
-  return { app, token: `tok_${name}`, meta }
+  return { app, token: `tok_${name}`, meta, blobs }
 }
 
 type App = ReturnType<typeof createApp>
@@ -760,6 +761,54 @@ describe("remote MCP endpoint (/mcp)", () => {
       .short_id
     const none = toolText(await call(app, token, "read", { short_id: md, section: "@1" }))
     expect(none).toContain("no landmark regions")
+  })
+
+  it("read render:true — the publish→look loop (pending, ready as an image, failed)", async () => {
+    const { app, token, meta, blobs } = appWithGrant("render", "openid derive:read derive:publish")
+    const pub = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Styled page",
+          content: "<!DOCTYPE html><html><body><h1>Hi</h1></body></html>",
+          filename: "page.html",
+        }),
+      ),
+    )
+    const id = pub.short_id
+    // The publish receipt steers to the render read.
+    expect(pub.render).toContain("render:true")
+
+    // Before the pipeline finishes: an actionable not-ready message, not a failure.
+    const pending = toolText(await call(app, token, "read", { short_id: id, render: true }))
+    expect(pending).toContain("isn't ready yet")
+
+    // render + section/lines is rejected as contradictory.
+    const both = toolText(
+      await call(app, token, "read", { short_id: id, render: true, lines: "1" }),
+    )
+    expect(both).toContain("pass it alone")
+
+    // Seed a ready render (what the previews worker writes) and read it back as an image.
+    const art = await meta.getByShortId(id)
+    if (!art) throw new Error("no artifact")
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4])
+    const key = await blobs.put(png)
+    await meta.setVersionPreview(art.id, 1, { preview_key: key, preview_status: "ready" })
+    const r = await call(app, token, "read", { short_id: id, render: true })
+    const content = (
+      r.parsed?.result as {
+        content?: { type: string; text?: string; mimeType?: string; data?: string }[]
+      }
+    )?.content
+    expect(content?.[0]?.text).toContain(`render of "${id}" v1`)
+    expect(content?.[1]?.type).toBe("image")
+    expect(content?.[1]?.mimeType).toBe("image/png")
+    expect(content?.[1]?.data?.length).toBeGreaterThan(0)
+
+    // A failed render reports the reason and points at the page.
+    await meta.setVersionPreview(art.id, 1, { preview_status: "failed", preview_error: "timeout" })
+    const failed = toolText(await call(app, token, "read", { short_id: id, render: true }))
+    expect(failed).toContain("failed (timeout)")
   })
 
   it("read: windowed `lines` returns a range, and rejects bad input", async () => {

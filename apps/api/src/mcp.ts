@@ -465,7 +465,9 @@ async function buildServer(
         `first for large documents or bundles, so pull sections by heading slug or page path once ` +
         `you know what you want; pass format:'html' for the exact source. On a large artifact, use ` +
         `search to grep for a spot and read's \`lines\` to window just that range, instead of ` +
-        `pulling the whole thing. Use comment to leave or ` +
+        `pulling the whole thing. After publishing a styled page, call read with render:true to ` +
+        `SEE what shipped (a screenshot of the served page) — it catches visual breakage no text ` +
+        `read can. Use comment to leave or ` +
         `resolve feedback. ${writeGuidance}To change PART of an artifact, prefer publish's edits ` +
         `(exact-match search/replace against the stored source) over resending everything. When a ` +
         `revision fixes specific feedback, pass those thread ids as publish's "addresses" so the ` +
@@ -767,11 +769,17 @@ async function buildServer(
           .describe(
             'Windowed read: a 1-indexed inclusive line range of the body in the chosen format — "40-120", "40" (one line), or "40-" (to the end). Windows a single-file doc, or one bundle page named by a bare `section` path. Pair with format:"html" to window the exact source before an edit. Skips the outline; still capped.',
           ),
+        render: z
+          .boolean()
+          .optional()
+          .describe(
+            "SEE the published page: returns the version's rendered screenshot (top of the page, 1200x630) as an image — what a viewer actually sees, catching visual breakage (a failed font, a broken layout) that no text read can. Computed seconds after each publish; pass alone (optionally with `version`).",
+          ),
         version: z.number().optional().describe("Defaults to the current version."),
         workspace: wsArg,
       },
     },
-    async ({ short_id, section, format, version, lines, workspace }) => {
+    async ({ short_id, section, format, version, lines, render, workspace }) => {
       const fmt: ReadFormat = format ?? "markdown"
       const r = await reach(short_id, workspace)
       if (r && "error" in r) return err(r.error)
@@ -783,6 +791,44 @@ async function buildServer(
       const v = await ctx.meta.getVersion(a.id, n)
       if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
       const url = artifactUrl(ctx.deps.baseUrl, a)
+
+      // The render rung: the version's screenshot, so an agent SEES what it shipped.
+      // The preview pipeline computes one per publish (previews.ts); this surfaces it.
+      if (render) {
+        if (section || lines)
+          return err(
+            "`render` is a view of the whole version — pass it alone (with `version` for history).",
+          )
+        if (v.preview_status === "ready" && v.preview_key) {
+          const png = await ctx.blobs.get(v.preview_key)
+          if (png) {
+            if (png.length > IMAGE_INLINE_MAX)
+              return json({
+                short_id,
+                version: n,
+                render: "ready",
+                bytes: png.length,
+                note: `Too large to inline over MCP — open ${url} to view the page.`,
+              })
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `render of "${short_id}" v${n} — the published page as a viewer sees it (top of the page, 1200x630, ${png.length} bytes). The source is untouched; use read/search for the text.`,
+                },
+                { type: "image" as const, data: toBase64(png), mimeType: "image/png" },
+              ],
+            }
+          }
+        }
+        if (v.preview_status === "failed")
+          return err(
+            `The render of "${short_id}" v${n} failed${v.preview_error ? ` (${v.preview_error})` : ""} — the page may still be fine; open ${url} to check, or republish to retry.`,
+          )
+        return err(
+          `The render of "${short_id}" v${n} isn't ready yet — screenshots are computed a few seconds after publish. Try again shortly.`,
+        )
+      }
       const manifest = await manifestOf(ctx, v)
 
       if (!manifest) {
@@ -2029,6 +2075,9 @@ async function buildServer(
           // they sent.
           ...(artifact.kind === "file" ? { content_sha256: version.blob_key } : {}),
           ...(pageUrls ? { page_urls: pageUrls } : {}),
+          // The publish→look loop: a screenshot of the served page is queued at every
+          // publish; seeing it is the only way to catch purely-visual breakage.
+          render: `queued — call read(short_id:"${artifact.short_id}", render:true) in a few seconds to SEE the published page.`,
           title: artifact.title,
           workspace_access: artifact.workspace_access,
           link_role: artifact.link_role,
