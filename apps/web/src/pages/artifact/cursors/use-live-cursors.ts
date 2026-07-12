@@ -21,9 +21,9 @@ export function useLiveCursors(
   shortId: string,
   selfId: string,
 ): {
-  onPointerMove: (x: number, y: number, slide?: number, sf?: number) => void
+  onPointerMove: (x: number, y: number, slide?: number, sf?: number, live?: boolean) => void
   onPointerLeave: () => void
-  onTap: (x: number, y: number, slide?: number, sf?: number) => void
+  onTap: (x: number, y: number, slide?: number, sf?: number, live?: boolean) => void
   paintFrame: (f: CursorFrame) => void
   setGeom: (g: { scrollY: number; docH: number; viewH: number }) => void
   setViewSlide: (slide: number | null) => void
@@ -34,7 +34,7 @@ export function useLiveCursors(
   setFollowScroll: (fn: ((frac: number) => void) | null) => void
   layer: CursorLayerHandle
 } {
-  const send = useCursorSend(shortId, selfId)
+  const send = useCursorSend(shortId)
   const paint = useCursorPaint(selfId)
 
   return { ...send, ...paint }

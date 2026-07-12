@@ -4,9 +4,9 @@ import type { Comment } from "@/api"
 import { groupThreads } from "./lib/layout"
 import { type AnchorConf, type FrameGeom, type Panel, parseAnchor, type Selection } from "./types"
 
-// Two `anchor-rects` posts with identical tops must not re-render the page: the
-// frame's dedupe signature includes scrollY, so an ANIMATING artifact (a ticker,
-// a live chart) re-posts unchanged tops every frame during scroll.
+// Keep `anchorTops` referentially stable when the tops are unchanged, so a re-post doesn't
+// churn the comment layout. The frame already dedupes anchor-rects on tops before sending
+// (geometry rides its own `scroll` message now), so this is belt-and-suspenders.
 const sameTops = (a: Record<string, number>, b: Record<string, number>): boolean => {
   const ka = Object.keys(a)
   if (ka.length !== Object.keys(b).length) return false
@@ -35,9 +35,9 @@ export function useArtifactFrame(p: {
    *  the mouse over its card, so picking a comment (click, or Prev/Next) reads
    *  as a persistent selection, not a hover trick you have to hold. */
   activeThread: string | null
-  onPointerMove: (x: number, y: number, slide?: number, sf?: number) => void
+  onPointerMove: (x: number, y: number, slide?: number, sf?: number, live?: boolean) => void
   onPointerLeave: () => void
-  onTap: (x: number, y: number, slide?: number, sf?: number) => void
+  onTap: (x: number, y: number, slide?: number, sf?: number, live?: boolean) => void
   setHoverThread: Dispatch<SetStateAction<string | null>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
   setPanel: Dispatch<SetStateAction<Panel>>
@@ -172,7 +172,6 @@ export function useArtifactFrame(p: {
       } else if (d.type === "anchor-rects") {
         const tops: Record<string, number> = d.tops ?? {}
         setAnchorTops((prev) => (sameTops(prev, tops) ? prev : tops))
-        updateGeom(d)
       } else if (d.type === "scroll") {
         updateGeom(d)
       } else if (d.type === "anchor-hover") setHoverThread(d.id ?? null)
@@ -180,9 +179,9 @@ export function useArtifactFrame(p: {
         setActiveThread(d.id)
         setPanel((cur) => (cur === "open" ? cur : "open"))
       } else if (d.type === "cursor" && typeof d.x === "number" && typeof d.y === "number") {
-        onPointerMove(d.x, d.y, deckRef.current?.i, d.sf)
+        onPointerMove(d.x, d.y, deckRef.current?.i, d.sf, d.live)
       } else if (d.type === "cursor-tap" && typeof d.x === "number" && typeof d.y === "number") {
-        onTap(d.x, d.y, deckRef.current?.i, d.sf)
+        onTap(d.x, d.y, deckRef.current?.i, d.sf, d.live)
       } else if (d.type === "cursor-leave") {
         onPointerLeave()
       } else if (d.type === "user-scroll") {

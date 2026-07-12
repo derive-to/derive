@@ -143,16 +143,16 @@ const RemoteCursor = memo(function RemoteCursor({
   )
 })
 
-// A click ripple — a ring that expands and fades once. Positioned by percentage
-// so it's resolution-independent (no layout read needed); the keyframe lives in
-// globals.css (derive-cursor-ripple).
+// A click ripple — a ring that expands and fades once, at the SCREEN position the paint
+// loop already mapped from the tapper's document coords + our scroll (so it lands on the
+// tapped content, not a viewport fraction). The keyframe lives in globals.css.
 function RippleDot({ ripple }: { ripple: Ripple }) {
   return (
     <span
       className="absolute block size-5 rounded-full border-2"
       style={{
-        left: `${ripple.x * 100}%`,
-        top: `${ripple.y * 100}%`,
+        left: `${ripple.x}px`,
+        top: `${ripple.y}px`,
         borderColor: ripple.color,
         animation: "derive-cursor-ripple 620ms ease-out forwards",
       }}
