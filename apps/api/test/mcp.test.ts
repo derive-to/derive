@@ -112,6 +112,20 @@ const publish = (app: App, token: string, title: string) => {
   })
 }
 
+// Publish arbitrary bytes under a chosen filename (so the sniffer types it), for the
+// search/windowed-read tests that need real multi-line source, not an `<h1>` stub.
+const publishRaw = (app: App, token: string, content: string, filename: string, title: string) => {
+  const form = new FormData()
+  form.append("file", new Blob([new TextEncoder().encode(content)]), filename)
+  form.append("title", title)
+  form.append("visibility", "link")
+  return app.request("/v1/artifacts", {
+    method: "POST",
+    body: form,
+    headers: { authorization: `Bearer ${token}` },
+  })
+}
+
 const call = (app: App, token: string, name: string, args: Record<string, unknown> = {}) =>
   rpc(app, token, {
     jsonrpc: "2.0",
@@ -148,6 +162,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       "list_workspaces",
       "publish",
       "read",
+      "search",
     ])
     // Consolidated away — folded into catch_up / comment / publish.
     for (const gone of [
@@ -596,6 +611,133 @@ describe("remote MCP endpoint (/mcp)", () => {
       toolText(await call(app, token, "catch_up", { short_id: shortId, since_version: 1 })),
     )
     expect(cu.pages_changed.added).toContain("new.html")
+  })
+
+  it("search: literal matches with line numbers, context, case, and regex", async () => {
+    const { app, token } = appWithGrant("search", "openid derive:read derive:publish")
+    const md = [
+      "# Plan",
+      "",
+      "alpha line",
+      "beta line with Pricing",
+      "gamma line",
+      "more pricing here",
+    ].join("\n")
+    const id = (await (await publishRaw(app, token, md, "plan.md", "Plan")).json()).short_id
+
+    // Literal, case-insensitive by default: both "Pricing" and "pricing" lines match.
+    const hit = toolText(await call(app, token, "search", { short_id: id, query: "pricing" }))
+    expect(hit).toContain("2 matches")
+    expect(hit).toContain("4: beta line with Pricing")
+    expect(hit).toContain("6: more pricing here")
+
+    // Case-sensitive narrows to the capital-P line only.
+    const cs = toolText(
+      await call(app, token, "search", { short_id: id, query: "Pricing", case_sensitive: true }),
+    )
+    expect(cs).toContain("1 match")
+    expect(cs).toContain("4: beta line with Pricing")
+    expect(cs).not.toContain("6:")
+
+    // Context shows neighbouring lines with a dash marker, matches with a colon.
+    const withCtx = toolText(
+      await call(app, token, "search", { short_id: id, query: "beta", context: 1 }),
+    )
+    expect(withCtx).toContain("3- alpha line")
+    expect(withCtx).toContain("4: beta line with Pricing")
+    expect(withCtx).toContain("5- gamma line")
+
+    // Regex matches a pattern; an invalid regex is an actionable error.
+    const rx = toolText(
+      await call(app, token, "search", { short_id: id, query: "^gamma", regex: true }),
+    )
+    expect(rx).toContain("5: gamma line")
+    const bad = await call(app, token, "search", { short_id: id, query: "(unclosed", regex: true })
+    expect(toolText(bad)).toContain("Invalid regex")
+
+    // A literal query with regex metachars matches verbatim (no regex:true).
+    const literal = toolText(await call(app, token, "search", { short_id: id, query: "line with" }))
+    expect(literal).toContain("4: beta line with Pricing")
+
+    // No matches steers toward the text scope.
+    const none = toolText(await call(app, token, "search", { short_id: id, query: "zzznothere" }))
+    expect(none).toContain("no matches")
+  })
+
+  it("search: source vs text scope on HTML, and bundles grouped by page", async () => {
+    const { app, token } = appWithGrant("search2", "openid derive:read derive:publish")
+    const html = "<h1>Heading</h1>\n<p>visible pricing text</p>"
+    const id = (await (await publishRaw(app, token, html, "page.html", "Page")).json()).short_id
+
+    // Source search sees the tags; text search sees only the visible words.
+    const inSource = toolText(await call(app, token, "search", { short_id: id, query: "h1" }))
+    expect(inSource).toContain("in source")
+    expect(inSource).toContain("<h1>Heading</h1>")
+    const inText = toolText(
+      await call(app, token, "search", { short_id: id, query: "h1", in: "text" }),
+    )
+    expect(inText).toContain("no matches")
+    const wordInText = toolText(
+      await call(app, token, "search", { short_id: id, query: "pricing", in: "text" }),
+    )
+    expect(wordInText).toContain("in text")
+    expect(wordInText).toContain("pricing")
+
+    // Bundle: matches across pages are grouped under each page path.
+    const enc = (s: string) => new TextEncoder().encode(s)
+    const form = new FormData()
+    form.append(
+      "file",
+      new Blob([
+        zipSync({
+          "index.html": enc("<h1>needle home</h1>"),
+          "about.html": enc("<p>needle about</p>"),
+        }),
+      ]),
+      "site.zip",
+    )
+    form.append("title", "Site")
+    form.append("visibility", "link")
+    const bundleId = (
+      await (
+        await app.request("/v1/artifacts", {
+          method: "POST",
+          body: form,
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).json()
+    ).short_id
+    const across = toolText(
+      await call(app, token, "search", { short_id: bundleId, query: "needle" }),
+    )
+    expect(across).toContain("index.html")
+    expect(across).toContain("about.html")
+    expect(across).toContain("2 matches")
+  })
+
+  it("read: windowed `lines` returns a range, and rejects bad input", async () => {
+    const { app, token } = appWithGrant("window", "openid derive:read derive:publish")
+    const md = ["# Doc", "line two", "line three", "line four", "line five"].join("\n")
+    const id = (await (await publishRaw(app, token, md, "doc.md", "Doc")).json()).short_id
+
+    const win = toolText(await call(app, token, "read", { short_id: id, lines: "2-3" }))
+    expect(win).toContain("lines: 2-3 of 5")
+    expect(win).toContain("line two")
+    expect(win).toContain("line three")
+    expect(win).not.toContain("line four")
+
+    // "4-" runs to the end; a single number is one line.
+    const toEnd = toolText(await call(app, token, "read", { short_id: id, lines: "4-" }))
+    expect(toEnd).toContain("lines: 4-5 of 5")
+    expect(toEnd).toContain("line five")
+    const one = toolText(await call(app, token, "read", { short_id: id, lines: "1" }))
+    expect(one).toContain("lines: 1-1 of 5")
+
+    // lines + section is rejected; a malformed range is an actionable error.
+    const both = await call(app, token, "read", { short_id: id, lines: "2-3", section: "doc" })
+    expect(toolText(both)).toContain("Pass `lines` OR `section`")
+    const bad = await call(app, token, "read", { short_id: id, lines: "nope" })
+    expect(toolText(bad)).toContain("Bad `lines`")
   })
 
   it("read: formats, heading sections, and the outline-first threshold", async () => {

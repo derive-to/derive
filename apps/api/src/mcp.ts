@@ -165,6 +165,116 @@ const toBase64 = (bytes: Uint8Array): string => {
   return out
 }
 
+// A 1-indexed, inclusive line range for windowed reads: "40-120", "40" (one line),
+// or "40-" (from 40 to the end). Returns null on a malformed or inverted range.
+const parseLineRange = (spec: string, total: number): { from: number; to: number } | null => {
+  const m = spec.trim().match(/^(\d+)(?:-(\d*))?$/)
+  if (!m) return null
+  const from = Number(m[1])
+  if (from < 1) return null
+  const to = m[2] === undefined ? from : m[2] === "" ? total : Number(m[2])
+  if (to < from) return null
+  return { from, to: Math.min(to, total) }
+}
+
+// One line-oriented match hunk: the matched line plus its context, with line numbers.
+interface SearchHunk {
+  from: number
+  lines: { n: number; text: string; hit: boolean }[]
+}
+// Scan `content` for `re` line by line, ripgrep-style: each matching line becomes a
+// hunk carrying `context` lines either side. Adjacent/overlapping hunks merge so a
+// run of hits reads as one block. Caps at `max` matches; returns whether it was cut.
+const scanLines = (
+  content: string,
+  re: RegExp,
+  context: number,
+  max: number,
+): { hunks: SearchHunk[]; total: number } => {
+  const lines = content.split("\n")
+  const hitRows: number[] = []
+  for (let i = 0; i < lines.length; i++) {
+    re.lastIndex = 0
+    if (re.test(lines[i] as string)) hitRows.push(i)
+  }
+  const capped = hitRows.slice(0, max)
+  const hunks: SearchHunk[] = []
+  for (const row of capped) {
+    const lo = Math.max(0, row - context)
+    const hi = Math.min(lines.length - 1, row + context)
+    const last = hunks[hunks.length - 1]
+    // Merge into the previous hunk when its context window touches this one.
+    if (last && lo <= last.from - 1 + last.lines.length) {
+      for (let i = last.from - 1 + last.lines.length; i <= hi; i++)
+        last.lines.push({ n: i + 1, text: lines[i] as string, hit: false })
+      last.lines[row - (last.from - 1)] = { n: row + 1, text: lines[row] as string, hit: true }
+      continue
+    }
+    const block: SearchHunk["lines"] = []
+    for (let i = lo; i <= hi; i++)
+      block.push({ n: i + 1, text: lines[i] as string, hit: i === row })
+    hunks.push({ from: lo + 1, lines: block })
+  }
+  return { hunks, total: hitRows.length }
+}
+
+// Render hunks ripgrep-style: `  142: hit line` for matches, `  141- context` for
+// context, a blank line between hunks. Line text is trimmed of a trailing CR and
+// clipped so one enormous minified line can't blow the budget.
+const LINE_CLIP = 400
+const renderHunks = (hunks: SearchHunk[]): string =>
+  hunks
+    .map((h) =>
+      h.lines
+        .map((l) => {
+          const t = l.text.replace(/\r$/, "")
+          const shown = t.length > LINE_CLIP ? `${t.slice(0, LINE_CLIP)}…` : t
+          return `  ${l.n}${l.hit ? ":" : "-"} ${shown}`
+        })
+        .join("\n"),
+    )
+    .join("\n\n")
+
+// Assemble the ripgrep-style search report: a header with the total, each page's
+// hunks (bundle pages labelled), and a steer to act. `cap` names the per-page match
+// ceiling so a capped result reads honestly. Clipped to the response budget.
+const searchReport = (
+  shortId: string,
+  query: string,
+  where: string,
+  total: number,
+  cap: number,
+  groups: { path: string | null; hunks: SearchHunk[] }[],
+  note?: string | null,
+): string => {
+  if (total === 0)
+    return `${shortId} — no matches for "${query}" in ${where}.${
+      where === "source" ? " Try in:'text' to search the visible text, or regex:true." : ""
+    }`
+  const shown = groups.filter((g) => g.hunks.length > 0)
+  const head = `${shortId} — ${total} match${total === 1 ? "" : "es"} for "${query}" in ${where}${
+    note ? ` (${note})` : ""
+  }${total > cap ? `, showing the first ${cap} per page` : ""}`
+  const body = shown
+    .map((g) => (g.path ? `${g.path}\n${renderHunks(g.hunks)}` : renderHunks(g.hunks)))
+    .join("\n\n")
+  const steer = '\n\nRead a spot with read(lines:"from-to"), or edit it via publish edits.'
+  return clip(`${head}\n\n${body}${steer}`)
+}
+
+// Build the case/regex flags and compiled matcher for `search`. A literal query is
+// escaped so an agent pasting "$31k" or "a.b()" matches verbatim; regex:true takes
+// the query as a pattern. Returns null when a regex fails to compile.
+const searchMatcher = (query: string, isRegex: boolean, caseSensitive: boolean): RegExp | null => {
+  const flags = caseSensitive ? "g" : "gi"
+  if (!isRegex) return new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags)
+  try {
+    return new RegExp(query, flags)
+  } catch {
+    return null
+  }
+}
+
 const summarizeArtifact = (a: ArtifactRecord) => ({
   short_id: a.short_id,
   title: a.title,
@@ -316,7 +426,9 @@ async function buildServer(
         `Start a session with catch_up to re-sync on what changed and what feedback is open; use ` +
         `read to view content — it returns Markdown by default (HTML is converted) and an outline ` +
         `first for large documents or bundles, so pull sections by heading slug or page path once ` +
-        `you know what you want; pass format:'html' for the exact source. Use comment to leave or ` +
+        `you know what you want; pass format:'html' for the exact source. On a large artifact, use ` +
+        `search to grep for a spot and read's \`lines\` to window just that range, instead of ` +
+        `pulling the whole thing. Use comment to leave or ` +
         `resolve feedback. ${writeGuidance}To change PART of an artifact, prefer publish's edits ` +
         `(exact-match search/replace against the stored source) over resending everything. When a ` +
         `revision fixes specific feedback, pass those thread ids as publish's "addresses" so the ` +
@@ -612,11 +724,17 @@ async function buildServer(
           .describe(
             "markdown (default): HTML converted to structured Markdown — headings, lists, tables, code fences; Markdown sources return as-is. html: the exact stored source — read this BEFORE publish `edits` on an HTML artifact (edits match raw source). text: flat visible text, exactly what comment `quote`s anchor against.",
           ),
+        lines: z
+          .string()
+          .optional()
+          .describe(
+            'Windowed read: a 1-indexed inclusive line range of the body in the chosen format — "40-120", "40" (one line), or "40-" (to the end). Windows a single-file doc, or one bundle page named by a bare `section` path. Pair with format:"html" to window the exact source before an edit. Skips the outline; still capped.',
+          ),
         version: z.number().optional().describe("Defaults to the current version."),
         workspace: wsArg,
       },
     },
-    async ({ short_id, section, format, version, workspace }) => {
+    async ({ short_id, section, format, version, lines, workspace }) => {
       const fmt: ReadFormat = format ?? "markdown"
       const r = await reach(short_id, workspace)
       if (r && "error" in r) return err(r.error)
@@ -641,6 +759,26 @@ async function buildServer(
           kind: a.kind,
           format: formatLabel(ct, fmt),
           url,
+        }
+        if (lines) {
+          if (section && section !== "*")
+            return err("Pass `lines` OR `section`, not both — windowing applies to the whole doc.")
+          const body = present(src, ct, fmt)
+          const all = body.split("\n")
+          const range = parseLineRange(lines, all.length)
+          if (!range)
+            return err(
+              `Bad \`lines\` "${lines}" for "${short_id}" v${n} (1..${all.length}) — use "40-120", "40", or "40-".`,
+            )
+          const windowed = all.slice(range.from - 1, range.to).join("\n")
+          return doc(
+            {
+              ...meta,
+              lines: `${range.from}-${range.to} of ${all.length}`,
+              chars: windowed.length,
+            },
+            clip(windowed),
+          )
         }
         if (section && section !== "*") {
           const slice = sectionOf(src, ct, section)
@@ -799,6 +937,27 @@ async function buildServer(
         url,
         type: file.type,
       }
+      if (lines) {
+        if (slug)
+          return err("Pass `lines` OR a #slug, not both — windowing applies to a whole page.")
+        const pageBody = isText ? present(raw, file.type, fmt) : raw
+        const all = pageBody.split("\n")
+        const range = parseLineRange(lines, all.length)
+        if (!range)
+          return err(
+            `Bad \`lines\` "${lines}" for "${cleanPath(pagePath)}" (1..${all.length}) — use "40-120", "40", or "40-".`,
+          )
+        const windowed = all.slice(range.from - 1, range.to).join("\n")
+        return doc(
+          {
+            ...meta,
+            section: cleanPath(pagePath),
+            lines: `${range.from}-${range.to} of ${all.length}`,
+            chars: windowed.length,
+          },
+          clip(windowed),
+        )
+      }
       if (slug) {
         if (!isText)
           return err(`"${pagePath}" is ${file.type} — heading sections only apply to text pages.`)
@@ -859,6 +1018,102 @@ async function buildServer(
         },
         clipDoc(body, outline),
       )
+    },
+  )
+
+  // SEARCH — grep within one artifact, so an agent finds a spot without a full read
+  server.registerTool(
+    "search",
+    {
+      description:
+        "Find text WITHIN one artifact — grep, not a full read. Returns matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range or `edit` that spot. Searches the exact source by default (in:'text' searches the visible text instead). A bundle is searched across all its text pages, grouped by page. Literal by default; pass regex:true for a pattern.",
+      inputSchema: {
+        short_id: z.string().describe("The artifact's short id, e.g. nk0dsral."),
+        query: z.string().describe("What to find. Matched literally unless regex:true."),
+        regex: z
+          .boolean()
+          .optional()
+          .describe("Treat `query` as a JavaScript regular expression (default false = literal)."),
+        case_sensitive: z.boolean().optional().describe("Default false."),
+        in: z
+          .enum(["source", "text"])
+          .optional()
+          .describe(
+            "source (default): the exact stored bytes — the positions you'd `edit`. text: the visible text a reader sees (HTML tags stripped).",
+          ),
+        context: z
+          .number()
+          .optional()
+          .describe("Lines of surrounding context to show around each match (default 0, max 5)."),
+        max_matches: z
+          .number()
+          .optional()
+          .describe("Cap on matches returned (default 40, max 200)."),
+        version: z.number().optional().describe("Defaults to the current version."),
+        workspace: wsArg,
+      },
+    },
+    async ({
+      short_id,
+      query,
+      regex,
+      case_sensitive,
+      in: scope,
+      context,
+      max_matches,
+      version,
+      workspace,
+    }) => {
+      if (!query) return err("`query` is required.")
+      const r = await reach(short_id, workspace)
+      if (r && "error" in r) return err(r.error)
+      if (!r) return notFound(short_id)
+      const a = r.a
+      const n = version ?? a.current_version
+      if (n < 1 || n > a.current_version)
+        return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
+      const v = await ctx.meta.getVersion(a.id, n)
+      if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
+      const re = searchMatcher(query, regex ?? false, case_sensitive ?? false)
+      if (!re) return err(`Invalid regex: ${query}`)
+      const ctxLines = Math.min(Math.max(context ?? 0, 0), 5)
+      const cap = Math.min(Math.max(max_matches ?? 40, 1), 200)
+      const where = scope ?? "source"
+      // What each page's searchable content is, in the chosen scope: exact source, or
+      // the visible text (tags stripped) for HTML — Markdown/plain ARE their own text.
+      const contentFor = (raw: string, ct: string) =>
+        where === "text" ? present(raw, ct, "text") : raw
+      const manifest = await manifestOf(ctx, v)
+
+      if (!manifest) {
+        const src = (await ctx.sourceText(v)) ?? ""
+        const { hunks, total } = scanLines(contentFor(src, v.content_type), re, ctxLines, cap)
+        return text(searchReport(short_id, query, where, total, cap, [{ path: null, hunks }]))
+      }
+
+      // Bundle: search every text page (capped), grouped by page. Blob reads run in
+      // parallel; non-text files (images, css/js are text but binaries aren't) skip.
+      const pages = Object.keys(manifest.files)
+        .filter((p) => isTextType(manifest.files[p]?.type ?? ""))
+        .sort((x, y) => x.split("/").length - y.split("/").length || x.localeCompare(y))
+      const PAGE_SCAN_CAP = 50
+      const scanned = pages.slice(0, PAGE_SCAN_CAP)
+      const perPage = await Promise.all(
+        scanned.map(async (p) => {
+          const file = manifest.files[p]
+          if (!file) return null
+          const bytes = await ctx.blobs.get(file.key)
+          if (!bytes) return null
+          const raw = new TextDecoder().decode(bytes)
+          const { hunks, total } = scanLines(contentFor(raw, file.type), re, ctxLines, cap)
+          return total ? { path: cleanPath(p), hunks, total } : null
+        }),
+      )
+      const groups = perPage.filter((g) => g !== null)
+      const total = groups.reduce((sum, g) => sum + g.total, 0)
+      const note =
+        pages.length > PAGE_SCAN_CAP ? `first ${PAGE_SCAN_CAP} of ${pages.length} pages` : null
+      return text(searchReport(short_id, query, where, total, cap, groups, note))
     },
   )
 
