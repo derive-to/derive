@@ -4,11 +4,14 @@ import {
   applyEdits,
   docOutline,
   EditError,
+  enclosingMarker,
   headingSlug,
   htmlToMarkdown,
   landmarkMap,
+  landmarkSlice,
   landmarksOf,
   outlineOf,
+  sectionMarkers,
   sectionOf,
   sectionSlice,
   toMarkdown,
@@ -316,6 +319,55 @@ describe("landmarkMap (headless-page fallback)", () => {
   it("landmarksOf returns [] for markdown and for HTML (via the facade only when html)", () => {
     expect(landmarksOf("# just markdown", "text/markdown")).toEqual([])
     expect(landmarksOf(doc("<main><p>hi</p></main>"), "text/html")).toHaveLength(1)
+  })
+})
+
+describe("landmarkSlice (region-addressable reads)", () => {
+  const html = doc(
+    '<nav aria-label="Nav">n</nav><main><p>the main body</p></main><footer>fin</footer>',
+  )
+  it("returns the Nth top-level region's raw HTML, matching the map order", () => {
+    expect(landmarkSlice(html, 1)).toContain("<nav")
+    expect(landmarkSlice(html, 2)).toContain("the main body")
+    expect(landmarkSlice(html, 2)?.startsWith("<main>")).toBe(true)
+    expect(landmarkSlice(html, 3)).toContain("fin")
+    expect(landmarkSlice(html, 4)).toBeNull() // no 4th region
+    expect(landmarkSlice(html, 0)).toBeNull()
+  })
+})
+
+describe("sectionMarkers + enclosingMarker (self-locating search)", () => {
+  it("markers = ATX headings for markdown, with 1-based line numbers", () => {
+    const md = "# Top\nintro\n\n## Alpha\nbody\n\n## Beta\nmore"
+    expect(sectionMarkers(md, "text/markdown")).toEqual([
+      { text: "Top", line: 1 },
+      { text: "Alpha", line: 4 },
+      { text: "Beta", line: 7 },
+    ])
+  })
+
+  it("markers = headings + NESTED labelled landmarks for HTML (the finest section)", () => {
+    // A card inside <main> is the finest enclosing section — top-level-only would miss it.
+    const html =
+      "<body>\n<h1>Report</h1>\n<main>\n<section aria-label='Revenue'>rev</section>\n<section aria-label='Risks'>risk</section>\n</main>\n</body>"
+    const markers = sectionMarkers(html, "text/html")
+    expect(markers).toEqual([
+      { text: "Report", line: 2 },
+      { text: "Revenue", line: 4 },
+      { text: "Risks", line: 5 },
+    ])
+  })
+
+  it("enclosingMarker returns the last marker at or above a line", () => {
+    const markers = [
+      { text: "Report", line: 2 },
+      { text: "Revenue", line: 4 },
+      { text: "Risks", line: 5 },
+    ]
+    expect(enclosingMarker(markers, 1)).toBeNull() // before any marker
+    expect(enclosingMarker(markers, 2)).toBe("Report")
+    expect(enclosingMarker(markers, 4)).toBe("Revenue")
+    expect(enclosingMarker(markers, 10)).toBe("Risks") // after the last marker
   })
 })
 

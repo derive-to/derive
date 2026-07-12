@@ -717,6 +717,51 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(across).toContain("2 matches")
   })
 
+  it("search: matches are self-locating (§ section labels)", async () => {
+    const { app, token } = appWithGrant("srchsec", "openid derive:read derive:publish")
+    const md = [
+      "# Doc",
+      "",
+      "## Budget",
+      "spend is high",
+      "",
+      "## Risks",
+      "the churn risk is real",
+    ].join("\n")
+    const id = (await (await publishRaw(app, token, md, "plan.md", "Plan")).json()).short_id
+
+    // A term in each section is labelled with the heading it falls under.
+    const budget = toolText(await call(app, token, "search", { short_id: id, query: "spend" }))
+    expect(budget).toContain("§ Budget")
+    const risk = toolText(await call(app, token, "search", { short_id: id, query: "churn" }))
+    expect(risk).toContain("§ Risks")
+
+    // On HTML, a nested labelled landmark is the section (not just top-level).
+    const html =
+      "<body>\n<main>\n<section aria-label='Revenue'>the pricing tier</section>\n</main>\n</body>"
+    const hid = (await (await publishRaw(app, token, html, "d.html", "D")).json()).short_id
+    const s = toolText(await call(app, token, "search", { short_id: hid, query: "pricing" }))
+    expect(s).toContain("§ Revenue")
+  })
+
+  it("read: a region ref (@N) reads that region directly, with actionable errors", async () => {
+    const { app, token } = appWithGrant("region", "openid derive:read derive:publish")
+    const html =
+      "<!DOCTYPE html><html><body><nav aria-label='Nav'>n</nav><main><p>the main body here</p></main><footer>fin</footer></body></html>"
+    const id = (await (await publishRaw(app, token, html, "app.html", "App")).json()).short_id
+
+    const region2 = toolText(await call(app, token, "read", { short_id: id, section: "@2" }))
+    expect(region2).toContain("section: @2 of 3 regions")
+    expect(region2).toContain("the main body here")
+    // Out-of-range ref names the real count; a doc with no regions says so.
+    const bad = toolText(await call(app, token, "read", { short_id: id, section: "@9" }))
+    expect(bad).toContain("@1..@3")
+    const md = (await (await publishRaw(app, token, "# Just markdown", "x.md", "X")).json())
+      .short_id
+    const none = toolText(await call(app, token, "read", { short_id: md, section: "@1" }))
+    expect(none).toContain("no landmark regions")
+  })
+
   it("read: windowed `lines` returns a range, and rejects bad input", async () => {
     const { app, token } = appWithGrant("window", "openid derive:read derive:publish")
     const md = ["# Doc", "line two", "line three", "line four", "line five"].join("\n")

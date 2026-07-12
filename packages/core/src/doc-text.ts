@@ -600,6 +600,77 @@ export function landmarkMap(html: string): LandmarkRegion[] {
   })
 }
 
+/** The raw-HTML slice of the Nth (1-based) top-level landmark region — what a headless
+ *  page's region map addresses. Null when there is no Nth region. */
+export function landmarkSlice(html: string, n: number): string | null {
+  const span = landmarkSpans(html)[n - 1]
+  return span ? html.slice(span.start, span.end) : null
+}
+
+/** A named position in a document — a heading, or (for HTML) a labelled landmark —
+ *  with its 1-based line number. Lets a search annotate each match with the section it
+ *  falls in ("§ Revenue"), so a hit deep in a doc is self-locating. */
+export interface SectionMarker {
+  text: string
+  line: number
+}
+
+// Every labelled landmark element by open-tag position — nested included, unlike the
+// top-level-only `landmarkSpans` the map uses. Search wants the FINEST enclosing
+// section (a card inside <main>), so it needs the inner labels too. Drop-subtree
+// masking mirrors headingSpans so a landmark inside <script>/<template> is ignored.
+const labelledLandmarks = (html: string): { label: string; start: number }[] => {
+  const drop: [number, number][] = []
+  DROP_SUBTREE.lastIndex = 0
+  for (let dm = DROP_SUBTREE.exec(html); dm; dm = DROP_SUBTREE.exec(html))
+    drop.push([dm.index, dm.index + dm[0].length])
+  const inDrop = (p: number) => drop.some(([s, e]) => p >= s && p < e)
+  const out: { label: string; start: number }[] = []
+  TOKEN.lastIndex = 0
+  for (let m = TOKEN.exec(html); m; m = TOKEN.exec(html)) {
+    if (inDrop(m.index)) continue
+    const tag = parseTag(m[0] as string, m.index)
+    if (!tag || tag.closing || !LANDMARK.has(tag.name)) continue
+    const label = attrOf(tag.attrs, "aria-label") ?? attrOf(tag.attrs, "id")
+    if (label) out.push({ label, start: tag.start })
+  }
+  return out
+}
+
+/** Section markers for `source`, sorted by position: ATX headings for markdown; h1–h6
+ *  plus labelled landmarks (nested included) for HTML. Line numbers are computed in one
+ *  newline pass, so they line up with the raw source an agent greps and windows. */
+export const sectionMarkers = (source: string, contentType: string): SectionMarker[] => {
+  const raw: { text: string; offset: number }[] = []
+  if (isHtmlLike(contentType)) {
+    for (const s of headingSpans(source)) raw.push({ text: s.text, offset: s.start })
+    for (const s of labelledLandmarks(source)) raw.push({ text: s.label, offset: s.start })
+  } else {
+    for (const h of mdHeadings(source)) raw.push({ text: h.text, offset: h.start })
+  }
+  raw.sort((a, b) => a.offset - b.offset)
+  let line = 1
+  let pos = 0
+  return raw.map((m) => {
+    while (pos < m.offset && pos < source.length) {
+      if (source[pos] === "\n") line++
+      pos++
+    }
+    return { text: m.text, line }
+  })
+}
+
+/** The marker a given 1-based line falls under: the last marker at or above it, or null
+ *  when the line precedes every marker. */
+export const enclosingMarker = (markers: SectionMarker[], line: number): string | null => {
+  let found: string | null = null
+  for (const m of markers) {
+    if (m.line > line) break
+    found = m.text
+  }
+  return found
+}
+
 /** The h1–h6 spine of an HTML document. Empty array = unsectionable (no headings). */
 export function docOutline(html: string): OutlineSection[] {
   const spans = headingSpans(html)

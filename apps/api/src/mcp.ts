@@ -30,8 +30,10 @@ import {
   diffLines,
   EditError,
   elideDataUris,
+  enclosingMarker,
   formatDiff,
   isHtmlLike,
+  landmarkSlice,
   landmarksOf,
   looksLikeHtmlDocument,
   newId,
@@ -48,7 +50,9 @@ import {
   type Role,
   resolveBrandprint,
   roleAllows,
+  type SectionMarker,
   SKILL_CONTENT_TYPE,
+  sectionMarkers,
   sectionOf,
   toMarkdown,
   type VersionRecord,
@@ -186,9 +190,25 @@ const parseLineRange = (spec: string, total: number): { from: number; to: number
 }
 
 // One line-oriented match hunk: the matched line plus its context, with line numbers.
+// A hit line carries `section` (the heading/region it falls under, when known) so a hit
+// deep in a doc is self-locating — annotated per hit line, not per hunk, so two matches
+// in different sections that merged into one hunk are each labelled correctly.
 interface SearchHunk {
   from: number
-  lines: { n: number; text: string; hit: boolean }[]
+  lines: { n: number; text: string; hit: boolean; section?: string }[]
+}
+
+// Tag each HIT line with the section it falls under. No-op when there are no markers
+// (an unstructured doc, or a text-scope search whose line numbers don't align with the
+// source the markers come from).
+const annotateSections = (hunks: SearchHunk[], markers: SectionMarker[]): void => {
+  if (!markers.length) return
+  for (const h of hunks)
+    for (const l of h.lines) {
+      if (!l.hit) continue
+      const label = enclosingMarker(markers, l.n)
+      if (label) l.section = label
+    }
 }
 // Scan `content` for `re` line by line, ripgrep-style: each matching line becomes a
 // hunk carrying `context` lines either side. Adjacent/overlapping hunks merge so a
@@ -227,21 +247,30 @@ const scanLines = (
 }
 
 // Render hunks ripgrep-style: `  142: hit line` for matches, `  141- context` for
-// context, a blank line between hunks. Line text is trimmed of a trailing CR and
-// clipped so one enormous minified line can't blow the budget.
+// context, a blank line between hunks. A `§ Section` header precedes a run of hunks
+// that share an enclosing heading/region, so each match is self-locating. Line text is
+// trimmed of a trailing CR and clipped so one enormous minified line can't blow budget.
 const LINE_CLIP = 400
-const renderHunks = (hunks: SearchHunk[]): string =>
-  hunks
-    .map((h) =>
-      h.lines
-        .map((l) => {
-          const t = l.text.replace(/\r$/, "")
-          const shown = t.length > LINE_CLIP ? `${t.slice(0, LINE_CLIP)}…` : t
-          return `  ${l.n}${l.hit ? ":" : "-"} ${shown}`
-        })
-        .join("\n"),
-    )
-    .join("\n\n")
+const renderHunks = (hunks: SearchHunk[]): string => {
+  const blocks: string[] = []
+  let section: string | undefined
+  for (const h of hunks) {
+    const rows: string[] = []
+    for (const l of h.lines) {
+      // A `§ Section` header whenever a hit enters a new section — so a merged hunk
+      // spanning two sections labels each correctly.
+      if (l.hit && l.section && l.section !== section) {
+        section = l.section
+        rows.push(`§ ${section}`)
+      }
+      const t = l.text.replace(/\r$/, "")
+      const shown = t.length > LINE_CLIP ? `${t.slice(0, LINE_CLIP)}…` : t
+      rows.push(`  ${l.n}${l.hit ? ":" : "-"} ${shown}`)
+    }
+    blocks.push(rows.join("\n"))
+  }
+  return blocks.join("\n\n")
+}
 
 // Assemble the ripgrep-style search report: a header with the total, each page's
 // hunks (bundle pages labelled), and a steer to act. `cap` names the per-page match
@@ -724,7 +753,7 @@ async function buildServer(
           .string()
           .optional()
           .describe(
-            'What to read. Single-file doc: a heading slug from the outline (e.g. rollout-plan). Bundle: a page path (agentic-loop.html), optionally with a slug (agentic-loop.html#risks). Pass "*" (or "page.html#*" for a bundle page) to force the full (clipped) document/page. Omit it: small docs/pages return whole, large ones return their outline.',
+            'What to read. Single-file doc: a heading slug from the outline (e.g. rollout-plan), or a region ref like "@2" from a headless page\'s map. Bundle: a page path (agentic-loop.html), optionally with a slug (agentic-loop.html#risks). Pass "*" (or "page.html#*" for a bundle page) to force the full (clipped) document/page. Omit it: small docs/pages return whole, large ones return their outline or region map.',
           ),
         format: z
           .enum(["markdown", "html", "text"])
@@ -788,6 +817,27 @@ async function buildServer(
             clip(windowed),
           )
         }
+        // Region read: "@N" pulls the Nth landmark region from the page map, so a
+        // headless page's map is directly readable, not just orientation.
+        const regionRef = section?.match(/^@(\d+)$/)
+        if (regionRef) {
+          const idx = Number(regionRef[1])
+          const slice = landmarkSlice(src, idx)
+          if (slice === null) {
+            const count = landmarksOf(src, ct).length
+            return err(
+              count
+                ? `No region @${idx} in "${short_id}" — it has ${count} region(s), @1..@${count}. Read with no \`section\` for the map.`
+                : `"${short_id}" has no landmark regions — read a heading \`section\`, a \`lines\` range, or the whole doc.`,
+            )
+          }
+          const body = present(slice, ct, fmt)
+          const count = landmarksOf(src, ct).length
+          return doc(
+            { ...meta, section: `@${idx} of ${count} regions`, chars: body.length },
+            clip(body),
+          )
+        }
         if (section && section !== "*") {
           const slice = sectionOf(src, ct, section)
           if (slice === null) {
@@ -843,11 +893,13 @@ async function buildServer(
               format: fmt,
               doc_chars: body.length,
               url,
-              regions: regions.slice(0, PAGE_MAP_MAX),
+              regions: regions
+                .slice(0, PAGE_MAP_MAX)
+                .map((region, i) => ({ ref: `@${i + 1}`, ...region })),
               ...(regions.length > PAGE_MAP_MAX
                 ? { more_regions: regions.length - PAGE_MAP_MAX }
                 : {}),
-              next: 'This page has no headings — it is mapped by region above. Use `search` to find a term, then read with `lines:"from-to"` to window that part. section:"*" forces the full clipped text.',
+              next: 'This page has no headings — it is mapped by region above. Read a region directly with its `ref` (e.g. section:"@1"), or `search` for a term. section:"*" forces the full clipped text.',
             })
           // Truly unstructured — fall through to a plain (clipped) return, reusing the
           // already-computed (empty) outline instead of asking again.
@@ -1123,11 +1175,18 @@ async function buildServer(
       // the visible text (tags stripped) for HTML — Markdown/plain ARE their own text.
       const contentFor = (raw: string, ct: string) =>
         where === "text" ? present(raw, ct, "text") : raw
+      // Section markers align with the searched content's line numbers only when that
+      // content IS the raw source — i.e. any source-scope search, or a markdown/plain
+      // text-scope search (its text IS the source). An HTML text-scope search greps the
+      // tag-stripped text, whose lines don't map to the source markers, so skip it.
+      const markersFor = (raw: string, ct: string): SectionMarker[] =>
+        where === "source" || !isHtmlLike(ct) ? sectionMarkers(raw, ct) : []
       const manifest = await manifestOf(ctx, v)
 
       if (!manifest) {
         const src = (await ctx.sourceText(v)) ?? ""
         const { hunks, total } = scanLines(contentFor(src, v.content_type), re, ctxLines, cap)
+        annotateSections(hunks, markersFor(src, v.content_type))
         return text(searchReport(short_id, query, where, total, cap, [{ path: null, hunks }]))
       }
 
@@ -1150,6 +1209,7 @@ async function buildServer(
         if (!bytes) return null
         const raw = new TextDecoder().decode(bytes)
         const { hunks, total } = scanLines(contentFor(raw, file.type), re, ctxLines, cap)
+        annotateSections(hunks, markersFor(raw, file.type))
         return total ? { path: cleanPath(p), hunks, total } : null
       }
       const groups: { path: string; hunks: SearchHunk[]; total: number }[] = []
