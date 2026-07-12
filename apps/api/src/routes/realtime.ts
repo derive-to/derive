@@ -20,7 +20,7 @@ export const realtimeRoutes = (ctx: AppContext) => {
     actingUser,
     currentUser,
     actorFor,
-    anonViewerId,
+    guestViewerId,
     requireArtifact,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -40,11 +40,27 @@ export const realtimeRoutes = (ctx: AppContext) => {
     })
     .openapi("Viewer")
 
-  // Server-derived presence identity (never client-supplied): a signed-in user by
-  // their public @handle, an anonymous viewer by a stable friendly handle keyed to
-  // their viewer cookie (no PII, no impersonation). `role` is their effective role on
-  // this artifact, so name/role can't be forged either. Shared by the SSE-lifecycle
-  // presence (join/leave) and the heartbeat backstop.
+  // The anonymous viewer's stable guest token (see guestViewerId). Declared on the
+  // contract routes below so it's visible in the OpenAPI spec + generated types; the SSE
+  // `/events` route reads the same param but is a plain route (streams can't be contract
+  // JSON). Signed-in callers are resolved from their session and ignore it.
+  const GuestQuery = z.object({
+    g: z
+      .string()
+      .optional()
+      .describe("An anonymous viewer's stable guest token; fixes presence to one row per browser."),
+  })
+
+  // Presence identity: a signed-in user by their public @handle + id; an anonymous viewer
+  // by a stable friendly handle derived from the guest token their browser carries (see
+  // guestViewerId). Derived ONCE per call (id and name from the same token, never two mints).
+  // `role` is the caller's EFFECTIVE role from real auth (session / link access / password
+  // unlock) — never from the token — so no capability can be forged, and a signed-in user
+  // can't be impersonated (anon ids are `anon_`-namespaced). The anonymous *display handle*
+  // IS a function of the client token, so it's chosen/collidable between anonymous viewers —
+  // an accepted, cosmetic trade-off (same as PartyKit/Liveblocks client-set ids); it names
+  // nobody real. Shared by the SSE-lifecycle presence and the heartbeat, so both agree on
+  // one identity per browser.
   const deriveViewer = async (
     c: Context,
     artifact: Parameters<typeof actorFor>[1],
@@ -55,9 +71,9 @@ export const realtimeRoutes = (ctx: AppContext) => {
       artifact.workspace_access,
       artifact.link_role,
     )
-    return me
-      ? { id: me.id, name: me.username ?? "someone", role }
-      : { id: anonViewerId(c), name: anonName(anonViewerId(c)), role }
+    if (me) return { id: me.id, name: me.username ?? "someone", role }
+    const gid = guestViewerId(c)
+    return { id: gid, name: anonName(gid), role }
   }
   // Per-connection key so a viewer's multiple tabs ref-count correctly on the
   // in-process backplane (the DO keys presence on the stream object itself).
@@ -113,7 +129,7 @@ export const realtimeRoutes = (ctx: AppContext) => {
       path: "/v1/artifacts/{shortId}/presence",
       tags: ["Realtime"],
       summary: "Presence heartbeat — keep this viewer on the artifact's roster.",
-      request: { params: z.object({ shortId: z.string() }) },
+      request: { params: z.object({ shortId: z.string() }), query: GuestQuery },
       responses: {
         200: {
           description: "The current viewers on this artifact.",
@@ -139,7 +155,7 @@ export const realtimeRoutes = (ctx: AppContext) => {
       path: "/v1/artifacts/{shortId}/cursor",
       tags: ["Realtime"],
       summary: "Broadcast a live cursor frame to the artifact's other viewers.",
-      request: { params: z.object({ shortId: z.string() }) },
+      request: { params: z.object({ shortId: z.string() }), query: GuestQuery },
       responses: { 204: { description: "Fanned out (ephemeral; nothing stored)." } },
     }),
     async (c) => {
@@ -162,10 +178,10 @@ export const realtimeRoutes = (ctx: AppContext) => {
       )
       if (body instanceof Response) return bail(body)
       const clamp = (n: number) => (n < 0 ? 0 : n > 1 ? 1 : n)
-      // Same server-derived identity as presence: a signed-in user/agent by their
-      // account name, an anonymous viewer by their stable rando handle — never a
+      // Same identity as presence: a signed-in user/agent by their account name, an
+      // anonymous viewer by the stable handle derived from their guest token — never a
       // client-supplied label. So a cursor and its presence row share one identity.
-      const name = (await actingUser(c))?.name ?? anonName(anonViewerId(c))
+      const name = (await actingUser(c))?.name ?? anonName(guestViewerId(c))
       const kind = body.kind ?? "arrow"
       bus.publish(artifact.id, {
         type: "cursor",

@@ -9,6 +9,7 @@ import { Kbd } from "@/components/ui/kbd"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { artifactTypeLabel } from "@/lib/artifact"
+import { guestPresenceId } from "@/lib/guest-id"
 import { artifactAgentsQuery, artifactQuery, commentsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
@@ -566,6 +567,7 @@ export function Artifact() {
         art={art}
         returnTo={`/artifacts/${ref}`}
         viewers={live.viewers}
+        selfId={guestPresenceId()}
         isMobile={isMobile}
       >
         {documentEl}

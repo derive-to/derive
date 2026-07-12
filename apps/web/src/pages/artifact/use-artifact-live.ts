@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { API_BASE, api, type Viewer } from "@/api"
+import { guestQuery } from "@/lib/guest-id"
 import { useOnline } from "@/lib/use-online"
 import { usePageVisible } from "@/lib/use-page-visible"
 import { useLiveCursors } from "./cursors/use-live-cursors"
@@ -59,7 +60,10 @@ export function useArtifactLive(opts: {
   // re-establishes, which recovers the rarer server-error CLOSED case too.
   useEffect(() => {
     if (!visible || !online) return
-    const ev = new EventSource(`${API_BASE}/v1/artifacts/${shortId}/events`, {
+    // `?g=` carries this browser's stable guest identity to the presence roster, so an
+    // anonymous viewer is ONE row here and on the heartbeat below — not a cookie raced
+    // across concurrent requests into several phantoms (see lib/guest-id).
+    const ev = new EventSource(`${API_BASE}/v1/artifacts/${shortId}/events${guestQuery()}`, {
       withCredentials: true,
     })
     // Connection health for the cue: onerror flips to reconnecting; the server's `ready` hello

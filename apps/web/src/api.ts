@@ -1,5 +1,6 @@
 import type { LinkRole, Listed, Role, WorkspaceAccess } from "@derive/core"
 import type { components } from "./api-types"
+import { guestQuery } from "./lib/guest-id"
 
 /** The role vocabulary and the v2 access model's three single-purpose fields are
  *  canonical in @derive/core (roles.ts); imported here as type-only (clients never
@@ -586,9 +587,11 @@ export const api = {
     f(`/v1/workspace/domains/${host}`, { method: "DELETE", credentials: "include" }).then(
       () => undefined,
     ),
-  // Identity is derived server-side from the session/cookie, so we send nothing.
+  // Presence identity: a signed-in caller is resolved from their session server-side; an
+  // anonymous caller carries their stable guest token (`?g=`) so the heartbeat and the SSE
+  // stream agree on ONE viewer per browser (see lib/guest-id).
   heartbeat: (id: string): Promise<{ viewers: Viewer[] }> =>
-    f(`/v1/artifacts/${id}/presence`, opts({})).then(j),
+    f(`/v1/artifacts/${id}/presence${guestQuery()}`, opts({})).then(j),
 
   favorite: (id: string, on: boolean): Promise<{ favorite: boolean }> =>
     f(`/v1/artifacts/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),
