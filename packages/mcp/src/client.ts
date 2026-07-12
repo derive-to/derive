@@ -157,7 +157,7 @@ export interface ContentOpts {
   version?: number
   /** A heading slug (single-file) or page path (bundle, optionally page#slug). */
   section?: string
-  format?: "markdown" | "text"
+  format?: "markdown" | "text" | "html"
 }
 
 /** A content read: the body plus the server's X-Derive-* capability headers, so a
