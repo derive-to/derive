@@ -599,6 +599,9 @@ export function buildContext(deps: AppDeps) {
       else {
         const mine = await meta.listWorkspaces(me.id)
         ws = mine[0]?.id ?? (await provisionPersonal(me))
+        // Persist the resolved workspace so the next request short-circuits on the
+        // cookie instead of re-racing listWorkspaces during the first-login burst.
+        setWsCookie(c, ws)
       }
     }
     wsCache.set(c, ws)
