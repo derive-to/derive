@@ -85,8 +85,7 @@ export const OAUTH_SCOPES = [
 // registrations, not a security boundary. It used to be 24h, which was short enough that
 // a real agent connector (Claude.ai, etc.) could register, sit unconsented over a
 // weekend, and come back to a client_id that no longer existed — a dead end the human
-// had no way to diagnose. 30 days matches the existing OAuth refresh-token idle window
-// (see accessTokenExpiresIn below) and makes that failure mode a near-non-issue; the
+// had no way to diagnose. 30 days makes that failure mode a near-non-issue; the
 // authorize self-heal in app.ts (see `oauthClientExists`) covers what's left.
 export const OAUTH_ANON_CLIENT_TTL_MS = 30 * 24 * 3600_000
 
@@ -424,9 +423,14 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
         // session; the rotating refresh token below still bounds abandoned clients.
         accessTokenExpiresIn: 60 * 60 * 24, // 24h
         // Refresh tokens rotate + reset their window on every use (see createUserTokens),
-        // so this is an INACTIVITY timeout, not a hard cap: active clients (MCP, browser)
-        // never re-auth; you only re-consent after 30 days of no use.
-        refreshTokenExpiresIn: 60 * 60 * 24 * 30, // 30d (idle)
+        // so this is an INACTIVITY timeout, not a hard cap: you only re-consent after a
+        // full year of not using a client. A year, not the previous 30d, because this
+        // bound buys almost nothing here — refresh tokens are opaque, stored hashed, and
+        // resolved by DB lookup, so a leaked DB row is unusable and real revocation is
+        // deleting the row (immediate at any TTL). The only thing the window bounds is
+        // how long an abandoned-but-consented client could sit idle and still come back,
+        // and re-consenting yearly is the right cost for that on a personal instance.
+        refreshTokenExpiresIn: 60 * 60 * 24 * 365, // 365d (idle)
         scopes: [...OAUTH_SCOPES],
         // Accept the resource indicators MCP clients send (else token exchange 400s).
         validAudiences: audiences,

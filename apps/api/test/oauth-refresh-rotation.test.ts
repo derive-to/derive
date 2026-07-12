@@ -8,8 +8,8 @@ import { sha256 } from "../src/lib/crypto"
 
 // Regression test for the MCP/OAuth "sign back in every few hours" bug.
 //
-// Claude Code's Derive access token is a 1h JWT, so it must hit the refresh grant
-// roughly hourly under active use. The oauth-provider rotates refresh tokens on
+// Claude Code's Derive access token expires every 24h, so every long-lived or
+// parallel agent session hits the refresh grant. The oauth-provider rotates refresh tokens on
 // every use and, on detecting a *reused* (already-revoked) token, calls
 // invalidateRefreshFamily — which deletes EVERY refresh + access token for that
 // (client, user). A concurrent refresh (an MCP client firing several requests at
@@ -19,11 +19,14 @@ import { sha256 } from "../src/lib/crypto"
 // re-register a brand-new OAuth client and re-consent. Observed in prod as 11
 // client registrations in 4 days.
 //
-// The derive-patch(refresh-rotation-grace) adds a short grace window: a token revoked
-// within the window is treated as a benign concurrent rotation — the request still
-// fails (the reused token is never honored) but the family is left intact, so the
-// winning refresh keeps the session alive. Genuine reuse outside the window still
-// invalidates the family.
+// The derive-patch(refresh-rotation-grace) v2 makes reuse painless instead of merely
+// less destructive: a token rotated within a 7-day grace window is HONORED — the
+// server mints a fresh sibling token pair for the presenter, so parallel agent
+// sessions sharing one credential store all end up with valid tokens no matter who
+// wins the rotation race. A token rotated longer ago than the grace window is
+// rejected, but only that request fails: the family is never invalidated, because in
+// this deployment every reuse ever observed was a stale legitimate client, and the
+// nuke converted one dead client into a forced re-consent for every live one.
 
 const dir = mkdtempSync(join(tmpdir(), "derive-oauth-refresh-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -123,7 +126,7 @@ describe("OAuth refresh-token rotation survives a concurrent/replayed refresh", 
     userId = await createUser(ctx, "race@derive.test")
   })
 
-  it("a reused (just-rotated) refresh token is rejected but the live child survives", async () => {
+  it("a reused (just-rotated) refresh token is honored with a fresh sibling pair", async () => {
     const RT = "rt_parent_aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     await seedRefreshToken(ctx, { plaintext: RT, clientId, userId })
 
@@ -137,36 +140,44 @@ describe("OAuth refresh-token rotation survives a concurrent/replayed refresh", 
     const RT2 = ((await r1.json()) as { refresh_token?: string }).refresh_token
     expect(RT2, "rotation should issue a new refresh token").toBeTruthy()
 
-    // Concurrent/replayed refresh presents the just-rotated parent again. It must be
-    // rejected (the reused token is never honored)...
+    // Concurrent/replayed refresh presents the just-rotated parent again. Within the
+    // grace window this SUCCEEDS: the loser of the rotation race gets its own fresh
+    // sibling pair instead of an invalid_grant it would surface as "sign in again".
     const r2 = await tokenReq(auth, {
       grant_type: "refresh_token",
       refresh_token: RT,
       client_id: clientId,
     })
-    expect(r2.status, "reused parent token must be rejected").toBe(400)
+    expect(r2.status, "reused parent within grace must succeed").toBe(200)
+    const RT3 = ((await r2.json()) as { refresh_token?: string }).refresh_token
+    expect(RT3, "the loser gets its own fresh refresh token").toBeTruthy()
+    expect(RT3, "the sibling is a new token, not the parent replayed").not.toBe(RT)
 
-    // ...but it must NOT have nuked the family: the child issued by the first refresh
-    // still works. Without the grace patch, invalidateRefreshFamily deletes RT2's row
-    // and this returns 400 ("session not found") — the forced re-consent.
+    // Both the winner's child and the loser's sibling stay live.
     const r3 = await tokenReq(auth, {
       grant_type: "refresh_token",
       refresh_token: RT2 as string,
       client_id: clientId,
     })
-    expect(r3.status, "the live child token must survive the reuse attempt").toBe(200)
+    expect(r3.status, "the winner's child token must stay live").toBe(200)
+    const r4 = await tokenReq(auth, {
+      grant_type: "refresh_token",
+      refresh_token: RT3 as string,
+      client_id: clientId,
+    })
+    expect(r4.status, "the loser's sibling token must stay live").toBe(200)
   })
 
-  it("genuine reuse outside the grace window still invalidates the family", async () => {
+  it("reuse outside the grace window fails that request only — the family survives", async () => {
     const RT_OLD = "rt_old_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     const RT_LIVE = "rt_live_cccccccccccccccccccccccccccc"
-    // A token revoked well before the grace window (a real replay), plus a live
-    // sibling in the same family.
+    // A token rotated 8 days ago (outside the 7-day grace), plus a live sibling in
+    // the same family.
     await seedRefreshToken(ctx, {
       plaintext: RT_OLD,
       clientId,
       userId,
-      revoked: new Date(Date.now() - 5 * 60_000),
+      revoked: new Date(Date.now() - 8 * 86_400_000),
     })
     await seedRefreshToken(ctx, { plaintext: RT_LIVE, clientId, userId })
 
@@ -175,15 +186,16 @@ describe("OAuth refresh-token rotation survives a concurrent/replayed refresh", 
       refresh_token: RT_OLD,
       client_id: clientId,
     })
-    expect(reuse.status, "stale reused token rejected").toBe(400)
+    expect(reuse.status, "token rotated beyond grace is rejected").toBe(400)
 
-    // The whole family is invalidated, so even the live sibling no longer works —
-    // reuse-detection is preserved for genuine replay.
+    // The rejection is scoped to the stale token: the live sibling keeps working.
+    // (v1 called invalidateRefreshFamily here, turning one dead client into a forced
+    // re-consent for every live one.)
     const live = await tokenReq(auth, {
       grant_type: "refresh_token",
       refresh_token: RT_LIVE,
       client_id: clientId,
     })
-    expect(live.status, "family invalidated on real reuse").toBe(400)
+    expect(live.status, "the family must survive a stale-token rejection").toBe(200)
   })
 })
