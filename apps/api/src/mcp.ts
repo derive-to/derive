@@ -1683,12 +1683,11 @@ async function buildServer(
             (actingFor && !openedInTab
               ? " No open Derive tab caught this push — open the url for the user (e.g. run `open <url>`) if they should see it now."
               : "") +
-            // Detection-driven advisories: a rule delivered at the moment of the
-            // mistake (missing viewport → reflow injected; base64 blobs → use assets)
-            // beats one buried in the tool description. Content-provided single files
-            // only — an edits revision didn't carry the whole document through here.
-            (typeof contentIn === "string" && artifact.kind === "file"
-              ? publishAdvisories(contentIn, version.content_type)
+            // Advisories over what was just stored (missing viewport meta, oversized
+            // inline base64). `content` holds the full document for both direct and
+            // edits publishes — materializeEdits assigned into it above.
+            (typeof content === "string" && artifact.kind === "file"
+              ? publishAdvisories(content, version.content_type)
                   .map((advisory) => ` ${advisory}`)
                   .join("")
               : ""),

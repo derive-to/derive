@@ -640,10 +640,9 @@ server.registerTool(
     const client = clientFor(ws)
     if ([content, content_path, edits].filter((v) => v !== undefined).length > 1)
       return text("Provide exactly one of `content`, `content_path`, or `edits`.")
-    // The by-path lane: read the bytes HERE (this server runs on the caller's machine)
-    // so the artifact never rides through the agent's context. The sha256 computed off
-    // the local file is checked against the publish response's content_sha256 echo —
-    // any mismatch means the bytes were mangled in transit and the agent must know.
+    // content_path: this server runs on the caller's machine, so it reads the file
+    // itself and uploads the bytes — the content never passes through the model. The
+    // local file's sha256 is checked against the response's content_sha256 echo below.
     let pathBytes: Uint8Array | undefined
     let pathSha: string | undefined
     if (content_path !== undefined) {
@@ -660,10 +659,10 @@ server.registerTool(
       if (!short_id) return text("A proposal revises an EXISTING artifact — pass its short_id.")
       try {
         const p = await client.propose(short_id, {
-          content,
+          content: pathBytes ?? content,
           edits,
           baseVersion: base_version,
-          filename,
+          filename: filename ?? (content_path !== undefined ? basename(content_path) : undefined),
           message: message ?? "Proposed revision",
           addresses,
         })
@@ -700,8 +699,8 @@ server.registerTool(
     } catch (e) {
       return err(e instanceof Error ? e.message : "publish failed")
     }
-    // Integrity check for the by-path lane: the server echoes the sha256 of what it
-    // stored (single-file artifacts); it must be the local file's hash, byte for byte.
+    // The server echoes the sha256 of the stored bytes; for a by-path publish it
+    // must match the local file exactly.
     const echoedSha = (a as { content_sha256?: string }).content_sha256
     if (pathSha && echoedSha && echoedSha !== pathSha)
       return err(
@@ -712,9 +711,9 @@ server.registerTool(
       a.opened_in_tab === false
         ? " No open Derive tab caught this push — open the url for the user if they should see it now."
         : ""
-    // Detection-driven advisories (missing viewport → reflow injected; base64 blobs
-    // → use assets) are computed SERVER-side and ride the REST response — this shim
-    // is an HTTP client (no @derive/core at runtime), so it only relays them.
+    // Advisories (missing viewport, oversized inline base64) are computed server-side
+    // and carried on the REST response; this shim is an HTTP client with no @derive/core
+    // at runtime, so it only relays them.
     const advisories = (a as { advisories?: string[] }).advisories
     const advisoryNote = advisories?.length
       ? advisories.map((advisory) => ` ${advisory}`).join("")

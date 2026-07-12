@@ -793,10 +793,9 @@ export const artifactRoutes = (ctx: AppContext) => {
         }
       }
       const versions = await meta.listVersions(artifact.id)
-      // Detection-driven advisories over what was just stored (no viewport meta →
-      // the reflow injection applies; base64 blobs → they belong in /v1/assets).
-      // Computed HERE so every client — the stdio MCP shim, the CLI, a raw curl —
-      // relays the same guidance without importing server logic.
+      // Advisories over what was just stored (missing viewport meta, oversized
+      // inline base64) — computed server-side so every client relays the same
+      // guidance; the boundary rules keep @derive/core out of the clients.
       const advisories =
         artifact.kind === "file" &&
         (version.content_type === "text/html" || version.content_type === "text/markdown")

@@ -1,8 +1,7 @@
-// Detection-driven publish advisories. A rule delivered in the publish RESPONSE, at
-// the moment of the mistake, lands where a rule buried in a 200-word tool description
-// doesn't — the agent reads results, then acts. Pure string checks over the content
-// that was just published; both MCP servers append these to their response notes.
-// (Plan: docs/plans/agent-artifact-learnings.md §4.)
+// Publish advisories: pure string checks over just-published content, returned with
+// the publish response (response text reaches agents far more reliably than tool
+// descriptions do). The REST route carries them as a field; both MCP servers fold
+// them into their notes. Plan: docs/plans/agent-artifact-learnings.md §4.
 
 import { needsReflow } from "./reflow"
 
@@ -10,9 +9,8 @@ import { needsReflow } from "./reflow"
 export const publishAdvisories = (content: string, contentType: string): string[] => {
   const out: string[] = []
 
-  // A styled page with no viewport meta gets the mobile-reflow injection, whose
-  // media caps can silently fight an intentional layout (see reflow.ts). Authors who
-  // declared a viewport hear nothing.
+  // A page with no viewport meta gets the mobile-reflow injection, whose media
+  // caps can fight an intentional layout (see reflow.ts).
   if (contentType === "text/html" && needsReflow(content))
     out.push(
       'This page has no <meta name="viewport">, so Derive injects mobile-reflow CSS ' +
@@ -20,9 +18,8 @@ export const publishAdvisories = (content: string, contentType: string): string[
         "opts a component out). Declare your own viewport meta to skip the injection.",
     )
 
-  // Inlined base64 at scale means binaries rode through a tool call — the token-cost
-  // and silent-mistranscription path the asset store exists to replace. Threshold set
-  // well above icon-sized payloads so small data URIs stay quiet.
+  // Large inlined base64 usually means binaries were pasted through a tool call
+  // instead of staged via /v1/assets. The threshold keeps icon-sized data URIs quiet.
   let base64Chars = 0
   for (const m of content.matchAll(/data:[\w/+.-]+;base64,([A-Za-z0-9+/=]+)/g))
     base64Chars += (m[1] ?? "").length
