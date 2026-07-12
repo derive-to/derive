@@ -40,9 +40,15 @@ addEventListener('load',sc);addEventListener('resize',sc);})();
 // Reflow CSS. `!important` on the media caps so an author's fixed pixel width on an <img>
 // can't reintroduce horizontal overflow; tables become their own horizontal scroll region
 // instead of blowing out the page; <pre> wraps instead of running off-screen.
+//
+// `data-reflow-exempt` is the surgical escape hatch: some components NEED media larger
+// than their box (a sprite-sheet crop scales an <img> to 140% inside an overflow-hidden
+// frame; the `!important` cap silently squashes it). Marking the element — or any
+// ancestor — exempts the subtree from the media caps while the rest of the page keeps
+// its overflow guarantee. The page-level opt-out stays what it was: declare a viewport.
 const REFLOW_CSS = `<style data-derive-reflow>
-img,video,canvas{max-width:100%!important;height:auto}
-svg,iframe,embed,object{max-width:100%!important}
+img:not([data-reflow-exempt],[data-reflow-exempt] *),video:not([data-reflow-exempt],[data-reflow-exempt] *),canvas:not([data-reflow-exempt],[data-reflow-exempt] *){max-width:100%!important;height:auto}
+svg:not([data-reflow-exempt],[data-reflow-exempt] *),iframe:not([data-reflow-exempt],[data-reflow-exempt] *),embed:not([data-reflow-exempt],[data-reflow-exempt] *),object:not([data-reflow-exempt],[data-reflow-exempt] *){max-width:100%!important}
 pre{white-space:pre-wrap;overflow-wrap:anywhere}
 table{display:block;max-width:100%;overflow-x:auto}
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
