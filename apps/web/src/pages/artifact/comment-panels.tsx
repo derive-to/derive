@@ -1,4 +1,4 @@
-import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react"
+import { type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react"
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -16,6 +16,10 @@ import { type ComposerState, type FrameGeom, type PinItem, selLabel } from "./ty
 
 // Touch has no hover, so the mobile sheet overrides the tree's onHover with this.
 const NO_HOVER = () => {}
+
+// A one-line plain-text teaser of a comment body for the peek preview (CSS truncates
+// the length; this just flattens whitespace so a multi-line body reads as one line).
+const teaser = (md: string) => md.replace(/\s+/g, " ").trim()
 
 // The comments panel header: the label + the open-thread count in the machine
 // count register ("Comments · 3") — quieter than a pill blob beside the title.
@@ -135,6 +139,14 @@ export function MobileComments({
     return () => cancelAnimationFrame(raf)
   }, [open, onHeightChange])
   const empty = openThreads.length === 0 && resolved.length === 0 && !composer
+  // The most recent open comment — the peek bar previews it so the resting state
+  // teases the live discussion instead of showing a bare "Comments" header.
+  const latest = useMemo(() => {
+    let best: Comment | null = null
+    for (const t of openThreads)
+      for (const c of t) if (c.body_md && (!best || c.created_at > best.created_at)) best = c
+    return best
+  }, [openThreads])
   // The grip toggles peek <-> full.
   const grip = () => setSize((s) => (s === "peek" ? "full" : "peek"))
   // Jumping to text: drop to the peek bar so the highlight is visible in the doc.
@@ -163,12 +175,16 @@ export function MobileComments({
       <div
         ref={sheetRef}
         className={cn(
-          "fixed inset-x-0 bottom-0 z-61 flex flex-col rounded-t-2xl border-t border-border bg-card shadow-[var(--shadow-pop)] duration-200",
-          // Don't animate height while the keyboard repositions the sheet.
-          kb ? "transition-transform" : "transition-[transform,height]",
+          "fixed inset-x-0 bottom-0 z-61 flex flex-col rounded-t-2xl border-t border-border bg-card shadow-[var(--shadow-pop)] duration-200 ease-out",
+          // The slide rides the `translate` property (translate-y-full/0), so the
+          // transition MUST target `translate` — not `transform` — or the sheet jumps
+          // in and out instead of sliding. Don't animate height while the keyboard
+          // repositions the sheet.
+          kb ? "transition-[translate]" : "transition-[translate,height]",
           // Composing: a compact bar sized to its content (capped), so the box sits
           // flush above the keyboard rather than high up in a tall sheet.
-          composer ? "max-h-[80vh]" : size === "full" ? "h-[88vh]" : "h-18.5",
+          // Peek grows a little to preview the latest comment; a bare header when empty.
+          composer ? "max-h-[80vh]" : size === "full" ? "h-[88vh]" : latest ? "h-24" : "h-18.5",
           open ? "translate-y-0" : "translate-y-full",
         )}
         // While the keyboard is up, lift the sheet's bottom to just above it and cap
@@ -285,6 +301,20 @@ export function MobileComments({
               )}
             </div>
           </CommentTreeProvider>
+        ) : latest ? (
+          // Peek preview: a one-line teaser of the latest comment, so the resting
+          // sheet shows the live discussion. Tapping it expands to the full list.
+          <button
+            type="button"
+            data-testid="comments-peek-preview"
+            onClick={() => setSize("full")}
+            className="flex min-w-0 items-center gap-1.5 px-3 pt-0.5 pb-[max(12px,env(safe-area-inset-bottom))] text-left"
+          >
+            <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">{latest.author}</span>{" "}
+              {teaser(latest.body_md)}
+            </span>
+          </button>
         ) : null}
       </div>
     </>

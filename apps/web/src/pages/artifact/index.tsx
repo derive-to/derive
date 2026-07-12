@@ -762,16 +762,20 @@ export function Artifact() {
             ) : (
               documentEl
             )}
-            {/* Only when there ARE open comments — a zero-count "Show comments" pill
-                is noise over the render. The top-bar Comments toggle (and `c`)
-                still opens the empty panel to start the first thread. */}
-            {!isAnon && !focus && panel === "hidden" && openCount > 0 && (
+            {/* On desktop, only when there ARE open comments — a zero-count pill is
+                noise there, since the top-bar Comments toggle (and `c`) already opens
+                the empty panel. On mobile NEITHER exists (the toggle is desktop-only,
+                there's no keyboard), so the FAB is the sole entry point and must show
+                even at zero — otherwise a comment-less doc has no way into comments. */}
+            {!isAnon && !focus && panel === "hidden" && (openCount > 0 || isMobile) && (
               <DocFab
                 title="Show comments (c)"
                 testId="artifact-comments-fab"
                 onClick={() => setPanel("open")}
               >
-                {`${openCount} comment${openCount === 1 ? "" : "s"}`}
+                {openCount > 0
+                  ? `${openCount} comment${openCount === 1 ? "" : "s"}`
+                  : "Show comments"}
               </DocFab>
             )}
             {/* Anonymous visitor on a comment-enabled link: commenting forces auth (anon
