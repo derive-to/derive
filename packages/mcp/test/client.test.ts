@@ -179,6 +179,13 @@ describe("derive client (the MCP server's backend) over real HTTP", () => {
     expect(p3.id).toBeTruthy()
   })
 
+  it("getContent format:'html' returns the exact stored source (the edits precondition)", async () => {
+    const src = "<html><head><title>t</title></head><body><h1>H</h1><p>body</p></body></html>"
+    const a = await client.publish({ content: src, filename: "h.html", title: "Html read" })
+    const r = await client.getContent(a.short_id, { format: "html" })
+    expect(r.text).toBe(src)
+  })
+
   it("surfaces server errors as thrown messages", async () => {
     await expect(client.get("nope0000")).rejects.toThrow(/derive 404/)
   })

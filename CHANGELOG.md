@@ -74,6 +74,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
   `CODE_OF_CONDUCT.md`, issue + PR templates, `.editorconfig`.
 
 ### Fixed
+- `@derive-to/mcp` 0.5.1 — the stdio `read` tool now accepts `format:'html'`. Its
+  schema only allowed markdown/text while the publish description said "read
+  format:'html' first" before `edits` — following the server's own guidance was a
+  validation error (remote `/mcp` always accepted html). Found dogfooding 0.5.0.
+  Publish responses also surface `content_sha256` now, matching REST and remote.
 - `@derive-to/mcp` 0.4.1 — republish with the `@derive-to/cli` dependency resolved to
   a real version. 0.4.0 shipped it as the raw `workspace:*` protocol (published with
   `npm` instead of `pnpm`), which is uninstallable; 0.4.0 is deprecated.

@@ -214,9 +214,11 @@ server.registerTool(
           'A heading slug (single-file) or page path (bundle, optionally page#slug). Pass "*" for the full document.',
         ),
       format: z
-        .enum(["markdown", "text"])
+        .enum(["markdown", "text", "html"])
         .optional()
-        .describe("markdown (default, HTML converted) or text (flat visible text)."),
+        .describe(
+          "markdown (default, HTML converted), text (flat visible text), or html (the exact stored source — read it before revising with publish `edits`).",
+        ),
       version: z.number().int().optional().describe("Defaults to the current version."),
       workspace: wsArg,
     },
@@ -722,6 +724,7 @@ server.registerTool(
       published: true,
       short_id: a.short_id,
       ...(a.review_requested ? { review_requested: true } : {}),
+      ...(echoedSha ? { content_sha256: echoedSha } : {}),
       ...(pathSha && echoedSha ? { content_verified: true } : {}),
       version: a.current_version,
       url: a.url,
