@@ -321,6 +321,35 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(refText).toContain("brandprint-tokens")
   })
 
+  it("serves the design reference to every workspace (no Brandprint required)", async () => {
+    const { app, token } = appWithGrant("design-ref", "openid derive:read")
+    await rpc(app, token, initBody)
+    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
+    const uris = (
+      (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
+    ).map((r) => r.uri)
+    expect(uris).toContain("derive://design/reference")
+
+    const ref = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "resources/read",
+      params: { uri: "derive://design/reference" },
+    })
+    const refText =
+      (ref.parsed?.result as { contents?: { text: string }[] } | undefined)?.contents?.[0]?.text ??
+      ""
+    // The method composes with Brandprint (values) and names the platform rules.
+    expect(refText).toContain("derive://brandprint/profile")
+    expect(refText).toContain("viewport")
+    expect(refText).toContain("/v1/assets")
+
+    // The instructions point at it so an agent authoring a styled page finds it.
+    const init = await rpc(app, token, { ...initBody, id: 5 })
+    const inst = (init.parsed?.result as { instructions?: string }).instructions ?? ""
+    expect(inst).toContain("derive://design/reference")
+  })
+
   it("serves the live profile as the headline resource once it has a real version", async () => {
     const { app, token, meta } = appWithGrant(
       "brandprint-live",

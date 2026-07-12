@@ -58,6 +58,7 @@ import type { Hono } from "hono"
 import { z } from "zod"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "./brandprint-reference"
 import type { AppContext } from "./context"
+import { DESIGN_REFERENCE } from "./design-reference"
 import { markAddressed } from "./lib/addressed"
 import { afterPublish } from "./lib/after-publish"
 import {
@@ -312,7 +313,7 @@ async function buildServer(
         `history, text-anchored review comments, and a publish → review → revise loop. Fully-styled ` +
         `HTML pages are first-class too: a single-file artifact with its own <style>, scripts, fonts ` +
         `and images renders as-authored in a sandboxed viewer — publish real designed pages, not just ` +
-        `prose. ` +
+        `prose, and read derive://design/reference (the method) before authoring one. ` +
         `Start a session with catch_up to re-sync on what changed and what feedback is open; use ` +
         `read to view content — it returns Markdown by default (HTML is converted) and an outline ` +
         `first for large documents or bundles, so pull sections by heading slug or page path once ` +
@@ -396,6 +397,24 @@ async function buildServer(
       },
     )
   }
+  // The design reference: how to author a styled artifact page, served to every
+  // workspace. It carries the method; the Brandprint profile, when live, carries the
+  // values (its tokens island), and the reference tells the agent to read it first.
+  // Static and versioned like code, same as the Brandprint pair below.
+  server.registerResource(
+    "design:reference",
+    "derive://design/reference",
+    {
+      title: "Designing a styled artifact",
+      description:
+        "The authoring method for fully-styled HTML pages: treatment calibration, type/color/structure rules, the tells of a generated page, and this platform's own rules. Read before authoring; the Brandprint profile supplies the values.",
+      mimeType: "text/markdown",
+      annotations: { audience: ["assistant"], priority: 0.7 },
+    },
+    async (uri) => ({
+      contents: [{ uri: uri.href, mimeType: "text/markdown", text: DESIGN_REFERENCE }],
+    }),
+  )
   // The generation reference: the build guide + the neutral benchmark page, served
   // whenever a Brandprint exists. Derive runs no inference, so these two static files
   // are its entire side of profile generation; the user's agent does the assembling.
