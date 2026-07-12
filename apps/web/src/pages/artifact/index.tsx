@@ -517,6 +517,12 @@ export function Artifact() {
   // no width and the document gets the full screen.
   const asideWidth = isMobile ? 0 : panel === "open" ? 340 : 0
 
+  // Mobile has no hidden state: the sheet's peek bar is always docked (it IS the
+  // entry point — there's no top-bar toggle or `c` key on a phone, and a hidden
+  // panel made comments unreachable). Computed here rather than in the panel hook
+  // so a desktop→mobile resize with a persisted "hidden" can't strand a phone.
+  const effectivePanel = isMobile && !isAnon ? "open" : panel
+
   // The rendered artifact frame — identical for the anon public viewer and the authed
   // workbench, so build it once and place it in both branches (no prop drift).
   const documentEl = (
@@ -736,7 +742,9 @@ export function Artifact() {
             // bar, full list, or keyboard-pinned composer), so this never over- or
             // under-reserves the way a fixed `pb-[50vh]` did.
             style={
-              isMobile && !focus && panel === "open" ? { paddingBottom: sheetInset } : undefined
+              isMobile && !focus && effectivePanel === "open"
+                ? { paddingBottom: sheetInset }
+                : undefined
             }
           >
             {art.bundle && !editing && (
@@ -762,16 +770,20 @@ export function Artifact() {
             ) : (
               documentEl
             )}
-            {/* Only when there ARE open comments — a zero-count "Show comments" pill
-                is noise over the render. The top-bar Comments toggle (and `c`)
-                still opens the empty panel to start the first thread. */}
-            {!isAnon && !focus && panel === "hidden" && openCount > 0 && (
+            {/* On desktop, only when there ARE open comments — a zero-count pill is
+                noise there, since the top-bar Comments toggle (and `c`) already opens
+                the empty panel. On mobile NEITHER exists (the toggle is desktop-only,
+                there's no keyboard), so the FAB is the sole entry point and must show
+                even at zero — otherwise a comment-less doc has no way into comments. */}
+            {!isAnon && !focus && !isMobile && panel === "hidden" && openCount > 0 && (
               <DocFab
                 title="Show comments (c)"
                 testId="artifact-comments-fab"
                 onClick={() => setPanel("open")}
               >
-                {`${openCount} comment${openCount === 1 ? "" : "s"}`}
+                {openCount > 0
+                  ? `${openCount} comment${openCount === 1 ? "" : "s"}`
+                  : "Show comments"}
               </DocFab>
             )}
             {/* Anonymous visitor on a comment-enabled link: commenting forces auth (anon
@@ -820,7 +832,7 @@ export function Artifact() {
               }
               onSheetHeight={setSheetInset}
               docLive={docLive}
-              panel={panel}
+              panel={effectivePanel}
               asideWidth={asideWidth}
               openCount={openCount}
               frameRef={frame}
