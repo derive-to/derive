@@ -54,6 +54,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
   and structured logging introduced. No behavior change.
 
 ### Added
+- `@derive-to/mcp` 0.5.0 — `content_path` on `publish`: pass an absolute path and the
+  stdio server reads and uploads the file's raw bytes itself, so page content never
+  passes through the agent's context (no token cost, no transcription risk). The
+  local file's sha256 is verified against the server's `content_sha256` echo — a
+  corrupted upload is a hard error, and a clean one reports `content_verified`.
+  Works for proposals (`for_review`) too; the filename defaults to the file's
+  basename. Publish responses now also relay the server's `advisories`.
+- `@derive-to/cli` 0.4.0 — republish carrying the `./publish` export the workspace
+  gained in the unified cli/mcp publish refactor; npm's 0.3.0 predates it, which
+  would have made mcp 0.5.0 uninstallable (its client imports
+  `@derive-to/cli/publish`). Publish the CLI before the MCP server.
 - Binary asset uploads for bundles: `POST /v1/assets` stores raw image bytes
   content-addressed (dedup by hash) and returns an `asset:<hash>` handle; a `publish`
   `files` value may now be that handle instead of an inline base64 data URI. An agent
