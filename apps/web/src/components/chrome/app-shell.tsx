@@ -8,6 +8,7 @@ import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sideb
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { useAuth } from "@/ctx"
 import { readAuthHint } from "@/lib/auth-hint"
+import { dropPersistedCacheOnNextBoot } from "@/lib/persist"
 import { collectionsQuery, summaryQuery, workspacesQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useIsMobile } from "@/lib/use-is-mobile"
@@ -124,11 +125,19 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [me, pathname, qc])
 
   // Switching/creating a workspace swaps the whole content context, so reload the
-  // page rather than re-thread every list (a deliberate, infrequent action).
+  // page rather than re-thread every list (a deliberate, infrequent action). The
+  // reload alone stopped being enough once the query cache persisted to IndexedDB:
+  // the boot restore would rehydrate the OLD workspace's entries, and any
+  // staleTime-Infinity query (e.g. workspaceQuery) would then serve the wrong
+  // workspace's data forever without ever refetching — including the switcher's
+  // own active check, which then silently no-ops the switch. Nearly every query
+  // is workspace-scoped, so have the next boot start cold instead of restoring
+  // (see persist.ts for why the drop happens at boot, not here).
   const switchWorkspace = async (id: string) => {
     if (id === workspaces?.active) return
     try {
       await api.switchWorkspace(id)
+      dropPersistedCacheOnNextBoot()
       window.location.reload()
     } catch {
       /* surfaced elsewhere */
@@ -149,6 +158,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         /* re-addable from Members */
       }
     }
+    dropPersistedCacheOnNextBoot()
     if (invited) window.location.assign("/settings/members")
     else window.location.reload()
   }
@@ -156,6 +166,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   // delete the one you're in), so reload to pick up the new active context.
   const deleteWorkspace = async (id: string) => {
     await api.deleteWorkspace(id)
+    dropPersistedCacheOnNextBoot()
     window.location.reload()
   }
 

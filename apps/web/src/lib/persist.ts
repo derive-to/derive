@@ -45,6 +45,35 @@ const persistOptions = {
   },
 }
 
+// Workspace switch/create/delete reload into a different content context, so the persisted
+// cache must not be restored — nearly every query is workspace-scoped, and any restored entry
+// (worse, a staleTime-Infinity one like workspaceQuery) would keep serving the OLD workspace's
+// data after the switch. Clearing the cache in-page before the reload is racy: the subscriber's
+// throttled write can land after the delete and resurrect the pre-switch snapshot. So the
+// switch path sets this flag instead, and the NEXT boot — before the persister has subscribed,
+// when nothing can race the delete — drops the store and starts cold.
+const RESET_KEY = "derive-cache-reset"
+
+/** Ask the next page boot to discard the persisted cache instead of restoring it. Call
+ *  right before a reload that changes the workspace context. */
+export function dropPersistedCacheOnNextBoot(): void {
+  try {
+    sessionStorage.setItem(RESET_KEY, "1")
+  } catch {
+    /* private mode — the boot restores as usual; staleness is bounded by CACHE_MAX_AGE */
+  }
+}
+
+const consumeResetFlag = (): boolean => {
+  try {
+    if (sessionStorage.getItem(RESET_KEY) !== "1") return false
+    sessionStorage.removeItem(RESET_KEY)
+    return true
+  } catch {
+    return false
+  }
+}
+
 // Restore the persisted cache ONCE, up front, then keep persisting future changes. The root
 // route's beforeLoad awaits `cacheRestored`, so no route loader (ensureQueryData) fetches cold
 // before the disk cache has hydrated — that ordering is what lets a reload paint from cache
@@ -56,7 +85,10 @@ const persistOptions = {
 export const cacheRestored: Promise<void> =
   typeof indexedDB === "undefined"
     ? Promise.resolve()
-    : persistQueryClientRestore(persistOptions)
+    : (consumeResetFlag()
+        ? Promise.resolve(queryPersister.removeClient())
+        : persistQueryClientRestore(persistOptions)
+      )
         .then(() => {
           persistQueryClientSubscribe(persistOptions)
         })
