@@ -17,14 +17,12 @@ const TOKEN_SOURCE = new Set(["styles/globals.css", "styles.css"])
 // Files that carry raw color DATA, not theming — avatar identity tints are a
 // fixed categorical palette, and the theme picker must show each theme's literal
 // swatch color. These are the "right places" for a raw color. The live-cursor
-// files are the same shape: a viewer's chosen identity tint (and the fixed white
-// keyline / lift shadow) painted onto the multiplayer overlay.
+// files are the same shape: a peer's identity tint (derived from their name) and
+// the fixed white keyline / lift shadow painted onto the multiplayer overlay.
 const ALLOW_FILES = new Set([
   "lib/avatar-tints.ts",
   "ctx.tsx",
-  "lib/cursors.ts",
   "pages/artifact/cursors/glyph.tsx",
-  "pages/artifact/cursors/cursor-switch.tsx",
   "pages/artifact/cursors/cursor-layer.tsx",
   // A self-contained HTML document published as an artifact, not app UI — its
   // colors ship inside the document and can't reference the token system.

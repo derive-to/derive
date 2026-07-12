@@ -3,7 +3,7 @@ import { ThemeProvider as NextThemesProvider, useTheme as useNextTheme } from "n
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react"
 import type { Me } from "./api"
 import { writeAuthHint } from "./lib/auth-hint"
-import { type CursorPref, defaultPrefFor, normalizePref } from "./lib/cursors"
+import { type CursorPref, normalizePref } from "./lib/cursors"
 import { clearPersistedCache } from "./lib/persist"
 import { meQuery } from "./lib/queries"
 import { STORAGE_KEYS } from "./lib/storage-keys"
@@ -85,13 +85,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   )
 }
 
-/* ---- cursor preference (your live multiplayer cursor look) ---- */
-// Persisted per-browser, exactly like the theme — so it works for anonymous
-// public-link viewers too (no account, no server round-trip), and a signed-in
-// user's pick is instant. The look only ever rides ephemeral cursor frames, so
-// there's nothing to store server-side.
+/* ---- cursor preference (whether you take part in the live-cursor layer) ---- */
+// One bit — hidden — persisted per-browser, exactly like the theme, so it works
+// for anonymous public-link viewers too (no account, no server round-trip). A
+// person's cursor color isn't a preference: it's their identity tint, derived
+// from their name wherever they appear. Nothing to store server-side.
 const CursorPrefCtx = createContext<{ pref: CursorPref; setPref: (p: CursorPref) => void }>({
-  pref: defaultPrefFor("default"),
+  pref: { hidden: false },
   setPref: () => {},
 })
 export const useCursorPref = () => useContext(CursorPrefCtx)
@@ -99,16 +99,14 @@ export const useCursorPref = () => useContext(CursorPrefCtx)
 export function CursorPrefProvider({ children }: { children: ReactNode }) {
   const [pref, setPref] = useState<CursorPref>(() => {
     // Guard for the prerendered shell (no window/localStorage at build time).
-    if (typeof localStorage === "undefined") return defaultPrefFor("default")
+    if (typeof localStorage === "undefined") return { hidden: false }
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.cursorPref)
-      if (saved) return normalizePref(JSON.parse(saved), defaultPrefFor("default"))
+      if (saved) return normalizePref(JSON.parse(saved))
     } catch {
       /* fall through to a fresh default */
     }
-    // First visit: seed a stable-ish random look (persisted by the effect below),
-    // so a viewer keeps the same cursor across reloads — Figma-style.
-    return defaultPrefFor(Math.random().toString(36).slice(2))
+    return { hidden: false }
   })
   useEffect(() => {
     try {

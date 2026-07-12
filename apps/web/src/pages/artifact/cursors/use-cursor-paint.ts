@@ -1,29 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useCursorPref } from "@/ctx"
-import {
-  CURSOR_FALLBACK,
-  CURSOR_TUNING,
-  type CursorFrame,
-  effectiveDocH,
-  placePeer,
-} from "@/lib/cursors"
+import { colorForName } from "@/lib/avatar-tints"
+import { CURSOR_TUNING, type CursorFrame, effectiveDocH, placePeer } from "@/lib/cursors"
 
 // The RECEIVING half of the live-cursor engine: it takes peer frames off the SSE
 // stream and paints them as a single rAF-driven overlay that eases (lerps) toward each
 // peer's latest position, so cursors glide instead of teleporting between throttled
 // samples; the name tag fades after a beat of stillness, and peers scrolled past a
 // viewport edge collapse into an edge indicator. React only re-renders when the roster
-// changes (a peer joins, leaves, or restyles) or a ripple fires; every-frame motion is
-// written straight to the DOM via refs, never through React. The SENDING half (our own
-// pointer → server) lives in use-cursor-send. `selfId` is shared so we ignore our own
-// echoed frames.
+// changes (a peer joins, leaves, or is renamed) or a ripple fires; every-frame motion is
+// written straight to the DOM via refs, never through React. A peer's color isn't sent —
+// it's their identity tint, derived from their name (`colorForName`) so their cursor
+// matches their avatar. The SENDING half (our own pointer → server) lives in
+// use-cursor-send. `selfId` is shared so we ignore our own echoed frames.
 
-/** A peer entry the overlay mounts/unmounts and styles (no per-frame churn). */
+/** A peer entry the overlay mounts/unmounts (no per-frame churn). Color is the peer's
+ *  identity tint, derived once from their name so it matches their avatar. */
 export interface PeerView {
   id: string
   color: string
-  kind: "arrow" | "emoji"
-  emoji?: string
   name: string
 }
 
@@ -54,9 +49,7 @@ interface PeerTarget {
   y: number
   cx: number // current eased position: cx in layer px (x), cy in document px (y)
   cy: number
-  color: string
-  kind: "arrow" | "emoji"
-  emoji?: string
+  color: string // identity tint, derived from name (recomputed only on rename)
   name: string
   slide?: number // deck slide the peer is on (undefined on non-deck artifacts)
   gone: boolean
@@ -67,11 +60,8 @@ interface PeerTarget {
   labelEl: HTMLElement | null
 }
 
-const styleChanged = (t: PeerTarget, f: CursorFrame) =>
-  t.color !== (f.color ?? t.color) ||
-  t.kind !== (f.kind ?? t.kind) ||
-  t.emoji !== f.emoji ||
-  t.name !== (f.name ?? t.name)
+// The roster only re-renders when a peer is renamed (their tint follows their name).
+const nameChanged = (t: PeerTarget, f: CursorFrame) => t.name !== (f.name ?? t.name)
 
 export function useCursorPaint(selfId: string): {
   paintFrame: (f: CursorFrame) => void
@@ -148,8 +138,6 @@ export function useCursorPaint(selfId: string): {
         [...targets.current.entries()].map(([id, t]) => ({
           id,
           color: t.color,
-          kind: t.kind,
-          emoji: t.emoji,
           name: t.name,
         })),
       )
@@ -193,7 +181,7 @@ export function useCursorPaint(selfId: string): {
           const key = ++rippleKey.current
           setRipples((rs) => [
             ...rs,
-            { key, x: place.x, y: place.y, color: f.color ?? CURSOR_FALLBACK },
+            { key, x: place.x, y: place.y, color: colorForName(f.name ?? "Guest") },
           ])
           setTimeout(
             () => setRipples((rs) => rs.filter((r) => r.key !== key)),
@@ -212,15 +200,14 @@ export function useCursorPaint(selfId: string): {
         // y is document-normalized, so seed cy in document pixels (eased there).
         const r = layerRef.current?.getBoundingClientRect()
         const docH = effectiveDocH(geomRef.current.docH, r?.height ?? 0)
+        const name = f.name ?? "Guest"
         targets.current.set(f.id, {
           x: f.x,
           y: f.y,
           cx: f.x * (r?.width ?? 0),
           cy: f.y * docH,
-          color: f.color ?? CURSOR_FALLBACK,
-          kind: f.kind ?? "arrow",
-          emoji: f.emoji,
-          name: f.name ?? "Guest",
+          color: colorForName(name),
+          name,
           slide: f.slide,
           gone: false,
           fade: 1,
@@ -233,13 +220,13 @@ export function useCursorPaint(selfId: string): {
         return
       }
 
-      if (styleChanged(existing, f)) markRosterDirty()
+      if (nameChanged(existing, f)) {
+        existing.name = f.name ?? existing.name
+        existing.color = colorForName(existing.name)
+        markRosterDirty()
+      }
       existing.x = f.x
       existing.y = f.y
-      existing.color = f.color ?? existing.color
-      existing.kind = f.kind ?? existing.kind
-      existing.emoji = f.emoji
-      existing.name = f.name ?? existing.name
       existing.slide = f.slide
       existing.gone = false
       existing.fade = 1
@@ -306,7 +293,7 @@ export function useCursorPaint(selfId: string): {
             }
           }
           if (!place.onScreen && !t.gone) {
-            const v: PeerView = { id, color: t.color, kind: t.kind, emoji: t.emoji, name: t.name }
+            const v: PeerView = { id, color: t.color, name: t.name }
             ;(place.side === "above" ? above : below).push(v)
           }
           if (t.labelEl) {

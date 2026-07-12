@@ -446,13 +446,21 @@ variants.
   state line (`{TYPE} · v{n} · updated {ago}`, mono `text-2xs` muted) — the bar states WHAT
   you're viewing and its state, the thing a row of icons never did. The right side is three
   clusters separated by **space, not rules** — no floating vertical hairlines (group the
-  Linear way, with spacing + alignment): the ambient **presence + cursor** cluster, then the
-  **actions** — the ONE filled-ink **Share** leads as the page's single primary (everything
-  else ghost), then the favorited **star** (glanceable ink state), then a single sectioned
-  **⋯** (view modes → organize → activity → manage; Tags & Collections open as dialogs from
-  it) — then the terminal **Comments** toggle hugging the panel it opens. Everything that used
-  to crowd the row (Reader / Present / Insights / History / Proposals / Edit / Lock / Report /
-  Tags / Collections) now lives behind the ⋯ — the render is the hero, the chrome recedes.
+  Linear way, with spacing + alignment): the ambient **presence** cluster (the facepile — the
+  live-cursor layer needs no control of its own), then the **actions** — the ONE filled-ink
+  **Share** leads as the page's single primary (everything else ghost), then the favorited
+  **star** (glanceable ink state), then a single sectioned **⋯** (view modes → organize →
+  activity → manage; Tags & Collections open as dialogs from it) — then the terminal
+  **Comments** toggle hugging the panel it opens. Everything that used to crowd the row
+  (Present / Insights / History / Proposals / Edit / Lock / Report / Tags / Collections) now
+  lives behind the ⋯ — the render is the hero, the chrome recedes.
+- **Live cursors** — peers' cursors are a slim arrow tinted by their **identity** (the same
+  `colorForName` tint as their avatar and presence dot — color follows the person, never a
+  per-cursor pick), with a `font-medium` name flag that fades on stillness. There is no style
+  selector: a picker of colors + emoji would break both *color is rationed* and *never emojis*.
+  The one real preference — **Hide live cursors** — is a checkbox item in the ⋯ menu's view-
+  modes group beside Focus; it opts you out of the whole layer (peers vanish, yours stops
+  broadcasting) and persists per-browser like the theme.
 
 ## Voice
 

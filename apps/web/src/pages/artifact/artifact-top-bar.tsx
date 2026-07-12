@@ -1,4 +1,4 @@
-import { Maximize2 } from "lucide-react"
+import { Maximize2, MousePointer2Off } from "lucide-react"
 import { useState } from "react"
 import type { CollectionGrant, LinkRole, Listed, Role, WorkspaceAccess } from "@/api"
 import { Icon } from "@/components/icons"
@@ -6,11 +6,13 @@ import { CollectionsDialog, TagsDialog } from "@/components/shared/organize-dial
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useCursorPref } from "@/ctx"
 import { cn } from "@/lib/utils"
 import { MoveToWorkspaceDialog, ReportDialog, StarButton } from "./header-actions"
 import { ShareButton } from "./share-dialog"
@@ -72,6 +74,7 @@ export function ArtifactTopBar(props: {
   onFocus: () => void
 }) {
   const { shortId, openProposals, proposalsTotal } = props
+  const { pref: cursorPref, setPref: setCursorPref } = useCursorPref()
   const [reportOpen, setReportOpen] = useState(false)
   const [tagsOpen, setTagsOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
@@ -121,6 +124,16 @@ export function ArtifactTopBar(props: {
                 <Icon name="present" size={16} /> Present
               </DropdownMenuItem>
             )}
+            {/* Opt out of the live-cursor layer: peers vanish and yours stops broadcasting.
+                Kept open on toggle so the state reads back; the preference persists per-browser. */}
+            <DropdownMenuCheckboxItem
+              data-testid="cursor-hide"
+              checked={cursorPref.hidden}
+              onCheckedChange={(hidden) => setCursorPref({ hidden })}
+              onSelect={(e) => e.preventDefault()}
+            >
+              <MousePointer2Off className="size-4" aria-hidden /> Hide live cursors
+            </DropdownMenuCheckboxItem>
             <DropdownMenuSeparator />
 
             {/* Organize — open as dialogs. */}
