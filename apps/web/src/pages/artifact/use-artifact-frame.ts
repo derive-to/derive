@@ -303,8 +303,8 @@ export function useArtifactFrame(p: {
     frame,
     presentWrap,
     // The iframe (re)loaded. That's not only a shortId/version change: a live
-    // version auto-swap, the reader-mode toggle, and a RenderStage retry all
-    // reload the frame with the SAME key — so the fresh document starts at
+    // version auto-swap and a RenderStage retry also reload the frame with the
+    // SAME key — so the fresh document starts at
     // scrollY 0 and the OLD doc's anchor tops are meaningless. Reset both here
     // (pins go unlocated/invisible until the new doc reports) instead of pinning
     // stale cards over the new document.

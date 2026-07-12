@@ -21,7 +21,7 @@ import { ShareButton } from "./share-dialog"
  *   [ Share · ★ · ⋯ ]        [ comments ]
  *     actions cluster          the discussion panel toggle (terminal)
  * The filled-ink Share leads as the one primary; the favorited star is glanceable
- * state; the ⋯ holds everything else (Reader/Present, Tags/Collections, Insights/
+ * state; the ⋯ holds everything else (Focus/Present, Tags/Collections, Insights/
  * History/Proposals, Edit/Lock/Report). Comments hugs the panel it opens. Presence +
  * the cursor picker are the ambient cluster the page renders ahead of this. Props-
  * driven; the page keeps the cache writes.
@@ -52,11 +52,6 @@ export function ArtifactTopBar(props: {
   editLabel: string
   /** This artifact is a slide deck — offer Present (fullscreen) in the ⋯ menu. */
   isDeck: boolean
-  /** Offer the Reader toggle (HTML artifacts only — markdown is already responsive). */
-  showReader: boolean
-  /** Reader view is currently on (re-renders the artifact clean + responsive). */
-  reader: boolean
-  onReaderToggle: () => void
   /** Caller may toggle the change-lock (editor/owner). */
   canLock: boolean
   /** Whether the artifact is currently locked (changes go through approval). */
@@ -117,17 +112,10 @@ export function ArtifactTopBar(props: {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent>
-            {/* View modes — focus strips the chrome to just the render; a check marks
-                the active reader toggle. */}
+            {/* View modes — focus strips the chrome to just the render. */}
             <DropdownMenuItem data-testid="artifact-focus" onSelect={props.onFocus}>
               <Maximize2 className="size-4" aria-hidden /> Focus mode
             </DropdownMenuItem>
-            {props.showReader && (
-              <DropdownMenuItem data-testid="artifact-reader" onSelect={props.onReaderToggle}>
-                <Icon name="reader" size={16} /> Reader
-                {props.reader && <Icon name="check" size={16} className="ml-auto" />}
-              </DropdownMenuItem>
-            )}
             {props.isDeck && (
               <DropdownMenuItem data-testid="artifact-present" onSelect={props.onPresent}>
                 <Icon name="present" size={16} /> Present
