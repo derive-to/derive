@@ -9,14 +9,23 @@
 // reports using the same block tags, so a tokenizer over that tag set is small and
 // testable — the same trade `pageText`/`reflow.ts` already make.
 
-import { decodeEntities } from "./anchor"
+import { decodeEntities, pageText } from "./anchor"
 
-/** One heading in a document's h1–h3 spine. `chars` is the size of the section's
+/** One heading in a document's h1–h6 spine. `chars` is the size of the section's
  *  MARKDOWN conversion (heading included) — what a read of that section costs. */
 export interface OutlineSection {
   level: number
   text: string
   slug: string
+  chars: number
+}
+
+/** One structural landmark of a page with no heading spine (a dashboard, card grid,
+ *  or landing page): enough to orient an agent that then searches/windows into it.
+ *  `chars` is the size of the region's visible text. */
+export interface LandmarkRegion {
+  role: string
+  label: string | null
   chars: number
 }
 
@@ -479,7 +488,7 @@ interface HeadingSpan {
   start: number // offset of the heading's opening "<hN"
 }
 
-const HEADING = /<h([1-3])\b[^>]*>([\s\S]*?)<\/h\1>/gi
+const HEADING = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi
 // A DROP subtree with its full content — same tag set htmlToMarkdown drops whole.
 // Used to mask out `<script>`/`<template>`/… content before scanning for headings,
 // since the regex scan below has no tokenizer state and would otherwise happily
@@ -518,7 +527,72 @@ const sectionEnd = (html: string, spans: HeadingSpan[], i: number): number => {
   return body > (spans[i] as HeadingSpan).start ? body : html.length
 }
 
-/** The h1–h3 spine of an HTML document. Empty array = unsectionable (no headings). */
+// Structural landmarks that orient a page with no heading spine. A landmark nested
+// inside another is folded into its parent, so the map stays shallow. The role is the
+// element's implicit ARIA landmark role (what an accessibility tree would report) so
+// the map reads like the aria snapshots agents already know; an explicit `role`
+// attribute overrides it. header/footer map to banner/contentinfo, correct at the top
+// level (the only level surfaced here).
+const IMPLICIT_ROLE: Record<string, string> = {
+  main: "main",
+  nav: "navigation",
+  header: "banner",
+  footer: "contentinfo",
+  aside: "complementary",
+  section: "region",
+  article: "article",
+  form: "form",
+}
+const LANDMARK = new Set(Object.keys(IMPLICIT_ROLE))
+
+// Top-level landmark spans, balanced-matched by tag name (so nested same-name tags
+// don't close a parent early). Drop-subtree content is masked out first, exactly like
+// the heading scan, so a landmark tag inside a <template>/<script> is never surfaced.
+const landmarkSpans = (
+  html: string,
+): { name: string; attrs: string; start: number; end: number }[] => {
+  const drop: [number, number][] = []
+  DROP_SUBTREE.lastIndex = 0
+  for (let dm = DROP_SUBTREE.exec(html); dm; dm = DROP_SUBTREE.exec(html))
+    drop.push([dm.index, dm.index + dm[0].length])
+  const inDrop = (p: number) => drop.some(([s, e]) => p >= s && p < e)
+
+  const out: { name: string; attrs: string; start: number; end: number }[] = []
+  const stack: { name: string; attrs: string; start: number }[] = []
+  TOKEN.lastIndex = 0
+  for (let m = TOKEN.exec(html); m; m = TOKEN.exec(html)) {
+    if (inDrop(m.index)) continue
+    const tag = parseTag(m[0] as string, m.index)
+    if (!tag || !LANDMARK.has(tag.name) || tag.selfClosing) continue
+    if (!tag.closing) {
+      stack.push({ name: tag.name, attrs: tag.attrs, start: tag.start })
+      continue
+    }
+    // A close tag pops the nearest matching open, discarding any unclosed tags above
+    // it. A top-level landmark (opened at stack bottom) becomes a map entry.
+    for (let i = stack.length - 1; i >= 0; i--) {
+      if ((stack[i] as { name: string }).name !== tag.name) continue
+      const open = stack[i] as { name: string; attrs: string; start: number }
+      stack.length = i
+      if (i === 0) out.push({ name: open.name, attrs: open.attrs, start: open.start, end: tag.end })
+      break
+    }
+  }
+  return out
+}
+
+/** The structural map of an HTML page with no headings — a fallback so a designed,
+ *  headless page (dashboard, card grid) still orients an agent, who then searches or
+ *  windows into a region. Empty when there is no landmark structure either. */
+export function landmarkMap(html: string): LandmarkRegion[] {
+  return landmarkSpans(html).map((s) => ({
+    role: attrOf(s.attrs, "role") ?? IMPLICIT_ROLE[s.name] ?? s.name,
+    label: attrOf(s.attrs, "aria-label") ?? attrOf(s.attrs, "id"),
+    chars: pageText(html.slice(s.start, s.end)).length,
+  }))
+}
+
+/** The h1–h6 spine of an HTML document. Empty array = unsectionable (no headings). */
 export function docOutline(html: string): OutlineSection[] {
   const spans = headingSpans(html)
   return spans.map((s, i) => ({
@@ -561,7 +635,7 @@ const mdHeadings = (src: string): MdHeading[] => {
       if (!fence) fence = run.slice(0, 1).repeat(3)
       else if (run.startsWith(fence)) fence = null
     } else if (!fence) {
-      const h = /^(#{1,3})\s+(.+?)\s*#*\s*$/.exec(line)
+      const h = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line)
       if (h) {
         const text = (h[2] as string).trim()
         out.push({ level: (h[1] as string).length, text, slug: slug(text), start: offset })
@@ -612,7 +686,7 @@ export const elideDataUris = (s: string): string =>
       : m,
   )
 
-/** Outline for any text source (h1–h3 for HTML, ATX `#`–`###` for markdown). */
+/** Outline for any text source (h1–h6 for HTML, ATX `#`–`######` for markdown). */
 export const outlineOf = (source: string, contentType: string): OutlineSection[] => {
   if (isHtmlLike(contentType)) return docOutline(source)
   const hs = mdHeadings(source)
@@ -623,6 +697,11 @@ export const outlineOf = (source: string, contentType: string): OutlineSection[]
     chars: mdSectionEnd(source, hs, i) - h.start,
   }))
 }
+
+/** The landmark map for an HTML page with no heading spine (empty for markdown, and
+ *  for HTML that has headings — the outline covers those, this is the fallback). */
+export const landmarksOf = (source: string, contentType: string): LandmarkRegion[] =>
+  isHtmlLike(contentType) ? landmarkMap(source) : []
 
 /** The SOURCE slice a section slug addresses (raw HTML or raw markdown). */
 export const sectionOf = (source: string, contentType: string, slug: string): string | null => {

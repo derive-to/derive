@@ -740,6 +740,40 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(toolText(bad)).toContain("Bad `lines`")
   })
 
+  it("read: a large headless HTML page returns a landmark map, not a blind dump", async () => {
+    const { app, token } = appWithGrant("landmark", "openid derive:read derive:publish")
+    // A designed, heading-less page bigger than the outline-first threshold.
+    const filler = "<p>card content that repeats to exceed the outline threshold. </p>".repeat(700)
+    const html = `<!DOCTYPE html><html><body><nav aria-label="Primary">x</nav><main>${filler}</main><footer>fin</footer></body></html>`
+    const id = (await (await publishRaw(app, token, html, "dash.html", "Dashboard")).json())
+      .short_id
+
+    const res = JSON.parse(toolText(await call(app, token, "read", { short_id: id })))
+    expect(res.regions.map((r: { role: string }) => r.role)).toEqual([
+      "navigation",
+      "main",
+      "contentinfo",
+    ])
+    expect(res.regions[0].label).toBe("Primary")
+    expect(res.next).toContain("search")
+    // And it is not the old blind clipped dump.
+    expect(res.sections).toBeUndefined()
+  })
+
+  it("read: outline now covers the full h1–h6 spine", async () => {
+    const { app, token } = appWithGrant("deep", "openid derive:read derive:publish")
+    const md = ["# One", "## Two", "### Three", "#### Four", "##### Five", "###### Six", "", "body"]
+      .join("\n")
+      // Pad past the outline-first threshold so `read` returns the outline.
+      .concat(`\n\n${"filler line\n".repeat(4000)}`)
+    const id = (await (await publishRaw(app, token, md, "deep.md", "Deep")).json()).short_id
+    const res = JSON.parse(toolText(await call(app, token, "read", { short_id: id })))
+    expect(res.sections.map((s: { level: number }) => s.level)).toEqual([1, 2, 3, 4, 5, 6])
+    // A level-4 heading is addressable as a section.
+    const sec = toolText(await call(app, token, "read", { short_id: id, section: "four" }))
+    expect(sec).toContain("Four")
+  })
+
   it("read: formats, heading sections, and the outline-first threshold", async () => {
     const { app, token } = appWithGrant("readfmt", "openid derive:read derive:publish")
     const html =

@@ -6,6 +6,8 @@ import {
   EditError,
   headingSlug,
   htmlToMarkdown,
+  landmarkMap,
+  landmarksOf,
   outlineOf,
   sectionOf,
   sectionSlice,
@@ -214,6 +216,23 @@ describe("docOutline + sectionSlice", () => {
     for (const s of out) expect(s.chars).toBeGreaterThan(0)
   })
 
+  it("covers the full h1–h6 spine, not just h1–h3", () => {
+    const deep = doc(
+      "<h1>One</h1><h2>Two</h2><h3>Three</h3><h4>Four</h4><h5>Five</h5><h6>Six</h6><p>x</p>",
+    )
+    expect(docOutline(deep).map((s) => [s.level, s.slug])).toEqual([
+      [1, "one"],
+      [2, "two"],
+      [3, "three"],
+      [4, "four"],
+      [5, "five"],
+      [6, "six"],
+    ])
+    // A deep heading is addressable, and its section runs to the next same-or-higher.
+    expect(sectionSlice(deep, "four")).toContain("<h4>Four</h4>")
+    expect(outlineOf(deep, "text/html").map((s) => s.level)).toEqual([1, 2, 3, 4, 5, 6])
+  })
+
   it("slices a section up to the next same-or-higher heading", () => {
     const alpha = sectionSlice(html, "alpha")
     expect(alpha).toContain("<h2>Alpha</h2>")
@@ -247,6 +266,46 @@ describe("docOutline + sectionSlice", () => {
     expect(outline.map((s) => s.text)).toEqual(["Real"])
     // And the section it DOES find slices and converts cleanly, with no leaked markup.
     expect(sectionSlice(withScript, "real")).toContain("<h1>Real</h1>")
+  })
+})
+
+describe("landmarkMap (headless-page fallback)", () => {
+  it("maps top-level landmarks with role, label, and size", () => {
+    const html = doc(
+      '<header id="masthead"><p>logo</p></header>' +
+        '<nav aria-label="Primary"><a href="/a">A</a></nav>' +
+        "<main><p>the dashboard body has real content here</p></main>" +
+        "<footer><p>fin</p></footer>",
+    )
+    const map = landmarkMap(html)
+    // Roles are the implicit ARIA landmark roles (banner/navigation/main/contentinfo).
+    expect(map.map((r) => [r.role, r.label])).toEqual([
+      ["banner", "masthead"],
+      ["navigation", "Primary"],
+      ["main", null],
+      ["contentinfo", null],
+    ])
+    for (const r of map) expect(r.chars).toBeGreaterThan(0)
+  })
+
+  it("folds a nested landmark into its parent (map stays shallow)", () => {
+    const html = doc("<main><section aria-label='inner'><p>x</p></section></main>")
+    expect(landmarkMap(html).map((r) => [r.role, r.label])).toEqual([["main", null]])
+  })
+
+  it("prefers an explicit role attribute, and masks dropped subtrees", () => {
+    const html = doc(
+      '<template><nav aria-label="fake"></nav></template><section role="search" aria-label="Stats"><p>y</p></section>',
+    )
+    const map = landmarkMap(html)
+    expect(map).toHaveLength(1) // the <template> nav is masked
+    expect(map[0]?.role).toBe("search") // explicit role beats the implicit "region"
+    expect(map[0]?.label).toBe("Stats")
+  })
+
+  it("landmarksOf returns [] for markdown and for HTML (via the facade only when html)", () => {
+    expect(landmarksOf("# just markdown", "text/markdown")).toEqual([])
+    expect(landmarksOf(doc("<main><p>hi</p></main>"), "text/html")).toHaveLength(1)
   })
 })
 

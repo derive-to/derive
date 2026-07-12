@@ -32,6 +32,7 @@ import {
   elideDataUris,
   formatDiff,
   isHtmlLike,
+  landmarksOf,
   looksLikeHtmlDocument,
   newId,
   type OutlineSection,
@@ -821,8 +822,25 @@ async function buildServer(
               sections: outline,
               next: 'Large document — call read again with a `section` slug for just that part, or section:"*" for the full clipped text. To revise it, publish with `edits` instead of resending content.',
             })
-          // No headings to summarize by — fall through to a plain (clipped) return,
-          // reusing the already-computed (empty) outline instead of asking again.
+          // No headings — a designed, headless HTML page (dashboard, card grid) still
+          // has landmark structure. Return that map so the agent can search/window in
+          // rather than blindly dumping a clipped wall of text.
+          const regions = landmarksOf(src, ct)
+          if (regions.length)
+            return json({
+              short_id,
+              title: a.title,
+              kind: a.kind,
+              version: n,
+              source: ct,
+              format: fmt,
+              doc_chars: body.length,
+              url,
+              regions,
+              next: 'This page has no headings — it is mapped by region above. Use `search` to find a term, then read with `lines:"from-to"` to window that part. section:"*" forces the full clipped text.',
+            })
+          // Truly unstructured — fall through to a plain (clipped) return, reusing the
+          // already-computed (empty) outline instead of asking again.
           return doc({ ...meta, chars: body.length }, clipDoc(body, outline))
         }
         // Under FULL_DOC_MAX: clipDoc's MAX_CHARS ceiling is far above this body's
@@ -1002,6 +1020,21 @@ async function buildServer(
             url,
             sections: outline,
             next: `Large page — call read again with \`section\` set to "${cleanPath(pagePath)}#slug" for just that part, or "${cleanPath(pagePath)}#*" for the full clipped text.`,
+          })
+        const regions = landmarksOf(raw, file.type)
+        if (regions.length)
+          return json({
+            short_id,
+            title: a.title,
+            kind: "bundle",
+            version: n,
+            section: cleanPath(pagePath),
+            source: file.type,
+            format: fmt,
+            doc_chars: body.length,
+            url,
+            regions,
+            next: `This page has no headings — it is mapped by region above. Use \`search\` to find a term, then read with \`lines:"from-to"\` to window that part, or "${cleanPath(pagePath)}#*" for the full clipped text.`,
           })
         return doc(
           { ...meta, section: cleanPath(pagePath), chars: body.length },
