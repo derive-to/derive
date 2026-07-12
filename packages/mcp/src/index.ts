@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
+import { basename } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
   findAccountWorkspace,
@@ -550,13 +552,19 @@ server.registerTool(
   "publish",
   {
     description:
-      "Publish a single-file artifact and get a permanent URL. OMIT short_id to create a NEW artifact (title recommended); PASS short_id to publish a new version (same URL). To CHANGE PART of an existing artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything via `content`. Pass for_review:true to file it as a PROPOSAL a human approves instead of going live. Pass `addresses` with the thread ids this revision resolves. (Multi-page bundles are published via the web app or the remote /mcp server.) FULLY-STYLED HTML renders as-authored (own <style>/scripts/fonts) in the sandboxed viewer — declare your own <meta name=\"viewport\"> to skip the mobile-reflow injection, and self-host binaries via POST /v1/assets (images and woff2 fonts) instead of inlining base64. The response echoes content_sha256 of the stored bytes — verify it when the content passed through your context.",
+      "Publish a single-file artifact and get a permanent URL. OMIT short_id to create a NEW artifact (title recommended); PASS short_id to publish a new version (same URL). Provide the body as `content_path` (a local file this server reads and uploads — preferred, zero tokens) or `content` (inline text). To CHANGE PART of an existing artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything. Pass for_review:true to file it as a PROPOSAL a human approves instead of going live. Pass `addresses` with the thread ids this revision resolves. (Multi-page bundles are published via the web app or the remote /mcp server.) FULLY-STYLED HTML renders as-authored (own <style>/scripts/fonts) in the sandboxed viewer — declare your own <meta name=\"viewport\"> to skip the mobile-reflow injection, and self-host binaries via POST /v1/assets (images and woff2 fonts) instead of inlining base64.",
     inputSchema: {
       content: z
         .string()
         .optional()
         .describe(
-          "The artifact's full text content (HTML or Markdown). Use this OR `edits`. For images or web fonts, upload the raw bytes to POST /v1/assets (no base64 — binaries carried through a tool call can be silently mistranscribed) and reference the returned URL.",
+          "The artifact's full text content (HTML or Markdown). Use this OR `content_path` OR `edits`. For images or web fonts, upload the raw bytes to POST /v1/assets (no base64 — binaries carried through a tool call can be silently mistranscribed) and reference the returned URL.",
+        ),
+      content_path: z
+        .string()
+        .optional()
+        .describe(
+          "PREFERRED over `content` when the artifact exists as a local file: an absolute path this server reads and uploads as raw bytes — the content never rides through your context (no token cost, no transcription risk), and the stored bytes are verified against the file's sha256 automatically. Build and iterate on the file locally, then publish it by path. Filename defaults to the file's basename.",
         ),
       edits: z
         .array(
@@ -614,6 +622,7 @@ server.registerTool(
   },
   async ({
     content,
+    content_path,
     edits,
     base_version,
     filename,
@@ -629,7 +638,24 @@ server.registerTool(
     workspace: ws,
   }) => {
     const client = clientFor(ws)
-    if (content !== undefined && edits) return text("Provide `content` OR `edits`, not both.")
+    if ([content, content_path, edits].filter((v) => v !== undefined).length > 1)
+      return text("Provide exactly one of `content`, `content_path`, or `edits`.")
+    // The by-path lane: read the bytes HERE (this server runs on the caller's machine)
+    // so the artifact never rides through the agent's context. The sha256 computed off
+    // the local file is checked against the publish response's content_sha256 echo —
+    // any mismatch means the bytes were mangled in transit and the agent must know.
+    let pathBytes: Uint8Array | undefined
+    let pathSha: string | undefined
+    if (content_path !== undefined) {
+      try {
+        pathBytes = new Uint8Array(readFileSync(content_path))
+      } catch (e) {
+        return err(
+          `could not read content_path "${content_path}": ${e instanceof Error ? e.message : "unknown error"}`,
+        )
+      }
+      pathSha = createHash("sha256").update(pathBytes).digest("hex")
+    }
     if (for_review) {
       if (!short_id) return text("A proposal revises an EXISTING artifact — pass its short_id.")
       try {
@@ -657,10 +683,12 @@ server.registerTool(
     try {
       a = await client.publish({
         id: short_id,
-        content,
+        content: pathBytes ?? content,
         edits,
         baseVersion: base_version,
-        filename: filename ?? (edits ? undefined : "index.html"),
+        filename:
+          filename ??
+          (content_path !== undefined ? basename(content_path) : edits ? undefined : "index.html"),
         title,
         workspaceAccess: workspace_access,
         linkRole: link_role,
@@ -672,15 +700,30 @@ server.registerTool(
     } catch (e) {
       return err(e instanceof Error ? e.message : "publish failed")
     }
+    // Integrity check for the by-path lane: the server echoes the sha256 of what it
+    // stored (single-file artifacts); it must be the local file's hash, byte for byte.
+    const echoedSha = (a as { content_sha256?: string }).content_sha256
+    if (pathSha && echoedSha && echoedSha !== pathSha)
+      return err(
+        `content integrity mismatch: local file sha256 ${pathSha} but the server stored ${echoedSha} — the upload was corrupted; retry the publish.`,
+      )
     const note = addresses?.length ? ` · resolved ${addresses.length} thread(s)` : ""
     const openNote =
       a.opened_in_tab === false
         ? " No open Derive tab caught this push — open the url for the user if they should see it now."
         : ""
+    // Detection-driven advisories (missing viewport → reflow injected; base64 blobs
+    // → use assets) are computed SERVER-side and ride the REST response — this shim
+    // is an HTTP client (no @derive/core at runtime), so it only relays them.
+    const advisories = (a as { advisories?: string[] }).advisories
+    const advisoryNote = advisories?.length
+      ? advisories.map((advisory) => ` ${advisory}`).join("")
+      : ""
     return json({
       published: true,
       short_id: a.short_id,
       ...(a.review_requested ? { review_requested: true } : {}),
+      ...(pathSha && echoedSha ? { content_verified: true } : {}),
       version: a.current_version,
       url: a.url,
       title: a.title,
@@ -689,7 +732,8 @@ server.registerTool(
       ...(a.opened_in_tab !== undefined ? { opened_in_tab: a.opened_in_tab } : {}),
       note:
         (short_id ? `Live — new version${note}.` : `Live — created "${a.title}"${note}.`) +
-        openNote,
+        openNote +
+        advisoryNote,
     })
   },
 )
