@@ -1,8 +1,10 @@
 // The live-cursor domain — one source of truth for the on-canvas overlay and the
-// one preference (hide). A peer's identity color is NOT here and NOT on the wire:
-// it's derived from their name via the app's shared avatar tint (`colorForName`),
-// so a person is the same color on their cursor, avatar, and presence row. No
-// per-cursor look to pick — the design language rations color and forbids emoji.
+// one preference (hide). A peer's color is NOT here and NOT on the wire: it's
+// derived from their name via `colorForName` (the shared identity palette avatar
+// tints draw from), keyed on the SAME server-stamped handle that names them in the
+// presence roster — so each peer keeps one stable, distinct tint for the session,
+// with the name tag carrying identity. No per-cursor look to pick — the design
+// language rations color and forbids emoji.
 //
 // Nothing here touches React or the DOM: just the wire vocabulary, the one pref,
 // and the animation/lifecycle tuning.

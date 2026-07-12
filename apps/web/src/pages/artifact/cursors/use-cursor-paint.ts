@@ -10,9 +10,10 @@ import { CURSOR_TUNING, type CursorFrame, effectiveDocH, placePeer } from "@/lib
 // viewport edge collapse into an edge indicator. React only re-renders when the roster
 // changes (a peer joins, leaves, or is renamed) or a ripple fires; every-frame motion is
 // written straight to the DOM via refs, never through React. A peer's color isn't sent —
-// it's their identity tint, derived from their name (`colorForName`) so their cursor
-// matches their avatar. The SENDING half (our own pointer → server) lives in
-// use-cursor-send. `selfId` is shared so we ignore our own echoed frames.
+// it's derived from their name (`colorForName`, the shared identity palette), keyed on the
+// same server-stamped handle presence uses, so each peer keeps one stable, distinct tint.
+// The SENDING half (our own pointer → server) lives in use-cursor-send. `selfId` is shared
+// so we ignore our own echoed frames.
 
 /** A peer entry the overlay mounts/unmounts (no per-frame churn). Color is the peer's
  *  identity tint, derived once from their name so it matches their avatar. */

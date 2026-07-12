@@ -454,9 +454,14 @@ variants.
   **Comments** toggle hugging the panel it opens. Everything that used to crowd the row
   (Present / Insights / History / Proposals / Edit / Lock / Report / Tags / Collections) now
   lives behind the ⋯ — the render is the hero, the chrome recedes.
-- **Live cursors** — peers' cursors are a slim arrow tinted by their **identity** (the same
-  `colorForName` tint as their avatar and presence dot — color follows the person, never a
-  per-cursor pick), with a `font-medium` name flag that fades on stillness. There is no style
+- **Live cursors** — peers' cursors are a slim arrow tinted by their **identity**: a stable,
+  distinct tint from the shared identity palette (`colorForName`, the same palette avatar
+  tints draw from), keyed on the server-stamped handle that also names them in presence.
+  Color follows the person — one tint per peer for the session, never a per-cursor pick — with
+  a `font-medium` name flag that fades on stillness. (Today that palette is a cursor-only
+  accent in the artifact view; the presence facepile still reads you-vs-them in `primary`/
+  `accent`. Unifying the two on `colorForName` — so a cursor and its facepile row share a
+  color — is the obvious next coherence step, deferred as its own call.) There is no style
   selector: a picker of colors + emoji would break both *color is rationed* and *never emojis*.
   The one real preference — **Hide live cursors** — is a checkbox item in the ⋯ menu's view-
   modes group beside Focus; it opts you out of the whole layer (peers vanish, yours stops
