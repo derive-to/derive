@@ -19,8 +19,8 @@ import { useLiveCursors } from "./cursors/use-live-cursors"
  */
 export function useArtifactLive(opts: {
   shortId: string
-  /** This viewer's stable presence id (user id, or the anon guest id) — the cursor
-   *  engine keys on it so "follow" from the facepile lines up with the peer's cursor. */
+  /** This viewer's stable presence id (a user id, or the anon guest id) — the cursor engine
+   *  keys peers on it (one identity per browser) and ignores our own echoed frames. */
   selfId: string
   onComment: () => void
   /** A new version landed live, with its number when the event carried one — the
@@ -133,13 +133,6 @@ export function useArtifactLive(opts: {
     return () => clearInterval(t)
   }, [shortId, visible])
 
-  // Stop following a peer the instant they leave — the cursor loop can't tell "left" from
-  // "mouse gone idle", so settle it against the authoritative presence roster instead.
-  const { following, unfollow } = cursors
-  useEffect(() => {
-    if (following && !viewers.some((v) => v.id === following)) unfollow()
-  }, [viewers, following, unfollow])
-
   // Record one view per artifact open.
   const recorded = useRef("")
   useEffect(() => {
@@ -157,13 +150,5 @@ export function useArtifactLive(opts: {
     setGeom: cursors.setGeom,
     setViewSlide: cursors.setViewSlide,
     cursor: cursors.layer,
-    // Follow-a-peer controls (Figma/tldraw style), surfaced to the page so the presence
-    // facepile can start it and a banner can show/stop it. `setFollowScroll` lets the page
-    // hand the cursor engine a way to scroll the artifact frame.
-    following: cursors.following,
-    followingPeer: cursors.followingPeer,
-    follow: cursors.follow,
-    unfollow: cursors.unfollow,
-    setFollowScroll: cursors.setFollowScroll,
   }
 }

@@ -81,19 +81,11 @@ export function Presence({
   viewers,
   selfId,
   compact,
-  following,
-  onFollow,
-  onStopFollow,
 }: {
   viewers: Viewer[]
   selfId?: string
   /** Tight header (mobile): fewer avatars + a count only, no "viewing" word. */
   compact?: boolean
-  /** The peer id we're currently following (Figma-style), or null. */
-  following?: string | null
-  /** Start following a peer — lock our scroll to theirs. Absent on read-only headers. */
-  onFollow?: (id: string, name: string) => void
-  onStopFollow?: () => void
 }) {
   const self = viewers.find((v) => v.id === selfId) ?? null
   const others = viewers.filter((v) => v.id !== selfId)
@@ -134,52 +126,28 @@ export function Presence({
           {ordered.length} viewing now
         </Eyebrow>
         <div className="max-h-70 overflow-auto">
-          {ordered.map((v) => {
-            const isSelf = v.id === selfId
-            const isFollowing = following === v.id
-            return (
-              <div key={v.id} className="group flex items-center gap-2.5 rounded-lg px-2 py-1.5">
-                <Avatar className="size-7">
-                  <AvatarFallback
-                    className={cn("font-mono text-2xs font-medium", presenceTint(isSelf))}
-                  >
-                    {initials(v)}
-                  </AvatarFallback>
-                </Avatar>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                    <span className="truncate">{v.name}</span>
-                    {isSelf && <span className="text-sm text-muted-foreground">(you)</span>}
-                  </span>
+          {ordered.map((v) => (
+            <div key={v.id} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
+              <Avatar className="size-7">
+                <AvatarFallback
+                  className={cn("font-mono text-2xs font-medium", presenceTint(v.id === selfId))}
+                >
+                  {initials(v)}
+                </AvatarFallback>
+              </Avatar>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                  <span className="truncate">{v.name}</span>
+                  {v.id === selfId && <span className="text-sm text-muted-foreground">(you)</span>}
                 </span>
-                {/* Follow lives on the row: click to lock your scroll to this peer. Shown
-                    for real peers only (never yourself), and it can't out-rank the role. */}
-                {!isSelf && onFollow && (
-                  <Button
-                    variant={isFollowing ? "secondary" : "ghost"}
-                    size="xs"
-                    data-testid="presence-follow"
-                    onClick={() => (isFollowing ? onStopFollow?.() : onFollow(v.id, v.name))}
-                    className={cn(
-                      "shrink-0",
-                      // Desktop: reveal on row hover/focus to keep the list quiet. Touch has
-                      // neither, so always show it on the compact (mobile) popover.
-                      !isFollowing &&
-                        !compact &&
-                        "opacity-0 focus-visible:opacity-100 group-hover:opacity-100",
-                    )}
-                  >
-                    {isFollowing ? "Following" : "Follow"}
-                  </Button>
-                )}
-                {v.role && (
-                  <Badge shape="pill" className="capitalize">
-                    {v.role}
-                  </Badge>
-                )}
-              </div>
-            )
-          })}
+              </span>
+              {v.role && (
+                <Badge shape="pill" className="capitalize">
+                  {v.role}
+                </Badge>
+              )}
+            </div>
+          ))}
         </div>
       </PopoverContent>
     </Popover>

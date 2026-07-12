@@ -54,23 +54,6 @@ describe("live cursor frame", () => {
     expect(f).toMatchObject({ x: 0.5, y: 0.5 })
   })
 
-  it("carries the scroll fraction (sf) so peers can follow, and clamps it 0..1", async () => {
-    const { cursor, lastCursor } = await seed()
-    await cursor({ id: "a", sf: 0.42, x: 0.1, y: 0.2 })
-    expect(lastCursor()?.sf).toBe(0.42)
-    // Out-of-range sf is rejected by the schema (0..1), so a bad client can't warp follow.
-    expect((await cursor({ id: "a", sf: 1.5, x: 0, y: 0 })).status).toBe(400)
-  })
-
-  it("passes `live` through so a scroll with the mouse off the doc updates sf, not the cursor", async () => {
-    const { cursor, lastCursor } = await seed()
-    // A bare scroll (pointer not over the doc) carries live:false — peers consume sf but
-    // don't render/move the cursor. The server must forward the flag verbatim.
-    await cursor({ id: "a", sf: 0.7, live: false, x: 0.1, y: 0.2 })
-    expect(lastCursor()?.live).toBe(false)
-    expect(lastCursor()?.sf).toBe(0.7)
-  })
-
   it("defaults kind to arrow and never forwards an emoji for an arrow cursor", async () => {
     const { cursor, lastCursor } = await seed()
     // Even if a client sends an emoji with an arrow kind, it isn't forwarded.

@@ -11,9 +11,9 @@ import { guestQuery } from "@/lib/guest-id"
 // We send no id: the server stamps the authoritative one (our presence identity) on every
 // broadcast, so the client id was dead weight. Echo-filtering uses selfId on the paint side.
 export function useCursorSend(shortId: string): {
-  onPointerMove: (x: number, y: number, slide?: number, sf?: number, live?: boolean) => void
+  onPointerMove: (x: number, y: number, slide?: number) => void
   onPointerLeave: () => void
-  onTap: (x: number, y: number, slide?: number, sf?: number, live?: boolean) => void
+  onTap: (x: number, y: number, slide?: number) => void
 } {
   const { pref } = useCursorPref()
   // Always send the latest pick without re-binding the send callbacks.
@@ -23,11 +23,6 @@ export function useCursorSend(shortId: string): {
   // Local send + lifecycle state. `mySlide` is the deck slide WE'RE on, tagged onto
   // every frame we send (undefined off a deck, so peers never get filtered out).
   const mySlide = useRef<number | undefined>(undefined)
-  // Our own scroll fraction, tagged onto every outgoing frame so peers can follow us.
-  const mySf = useRef<number | undefined>(undefined)
-  // Whether our pointer is actually over the doc — rides the frame so peers render our
-  // cursor only when it's live, but still consume our scroll fraction when it isn't.
-  const myLive = useRef<boolean | undefined>(undefined)
   const xy = useRef<[number, number] | null>(null)
   const sentAt = useRef(0)
   const live = useRef(false)
@@ -47,8 +42,6 @@ export function useCursorSend(shortId: string): {
           x: pt[0],
           y: pt[1],
           slide: mySlide.current,
-          sf: mySf.current,
-          live: myLive.current,
           ...extra,
         }),
       }).catch(() => {})
@@ -75,12 +68,10 @@ export function useCursorSend(shortId: string): {
   }, [send])
 
   const onPointerMove = useCallback(
-    (x: number, y: number, slide?: number, sf?: number, pv?: boolean) => {
+    (x: number, y: number, slide?: number) => {
       if (prefRef.current.hidden) return
       xy.current = [x, y]
       mySlide.current = slide
-      mySf.current = sf
-      myLive.current = pv
       live.current = true
       if (idleTimer.current) clearTimeout(idleTimer.current)
       idleTimer.current = setTimeout(sendLeave, CURSOR_TUNING.idleMs)
@@ -92,12 +83,10 @@ export function useCursorSend(shortId: string): {
   const onPointerLeave = useCallback(() => sendLeave(), [sendLeave])
 
   const onTap = useCallback(
-    (x: number, y: number, slide?: number, sf?: number, pv?: boolean) => {
+    (x: number, y: number, slide?: number) => {
       if (prefRef.current.hidden) return
       xy.current = [x, y]
       mySlide.current = slide
-      mySf.current = sf
-      myLive.current = pv
       live.current = true
       send({ ...look(), tap: true })
     },

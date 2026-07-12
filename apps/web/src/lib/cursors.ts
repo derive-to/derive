@@ -30,14 +30,6 @@ export interface CursorFrame {
   tap?: boolean
   /** Deck artifacts: the slide the peer is on. Peers on other slides aren't shown. */
   slide?: number
-  /** The sender's scroll position, 0..1 (how far down the document they are). VIEWPORT
-   *  state, independent of the pointer — rides every frame (a move OR a bare scroll) so a
-   *  viewer can FOLLOW this peer by syncing their own scroll to it. */
-  sf?: number
-  /** Is the sender's pointer actually over the document right now? A scroll with the mouse
-   *  elsewhere sends `live: false` — update `sf`, but don't render/move their cursor.
-   *  Absent (older clients / a plain move) means live. */
-  live?: boolean
   x: number
   y: number
 }
