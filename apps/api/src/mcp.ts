@@ -42,6 +42,7 @@ import {
   parseFrontmatter,
   profileState,
   propose as proposeChange,
+  publishAdvisories,
   publish as publishVersion,
   type Role,
   resolveBrandprint,
@@ -1681,6 +1682,15 @@ async function buildServer(
                 : "Live now — created a new artifact in your workspace.") +
             (actingFor && !openedInTab
               ? " No open Derive tab caught this push — open the url for the user (e.g. run `open <url>`) if they should see it now."
+              : "") +
+            // Detection-driven advisories: a rule delivered at the moment of the
+            // mistake (missing viewport → reflow injected; base64 blobs → use assets)
+            // beats one buried in the tool description. Content-provided single files
+            // only — an edits revision didn't carry the whole document through here.
+            (typeof contentIn === "string" && artifact.kind === "file"
+              ? publishAdvisories(contentIn, version.content_type)
+                  .map((advisory) => ` ${advisory}`)
+                  .join("")
               : ""),
         })
       } catch (e) {
