@@ -53,6 +53,27 @@ test.describe("live multiplayer cursors", () => {
     await expect(owner.getByTestId("remote-cursor")).toHaveCount(0)
   })
 
+  test("follow a peer from the facepile shows a banner and Stop releases it", async ({
+    owner,
+    secondUser,
+  }) => {
+    const shortId = await publishPublic(owner)
+    await openArtifact(owner, shortId)
+    // The second viewer opens the SAME doc, so they land in the presence facepile — and
+    // because the cursor id is now the presence id, following them from the facepile lines
+    // up with their cursor. The facepile only renders once a peer is present.
+    await openArtifact(secondUser.page, shortId)
+
+    await expect(owner.getByTestId("presence-trigger")).toBeVisible({ timeout: 15_000 })
+    await owner.getByTestId("presence-trigger").click()
+    await owner.getByTestId("presence-follow").click()
+
+    // The banner names who we're locked to; Stop releases us.
+    await expect(owner.getByTestId("follow-banner")).toContainText("Second User")
+    await owner.getByTestId("follow-stop").click()
+    await expect(owner.getByTestId("follow-banner")).toHaveCount(0)
+  })
+
   test("you can customize your own cursor", async ({ owner }) => {
     const shortId = await publishPublic(owner)
     await openArtifact(owner, shortId)

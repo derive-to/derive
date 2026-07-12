@@ -45,6 +45,10 @@ export interface CursorLayerHandle {
    *  as edge indicators instead of a cursor pinned at the edge. */
   above: PeerView[]
   below: PeerView[]
+  /** The peer we're following, for the "Following …" banner (null if none). */
+  followingPeer: PeerView | null
+  /** Stop following — the banner's button (auto-exit on manual scroll shares it). */
+  onStopFollow: () => void
 }
 
 /** Per-peer animation state — lives in a ref, mutated outside React. */
@@ -58,6 +62,7 @@ interface PeerTarget {
   emoji?: string
   name: string
   slide?: number // deck slide the peer is on (undefined on non-deck artifacts)
+  sf?: number // the peer's own scroll fraction 0..1 — drives "follow this peer"
   gone: boolean
   fade: number // opacity while leaving (1 → 0)
   lastSeen: number
@@ -76,6 +81,13 @@ export function useCursorPaint(selfId: string): {
   paintFrame: (f: CursorFrame) => void
   setGeom: (g: { scrollY: number; docH: number; viewH: number }) => void
   setViewSlide: (slide: number | null) => void
+  /** Follow controls: lock our scroll to a peer's (see the follow block above). */
+  following: string | null
+  followingPeer: PeerView | null
+  follow: (id: string, name: string) => void
+  unfollow: () => void
+  /** Injected by the page: how to command the artifact frame to scroll to a fraction. */
+  setFollowScroll: (fn: ((frac: number) => void) | null) => void
   layer: CursorLayerHandle
 } {
   const { pref } = useCursorPref()
@@ -136,6 +148,34 @@ export function useCursorPaint(selfId: string): {
   })
   const offscreenKey = useRef("")
   const rippleKey = useRef(0)
+
+  // "Follow" a peer: glue our own scroll to theirs, so we see exactly what they're
+  // pointing at wherever they are in the doc (Figma/tldraw follow). Their scroll fraction
+  // rides every cursor frame (PeerTarget.sf); the rAF loop pushes it to `onFollowScroll`,
+  // which index wires to a scroll command in the artifact frame. Keyed by the peer's
+  // stable presence id (cursor id === presence id — see use-live-cursors), so the facepile
+  // can start it. `followingPeer` is carried explicitly (not derived from the cursor
+  // roster) so the banner shows the instant you click Follow, before their first frame.
+  const [following, setFollowing] = useState<string | null>(null)
+  const [followingPeer, setFollowingPeer] = useState<PeerView | null>(null)
+  const followingRef = useRef<string | null>(null)
+  followingRef.current = following
+  const onFollowScroll = useRef<((frac: number) => void) | null>(null)
+  const lastFollowSf = useRef(-1)
+  const follow = useCallback((id: string, name: string) => {
+    lastFollowSf.current = -1 // force an immediate jump to the peer on the next frame
+    // Tint the banner with their cursor color if we've seen their cursor; else neutral.
+    const color = targets.current.get(id)?.color ?? CURSOR_FALLBACK
+    setFollowing(id)
+    setFollowingPeer({ id, color, kind: "arrow", name })
+  }, [])
+  const unfollow = useCallback(() => {
+    setFollowing(null)
+    setFollowingPeer(null)
+  }, [])
+  const setFollowScroll = useCallback((fn: ((frac: number) => void) | null) => {
+    onFollowScroll.current = fn
+  }, [])
 
   // Rebuild the roster from the targets map, coalesced to ≤1 render per burst.
   const markRosterDirty = useCallback(() => {
@@ -208,6 +248,7 @@ export function useCursorPaint(selfId: string): {
           emoji: f.emoji,
           name: f.name ?? "Guest",
           slide: f.slide,
+          sf: f.sf,
           gone: false,
           fade: 1,
           lastSeen: now,
@@ -227,6 +268,7 @@ export function useCursorPaint(selfId: string): {
       existing.emoji = f.emoji
       existing.name = f.name ?? existing.name
       existing.slide = f.slide
+      if (typeof f.sf === "number") existing.sf = f.sf
       existing.gone = false
       existing.fade = 1
       existing.lastSeen = now
@@ -300,6 +342,18 @@ export function useCursorPaint(selfId: string): {
             t.labelEl.style.opacity = hideLabel ? "0" : "1"
           }
         }
+        // Follow: keep our scroll glued to the followed peer's scroll fraction. Command
+        // only on a real change, so we don't fight the user or spam the frame at 60fps.
+        // A missing/idle cursor doesn't stop the follow (they may just be reading, mouse
+        // still) — leaving presence does, handled by the page against the viewer roster.
+        const fid = followingRef.current
+        if (fid) {
+          const ft = targets.current.get(fid)
+          if (ft && typeof ft.sf === "number" && Math.abs(ft.sf - lastFollowSf.current) > 0.0005) {
+            lastFollowSf.current = ft.sf
+            onFollowScroll.current?.(ft.sf)
+          }
+        }
         // Re-render React only when the off-screen membership actually changes.
         const key = `${above.map((p) => p.id).join(",")}|${below.map((p) => p.id).join(",")}`
         if (key !== offscreenKey.current) {
@@ -318,6 +372,11 @@ export function useCursorPaint(selfId: string): {
     paintFrame,
     setGeom,
     setViewSlide,
+    following,
+    followingPeer,
+    follow,
+    unfollow,
+    setFollowScroll,
     layer: {
       ref: layerRef,
       roster,
@@ -325,6 +384,8 @@ export function useCursorPaint(selfId: string): {
       register,
       above: offscreen.above,
       below: offscreen.below,
+      followingPeer,
+      onStopFollow: unfollow,
     },
   }
 }

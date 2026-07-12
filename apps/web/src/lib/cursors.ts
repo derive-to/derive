@@ -30,6 +30,9 @@ export interface CursorFrame {
   tap?: boolean
   /** Deck artifacts: the slide the peer is on. Peers on other slides aren't shown. */
   slide?: number
+  /** The sender's scroll position, 0..1 (how far down the document they are). Rides
+   *  every frame so a viewer can FOLLOW this peer — syncing their own scroll to it. */
+  sf?: number
   x: number
   y: number
 }

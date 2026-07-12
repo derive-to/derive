@@ -35,9 +35,9 @@ export function useArtifactFrame(p: {
    *  the mouse over its card, so picking a comment (click, or Prev/Next) reads
    *  as a persistent selection, not a hover trick you have to hold. */
   activeThread: string | null
-  onPointerMove: (x: number, y: number, slide?: number) => void
+  onPointerMove: (x: number, y: number, slide?: number, sf?: number) => void
   onPointerLeave: () => void
-  onTap: (x: number, y: number, slide?: number) => void
+  onTap: (x: number, y: number, slide?: number, sf?: number) => void
   setHoverThread: Dispatch<SetStateAction<string | null>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
   setPanel: Dispatch<SetStateAction<Panel>>
@@ -54,6 +54,9 @@ export function useArtifactFrame(p: {
    *  opens anything else in a clean un-sandboxed tab. The href comes from
    *  untrusted artifact HTML: validate the scheme before acting. */
   onOpenExternal?: (href: string) => void
+  /** The viewer scrolled the doc by hand while following a peer — they're taking control
+   *  back, so stop following (the frame only reports this while follow mode is armed). */
+  onUserScroll?: () => void
 }) {
   const {
     comments,
@@ -66,6 +69,7 @@ export function useArtifactFrame(p: {
     onTap,
   } = p
   const { setHoverThread, setActiveThread, setPanel, onNavigate, onEsc, onOpenExternal } = p
+  const { onUserScroll } = p
   const frame = useRef<HTMLIFrameElement>(null)
   const presentWrap = useRef<HTMLDivElement>(null)
   const [frameReady, setFrameReady] = useState(0)
@@ -176,11 +180,13 @@ export function useArtifactFrame(p: {
         setActiveThread(d.id)
         setPanel((cur) => (cur === "open" ? cur : "open"))
       } else if (d.type === "cursor" && typeof d.x === "number" && typeof d.y === "number") {
-        onPointerMove(d.x, d.y, deckRef.current?.i)
+        onPointerMove(d.x, d.y, deckRef.current?.i, d.sf)
       } else if (d.type === "cursor-tap" && typeof d.x === "number" && typeof d.y === "number") {
-        onTap(d.x, d.y, deckRef.current?.i)
+        onTap(d.x, d.y, deckRef.current?.i, d.sf)
       } else if (d.type === "cursor-leave") {
         onPointerLeave()
+      } else if (d.type === "user-scroll") {
+        onUserScroll?.()
       } else if (d.type === "navigate" && typeof d.ref === "string") {
         onNavigate(d.ref, !!d.newTab)
       } else if (d.type === "open-external" && typeof d.href === "string") {
@@ -201,6 +207,7 @@ export function useArtifactFrame(p: {
     onNavigate,
     onEsc,
     onOpenExternal,
+    onUserScroll,
     updateGeom,
   ])
 
@@ -314,6 +321,9 @@ export function useArtifactFrame(p: {
       setAnchorTops({})
       setFrameReady((n) => n + 1)
     },
+    // Bumps on every (re)load — the fresh frame starts at scroll 0 with `follow-mode`
+    // off, so the page must react (it drops any follow so the exit can't go dead).
+    frameReady,
     post,
     scrollBy,
     deck,

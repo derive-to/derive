@@ -44,10 +44,22 @@ describe("live cursor frame", () => {
     const { cursor, lastCursor } = await seed()
     expect((await cursor({ id: "a", kind: "emoji", emoji: "🦊", x: 0.5, y: 0.5 })).status).toBe(204)
     const f = lastCursor()
-    expect(f).toMatchObject({ type: "cursor", id: "a", kind: "emoji", emoji: "🦊" })
+    expect(f).toMatchObject({ type: "cursor", kind: "emoji", emoji: "🦊" })
+    // The broadcast id is SERVER-derived (matches the presence roster), never the client's
+    // `body.id` — that's what lets "follow this peer" line up with their facepile row.
+    expect(f?.id).toMatch(/^anon_/)
+    expect(f?.id).not.toBe("a")
     // color falls back to the server default; x/y survive.
     expect(f?.color).toBe("#655999")
     expect(f).toMatchObject({ x: 0.5, y: 0.5 })
+  })
+
+  it("carries the scroll fraction (sf) so peers can follow, and clamps it 0..1", async () => {
+    const { cursor, lastCursor } = await seed()
+    await cursor({ id: "a", sf: 0.42, x: 0.1, y: 0.2 })
+    expect(lastCursor()?.sf).toBe(0.42)
+    // Out-of-range sf is rejected by the schema (0..1), so a bad client can't warp follow.
+    expect((await cursor({ id: "a", sf: 1.5, x: 0, y: 0 })).status).toBe(400)
   })
 
   it("defaults kind to arrow and never forwards an emoji for an arrow cursor", async () => {
