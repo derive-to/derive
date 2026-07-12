@@ -19,6 +19,9 @@ import { useLiveCursors } from "./cursors/use-live-cursors"
  */
 export function useArtifactLive(opts: {
   shortId: string
+  /** This viewer's stable presence id (user id, or the anon guest id) — the cursor
+   *  engine keys on it so "follow" from the facepile lines up with the peer's cursor. */
+  selfId: string
   onComment: () => void
   /** A new version landed live, with its number when the event carried one — the
    *  page refetches AND may cue the user (toast / mid-edit warning). */
@@ -31,7 +34,7 @@ export function useArtifactLive(opts: {
    *  were never replayed, so refetch silently instead of trusting the cache. */
   onResync?: () => void
 }) {
-  const { shortId, onComment, onVersion, onReview, onResync } = opts
+  const { shortId, selfId, onComment, onVersion, onReview, onResync } = opts
   const [viewers, setViewers] = useState<Viewer[]>([])
   // The live-stream "reconnecting" cue: `connected` is false whenever the browser is offline OR
   // the stream isn't confirmed live — so a dropped connection reads as reconnecting instead of a
@@ -47,7 +50,7 @@ export function useArtifactLive(opts: {
   // the first stream is the mount itself (the loader/query just fetched; nothing
   // to catch up on); every later "ready" means a gap just closed.
   const everConnected = useRef(false)
-  const cursors = useLiveCursors(shortId)
+  const cursors = useLiveCursors(shortId, selfId)
   const { paintFrame } = cursors
   const visible = usePageVisible()
 
@@ -130,6 +133,13 @@ export function useArtifactLive(opts: {
     return () => clearInterval(t)
   }, [shortId, visible])
 
+  // Stop following a peer the instant they leave — the cursor loop can't tell "left" from
+  // "mouse gone idle", so settle it against the authoritative presence roster instead.
+  const { following, unfollow } = cursors
+  useEffect(() => {
+    if (following && !viewers.some((v) => v.id === following)) unfollow()
+  }, [viewers, following, unfollow])
+
   // Record one view per artifact open.
   const recorded = useRef("")
   useEffect(() => {
@@ -147,5 +157,13 @@ export function useArtifactLive(opts: {
     setGeom: cursors.setGeom,
     setViewSlide: cursors.setViewSlide,
     cursor: cursors.layer,
+    // Follow-a-peer controls (Figma/tldraw style), surfaced to the page so the presence
+    // facepile can start it and a banner can show/stop it. `setFollowScroll` lets the page
+    // hand the cursor engine a way to scroll the artifact frame.
+    following: cursors.following,
+    followingPeer: cursors.followingPeer,
+    follow: cursors.follow,
+    unfollow: cursors.unfollow,
+    setFollowScroll: cursors.setFollowScroll,
   }
 }

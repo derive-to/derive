@@ -280,24 +280,52 @@ interface ElReg {
         peers scrolled out of view collapse into an edge indicator. Plus an explicit
         leave (pointer left the doc / frame blurred / tab hidden) so peers drop us at
         once, and a tap on click so peers can ripple where we acted. -- */
+  // How far down the document we are, 0..1 — rides every cursor frame so a peer can
+  // OFFER "follow me" and a follower syncs their own scroll to ours (see scroll-to-frac).
+  const scrollFrac = () => {
+    const max = document.documentElement.scrollHeight - window.innerHeight
+    return max > 0 ? Math.min(1, Math.max(0, scrollTop() / max)) : 0
+  }
+  // Last pointer position (viewport px) + whether it's currently over the doc. A SCROLL
+  // with a still mouse re-broadcasts the cursor (below), because the content under the
+  // pointer changed — otherwise peers freeze our cursor on stale content as we scroll.
+  let pX = 0
+  let pY = 0
+  let pIn = false
+  const postCursor = (type: "cursor" | "cursor-tap") => {
+    const w = window.innerWidth || 1
+    const dh = document.documentElement.scrollHeight || 1
+    post({ type, x: pX / w, y: (pY + scrollTop()) / dh, sf: scrollFrac() })
+  }
   let cT = 0
   document.addEventListener("mousemove", (e) => {
+    pX = e.clientX
+    pY = e.clientY
+    pIn = true
     const n = Date.now()
     if (n - cT < 40) return
     cT = n
-    const w = window.innerWidth || 1
-    const dh = document.documentElement.scrollHeight || 1
-    post({ type: "cursor", x: e.clientX / w, y: (e.clientY + scrollTop()) / dh })
+    postCursor("cursor")
   })
   document.addEventListener("mousedown", (e) => {
-    const w = window.innerWidth || 1
-    const dh = document.documentElement.scrollHeight || 1
-    post({ type: "cursor-tap", x: e.clientX / w, y: (e.clientY + scrollTop()) / dh })
+    pX = e.clientX
+    pY = e.clientY
+    pIn = true
+    postCursor("cursor-tap")
   })
-  document.addEventListener("mouseleave", () => post({ type: "cursor-leave" }))
-  window.addEventListener("blur", () => post({ type: "cursor-leave" }))
+  document.addEventListener("mouseleave", () => {
+    pIn = false
+    post({ type: "cursor-leave" })
+  })
+  window.addEventListener("blur", () => {
+    pIn = false
+    post({ type: "cursor-leave" })
+  })
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) post({ type: "cursor-leave" })
+    if (document.hidden) {
+      pIn = false
+      post({ type: "cursor-leave" })
+    }
   })
   // Escape pressed while keyboard focus is INSIDE the frame (a click into the
   // document moves it here): the host's window listener can't see it, so forward
@@ -1116,6 +1144,9 @@ interface ElReg {
         sTick = 0
         if (elReg.length) positionEls()
         reportScroll()
+        // A still pointer now hovers different content — re-broadcast so peers track our
+        // cursor down the page (and a follower stays glued to us), not just on mouse-move.
+        if (pIn) postCursor("cursor")
       })
     },
     true,
@@ -1136,6 +1167,11 @@ interface ElReg {
           if (lastAnchors) applyAnchors(lastAnchors)
         }, 150)
       reportRects()
+      // reportRects dedupes on the comment tops, so on a comment-less artifact it stops
+      // re-posting after the first frame — but the document height it carries changes as
+      // images/fonts settle. reportScroll always posts fresh geometry, so the host's
+      // docH (which peer-cursor Y is mapped against) can't go stale before the first scroll.
+      reportScroll()
     })
   }
   window.addEventListener("resize", reflow)
@@ -1144,6 +1180,24 @@ interface ElReg {
     reportRects()
     setTimeout(reportRects, 400)
     setTimeout(reportRects, 1200)
+  })
+  /* Follow mode: the host is locking our scroll to a peer's. If the USER scrolls (wheel,
+     touch, or a scroll key), they're taking control back — tell the host to stop
+     following. Gated on followMode so we never chatter when nobody's following. */
+  let followMode = false
+  let usTick = 0
+  const userScrolled = () => {
+    if (!followMode || usTick) return
+    usTick = window.setTimeout(() => {
+      usTick = 0
+    }, 150)
+    post({ type: "user-scroll" })
+  }
+  const SCROLL_KEYS = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]
+  window.addEventListener("wheel", userScrolled, { passive: true })
+  window.addEventListener("touchmove", userScrolled, { passive: true })
+  window.addEventListener("keydown", (e) => {
+    if (SCROLL_KEYS.includes(e.key)) userScrolled()
   })
   /* The artifact's OWN scripts can mutate the DOM after load (a chart library renders,
      content animates, an accordion expands) — none of which fire scroll/resize/load. So
@@ -1299,6 +1353,12 @@ interface ElReg {
     else if (d.type === "remeasure") reportRects()
     else if (d.type === "emphasize") setOn(d.id)
     else if (d.type === "scroll-by") window.scrollBy(0, d.dy || 0)
+    else if (d.type === "scroll-to-frac") {
+      // Follow mode: match a peer's scroll position (their scrollFrac). Direct — the
+      // peer's updates arrive fast enough that easing would only add lag to the lock.
+      const max = document.documentElement.scrollHeight - window.innerHeight
+      if (max > 0) window.scrollTo(0, Math.max(0, Math.min(1, d.frac || 0)) * max)
+    } else if (d.type === "follow-mode") followMode = !!d.on
     else if (d.type === "focus-anchor") {
       const entry = textEntries.find((t) => t.id === d.id)
       const ovEl = document.querySelector<HTMLElement>(`.derive-el-hl[data-derive-id="${d.id}"]`)

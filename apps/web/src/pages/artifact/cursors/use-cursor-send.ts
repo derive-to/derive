@@ -13,9 +13,9 @@ export function useCursorSend(
   shortId: string,
   selfId: string,
 ): {
-  onPointerMove: (x: number, y: number, slide?: number) => void
+  onPointerMove: (x: number, y: number, slide?: number, sf?: number) => void
   onPointerLeave: () => void
-  onTap: (x: number, y: number, slide?: number) => void
+  onTap: (x: number, y: number, slide?: number, sf?: number) => void
 } {
   const { pref } = useCursorPref()
   // Always send the latest pick without re-binding the send callbacks.
@@ -25,6 +25,8 @@ export function useCursorSend(
   // Local send + lifecycle state. `mySlide` is the deck slide WE'RE on, tagged onto
   // every frame we send (undefined off a deck, so peers never get filtered out).
   const mySlide = useRef<number | undefined>(undefined)
+  // Our own scroll fraction, tagged onto every outgoing frame so peers can follow us.
+  const mySf = useRef<number | undefined>(undefined)
   const xy = useRef<[number, number] | null>(null)
   const sentAt = useRef(0)
   const live = useRef(false)
@@ -45,6 +47,7 @@ export function useCursorSend(
           x: pt[0],
           y: pt[1],
           slide: mySlide.current,
+          sf: mySf.current,
           ...extra,
         }),
       }).catch(() => {})
@@ -71,10 +74,11 @@ export function useCursorSend(
   }, [send])
 
   const onPointerMove = useCallback(
-    (x: number, y: number, slide?: number) => {
+    (x: number, y: number, slide?: number, sf?: number) => {
       if (prefRef.current.hidden) return
       xy.current = [x, y]
       mySlide.current = slide
+      mySf.current = sf
       live.current = true
       if (idleTimer.current) clearTimeout(idleTimer.current)
       idleTimer.current = setTimeout(sendLeave, CURSOR_TUNING.idleMs)
@@ -86,10 +90,11 @@ export function useCursorSend(
   const onPointerLeave = useCallback(() => sendLeave(), [sendLeave])
 
   const onTap = useCallback(
-    (x: number, y: number, slide?: number) => {
+    (x: number, y: number, slide?: number, sf?: number) => {
       if (prefRef.current.hidden) return
       xy.current = [x, y]
       mySlide.current = slide
+      mySf.current = sf
       live.current = true
       send({ ...look(), tap: true })
     },

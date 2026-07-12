@@ -21,6 +21,9 @@ export function PublicViewer({
   viewers,
   selfId,
   isMobile,
+  following,
+  onFollow,
+  onStopFollow,
   children,
 }: {
   art: Artifact
@@ -29,6 +32,9 @@ export function PublicViewer({
   viewers: Viewer[]
   selfId?: string
   isMobile: boolean
+  following?: string | null
+  onFollow?: (id: string, name: string) => void
+  onStopFollow?: () => void
   /** The render (ArtifactDocument) — the page owns its refs/bridge and threads it in. */
   children: ReactNode
 }) {
@@ -80,7 +86,14 @@ export function PublicViewer({
         </div>
 
         {/* A shared link that's being viewed feels alive — even on a phone (compact). */}
-        <Presence viewers={viewers} selfId={selfId} compact={isMobile} />
+        <Presence
+          viewers={viewers}
+          selfId={selfId}
+          compact={isMobile}
+          following={following}
+          onFollow={onFollow}
+          onStopFollow={onStopFollow}
+        />
 
         {/* The growth verb (the page's one filled primary) + a quiet sign-in. */}
         <Button asChild variant="default" size="sm" data-testid="public-make-your-own">

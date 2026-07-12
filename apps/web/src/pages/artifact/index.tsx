@@ -200,6 +200,9 @@ export function Artifact() {
   // onResync closes coverage gaps (hidden tab return, SSE reconnect) silently.
   const live = useArtifactLive({
     shortId,
+    // Our stable presence id: a signed-in user id, else the anon guest id (same one the
+    // facepile uses). The cursor engine keys peers on it so "follow" lines up.
+    selfId: me?.id ?? guestPresenceId(),
     onComment: refetchComments,
     onVersion: onVersionLive,
     onReview,
@@ -213,6 +216,7 @@ export function Artifact() {
     frame,
     presentWrap,
     onFrameLoad,
+    frameReady,
     post,
     scrollBy,
     deck,
@@ -268,6 +272,8 @@ export function Artifact() {
       if (m?.[1]) nav({ to: "/artifacts/$ref", params: { ref: decodeURIComponent(m[1]) } })
       else window.open(u.href, "_blank", "noopener,noreferrer")
     },
+    // Following a peer and then scrolling by hand = take control back → stop following.
+    onUserScroll: live.unfollow,
   })
 
   // Preview vs. line-diff for the shown version, plus the fetched diff. See
@@ -291,6 +297,24 @@ export function Artifact() {
   useEffect(() => {
     live.setViewSlide(deck?.i ?? null)
   }, [live.setViewSlide, deck?.i])
+
+  // Follow mode: hand the cursor engine a way to scroll the artifact frame (it drives
+  // this from the followed peer's scroll fraction), and arm the frame to report a manual
+  // scroll (which stops following) only while we're actually following someone.
+  useEffect(() => {
+    live.setFollowScroll((frac) => post({ type: "scroll-to-frac", frac }))
+    return () => live.setFollowScroll(null)
+  }, [live.setFollowScroll, post])
+  useEffect(() => {
+    post({ type: "follow-mode", on: !!live.following })
+  }, [live.following, post])
+  // A frame (re)load resets the doc to scroll 0 with follow-mode OFF, which would strand a
+  // follower (their manual-scroll exit goes dead in the fresh frame). Drop the follow on
+  // reload — the walkthrough context changed anyway; re-follow is one click on the new doc.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fire on reload (frameReady), not on unfollow identity.
+  useEffect(() => {
+    live.unfollow()
+  }, [frameReady])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: clears the active thread + composer when the artifact/version changes (the iframe bridge clears its own selection).
   useEffect(() => {
@@ -569,6 +593,9 @@ export function Artifact() {
         viewers={live.viewers}
         selfId={guestPresenceId()}
         isMobile={isMobile}
+        following={live.following}
+        onFollow={deck ? undefined : live.follow}
+        onStopFollow={live.unfollow}
       >
         {documentEl}
       </PublicViewer>
@@ -666,7 +693,16 @@ export function Artifact() {
                 <span className="hidden sm:inline">Reconnecting…</span>
               </span>
             )}
-            <Presence viewers={live.viewers} selfId={me?.id} compact={isMobile} />
+            <Presence
+              viewers={live.viewers}
+              selfId={me?.id}
+              compact={isMobile}
+              following={live.following}
+              // Follow locks your SCROLL to a peer's — meaningless on a slide deck (they
+              // move by slide, not scroll), so it's offered only on scrollable documents.
+              onFollow={deck ? undefined : live.follow}
+              onStopFollow={live.unfollow}
+            />
             {!isMobile && <CursorButton />}
           </div>
           {!isAnon && (

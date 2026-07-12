@@ -39,6 +39,37 @@ export function CursorLayer({
       {layer.below.length > 0 && (
         <EdgeIndicator side="bottom" peers={layer.below} onClick={() => jump("down")} />
       )}
+      {layer.followingPeer && (
+        <FollowBanner peer={layer.followingPeer} onStop={layer.onStopFollow} />
+      )}
+    </div>
+  )
+}
+
+// While following a peer, our scroll is locked to theirs — a persistent, dismissible
+// banner makes that legible and gives an explicit exit (manual scroll also exits, via the
+// frame's user-scroll signal). Colored to the peer's identity, like their cursor.
+function FollowBanner({ peer, onStop }: { peer: PeerView; onStop: () => void }) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-2 z-30 flex justify-center">
+      <div
+        data-testid="follow-banner"
+        className="pointer-events-auto flex items-center gap-2 rounded-full border bg-card/95 py-1 pr-1 pl-3 text-xs font-medium text-foreground shadow-[var(--shadow)] backdrop-blur"
+        style={{ borderColor: peer.color }}
+      >
+        <span className="size-2 rounded-full" style={{ background: peer.color }} />
+        <span className="tabular-nums">
+          Following <span className="font-semibold">{peer.name}</span>
+        </span>
+        <button
+          type="button"
+          onClick={onStop}
+          data-testid="follow-stop"
+          className="rounded-full px-2 py-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+        >
+          Stop
+        </button>
+      </div>
     </div>
   )
 }

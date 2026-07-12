@@ -17,7 +17,6 @@ export const realtimeRoutes = (ctx: AppContext) => {
     presence,
     backplane,
     authorize,
-    actingUser,
     currentUser,
     actorFor,
     guestViewerId,
@@ -164,7 +163,9 @@ export const realtimeRoutes = (ctx: AppContext) => {
       const body = await readJson(
         c,
         z.object({
-          id: z.string().min(1).max(64),
+          // Accepted for back-compat but IGNORED — the broadcast id is server-stamped from
+          // the presence identity below (so it can't be forged and lines up with follow).
+          id: z.string().min(1).max(64).optional(),
           name: z.string().max(80).optional(),
           color: z.string().max(32).optional(),
           kind: z.enum(["arrow", "emoji"]).optional(),
@@ -172,20 +173,26 @@ export const realtimeRoutes = (ctx: AppContext) => {
           gone: z.boolean().optional(),
           tap: z.boolean().optional(),
           slide: z.number().int().min(0).optional(),
+          sf: z.number().min(0).max(1).optional(),
           x: z.number(),
           y: z.number(),
         }),
       )
       if (body instanceof Response) return bail(body)
       const clamp = (n: number) => (n < 0 ? 0 : n > 1 ? 1 : n)
-      // Same identity as presence: a signed-in user/agent by their account name, an
-      // anonymous viewer by the stable handle derived from their guest token — never a
-      // client-supplied label. So a cursor and its presence row share one identity.
-      const name = (await actingUser(c))?.name ?? anonName(guestViewerId(c))
+      // Identity is server-derived to EXACTLY match presence (see deriveViewer): a signed-in
+      // user by their id + @handle, an anonymous viewer by their guest id + friendly handle.
+      // The id is the presence id — not the client-supplied `body.id` — so a cursor and its
+      // facepile row are one identity and "follow this peer" lines up. Computed cheaply here
+      // (no role/actor work) because cursor frames are high-frequency.
+      const me = await currentUser(c)
+      const gid = guestViewerId(c)
+      const id = me?.id ?? gid
+      const name = me ? (me.username ?? "someone") : anonName(gid)
       const kind = body.kind ?? "arrow"
       bus.publish(artifact.id, {
         type: "cursor",
-        id: body.id,
+        id,
         name,
         color: body.color ?? "#655999",
         kind,
@@ -193,6 +200,7 @@ export const realtimeRoutes = (ctx: AppContext) => {
         gone: body.gone === true ? true : undefined,
         tap: body.tap === true ? true : undefined,
         slide: body.slide,
+        sf: body.sf,
         x: clamp(body.x),
         y: clamp(body.y),
       })
