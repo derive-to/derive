@@ -134,6 +134,19 @@ describe("publish html file", () => {
     expect(json.current_version).toBe(1)
   })
 
+  it("echoes the stored content's sha256 so a caller can verify byte integrity", async () => {
+    const content = "<h1>Checksum me</h1>"
+    const res = await upload("sum.html", content, { title: "Sum" })
+    const json = await res.json()
+    const expected = Buffer.from(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content)),
+    ).toString("hex")
+    // The blob store is content-addressed, so the echoed hash is the sha256 of the
+    // exact bytes stored — if an agent mistranscribed content on the way in (base64
+    // in an edit, say), this is where it finds out instead of shipping it silently.
+    expect(json.content_sha256).toBe(expected)
+  })
+
   it("serves artifact metadata and sandboxed raw content", async () => {
     // The viewer at /artifacts/:ref is the SPA (client-rendered); the server exposes the
     // artifact's metadata over the data API and the bytes over the sandboxed /raw.
