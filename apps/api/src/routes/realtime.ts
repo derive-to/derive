@@ -173,8 +173,6 @@ export const realtimeRoutes = (ctx: AppContext) => {
           gone: z.boolean().optional(),
           tap: z.boolean().optional(),
           slide: z.number().int().min(0).optional(),
-          sf: z.number().min(0).max(1).optional(),
-          live: z.boolean().optional(),
           x: z.number(),
           y: z.number(),
         }),
@@ -184,8 +182,8 @@ export const realtimeRoutes = (ctx: AppContext) => {
       // Identity is server-derived to EXACTLY match presence (see deriveViewer): a signed-in
       // user by their id + @handle, an anonymous viewer by their guest id + friendly handle.
       // The id is the presence id — not the client-supplied `body.id` — so a cursor and its
-      // facepile row are one identity and "follow this peer" lines up. Computed cheaply here
-      // (no role/actor work) because cursor frames are high-frequency.
+      // facepile row are one identity (and the @handle, not a private name, rides the wire).
+      // Computed cheaply here (no role/actor work) because cursor frames are high-frequency.
       const me = await currentUser(c)
       const gid = guestViewerId(c)
       const id = me?.id ?? gid
@@ -201,8 +199,6 @@ export const realtimeRoutes = (ctx: AppContext) => {
         gone: body.gone === true ? true : undefined,
         tap: body.tap === true ? true : undefined,
         slide: body.slide,
-        sf: body.sf,
-        live: body.live,
         x: clamp(body.x),
         y: clamp(body.y),
       })
