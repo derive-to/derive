@@ -62,9 +62,7 @@ describe("POST /v1/assets", () => {
   })
 
   it("stores a woff2 font and serves it back with the font content-type", async () => {
-    // The alternative to this path is an agent carrying the font as base64 through a
-    // tool call, where one mistranscribed character silently corrupts it — so fonts
-    // are first-class assets. Magic bytes: 'wOF2'.
+    // Magic bytes 'wOF2'; the route only sniffs the header, so a stub body suffices.
     const woff2 = new Uint8Array([0x77, 0x4f, 0x46, 0x32, 0, 1, 2, 3, 4, 5])
     const res = await postAsset(woff2, "font/woff2")
     expect(res.status).toBe(200)

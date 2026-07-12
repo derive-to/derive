@@ -97,7 +97,7 @@ export const assetRoutes = (ctx: AppContext) => {
 
       // Trust the bytes, not the declared type — and only store non-executable formats:
       // plain raster images and packaged web fonts (no SVG/HTML: served from our origin
-      // they could carry script). Avatars stay image-only via sniffImageType.
+      // they could carry script).
       const type = sniffAssetType(bytes)
       if (!type)
         return bail(fail(c, 400, "unsupported asset (use PNG, JPEG, GIF, WebP, or WOFF/WOFF2)"))

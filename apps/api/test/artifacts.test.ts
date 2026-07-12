@@ -141,9 +141,8 @@ describe("publish html file", () => {
     const expected = Buffer.from(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content)),
     ).toString("hex")
-    // The blob store is content-addressed, so the echoed hash is the sha256 of the
-    // exact bytes stored — if an agent mistranscribed content on the way in (base64
-    // in an edit, say), this is where it finds out instead of shipping it silently.
+    // Computed independently here: the echoed hash must be the sha256 of the
+    // exact bytes stored, not of anything the server re-encoded.
     expect(json.content_sha256).toBe(expected)
   })
 

@@ -1661,9 +1661,9 @@ async function buildServer(
           kind: artifact.kind,
           version: version.n,
           url,
-          // Single-file integrity check: the content-addressed blob key IS the sha256
-          // of the stored bytes, so a caller that carried content through its own
-          // context (e.g. base64 in an edit) can verify nothing got mistranscribed.
+          // Single-file publishes report the stored bytes' sha256 (the content-
+          // addressed blob key) so callers can verify what landed matches what
+          // they sent.
           ...(artifact.kind === "file" ? { content_sha256: version.blob_key } : {}),
           ...(pageUrls ? { page_urls: pageUrls } : {}),
           title: artifact.title,

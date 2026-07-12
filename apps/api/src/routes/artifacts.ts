@@ -796,11 +796,10 @@ export const artifactRoutes = (ctx: AppContext) => {
         {
           ...toJson(deps.baseUrl, artifact, versions),
           published: version.n,
-          // For a single file the blob key IS the sha256 of the stored bytes (the
-          // store is content-addressed), so the caller can verify integrity against
-          // its local copy — the guard against content corrupted in transit (an
-          // agent mistranscribing one character of a base64 font breaks it silently).
-          // Bundles store a manifest blob, so the hash wouldn't match any one file.
+          // The store is content-addressed, so a single file's blob key IS the
+          // sha256 of its stored bytes — callers verify it against their local copy
+          // to catch content corrupted on the way in. Bundles store a manifest
+          // blob, so there is no single-file hash to report.
           ...(artifact.kind === "file" ? { content_sha256: version.blob_key } : {}),
           ...(roundCreated ? { review_requested: true } : {}),
           ...(openedInTab !== null ? { opened_in_tab: openedInTab } : {}),

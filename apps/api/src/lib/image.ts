@@ -40,10 +40,8 @@ export type AssetType = ImageType | "font/woff2" | "font/woff"
 /**
  * Identify a supported standalone asset — a raster image or a packaged web font —
  * by its magic bytes. Fonts share the rasters' stored-XSS posture (non-executable
- * bytes behind a fixed content-type + nosniff), unlike SVG/HTML, which stay out.
- * Fonts matter for the asset path specifically because the alternative is an agent
- * carrying tens of KB of base64 through a tool call, where a single transcribed
- * character silently corrupts the font. Avatars stay image-only (sniffImageType).
+ * bytes served under a fixed content-type + nosniff); SVG/HTML stay out. Avatars
+ * are stricter and keep using sniffImageType directly.
  */
 export const sniffAssetType = (b: Uint8Array): AssetType | null => {
   const image = sniffImageType(b)
