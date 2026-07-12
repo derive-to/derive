@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { MAX_AVATAR_BYTES, sniffImageType } from "../src/lib/image"
+import { MAX_AVATAR_BYTES, sniffAssetType, sniffImageType } from "../src/lib/image"
 
 const bytes = (...vals: number[]) => Uint8Array.from(vals)
 const text = (s: string) => new TextEncoder().encode(s)
@@ -52,6 +52,36 @@ describe("sniffImageType — accepts only raster images, by magic bytes", () => 
   it("does not trust a forged header beyond its own bytes", () => {
     // PNG magic but only 4 bytes present -> the length guard still rejects it.
     expect(sniffImageType(bytes(0x89, 0x50, 0x4e, 0x47))).toBeNull()
+  })
+})
+
+describe("sniffAssetType — rasters plus packaged web fonts", () => {
+  const WOFF2 = text("wOF2")
+  const WOFF = text("wOFF")
+
+  it("accepts everything sniffImageType accepts", () => {
+    expect(sniffAssetType(PNG)).toBe("image/png")
+    expect(sniffAssetType(WEBP)).toBe("image/webp")
+  })
+
+  it("identifies woff2 and woff by magic bytes", () => {
+    expect(sniffAssetType(bytes(...WOFF2, 0, 0, 0, 0))).toBe("font/woff2")
+    expect(sniffAssetType(bytes(...WOFF, 0, 0, 0, 0))).toBe("font/woff")
+  })
+
+  it("rejects ttf/otf (no self-describing magic worth trusting) and truncated font headers", () => {
+    expect(sniffAssetType(bytes(0x00, 0x01, 0x00, 0x00))).toBeNull() // raw ttf
+    expect(sniffAssetType(text("OTTO"))).toBeNull() // raw otf
+    expect(sniffAssetType(text("wOF"))).toBeNull() // one byte short
+  })
+
+  it("still rejects markup — fonts don't open the SVG/HTML door", () => {
+    expect(sniffAssetType(text("<!doctype html><html></html>"))).toBeNull()
+    expect(sniffAssetType(text('<svg xmlns="http://www.w3.org/2000/svg"/>'))).toBeNull()
+  })
+
+  it("avatars remain image-only: sniffImageType does not accept fonts", () => {
+    expect(sniffImageType(bytes(...WOFF2, 0, 0, 0, 0))).toBeNull()
   })
 })
 

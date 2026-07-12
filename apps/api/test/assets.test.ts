@@ -61,6 +61,23 @@ describe("POST /v1/assets", () => {
     expect(res.status).toBe(400)
   })
 
+  it("stores a woff2 font and serves it back with the font content-type", async () => {
+    // The alternative to this path is an agent carrying the font as base64 through a
+    // tool call, where one mistranscribed character silently corrupts it — so fonts
+    // are first-class assets. Magic bytes: 'wOF2'.
+    const woff2 = new Uint8Array([0x77, 0x4f, 0x46, 0x32, 0, 1, 2, 3, 4, 5])
+    const res = await postAsset(woff2, "font/woff2")
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.type).toBe("font/woff2")
+    expect(body.url).toMatch(/\.woff2$/)
+
+    const served = await app.request(new URL(body.url).pathname)
+    expect(served.status).toBe(200)
+    expect(served.headers.get("content-type")).toBe("font/woff2")
+    expect(new Uint8Array(await served.arrayBuffer())).toEqual(woff2)
+  })
+
   it("rejects an empty body", async () => {
     const res = await postAsset(new Uint8Array(), "image/png")
     expect(res.status).toBe(400)
