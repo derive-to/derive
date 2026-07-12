@@ -134,6 +134,27 @@ describe("publish html file", () => {
     expect(json.current_version).toBe(1)
   })
 
+  it("returns detection-driven advisories (here: styled page publishing into the reflow injection)", async () => {
+    const res = await upload(
+      "noviewport.html",
+      "<html><head></head><body><h1>x</h1></body></html>",
+      {
+        title: "No viewport",
+      },
+    )
+    const json = await res.json()
+    expect(json.advisories).toHaveLength(1)
+    expect(json.advisories[0]).toContain("viewport")
+
+    // A page that declared its viewport hears nothing — the field is absent entirely.
+    const quiet = await upload(
+      "viewport.html",
+      '<html><head><meta name="viewport" content="width=device-width"></head><body>x</body></html>',
+      { title: "Viewport" },
+    )
+    expect((await quiet.json()).advisories).toBeUndefined()
+  })
+
   it("echoes the stored content's sha256 so a caller can verify byte integrity", async () => {
     const content = "<h1>Checksum me</h1>"
     const res = await upload("sum.html", content, { title: "Sum" })

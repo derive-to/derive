@@ -66,7 +66,7 @@ export interface ArtifactSummaryJson {
 /** A revision submitted for human review instead of published live. */
 export interface ProposeArgs {
   /** Full content for the proposal. Omit when using `edits` instead. */
-  content?: string
+  content?: string | Uint8Array
   filename?: string
   message: string
   /** Thread ids this revision addresses (flip to `addressed`, resolve on approval). */
@@ -283,11 +283,11 @@ export function createClient(opts: ClientOptions): DeriveClient {
         form.append("edits", JSON.stringify(args.edits))
         if (args.baseVersion != null) form.append("base_version", String(args.baseVersion))
       } else {
-        form.append(
-          "file",
-          new Blob([new TextEncoder().encode(args.content ?? "")]),
-          args.filename ?? "index.html",
-        )
+        const bytes =
+          typeof args.content === "string" || args.content === undefined
+            ? new TextEncoder().encode(args.content ?? "")
+            : args.content
+        form.append("file", new Blob([bytes as BlobPart]), args.filename ?? "index.html")
       }
       form.append("message", args.message)
       if (args.addresses?.length) form.append("addresses", args.addresses.join(","))

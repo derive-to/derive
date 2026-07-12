@@ -42,6 +42,7 @@ import {
   parseFrontmatter,
   profileState,
   propose as proposeChange,
+  publishAdvisories,
   publish as publishVersion,
   type Role,
   resolveBrandprint,
@@ -1681,6 +1682,14 @@ async function buildServer(
                 : "Live now — created a new artifact in your workspace.") +
             (actingFor && !openedInTab
               ? " No open Derive tab caught this push — open the url for the user (e.g. run `open <url>`) if they should see it now."
+              : "") +
+            // Advisories over what was just stored (missing viewport meta, oversized
+            // inline base64). `content` holds the full document for both direct and
+            // edits publishes — materializeEdits assigned into it above.
+            (typeof content === "string" && artifact.kind === "file"
+              ? publishAdvisories(content, version.content_type)
+                  .map((advisory) => ` ${advisory}`)
+                  .join("")
               : ""),
         })
       } catch (e) {

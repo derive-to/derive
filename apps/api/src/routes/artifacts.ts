@@ -19,6 +19,7 @@ import {
   PublishError,
   pageText,
   publish,
+  publishAdvisories,
   type Role,
   renderMarkdown,
   sectionOf,
@@ -792,6 +793,14 @@ export const artifactRoutes = (ctx: AppContext) => {
         }
       }
       const versions = await meta.listVersions(artifact.id)
+      // Advisories over what was just stored (missing viewport meta, oversized
+      // inline base64) — computed server-side so every client relays the same
+      // guidance; the boundary rules keep @derive/core out of the clients.
+      const advisories =
+        artifact.kind === "file" &&
+        (version.content_type === "text/html" || version.content_type === "text/markdown")
+          ? publishAdvisories(new TextDecoder().decode(bytes), version.content_type)
+          : []
       return c.json(
         {
           ...toJson(deps.baseUrl, artifact, versions),
@@ -801,6 +810,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           // to catch content corrupted on the way in. Bundles store a manifest
           // blob, so there is no single-file hash to report.
           ...(artifact.kind === "file" ? { content_sha256: version.blob_key } : {}),
+          ...(advisories.length ? { advisories } : {}),
           ...(roundCreated ? { review_requested: true } : {}),
           ...(openedInTab !== null ? { opened_in_tab: openedInTab } : {}),
         },

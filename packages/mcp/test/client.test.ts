@@ -170,6 +170,13 @@ describe("derive client (the MCP server's backend) over real HTTP", () => {
     // No `addresses` (default filename) covers the other branch.
     const p2 = await client.propose(a.short_id, { content: "# again", message: "another pass" })
     expect(p2.id).toBeTruthy()
+
+    // Bytes content (the content_path lane) proposes the same as a string.
+    const p3 = await client.propose(a.short_id, {
+      content: new TextEncoder().encode("# from a file"),
+      message: "by path",
+    })
+    expect(p3.id).toBeTruthy()
   })
 
   it("surfaces server errors as thrown messages", async () => {
