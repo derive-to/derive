@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query-persist-client"
 import { del, get, set } from "idb-keyval"
 import { CACHE_MAX_AGE, queryClient, shouldPersistQuery } from "./query-client"
+import { STORAGE_KEYS } from "./storage-keys"
 
 // Persist the query cache to IndexedDB so a refresh restores the last-known data and paints
 // instantly — the same warm cache an in-app navigation already runs against. This erases the
@@ -45,6 +46,43 @@ const persistOptions = {
   },
 }
 
+// Workspace switch/create/delete reload into a different content context, so the persisted
+// cache must not be restored — nearly every query is workspace-scoped, and any restored entry
+// (worse, a staleTime-Infinity one like workspaceQuery) would keep serving the OLD workspace's
+// data after the switch. Clearing the cache in-page before the reload is racy: the subscriber's
+// throttled write can land after the delete and resurrect the pre-switch snapshot. So the
+// switch path sets this flag instead, and the NEXT boot — before the persister has subscribed,
+// when nothing can race the delete — drops the store and starts cold.
+const dropPersistedCacheOnNextBoot = (): void => {
+  try {
+    sessionStorage.setItem(STORAGE_KEYS.cacheReset, "1")
+  } catch {
+    /* private mode — the boot restores as usual; staleness is bounded by CACHE_MAX_AGE */
+  }
+}
+
+/** The ONE sanctioned hard navigation after the active workspace changes (switch /
+ *  create / delete): flags the next boot to drop the persisted cache, then reloads —
+ *  or, with `target`, full-navigates there. Raw `location.reload()`/`location.assign()`
+ *  are banned in apps/web (scripts/check-workspace-reload.mjs) so a new call site can't
+ *  reintroduce the stale-workspace restore by forgetting the drop. */
+export function reloadAfterWorkspaceChange(target?: string): void {
+  dropPersistedCacheOnNextBoot()
+  // This module is the check's one allowlisted home for the raw calls it wraps.
+  if (target) window.location.assign(target)
+  else window.location.reload()
+}
+
+const consumeResetFlag = (): boolean => {
+  try {
+    if (sessionStorage.getItem(STORAGE_KEYS.cacheReset) !== "1") return false
+    sessionStorage.removeItem(STORAGE_KEYS.cacheReset)
+    return true
+  } catch {
+    return false
+  }
+}
+
 // Restore the persisted cache ONCE, up front, then keep persisting future changes. The root
 // route's beforeLoad awaits `cacheRestored`, so no route loader (ensureQueryData) fetches cold
 // before the disk cache has hydrated — that ordering is what lets a reload paint from cache
@@ -56,7 +94,10 @@ const persistOptions = {
 export const cacheRestored: Promise<void> =
   typeof indexedDB === "undefined"
     ? Promise.resolve()
-    : persistQueryClientRestore(persistOptions)
+    : (consumeResetFlag()
+        ? Promise.resolve(queryPersister.removeClient())
+        : persistQueryClientRestore(persistOptions)
+      )
         .then(() => {
           persistQueryClientSubscribe(persistOptions)
         })

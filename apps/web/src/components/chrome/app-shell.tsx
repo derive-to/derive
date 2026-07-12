@@ -8,6 +8,7 @@ import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sideb
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { useAuth } from "@/ctx"
 import { readAuthHint } from "@/lib/auth-hint"
+import { reloadAfterWorkspaceChange } from "@/lib/persist"
 import { collectionsQuery, summaryQuery, workspacesQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useIsMobile } from "@/lib/use-is-mobile"
@@ -124,12 +125,18 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [me, pathname, qc])
 
   // Switching/creating a workspace swaps the whole content context, so reload the
-  // page rather than re-thread every list (a deliberate, infrequent action).
+  // page rather than re-thread every list (a deliberate, infrequent action). The
+  // reload rides reloadAfterWorkspaceChange: a plain location.reload() would restore
+  // the OLD workspace's persisted query cache on boot, and any staleTime-Infinity
+  // query (e.g. workspaceQuery) would then serve the wrong workspace's data forever
+  // without ever refetching — including the switcher's own active check, which then
+  // silently no-ops the switch. See persist.ts for why the cache drop happens at
+  // boot, not here.
   const switchWorkspace = async (id: string) => {
     if (id === workspaces?.active) return
     try {
       await api.switchWorkspace(id)
-      window.location.reload()
+      reloadAfterWorkspaceChange()
     } catch {
       /* surfaced elsewhere */
     }
@@ -149,14 +156,13 @@ export function AppShell({ children }: { children: ReactNode }) {
         /* re-addable from Members */
       }
     }
-    if (invited) window.location.assign("/settings/members")
-    else window.location.reload()
+    reloadAfterWorkspaceChange(invited ? "/settings/members" : undefined)
   }
   // Deleting may swap the active workspace (the server switches the cookie when you
   // delete the one you're in), so reload to pick up the new active context.
   const deleteWorkspace = async (id: string) => {
     await api.deleteWorkspace(id)
-    window.location.reload()
+    reloadAfterWorkspaceChange()
   }
 
   // A plain value object — the React Compiler keeps it reference-stable across

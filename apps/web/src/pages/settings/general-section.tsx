@@ -22,6 +22,7 @@ import {
   SelectMenuItem,
   SelectMenuTrigger,
 } from "@/components/ui/select-menu"
+import { reloadAfterWorkspaceChange } from "@/lib/persist"
 import { workspaceQuery, workspaceSettingsQuery, workspacesQuery } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsSection } from "./settings-section"
@@ -96,10 +97,12 @@ export function GeneralSection() {
   }
 
   // Delete the active workspace. The server enforces the guards (Admin, not your last,
-  // must be empty); the primitive surfaces those and we reload on success.
+  // must be empty); the primitive surfaces those and we reload on success. The server
+  // switches the cookie to another workspace, so the reload rides the workspace-change
+  // helper — a plain reload would restore the deleted workspace's persisted cache.
   const del = useApiMutation({
     mutationFn: (id: string) => api.deleteWorkspace(id),
-    onSuccess: () => window.location.reload(),
+    onSuccess: () => reloadAfterWorkspaceChange(),
   })
   const onDelete = () => {
     if (ws) del.mutate(ws.id)
