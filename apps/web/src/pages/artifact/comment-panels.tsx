@@ -269,7 +269,7 @@ export function MobileComments({
           </div>
           <div className="flex items-center gap-2 border-b border-border-soft pb-3 pl-3 pr-2.5 pt-2">
             <CommentsHeading count={openThreads.length} />
-            {size === "full" && openThreads.length > 1 && (
+            {size === "full" && !composer && openThreads.length > 1 && (
               // Step through the discussion one thread at a time: the card scrolls
               // into view and an anchored thread scrolls the doc to its highlight.
               <div className="flex items-center gap-0.5 font-mono text-xs tabular-nums text-muted-foreground">
