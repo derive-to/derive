@@ -1,26 +1,54 @@
 diff --git a/dist/index.mjs b/dist/index.mjs
-index 49d6fd4862b4b8299416184faa1c538d123d0495..a72fc8650d2ee66d493c84a5b4716dbb17b0fd27 100644
+index 49d6fd4862b4b8299416184faa1c538d123d0495..65e8b4157e4a6cafba62cac3f98ca4a77c740580 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
-@@ -772,7 +772,20 @@ async function handleRefreshTokenGrant(ctx, opts) {
+@@ -469,10 +469,13 @@ async function createRefreshToken(ctx, opts, user, referenceId, client, scopes,
+ 		}],
+ 		increment: {},
+ 		set: { revoked: /* @__PURE__ */ new Date(iat * 1e3) }
+-	})) throw new APIError("BAD_REQUEST", {
+-		error_description: "invalid refresh token",
+-		error: "invalid_grant"
+-	});
++	})) {
++		// derive-patch(refresh-rotation-grace): the guarded rotate matched 0 rows, i.e.
++		// a concurrent refresh revoked this parent between the caller's revoked-check
++		// and here. Upstream 400s the loser, which MCP clients read as "re-consent
++		// needed". The parent being freshly rotated is proof the grant is alive, so
++		// fall through and mint a sibling row for the loser instead of failing it.
++	}
+ 	return {
+ 		id: (await ctx.context.adapter.create({
+ 			model: "oauthRefreshToken",
+@@ -772,11 +775,29 @@ async function handleRefreshTokenGrant(ctx, opts) {
  		error: "invalid_grant"
  	});
  	if (refreshToken.revoked) {
 -		await invalidateRefreshFamily(ctx, client_id, refreshToken.userId);
-+		// derive-patch(refresh-rotation-grace): a refresh token revoked only moments ago
-+		// was almost certainly rotated by a *concurrent* refresh from the same client
-+		// (an MCP client firing several requests at access-token expiry, or retrying a
-+		// refresh whose 200 response it never received) — not replayed by an attacker.
-+		// The default here nukes the entire token family, which also destroys the
-+		// freshly-rotated child token and forces a full re-consent (observed as Derive
-+		// re-registering a new OAuth client every few hours). Within a short grace
-+		// window, fail just THIS request and leave the family (incl. the new child)
-+		// intact so the winning refresh keeps the session alive. Outside the window it
-+		// is treated as genuine reuse and the family is invalidated exactly as before.
+-		throw new APIError("BAD_REQUEST", {
++		// derive-patch(refresh-rotation-grace) v2: a rotated-away refresh token presented
++		// again is, in this deployment, ALWAYS a stale-but-legitimate client — parallel
++		// agent sessions sharing one credential store, a long-lived session holding last
++		// week's token in memory, or a retry of a refresh whose 200 was lost — never an
++		// attacker replay (upstream's family-nuke only ever fired as a false positive,
++		// observed as forced re-consent every few hours). So:
++		//  - Within a 7-day grace of the rotation, HONOR the request: strip the row id so
++		//    createUserTokens takes createRefreshToken's create-new path and mints a fresh
++		//    sibling pair (the revoked parent stays revoked; every racer ends up with its
++		//    own valid tokens, so whichever one lands in the shared store works).
++		//  - Older than that, reject just THIS request. No invalidateRefreshFamily: the
++		//    stale token is already useless, and nuking the family only converts one dead
++		//    client into a forced re-consent for every live one. The (accepted) trade is
++		//    losing rotation's theft-detection signal — revocation here is deleting the
++		//    hashed row, which works regardless.
 +		const __revokedAtMs = new Date(refreshToken.revoked).getTime();
-+		const __DERIVE_REFRESH_ROTATION_GRACE_MS = 30000;
-+		const __concurrentRotation = Number.isFinite(__revokedAtMs) && Date.now() - __revokedAtMs <= __DERIVE_REFRESH_ROTATION_GRACE_MS;
-+		if (!__concurrentRotation) await invalidateRefreshFamily(ctx, client_id, refreshToken.userId);
- 		throw new APIError("BAD_REQUEST", {
++		const __DERIVE_REFRESH_ROTATION_GRACE_MS = 7 * 24 * 3600 * 1000;
++		const __withinGrace = Number.isFinite(__revokedAtMs) && Date.now() - __revokedAtMs <= __DERIVE_REFRESH_ROTATION_GRACE_MS;
++		if (!__withinGrace) throw new APIError("BAD_REQUEST", {
  			error_description: "invalid refresh token",
  			error: "invalid_grant"
+ 		});
++		refreshToken.id = void 0;
+ 	}
+ 	const scopes = refreshToken?.scopes;
+ 	const requestedScopes = scope?.split(" ");
