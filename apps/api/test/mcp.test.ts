@@ -647,15 +647,12 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(withCtx).toContain("4: beta line with Pricing")
     expect(withCtx).toContain("5- gamma line")
 
-    // Regex matches a pattern; an invalid regex is an actionable error.
-    const rx = toolText(
-      await call(app, token, "search", { short_id: id, query: "^gamma", regex: true }),
+    // The query is matched LITERALLY: regex metacharacters are not special, so a
+    // pattern-shaped query only matches that verbatim text (and can't backtrack).
+    const literalMeta = toolText(
+      await call(app, token, "search", { short_id: id, query: "^gamma" }),
     )
-    expect(rx).toContain("5: gamma line")
-    const bad = await call(app, token, "search", { short_id: id, query: "(unclosed", regex: true })
-    expect(toolText(bad)).toContain("Invalid regex")
-
-    // A literal query with regex metachars matches verbatim (no regex:true).
+    expect(literalMeta).toContain("no matches") // there is no literal "^gamma" in the doc
     const literal = toolText(await call(app, token, "search", { short_id: id, query: "line with" }))
     expect(literal).toContain("4: beta line with Pricing")
 
@@ -682,6 +679,11 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     expect(wordInText).toContain("in text")
     expect(wordInText).toContain("pricing")
+
+    // The steer names the format whose line numbers the results match, so the
+    // follow-up windowed read lands on the same coordinate space.
+    expect(inSource).toContain('read(lines:"from-to", format:"html")')
+    expect(wordInText).toContain('read(lines:"from-to", format:"text")')
 
     // Bundle: matches across pages are grouped under each page path.
     const enc = (s: string) => new TextEncoder().encode(s)
@@ -765,6 +767,23 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(res.next).toContain("search")
     // And it is not the old blind clipped dump.
     expect(res.sections).toBeUndefined()
+  })
+
+  it("read: a headless card grid caps the region map instead of blowing the budget", async () => {
+    const { app, token } = appWithGrant("mapcap", "openid derive:read derive:publish")
+    // 400 top-level sections (a card grid) — each a landmark, no headings anywhere.
+    const cards = Array.from(
+      { length: 400 },
+      (_, i) => `<section aria-label="Card ${i}"><p>${"content ".repeat(20)}</p></section>`,
+    ).join("")
+    const html = `<!DOCTYPE html><html><body><main>x</main>${cards}</body></html>`
+    const id = (await (await publishRaw(app, token, html, "grid.html", "Grid")).json()).short_id
+    const res = JSON.parse(toolText(await call(app, token, "read", { short_id: id })))
+    expect(res.regions).toHaveLength(50) // capped
+    expect(res.more_regions).toBe(351) // 401 total (main + 400 cards) - 50 shown
+    // The whole response stays well under the ~80k char / 25k token budget.
+    const raw = toolText(await call(app, token, "read", { short_id: id }))
+    expect(raw.length).toBeLessThan(20_000)
   })
 
   it("read: outline now covers the full h1–h6 spine", async () => {

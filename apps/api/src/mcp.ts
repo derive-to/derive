@@ -101,6 +101,11 @@ const clip = (s: string) =>
 // arrive whole. Measured on the formatted body, not the raw source.
 const FULL_DOC_MAX = 30_000
 
+// Cap on landmark regions in a headless-page map: a card grid can have thousands of
+// top-level sections/articles, and the map (built to AVOID a wall of text) must not
+// itself blow the response budget. The rest are summarized as a "+N more" count.
+const PAGE_MAP_MAX = 50
+
 // clip(), but the truncation steer names sections that actually resolve.
 const clipDoc = (s: string, sections: OutlineSection[]) => {
   if (s.length <= MAX_CHARS) return s
@@ -252,7 +257,7 @@ const searchReport = (
 ): string => {
   if (total === 0)
     return `${shortId} — no matches for "${query}" in ${where}.${
-      where === "source" ? " Try in:'text' to search the visible text, or regex:true." : ""
+      where === "source" ? " Try in:'text' to search the visible text." : ""
     }`
   const shown = groups.filter((g) => g.hunks.length > 0)
   const head = `${shortId} — ${total} match${total === 1 ? "" : "es"} for "${query}" in ${where}${
@@ -261,22 +266,22 @@ const searchReport = (
   const body = shown
     .map((g) => (g.path ? `${g.path}\n${renderHunks(g.hunks)}` : renderHunks(g.hunks)))
     .join("\n\n")
-  const steer = '\n\nRead a spot with read(lines:"from-to"), or edit it via publish edits.'
+  // The steer names the format whose line numbers these match, so the follow-up
+  // windowed read lands on the same lines: `source` line numbers are the raw source
+  // (read format:"html"); `text` line numbers are the visible text (read format:"text").
+  const fmt = where === "text" ? "text" : "html"
+  const steer = `\n\nRead a spot with read(lines:"from-to", format:"${fmt}"), or edit it via publish edits.`
   return clip(`${head}\n\n${body}${steer}`)
 }
 
-// Build the case/regex flags and compiled matcher for `search`. A literal query is
-// escaped so an agent pasting "$31k" or "a.b()" matches verbatim; regex:true takes
-// the query as a pattern. Returns null when a regex fails to compile.
-const searchMatcher = (query: string, isRegex: boolean, caseSensitive: boolean): RegExp | null => {
-  const flags = caseSensitive ? "g" : "gi"
-  if (!isRegex) return new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags)
-  try {
-    return new RegExp(query, flags)
-  } catch {
-    return null
-  }
-}
+// The compiled matcher for `search`. The query is matched LITERALLY: metacharacters
+// are escaped so an agent pasting "$31k" or "a.b()" matches verbatim, and — because a
+// literal has no quantifiers — the scan is linear even on a multi-MB minified line.
+// (Arbitrary user regex is deliberately NOT accepted: catastrophic backtracking on a
+// long line blows the Workers CPU budget, and there is no linear-time regex engine on
+// this tier. Re-add regex only behind a re2-style matcher.)
+const searchMatcher = (query: string, caseSensitive: boolean): RegExp =>
+  new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), caseSensitive ? "g" : "gi")
 
 const summarizeArtifact = (a: ArtifactRecord) => ({
   short_id: a.short_id,
@@ -838,7 +843,10 @@ async function buildServer(
               format: fmt,
               doc_chars: body.length,
               url,
-              regions,
+              regions: regions.slice(0, PAGE_MAP_MAX),
+              ...(regions.length > PAGE_MAP_MAX
+                ? { more_regions: regions.length - PAGE_MAP_MAX }
+                : {}),
               next: 'This page has no headings — it is mapped by region above. Use `search` to find a term, then read with `lines:"from-to"` to window that part. section:"*" forces the full clipped text.',
             })
           // Truly unstructured — fall through to a plain (clipped) return, reusing the
@@ -1035,7 +1043,10 @@ async function buildServer(
             format: fmt,
             doc_chars: body.length,
             url,
-            regions,
+            regions: regions.slice(0, PAGE_MAP_MAX),
+            ...(regions.length > PAGE_MAP_MAX
+              ? { more_regions: regions.length - PAGE_MAP_MAX }
+              : {}),
             next: `This page has no headings — it is mapped by region above. Use \`search\` to find a term, then read with \`lines:"from-to"\` to window that part, or "${cleanPath(pagePath)}#*" for the full clipped text.`,
           })
         return doc(
@@ -1061,14 +1072,10 @@ async function buildServer(
     "search",
     {
       description:
-        "Find text WITHIN one artifact — grep, not a full read. Returns matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range or `edit` that spot. Searches the exact source by default (in:'text' searches the visible text instead). A bundle is searched across all its text pages, grouped by page. Literal by default; pass regex:true for a pattern.",
+        "Find text WITHIN one artifact — grep, not a full read. Returns matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range (in the format the result names) or `edit` that spot. Searches the exact source by default (in:'text' searches the visible text instead). A bundle is searched across all its text pages, grouped by page. The query is matched literally (metacharacters are not special).",
       inputSchema: {
         short_id: z.string().describe("The artifact's short id, e.g. nk0dsral."),
-        query: z.string().describe("What to find. Matched literally unless regex:true."),
-        regex: z
-          .boolean()
-          .optional()
-          .describe("Treat `query` as a JavaScript regular expression (default false = literal)."),
+        query: z.string().describe("The literal text to find (metacharacters are not special)."),
         case_sensitive: z.boolean().optional().describe("Default false."),
         in: z
           .enum(["source", "text"])
@@ -1091,7 +1098,6 @@ async function buildServer(
     async ({
       short_id,
       query,
-      regex,
       case_sensitive,
       in: scope,
       context,
@@ -1109,8 +1115,7 @@ async function buildServer(
         return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
       const v = await ctx.meta.getVersion(a.id, n)
       if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
-      const re = searchMatcher(query, regex ?? false, case_sensitive ?? false)
-      if (!re) return err(`Invalid regex: ${query}`)
+      const re = searchMatcher(query, case_sensitive ?? false)
       const ctxLines = Math.min(Math.max(context ?? 0, 0), 5)
       const cap = Math.min(Math.max(max_matches ?? 40, 1), 200)
       const where = scope ?? "source"
@@ -1133,18 +1138,25 @@ async function buildServer(
         .sort((x, y) => x.split("/").length - y.split("/").length || x.localeCompare(y))
       const PAGE_SCAN_CAP = 50
       const scanned = pages.slice(0, PAGE_SCAN_CAP)
-      const perPage = await Promise.all(
-        scanned.map(async (p) => {
-          const file = manifest.files[p]
-          if (!file) return null
-          const bytes = await ctx.blobs.get(file.key)
-          if (!bytes) return null
-          const raw = new TextDecoder().decode(bytes)
-          const { hunks, total } = scanLines(contentFor(raw, file.type), re, ctxLines, cap)
-          return total ? { path: cleanPath(p), hunks, total } : null
-        }),
-      )
-      const groups = perPage.filter((g) => g !== null)
+      // Scan in bounded batches rather than one Promise.all over all 50: each page is
+      // decoded to a string and line-split, and scanLines is synchronous (nothing frees
+      // mid-batch), so an unbounded fan-out over large pages could pile decoded copies
+      // toward the memory ceiling. Batches keep at most CONCURRENCY live at once.
+      const CONCURRENCY = 8
+      const scanPage = async (p: string) => {
+        const file = manifest.files[p]
+        if (!file) return null
+        const bytes = await ctx.blobs.get(file.key)
+        if (!bytes) return null
+        const raw = new TextDecoder().decode(bytes)
+        const { hunks, total } = scanLines(contentFor(raw, file.type), re, ctxLines, cap)
+        return total ? { path: cleanPath(p), hunks, total } : null
+      }
+      const groups: { path: string; hunks: SearchHunk[]; total: number }[] = []
+      for (let i = 0; i < scanned.length; i += CONCURRENCY) {
+        const batch = await Promise.all(scanned.slice(i, i + CONCURRENCY).map(scanPage))
+        for (const g of batch) if (g) groups.push(g)
+      }
       const total = groups.reduce((sum, g) => sum + g.total, 0)
       const note =
         pages.length > PAGE_SCAN_CAP ? `first ${PAGE_SCAN_CAP} of ${pages.length} pages` : null
