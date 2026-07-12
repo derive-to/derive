@@ -14,6 +14,10 @@ export const STORAGE_KEYS = {
   // Agent pushes auto-open in this tab (absent = on). Per-device on purpose:
   // yanking navigation is fine on your own laptop, hostile on a shared screen.
   autoOpen: "derive.autoopen",
+  // One-shot (sessionStorage): the next boot drops the persisted query cache instead
+  // of restoring it — set by reloadAfterWorkspaceChange (lib/persist) when the active
+  // workspace changes, so another workspace's cache can't be rehydrated.
+  cacheReset: "derive.cache.reset",
   // Legacy literals (the colon convention predates the dot switch) — kept as-is so a
   // saved onboarding flag / folder pref survives the rename.
   onboarded: "derive:onboarded",

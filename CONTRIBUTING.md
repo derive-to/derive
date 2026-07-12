@@ -130,6 +130,13 @@ shipping. If something below surprises you, that's the guardrail doing its job:
 - **Hardcoded storage keys.** A `localStorage`/`sessionStorage` call keyed by a string
   literal fails `pnpm lint:frontend`; keys live in `apps/web/src/lib/storage-keys.ts`
   (`STORAGE_KEYS`).
+- **Raw full-page reloads.** `location.reload()`/`location.assign()` in `apps/web` fails
+  `pnpm lint:reload` (`scripts/check-workspace-reload.mjs`). A hard navigation after the
+  active workspace changes must flag the next boot to drop the persisted query cache —
+  otherwise the restore rehydrates the old workspace's data — so it goes through
+  `reloadAfterWorkspaceChange` (`apps/web/src/lib/persist.ts`). A genuinely
+  non-workspace reload opts out with a `reload-ignore` comment. (Auth/external
+  redirects via `location.href = url` are a different gesture and stay allowed.)
 - **Untestable UI.** An interactive control (`button`/`input`/`select`/`textarea` or shadcn
   `Button`/`Input`/`Textarea`/`DropdownMenuItem`) in `pages/` or `components/shared/`
   without a `data-testid` fails `pnpm lint:testids`. Add a surface-scoped id, or

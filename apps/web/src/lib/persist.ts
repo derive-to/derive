@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query-persist-client"
 import { del, get, set } from "idb-keyval"
 import { CACHE_MAX_AGE, queryClient, shouldPersistQuery } from "./query-client"
+import { STORAGE_KEYS } from "./storage-keys"
 
 // Persist the query cache to IndexedDB so a refresh restores the last-known data and paints
 // instantly — the same warm cache an in-app navigation already runs against. This erases the
@@ -52,22 +53,30 @@ const persistOptions = {
 // throttled write can land after the delete and resurrect the pre-switch snapshot. So the
 // switch path sets this flag instead, and the NEXT boot — before the persister has subscribed,
 // when nothing can race the delete — drops the store and starts cold.
-const RESET_KEY = "derive-cache-reset"
-
-/** Ask the next page boot to discard the persisted cache instead of restoring it. Call
- *  right before a reload that changes the workspace context. */
-export function dropPersistedCacheOnNextBoot(): void {
+const dropPersistedCacheOnNextBoot = (): void => {
   try {
-    sessionStorage.setItem(RESET_KEY, "1")
+    sessionStorage.setItem(STORAGE_KEYS.cacheReset, "1")
   } catch {
     /* private mode — the boot restores as usual; staleness is bounded by CACHE_MAX_AGE */
   }
 }
 
+/** The ONE sanctioned hard navigation after the active workspace changes (switch /
+ *  create / delete): flags the next boot to drop the persisted cache, then reloads —
+ *  or, with `target`, full-navigates there. Raw `location.reload()`/`location.assign()`
+ *  are banned in apps/web (scripts/check-workspace-reload.mjs) so a new call site can't
+ *  reintroduce the stale-workspace restore by forgetting the drop. */
+export function reloadAfterWorkspaceChange(target?: string): void {
+  dropPersistedCacheOnNextBoot()
+  // This module is the check's one allowlisted home for the raw calls it wraps.
+  if (target) window.location.assign(target)
+  else window.location.reload()
+}
+
 const consumeResetFlag = (): boolean => {
   try {
-    if (sessionStorage.getItem(RESET_KEY) !== "1") return false
-    sessionStorage.removeItem(RESET_KEY)
+    if (sessionStorage.getItem(STORAGE_KEYS.cacheReset) !== "1") return false
+    sessionStorage.removeItem(STORAGE_KEYS.cacheReset)
     return true
   } catch {
     return false
