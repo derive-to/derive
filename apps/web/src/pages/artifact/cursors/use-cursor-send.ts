@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react"
 import { API_BASE } from "@/api"
 import { useCursorPref } from "@/ctx"
 import { CURSOR_TUNING } from "@/lib/cursors"
+import { guestQuery } from "@/lib/guest-id"
 
 // The SENDING half of the live-cursor engine: our own pointer → the server (throttled),
 // our chosen look, and explicit leave / tap signals — plus a focus/idle state machine so
@@ -33,7 +34,8 @@ export function useCursorSend(
   const send = useCallback(
     (extra: Record<string, unknown>) => {
       const pt = xy.current ?? [0, 0]
-      fetch(`${API_BASE}/v1/artifacts/${shortId}/cursor`, {
+      // `?g=` so the cursor's server-derived handle matches this browser's presence row.
+      fetch(`${API_BASE}/v1/artifacts/${shortId}/cursor${guestQuery()}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         credentials: "include",

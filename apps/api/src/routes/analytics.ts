@@ -1,6 +1,5 @@
 import { can, newId } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
-import { getCookie, setCookie } from "hono/cookie"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { bail, fail, readJson, VIEW_DEDUP_MS } from "../lib/http"
@@ -8,7 +7,7 @@ import { bail, fail, readJson, VIEW_DEDUP_MS } from "../lib/http"
 /** View recording (de-duped, owner self-views excluded) + per-artifact stats. The
  *  Analytics response schema is the single source for the web client's type. */
 export const analyticsRoutes = (ctx: AppContext) => {
-  const { meta, deps, analyticsOn, currentUser, actorFor, requireArtifact, authorize } = ctx
+  const { meta, analyticsOn, currentUser, actorFor, anonViewerId, requireArtifact, authorize } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const Analytics = z
@@ -77,31 +76,12 @@ export const analyticsRoutes = (ctx: AppContext) => {
       )
         return c.body(null, 204)
       const me = await currentUser(c)
-      let viewer: string
-      let kind: "user" | "anon"
-      if (me) {
-        // Stable identity = the account. The same signed-in person is one viewer,
-        // shown by name — never "anonymous".
-        viewer = me.id
-        kind = "user"
-      } else {
-        // A long-lived first-party cookie keeps the same browser as one anonymous
-        // viewer across opens. SameSite=None;Secure when the SPA is cross-site, so
-        // it actually sticks there (Lax would be dropped on the cross-site fetch).
-        let vid = getCookie(c, "derive_vid")
-        if (!vid) {
-          vid = newId("anon")
-          setCookie(c, "derive_vid", vid, {
-            path: "/",
-            maxAge: 60 * 60 * 24 * 365,
-            httpOnly: true,
-            sameSite: deps.crossSite ? "None" : "Lax",
-            secure: deps.crossSite || new URL(deps.baseUrl).protocol === "https:",
-          })
-        }
-        viewer = vid
-        kind = "anon"
-      }
+      // Stable identity per viewer: a signed-in account counts once by id; an anonymous
+      // opener by their long-lived `derive_vid` cookie (minted on first sight), so unique
+      // counts hold across opens. This cookie is the view-count anchor ONLY — presence
+      // identity is the client-carried guest token (see context.ts guestViewerId).
+      const viewer = me ? me.id : anonViewerId(c)
+      const kind: "user" | "anon" = me ? "user" : "anon"
       const body = await readJson(c, z.object({ version: z.number().int().optional() }))
       if (body instanceof Response) return bail(body)
       const version = body.version ?? artifact.current_version

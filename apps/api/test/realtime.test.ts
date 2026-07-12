@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { type Backplane, createInProcessBackplane, type DeriveEvent } from "../src/bus"
+import { anonName } from "../src/lib/http"
 import { bearer, json, publishAs, quotaApp, TEST_TOKEN } from "./helpers"
 
 // The live-cursor frame is the wire contract between viewers: it carries a chosen
@@ -78,5 +79,56 @@ describe("live cursor frame", () => {
     const { cursor } = await seed()
     expect((await cursor({ id: "d", emoji: "x".repeat(64), x: 0, y: 0 })).status).toBe(400)
     expect((await cursor({ id: "d", kind: "rainbow", x: 0, y: 0 })).status).toBe(400)
+  })
+})
+
+// Presence identity is pinned to the guest token the browser carries (`?g=`), so one
+// browser is one "viewing now" row — never several phantoms from a cookie raced across a
+// page's concurrent mount requests (the bug this replaced). The token is opaque: the
+// server derives the handle from it and never trusts it for anything else.
+describe("presence identity (one browser = one viewer)", () => {
+  const seed = async () => {
+    const { app } = quotaApp("realtime-presence", {})
+    const { short_id } = await (
+      await publishAs(app, "<h1>doc</h1>", { visibility: "public" }, bearer(TEST_TOKEN))
+    ).json()
+    const roster = async (token?: string) =>
+      (
+        (await (
+          await app.request(
+            `/v1/artifacts/${short_id}/presence${token ? `?g=${encodeURIComponent(token)}` : ""}`,
+            json({}),
+          )
+        ).json()) as { viewers: { id: string; name: string }[] }
+      ).viewers
+    return { roster }
+  }
+
+  it("collapses repeated heartbeats from one guest token to a single viewer", async () => {
+    const { roster } = await seed()
+    const first = await roster("alpha")
+    expect(first).toHaveLength(1)
+    // Identity + display handle both come from the one token — no id/name split.
+    expect(first[0]?.id).toBe("anon_alpha")
+    expect(first[0]?.name).toBe(anonName("anon_alpha"))
+    // A second beat with the SAME token is the SAME viewer, not a phantom second row.
+    const again = await roster("alpha")
+    expect(again).toHaveLength(1)
+    expect(again[0]?.id).toBe("anon_alpha")
+  })
+
+  it("keeps distinct guest tokens (e.g. a private tab) as distinct viewers", async () => {
+    const { roster } = await seed()
+    await roster("alpha")
+    const both = await roster("beta")
+    expect(both.map((v) => v.id).sort()).toEqual(["anon_alpha", "anon_beta"])
+  })
+
+  it("sanitizes + namespaces the token so a client can't forge a real user id", async () => {
+    const { roster } = await seed()
+    const one = await roster("usr_boss!! drop")
+    expect(one).toHaveLength(1)
+    // Punctuation/whitespace stripped, then namespaced under anon_ — can never equal usr_boss.
+    expect(one[0]?.id).toBe("anon_usr_bossdrop")
   })
 })

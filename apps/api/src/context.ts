@@ -635,6 +635,25 @@ export function buildContext(deps: AppDeps) {
     return vid
   }
 
+  // The PRESENCE identity for an anonymous viewer, taken from a stable token the CLIENT
+  // carries (localStorage) and echoes on every realtime call — the SSE stream (`?g=`), the
+  // heartbeat, and cursor frames. Fixing identity client-side (the PartyKit/Liveblocks
+  // model) is what keeps one browser to ONE presence row: all of a page's concurrent
+  // realtime requests carry the same token, so there is no cookie set-and-read race to fan
+  // a single tab out into several phantom viewers. NON-authoritative and used only for the
+  // display handle/roster key — the caller's role always comes from real auth (see
+  // deriveViewer), never this. The `anon_` namespace + charset strip mean a client value
+  // can't collide with a real `usr_`/session id (no impersonating a signed-in user); it CAN
+  // collide with another anonymous viewer's handle, which is cosmetic and accepted. The
+  // web mirror `guestPresenceId()` (lib/guest-id.ts) must reproduce this exact transform so
+  // an anon viewer recognises its own row. Falls back to the cookie-minted id for a caller
+  // that sends no token (an older client, or curl). The `derive_vid` cookie now serves
+  // unique-view analytics only (see analytics.ts).
+  const guestViewerId = (c: Context): string => {
+    const clean = (c.req.query("g") ?? "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40)
+    return clean ? `anon_${clean}` : anonViewerId(c)
+  }
+
   const actorFor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
     // A password on the artifact is a lock on its public link. Has this visitor
     // entered it? The unlock cookie's value is derived from the server-only
@@ -875,6 +894,7 @@ export function buildContext(deps: AppDeps) {
     activeWorkspace,
     setWsCookie,
     anonViewerId,
+    guestViewerId,
     actorFor,
     authorize,
     authorizeStanding,

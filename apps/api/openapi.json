@@ -6814,6 +6814,16 @@
             "required": true,
             "name": "shortId",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "An anonymous viewer's stable guest token; fixes presence to one row per browser."
+            },
+            "required": false,
+            "description": "An anonymous viewer's stable guest token; fixes presence to one row per browser.",
+            "name": "g",
+            "in": "query"
           }
         ],
         "responses": {
@@ -6855,6 +6865,16 @@
             "required": true,
             "name": "shortId",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "An anonymous viewer's stable guest token; fixes presence to one row per browser."
+            },
+            "required": false,
+            "description": "An anonymous viewer's stable guest token; fixes presence to one row per browser.",
+            "name": "g",
+            "in": "query"
           }
         ],
         "responses": {

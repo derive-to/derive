@@ -4108,7 +4108,10 @@ export interface paths {
         /** Presence heartbeat — keep this viewer on the artifact's roster. */
         post: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description An anonymous viewer's stable guest token; fixes presence to one row per browser. */
+                    g?: string;
+                };
                 header?: never;
                 path: {
                     shortId: string;
@@ -4148,7 +4151,10 @@ export interface paths {
         /** Broadcast a live cursor frame to the artifact's other viewers. */
         post: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description An anonymous viewer's stable guest token; fixes presence to one row per browser. */
+                    g?: string;
+                };
                 header?: never;
                 path: {
                     shortId: string;

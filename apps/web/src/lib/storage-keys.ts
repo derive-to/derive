@@ -18,6 +18,10 @@ export const STORAGE_KEYS = {
   // of restoring it — set by reloadAfterWorkspaceChange (lib/persist) when the active
   // workspace changes, so another workspace's cache can't be rehydrated.
   cacheReset: "derive.cache.reset",
+  // A stable, per-browser anonymous identity for realtime PRESENCE — generated once and
+  // echoed on every realtime call, so one browser stays one "viewing now" row instead of
+  // racing a server cookie into several phantom viewers (see lib/guest-id).
+  guestId: "derive.guest",
   // Legacy literals (the colon convention predates the dot switch) — kept as-is so a
   // saved onboarding flag / folder pref survives the rename.
   onboarded: "derive:onboarded",
