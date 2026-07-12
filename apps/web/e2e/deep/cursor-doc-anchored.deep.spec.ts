@@ -27,12 +27,13 @@ async function publishTall(page: Page): Promise<string> {
   return shortId
 }
 
-// Drive a peer cursor at a document-normalized y from a second viewer.
+// Drive a peer cursor at a document-normalized y from a second viewer. No look on the
+// wire — identity (and its tint) is server-derived; only the position matters here.
 const peerOf =
   (page: Page, shortId: string, id: string) =>
   (y: number, x = 0.5) =>
     page.request.post(`/v1/artifacts/${shortId}/cursor`, {
-      data: { id, x, y, color: "#7c6cbd", kind: "arrow" },
+      data: { id, x, y },
     })
 
 test("a peer below the fold is a bottom indicator (with a count), then a cursor on-screen", async ({
@@ -100,8 +101,8 @@ test("hiding cursors removes the edge indicators too", async ({ owner, secondUse
     await expect(owner.getByTestId("cursor-offscreen-bottom")).toBeVisible({ timeout: 1000 })
   }).toPass({ timeout: 20_000 })
 
-  // Opt out of the layer entirely → no cursors and no edge indicators.
-  await owner.getByTestId("cursor-self-trigger").click()
+  // Opt out of the layer entirely (⋯ → Hide live cursors) → no cursors, no indicators.
+  await owner.getByTestId("artifact-more").click()
   await owner.getByTestId("cursor-hide").click()
   await expect(owner.getByTestId("cursor-offscreen-bottom")).toHaveCount(0)
   await expect(owner.getByTestId("remote-cursor")).toHaveCount(0)
@@ -164,7 +165,7 @@ test("stress: many peers and rapid scrolling stay consistent (above + below at o
     Promise.all(
       Array.from({ length: N }, (_, i) =>
         secondUser.page.request.post(`/v1/artifacts/${shortId}/cursor`, {
-          data: { id: `s${i}`, x: ((i % 5) + 1) / 6, y: (i + 1) / (N + 1), color: "#7c6cbd" },
+          data: { id: `s${i}`, x: ((i % 5) + 1) / 6, y: (i + 1) / (N + 1) },
         }),
       ),
     )

@@ -3,11 +3,11 @@ import { type Backplane, createInProcessBackplane, type DeriveEvent } from "../s
 import { anonName } from "../src/lib/http"
 import { bearer, json, publishAs, quotaApp, TEST_TOKEN } from "./helpers"
 
-// The live-cursor frame is the wire contract between viewers: it carries a chosen
-// look (kind + emoji) plus two one-shot signals (gone = "I blurred/left", tap =
-// "I clicked"). The server passes the cosmetic fields through but keeps them
-// bounded, and — as everywhere — derives the identity name itself. These tests
-// pin that contract by watching what gets published on the bus.
+// The live-cursor frame is the wire contract between viewers: a position plus two
+// one-shot signals (gone = "I blurred/left", tap = "I clicked"). There is no cosmetic
+// payload — a peer's color is their identity tint, derived from the server-stamped name
+// on the receiving side, so nothing about the look rides the wire. The server derives
+// the identity itself and clamps x/y. These tests pin that contract by watching the bus.
 
 /** A backplane that records every published frame, delegating the rest in-process. */
 const recordingBackplane = (): { backplane: Backplane; frames: DeriveEvent[] } => {
@@ -40,29 +40,20 @@ describe("live cursor frame", () => {
     return { cursor, lastCursor }
   }
 
-  it("passes an emoji look through and defaults the rest", async () => {
+  it("derives identity, strips any cosmetic fields, and passes position through", async () => {
     const { cursor, lastCursor } = await seed()
+    // A legacy client may still send color/kind/emoji; the schema strips them silently.
     expect((await cursor({ id: "a", kind: "emoji", emoji: "🦊", x: 0.5, y: 0.5 })).status).toBe(204)
     const f = lastCursor()
-    expect(f).toMatchObject({ type: "cursor", kind: "emoji", emoji: "🦊" })
+    expect(f).toMatchObject({ type: "cursor", x: 0.5, y: 0.5 })
     // The broadcast id is SERVER-derived (matches the presence roster), never the client's
-    // `body.id` — that's what lets "follow this peer" line up with their facepile row.
+    // `body.id`, so a cursor and its facepile row are one identity.
     expect(f?.id).toMatch(/^anon_/)
     expect(f?.id).not.toBe("a")
-    // color falls back to the server default; x/y survive.
-    expect(f?.color).toBe("#655999")
-    expect(f).toMatchObject({ x: 0.5, y: 0.5 })
-  })
-
-  it("defaults kind to arrow and never forwards an emoji for an arrow cursor", async () => {
-    const { cursor, lastCursor } = await seed()
-    // Even if a client sends an emoji with an arrow kind, it isn't forwarded.
-    await cursor({ id: "b", kind: "arrow", emoji: "🦊", x: 0.1, y: 0.2 })
-    expect(lastCursor()).toMatchObject({ kind: "arrow" })
-    expect(lastCursor()?.emoji).toBeUndefined()
-    // Omitted kind → arrow.
-    await cursor({ id: "b", x: 0.3, y: 0.4 })
-    expect(lastCursor()).toMatchObject({ kind: "arrow" })
+    // No look rides the wire — the receiver tints from the name.
+    expect(f?.color).toBeUndefined()
+    expect(f?.kind).toBeUndefined()
+    expect(f?.emoji).toBeUndefined()
   })
 
   it("forwards the gone (leave) and tap signals as present-only flags", async () => {
@@ -79,10 +70,12 @@ describe("live cursor frame", () => {
     expect(lastCursor()?.tap).toBeUndefined()
   })
 
-  it("rejects an out-of-bounds look (oversized emoji, unknown kind)", async () => {
-    const { cursor } = await seed()
-    expect((await cursor({ id: "d", emoji: "x".repeat(64), x: 0, y: 0 })).status).toBe(400)
-    expect((await cursor({ id: "d", kind: "rainbow", x: 0, y: 0 })).status).toBe(400)
+  it("clamps x/y into the unit square and requires them", async () => {
+    const { cursor, lastCursor } = await seed()
+    await cursor({ id: "d", x: 1.7, y: -0.3 })
+    expect(lastCursor()).toMatchObject({ x: 1, y: 0 })
+    // x/y are the only required fields — a frame without a position is rejected.
+    expect((await cursor({ id: "d" })).status).toBe(400)
   })
 })
 

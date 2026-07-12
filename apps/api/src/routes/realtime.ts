@@ -163,13 +163,12 @@ export const realtimeRoutes = (ctx: AppContext) => {
       const body = await readJson(
         c,
         z.object({
-          // Accepted for back-compat but IGNORED — the broadcast id is server-stamped from
-          // the presence identity below (so it can't be forged and lines up with follow).
+          // id/name are accepted for back-compat but IGNORED — identity is server-stamped
+          // from the presence identity below (so it can't be forged). A peer's color isn't
+          // on the wire at all: the receiver derives it from `name` (the same identity tint
+          // as their avatar). Older clients may still send color/kind/emoji; zod strips them.
           id: z.string().min(1).max(64).optional(),
           name: z.string().max(80).optional(),
-          color: z.string().max(32).optional(),
-          kind: z.enum(["arrow", "emoji"]).optional(),
-          emoji: z.string().max(16).optional(),
           gone: z.boolean().optional(),
           tap: z.boolean().optional(),
           slide: z.number().int().min(0).optional(),
@@ -188,14 +187,10 @@ export const realtimeRoutes = (ctx: AppContext) => {
       const gid = guestViewerId(c)
       const id = me?.id ?? gid
       const name = me ? (me.username ?? "someone") : anonName(gid)
-      const kind = body.kind ?? "arrow"
       bus.publish(artifact.id, {
         type: "cursor",
         id,
         name,
-        color: body.color ?? "#655999",
-        kind,
-        emoji: kind === "emoji" ? body.emoji : undefined,
         gone: body.gone === true ? true : undefined,
         tap: body.tap === true ? true : undefined,
         slide: body.slide,

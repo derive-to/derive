@@ -3,8 +3,9 @@ import type { Page } from "@playwright/test"
 import { expect, openArtifact, test } from "../fixtures"
 
 // Live multiplayer cursors, end to end across two real browser contexts: a peer's
-// cursor reaches the other viewer over SSE, carries a chosen look, and is removed
-// the instant the peer signals it left — no 8s lingering. Plus the self picker.
+// cursor reaches the other viewer over SSE tagged with its SERVER-derived identity
+// (name → tint, never a client field), and is removed the instant the peer signals it
+// left — no 8s lingering. There's no look to pick: a cursor is an identity-tinted arrow.
 
 async function publishPublic(page: Page): Promise<string> {
   let shortId = ""
@@ -22,7 +23,7 @@ async function publishPublic(page: Page): Promise<string> {
 }
 
 test.describe("live multiplayer cursors", () => {
-  test("a peer cursor appears, restyles to an emoji, and leaves on signal", async ({
+  test("a peer cursor appears with its server-derived identity, and leaves on signal", async ({
     owner,
     secondUser,
   }) => {
@@ -38,28 +39,15 @@ test.describe("live multiplayer cursors", () => {
 
     // Appears — retry the publish until the owner's SSE has connected and painted.
     await expect(async () => {
-      expect((await peer({ color: "#7c6cbd", kind: "arrow" })).ok()).toBeTruthy()
+      expect((await peer({})).ok()).toBeTruthy()
       await expect(owner.getByTestId("remote-cursor")).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 15_000 })
-    // Identity is server-derived, never a client field.
+    // Identity is server-derived, never a client field — the name tags the cursor and
+    // (on the paint side) tints it. No emoji, no client-chosen color.
     await expect(owner.getByTestId("remote-cursor")).toContainText("Second User")
-
-    // Restyle to an emoji cursor — the glyph swaps.
-    await peer({ kind: "emoji", emoji: "🦊" })
-    await expect(owner.getByTestId("remote-cursor")).toContainText("🦊")
 
     // Leave → removed promptly.
     await peer({ gone: true })
     await expect(owner.getByTestId("remote-cursor")).toHaveCount(0)
-  })
-
-  test("you can customize your own cursor", async ({ owner }) => {
-    const shortId = await publishPublic(owner)
-    await openArtifact(owner, shortId)
-
-    await owner.getByTestId("cursor-self-trigger").click()
-    await owner.getByTestId("cursor-kind-emoji").click()
-    await owner.getByTestId("cursor-emoji-2").click() // 🦊
-    await expect(owner.getByTestId("cursor-self-trigger")).toContainText("🦊")
   })
 })

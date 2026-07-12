@@ -23,7 +23,6 @@ import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact
 import { ArtifactTopBar } from "./artifact-top-bar"
 import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
-import { CursorButton } from "./cursors/cursor-button"
 import { FloatingControl } from "./floating-control"
 import { canCommentWithRole, shouldPromptSignInToComment } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
@@ -648,9 +647,10 @@ export function Artifact() {
               {art.updated_at ? ` · updated ${ago(art.updated_at)}` : ""}
             </span>
           </div>
-          {/* Collaboration — presence facepile + your cursor. Presence rides even the
-              phone header (compact) so multiplayer identity never vanishes on mobile;
-              the cursor picker stays desktop-only (no hovering cursor to style on touch). */}
+          {/* Collaboration — the presence facepile (rides even the phone header, compact,
+              so multiplayer identity never vanishes on mobile) + the live-stream health
+              cue. Live cursors need no control here: they're on by default, auto-tinted by
+              identity, and opting out lives in the ⋯ menu ("Hide live cursors"). */}
           <div className="flex items-center gap-0.5">
             {/* Live-stream health: surfaced ONLY while disconnected, so a dropped connection
                 reads as "reconnecting" instead of a silently-frozen collaborative view.
@@ -666,7 +666,6 @@ export function Artifact() {
               </span>
             )}
             <Presence viewers={live.viewers} selfId={me?.id} compact={isMobile} />
-            {!isMobile && <CursorButton />}
           </div>
           {!isAnon && (
             <ArtifactTopBar

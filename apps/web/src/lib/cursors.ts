@@ -1,29 +1,23 @@
-// The live-cursor domain — one source of truth shared by the preference store
-// (ctx), the picker, and the on-canvas overlay, so the look and the feel are
-// tuned in exactly one place.
+// The live-cursor domain — one source of truth for the on-canvas overlay and the
+// one preference (hide). A peer's identity color is NOT here and NOT on the wire:
+// it's derived from their name via the app's shared avatar tint (`colorForName`),
+// so a person is the same color on their cursor, avatar, and presence row. No
+// per-cursor look to pick — the design language rations color and forbids emoji.
 //
-// Nothing here touches React or the DOM: just the vocabulary (a viewer's
-// `CursorPref`, the `CursorFrame` peers exchange over the wire), the curated
-// palettes a viewer chooses from, and the animation/lifecycle tuning.
+// Nothing here touches React or the DOM: just the wire vocabulary, the one pref,
+// and the animation/lifecycle tuning.
 
-export type CursorKind = "arrow" | "emoji"
-
-/** A viewer's chosen cursor look. Persisted per-browser (see `useCursorPref`). */
+/** The one live-cursor preference. Persisted per-browser (see `useCursorPref`). */
 export interface CursorPref {
-  color: string
-  kind: CursorKind
-  emoji: string
   /** Opt out of the live-cursor layer: don't show peers, don't broadcast yours. */
   hidden: boolean
 }
 
-/** A cursor frame as it arrives over the SSE bus (server-shaped, sans `type`). */
+/** A cursor frame as it arrives over the SSE bus (server-shaped, sans `type`). The
+ *  color/name are server-derived from identity; position is document-normalized. */
 export interface CursorFrame {
   id: string
   name?: string
-  color?: string
-  kind?: CursorKind
-  emoji?: string
   /** The viewer blurred / went idle — drop their cursor now, don't wait it out. */
   gone?: boolean
   /** The viewer clicked — pulse a ripple at (x, y). */
@@ -33,27 +27,6 @@ export interface CursorFrame {
   x: number
   y: number
 }
-
-// Curated identity palette, tuned to read on both light and dark artifact
-// backgrounds (the avatar identity tints' sibling). Raw hex is the point here.
-export const CURSOR_COLORS = [
-  "#7c6cbd",
-  "#3c8f4e",
-  "#d2724b",
-  "#3aa6a6",
-  "#b15fb0",
-  "#c79a2a",
-  "#5170d8",
-  "#cc5d80",
-] as const
-
-// A small, friendly set — personal without the weight of a full emoji picker.
-export const CURSOR_EMOJI = ["👆", "🐱", "🦊", "🚀", "✨", "🌸", "🔥", "👀", "💜", "🐙"] as const
-
-/** Server's fallback tint when a (stale) client sends a cursor with no color. */
-export const CURSOR_FALLBACK = "#655999"
-
-const DEFAULT_EMOJI = CURSOR_EMOJI[0]
 
 // Animation + lifecycle tuning, all in one place so "feel" is a one-file tweak.
 export const CURSOR_TUNING = {
@@ -77,28 +50,10 @@ export const CURSOR_TUNING = {
   resendMs: 3000,
 } as const
 
-/** Deterministic default look for a viewer with no saved preference, seeded by
- *  their per-tab id so two strangers usually land on different colors. */
-export function defaultPrefFor(seed: string): CursorPref {
-  let h = 0
-  for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+/** Coerce a persisted/garbage value into a valid `CursorPref` (only `hidden` matters). */
+export function normalizePref(raw: unknown): CursorPref {
   return {
-    color: CURSOR_COLORS[h % CURSOR_COLORS.length] ?? CURSOR_COLORS[0],
-    kind: "arrow",
-    emoji: DEFAULT_EMOJI,
-    hidden: false,
-  }
-}
-
-/** Coerce a persisted/garbage value into a valid `CursorPref`. */
-export function normalizePref(raw: unknown, fallback: CursorPref): CursorPref {
-  if (!raw || typeof raw !== "object") return fallback
-  const r = raw as Record<string, unknown>
-  return {
-    color: typeof r.color === "string" ? r.color : fallback.color,
-    kind: r.kind === "emoji" ? "emoji" : "arrow",
-    emoji: typeof r.emoji === "string" && r.emoji ? r.emoji : fallback.emoji,
-    hidden: r.hidden === true,
+    hidden: !!raw && typeof raw === "object" && (raw as Record<string, unknown>).hidden === true,
   }
 }
 

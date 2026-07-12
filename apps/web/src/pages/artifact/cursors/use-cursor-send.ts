@@ -5,11 +5,12 @@ import { CURSOR_TUNING } from "@/lib/cursors"
 import { guestQuery } from "@/lib/guest-id"
 
 // The SENDING half of the live-cursor engine: our own pointer → the server (throttled),
-// our chosen look, and explicit leave / tap signals — plus a focus/idle state machine so
-// a blurred or idle tab stops showing a cursor at once (no cursors lingering on an
-// abandoned tab). The RECEIVING half (peer frames → screen) lives in use-cursor-paint.
-// We send no id: the server stamps the authoritative one (our presence identity) on every
-// broadcast, so the client id was dead weight. Echo-filtering uses selfId on the paint side.
+// plus explicit leave / tap signals and a focus/idle state machine so a blurred or idle
+// tab stops showing a cursor at once (no cursors lingering on an abandoned tab). The
+// RECEIVING half (peer frames → screen) lives in use-cursor-paint. We send no id and no
+// color: the server stamps the authoritative id + name (our presence identity) on every
+// broadcast, and the color is derived from that name on the receiving side, so both were
+// dead weight on the wire. Echo-filtering uses selfId on the paint side.
 export function useCursorSend(shortId: string): {
   onPointerMove: (x: number, y: number, slide?: number) => void
   onPointerLeave: () => void
@@ -49,17 +50,11 @@ export function useCursorSend(shortId: string): {
     [shortId],
   )
 
-  // Our current look as wire fields (reads a ref, so it's stable).
-  const look = useCallback(() => {
-    const p = prefRef.current
-    return { color: p.color, kind: p.kind, emoji: p.kind === "emoji" ? p.emoji : undefined }
-  }, [])
-
   const sendCursor = useCallback(() => {
     if (prefRef.current.hidden) return
     sentAt.current = Date.now()
-    send(look())
-  }, [send, look])
+    send({})
+  }, [send])
 
   const sendLeave = useCallback(() => {
     if (!live.current) return
@@ -88,9 +83,9 @@ export function useCursorSend(shortId: string): {
       xy.current = [x, y]
       mySlide.current = slide
       live.current = true
-      send({ ...look(), tap: true })
+      send({ tap: true })
     },
-    [send, look],
+    [send],
   )
 
   // Hiding opts the viewer out of the whole layer: retire our own cursor for peers

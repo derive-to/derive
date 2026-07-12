@@ -1,13 +1,5 @@
 import { describe, expect, it } from "vitest"
-import {
-  CURSOR_COLORS,
-  type CursorPref,
-  defaultPrefFor,
-  effectiveDocH,
-  normalizePref,
-  placePeer,
-  type ViewerGeom,
-} from "./cursors"
+import { effectiveDocH, normalizePref, placePeer, type ViewerGeom } from "./cursors"
 
 // The document-anchored placement math: a peer's eased document position mapped
 // against THIS viewer's scroll into a screen position, or classified as an
@@ -115,15 +107,16 @@ describe("document mapping (effectiveDocH + placePeer, as the rAF loop composes 
   })
 })
 
-describe("normalizePref / defaultPrefFor (hidden field)", () => {
-  const fb: CursorPref = { color: CURSOR_COLORS[0], kind: "arrow", emoji: "👆", hidden: false }
-  it("defaults hidden to false", () => {
-    expect(defaultPrefFor("seed").hidden).toBe(false)
-    expect(normalizePref({}, fb).hidden).toBe(false)
+describe("normalizePref (hidden is the only preference)", () => {
+  it("defaults hidden to false for empty / garbage / nullish input", () => {
+    expect(normalizePref({}).hidden).toBe(false)
+    expect(normalizePref(null).hidden).toBe(false)
+    expect(normalizePref(undefined).hidden).toBe(false)
+    expect(normalizePref("nope").hidden).toBe(false)
   })
-  it("only treats a strict true as hidden", () => {
-    expect(normalizePref({ hidden: true }, fb).hidden).toBe(true)
-    expect(normalizePref({ hidden: "yes" }, fb).hidden).toBe(false)
-    expect(normalizePref({ hidden: 1 }, fb).hidden).toBe(false)
+  it("only treats a strict boolean true as hidden", () => {
+    expect(normalizePref({ hidden: true }).hidden).toBe(true)
+    expect(normalizePref({ hidden: "yes" }).hidden).toBe(false)
+    expect(normalizePref({ hidden: 1 }).hidden).toBe(false)
   })
 })

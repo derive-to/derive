@@ -101,7 +101,7 @@ const RemoteCursor = memo(function RemoteCursor({
       // Opacity transitions handle the leave fade smoothly.
       className="absolute left-0 top-0 will-change-transform transition-opacity duration-150"
     >
-      <CursorGlyph color={peer.color} kind={peer.kind} emoji={peer.emoji} />
+      <CursorGlyph color={peer.color} />
       <NameTag
         color={peer.color}
         className="absolute left-[15px] top-[16px] whitespace-nowrap transition-opacity duration-200"
