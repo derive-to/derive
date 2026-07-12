@@ -280,22 +280,25 @@ interface ElReg {
         peers scrolled out of view collapse into an edge indicator. Plus an explicit
         leave (pointer left the doc / frame blurred / tab hidden) so peers drop us at
         once, and a tap on click so peers can ripple where we acted. -- */
-  // How far down the document we are, 0..1 — rides every cursor frame so a peer can
-  // OFFER "follow me" and a follower syncs their own scroll to ours (see scroll-to-frac).
+  // How far down the document we are, 0..1. This is VIEWPORT state, independent of the
+  // pointer: it rides every frame we emit (a pointer move OR a bare scroll) so a peer can
+  // FOLLOW us — syncing their scroll to ours (see scroll-to-frac) — regardless of whether
+  // our mouse is over the doc. (Fusing scroll-broadcast with pointer-presence was the old
+  // bug: a follower stalled whenever we scrolled by keyboard / over the comments panel.)
   const scrollFrac = () => {
     const max = document.documentElement.scrollHeight - window.innerHeight
     return max > 0 ? Math.min(1, Math.max(0, scrollTop() / max)) : 0
   }
-  // Last pointer position (viewport px) + whether it's currently over the doc. A SCROLL
-  // with a still mouse re-broadcasts the cursor (below), because the content under the
-  // pointer changed — otherwise peers freeze our cursor on stale content as we scroll.
+  // Last pointer position (viewport px) + whether it's currently over the doc. `live` rides
+  // the frame so the receiver renders our pointer only while it's really over the doc, but
+  // always consumes `sf` — a scroll with the mouse elsewhere still updates our shared scroll.
   let pX = 0
   let pY = 0
   let pIn = false
   const postCursor = (type: "cursor" | "cursor-tap") => {
     const w = window.innerWidth || 1
     const dh = document.documentElement.scrollHeight || 1
-    post({ type, x: pX / w, y: (pY + scrollTop()) / dh, sf: scrollFrac() })
+    post({ type, x: pX / w, y: (pY + scrollTop()) / dh, sf: scrollFrac(), live: pIn })
   }
   let cT = 0
   document.addEventListener("mousemove", (e) => {
@@ -1049,20 +1052,17 @@ interface ElReg {
       seen[e.id] = 1
       tops[e.id] = e.el.getBoundingClientRect().top + sy
     }
-    /* Dedupe on the TOPS alone: tops are doc-absolute (scroll-invariant), and the
-       host gets scroll geometry from the scroll stream — including scrollY here
-       used to make an animating artifact re-post (and re-render the host) every
-       frame while the user scrolled, for identical tops. */
+    /* Two independent streams to the host: comment-anchor TOPS (this message) and viewport
+       GEOMETRY (reportScroll below). Keeping them separate is deliberate — tops are
+       doc-absolute (scroll-invariant) and change rarely, so this dedupes on tops alone and
+       an animating artifact doesn't re-render the host's comment layout every scroll frame.
+       docH/viewH/scrollY ride reportScroll, which fires on every scroll/reflow/load, so the
+       host's geometry (peer-cursor Y maps against it) can't go stale even with zero
+       comments — the trap when geometry used to piggyback this tops-deduped message. */
     const sig = JSON.stringify(tops)
     if (sig === lastRects) return /* nothing the host pins to changed — skip the re-render */
     lastRects = sig
-    post({
-      type: "anchor-rects",
-      tops,
-      scrollY: sy,
-      viewH: window.innerHeight,
-      docH: document.documentElement.scrollHeight,
-    })
+    post({ type: "anchor-rects", tops })
   }
   const reportScroll = () =>
     post({
@@ -1144,9 +1144,11 @@ interface ElReg {
         sTick = 0
         if (elReg.length) positionEls()
         reportScroll()
-        // A still pointer now hovers different content — re-broadcast so peers track our
-        // cursor down the page (and a follower stays glued to us), not just on mouse-move.
-        if (pIn) postCursor("cursor")
+        // Always emit on scroll (not just when the pointer's over the doc): the frame
+        // carries our scroll fraction, which followers track, and `live` tells the receiver
+        // whether to also move our rendered pointer. A still mouse over the doc thus tracks
+        // down the page; a keyboard/panel scroll still drives anyone following us.
+        postCursor("cursor")
       })
     },
     true,
@@ -1167,19 +1169,19 @@ interface ElReg {
           if (lastAnchors) applyAnchors(lastAnchors)
         }, 150)
       reportRects()
-      // reportRects dedupes on the comment tops, so on a comment-less artifact it stops
-      // re-posting after the first frame — but the document height it carries changes as
-      // images/fonts settle. reportScroll always posts fresh geometry, so the host's
-      // docH (which peer-cursor Y is mapped against) can't go stale before the first scroll.
-      reportScroll()
+      reportScroll() // geometry can change on reflow (images/fonts settle) with no scroll
     })
   }
   window.addEventListener("resize", reflow)
-  /* images/fonts settle after load — re-measure a few times so pins land right */
+  /* images/fonts settle after load — re-measure a few times so pins AND geometry land right */
   window.addEventListener("load", () => {
-    reportRects()
-    setTimeout(reportRects, 400)
-    setTimeout(reportRects, 1200)
+    const remeasure = () => {
+      reportRects()
+      reportScroll()
+    }
+    remeasure()
+    setTimeout(remeasure, 400)
+    setTimeout(remeasure, 1200)
   })
   /* Follow mode: the host is locking our scroll to a peer's. If the USER scrolls (wheel,
      touch, or a scroll key), they're taking control back — tell the host to stop
@@ -1197,7 +1199,10 @@ interface ElReg {
   window.addEventListener("wheel", userScrolled, { passive: true })
   window.addEventListener("touchmove", userScrolled, { passive: true })
   window.addEventListener("keydown", (e) => {
-    if (SCROLL_KEYS.includes(e.key)) userScrolled()
+    // Space/arrows scroll the page — but not when they're being typed into a field.
+    const t = e.target as HTMLElement | null
+    const typing = t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA")
+    if (!typing && SCROLL_KEYS.includes(e.key)) userScrolled()
   })
   /* The artifact's OWN scripts can mutate the DOM after load (a chart library renders,
      content animates, an accordion expands) — none of which fire scroll/resize/load. So

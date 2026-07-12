@@ -174,6 +174,7 @@ export const realtimeRoutes = (ctx: AppContext) => {
           tap: z.boolean().optional(),
           slide: z.number().int().min(0).optional(),
           sf: z.number().min(0).max(1).optional(),
+          live: z.boolean().optional(),
           x: z.number(),
           y: z.number(),
         }),
@@ -201,6 +202,7 @@ export const realtimeRoutes = (ctx: AppContext) => {
         tap: body.tap === true ? true : undefined,
         slide: body.slide,
         sf: body.sf,
+        live: body.live,
         x: clamp(body.x),
         y: clamp(body.y),
       })

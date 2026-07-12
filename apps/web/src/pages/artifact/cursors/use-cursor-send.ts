@@ -8,14 +8,12 @@ import { guestQuery } from "@/lib/guest-id"
 // our chosen look, and explicit leave / tap signals — plus a focus/idle state machine so
 // a blurred or idle tab stops showing a cursor at once (no cursors lingering on an
 // abandoned tab). The RECEIVING half (peer frames → screen) lives in use-cursor-paint.
-// `selfId` is the stable per-tab id stamped onto every frame we send.
-export function useCursorSend(
-  shortId: string,
-  selfId: string,
-): {
-  onPointerMove: (x: number, y: number, slide?: number, sf?: number) => void
+// We send no id: the server stamps the authoritative one (our presence identity) on every
+// broadcast, so the client id was dead weight. Echo-filtering uses selfId on the paint side.
+export function useCursorSend(shortId: string): {
+  onPointerMove: (x: number, y: number, slide?: number, sf?: number, live?: boolean) => void
   onPointerLeave: () => void
-  onTap: (x: number, y: number, slide?: number, sf?: number) => void
+  onTap: (x: number, y: number, slide?: number, sf?: number, live?: boolean) => void
 } {
   const { pref } = useCursorPref()
   // Always send the latest pick without re-binding the send callbacks.
@@ -27,6 +25,9 @@ export function useCursorSend(
   const mySlide = useRef<number | undefined>(undefined)
   // Our own scroll fraction, tagged onto every outgoing frame so peers can follow us.
   const mySf = useRef<number | undefined>(undefined)
+  // Whether our pointer is actually over the doc — rides the frame so peers render our
+  // cursor only when it's live, but still consume our scroll fraction when it isn't.
+  const myLive = useRef<boolean | undefined>(undefined)
   const xy = useRef<[number, number] | null>(null)
   const sentAt = useRef(0)
   const live = useRef(false)
@@ -43,16 +44,16 @@ export function useCursorSend(
         credentials: "include",
         keepalive: true, // so a leave fired at unload still flushes
         body: JSON.stringify({
-          id: selfId,
           x: pt[0],
           y: pt[1],
           slide: mySlide.current,
           sf: mySf.current,
+          live: myLive.current,
           ...extra,
         }),
       }).catch(() => {})
     },
-    [shortId, selfId],
+    [shortId],
   )
 
   // Our current look as wire fields (reads a ref, so it's stable).
@@ -74,11 +75,12 @@ export function useCursorSend(
   }, [send])
 
   const onPointerMove = useCallback(
-    (x: number, y: number, slide?: number, sf?: number) => {
+    (x: number, y: number, slide?: number, sf?: number, pv?: boolean) => {
       if (prefRef.current.hidden) return
       xy.current = [x, y]
       mySlide.current = slide
       mySf.current = sf
+      myLive.current = pv
       live.current = true
       if (idleTimer.current) clearTimeout(idleTimer.current)
       idleTimer.current = setTimeout(sendLeave, CURSOR_TUNING.idleMs)
@@ -90,11 +92,12 @@ export function useCursorSend(
   const onPointerLeave = useCallback(() => sendLeave(), [sendLeave])
 
   const onTap = useCallback(
-    (x: number, y: number, slide?: number, sf?: number) => {
+    (x: number, y: number, slide?: number, sf?: number, pv?: boolean) => {
       if (prefRef.current.hidden) return
       xy.current = [x, y]
       mySlide.current = slide
       mySf.current = sf
+      myLive.current = pv
       live.current = true
       send({ ...look(), tap: true })
     },

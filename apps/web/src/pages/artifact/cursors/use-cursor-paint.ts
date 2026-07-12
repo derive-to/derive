@@ -18,6 +18,10 @@ import {
 // pointer → server) lives in use-cursor-send. `selfId` is shared so we ignore our own
 // echoed frames.
 
+// Drop a peer's tracked scroll position after this much silence (they've gone). Generous —
+// a followed peer who pauses reading shouldn't be forgotten; leaving presence stops follow.
+const VIEWPORT_TTL_MS = 60_000
+
 /** A peer entry the overlay mounts/unmounts and styles (no per-frame churn). */
 export interface PeerView {
   id: string
@@ -27,7 +31,8 @@ export interface PeerView {
   name: string
 }
 
-/** A one-shot click ripple. */
+/** A one-shot click ripple, positioned in SCREEN px (already mapped through the tapper's
+ *  document position + our scroll at paint time — so it lands on the tapped content). */
 export interface Ripple {
   key: number
   x: number
@@ -62,7 +67,6 @@ interface PeerTarget {
   emoji?: string
   name: string
   slide?: number // deck slide the peer is on (undefined on non-deck artifacts)
-  sf?: number // the peer's own scroll fraction 0..1 — drives "follow this peer"
   gone: boolean
   fade: number // opacity while leaving (1 → 0)
   lastSeen: number
@@ -136,6 +140,10 @@ export function useCursorPaint(selfId: string): {
 
   // Peer animation state (ref) + the React-visible roster/ripples (state).
   const targets = useRef(new Map<string, PeerTarget>())
+  // Each peer's latest scroll fraction — kept SEPARATE from their cursor target because
+  // viewport ≠ pointer: a peer scrolling with the mouse off the doc has no live cursor but
+  // still updates this, so "follow" tracks them. `t` is the last-heard time for TTL pruning.
+  const viewports = useRef(new Map<string, { sf: number; t: number }>())
   const [roster, setRoster] = useState<PeerView[]>([])
   const [ripples, setRipples] = useState<Ripple[]>([])
   const rosterDirty = useRef(false)
@@ -150,12 +158,12 @@ export function useCursorPaint(selfId: string): {
   const rippleKey = useRef(0)
 
   // "Follow" a peer: glue our own scroll to theirs, so we see exactly what they're
-  // pointing at wherever they are in the doc (Figma/tldraw follow). Their scroll fraction
-  // rides every cursor frame (PeerTarget.sf); the rAF loop pushes it to `onFollowScroll`,
-  // which index wires to a scroll command in the artifact frame. Keyed by the peer's
-  // stable presence id (cursor id === presence id — see use-live-cursors), so the facepile
-  // can start it. `followingPeer` is carried explicitly (not derived from the cursor
-  // roster) so the banner shows the instant you click Follow, before their first frame.
+  // pointing at wherever they are in the doc (Figma/tldraw follow). We read their scroll
+  // from `viewports` (updated by any frame, cursor or bare scroll); the rAF loop pushes it
+  // to `onFollowScroll`, which index wires to a scroll command in the artifact frame. Keyed
+  // by the peer's stable presence id (cursor id === presence id — see use-live-cursors), so
+  // the facepile can start it. `followingPeer` is carried explicitly (not derived from the
+  // cursor roster) so the banner shows the instant you click Follow, before their 1st frame.
   const [following, setFollowing] = useState<string | null>(null)
   const [followingPeer, setFollowingPeer] = useState<PeerView | null>(null)
   const followingRef = useRef<string | null>(null)
@@ -217,13 +225,35 @@ export function useCursorPaint(selfId: string): {
         return
       }
 
+      const now = Date.now()
+      // Viewport: record the peer's scroll fraction from ANY frame (a pointer move OR a bare
+      // scroll), independent of the cursor lifecycle — this is what "follow" reads.
+      if (typeof f.sf === "number") viewports.current.set(f.id, { sf: f.sf, t: now })
+      // A scroll with the pointer off the doc (live === false) carries viewport state only
+      // (recorded above); there's no pointer to render, so leave the cursor untouched.
+      if (f.live === false) return
+
       if (f.tap && !reducedMotion.current) {
-        const key = ++rippleKey.current
-        setRipples((rs) => [...rs, { key, x: f.x, y: f.y, color: f.color ?? CURSOR_FALLBACK }])
-        setTimeout(
-          () => setRipples((rs) => rs.filter((r) => r.key !== key)),
-          CURSOR_TUNING.rippleMs,
-        )
+        // Ripples share the cursor's document space — map through our scroll so a tap deep in
+        // a scrolled doc lands where it happened, not at a raw viewport fraction.
+        const r = layerRef.current?.getBoundingClientRect()
+        const docH = effectiveDocH(geomRef.current.docH, r?.height ?? 0)
+        const place = placePeer(f.x * (r?.width ?? 0), f.y * docH, {
+          scrollY: geomRef.current.scrollY || 0,
+          docH,
+          viewH: r?.height ?? 0,
+        })
+        if (place.onScreen) {
+          const key = ++rippleKey.current
+          setRipples((rs) => [
+            ...rs,
+            { key, x: place.x, y: place.y, color: f.color ?? CURSOR_FALLBACK },
+          ])
+          setTimeout(
+            () => setRipples((rs) => rs.filter((r) => r.key !== key)),
+            CURSOR_TUNING.rippleMs,
+          )
+        }
       }
 
       const existing = targets.current.get(f.id)
@@ -231,8 +261,6 @@ export function useCursorPaint(selfId: string): {
         if (existing) existing.gone = true // the rAF loop fades it out, then prunes
         return
       }
-
-      const now = Date.now()
       if (!existing) {
         // New peer: seed the eased position at the target so it appears in place.
         // y is document-normalized, so seed cy in document pixels (eased there).
@@ -248,7 +276,6 @@ export function useCursorPaint(selfId: string): {
           emoji: f.emoji,
           name: f.name ?? "Guest",
           slide: f.slide,
-          sf: f.sf,
           gone: false,
           fade: 1,
           lastSeen: now,
@@ -268,7 +295,6 @@ export function useCursorPaint(selfId: string): {
       existing.emoji = f.emoji
       existing.name = f.name ?? existing.name
       existing.slide = f.slide
-      if (typeof f.sf === "number") existing.sf = f.sf
       existing.gone = false
       existing.fade = 1
       existing.lastSeen = now
@@ -282,6 +308,7 @@ export function useCursorPaint(selfId: string): {
   useEffect(() => {
     if (!pref.hidden) return
     targets.current.clear()
+    viewports.current.clear()
     setRoster([])
     setRipples([])
   }, [pref.hidden])
@@ -342,16 +369,20 @@ export function useCursorPaint(selfId: string): {
             t.labelEl.style.opacity = hideLabel ? "0" : "1"
           }
         }
-        // Follow: keep our scroll glued to the followed peer's scroll fraction. Command
-        // only on a real change, so we don't fight the user or spam the frame at 60fps.
-        // A missing/idle cursor doesn't stop the follow (they may just be reading, mouse
-        // still) — leaving presence does, handled by the page against the viewer roster.
+        // Forget viewports we haven't heard from in a while (peers who came and went), so
+        // the map can't grow unbounded over a long session.
+        for (const [id, vp] of viewports.current)
+          if (now - vp.t > VIEWPORT_TTL_MS) viewports.current.delete(id)
+        // Follow: keep our scroll glued to the followed peer's scroll fraction (read from
+        // their viewport, which updates even when their cursor is idle/off-doc — so a reader
+        // is followable too). Command only on a real change, so we don't fight the user or
+        // spam the frame at 60fps. Leaving presence stops the follow (handled by the page).
         const fid = followingRef.current
         if (fid) {
-          const ft = targets.current.get(fid)
-          if (ft && typeof ft.sf === "number" && Math.abs(ft.sf - lastFollowSf.current) > 0.0005) {
-            lastFollowSf.current = ft.sf
-            onFollowScroll.current?.(ft.sf)
+          const vp = viewports.current.get(fid)
+          if (vp && Math.abs(vp.sf - lastFollowSf.current) > 0.0005) {
+            lastFollowSf.current = vp.sf
+            onFollowScroll.current?.(vp.sf)
           }
         }
         // Re-render React only when the off-screen membership actually changes.
