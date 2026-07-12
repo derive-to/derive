@@ -738,6 +738,13 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(toolText(both)).toContain("Pass `lines` OR `section`")
     const bad = await call(app, token, "read", { short_id: id, lines: "nope" })
     expect(toolText(bad)).toContain("Bad `lines`")
+
+    // A start past the end is an error naming the real range, not an empty "999-5" window.
+    const past = toolText(await call(app, token, "read", { short_id: id, lines: "999-1000" }))
+    expect(past).toContain("Bad `lines`")
+    expect(past).not.toContain("999-5")
+    const zero = toolText(await call(app, token, "read", { short_id: id, lines: "0" }))
+    expect(zero).toContain("Bad `lines`")
   })
 
   it("read: a large headless HTML page returns a landmark map, not a blind dump", async () => {

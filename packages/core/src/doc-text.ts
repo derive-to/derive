@@ -11,8 +11,8 @@
 
 import { decodeEntities, pageText } from "./anchor"
 
-/** One heading in a document's h1–h6 spine. `chars` is the size of the section's
- *  MARKDOWN conversion (heading included) — what a read of that section costs. */
+/** One heading in a document's h1–h6 spine. `chars` is the section's raw-source size
+ *  (heading included) — a cheap budget proxy for what reading that section costs. */
 export interface OutlineSection {
   level: number
   text: string
@@ -22,10 +22,12 @@ export interface OutlineSection {
 
 /** One structural landmark of a page with no heading spine (a dashboard, card grid,
  *  or landing page): enough to orient an agent that then searches/windows into it.
- *  `chars` is the size of the region's visible text. */
+ *  `text` is a short visible-text preview (so an unlabelled region is still
+ *  recognizable); `chars` is the size of the region's full visible text. */
 export interface LandmarkRegion {
   role: string
   label: string | null
+  text: string
   chars: number
 }
 
@@ -584,22 +586,31 @@ const landmarkSpans = (
 /** The structural map of an HTML page with no headings — a fallback so a designed,
  *  headless page (dashboard, card grid) still orients an agent, who then searches or
  *  windows into a region. Empty when there is no landmark structure either. */
+const LANDMARK_PREVIEW = 80
 export function landmarkMap(html: string): LandmarkRegion[] {
-  return landmarkSpans(html).map((s) => ({
-    role: attrOf(s.attrs, "role") ?? IMPLICIT_ROLE[s.name] ?? s.name,
-    label: attrOf(s.attrs, "aria-label") ?? attrOf(s.attrs, "id"),
-    chars: pageText(html.slice(s.start, s.end)).length,
-  }))
+  return landmarkSpans(html).map((s) => {
+    const visible = pageText(html.slice(s.start, s.end))
+    const preview = collapse(visible).trim()
+    return {
+      role: attrOf(s.attrs, "role") ?? IMPLICIT_ROLE[s.name] ?? s.name,
+      label: attrOf(s.attrs, "aria-label") ?? attrOf(s.attrs, "id"),
+      text: preview.length > LANDMARK_PREVIEW ? `${preview.slice(0, LANDMARK_PREVIEW)}…` : preview,
+      chars: visible.length,
+    }
+  })
 }
 
 /** The h1–h6 spine of an HTML document. Empty array = unsectionable (no headings). */
 export function docOutline(html: string): OutlineSection[] {
   const spans = headingSpans(html)
+  // `chars` is the section's raw-source span (offset math, O(1) per heading) — the
+  // same cheap measure the markdown outline uses, not a per-section htmlToMarkdown
+  // reconversion (which made the outline of a heading-heavy doc O(headings × size)).
   return spans.map((s, i) => ({
     level: s.level,
     text: s.text,
     slug: s.slug,
-    chars: htmlToMarkdown(html.slice(s.start, sectionEnd(html, spans, i))).length,
+    chars: sectionEnd(html, spans, i) - s.start,
   }))
 }
 

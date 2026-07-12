@@ -167,12 +167,14 @@ const toBase64 = (bytes: Uint8Array): string => {
 }
 
 // A 1-indexed, inclusive line range for windowed reads: "40-120", "40" (one line),
-// or "40-" (from 40 to the end). Returns null on a malformed or inverted range.
+// or "40-" (from 40 to the end). Returns null on a malformed, inverted, or
+// out-of-range start (a `from` past the end has no valid window — the caller errors
+// with the real line count rather than returning an empty "999-5" window).
 const parseLineRange = (spec: string, total: number): { from: number; to: number } | null => {
   const m = spec.trim().match(/^(\d+)(?:-(\d*))?$/)
   if (!m) return null
   const from = Number(m[1])
-  if (from < 1) return null
+  if (from < 1 || from > total) return null
   const to = m[2] === undefined ? from : m[2] === "" ? total : Number(m[2])
   if (to < from) return null
   return { from, to: Math.min(to, total) }

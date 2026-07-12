@@ -286,6 +286,16 @@ describe("landmarkMap (headless-page fallback)", () => {
       ["contentinfo", null],
     ])
     for (const r of map) expect(r.chars).toBeGreaterThan(0)
+    // The unlabelled <main> is still recognizable from its text preview.
+    expect(map[2]?.text).toBe("the dashboard body has real content here")
+  })
+
+  it("truncates a long region preview to keep the map compact", () => {
+    const long = "word ".repeat(40)
+    const map = landmarkMap(doc(`<main><p>${long}</p></main>`))
+    expect(map[0]?.text.endsWith("…")).toBe(true)
+    expect(map[0]?.text.length).toBeLessThanOrEqual(81)
+    expect(map[0]?.chars).toBeGreaterThan(100) // chars is the FULL size, not the preview
   })
 
   it("folds a nested landmark into its parent (map stays shallow)", () => {
