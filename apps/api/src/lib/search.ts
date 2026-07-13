@@ -11,6 +11,7 @@ import {
   toMarkdown,
   type VersionRecord,
 } from "@derive/core"
+import { log } from "../log"
 import { cleanPath, manifestOf } from "./bundle"
 import { clip } from "./clip"
 
@@ -31,6 +32,7 @@ export interface WorkspaceSearchDeps extends SearchDeps {
       orgId?: string
       viewerId?: string
       publicOnly?: boolean
+      excludeRemoved?: boolean
       ids?: string[]
       limit?: number
     }): Promise<ArtifactRecord[]>
@@ -275,21 +277,25 @@ export const searchReport = (
 // proposal-approve, and the DB layer maintains it on deleteArtifact/moveArtifactOrg.
 // ---------------------------------------------------------------------------
 
-// Postgres caps a single tsvector near 1MB, so a source far past this can't be one
-// tsvector at all. Bound the indexed text well under that (real artifacts are far
-// smaller) on BOTH dialects, so the index content stays identical across them. The
-// tail of a giant doc isn't FTS-findable, but once the index nominates the artifact
-// grep still reads the live blob in full — so a hit past the bound is still reported
-// on the one-artifact path, just not discovered workspace-wide.
+// Bound the indexed text per artifact (in JS chars — real artifacts are far smaller).
+// This keeps the index lean and stays comfortably under Postgres's ~1MB-per-tsvector
+// ceiling: 256K UTF-16 code units is at most ~1MB of UTF-8, and a tsvector is no larger
+// than its input, so `to_tsvector` won't overflow on normal input. Applied on BOTH
+// dialects so the index content matches. The tail of a giant doc isn't FTS-findable,
+// but once the index nominates the artifact the one-artifact grep still reads the live
+// blob in full — so a past-the-bound hit is reported there, just not discovered
+// workspace-wide.
 export const MAX_INDEX_TEXT = 256 * 1024
 
 // The text an artifact version contributes to the search index: its raw SOURCE — so
-// the default source-scope search finds tag/attribute content, not only visible text
-// — across every text page of a bundle, with data: URIs elided (megabytes of inlined
-// base64 are index bloat, never a real search target). This is a RECALL superset of
-// what search greps in either scope: the index only nominates candidates, and
-// searchArtifactVersion re-applies the exact scope + literal. A non-text single file
-// (a bare uploaded image) contributes nothing.
+// the default source-scope search finds tag/attribute content, not only visible text —
+// across every text page of a bundle. The index is a RECALL-APPROXIMATE candidate
+// generator, not a strict superset of what grep-confirm reads: data: URIs are elided
+// (megabytes of inlined base64 are bloat, never a real target), text past MAX_INDEX_TEXT
+// is dropped, and — because the source is indexed, not the rendered text — an `in:'text'`
+// query for a word split across inline tags (foo<b>bar</b> → visible "foobar") may not
+// be nominated. All three are workspace-discovery gaps only: the one-artifact grep still
+// finds those hits directly. A non-text single file (a bare uploaded image) adds nothing.
 export async function versionIndexText(blobs: BlobStore, v: VersionRecord): Promise<string> {
   const clipText = (s: string) => (s.length > MAX_INDEX_TEXT ? s.slice(0, MAX_INDEX_TEXT) : s)
   const manifest = await manifestOf(blobs, v)
@@ -334,8 +340,8 @@ export async function indexArtifactVersion(
 // Publishing keeps the index current going forward; this one-time sweep covers the
 // existing corpus. Idempotent (indexArtifact upserts), operator-driven in bounded
 // batches (POST /v1/system/search-reindex), resumed by passing nextCursor back until
-// it's null. Runs at operator scope (no viewerId) so it walks EVERY live artifact;
-// removed/taken-down rows are excluded by listArtifacts and stay out of the index.
+// it's null. Runs at operator scope (no viewerId) but with `excludeRemoved` so it walks
+// every LIVE artifact and never indexes a taken-down one.
 export interface ReindexSearchDeps {
   blobs: BlobStore
   meta: Pick<MetaStore, "indexArtifact" | "getVersion" | "listArtifacts">
@@ -355,13 +361,21 @@ export const reindexSearchBatch = async (
     orgId: opts.orgId,
     cursor: opts.cursor,
     limit: opts.limit,
+    excludeRemoved: true,
   })
   let indexed = 0
   for (const a of arts) {
-    const v = await deps.meta.getVersion(a.id, a.current_version)
-    if (!v) continue // no readable current version — skip rather than index empty
-    await indexArtifactVersion(deps.meta, deps.blobs, a, v)
-    indexed++
+    // Isolate each artifact: a single unreadable blob / transient store error must not
+    // abort the whole batch and wedge the operator's cursor (unlike the publish path,
+    // this loop is the only driver). Log and move on — the row can be re-swept later.
+    try {
+      const v = await deps.meta.getVersion(a.id, a.current_version)
+      if (!v) continue // no readable current version — skip rather than index empty
+      await indexArtifactVersion(deps.meta, deps.blobs, a, v)
+      indexed++
+    } catch (err) {
+      log.error("search reindex skipped one artifact", { artifact: a.id, err: String(err) })
+    }
   }
   // A full page implies there may be more; the last row is the keyset for the next call
   // (listArtifacts is newest-first, keyset on created_at+id — the same cursor the list
@@ -392,6 +406,13 @@ export const WORKSPACE_SEARCH_CANDIDATE_CAP = 200
 // now "grep-confirm the 30 most RELEVANT you can see".
 export const WORKSPACE_SEARCH_ARTIFACT_CAP = 30
 
+// The candidate ids are resolved through listArtifacts in chunks this size: `ids`
+// compiles to `id IN (?…)`, one bound parameter each, and D1 rejects any statement
+// with >100 of them (a 500). 90 leaves room for the query's other bound params
+// (org, viewer, listed). Postgres could take all 200 at once but chunking is harmless
+// there. The chunks are independent visibility queries; their rows just concatenate.
+const LIST_ID_CHUNK = 90
+
 export interface WorkspaceSearchResult {
   short_id: string
   title: string
@@ -420,26 +441,37 @@ export const searchWorkspace = async (
   },
 ): Promise<{ results: WorkspaceSearchResult[]; note: string | null }> => {
   // Tier 1 — the index nominates the most relevant candidate ids across the whole
-  // corpus. Org-scoped and ranked, but with NO visibility knowledge by design.
-  const candidates = await deps.meta.searchArtifactIds(
+  // corpus. Org-scoped and ranked, but with NO visibility knowledge by design. Fetch one
+  // past the cap: the sentinel row (never resolved) just answers "were there more?".
+  const nominated = await deps.meta.searchArtifactIds(
     opts.orgId,
     opts.query,
-    WORKSPACE_SEARCH_CANDIDATE_CAP,
+    WORKSPACE_SEARCH_CANDIDATE_CAP + 1,
   )
-  if (candidates.length === 0) return { results: [], note: null }
+  if (nominated.length === 0) return { results: [], note: null }
+  const moreCandidates = nominated.length > WORKSPACE_SEARCH_CANDIDATE_CAP
+  const candidates = nominated.slice(0, WORKSPACE_SEARCH_CANDIDATE_CAP)
   const rankOf = new Map(candidates.map((c, i) => [c.id, i]))
 
   // Tier 2 gate — THE visibility check. Re-resolve the nominated ids through
-  // listArtifacts with the SAME orgId/viewerId/publicOnly list_artifacts uses: an id
-  // the index nominated survives only if this call (the one true source of what a
-  // viewer can see) returns it. The index is a pure relevance oracle with no access
-  // knowledge, so it can never widen visibility past this gate.
-  const visible = await deps.meta.listArtifacts({
-    orgId: opts.orgId,
-    viewerId: opts.viewerId,
-    publicOnly: opts.publicOnly,
-    ids: candidates.map((c) => c.id),
-  })
+  // listArtifacts with the SAME orgId/viewerId/publicOnly list_artifacts uses, PLUS
+  // excludeRemoved (the index can outlive a takedown, and listArtifacts keeps tombstones
+  // for the feed — so search must drop them explicitly, else a moderated artifact's text
+  // is grep-readable). An id the index nominated survives only if this call returns it,
+  // so the index — a pure relevance oracle with no access knowledge — can never widen
+  // visibility. Chunked to stay under D1's bound-parameter cap (see LIST_ID_CHUNK).
+  const visible: ArtifactRecord[] = []
+  const candidateIds = candidates.map((c) => c.id)
+  for (let i = 0; i < candidateIds.length; i += LIST_ID_CHUNK) {
+    const rows = await deps.meta.listArtifacts({
+      orgId: opts.orgId,
+      viewerId: opts.viewerId,
+      publicOnly: opts.publicOnly,
+      excludeRemoved: true,
+      ids: candidateIds.slice(i, i + LIST_ID_CHUNK),
+    })
+    visible.push(...rows)
+  }
   // listArtifacts returns in its own (recency) order; restore relevance order.
   visible.sort((a, b) => (rankOf.get(a.id) ?? Infinity) - (rankOf.get(b.id) ?? Infinity))
 
@@ -471,17 +503,18 @@ export const searchWorkspace = async (
     for (const r of batch) if (r) results.push(r)
   }
 
-  // Honest truncation. `grepTruncated`: more visible matches than we confirmed.
-  // `moreCandidates`: the index itself hit its candidate cap, so lower-ranked matches
-  // (some possibly visible) exist below the window — hence the `+`.
+  // Honest truncation. These are CANDIDATE counts (index nominations that passed
+  // visibility), not confirmed-hit counts: grep-confirm may still drop some, so the
+  // wording says "candidates", never "matches". `grepTruncated`: more visible candidates
+  // than we confirmed. `moreCandidates`: the index had still more below the window
+  // (detected by the over-fetched sentinel) — hence the `+`.
   const grepTruncated = visible.length > WORKSPACE_SEARCH_ARTIFACT_CAP
-  const moreCandidates = candidates.length >= WORKSPACE_SEARCH_CANDIDATE_CAP
   const note = grepTruncated
-    ? `ranked by relevance — showing the top ${WORKSPACE_SEARCH_ARTIFACT_CAP} of ${visible.length}${
+    ? `ranked by relevance — grep-confirmed the top ${WORKSPACE_SEARCH_ARTIFACT_CAP} of ${visible.length}${
         moreCandidates ? "+" : ""
-      } matching artifacts you can see; refine the query for the rest`
+      } candidate artifacts you can see; refine the query to reach the rest`
     : moreCandidates
-      ? "ranked by relevance — there may be more lower-ranked matches; refine the query to surface them"
+      ? `ranked by relevance — more than ${WORKSPACE_SEARCH_CANDIDATE_CAP} artifacts matched the index; refine the query to narrow`
       : null
   return { results, note }
 }

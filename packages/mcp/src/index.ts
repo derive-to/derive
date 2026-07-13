@@ -205,7 +205,7 @@ server.registerTool(
   "search",
   {
     description:
-      "Find text within ONE artifact, or across a WORKSPACE — same tool, same behavior as the remote MCP server's `search`. Pass short_id to grep one artifact: matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range or `edit` that spot. Omit short_id to search the whole workspace — every artifact you can see, ranked by relevance, grouped by artifact — find WHICH doc has something before opening it. Searches the exact source by default (in:'text' searches the visible text instead). The query is matched literally (metacharacters are not special).",
+      "Find text within ONE artifact, or across a WORKSPACE — same tool, same behavior as the remote MCP server's `search`. Pass short_id to grep one artifact: matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range or `edit` that spot. Omit short_id to search across the workspace — the artifacts you can see, ranked by relevance and grouped by artifact — find WHICH doc has something before opening it. Searches the exact source by default (in:'text' searches the visible text instead). The query is matched literally (metacharacters are not special).",
     inputSchema: {
       short_id: z
         .string()

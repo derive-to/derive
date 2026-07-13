@@ -101,6 +101,13 @@ export interface ListArtifactsOpts {
    *  An empty/omitted set with a profile query ⇒ public-only. Used by `listUserWorks`
    *  so a person's profile never leaks non-public work the viewer can't open. */
   visibleOrgIds?: string[]
+  /** Drop taken-down (`removed_at` set) rows. OFF by default because a plain listing
+   *  (the feed) deliberately keeps them to render a tombstone card — it never exposes
+   *  their content. Search MUST set this: it reads the live blob, so a surviving index
+   *  row for a moderated artifact would otherwise let its text be grepped out, bypassing
+   *  the read path's 410 tombstone. `listArtifacts` alone is therefore NOT a complete
+   *  visibility gate for content — this flag closes the tombstone hole. */
+  excludeRemoved?: boolean
 }
 
 export type PreviewStatus = "pending" | "ready" | "failed"

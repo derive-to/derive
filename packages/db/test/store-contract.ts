@@ -1678,6 +1678,18 @@ export function runStoreContract(
       expect(await store.searchArtifactIds(ORG, "migration", 10)).toHaveLength(0)
       expect(ids(await store.searchArtifactIds(target, "migration", 10))).toEqual([a.id])
     })
+
+    it("is accent-SENSITIVE identically on both dialects (fts5 remove_diacritics 0 == tsvector 'simple')", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.indexArtifact(a.id, ORG, null, "the café résumé report")
+      // The exact accented form matches; the unaccented form does NOT — the same on
+      // fts5 and tsvector, and consistent with the byte-literal grep-confirm ("cafe"
+      // would not grep "café" either). unicode61's default would fold café→cafe and
+      // silently diverge from Postgres; remove_diacritics 0 pins the parity.
+      expect(ids(await store.searchArtifactIds(ORG, "café", 10))).toEqual([a.id])
+      expect(ids(await store.searchArtifactIds(ORG, "résumé", 10))).toEqual([a.id])
+      expect(await store.searchArtifactIds(ORG, "cafe", 10)).toHaveLength(0)
+    })
   })
 
   describe(`${label}: moderation (reports, takedown, audit)`, () => {

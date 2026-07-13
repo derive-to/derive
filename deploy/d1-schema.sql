@@ -534,4 +534,4 @@ CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at);
 
 CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at);
 
-CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61');
+CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61 remove_diacritics 0');

@@ -912,7 +912,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     // grep-confirm cap engages and the truncation note must appear.
     await seedMatching(meta, blobs, owner.org_id, "bulk", 31)
     const res = toolText(await call(app, token, "search", { query: "widget" }))
-    expect(res).toContain("matching artifacts you can see") // the relevance-truncation note
+    expect(res).toContain("candidate artifacts you can see") // the relevance-truncation note
     expect(res).toContain("top 30 of 31")
   })
 
@@ -928,8 +928,75 @@ describe("remote MCP endpoint (/mcp)", () => {
     // boundary means no truncation note fires.
     await seedMatching(meta, blobs, owner.org_id, "exct", 30)
     const res = toolText(await call(app, token, "search", { query: "widget" }))
-    expect(res).not.toContain("matching artifacts you can see")
-    expect(res).not.toContain("there may be more")
+    expect(res).not.toContain("candidate artifacts you can see")
+    expect(res).not.toContain("matched the index")
+  })
+
+  it("search (workspace mode): a taken-down artifact's content is NOT grep-exfiltratable via search (tombstone hole)", async () => {
+    const { app, token, meta } = appWithGrant("wstomb", "openid derive:read derive:publish")
+    const sid = (
+      await (
+        await publishRaw(app, token, "# Secret\n\nthe tombstoneneedle lives here", "s.md", "Secret")
+      ).json()
+    ).short_id
+    // Findable while live — proves it's indexed (so the negative below is non-vacuous).
+    expect(toolText(await call(app, token, "search", { query: "tombstoneneedle" }))).toContain(
+      "tombstoneneedle",
+    )
+    // Take it down. Takedown deliberately does NOT unindex (a restore must stay cheap), so
+    // the index row survives and still nominates it — the ONLY thing keeping its content
+    // out of search is searchWorkspace's excludeRemoved gate. This pins that hole shut:
+    // the content must not be grep-readable even though the read endpoint 410s it.
+    const art = await meta.getByShortId(sid)
+    if (!art) throw new Error("expected the artifact to exist")
+    await meta.setArtifactRemoved(art.id, new Date().toISOString())
+    const after = toolText(await call(app, token, "search", { query: "tombstoneneedle" }))
+    expect(after).toContain("No matches")
+    expect(after).not.toContain("Secret")
+    expect(after).not.toContain(sid)
+  })
+
+  it("search (workspace mode): index nominations lacking the exact literal are not reported as matches (recall vs precision)", async () => {
+    const { app, token, meta, blobs } = appWithGrant("wsprec", "openid derive:read derive:publish")
+    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
+    const owner = await meta.getByShortId(seed)
+    if (!owner) throw new Error("expected the seed artifact to exist")
+    // Both words are present but never the contiguous phrase "alpha omega".
+    const key = await blobs.put(
+      new TextEncoder().encode("alpha here and omega there, not adjacent"),
+    )
+    for (let i = 0; i < 3; i++) {
+      const id = `a_prec_${i}`
+      await meta.createArtifact({
+        id,
+        short_id: `prec${i.toString().padStart(5, "0")}`,
+        org_id: owner.org_id,
+        slug: null,
+        title: `Prec ${i}`,
+        workspace_access: "member",
+        link_role: "viewer",
+        listed: "workspace",
+        kind: "file",
+        spa: 0,
+      })
+      await meta.addVersion(id, {
+        id: `v_prec_${i}`,
+        blob_key: key,
+        content_type: "text/markdown",
+        author: "s",
+        message: null,
+      })
+      await meta.indexArtifact(
+        id,
+        owner.org_id,
+        `Prec ${i}`,
+        "alpha here and omega there, not adjacent",
+      )
+    }
+    // The index nominates all three (both prefix tokens present), but grep-confirm for the
+    // contiguous literal finds nothing → honestly "No matches", never a false hit.
+    const res = toolText(await call(app, token, "search", { query: "alpha omega" }))
+    expect(res).toContain("No matches")
   })
 
   it("search reindex (backfill): a bounded, resumable sweep makes pre-existing (never-indexed) artifacts findable", async () => {

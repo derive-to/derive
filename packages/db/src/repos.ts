@@ -155,10 +155,21 @@ import {
  * once, not in two places (the listArtifacts the review flagged as duplicated).
  */
 export function artifactListConditions(
-  art: { title: Column; created_at: Column; id: Column; org_id: Column; listed: Column },
+  art: {
+    title: Column
+    created_at: Column
+    id: Column
+    org_id: Column
+    listed: Column
+    removed_at: Column
+  },
   opts?: ListArtifactsOpts,
 ): SQL[] {
   const conds: SQL[] = []
+  // Tombstone filter — OFF by default (the feed shows removed rows as tombstone cards),
+  // ON for content-reading callers like search so a moderated artifact's text can't be
+  // grepped out of the index. See ListArtifactsOpts.excludeRemoved.
+  if (opts?.excludeRemoved) conds.push(isNull(art.removed_at))
   // Anonymous / non-member callers only ever see the public directory — a
   // workspace-listed title must not leak to someone outside the workspace.
   if (opts?.publicOnly) conds.push(eq(art.listed, "public"))
@@ -599,7 +610,17 @@ export function makeRepos(db: SqliteDb) {
       WHERE org_id = ${orgId} AND artifact_search MATCH ${match}
       ORDER BY rank DESC
       LIMIT ${limit}`)) as { artifact_id: string; rank: number }[]
-    return rows.map((r) => ({ id: r.artifact_id, rank: r.rank }))
+    // fts5 has no UNIQUE(artifact_id) and index = DELETE-then-INSERT (two statements), so a
+    // race between two same-artifact publishes can momentarily leave two rows. Dedup on read
+    // (keep the best-ranked) so a caller never sees an id twice. (Postgres can't: PK upsert.)
+    const seen = new Set<string>()
+    const out: { id: string; rank: number }[] = []
+    for (const r of rows) {
+      if (seen.has(r.artifact_id)) continue
+      seen.add(r.artifact_id)
+      out.push({ id: r.artifact_id, rank: r.rank })
+    }
+    return out
   }
 
   const artifactIdsByTag = async (tag: string): Promise<string[]> =>
