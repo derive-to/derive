@@ -35,6 +35,7 @@ import {
   EditError,
   formatDiff,
   isHtmlLike,
+  type LandmarkRegion,
   landmarkSlice,
   landmarksOf,
   looksLikeHtmlDocument,
@@ -72,6 +73,7 @@ import {
 } from "./lib/bundle"
 import { clip, MAX_CHARS } from "./lib/clip"
 import { parseMeta, quoteOf, REACTIONS } from "./lib/comments"
+import { type DerivedViews, derivedViewsFor } from "./lib/derived-cache"
 import { type MaterializedEdits, materializeEdits, preservingFilename } from "./lib/edits"
 import { buildReviewEmail } from "./lib/email"
 import { MAX_UPLOAD_BYTES } from "./lib/http"
@@ -733,6 +735,24 @@ async function buildServer(
         // Single-file artifact.
         const src = (await ctx.sourceText(v)) ?? ""
         const ct = v.content_type
+        // Derived-view cache, fetched LAZILY and once: paths that never need a
+        // derived view (format:"html" windows, region slices) stay zero-cost, and
+        // a cache MISS computes the views exactly once per request, not per site.
+        // Small docs / non-HTML resolve to null and every site below falls back to
+        // the identical direct computation this code always did.
+        let viewsPromise: Promise<DerivedViews | null> | undefined
+        const views = (): Promise<DerivedViews | null> =>
+          (viewsPromise ??= derivedViewsFor(ctx.derived, src, ct))
+        const presentDoc = async (f: ReadFormat): Promise<string> => {
+          if (f === "html") return src
+          const cached = await views()
+          if (cached) return f === "markdown" ? cached.markdown : cached.text
+          return present(src, ct, f)
+        }
+        const outlineDoc = async (): Promise<OutlineSection[]> =>
+          (await views())?.outline ?? outlineOf(src, ct)
+        const landmarksDoc = async (): Promise<LandmarkRegion[]> =>
+          (await views())?.landmarks ?? landmarksOf(src, ct)
         const meta = {
           short_id,
           title: a.title,
@@ -744,7 +764,7 @@ async function buildServer(
         if (lines) {
           if (section && section !== "*")
             return err("Pass `lines` OR `section`, not both — windowing applies to the whole doc.")
-          const body = present(src, ct, fmt)
+          const body = await presentDoc(fmt)
           const all = body.split("\n")
           const range = parseLineRange(lines, all.length)
           if (!range)
@@ -768,7 +788,7 @@ async function buildServer(
           const idx = Number(regionRef[1])
           const slice = landmarkSlice(src, idx)
           if (slice === null) {
-            const count = landmarksOf(src, ct).length
+            const count = (await landmarksDoc()).length
             return err(
               count
                 ? `No region @${idx} in "${short_id}" — it has ${count} region(s), @1..@${count}. Read with no \`section\` for the map.`
@@ -776,7 +796,7 @@ async function buildServer(
             )
           }
           const body = present(slice, ct, fmt)
-          const count = landmarksOf(src, ct).length
+          const count = (await landmarksDoc()).length
           return doc(
             { ...meta, section: `@${idx} of ${count} regions`, chars: body.length },
             clip(body),
@@ -785,7 +805,7 @@ async function buildServer(
         if (section && section !== "*") {
           const slice = sectionOf(src, ct, section)
           if (slice === null) {
-            const slugs = outlineOf(src, ct).map((s) => s.slug)
+            const slugs = (await outlineDoc()).map((s) => s.slug)
             return err(
               slugs.length
                 ? `No section "${section}" in "${short_id}" v${n} — sections: ${slugs.join(", ")}.`
@@ -795,7 +815,7 @@ async function buildServer(
           // Also feeds clipDoc's steer below — a single section can itself be huge
           // (e.g. the last one, which runs to </body>), so it needs the same
           // MAX_CHARS ceiling the whole-doc path gets, not an unbounded return.
-          const outline = outlineOf(src, ct)
+          const outline = await outlineDoc()
           const i = outline.findIndex((s) => s.slug === section)
           const body = present(slice, ct, fmt)
           return doc(
@@ -807,9 +827,9 @@ async function buildServer(
             clipDoc(body, outline),
           )
         }
-        const body = present(src, ct, fmt)
+        const body = await presentDoc(fmt)
         if (!section && body.length > FULL_DOC_MAX) {
-          const outline = outlineOf(src, ct)
+          const outline = await outlineDoc()
           if (outline.length)
             return json({
               short_id,
@@ -826,7 +846,7 @@ async function buildServer(
           // No headings — a designed, headless HTML page (dashboard, card grid) still
           // has landmark structure. Return that map so the agent can search/window in
           // rather than blindly dumping a clipped wall of text.
-          const regions = landmarksOf(src, ct)
+          const regions = await landmarksDoc()
           if (regions.length)
             return json({
               short_id,
@@ -851,7 +871,7 @@ async function buildServer(
         }
         // Under FULL_DOC_MAX: clipDoc's MAX_CHARS ceiling is far above this body's
         // size, so it can never truncate — skip computing an outline it won't use.
-        const outline = body.length > MAX_CHARS ? outlineOf(src, ct) : []
+        const outline = body.length > MAX_CHARS ? await outlineDoc() : []
         return doc({ ...meta, chars: body.length }, clipDoc(body, outline))
       }
 

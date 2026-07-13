@@ -16,6 +16,7 @@ import type {
   ContextRecord,
   DeliveryRecord,
   DeliveryStatus,
+  DerivedViewRecord,
   DomainRecord,
   DomainStatus,
   FollowKind,
@@ -125,6 +126,7 @@ import {
   context,
   contextAsker,
   contextSession,
+  derivedView,
   domain,
   follow,
   githubApp,
@@ -171,6 +173,7 @@ export const schema = {
   webhook,
   webhookDelivery,
   renderJob,
+  derivedView,
   membership,
   workspace,
   artifactMember,
@@ -212,6 +215,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   webhook: true,
   webhookDelivery: true,
   renderJob: true,
+  derivedView: true,
   membership: true,
   workspace: true,
   artifactMember: true,
@@ -921,6 +925,23 @@ export class PgMetaStore implements MetaStore {
     },
   ): Promise<void> {
     await this.db.update(renderJob).set(fields).where(eq(renderJob.id, id))
+  }
+
+  // ---- Derived-view cache -------------------------------------------------
+  async getDerivedView(sourceSha: string): Promise<DerivedViewRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(derivedView)
+      .where(eq(derivedView.source_sha, sourceSha))
+    return rows[0] ?? null
+  }
+  async putDerivedView(rec: { source_sha: string; blob_key: string }): Promise<void> {
+    // Last write wins on a sha collision: two racing writers derived the SAME
+    // content, so either blob is correct — no need to preserve the first.
+    await this.db
+      .insert(derivedView)
+      .values(rec)
+      .onConflictDoUpdate({ target: derivedView.source_sha, set: { blob_key: rec.blob_key } })
   }
 
   // ---- Permissions: membership + per-artifact shares ---------------------

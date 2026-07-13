@@ -143,6 +143,17 @@ const call = (app: App, token: string, name: string, args: Record<string, unknow
     params: { name, arguments: args },
   })
 
+// How many derived-view cache rows exist in a test's db — raw SQL against the
+// same per-test file appWithGrant created, exactly like the grant seeding above.
+const countDerivedViews = (name: string): number => {
+  const db = new Database(join(dir, `${name}.db`))
+  try {
+    return (db.prepare(`SELECT count(*) AS n FROM derived_view`).get() as { n: number }).n
+  } finally {
+    db.close()
+  }
+}
+
 describe("remote MCP endpoint (/mcp)", () => {
   it("rejects an unauthenticated connect with 401 + WWW-Authenticate", async () => {
     const { app } = appWithGrant("noauth", "openid derive:read")
@@ -777,6 +788,54 @@ describe("remote MCP endpoint (/mcp)", () => {
     const hid = (await (await publishRaw(app, token, html, "d.html", "D")).json()).short_id
     const s = toolText(await call(app, token, "search", { short_id: hid, query: "pricing" }))
     expect(s).toContain("§ Revenue")
+  })
+
+  it("search + read on a LARGE html doc go through the derived-view cache: the first call persists a derived_view row, and cached calls return byte-identical results (substitution transparency, end to end)", async () => {
+    const { app, token } = appWithGrant("dcache", "openid derive:read derive:publish")
+    // Big enough to cross DERIVED_CACHE_MIN_CHARS (150K); real section structure.
+    const html =
+      `<!doctype html><html><head><title>Big</title></head><body><h1>Big Doc</h1>\n` +
+      Array.from(
+        { length: 1400 },
+        (_, i) =>
+          `<section aria-label="Part ${i}"><h2>Part ${i}</h2><p>content of part ${i}${i === 777 ? " with the dcache-needle-x" : ""}, padded out for size padded out for size and then some more.</p></section>`,
+      ).join("\n") +
+      `\n</body></html>`
+    const id = (await (await publishRaw(app, token, html, "big.html", "Big")).json()).short_id
+
+    // No cached views yet — the first search is the miss that fills the cache.
+    const before = countDerivedViews("dcache")
+    const first = toolText(
+      await call(app, token, "search", { short_id: id, query: "dcache-needle-x" }),
+    )
+    expect(first).toContain("1 match")
+    expect(first).toContain("§ Part 777") // markers work on the miss path
+    const after = countDerivedViews("dcache")
+    expect(after).toBe(before + 1)
+
+    // Second search hits the cache — result must be byte-identical (the whole
+    // substitution-transparency contract), and no new row appears.
+    const second = toolText(
+      await call(app, token, "search", { short_id: id, query: "dcache-needle-x" }),
+    )
+    expect(second).toBe(first)
+    expect(countDerivedViews("dcache")).toBe(after)
+
+    // The outline-first read comes from the same cached views.
+    const outlineRead = toolText(await call(app, token, "read", { short_id: id }))
+    expect(outlineRead).toContain("part-777")
+    expect(countDerivedViews("dcache")).toBe(after)
+
+    // Republishing CHANGED content is a new sha — a fresh row, no stale reuse.
+    await call(app, token, "publish", {
+      short_id: id,
+      edits: [{ old_str: "dcache-needle-x", new_str: "dcache-needle-y" }],
+    })
+    const changed = toolText(
+      await call(app, token, "search", { short_id: id, query: "dcache-needle-y" }),
+    )
+    expect(changed).toContain("1 match")
+    expect(countDerivedViews("dcache")).toBe(after + 1)
   })
 
   it("search (workspace mode, short_id omitted): greps across accessible artifacts, grouped by artifact, and NEVER leaks a private artifact's content to a viewer who isn't its member (regression)", async () => {
