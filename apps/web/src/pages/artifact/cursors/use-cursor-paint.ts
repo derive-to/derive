@@ -10,13 +10,15 @@ import { CURSOR_TUNING, type CursorFrame, effectiveDocH, placePeer } from "@/lib
 // viewport edge collapse into an edge indicator. React only re-renders when the roster
 // changes (a peer joins, leaves, or is renamed) or a ripple fires; every-frame motion is
 // written straight to the DOM via refs, never through React. A peer's color isn't sent —
-// it's derived from their name (`colorForName`, the shared identity palette), keyed on the
-// same server-stamped handle presence uses, so each peer keeps one stable, distinct tint.
-// The SENDING half (our own pointer → server) lives in use-cursor-send. `selfId` is shared
-// so we ignore our own echoed frames.
+// it's derived from their stable `id` via `colorForName` (the shared identity palette). We
+// key on the id, NOT the display name, on purpose: the name collapses (a handle-less account
+// stamps as "someone", a missing name as "Guest"), which would paint distinct people the same
+// color — the id is always present and unique per viewer, so every peer gets a distinct tint
+// that never flickers when their name resolves. The SENDING half (our own pointer → server)
+// lives in use-cursor-send. `selfId` is shared so we ignore our own echoed frames.
 
 /** A peer entry the overlay mounts/unmounts (no per-frame churn). Color is the peer's
- *  identity tint, derived once from their name so it matches their avatar. */
+ *  identity tint, derived once from their stable id (a distinct tint per viewer). */
 export interface PeerView {
   id: string
   color: string
@@ -50,7 +52,7 @@ interface PeerTarget {
   y: number
   cx: number // current eased position: cx in layer px (x), cy in document px (y)
   cy: number
-  color: string // identity tint, derived from name (recomputed only on rename)
+  color: string // identity tint, derived once from the stable id (never changes)
   name: string
   slide?: number // deck slide the peer is on (undefined on non-deck artifacts)
   gone: boolean
@@ -61,7 +63,8 @@ interface PeerTarget {
   labelEl: HTMLElement | null
 }
 
-// The roster only re-renders when a peer is renamed (their tint follows their name).
+// The roster re-renders when a peer is renamed (guest → resolved handle) to update the tag;
+// their tint is keyed on the stable id, so it does NOT change on rename.
 const nameChanged = (t: PeerTarget, f: CursorFrame) => t.name !== (f.name ?? t.name)
 
 export function useCursorPaint(selfId: string): {
@@ -180,10 +183,7 @@ export function useCursorPaint(selfId: string): {
         })
         if (place.onScreen) {
           const key = ++rippleKey.current
-          setRipples((rs) => [
-            ...rs,
-            { key, x: place.x, y: place.y, color: colorForName(f.name ?? "Guest") },
-          ])
+          setRipples((rs) => [...rs, { key, x: place.x, y: place.y, color: colorForName(f.id) }])
           setTimeout(
             () => setRipples((rs) => rs.filter((r) => r.key !== key)),
             CURSOR_TUNING.rippleMs,
@@ -201,14 +201,13 @@ export function useCursorPaint(selfId: string): {
         // y is document-normalized, so seed cy in document pixels (eased there).
         const r = layerRef.current?.getBoundingClientRect()
         const docH = effectiveDocH(geomRef.current.docH, r?.height ?? 0)
-        const name = f.name ?? "Guest"
         targets.current.set(f.id, {
           x: f.x,
           y: f.y,
           cx: f.x * (r?.width ?? 0),
           cy: f.y * docH,
-          color: colorForName(name),
-          name,
+          color: colorForName(f.id), // keyed on the stable id, not the collapsible name
+          name: f.name ?? "Guest",
           slide: f.slide,
           gone: false,
           fade: 1,
@@ -222,8 +221,8 @@ export function useCursorPaint(selfId: string): {
       }
 
       if (nameChanged(existing, f)) {
+        // Only the tag text changes; the tint stays (it's keyed on the stable id).
         existing.name = f.name ?? existing.name
-        existing.color = colorForName(existing.name)
         markRosterDirty()
       }
       existing.x = f.x
