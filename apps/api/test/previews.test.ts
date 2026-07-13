@@ -89,7 +89,19 @@ interface FakeMeta {
   jobs: Map<string, FakeJob>
 }
 
-const makeFakes = (): FakeMeta => {
+const makeFakes = (opts?: {
+  // Test hook: makes setVersionPreviewVariant throw when this predicate matches, to
+  // simulate a metastore write failure — used to reproduce and pin the "the FAILURE-
+  // recording write itself throws" case (regression: it used to escape and corrupt
+  // an unrelated, already-successful render's status).
+  failVariantWrite?: (
+    variant: "full" | "marked",
+    status: PreviewStatus | null | undefined,
+  ) => boolean
+  // Test hook: makes updateRenderJob throw when this predicate matches, to simulate a
+  // metastore write failure on the job-completion write itself.
+  failUpdateRenderJob?: (fields: { status: RenderJobStatus }) => boolean
+}): FakeMeta => {
   const artifacts = new Map<string, FakeArtifact>()
   const versions = new Map<string, FakeVersion>()
   const jobs = new Map<string, FakeJob>()
@@ -144,6 +156,8 @@ const makeFakes = (): FakeMeta => {
       variant: "full" | "marked",
       fields: { key?: string | null; status?: PreviewStatus | null; error?: string | null },
     ): Promise<void> => {
+      if (opts?.failVariantWrite?.(variant, fields.status))
+        throw new Error(`simulated metastore failure writing ${variant} status=${fields.status}`)
       const v = versions.get(`${artifactId}:${n}`)
       if (!v) return
       if (variant === "full") {
@@ -210,6 +224,8 @@ const makeFakes = (): FakeMeta => {
         next_attempt_at: string
       },
     ): Promise<void> => {
+      if (opts?.failUpdateRenderJob?.(fields))
+        throw new Error(`simulated metastore failure writing job status=${fields.status}`)
       const job = jobs.get(id)
       if (!job) return
       job.status = fields.status
@@ -406,6 +422,94 @@ describe("previews: enqueueRender + runRenderTick", () => {
     const job = [...fakes.jobs.values()][0]
     if (!job) throw new Error("expected a render job")
     expect(job.status).toBe("done")
+  })
+
+  it("Test A4 (regression): the metastore itself failing to RECORD a variant failure must never corrupt the already-successful OG status or requeue the job", async () => {
+    const fakes = makeFakes({
+      // Simulate a transient metastore error specifically when writing the MARKED
+      // variant's "failed" status — i.e. the render genuinely crashed AND the store
+      // couldn't even record that fact. renderPreviewVariant's own catch block used
+      // to let this exception escape, where the OUTER catch in runRenderTick mistook
+      // it for the OG render itself failing — overwriting an already-ready, already-
+      // stored OG image back to "failed" and requeuing the whole job pointlessly.
+      failVariantWrite: (variant, status) => variant === "marked" && status === "failed",
+    })
+    await seedArtifact(fakes, { id: "a1r", shortId: "short1r", versionN: 1 })
+
+    const renderer = {
+      screenshot: async (url: string): Promise<Uint8Array> => {
+        if (url.includes("marks=1")) throw new Error("marked screenshot genuinely crashed")
+        return new Uint8Array([1, 2, 3])
+      },
+    }
+
+    await enqueueRender(fakes.meta, "a1r", 1)
+    const n = await runRenderTick({
+      meta: fakes.meta,
+      blobs: makeBlobs(),
+      renderer,
+      baseUrl: "https://d.to",
+      secret: "test-secret",
+    })
+    expect(n).toBe(1)
+
+    const v = fakes.versions.get("a1r:1")
+    // The genuinely-successful OG and full renders must stay ready — a metastore
+    // failure recording an UNRELATED variant's failure must not corrupt them.
+    expect(v?.preview_status).toBe("ready")
+    expect(v?.preview_full_status).toBe("ready")
+    // The job completes normally, not requeued for a pointless full re-render.
+    const job = [...fakes.jobs.values()][0]
+    if (!job) throw new Error("expected a render job")
+    expect(job.status).toBe("done")
+  })
+
+  it("Test A5 (regression): the job-completion write is made right after the OG write, BEFORE the variant renders — so if it fails, the two variant screenshots are never wastefully attempted", async () => {
+    const fakes = makeFakes({
+      // The job's "done" write throws every time (a transient metastore error) — the
+      // retry's own "pending"/"dead" writes must still succeed, or this test can't
+      // observe the resulting state.
+      failUpdateRenderJob: (fields) => fields.status === "done",
+    })
+    await seedArtifact(fakes, { id: "a1o", shortId: "short1o", versionN: 1 })
+
+    const seen: string[] = []
+    const renderer = {
+      screenshot: async (url: string) => {
+        seen.push(url)
+        return new Uint8Array([1, 2, 3])
+      },
+    }
+
+    await enqueueRender(fakes.meta, "a1o", 1)
+    const n = await runRenderTick({
+      meta: fakes.meta,
+      blobs: makeBlobs(),
+      renderer,
+      baseUrl: "https://d.to",
+      secret: "test-secret",
+    })
+    expect(n).toBe(1)
+
+    // Only the OG screenshot ran — the job-completion write throwing short-circuits
+    // straight to the outer catch, so the full/marked screenshots (each up to
+    // RENDER_TIMEOUT_MS) are never attempted at all, not run-then-discarded.
+    expect(seen).toHaveLength(1)
+
+    const v = fakes.versions.get("a1o:1")
+    // The OG screenshot genuinely succeeded and its key was stored before the failed
+    // write — the outer catch's failure write only touches status/error, so the good
+    // key survives even though status is (correctly, per existing behavior) reported
+    // "failed" until the retry lands.
+    expect(v?.preview_key).toBeTruthy()
+    expect(v?.preview_status).toBe("failed")
+    // Neither variant ever got a chance to record a status.
+    expect(v?.preview_full_status).toBeNull()
+    expect(v?.preview_marked_status).toBeNull()
+
+    const job = [...fakes.jobs.values()][0]
+    if (!job) throw new Error("expected a render job")
+    expect(job.status).toBe("pending")
   })
 
   it("Test B (failure): renderer throws → version failed + job pending with future next_attempt_at", async () => {

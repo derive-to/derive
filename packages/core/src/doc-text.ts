@@ -822,6 +822,23 @@ const occurrencePositions = (haystack: string, needle: string): number[] => {
 // normalizes away, while real content differences still don't match.
 const normalizeLine = (s: string): string => s.trim().replace(/\s+/g, " ")
 
+// Tier 1 is a sliding window: O(haystack lines × needle lines) comparisons. Cheap for
+// a typical small edit on any size document (needle is short), or a large needle on a
+// typical small document — the risk is both being large at once. Cap the product
+// rather than either dimension alone, so neither shape is penalized on its own.
+// 500K comparisons is ~12ms by extrapolation from a measured 36M-comparison/~900ms case.
+const TIER1_MAX_COMPARISONS = 500_000
+
+const isWordChar = (c: string | undefined): boolean => !!c && /[A-Za-z0-9_]/.test(c)
+
+// Whole-word substring search without a regex (avoids escaping arbitrary user text):
+// `anchor` must not be glued to another word character on either side.
+const includesWord = (line: string, word: string): boolean => {
+  for (let idx = line.indexOf(word); idx !== -1; idx = line.indexOf(word, idx + 1))
+    if (!isWordChar(line[idx - 1]) && !isWordChar(line[idx + word.length])) return true
+  return false
+}
+
 // Diagnose a "not found" old_str: WHY didn't it match, not just that it didn't.
 // Two tiers, cheapest and most common first — never used to auto-apply anything,
 // purely a message so the agent fixes it in one round instead of a blind retry.
@@ -832,19 +849,21 @@ const nearestMissHint = (haystack: string, needle: string): string => {
 
   // Tier 1: the exact same lines exist, just with different whitespace — a sliding
   // window match on normalized lines, reported at its real (unnormalized) line no.
-  for (let i = 0; i + normN.length <= hLines.length; i++) {
-    let allMatch = true
-    for (let j = 0; j < normN.length; j++) {
-      if (normalizeLine(hLines[i + j] as string) !== normN[j]) {
-        allMatch = false
-        break
+  if (hLines.length * normN.length <= TIER1_MAX_COMPARISONS) {
+    for (let i = 0; i + normN.length <= hLines.length; i++) {
+      let allMatch = true
+      for (let j = 0; j < normN.length; j++) {
+        if (normalizeLine(hLines[i + j] as string) !== normN[j]) {
+          allMatch = false
+          break
+        }
       }
+      if (allMatch)
+        return (
+          ` The text is there at line ${i + 1}, but whitespace differs (tabs vs spaces, or ` +
+          `trailing spaces) — read format:"html" (or the doc's own format) and copy old_str exactly.`
+        )
     }
-    if (allMatch)
-      return (
-        ` The text is there at line ${i + 1}, but whitespace differs (tabs vs spaces, or ` +
-        `trailing spaces) — read format:"html" (or the doc's own format) and copy old_str exactly.`
-      )
   }
 
   // Tier 2: the FIRST WORD of old_str's first non-empty line exists somewhere, but
@@ -852,11 +871,12 @@ const nearestMissHint = (haystack: string, needle: string): string => {
   // there now. Deliberately just one word, not a phrase: for a single-line old_str the
   // "first line" IS the whole needle (which by definition didn't match), so requiring
   // more than a coarse token would never fire — a first-word anchor still locates the
-  // general spot even when everything after it changed.
+  // general spot even when everything after it changed. Matched as a whole word (not
+  // a bare substring) so "The" doesn't spuriously anchor onto "Theater".
   const firstLine = nLines.find((l) => l.trim().length > 0)
   if (firstLine) {
     const anchor = firstLine.trim().split(/\s+/)[0] ?? ""
-    const idx = anchor.length >= 3 ? hLines.findIndex((l) => l.includes(anchor)) : -1
+    const idx = anchor.length >= 3 ? hLines.findIndex((l) => includesWord(l, anchor)) : -1
     if (idx >= 0) {
       const around = hLines.slice(Math.max(0, idx - 1), idx + 2).join("\n")
       return (

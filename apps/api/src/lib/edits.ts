@@ -8,6 +8,7 @@ import {
   toMarkdown,
   type VersionRecord,
 } from "@derive/core"
+import { log } from "../log"
 
 /** A conflict with the artifact's actual state (wrong kind, or it moved past the
  *  version you read) — distinct from a malformed edit itself (bad JSON, 0/multi-match)
@@ -32,12 +33,30 @@ const compactDiff = (ops: DiffOp[], context = 1): string => {
   let last = -2
   ops.forEach((o, i) => {
     if (!keep[i]) return
-    if (i > last + 1) lines.push("…")
+    // i > 0 guard: without it, the very first kept line always looks like it has a
+    // gap before it (last starts at -2), printing a spurious "…" even when nothing
+    // precedes the diff at all.
+    if (i > last + 1 && i > 0) lines.push("…")
     lines.push(`${o.t === "add" ? "+" : o.t === "del" ? "-" : " "} ${o.line}`)
     last = i
   })
   const out = lines.join("\n")
-  return out.length > CONFLICT_DIFF_MAX ? `${out.slice(0, CONFLICT_DIFF_MAX)}\n…[truncated]` : out
+  if (out.length <= CONFLICT_DIFF_MAX) return out
+
+  // A near-total rewrite collapses nothing (no "…" at all — every line differs, so
+  // every op survives context expansion): a blind char slice would land mid-line and
+  // show a random truncated fragment instead of a useful summary. Report counts.
+  if (!lines.includes("…")) {
+    const added = ops.filter((o) => o.t === "add").length
+    const removed = ops.filter((o) => o.t === "del").length
+    return `${added} line${added === 1 ? "" : "s"} added, ${removed} line${removed === 1 ? "" : "s"} removed — too different to summarize as a diff.`
+  }
+
+  // Otherwise real hunks survived but are still long: trim to a whole-line boundary
+  // rather than cutting mid-word.
+  const truncated = out.slice(0, CONFLICT_DIFF_MAX)
+  const lastNewline = truncated.lastIndexOf("\n")
+  return `${lastNewline > 0 ? truncated.slice(0, lastNewline) : truncated}\n…[truncated]`
 }
 
 export interface MaterializeEditsDeps {
@@ -57,10 +76,19 @@ export interface MaterializedEdits {
 export const preservingFilename = (contentType: string | null): string =>
   (contentType ?? "").split(";")[0]?.trim() === "text/markdown" ? "index.md" : "index.html"
 
+// diffLines is O(n·m) in line count. Single-file artifacts scale up to
+// MAX_UPLOAD_BYTES, and this path fires on every stale-base_version conflict —
+// unlike catch_up's equivalent detailed diff, it isn't opt-in. Skip it above a size
+// that's already measurably slow locally (~490ms at ~5,000 lines / ~200KB) rather
+// than let ordinary concurrent editing on a larger document turn a routine conflict
+// response into a multi-second (or unbounded) request.
+const CONFLICT_DIFF_MAX_SRC_CHARS = 150_000
+
 // A short line diff (readable Markdown form, like catch_up's detailed diff) between
 // the version an edit was based on and the artifact's actual current version — best
 // effort: any lookup failure (a purged version, an unreadable blob) falls back to no
-// diff rather than failing the conflict report itself.
+// diff rather than failing the conflict report itself. The failure is still logged
+// (not silently swallowed) so a genuine bug here doesn't go invisible.
 const conflictDiffNote = async (
   deps: MaterializeEditsDeps,
   artifact: Pick<ArtifactRecord, "id" | "current_version">,
@@ -75,13 +103,24 @@ const conflictDiffNote = async (
     if (!base || !head) return ""
     const [baseSrc, headSrc] = await Promise.all([deps.sourceText(base), deps.sourceText(head)])
     if (baseSrc === null || headSrc === null) return ""
+    if (
+      baseSrc.length > CONFLICT_DIFF_MAX_SRC_CHARS ||
+      headSrc.length > CONFLICT_DIFF_MAX_SRC_CHARS
+    )
+      return ""
     const ops = diffLines(
       toMarkdown(baseSrc, base.content_type),
       toMarkdown(headSrc, head.content_type),
     )
     if (!ops.some((o) => o.t !== "ctx")) return "" // identical readable text — nothing to show
     return `\n\nWhat changed (v${baseVersion} → v${artifact.current_version}):\n${compactDiff(ops)}`
-  } catch {
+  } catch (err) {
+    log.error("conflictDiffNote failed — returning the conflict without a diff", {
+      artifactId: artifact.id,
+      baseVersion,
+      currentVersion: artifact.current_version,
+      error: err instanceof Error ? err.message : String(err),
+    })
     return ""
   }
 }

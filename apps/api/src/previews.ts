@@ -141,7 +141,14 @@ export const sweepMissingRenders = async (
 /**
  * Render one agent-facing preview variant (full-page or marked) and record the
  * result on ITS OWN status/error columns via `setVersionPreviewVariant` — never
- * throws, so a failure here can't fail the OG render or the job it rides on.
+ * throws, so a failure here can't fail the OG render or the job it rides on. That
+ * contract covers the FAILURE-recording write too: if the store itself rejects the
+ * "failed" write (a transient DB error, a raced-out artifact), the inner catch
+ * swallows it rather than letting it propagate into the caller's try block, where
+ * it would otherwise be mistaken for the OG render itself failing — overwriting an
+ * already-successful, already-stored OG image back to "failed" and requeuing the
+ * whole job for a needless retry. Logged, not silent: a status write that can't
+ * even record its own failure is worth knowing about, just not worth escalating.
  */
 const renderPreviewVariant = async (
   deps: RenderTickDeps,
@@ -161,10 +168,20 @@ const renderPreviewVariant = async (
     })
   } catch (err) {
     const msg = (err instanceof Error ? err.message : String(err)).slice(0, 200)
-    await deps.meta.setVersionPreviewVariant(artifactId, n, variant, {
-      status: "failed",
-      error: msg,
-    })
+    try {
+      await deps.meta.setVersionPreviewVariant(artifactId, n, variant, {
+        status: "failed",
+        error: msg,
+      })
+    } catch (writeErr) {
+      log.error(`preview ${variant} render: failed AND couldn't record the failure`, {
+        artifactId,
+        n,
+        variant,
+        renderError: msg,
+        writeError: writeErr instanceof Error ? writeErr.message : String(writeErr),
+      })
+    }
   }
 }
 
@@ -221,16 +238,31 @@ export const runRenderTick = async (
         preview_error: null,
       })
 
+      // Mark the job done immediately after the OG write, BEFORE attempting the two
+      // variant renders below — not after. The job's one hard deliverable is the OG
+      // image; the variants are additive best-effort extras that already can't fail
+      // the job (renderPreviewVariant never throws). Writing "done" here, close to
+      // the OG write, keeps the window where a late failure could wrongly stomp an
+      // already-successful OG status back to "failed" (and trigger a full re-render
+      // of OG+full+marked on retry) near-zero, instead of spanning the ~40s the two
+      // variant screenshots below can take.
+      await deps.meta.updateRenderJob(job.id, {
+        status: "done",
+        attempts: job.attempts,
+        last_error: null,
+        next_attempt_at: job.next_attempt_at,
+      })
+
       // The two agent-facing render variants: the whole page (fullPage:true, catches
       // below-the-fold breakage the 1200x630 OG crop above can't) and the same
       // full-page render with the region map's @N refs drawn on it (?marks=1, see
-      // marks-script.ts). Best-effort and INDEPENDENT of the OG image and of each
-      // other — a failure here never fails this job (the OG crop that unfurls/embeds
-      // depend on is already committed above) and is never retried via the job
-      // queue; a stale variant just gets a fresh attempt on the next publish. Run
-      // SEQUENTIALLY, not in parallel: each screenshot() launches its own browser,
-      // and the single-consumer invariant (one browser at a time, no parallel
-      // rendering billing) applies to every render this job makes, not just the OG one.
+      // marks-script.ts). Best-effort and INDEPENDENT of the OG image, of each other,
+      // and (per the reordering above) of this job's own completion — a failure here
+      // never fails this job and is never retried via the job queue; a stale variant
+      // just gets a fresh attempt on the next publish. Run SEQUENTIALLY, not in
+      // parallel: each screenshot() launches its own browser, and the
+      // single-consumer invariant (one browser at a time, no parallel rendering
+      // billing) applies to every render this job makes, not just the OG one.
       await renderPreviewVariant(deps, artifact.id, job.version_n, "full", url, {
         width: OG_W,
         height: OG_H,
@@ -242,13 +274,6 @@ export const runRenderTick = async (
         height: OG_H,
         fullPage: true,
         timeoutMs: RENDER_TIMEOUT_MS,
-      })
-
-      await deps.meta.updateRenderJob(job.id, {
-        status: "done",
-        attempts: job.attempts,
-        last_error: null,
-        next_attempt_at: job.next_attempt_at,
       })
     } catch (err) {
       const msg = (err instanceof Error ? err.message : String(err)).slice(0, 200)

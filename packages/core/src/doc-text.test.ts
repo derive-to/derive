@@ -472,6 +472,44 @@ describe("applyEdits", () => {
       applyEdits("abc", [{ old_str: "zzz not present anywhere", new_str: "y" }]),
     ).toThrow(/Re-read the artifact.*or use `search`/)
   })
+
+  it("Tier 2's anchor match is whole-word, not a bare substring — 'The' must not spuriously match inside 'Theater' (regression)", () => {
+    const src = "Theater tickets are on sale now.\nOther line here.\nThird line."
+    let msg = ""
+    try {
+      applyEdits(src, [{ old_str: "The show starts at 8pm.\nDoors open at 7.", new_str: "x" }])
+    } catch (e) {
+      msg = e instanceof EditError ? e.message : "wrong error type"
+    }
+    // Before the fix: `.includes("The")` matched inside "Theater", falsely reporting
+    // an unrelated line as "similar". A whole-word match finds nothing here, so this
+    // must fall through to the generic re-read steer instead.
+    expect(msg).not.toMatch(/Theater/)
+    expect(msg).toMatch(/Re-read the artifact.*or use `search`/)
+  })
+
+  it("Tier 2's anchor match still fires for a genuine whole-word match (fix doesn't over-correct)", () => {
+    const src = "alpha\nThe quick brown fox jumps.\ngamma"
+    expect(() =>
+      applyEdits(src, [{ old_str: "The quick red fox runs.\nmore text", new_str: "x" }]),
+    ).toThrow(/similar line exists at line 2.*The quick brown fox jumps/s)
+  })
+
+  it("Tier 1's sliding-window scan is bounded — a large haystack × large needle miss returns fast, not O(haystack×needle) (regression)", () => {
+    // Mirrors the shape that measured ~900ms unbounded in adversarial testing: a large
+    // document combined with a large (but still failing to match) old_str. The bound
+    // must keep this fast regardless of size, not just correct.
+    const hLines = Array.from({ length: 20_000 }, (_, i) => `haystack line ${i} unrelated content`)
+    const nLines = Array.from(
+      { length: 3_000 },
+      (_, i) => `needle line ${i} totally different text`,
+    )
+    const src = hLines.join("\n")
+    const needle = nLines.join("\n")
+    const start = performance.now()
+    expect(() => applyEdits(src, [{ old_str: needle, new_str: "x" }])).toThrow(EditError)
+    expect(performance.now() - start).toBeLessThan(500)
+  })
 })
 
 describe("decodeEntities extraction keeps pageText behavior", () => {
