@@ -2458,6 +2458,7 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(report).where(eq(report.artifact_id, id)).run()
     await db.delete(notification).where(eq(notification.artifact_id, id)).run()
     await db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
+    await db.delete(slackThreadLink).where(eq(slackThreadLink.artifact_id, id)).run()
     await db.delete(artifact).where(eq(artifact.id, id)).run()
   }
 

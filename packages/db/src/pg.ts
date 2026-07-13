@@ -2500,6 +2500,7 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(report).where(eq(report.artifact_id, id))
       await tx.delete(notification).where(eq(notification.artifact_id, id))
       await tx.delete(agentMention).where(eq(agentMention.artifact_id, id))
+      await tx.delete(slackThreadLink).where(eq(slackThreadLink.artifact_id, id))
       await tx.delete(artifact).where(eq(artifact.id, id))
     })
   }

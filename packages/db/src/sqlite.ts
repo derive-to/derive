@@ -177,6 +177,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(report).where(eq(report.artifact_id, id)).run()
         db.delete(notification).where(eq(notification.artifact_id, id)).run()
         db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
+        db.delete(slackThreadLink).where(eq(slackThreadLink.artifact_id, id)).run()
         db.delete(artifact).where(eq(artifact.id, id)).run()
       })()
     },

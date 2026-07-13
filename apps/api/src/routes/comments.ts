@@ -472,14 +472,23 @@ export const commentRoutes = (ctx: AppContext) => {
       if (acting && !ownsComment(cm, acting)) return bail(fail(c, 403, "forbidden"))
       const md = parseMeta(cm.meta)
       md.deleted = true
-      // Any OTHER comment in this thread still carrying content? (excludes cm and prior
-      // tombstones). Threads are small, so a single list + filter is cheaper than a new
-      // query path.
-      const survivors = (await meta.listComments(artifact.id)).filter(
-        (x) => x.thread_id === cm.thread_id && x.id !== cm.id && !parseMeta(x.meta).deleted,
+      // Tombstone FIRST, then re-read the thread. Writing before the survivor check is what
+      // makes this race-safe WITHOUT a cross-request transaction: if two authors delete the
+      // last two live comments at once, each re-reads only AFTER its own tombstone commits,
+      // so at least one of them observes the other's tombstone and sees a fully-dead thread.
+      // (A check-then-write order would let both see the other as "alive" and both tombstone,
+      // reviving the very "Comment deleted" ghost this removes.)
+      await meta.updateComment(cm.id, { meta: JSON.stringify(md) })
+      // Any comment in this thread still carrying content? cm is now tombstoned, so the
+      // `deleted` check already excludes it. Threads are small — one list + filter beats a
+      // dedicated query path.
+      const live = (await meta.listComments(artifact.id)).filter(
+        (x) => x.thread_id === cm.thread_id && !parseMeta(x.meta).deleted,
       )
-      if (survivors.length === 0) await meta.deleteThread(artifact.id, cm.thread_id)
-      else await meta.updateComment(cm.id, { meta: JSON.stringify(md) })
+      // Nothing anchors to the thread anymore → remove it whole (comments + notifications +
+      // agent mentions + Slack link) rather than leave a ghost pinned to the document. When
+      // two deletes race here, both may run this; deleteThread is idempotent.
+      if (live.length === 0) await meta.deleteThread(artifact.id, cm.thread_id)
       bus.publish(artifact.id, { type: "comment.updated", thread_id: cm.thread_id })
       return c.json(commentJson({ ...cm, meta: JSON.stringify(md) }))
     },
