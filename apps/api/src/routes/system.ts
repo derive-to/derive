@@ -58,7 +58,10 @@ export const systemRoutes = (ctx: AppContext) => {
   // wiring — or created outside it — need a one-time sweep. Operator-only, idempotent,
   // and bounded: it indexes one page (default 100, max 500) and returns `nextCursor`;
   // the operator re-POSTs with that cursor until it comes back null. Keeping each call
-  // bounded is what fits the Workers CPU budget rather than one unbounded pass.
+  // bounded is what fits the Workers CPU budget rather than one unbounded pass. Run it as
+  // a one-time backfill: under a concurrent live publish it could momentarily write
+  // older-version text for that artifact, but grep-confirm reads the live blob (so
+  // precision holds) and the next publish re-indexes it — the staleness self-heals.
   //   curl -XPOST -H "authorization: Bearer $DERIVE_TOKEN" .../v1/system/search-reindex
   //   # then repeat, passing {"cursor": <nextCursor>} until nextCursor is null
   app.post("/v1/system/search-reindex", async (c) => {

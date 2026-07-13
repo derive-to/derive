@@ -547,6 +547,12 @@ async function buildServer(
         (await ctx.meta.getArtifactMember(a.id, agent.id))
       if (!ok) return null
     }
+    // A taken-down artifact serves NO content, mirroring the web /raw 410: read, search,
+    // comment, and publish all resolve through here, so gating it once covers every
+    // one-artifact tool. It stays visible as a tombstone in list_artifacts (metadata
+    // only). Checked AFTER the reach/membership gates so it never confirms a removed
+    // short_id to someone who couldn't have reached it anyway (they still get notFound).
+    if (a.removed_at) return { error: `"${shortId}" was taken down and is no longer available.` }
     return { a, org, role }
   }
   const notFound = (shortId: string) =>

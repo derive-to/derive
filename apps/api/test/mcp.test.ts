@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { BlobStore, MetaStore } from "@derive/core"
+import type { BlobStore, MetaStore, VersionRecord } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
@@ -10,7 +10,7 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
-import { reindexSearchBatch } from "../src/lib/search"
+import { MAX_INDEX_TEXT, reindexSearchBatch, versionIndexText } from "../src/lib/search"
 
 // The remote MCP endpoint (/mcp) authenticated by an OAuth bearer. We seed a grant
 // straight into the oauth-provider tables (what the consent dance produces), publish
@@ -970,6 +970,28 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(after).not.toContain(sid)
   })
 
+  it("read/search (one-artifact): a taken-down artifact serves no content, mirroring the web 410", async () => {
+    const { app, token, meta } = appWithGrant("wsone", "openid derive:read derive:publish")
+    const sid = (
+      await (
+        await publishRaw(app, token, "# Secret\n\nthe onedocneedle lives here", "s.md", "Secret")
+      ).json()
+    ).short_id
+    // Readable by short_id while live.
+    expect(toolText(await call(app, token, "read", { short_id: sid }))).toContain("onedocneedle")
+    const art = await meta.getByShortId(sid)
+    if (!art) throw new Error("expected the artifact to exist")
+    await meta.setArtifactRemoved(art.id, new Date().toISOString())
+    // After takedown, the direct one-artifact paths (which resolve through reach, not the
+    // index) must ALSO refuse content — otherwise knowing the short_id bypasses the 410.
+    const read = toolText(await call(app, token, "read", { short_id: sid }))
+    expect(read).toContain("taken down")
+    expect(read).not.toContain("onedocneedle")
+    const one = toolText(await call(app, token, "search", { short_id: sid, query: "onedocneedle" }))
+    expect(one).toContain("taken down")
+    expect(one).not.toContain("onedocneedle")
+  })
+
   it("search (workspace mode): index nominations lacking the exact literal are not reported as matches (recall vs precision)", async () => {
     const { app, token, meta, blobs } = appWithGrant("wsprec", "openid derive:read derive:publish")
     const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
@@ -1011,6 +1033,31 @@ describe("remote MCP endpoint (/mcp)", () => {
     // contiguous literal finds nothing → honestly "No matches", never a false hit.
     const res = toolText(await call(app, token, "search", { query: "alpha omega" }))
     expect(res).toContain("No matches")
+  })
+
+  it("versionIndexText degrades safely on the non-happy paths (never throws)", async () => {
+    // These branches are load-bearing: they keep a publish from throwing, and a throw
+    // here would only be swallowed by emitVersionBump's best-effort catch (silently
+    // dropping the artifact from search). Pin them so a refactor can't regress them.
+    const dir = mkdtempSync(join(tmpdir(), "vit-"))
+    const blobs = new FsBlobStore(join(dir, "b"))
+    const v = (blobKey: string, ct: string) =>
+      ({ blob_key: blobKey, content_type: ct }) as VersionRecord
+    // Happy single-file: the source is indexed.
+    const md = await blobs.put(new TextEncoder().encode("# Title\n\nthe indexed body"))
+    expect(await versionIndexText(blobs, v(md, "text/markdown"))).toContain("indexed body")
+    // Oversized source is capped, not unbounded.
+    const big = await blobs.put(new TextEncoder().encode("x".repeat(MAX_INDEX_TEXT + 5000)))
+    expect((await versionIndexText(blobs, v(big, "text/markdown"))).length).toBeLessThanOrEqual(
+      MAX_INDEX_TEXT,
+    )
+    // Degrade branches → "" (never a throw):
+    const img = await blobs.put(new Uint8Array([1, 2, 3, 4]))
+    expect(await versionIndexText(blobs, v(img, "image/png"))).toBe("") // non-text single file
+    expect(await versionIndexText(blobs, v("0".repeat(64), "text/html"))).toBe("") // missing blob
+    const badBundle = await blobs.put(new TextEncoder().encode("not-a-json-manifest"))
+    expect(await versionIndexText(blobs, v(badBundle, "derive/bundle"))).toBe("") // unparseable manifest
+    rmSync(dir, { recursive: true, force: true })
   })
 
   it("search reindex (backfill): a bounded, resumable sweep makes pre-existing (never-indexed) artifacts findable", async () => {
