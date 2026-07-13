@@ -72,7 +72,11 @@ test("edit and delete an own comment", async ({ page }) => {
   await page.getByTestId("comment-delete").click()
   // Destructive actions confirm via the shared dialog, never immediately.
   await page.getByTestId("comment-delete-confirm").click()
-  await expect(page.getByText("Comment deleted")).toBeVisible()
+  // A solo comment (no replies) is removed outright — no "Comment deleted" ghost left
+  // pinned to the document. The tombstone path (when replies remain) is covered in the
+  // API tests (comments.test.ts).
+  await expect(page.getByText("Fixed now.")).toHaveCount(0)
+  await expect(page.getByText("Comment deleted")).toHaveCount(0)
 })
 
 test("the insights panel opens and reports viewers", async ({ page }) => {

@@ -442,18 +442,23 @@ export const commentRoutes = (ctx: AppContext) => {
     },
   )
 
-  // Soft-delete a comment (author only when signed in); the row stays so replies
-  // keep their thread, and the body is tombstoned.
+  // Delete a comment (author only when signed in). A tombstone only earns its keep
+  // when there are replies to hold the thread together, so we keep it conditional: if
+  // another live comment survives in the thread, tombstone this one (row stays, body
+  // blanked); if it was the thread's LAST living comment, remove the whole thread
+  // instead — otherwise a solo delete leaves a "Comment deleted" ghost pinned to the
+  // document with an orphaned highlight and a dangling notification. Either way the
+  // response describes the comment's final (deleted) state.
   app.openapi(
     createRoute({
       method: "delete",
       path: "/v1/artifacts/{shortId}/comments/{commentId}",
       tags: ["Comments"],
-      summary: "Soft-delete a comment (author only); the row stays, body tombstoned.",
+      summary: "Delete a comment (author only); tombstoned if replies remain, else removed.",
       request: { params: z.object({ shortId: z.string(), commentId: z.string() }) },
       responses: {
         200: {
-          description: "The tombstoned comment.",
+          description: "The comment's final deleted state.",
           content: { "application/json": { schema: Comment } },
         },
       },
@@ -467,9 +472,16 @@ export const commentRoutes = (ctx: AppContext) => {
       if (acting && !ownsComment(cm, acting)) return bail(fail(c, 403, "forbidden"))
       const md = parseMeta(cm.meta)
       md.deleted = true
-      const updated = await meta.updateComment(cm.id, { meta: JSON.stringify(md) })
+      // Any OTHER comment in this thread still carrying content? (excludes cm and prior
+      // tombstones). Threads are small, so a single list + filter is cheaper than a new
+      // query path.
+      const survivors = (await meta.listComments(artifact.id)).filter(
+        (x) => x.thread_id === cm.thread_id && x.id !== cm.id && !parseMeta(x.meta).deleted,
+      )
+      if (survivors.length === 0) await meta.deleteThread(artifact.id, cm.thread_id)
+      else await meta.updateComment(cm.id, { meta: JSON.stringify(md) })
       bus.publish(artifact.id, { type: "comment.updated", thread_id: cm.thread_id })
-      return c.json(commentJson(updated ?? cm))
+      return c.json(commentJson({ ...cm, meta: JSON.stringify(md) }))
     },
   )
 
