@@ -478,6 +478,23 @@ export class PgMetaStore implements MetaStore {
     return rows.length
   }
 
+  // Atomic: the thread's comments and everything keyed to it (notifications, agent
+  // mentions, Slack link) go together, so a removed thread leaves nothing dangling.
+  async deleteThread(artifactId: string, threadId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(notification)
+        .where(and(eq(notification.artifact_id, artifactId), eq(notification.thread_id, threadId)))
+      await tx
+        .delete(agentMention)
+        .where(and(eq(agentMention.artifact_id, artifactId), eq(agentMention.thread_id, threadId)))
+      await tx.delete(slackThreadLink).where(eq(slackThreadLink.thread_id, threadId))
+      await tx
+        .delete(comment)
+        .where(and(eq(comment.artifact_id, artifactId), eq(comment.thread_id, threadId)))
+    })
+  }
+
   // Mirrors the sqlite path: mentions live in meta.mentions (JSON), matched in code.
   private commentMentionsUser(metaJson: string | null, userId: string): boolean {
     if (!metaJson) return false

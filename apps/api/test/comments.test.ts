@@ -109,6 +109,83 @@ describe("comments + the loop", () => {
   })
 })
 
+describe("deleting comments — tombstone only when it earns its keep", () => {
+  const list = async (sid: string) =>
+    (await (await app.request(`/v1/artifacts/${sid}/comments`)).json()).comments as {
+      id: string
+      deleted: boolean
+      body_md: string
+    }[]
+  const add = async (sid: string, body: Record<string, unknown>) =>
+    (await app.request(`/v1/artifacts/${sid}/comments`, json(body))).json()
+  const del = (sid: string, id: string) =>
+    app.request(`/v1/artifacts/${sid}/comments/${id}`, { method: "delete" })
+
+  it("removes the whole thread when the last living comment goes (no ghost, no orphan anchor)", async () => {
+    const sid = (await (await upload("d1.md", "# solo doc", {})).json()).short_id
+    const cm = await add(sid, {
+      body_md: "just me",
+      anchor: { type: "TextQuoteSelector", exact: "solo" },
+    })
+    expect((await del(sid, cm.id)).status).toBe(200)
+    // Gone entirely — not a "Comment deleted" tombstone left pinned to the document.
+    expect(await list(sid)).toHaveLength(0)
+  })
+
+  it("tombstones instead when a reply survives, and blanks the body (no content leak)", async () => {
+    const sid = (await (await upload("d2.md", "# doc", {})).json()).short_id
+    const root = await add(sid, { body_md: "root here" })
+    await add(sid, { body_md: "a reply", thread_id: root.thread_id })
+    await del(sid, root.id)
+    const after = await list(sid)
+    expect(after).toHaveLength(2) // thread intact so the reply keeps its context
+    const tomb = after.find((c) => c.id === root.id)
+    expect(tomb?.deleted).toBe(true)
+    expect(tomb?.body_md).toBe("")
+  })
+
+  it("cleans up the tombstoned root once its last reply is also deleted", async () => {
+    const sid = (await (await upload("d3.md", "# doc", {})).json()).short_id
+    const root = await add(sid, { body_md: "root" })
+    const reply = await add(sid, { body_md: "reply", thread_id: root.thread_id })
+    await del(sid, root.id) // reply survives → root tombstoned
+    expect(await list(sid)).toHaveLength(2)
+    await del(sid, reply.id) // last living comment gone → whole thread removed
+    expect(await list(sid)).toHaveLength(0)
+  })
+})
+
+describe("deleting a solo comment clears its dangling notification", () => {
+  const alice: TestUser = { id: "u_del_alice", email: "dela@derive.test", name: "Alice" }
+  const bob: TestUser = { id: "u_del_bob", email: "delb@derive.test", name: "Bob" }
+  const { app: aApp } = makeAuthedApp("del-notif", [alice, bob], "editor")
+
+  it("removes the mentioned user's notification when the thread is removed", async () => {
+    const shortId = (await (await publishAs(aApp, "<h1>doc</h1>", {}, as(alice.email))).json())
+      .short_id
+    await aApp.request("/v1/me", { headers: as(bob.email) }) // provision Bob as a member
+    const cm = await (
+      await aApp.request(
+        `/v1/artifacts/${shortId}/comments`,
+        jsonAs(as(alice.email), { body_md: "look @bob", mentions: [{ id: bob.id, name: "Bob" }] }),
+      )
+    ).json()
+    // Bob has the mention notification…
+    expect(
+      (await (await aApp.request("/v1/notifications", { headers: as(bob.email) })).json()).unread,
+    ).toBe(1)
+    // …and deleting the solo comment removes the thread AND the notification with it (no
+    // click-through to a comment that no longer exists).
+    await aApp.request(`/v1/artifacts/${shortId}/comments/${cm.id}`, {
+      method: "delete",
+      headers: as(alice.email),
+    })
+    const bobN = await (await aApp.request("/v1/notifications", { headers: as(bob.email) })).json()
+    expect(bobN.unread).toBe(0)
+    expect(bobN.notifications).toHaveLength(0)
+  })
+})
+
 describe("anchored comments", () => {
   it("flags comments anchored vs orphaned against the current version", async () => {
     const sid = (await (await upload("a.md", "alpha beta gamma", { title: "A" })).json()).short_id

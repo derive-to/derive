@@ -306,6 +306,11 @@ export interface CommentStore {
   ): Promise<CommentRecord | null>
   /** Flips every comment in a thread to a state; returns the count updated. */
   setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number>
+  /** Hard-remove an entire comment thread and everything keyed to it — its comments,
+   *  notifications, agent mentions, and Slack link. Called when a delete leaves the
+   *  thread with no surviving comment, so no "Comment deleted" ghost (nor its orphaned
+   *  document highlight or dangling notification) is left behind. */
+  deleteThread(artifactId: string, threadId: string): Promise<void>
   /** Per-artifact comment signals for `userId` over a set of artifact ids, in one
    *  query: open-thread count plus whether the viewer is tagged in or has authored an
    *  open thread (drives the "needs your feedback" featuring). A null userId gets

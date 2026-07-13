@@ -6196,7 +6196,7 @@
         "tags": [
           "Comments"
         ],
-        "summary": "Soft-delete a comment (author only); the row stays, body tombstoned.",
+        "summary": "Delete a comment (author only); tombstoned if replies remain, else removed.",
         "parameters": [
           {
             "schema": {
@@ -6217,7 +6217,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The tombstoned comment.",
+            "description": "The comment's final deleted state.",
             "content": {
               "application/json": {
                 "schema": {

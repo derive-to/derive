@@ -32,6 +32,7 @@ import {
   reviewRound,
   SCHEMA_STATEMENTS,
   sessionMessage,
+  slackThreadLink,
   version,
   webhook,
 } from "./schema"
@@ -117,6 +118,27 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(collectionItem).where(eq(collectionItem.collection_id, id)).run()
         db.delete(collectionMember).where(eq(collectionMember.collection_id, id)).run()
         db.delete(collection).where(eq(collection.id, id)).run()
+      })()
+    },
+
+    // Atomic: the thread's comments and everything keyed to it commit together, so a
+    // removed thread never leaves a dangling notification / agent mention / Slack link.
+    deleteThread: async (artifactId: string, threadId: string): Promise<void> => {
+      raw.transaction(() => {
+        db.delete(notification)
+          .where(
+            and(eq(notification.artifact_id, artifactId), eq(notification.thread_id, threadId)),
+          )
+          .run()
+        db.delete(agentMention)
+          .where(
+            and(eq(agentMention.artifact_id, artifactId), eq(agentMention.thread_id, threadId)),
+          )
+          .run()
+        db.delete(slackThreadLink).where(eq(slackThreadLink.thread_id, threadId)).run()
+        db.delete(comment)
+          .where(and(eq(comment.artifact_id, artifactId), eq(comment.thread_id, threadId)))
+          .run()
       })()
     },
 

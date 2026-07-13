@@ -3560,7 +3560,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Soft-delete a comment (author only); the row stays, body tombstoned. */
+        /** Delete a comment (author only); tombstoned if replies remain, else removed. */
         delete: {
             parameters: {
                 query?: never;
@@ -3573,7 +3573,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The tombstoned comment. */
+                /** @description The comment's final deleted state. */
                 200: {
                     headers: {
                         [name: string]: unknown;

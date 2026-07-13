@@ -721,6 +721,27 @@ export function makeRepos(db: SqliteDb) {
     return res.changes ?? res.meta?.changes ?? 0
   }
 
+  // Hard-remove an entire thread and everything keyed to it. Sequential deletes (no
+  // cross-statement transaction on D1; the sqlite path wraps these in one) — order is
+  // immaterial since nothing here references another of these rows. Everything keyed on
+  // thread_id goes, so a removed thread leaves no dangling notification / agent mention /
+  // Slack link behind. Mirrors deleteArtifact's cascade, scoped to one thread.
+  const deleteThread = async (artifactId: string, threadId: string): Promise<void> => {
+    await db
+      .delete(notification)
+      .where(and(eq(notification.artifact_id, artifactId), eq(notification.thread_id, threadId)))
+      .run()
+    await db
+      .delete(agentMention)
+      .where(and(eq(agentMention.artifact_id, artifactId), eq(agentMention.thread_id, threadId)))
+      .run()
+    await db.delete(slackThreadLink).where(eq(slackThreadLink.thread_id, threadId)).run()
+    await db
+      .delete(comment)
+      .where(and(eq(comment.artifact_id, artifactId), eq(comment.thread_id, threadId)))
+      .run()
+  }
+
   // Does this comment's meta JSON tag `userId`? Mentions live in meta.mentions
   // (a {id,name}[]), so they can't be filtered in SQL cheaply — matched in code.
   const commentMentionsUser = (metaJson: string | null, userId: string): boolean => {
@@ -2572,6 +2593,7 @@ export function makeRepos(db: SqliteDb) {
     updateComment,
     listComments,
     setThreadState,
+    deleteThread,
     commentSignals,
     artifactIdsNeedingFeedback,
     createWebhook,

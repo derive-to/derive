@@ -15,6 +15,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { createClient } from "./client"
+import { fallbackFilename } from "./filename"
 
 // Stdio MCP server for self-hosters: `npx @derive-to/mcp` talks to a Derive instance over
 // the /v1 HTTP API (DERIVE_SERVER). It exposes the SAME tools as the remote /mcp
@@ -655,7 +656,9 @@ server.registerTool(
       filename: z
         .string()
         .optional()
-        .describe("Filename, e.g. report.html or notes.md. Defaults to index.html."),
+        .describe(
+          "Filename, e.g. report.html or notes.md — its extension sets the content type. Omit and it's inferred from the content (a full HTML document → HTML, otherwise Markdown); pass it explicitly to be sure, especially when republishing.",
+        ),
       short_id: z
         .string()
         .optional()
@@ -727,7 +730,13 @@ server.registerTool(
           content: pathBytes ?? content,
           edits,
           baseVersion: base_version,
-          filename: filename ?? (content_path !== undefined ? basename(content_path) : undefined),
+          filename:
+            filename ??
+            (content_path !== undefined
+              ? basename(content_path)
+              : edits
+                ? undefined
+                : fallbackFilename(content)),
           message: message ?? "Proposed revision",
           addresses,
         })
@@ -752,7 +761,11 @@ server.registerTool(
         baseVersion: base_version,
         filename:
           filename ??
-          (content_path !== undefined ? basename(content_path) : edits ? undefined : "index.html"),
+          (content_path !== undefined
+            ? basename(content_path)
+            : edits
+              ? undefined
+              : fallbackFilename(content)),
         title,
         workspaceAccess: workspace_access,
         linkRole: link_role,

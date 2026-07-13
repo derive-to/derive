@@ -456,13 +456,17 @@ variants.
   lives behind the ⋯ — the render is the hero, the chrome recedes.
 - **Live cursors** — peers' cursors are a slim arrow tinted by their **identity**: a stable,
   distinct tint from the shared identity palette (`colorForName`, the same palette avatar
-  tints draw from), keyed on the server-stamped handle that also names them in presence.
+  tints draw from), keyed on the peer's stable **id** — not their display name, which
+  collapses (a handle-less account is "someone", a missing name "Guest") and would paint
+  distinct people one color; the id is always unique, so every peer gets a distinct tint.
   Color follows the person — one tint per peer for the session, never a per-cursor pick — with
-  a `font-medium` name flag that fades on stillness. (Today that palette is a cursor-only
-  accent in the artifact view; the presence facepile still reads you-vs-them in `primary`/
-  `accent`. Unifying the two on `colorForName` — so a cursor and its facepile row share a
-  color — is the obvious next coherence step, deferred as its own call.) There is no style
-  selector: a picker of colors + emoji would break both *color is rationed* and *never emojis*.
+  a `font-medium` name flag that fades on stillness. The identity tint stops at the cursor **on
+  purpose**: a cursor *moves*, so color pre-attentively separates two arrows scrubbing at once
+  (the name tag confirms). The presence facepile and comment avatars are static and already
+  name-labeled — they read you-vs-them in `primary`/`accent` and stay calm; painting them with
+  8 identity tints would add persistent color to the view's busiest surfaces for a match nobody
+  needs at 2–3 concurrent viewers. So the tint earns its keep here and nowhere else. There is no
+  style selector: a picker of colors + emoji would break both *color is rationed* and *never emojis*.
   The one real preference — **Hide live cursors** — is a checkbox item in the ⋯ menu's view-
   modes group beside Focus; it opts you out of the whole layer (peers vanish, yours stops
   broadcasting) and persists per-browser like the theme.

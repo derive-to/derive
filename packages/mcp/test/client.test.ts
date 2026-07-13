@@ -8,6 +8,7 @@ import { FsBlobStore } from "@derive/storage/fs"
 import { serve } from "@hono/node-server"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createClient, type DeriveClient } from "../src/client"
+import { fallbackFilename } from "../src/filename"
 
 let server: ReturnType<typeof serve>
 let meta: SqliteMetaStore
@@ -46,6 +47,28 @@ describe("derive client (the MCP server's backend) over real HTTP", () => {
     expect(a.current_version).toBe(1)
     expect(a.kind).toBe("file")
     expect((await client.getContent(shortId)).text).toBe("# Hello")
+  })
+
+  it("filenameless markdown stays markdown and keeps <angle> tokens (retype-incident fix)", async () => {
+    const content = "# Doc\n\nsee the <token> below"
+    // What the publish tool now sends when the caller gives no filename.
+    const good = await client.publish({
+      content,
+      filename: fallbackFilename(content),
+      title: "Good",
+    })
+    // Read as markdown: a markdown artifact passes through, so the <token> survives.
+    expect((await client.getContent(good.short_id, { format: "markdown" })).text).toContain(
+      "<token>",
+    )
+
+    // Contrast with the OLD blind `index.html` default: the same content typed as HTML,
+    // read back as markdown, converts — and the browser/converter drops the unknown
+    // <token> tag, exactly the content-swallowing the fix prevents.
+    const bad = await client.publish({ content, filename: "index.html", title: "Bad" })
+    expect((await client.getContent(bad.short_id, { format: "markdown" })).text).not.toContain(
+      "<token>",
+    )
   })
 
   it("publishes a new version and reads each version back", async () => {
