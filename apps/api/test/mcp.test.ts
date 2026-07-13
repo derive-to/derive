@@ -932,6 +932,20 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(res).not.toContain("matched the index")
   })
 
+  it("search (workspace mode): resolves >90 candidates correctly across visibility chunks (D1 bound-param safety)", async () => {
+    const { app, token, meta, blobs } = appWithGrant("wschunk", "openid derive:read derive:publish")
+    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
+    const owner = await meta.getByShortId(seed)
+    if (!owner) throw new Error("expected the seed artifact to exist")
+    // 120 matching artifacts exceed the 90-id visibility chunk, so candidate ids resolve
+    // over multiple listArtifacts calls (each stays under D1's 100 bound-parameter cap).
+    // The merged, re-ranked result must count all 120 — nothing dropped or duplicated at
+    // the chunk boundary.
+    await seedMatching(meta, blobs, owner.org_id, "chunk", 120)
+    const res = toolText(await call(app, token, "search", { query: "widget" }))
+    expect(res).toContain("top 30 of 120")
+  })
+
   it("search (workspace mode): a taken-down artifact's content is NOT grep-exfiltratable via search (tombstone hole)", async () => {
     const { app, token, meta } = appWithGrant("wstomb", "openid derive:read derive:publish")
     const sid = (

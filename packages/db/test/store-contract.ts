@@ -1690,6 +1690,21 @@ export function runStoreContract(
       expect(ids(await store.searchArtifactIds(ORG, "résumé", 10))).toEqual([a.id])
       expect(await store.searchArtifactIds(ORG, "cafe", 10)).toHaveLength(0)
     })
+
+    it("excludeRemoved drops taken-down rows from listArtifacts (the search visibility gate)", async () => {
+      const a = await store.createArtifact(newArtifact({ listed: "workspace" }))
+      const seen = async (opts: Parameters<typeof store.listArtifacts>[0]) =>
+        (await store.listArtifacts(opts)).map((x) => x.id)
+      expect(await seen({ orgId: ORG, ids: [a.id] })).toEqual([a.id])
+      await store.setArtifactRemoved(a.id, new Date().toISOString())
+      // The default (feed) listing still returns the tombstone; the search gate,
+      // which reads the live blob, must exclude it — this is what keeps a moderated
+      // artifact's text out of workspace search.
+      expect(await seen({ orgId: ORG, ids: [a.id] })).toEqual([a.id])
+      expect(
+        await store.listArtifacts({ orgId: ORG, ids: [a.id], excludeRemoved: true }),
+      ).toHaveLength(0)
+    })
   })
 
   describe(`${label}: moderation (reports, takedown, audit)`, () => {
