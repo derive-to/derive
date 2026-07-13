@@ -56,9 +56,12 @@ export const systemRoutes = (ctx: AppContext) => {
   // Backfill the workspace search index over the EXISTING corpus. Publishing keeps the
   // index current going forward (emitVersionBump), but artifacts published before that
   // wiring — or created outside it — need a one-time sweep. Operator-only, idempotent,
-  // and bounded: it indexes one page (default 100, max 500) and returns `nextCursor`;
-  // the operator re-POSTs with that cursor until it comes back null. Keeping each call
-  // bounded is what fits the Workers CPU budget rather than one unbounded pass. Run it as
+  // and bounded: it indexes one page (default 100, max 200) and returns `nextCursor`;
+  // the operator re-POSTs with that cursor until it comes back null. The cap stays modest
+  // because a bundle indexes every page it holds — a bundle-dense page of 500 could breach
+  // the Worker's per-invocation subrequest ceiling, which the per-artifact try/catch would
+  // silently swallow as "skipped." Keeping each call bounded is what fits the Workers CPU +
+  // subrequest budget rather than one unbounded pass. Run it as
   // a one-time backfill: under a concurrent live publish it could momentarily write
   // older-version text for that artifact, but grep-confirm reads the live blob (so
   // precision holds) and the next publish re-indexes it — the staleness self-heals.
@@ -71,15 +74,18 @@ export const systemRoutes = (ctx: AppContext) => {
       c,
       z.object({
         orgId: z.string().optional(),
-        cursor: z.object({ created_at: z.string(), id: z.string() }).optional(),
+        // `.nullish()`: the natural resume loop echoes back the previous `nextCursor`, which is
+        // literally `null` on the final page — accept it as "start from the top" rather than 400.
+        cursor: z.object({ created_at: z.string(), id: z.string() }).nullish(),
         limit: z.number().int().optional(),
       }),
     )
     if (body instanceof Response) return body
-    const limit = Math.min(Math.max(body.limit ?? 100, 1), 500)
+    const limit = Math.min(Math.max(body.limit ?? 100, 1), 200)
     const result = await reindexSearchBatch(
       { meta, blobs },
-      { orgId: body.orgId, cursor: body.cursor, limit },
+      // Normalize null→undefined: reindexSearchBatch's keyset cursor is `{…} | undefined`.
+      { orgId: body.orgId, cursor: body.cursor ?? undefined, limit },
     )
     return c.json(result)
   })

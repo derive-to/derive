@@ -480,11 +480,22 @@ export const searchWorkspace = async (
     })
     visible.push(...rows)
   }
-  // A password lock gates the world-link CONTENT behind a password — read 401s without it.
-  // The publicOnly caller IS that anonymous/link visitor, so drop locked artifacts here,
-  // else their body would be grep-readable, bypassing the unlock. A member (viewerId)
-  // reaches content through membership, not the link, so the lock never applies to them.
-  const gated = opts.publicOnly ? visible.filter((a) => !a.password_hash) : visible
+  // A password lock suspends the WORLD LINK until unlocked — `effectiveRole` (permissions.ts)
+  // makes `locked && !unlocked` ⇒ the link grants nothing. So a locked artifact is readable
+  // ONLY through a non-link grant: a workspace SEAT (workspace_access:"member" opened by a
+  // member) or an explicit share. `listArtifacts` is the LISTING gate, not the read gate — a
+  // {listed:"public", workspace_access:"none", link_role:"viewer", password:…} doc lists to a
+  // member, yet they can open it only via the (locked) link, so its body must not be
+  // grep-readable to them (read would 401 "password required"). Keep a locked artifact only
+  // when the caller's SEAT grants read: a member (not publicOnly) on a workspace_access:"member"
+  // doc. Anonymous/link-only callers — and the rare member reachable solely by an explicit
+  // share on a workspace_access:"none" lock — are conservatively dropped: a safe recall loss,
+  // never a leak. (A per-candidate `authorize(c,"read",a)` would also honor explicit shares and
+  // unlock cookies, but the MCP entry point has no request Context to build that actor from, so
+  // this seat-only predicate is the uniform floor both callers share.)
+  const gated = visible.filter(
+    (a) => !a.password_hash || (!opts.publicOnly && a.workspace_access === "member"),
+  )
   // listArtifacts returns in its own (recency) order; restore relevance order.
   gated.sort((a, b) => (rankOf.get(a.id) ?? Infinity) - (rankOf.get(b.id) ?? Infinity))
 
