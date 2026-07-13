@@ -877,6 +877,10 @@ export const artifactRoutes = (ctx: AppContext) => {
     // reads only a few blobs; the text report keeps the full agent depth.
     const isJson = c.req.query("format") === "json"
     const limit = isJson ? Math.min(Math.max(Number(c.req.query("limit")) || 6, 1), 12) : undefined
+    // Keep the whole JSON request cheap, not just the blob reads: a small candidate cap
+    // means the visibility resolve is a SINGLE chunked query and the FTS scan is small —
+    // the palette only shows a handful, so deep recall would be wasted work on a hot path.
+    const candidateCap = isJson ? 60 : undefined
 
     const { results, note } = await searchWorkspace(
       { blobs, sourceText, meta },
@@ -890,9 +894,11 @@ export const artifactRoutes = (ctx: AppContext) => {
         ctxLines,
         cap,
         limit,
+        candidateCap,
       },
     )
     if (isJson) {
+      c.header("X-Content-Type-Options", "nosniff")
       c.header("Cache-Control", "no-store")
       return c.json({ hits: toSearchHits(results, query), truncated: note !== null })
     }

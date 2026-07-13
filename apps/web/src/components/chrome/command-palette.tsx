@@ -23,18 +23,25 @@ import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
 import { useShell } from "./shell-context"
 
+// The content group's data, carried together so the snippet is always highlighted
+// against the query it was FETCHED for — not the live input, which races ahead of the
+// (heavier, more debounced) content call and would briefly mis-highlight stale hits.
+type ContentState = { hits: SearchHit[]; truncated: boolean; q: string }
+const EMPTY_CONTENT: ContentState = { hits: [], truncated: false, q: "" }
+
 // Emphasize the query where it appears in a content snippet — the surrounding text is
 // muted (the caller styles it), the match reads at full weight. Splitting is pure +
-// tested in lib/highlight; here we just render the marked segments.
+// tested in lib/highlight; here we just render the marked segments. Index keys are safe:
+// the segments are stateless text spans, so a shifted boundary only re-renders text.
 function highlight(text: string, query: string): React.ReactNode[] {
   return splitMatches(text, query).map((seg, i) =>
     seg.match ? (
-      // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional + stable per render
+      // biome-ignore lint/suspicious/noArrayIndexKey: stateless text segments
       <span key={i} className="font-semibold text-foreground">
         {seg.text}
       </span>
     ) : (
-      // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional + stable per render
+      // biome-ignore lint/suspicious/noArrayIndexKey: stateless text segments
       <span key={i}>{seg.text}</span>
     ),
   )
@@ -54,7 +61,7 @@ export function CommandPalette() {
   const prefetch = usePrefetchArtifact()
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<Artifact[]>([])
-  const [contentHits, setContentHits] = useState<SearchHit[]>([])
+  const [content, setContent] = useState<ContentState>(EMPTY_CONTENT)
   const [people, setPeople] = useState<PublicProfile[]>([])
   const [loading, setLoading] = useState(false)
   const [contentLoading, setContentLoading] = useState(false)
@@ -65,7 +72,7 @@ export function CommandPalette() {
     if (paletteOpen) {
       setQuery("")
       setResults([])
-      setContentHits([])
+      setContent(EMPTY_CONTENT)
       setPeople([])
     }
   }, [paletteOpen])
@@ -123,7 +130,7 @@ export function CommandPalette() {
     if (!paletteOpen) return
     const term = query.trim()
     if (term.length < 2) {
-      setContentHits([])
+      setContent(EMPTY_CONTENT)
       setContentLoading(false)
       return
     }
@@ -132,9 +139,9 @@ export function CommandPalette() {
     const t = setTimeout(() => {
       api
         .searchContent(term, 6)
-        .then((r) => alive && setContentHits(r.hits))
+        .then((r) => alive && setContent({ hits: r.hits, truncated: r.truncated, q: term }))
         // frontend-ignore: debounced typeahead — clearing on an aborted/failed keystroke is intended, not a hidden load failure
-        .catch(() => alive && setContentHits([]))
+        .catch(() => alive && setContent(EMPTY_CONTENT))
         .finally(() => alive && setContentLoading(false))
     }, 220)
     return () => {
@@ -152,7 +159,7 @@ export function CommandPalette() {
   // An artifact whose TITLE matched already shows in "Artifacts" — don't repeat it as a
   // content hit; the content group is for docs found only by what's inside them.
   const titleIds = new Set(results.map((r) => r.short_id))
-  const contentOnly = contentHits.filter((h) => !titleIds.has(h.short_id))
+  const contentOnly = content.hits.filter((h) => !titleIds.has(h.short_id))
   // Brandprint-pointed collections are managed on /brandprint, not jumped to here.
   const brandprintIds = useBrandprintCollectionIds()
   const matchedCollections = collections.filter(
@@ -254,19 +261,28 @@ export function CommandPalette() {
                   }
                   onMouseEnter={() => prefetch(h.short_id, h.current_version)}
                   onFocus={() => prefetch(h.short_id, h.current_version)}
-                  className="flex-col items-start gap-0.5"
+                  // Top-align: this is a two-line row (title over snippet), so the icon
+                  // sits with the title, not centered against the whole block. Keeping the
+                  // item flex-ROW (a flex-col child holds the two lines) leaves cmdk's
+                  // trailing check glyph in the row instead of adding a phantom third line.
+                  className="items-start"
                 >
-                  <div className="flex w-full items-center gap-2">
-                    <Icon name="all" size={16} className="text-muted-foreground" />
-                    <span className="flex-1 truncate">{h.title}</span>
+                  <Icon name="all" size={16} className="mt-0.5 text-muted-foreground" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="truncate">{h.title}</span>
+                    {h.snippet && (
+                      <span className="truncate text-xs text-muted-foreground">
+                        {highlight(h.snippet, content.q)}
+                      </span>
+                    )}
                   </div>
-                  {h.snippet && (
-                    <span className="w-full truncate pl-6 text-xs text-muted-foreground">
-                      {highlight(h.snippet, query)}
-                    </span>
-                  )}
                 </CommandItem>
               ))}
+              {content.truncated && (
+                <div className="px-2 py-1.5 text-2xs text-muted-foreground">
+                  More matches — refine the query to narrow.
+                </div>
+              )}
             </CommandGroup>
           )}
 

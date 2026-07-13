@@ -441,21 +441,24 @@ export const searchWorkspace = async (
     cap: number
     // How many visible candidates to grep-confirm. Defaults to WORKSPACE_SEARCH_ARTIFACT_CAP
     // (agents want depth); a typeahead surface passes a small value so a debounced keystroke
-    // reads only a handful of blobs.
+    // reads only a handful of blobs. NOTE: this bounds only the blob-read + grep stage, not
+    // the (indexed, cheap) candidate scan or the visibility resolve — cap those with
+    // `candidateCap` when the caller wants the whole request small.
     limit?: number
+    // How many ranked candidates to nominate + visibility-check. Defaults to
+    // WORKSPACE_SEARCH_CANDIDATE_CAP (deep recall for agents); a typeahead surface passes a
+    // small value (≤ LIST_ID_CHUNK) so the visibility resolve is a SINGLE query, not three.
+    candidateCap?: number
   },
 ): Promise<{ results: WorkspaceSearchResult[]; note: string | null }> => {
   // Tier 1 — the index nominates the most relevant candidate ids across the whole
   // corpus. Org-scoped and ranked, but with NO visibility knowledge by design. Fetch one
   // past the cap: the sentinel row (never resolved) just answers "were there more?".
-  const nominated = await deps.meta.searchArtifactIds(
-    opts.orgId,
-    opts.query,
-    WORKSPACE_SEARCH_CANDIDATE_CAP + 1,
-  )
+  const candidateCap = opts.candidateCap ?? WORKSPACE_SEARCH_CANDIDATE_CAP
+  const nominated = await deps.meta.searchArtifactIds(opts.orgId, opts.query, candidateCap + 1)
   if (nominated.length === 0) return { results: [], note: null }
-  const moreCandidates = nominated.length > WORKSPACE_SEARCH_CANDIDATE_CAP
-  const candidates = nominated.slice(0, WORKSPACE_SEARCH_CANDIDATE_CAP)
+  const moreCandidates = nominated.length > candidateCap
+  const candidates = nominated.slice(0, candidateCap)
   const rankOf = new Map(candidates.map((c, i) => [c.id, i]))
 
   // Tier 2 gate — THE visibility check. Re-resolve the nominated ids through
@@ -528,7 +531,7 @@ export const searchWorkspace = async (
         moreCandidates ? "+" : ""
       } candidate artifacts you can see; refine the query to reach the rest`
     : moreCandidates
-      ? `ranked by relevance — more than ${WORKSPACE_SEARCH_CANDIDATE_CAP} artifacts matched the index; refine the query to narrow`
+      ? `ranked by relevance — more than ${candidateCap} artifacts matched the index; refine the query to narrow`
       : null
   return { results, note }
 }
@@ -579,7 +582,9 @@ const SNIPPET_RADIUS = 90
 // deeply indented). Falls back to the head of the line when the literal isn't found on it.
 export const snippetAround = (line: string, query: string): string => {
   const flat = line.replace(/\s+/g, " ").trim()
-  const q = query.trim()
+  // Collapse the query's whitespace too, so a multi-space/tab query still locates its
+  // match in the collapsed line (else it'd fall to the head-of-line branch).
+  const q = query.replace(/\s+/g, " ").trim()
   if (flat.length <= SNIPPET_RADIUS * 2) return flat
   const at = flat.toLowerCase().indexOf(q.toLowerCase())
   if (at < 0) return `${flat.slice(0, SNIPPET_RADIUS * 2)}…`
