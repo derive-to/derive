@@ -1580,6 +1580,15 @@ export function runStoreContract(
       })
       await store.setFavorite(a.id, "amy")
       await store.setArtifactTags(a.id, ["del-tag"])
+      await store.setSlackThreadLink({
+        id: uuid(),
+        org_id: ORG,
+        artifact_id: a.id,
+        thread_id: thread,
+        channel: "C1",
+        message_ts: "1.1",
+        created_at: "2026-01-01T00:00:00.000Z",
+      })
 
       await store.deleteArtifact(a.id, ORG)
 
@@ -1590,6 +1599,63 @@ export function runStoreContract(
       expect(await store.getArtifactMember(a.id, "bob")).toBeNull()
       expect(await store.listUserFavoriteIds("amy")).not.toContain(a.id)
       expect(await store.artifactIdsByTag("del-tag")).not.toContain(a.id)
+      // The Slack thread link is thread-keyed, not artifact_id-obvious — regression guard
+      // that it's cleaned too (it was orphaned before).
+      expect(await store.getSlackThreadLinkByThread(thread)).toBeNull()
+    })
+  })
+
+  describe(`${label}: deleteThread`, () => {
+    it("hard-removes a thread's comments, notifications, and Slack link — scoped to the thread", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const dead = uuid()
+      const kept = uuid()
+      const mkComment = (thread: string, body: string) =>
+        store.createComment({
+          id: uuid(),
+          artifact_id: a.id,
+          thread_id: thread,
+          base_version: 1,
+          body_md: body,
+          author: "amy",
+        })
+      // The doomed thread (root + reply) and a sibling thread that must survive.
+      await mkComment(dead, "root")
+      await mkComment(dead, "reply")
+      await mkComment(kept, "untouched")
+      const mkNotif = (thread: string, commentId: string) =>
+        store.createNotification({
+          id: uuid(),
+          user_id: "bob",
+          actor: "amy",
+          kind: "mention",
+          artifact_id: a.id,
+          artifact_short_id: a.short_id,
+          artifact_title: null,
+          thread_id: thread,
+          comment_id: commentId,
+          preview: "hi",
+        })
+      await mkNotif(dead, uuid())
+      await mkNotif(kept, uuid())
+      await store.setSlackThreadLink({
+        id: uuid(),
+        org_id: ORG,
+        artifact_id: a.id,
+        thread_id: dead,
+        channel: "C1",
+        message_ts: "1.1",
+        created_at: "2026-01-01T00:00:00.000Z",
+      })
+
+      await store.deleteThread(a.id, dead)
+
+      // The whole dead thread is gone — no ghost, no dangling notification or Slack link.
+      const comments = await store.listComments(a.id)
+      expect(comments.map((c) => c.thread_id)).toEqual([kept])
+      expect(await store.getSlackThreadLinkByThread(dead)).toBeNull()
+      const notifs = await store.listNotifications("bob", 50)
+      expect(notifs.map((n) => n.thread_id)).toEqual([kept]) // the sibling's survives
     })
   })
 
