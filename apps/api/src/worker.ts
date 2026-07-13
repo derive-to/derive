@@ -104,6 +104,7 @@ export interface Env {
   ASSETS: Fetcher
   BASE_URL?: string
   DERIVE_AUTH_SECRET?: string
+  DERIVE_TOKEN?: string
   DERIVE_SANDBOX_URL?: string
   DERIVE_SUPERADMIN_EMAILS?: string
   // Base domain for vanity subdomains (domain mode); unset = off.
@@ -198,6 +199,11 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
       })
       app = createApp({
         meta,
+        // The static operator/CI bearer (isToken). The Node entry wires this via
+        // loadConfig(process.env); the edge builds deps by hand from the CF binding and
+        // had omitted it, so operator-token auth (reindex, and any DERIVE_TOKEN automation)
+        // was dead on prod. Undefined when unset ⇒ isToken stays false, as before.
+        token: env.DERIVE_TOKEN,
         blobs: new R2BlobStore(env.BUCKET),
         backplane: createDoBackplane(env.ROOMS),
         baseUrl,
