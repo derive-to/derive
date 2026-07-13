@@ -13,11 +13,15 @@
 // shaped to the agent's workflow (not the API surface), high-signal responses with
 // truncate-and-steer, semantic ids (short_id / vN / page path — never UUIDs),
 // actionable errors, and identity carried in the server `instructions` rather than a
-// tool slot. Five tools, one per intent — FIND (list_artifacts), READ content (read),
-// CATCH UP on state/feedback/history (catch_up), COMMENT (comment), and WRITE
-// (publish). Variation lives in parameters: `since_version`/`to_version` turn
-// catch_up into a diff, `reply_to`/`set_state` fold reply+resolve into comment, and
-// `for_review`/role turn publish into a human-reviewed proposal.
+// tool slot. Seven tools, one per intent — WORKSPACES (list_workspaces), FIND
+// (list_artifacts), READ content (read), GREP (search), CATCH UP on state/feedback/
+// history (catch_up), COMMENT (comment), and WRITE (publish). Variation lives in
+// parameters, never a new tool: `since_version`/`to_version` turn catch_up into a
+// diff, `reply_to`/`set_state` fold reply+resolve into comment, `for_review`/role
+// turn publish into a human-reviewed proposal, and omitting `short_id` turns
+// `search` from grep-one-artifact into grep-the-workspace. A new capability is a
+// parameter on an existing tool, not a new tool — every extra tool costs the agent
+// a slot to understand and choose between.
 
 import {
   type AgentRecord,
@@ -29,8 +33,6 @@ import {
   capRole,
   diffLines,
   EditError,
-  elideDataUris,
-  enclosingMarker,
   formatDiff,
   isHtmlLike,
   landmarkSlice,
@@ -40,7 +42,6 @@ import {
   type OutlineSection,
   outlineOf,
   PublishError,
-  pageText,
   parseBrandprint,
   parseFrontmatter,
   profileState,
@@ -50,9 +51,7 @@ import {
   type Role,
   resolveBrandprint,
   roleAllows,
-  type SectionMarker,
   SKILL_CONTENT_TYPE,
-  sectionMarkers,
   sectionOf,
   toMarkdown,
   type VersionRecord,
@@ -71,11 +70,23 @@ import {
   manifestOf as sharedManifestOf,
   zipBundleFiles,
 } from "./lib/bundle"
+import { clip, MAX_CHARS } from "./lib/clip"
 import { parseMeta, quoteOf, REACTIONS } from "./lib/comments"
 import { type MaterializedEdits, materializeEdits, preservingFilename } from "./lib/edits"
 import { buildReviewEmail } from "./lib/email"
 import { MAX_UPLOAD_BYTES } from "./lib/http"
 import { notifyCommentBells } from "./lib/notify-comment"
+import {
+  baseType,
+  isTextType,
+  present,
+  type ReadFormat,
+  searchArtifactVersion,
+  searchMatcher,
+  searchReport,
+  searchWorkspace,
+  workspaceSearchReport,
+} from "./lib/search"
 import { enqueueSlackReviewRequestedDm } from "./lib/slack-dm"
 import { enqueueChannelDelivery } from "./webhooks"
 
@@ -91,14 +102,6 @@ const err = (s: string) => ({
   content: [{ type: "text" as const, text: s }],
   isError: true as const,
 })
-
-// Tool reads are bounded so a big artifact can never blow the client's context
-// window (Claude caps tool responses at ~25k tokens; ~80k chars is a safe ceiling).
-const MAX_CHARS = 80_000
-const clip = (s: string) =>
-  s.length > MAX_CHARS
-    ? `${s.slice(0, MAX_CHARS)}\n\n…[truncated ${s.length - MAX_CHARS} chars — narrow the range]`
-    : s
 
 // Above this, a section-less read of a sectionable doc returns its OUTLINE instead of
 // a blind dump: ~9k tokens leaves room to read on, small enough that most docs still
@@ -134,19 +137,6 @@ const doc = (meta: Record<string, string | number | null | undefined>, body: str
   return text(`---\n${head}\n---\n\n${body}`)
 }
 
-// The reading form for stored source at a given format. `markdown` converts HTML;
-// `text` is the flat visible text (exactly what comment quotes anchor against);
-// `html` is the exact source. Markdown/plain sources ARE their own visible text.
-type ReadFormat = "markdown" | "html" | "text"
-const baseType = (t: string) => t.split(";")[0]?.trim() ?? t
-const isTextType = (t: string) => baseType(t) === "text/html" || baseType(t) === "text/markdown"
-// Only the `markdown` format elides data: URIs (never `html`, which `edits` matches
-// byte-for-byte against, or `text`, the comment-anchor source) — see elideDataUris.
-const present = (source: string, contentType: string, format: ReadFormat): string => {
-  if (format === "html") return source
-  if (format === "text") return isHtmlLike(contentType) ? pageText(source) : source
-  return elideDataUris(toMarkdown(source, contentType))
-}
 const formatLabel = (contentType: string, format: ReadFormat): string => {
   if (format === "markdown")
     return isHtmlLike(contentType)
@@ -188,129 +178,6 @@ const parseLineRange = (spec: string, total: number): { from: number; to: number
   if (to < from) return null
   return { from, to: Math.min(to, total) }
 }
-
-// One line-oriented match hunk: the matched line plus its context, with line numbers.
-// A hit line carries `section` (the heading/region it falls under, when known) so a hit
-// deep in a doc is self-locating — annotated per hit line, not per hunk, so two matches
-// in different sections that merged into one hunk are each labelled correctly.
-interface SearchHunk {
-  from: number
-  lines: { n: number; text: string; hit: boolean; section?: string }[]
-}
-
-// Tag each HIT line with the section it falls under. No-op when there are no markers
-// (an unstructured doc, or a text-scope search whose line numbers don't align with the
-// source the markers come from).
-const annotateSections = (hunks: SearchHunk[], markers: SectionMarker[]): void => {
-  if (!markers.length) return
-  for (const h of hunks)
-    for (const l of h.lines) {
-      if (!l.hit) continue
-      const label = enclosingMarker(markers, l.n)
-      if (label) l.section = label
-    }
-}
-// Scan `content` for `re` line by line, ripgrep-style: each matching line becomes a
-// hunk carrying `context` lines either side. Adjacent/overlapping hunks merge so a
-// run of hits reads as one block. Caps at `max` matches; returns whether it was cut.
-const scanLines = (
-  content: string,
-  re: RegExp,
-  context: number,
-  max: number,
-): { hunks: SearchHunk[]; total: number } => {
-  const lines = content.split("\n")
-  const hitRows: number[] = []
-  for (let i = 0; i < lines.length; i++) {
-    re.lastIndex = 0
-    if (re.test(lines[i] as string)) hitRows.push(i)
-  }
-  const capped = hitRows.slice(0, max)
-  const hunks: SearchHunk[] = []
-  for (const row of capped) {
-    const lo = Math.max(0, row - context)
-    const hi = Math.min(lines.length - 1, row + context)
-    const last = hunks[hunks.length - 1]
-    // Merge into the previous hunk when its context window touches this one.
-    if (last && lo <= last.from - 1 + last.lines.length) {
-      for (let i = last.from - 1 + last.lines.length; i <= hi; i++)
-        last.lines.push({ n: i + 1, text: lines[i] as string, hit: false })
-      last.lines[row - (last.from - 1)] = { n: row + 1, text: lines[row] as string, hit: true }
-      continue
-    }
-    const block: SearchHunk["lines"] = []
-    for (let i = lo; i <= hi; i++)
-      block.push({ n: i + 1, text: lines[i] as string, hit: i === row })
-    hunks.push({ from: lo + 1, lines: block })
-  }
-  return { hunks, total: hitRows.length }
-}
-
-// Render hunks ripgrep-style: `  142: hit line` for matches, `  141- context` for
-// context, a blank line between hunks. A `§ Section` header precedes a run of hunks
-// that share an enclosing heading/region, so each match is self-locating. Line text is
-// trimmed of a trailing CR and clipped so one enormous minified line can't blow budget.
-const LINE_CLIP = 400
-const renderHunks = (hunks: SearchHunk[]): string => {
-  const blocks: string[] = []
-  let section: string | undefined
-  for (const h of hunks) {
-    const rows: string[] = []
-    for (const l of h.lines) {
-      // A `§ Section` header whenever a hit enters a new section — so a merged hunk
-      // spanning two sections labels each correctly.
-      if (l.hit && l.section && l.section !== section) {
-        section = l.section
-        rows.push(`§ ${section}`)
-      }
-      const t = l.text.replace(/\r$/, "")
-      const shown = t.length > LINE_CLIP ? `${t.slice(0, LINE_CLIP)}…` : t
-      rows.push(`  ${l.n}${l.hit ? ":" : "-"} ${shown}`)
-    }
-    blocks.push(rows.join("\n"))
-  }
-  return blocks.join("\n\n")
-}
-
-// Assemble the ripgrep-style search report: a header with the total, each page's
-// hunks (bundle pages labelled), and a steer to act. `cap` names the per-page match
-// ceiling so a capped result reads honestly. Clipped to the response budget.
-const searchReport = (
-  shortId: string,
-  query: string,
-  where: string,
-  total: number,
-  cap: number,
-  groups: { path: string | null; hunks: SearchHunk[] }[],
-  note?: string | null,
-): string => {
-  if (total === 0)
-    return `${shortId} — no matches for "${query}" in ${where}.${
-      where === "source" ? " Try in:'text' to search the visible text." : ""
-    }`
-  const shown = groups.filter((g) => g.hunks.length > 0)
-  const head = `${shortId} — ${total} match${total === 1 ? "" : "es"} for "${query}" in ${where}${
-    note ? ` (${note})` : ""
-  }${total > cap ? `, showing the first ${cap} per page` : ""}`
-  const body = shown
-    .map((g) => (g.path ? `${g.path}\n${renderHunks(g.hunks)}` : renderHunks(g.hunks)))
-    .join("\n\n")
-  // The steer names the format whose line numbers these match, so the follow-up
-  // windowed read lands on the same lines: `source` line numbers are the raw source
-  // (read format:"html"); `text` line numbers are the visible text (read format:"text").
-  const fmt = where === "text" ? "text" : "html"
-  const steer = `\n\nRead a spot with read(lines:"from-to", format:"${fmt}"), or edit it via publish edits.`
-  return clip(`${head}\n\n${body}${steer}`)
-}
-
-// The compiled matcher for `search`. The query is matched LITERALLY: metacharacters
-// are escaped so an agent pasting "$31k" or "a.b()" matches verbatim, and — because a
-// literal has no quantifiers — the scan is linear even on a multi-MB minified line.
-// (Arbitrary user regex is deliberately NOT accepted: catastrophic backtracking on a
-// long line blows the Workers CPU budget, and there is no linear-time regex engine on
-// this tier. Re-add regex only behind a re2-style matcher.)
-const searchMatcher = (query: string, caseSensitive: boolean): RegExp =>
-  new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), caseSensitive ? "g" : "gi")
 
 const summarizeArtifact = (a: ArtifactRecord) => ({
   short_id: a.short_id,
@@ -465,7 +332,9 @@ async function buildServer(
         `first for large documents or bundles, so pull sections by heading slug or page path once ` +
         `you know what you want; pass format:'html' for the exact source. On a large artifact, use ` +
         `search to grep for a spot and read's \`lines\` to window just that range, instead of ` +
-        `pulling the whole thing. After publishing a styled page, call read with render:"top" (or ` +
+        `pulling the whole thing. Not sure WHICH artifact has something? Call search without ` +
+        `short_id to grep across the workspace instead — same tool, that one parameter omitted. ` +
+        `After publishing a styled page, call read with render:"top" (or ` +
         `"full"/"marked") to SEE what shipped — it catches visual breakage no text ` +
         `read can. Use comment to leave or ` +
         `resolve feedback. ${writeGuidance}To change PART of an artifact, prefer publish's edits ` +
@@ -1193,9 +1062,14 @@ async function buildServer(
     "search",
     {
       description:
-        "Find text WITHIN one artifact — grep, not a full read. Returns matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range (in the format the result names) or `edit` that spot. Searches the exact source by default (in:'text' searches the visible text instead). A bundle is searched across all its text pages, grouped by page. The query is matched literally (metacharacters are not special).",
+        "Find text within ONE artifact, or across a WORKSPACE. Pass short_id to grep one artifact (not a full read): matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range (in the format the result names) or `edit` that spot. A bundle is searched across all its text pages, grouped by page. Omit short_id to grep instead across the most recently created artifacts you can see in a workspace — same visibility rules as list_artifacts — grouped by artifact, so you can find WHICH doc has something before opening it. Searches the exact source by default (in:'text' searches the visible text instead). The query is matched literally (metacharacters are not special).",
       inputSchema: {
-        short_id: z.string().describe("The artifact's short id, e.g. nk0dsral."),
+        short_id: z
+          .string()
+          .optional()
+          .describe(
+            "The artifact's short id, e.g. nk0dsral. Omit to search across the workspace instead of one artifact.",
+          ),
         query: z.string().describe("The literal text to find (metacharacters are not special)."),
         case_sensitive: z.boolean().optional().describe("Default false."),
         in: z
@@ -1211,8 +1085,13 @@ async function buildServer(
         max_matches: z
           .number()
           .optional()
-          .describe("Cap on matches returned (default 40, max 200)."),
-        version: z.number().optional().describe("Defaults to the current version."),
+          .describe(
+            "Cap on matches returned per artifact (default 40, max 200). Applies to each artifact scanned in workspace mode too.",
+          ),
+        version: z
+          .number()
+          .optional()
+          .describe("Defaults to the current version. Ignored in workspace mode (always current)."),
         workspace: wsArg,
       },
     },
@@ -1227,6 +1106,25 @@ async function buildServer(
       workspace,
     }) => {
       if (!query) return err("`query` is required.")
+      const re = searchMatcher(query, case_sensitive ?? false)
+      const ctxLines = Math.min(Math.max(context ?? 0, 0), 5)
+      const cap = Math.min(Math.max(max_matches ?? 40, 1), 200)
+      const where = scope ?? "source"
+
+      if (!short_id) {
+        const t = await resolveWs(workspace)
+        if ("error" in t) return err(t.error)
+        const { results, note } = await searchWorkspace(ctx, {
+          orgId: t.org,
+          viewerId: actingFor?.id ?? agent.id,
+          re,
+          where,
+          ctxLines,
+          cap,
+        })
+        return text(workspaceSearchReport(query, where, results, note))
+      }
+
       const r = await reach(short_id, workspace)
       if (r && "error" in r) return err(r.error)
       if (!r) return notFound(short_id)
@@ -1236,59 +1134,7 @@ async function buildServer(
         return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
       const v = await ctx.meta.getVersion(a.id, n)
       if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
-      const re = searchMatcher(query, case_sensitive ?? false)
-      const ctxLines = Math.min(Math.max(context ?? 0, 0), 5)
-      const cap = Math.min(Math.max(max_matches ?? 40, 1), 200)
-      const where = scope ?? "source"
-      // What each page's searchable content is, in the chosen scope: exact source, or
-      // the visible text (tags stripped) for HTML — Markdown/plain ARE their own text.
-      const contentFor = (raw: string, ct: string) =>
-        where === "text" ? present(raw, ct, "text") : raw
-      // Section markers align with the searched content's line numbers only when that
-      // content IS the raw source — i.e. any source-scope search, or a markdown/plain
-      // text-scope search (its text IS the source). An HTML text-scope search greps the
-      // tag-stripped text, whose lines don't map to the source markers, so skip it.
-      const markersFor = (raw: string, ct: string): SectionMarker[] =>
-        where === "source" || !isHtmlLike(ct) ? sectionMarkers(raw, ct) : []
-      const manifest = await manifestOf(ctx, v)
-
-      if (!manifest) {
-        const src = (await ctx.sourceText(v)) ?? ""
-        const { hunks, total } = scanLines(contentFor(src, v.content_type), re, ctxLines, cap)
-        annotateSections(hunks, markersFor(src, v.content_type))
-        return text(searchReport(short_id, query, where, total, cap, [{ path: null, hunks }]))
-      }
-
-      // Bundle: search every text page (capped), grouped by page. Blob reads run in
-      // parallel; non-text files (images, css/js are text but binaries aren't) skip.
-      const pages = Object.keys(manifest.files)
-        .filter((p) => isTextType(manifest.files[p]?.type ?? ""))
-        .sort((x, y) => x.split("/").length - y.split("/").length || x.localeCompare(y))
-      const PAGE_SCAN_CAP = 50
-      const scanned = pages.slice(0, PAGE_SCAN_CAP)
-      // Scan in bounded batches rather than one Promise.all over all 50: each page is
-      // decoded to a string and line-split, and scanLines is synchronous (nothing frees
-      // mid-batch), so an unbounded fan-out over large pages could pile decoded copies
-      // toward the memory ceiling. Batches keep at most CONCURRENCY live at once.
-      const CONCURRENCY = 8
-      const scanPage = async (p: string) => {
-        const file = manifest.files[p]
-        if (!file) return null
-        const bytes = await ctx.blobs.get(file.key)
-        if (!bytes) return null
-        const raw = new TextDecoder().decode(bytes)
-        const { hunks, total } = scanLines(contentFor(raw, file.type), re, ctxLines, cap)
-        annotateSections(hunks, markersFor(raw, file.type))
-        return total ? { path: cleanPath(p), hunks, total } : null
-      }
-      const groups: { path: string; hunks: SearchHunk[]; total: number }[] = []
-      for (let i = 0; i < scanned.length; i += CONCURRENCY) {
-        const batch = await Promise.all(scanned.slice(i, i + CONCURRENCY).map(scanPage))
-        for (const g of batch) if (g) groups.push(g)
-      }
-      const total = groups.reduce((sum, g) => sum + g.total, 0)
-      const note =
-        pages.length > PAGE_SCAN_CAP ? `first ${PAGE_SCAN_CAP} of ${pages.length} pages` : null
+      const { groups, total, note } = await searchArtifactVersion(ctx, v, re, where, ctxLines, cap)
       return text(searchReport(short_id, query, where, total, cap, groups, note))
     },
   )

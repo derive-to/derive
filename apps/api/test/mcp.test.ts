@@ -771,6 +771,109 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(s).toContain("§ Revenue")
   })
 
+  it("search (workspace mode, short_id omitted): greps across accessible artifacts, grouped by artifact, and NEVER leaks a private artifact's content to a viewer who isn't its member (regression)", async () => {
+    const { app, token, meta, blobs } = appWithGrant(
+      "wssearch",
+      "openid derive:read derive:publish",
+    )
+    const r1 = (
+      await (
+        await publishRaw(
+          app,
+          token,
+          "# Report\n\nthe visible-needle-alpha is here",
+          "r1.md",
+          "Report One",
+        )
+      ).json()
+    ).short_id
+    const r2 = (
+      await (
+        await publishRaw(app, token, "# Notes\n\nnothing relevant in here", "r2.md", "Notes")
+      ).json()
+    ).short_id
+
+    // Finds the hit and names which artifact it's in — the whole point of the mode.
+    const found = toolText(await call(app, token, "search", { query: "visible-needle-alpha" }))
+    expect(found).toContain(r1)
+    expect(found).toContain("Report One")
+    expect(found).toContain("1 match")
+    expect(found).not.toContain(r2) // no hit there — must not appear as an empty section
+
+    // A DIFFERENT artifact — listed:"none" (private) and NOT a member — must never
+    // surface, even though it lives in the same workspace. This mirrors exactly the
+    // visibility rule list_artifacts already enforces (artifactListConditions: listed
+    // != 'none' OR isMember); workspace search reuses listArtifacts with the same
+    // viewerId, so this pins that it didn't accidentally widen the scope.
+    const owner = await meta.getByShortId(r1)
+    if (!owner) throw new Error("expected the visible artifact to exist")
+    const key = await blobs.put(
+      new TextEncoder().encode("# Secret\n\nthe private-needle-zulu lives here"),
+    )
+    await meta.createArtifact({
+      id: "a_stranger_private",
+      short_id: "strangr1",
+      org_id: owner.org_id,
+      slug: null,
+      title: "Stranger's Private Doc",
+      workspace_access: "member",
+      link_role: "none",
+      listed: "none",
+      kind: "file",
+      spa: 0,
+    })
+    await meta.addVersion("a_stranger_private", {
+      id: "v_stranger1",
+      blob_key: key,
+      content_type: "text/markdown",
+      author: "stranger",
+      message: null,
+    })
+
+    const afterPrivate = toolText(
+      await call(app, token, "search", { query: "private-needle-zulu" }),
+    )
+    // "No matches for ... private-needle-zulu" legitimately echoes the searched
+    // query — the leak to guard against is the private artifact's short_id or its
+    // OWN content surfacing anywhere in the report, neither of which it should.
+    expect(afterPrivate).toContain("No matches")
+    expect(afterPrivate).not.toContain("strangr1")
+    expect(afterPrivate).not.toContain("Secret")
+  })
+
+  it("search (workspace mode): caps the scan at the most recent artifacts, with an honest truncation note (not silent)", async () => {
+    const { app, token, meta, blobs } = appWithGrant("wscap", "openid derive:read derive:publish")
+    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
+    const owner = await meta.getByShortId(seed)
+    if (!owner) throw new Error("expected the seed artifact to exist")
+    const key = await blobs.put(new TextEncoder().encode("filler content, nothing to find"))
+    // One more than WORKSPACE_SEARCH_ARTIFACT_CAP (30) so the cap must engage.
+    for (let i = 0; i < 31; i++) {
+      const id = `a_bulk_${i}`
+      await meta.createArtifact({
+        id,
+        short_id: `bulk${i.toString().padStart(4, "0")}`,
+        org_id: owner.org_id,
+        slug: null,
+        title: `Bulk ${i}`,
+        workspace_access: "member",
+        link_role: "viewer",
+        listed: "workspace",
+        kind: "file",
+        spa: 0,
+      })
+      await meta.addVersion(id, {
+        id: `v_bulk_${i}`,
+        blob_key: key,
+        content_type: "text/markdown",
+        author: "seeder",
+        message: null,
+      })
+    }
+    const res = toolText(await call(app, token, "search", { query: "zzz-nothing-matches-zzz" }))
+    expect(res).toContain("scanned the 30 most recently created artifacts you can see")
+  })
+
   it("read: a region ref (@N) reads that region directly, with actionable errors", async () => {
     const { app, token } = appWithGrant("region", "openid derive:read derive:publish")
     const html =

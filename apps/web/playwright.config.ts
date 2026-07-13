@@ -59,6 +59,14 @@ export default defineConfig({
     // specs self-skip unless SHOTS=1, so a bare `playwright test` never runs them.
     // Use: `SHOTS=1 npx playwright test --project=screens` (see e2e/screens/).
     { name: "screens", testMatch: /screens\/.*\.screens\.ts$/ },
+    // Pins the artifact sandbox CSP's real-world permissiveness (a self-contained
+    // artifact, a cdnjs-dependent one, a multi-page bundle) against real fixture
+    // content — see e2e/render-fidelity/. Deterministic DOM-marker + console-error
+    // assertions, not pixel-diff screenshots (this repo's `screens` project is
+    // capture-only for exactly that flakiness reason). Hits a real external CDN
+    // (cdnjs.cloudflare.com), so it's CI-triggered on a narrow path scope rather
+    // than every PR — see .github/workflows/e2e-fidelity.yml.
+    { name: "render-fidelity", testMatch: /render-fidelity\/.*\.spec\.ts$/ },
   ],
   // CI vs local serve the app differently, on purpose:
   //  • CI — build the SPA and let the API serve it (the production self-host path),

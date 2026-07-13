@@ -18,7 +18,7 @@ import { createClient } from "./client"
 
 // Stdio MCP server for self-hosters: `npx @derive-to/mcp` talks to a Derive instance over
 // the /v1 HTTP API (DERIVE_SERVER). It exposes the SAME tools as the remote /mcp
-// server — list_workspaces, list_artifacts, read, catch_up, comment, publish — so the
+// server — list_workspaces, list_artifacts, search, read, catch_up, comment, publish — so the
 // vocabulary is identical whether an agent connects over OAuth or a static token.
 //
 // No token to paste: by default this reads the SAME local store `derive login`
@@ -196,6 +196,69 @@ server.registerTool(
   async ({ query, workspace: ws }) => {
     const arts = await clientFor(ws).list(query)
     return json({ count: arts.length, artifacts: arts })
+  },
+)
+
+// GREP --------------------------------------------------------------------------
+server.registerTool(
+  "search",
+  {
+    description:
+      "Find text within ONE artifact, or across a WORKSPACE — same tool, same behavior as the remote MCP server's `search`. Pass short_id to grep one artifact: matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range or `edit` that spot. Omit short_id to grep instead across the most recently created artifacts you can see in a workspace, grouped by artifact — find WHICH doc has something before opening it. Searches the exact source by default (in:'text' searches the visible text instead). The query is matched literally (metacharacters are not special).",
+    inputSchema: {
+      short_id: z
+        .string()
+        .optional()
+        .describe(
+          "The artifact's short id, e.g. nk0dsral. Omit to search across the workspace instead of one artifact.",
+        ),
+      query: z.string().describe("The literal text to find (metacharacters are not special)."),
+      case_sensitive: z.boolean().optional().describe("Default false."),
+      in: z
+        .enum(["source", "text"])
+        .optional()
+        .describe(
+          "source (default): the exact stored bytes — the positions you'd `edit`. text: the visible text a reader sees (HTML tags stripped).",
+        ),
+      context: z
+        .number()
+        .optional()
+        .describe("Lines of surrounding context to show around each match (default 0, max 5)."),
+      max_matches: z
+        .number()
+        .optional()
+        .describe(
+          "Cap on matches returned per artifact (default 40, max 200). Applies to each artifact scanned in workspace mode too.",
+        ),
+      version: z
+        .number()
+        .optional()
+        .describe("Defaults to the current version. Ignored in workspace mode (always current)."),
+      workspace: wsArg,
+    },
+  },
+  async ({
+    short_id,
+    query,
+    case_sensitive,
+    in: scope,
+    context,
+    max_matches,
+    version,
+    workspace: ws,
+  }) => {
+    try {
+      const report = await clientFor(ws).search(short_id, query, {
+        caseSensitive: case_sensitive,
+        in: scope,
+        context,
+        maxMatches: max_matches,
+        version,
+      })
+      return text(report)
+    } catch (e) {
+      return err(e instanceof Error ? e.message : "search failed")
+    }
   },
 )
 
