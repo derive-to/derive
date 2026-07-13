@@ -480,15 +480,20 @@ export const searchWorkspace = async (
     })
     visible.push(...rows)
   }
+  // A password lock gates the world-link CONTENT behind a password — read 401s without it.
+  // The publicOnly caller IS that anonymous/link visitor, so drop locked artifacts here,
+  // else their body would be grep-readable, bypassing the unlock. A member (viewerId)
+  // reaches content through membership, not the link, so the lock never applies to them.
+  const gated = opts.publicOnly ? visible.filter((a) => !a.password_hash) : visible
   // listArtifacts returns in its own (recency) order; restore relevance order.
-  visible.sort((a, b) => (rankOf.get(a.id) ?? Infinity) - (rankOf.get(b.id) ?? Infinity))
+  gated.sort((a, b) => (rankOf.get(a.id) ?? Infinity) - (rankOf.get(b.id) ?? Infinity))
 
   // Grep-confirm only the top-N most-relevant survivors — the blob-read+scan is the
   // real cost, so it stays bounded. A candidate the index nominated on token overlap
   // but whose exact literal/scope isn't actually present yields no hunks and drops out
   // here: the index is RECALL, the grep is PRECISION.
   const grepCap = opts.limit ?? WORKSPACE_SEARCH_ARTIFACT_CAP
-  const toGrep = visible.slice(0, grepCap)
+  const toGrep = gated.slice(0, grepCap)
   // 4, not searchArtifactVersion's inner 8: the two fan-outs compose (a batch of
   // bundles each opens its own 8-wide page fan-out), so peak blob reads is the product
   // — 4×8=32 keeps that worst case reasonable without a cross-cutting semaphore.
@@ -525,9 +530,9 @@ export const searchWorkspace = async (
   // wording says "candidates", never "matches". `grepTruncated`: more visible candidates
   // than we confirmed. `moreCandidates`: the index had still more below the window
   // (detected by the over-fetched sentinel) — hence the `+`.
-  const grepTruncated = visible.length > grepCap
+  const grepTruncated = gated.length > grepCap
   const note = grepTruncated
-    ? `ranked by relevance — grep-confirmed the top ${grepCap} of ${visible.length}${
+    ? `ranked by relevance — grep-confirmed the top ${grepCap} of ${gated.length}${
         moreCandidates ? "+" : ""
       } candidate artifacts you can see; refine the query to reach the rest`
     : moreCandidates
