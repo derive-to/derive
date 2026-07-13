@@ -14,6 +14,7 @@ import {
 import { log } from "../log"
 import { cleanPath, manifestOf } from "./bundle"
 import { clip } from "./clip"
+import { type DerivedCacheDeps, derivedViewsFor } from "./derived-cache"
 
 // The minimal store surface search needs — a BlobStore, a version→text resolver
 // (works for a version OR a proposal, same as the rest of the app), and (only for
@@ -24,6 +25,10 @@ import { clip } from "./clip"
 export interface SearchDeps {
   blobs: BlobStore
   sourceText: (v: Pick<VersionRecord, "blob_key" | "content_type">) => Promise<string | null>
+  /** Optional derived-view cache (lib/derived-cache.ts) — when present, a large
+   *  HTML doc's section markers and text conversion come from the cache instead
+   *  of being recomputed per search. Absent ⇒ the identical direct path. */
+  derived?: DerivedCacheDeps
 }
 
 export interface WorkspaceSearchDeps extends SearchDeps {
@@ -204,8 +209,21 @@ export const searchArtifactVersion = async (
 
   if (!manifest) {
     const src = (await deps.sourceText(v)) ?? ""
-    const { hunks, total } = scanLines(contentFor(src, v.content_type), re, ctxLines, cap)
-    annotateSections(hunks, markersFor(src, v.content_type))
+    // A large HTML doc's markers (and text-scope conversion) come through the
+    // derived-view cache when one is wired — sectionMarkers alone is ~83ms per
+    // search on a 4MB doc, and agents search the same doc repeatedly. Small docs
+    // return null here and take the identical direct path as before. The cached
+    // markers are SOURCE-line markers, so they substitute only where the direct
+    // path would have computed source markers (source scope) — an HTML text-scope
+    // search keeps its empty marker list, exactly like markersFor.
+    const views = deps.derived ? await derivedViewsFor(deps.derived, src, v.content_type) : null
+    const content = where === "text" ? (views?.text ?? contentFor(src, v.content_type)) : src
+    const markers =
+      where === "source"
+        ? (views?.markers ?? markersFor(src, v.content_type))
+        : markersFor(src, v.content_type)
+    const { hunks, total } = scanLines(content, re, ctxLines, cap)
+    annotateSections(hunks, markers)
     return { groups: [{ path: null, hunks }], total, note: null }
   }
 

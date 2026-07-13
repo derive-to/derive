@@ -129,6 +129,16 @@ export interface NewRenderJob {
   version_n: number
 }
 
+/** A cached bundle of derived views (markdown, text, outline, landmarks, section
+ *  markers) for one exact source, keyed by the source's content sha. Content
+ *  addressing IS the invalidation: new content is a new sha, so rows never go
+ *  stale — an orphaned row for content nothing references anymore is inert. */
+export interface DerivedViewRecord {
+  source_sha: string
+  blob_key: string
+  created_at: string
+}
+
 export interface VersionRecord {
   id: string
   artifact_id: string
@@ -297,6 +307,15 @@ export interface ArtifactStore {
       next_attempt_at: string
     },
   ): Promise<void>
+
+  // ---- Derived-view cache (read-through, content-addressed) ----------------
+  /** The cached derived-views blob for this exact source content, if one exists. */
+  getDerivedView(sourceSha: string): Promise<DerivedViewRecord | null>
+  /** Record where a source's derived views live. Idempotent per sha (last write
+   *  wins is fine — two racing writers derived the same content, so either blob
+   *  is correct). Callers treat failures as best-effort: a cache-write hiccup
+   *  must never fail the read that triggered it. */
+  putDerivedView(rec: { source_sha: string; blob_key: string }): Promise<void>
 }
 
 export interface CommentStore {

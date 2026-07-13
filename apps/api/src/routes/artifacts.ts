@@ -36,6 +36,7 @@ import { afterPublish } from "../lib/after-publish"
 import { authorProfile, resolveHandles, resolveUserBylines } from "../lib/author"
 import { cleanPath, manifestOf } from "../lib/bundle"
 import { hashPassword, signState, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
+import { type DerivedViews, derivedViewsFor } from "../lib/derived-cache"
 import {
   EditConflictError,
   type MaterializedEdits,
@@ -883,7 +884,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const candidateCap = isJson ? 60 : undefined
 
     const { results, note } = await searchWorkspace(
-      { blobs, sourceText, meta },
+      { blobs, sourceText, meta, derived: { meta, blobs } },
       {
         orgId: listOrg,
         viewerId: isOperator ? undefined : (memberKey ?? undefined),
@@ -928,7 +929,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!version) return fail(c, 404, `no version ${v}`)
 
     const { groups, total, note } = await searchArtifactVersion(
-      { blobs, sourceText },
+      { blobs, sourceText, derived: { meta, blobs } },
       version,
       re,
       where,
@@ -1476,25 +1477,41 @@ export const artifactRoutes = (ctx: AppContext) => {
 
     const manifest = await manifestOf(blobs, version)
     if (!manifest) {
-      // Single-file artifact.
+      // Single-file artifact. Full-doc derived views (outline, markdown/text
+      // conversion) come through the derived-view cache for large HTML docs —
+      // the same substitution-transparent cache the MCP read tool uses; small
+      // docs resolve null and take the identical direct path. Section slices
+      // stay direct (a slice is its own content, small by construction).
       const src = await sourceText(version)
       if (src === null) return fail(c, 500, "blob missing")
+      const ct = version.content_type
+      let viewsPromise: Promise<DerivedViews | null> | undefined
+      const views = (): Promise<DerivedViews | null> =>
+        (viewsPromise ??= derivedViewsFor({ meta, blobs }, src, ct))
       if (outline) {
         c.header("X-Derive-Format", "outline")
-        return c.json({ sections: outlineOf(src, version.content_type) })
+        return c.json({ sections: (await views())?.outline ?? outlineOf(src, ct) })
       }
       if (section) {
-        const slice = sectionOf(src, version.content_type, section)
+        const slice = sectionOf(src, ct, section)
         if (slice === null) return fail(c, 404, `no section "${section}"`)
-        const body = present(slice, version.content_type)
+        const body = present(slice, ct)
         c.header("X-Derive-Format", format ?? "raw")
         c.header("X-Derive-Section", section)
         c.header("Content-Type", "text/plain; charset=utf-8")
         return c.body(body)
       }
-      const body = present(src, version.content_type)
+      const cached = format ? await views() : null
+      const body = cached
+        ? format === "markdown"
+          ? cached.markdown
+          : cached.text
+        : present(src, ct)
       c.header("X-Derive-Format", format ?? "raw")
-      c.header("X-Derive-Sections", String(outlineOf(src, version.content_type).length))
+      // Only consult the cache for the outline count when a format read already
+      // fetched it — a RAW read is the byte-exact fast path and must not pay a
+      // first-touch cache fill just for a response header.
+      c.header("X-Derive-Sections", String((cached?.outline ?? outlineOf(src, ct)).length))
       c.header("Content-Type", "text/plain; charset=utf-8")
       return c.body(body)
     }

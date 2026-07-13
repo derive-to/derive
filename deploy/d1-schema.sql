@@ -113,6 +113,12 @@ CREATE TABLE IF NOT EXISTS render_job (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS derived_view (
+  source_sha TEXT PRIMARY KEY,
+  blob_key TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS membership (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,

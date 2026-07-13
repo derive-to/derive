@@ -26,6 +26,7 @@ import type {
   ContextAskerRecord,
   ContextRecord,
   DeliveryRecord,
+  DerivedViewRecord,
   DomainRecord,
   FollowRecord,
   GitHubAppRecord,
@@ -56,6 +57,7 @@ export interface TypedTables {
   webhook: WebhookRecord
   webhookDelivery: DeliveryRecord
   renderJob: RenderJobRecord
+  derivedView: DerivedViewRecord
   membership: MembershipRecord
   workspace: WorkspaceRecord
   artifactMember: ArtifactMemberRecord

@@ -1773,6 +1773,29 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: derived-view cache`, () => {
+    it("get/put round-trips by source sha; a sha rewrite (last write wins) replaces the blob key; an unknown sha is null", async () => {
+      const sha = `sha_${uuid()}`
+      expect(await store.getDerivedView(sha)).toBeNull()
+
+      await store.putDerivedView({ source_sha: sha, blob_key: "blob-one" })
+      const first = await store.getDerivedView(sha)
+      expect(first?.blob_key).toBe("blob-one")
+      expect(first?.created_at).toBeTruthy()
+
+      // Two racing writers derived the SAME content — either blob is correct, so
+      // the second write simply wins instead of erroring on the primary key.
+      await store.putDerivedView({ source_sha: sha, blob_key: "blob-two" })
+      expect((await store.getDerivedView(sha))?.blob_key).toBe("blob-two")
+
+      // Distinct content is a distinct row — content addressing, no cross-talk.
+      const other = `sha_${uuid()}`
+      await store.putDerivedView({ source_sha: other, blob_key: "blob-three" })
+      expect((await store.getDerivedView(sha))?.blob_key).toBe("blob-two")
+      expect((await store.getDerivedView(other))?.blob_key).toBe("blob-three")
+    })
+  })
+
   describe(`${label}: moderation (reports, takedown, audit)`, () => {
     it("files a report, transitions it, takes down an artifact, logs the action", async () => {
       const a = await store.createArtifact(newArtifact())
