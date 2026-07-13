@@ -46,6 +46,12 @@ CREATE TABLE IF NOT EXISTS version (
   preview_key TEXT,
   preview_status TEXT,
   preview_error TEXT,
+  preview_full_key TEXT,
+  preview_full_status TEXT,
+  preview_full_error TEXT,
+  preview_marked_key TEXT,
+  preview_marked_status TEXT,
+  preview_marked_error TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (artifact_id, n),
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
@@ -527,3 +533,5 @@ CREATE INDEX IF NOT EXISTS comment_artifact_state ON comment (artifact_id, state
 CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at);
 
 CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61 remove_diacritics 0');

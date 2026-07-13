@@ -9,10 +9,10 @@
 // reports using the same block tags, so a tokenizer over that tag set is small and
 // testable — the same trade `pageText`/`reflow.ts` already make.
 
-import { decodeEntities } from "./anchor"
+import { decodeEntities, pageText } from "./anchor"
 
-/** One heading in a document's h1–h3 spine. `chars` is the size of the section's
- *  MARKDOWN conversion (heading included) — what a read of that section costs. */
+/** One heading in a document's h1–h6 spine. `chars` is the section's raw-source size
+ *  (heading included) — a cheap budget proxy for what reading that section costs. */
 export interface OutlineSection {
   level: number
   text: string
@@ -20,10 +20,25 @@ export interface OutlineSection {
   chars: number
 }
 
+/** One structural landmark of a page with no heading spine (a dashboard, card grid,
+ *  or landing page): enough to orient an agent that then searches/windows into it.
+ *  `text` is a short visible-text preview (so an unlabelled region is still
+ *  recognizable); `chars` is the size of the region's full visible text. */
+export interface LandmarkRegion {
+  role: string
+  label: string | null
+  text: string
+  chars: number
+}
+
 /** One exact-match replacement (the Edit-tool contract: unique match or error). */
 export interface DocEdit {
   old_str: string
   new_str: string
+  /** 1-based index of WHICH match to replace, for an `old_str` that is intentionally
+   *  non-unique (a phrase repeated verbatim in several spots). Omit when `old_str`
+   *  already matches exactly once — this only disambiguates a multi-match. */
+  occurrence?: number
 }
 
 // ---------------------------------------------------------------------------------
@@ -479,7 +494,7 @@ interface HeadingSpan {
   start: number // offset of the heading's opening "<hN"
 }
 
-const HEADING = /<h([1-3])\b[^>]*>([\s\S]*?)<\/h\1>/gi
+const HEADING = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi
 // A DROP subtree with its full content — same tag set htmlToMarkdown drops whole.
 // Used to mask out `<script>`/`<template>`/… content before scanning for headings,
 // since the regex scan below has no tokenizer state and would otherwise happily
@@ -518,14 +533,163 @@ const sectionEnd = (html: string, spans: HeadingSpan[], i: number): number => {
   return body > (spans[i] as HeadingSpan).start ? body : html.length
 }
 
-/** The h1–h3 spine of an HTML document. Empty array = unsectionable (no headings). */
+// Structural landmarks that orient a page with no heading spine. A landmark nested
+// inside another is folded into its parent, so the map stays shallow. The role is the
+// element's implicit ARIA landmark role (what an accessibility tree would report) so
+// the map reads like the aria snapshots agents already know; an explicit `role`
+// attribute overrides it. header/footer map to banner/contentinfo, correct at the top
+// level (the only level surfaced here).
+const IMPLICIT_ROLE: Record<string, string> = {
+  main: "main",
+  nav: "navigation",
+  header: "banner",
+  footer: "contentinfo",
+  aside: "complementary",
+  section: "region",
+  article: "article",
+  form: "form",
+}
+/** The lowercase landmark tag names, exported so the marked-render overlay script
+ *  (marks-script.ts) numbers the SAME top-level elements this module's landmarkMap
+ *  does — one list, not two that could drift. */
+export const LANDMARK_TAGS: string[] = Object.keys(IMPLICIT_ROLE)
+const LANDMARK = new Set(LANDMARK_TAGS)
+
+// Top-level landmark spans, balanced-matched by tag name (so nested same-name tags
+// don't close a parent early). Drop-subtree content is masked out first, exactly like
+// the heading scan, so a landmark tag inside a <template>/<script> is never surfaced.
+const landmarkSpans = (
+  html: string,
+): { name: string; attrs: string; start: number; end: number }[] => {
+  const drop: [number, number][] = []
+  DROP_SUBTREE.lastIndex = 0
+  for (let dm = DROP_SUBTREE.exec(html); dm; dm = DROP_SUBTREE.exec(html))
+    drop.push([dm.index, dm.index + dm[0].length])
+  const inDrop = (p: number) => drop.some(([s, e]) => p >= s && p < e)
+
+  const out: { name: string; attrs: string; start: number; end: number }[] = []
+  const stack: { name: string; attrs: string; start: number }[] = []
+  TOKEN.lastIndex = 0
+  for (let m = TOKEN.exec(html); m; m = TOKEN.exec(html)) {
+    if (inDrop(m.index)) continue
+    const tag = parseTag(m[0] as string, m.index)
+    if (!tag || !LANDMARK.has(tag.name) || tag.selfClosing) continue
+    if (!tag.closing) {
+      stack.push({ name: tag.name, attrs: tag.attrs, start: tag.start })
+      continue
+    }
+    // A close tag pops the nearest matching open, discarding any unclosed tags above
+    // it. A top-level landmark (opened at stack bottom) becomes a map entry.
+    for (let i = stack.length - 1; i >= 0; i--) {
+      if ((stack[i] as { name: string }).name !== tag.name) continue
+      const open = stack[i] as { name: string; attrs: string; start: number }
+      stack.length = i
+      if (i === 0) out.push({ name: open.name, attrs: open.attrs, start: open.start, end: tag.end })
+      break
+    }
+  }
+  return out
+}
+
+/** The structural map of an HTML page with no headings — a fallback so a designed,
+ *  headless page (dashboard, card grid) still orients an agent, who then searches or
+ *  windows into a region. Empty when there is no landmark structure either. */
+const LANDMARK_PREVIEW = 80
+export function landmarkMap(html: string): LandmarkRegion[] {
+  return landmarkSpans(html).map((s) => {
+    const visible = pageText(html.slice(s.start, s.end))
+    const preview = collapse(visible).trim()
+    return {
+      role: attrOf(s.attrs, "role") ?? IMPLICIT_ROLE[s.name] ?? s.name,
+      label: attrOf(s.attrs, "aria-label") ?? attrOf(s.attrs, "id"),
+      text: preview.length > LANDMARK_PREVIEW ? `${preview.slice(0, LANDMARK_PREVIEW)}…` : preview,
+      chars: visible.length,
+    }
+  })
+}
+
+/** The raw-HTML slice of the Nth (1-based) top-level landmark region — what a headless
+ *  page's region map addresses. Null when there is no Nth region. */
+export function landmarkSlice(html: string, n: number): string | null {
+  const span = landmarkSpans(html)[n - 1]
+  return span ? html.slice(span.start, span.end) : null
+}
+
+/** A named position in a document — a heading, or (for HTML) a labelled landmark —
+ *  with its 1-based line number. Lets a search annotate each match with the section it
+ *  falls in ("§ Revenue"), so a hit deep in a doc is self-locating. */
+export interface SectionMarker {
+  text: string
+  line: number
+}
+
+// Every labelled landmark element by open-tag position — nested included, unlike the
+// top-level-only `landmarkSpans` the map uses. Search wants the FINEST enclosing
+// section (a card inside <main>), so it needs the inner labels too. Drop-subtree
+// masking mirrors headingSpans so a landmark inside <script>/<template> is ignored.
+const labelledLandmarks = (html: string): { label: string; start: number }[] => {
+  const drop: [number, number][] = []
+  DROP_SUBTREE.lastIndex = 0
+  for (let dm = DROP_SUBTREE.exec(html); dm; dm = DROP_SUBTREE.exec(html))
+    drop.push([dm.index, dm.index + dm[0].length])
+  const inDrop = (p: number) => drop.some(([s, e]) => p >= s && p < e)
+  const out: { label: string; start: number }[] = []
+  TOKEN.lastIndex = 0
+  for (let m = TOKEN.exec(html); m; m = TOKEN.exec(html)) {
+    if (inDrop(m.index)) continue
+    const tag = parseTag(m[0] as string, m.index)
+    if (!tag || tag.closing || !LANDMARK.has(tag.name)) continue
+    const label = attrOf(tag.attrs, "aria-label") ?? attrOf(tag.attrs, "id")
+    if (label) out.push({ label, start: tag.start })
+  }
+  return out
+}
+
+/** Section markers for `source`, sorted by position: ATX headings for markdown; h1–h6
+ *  plus labelled landmarks (nested included) for HTML. Line numbers are computed in one
+ *  newline pass, so they line up with the raw source an agent greps and windows. */
+export const sectionMarkers = (source: string, contentType: string): SectionMarker[] => {
+  const raw: { text: string; offset: number }[] = []
+  if (isHtmlLike(contentType)) {
+    for (const s of headingSpans(source)) raw.push({ text: s.text, offset: s.start })
+    for (const s of labelledLandmarks(source)) raw.push({ text: s.label, offset: s.start })
+  } else {
+    for (const h of mdHeadings(source)) raw.push({ text: h.text, offset: h.start })
+  }
+  raw.sort((a, b) => a.offset - b.offset)
+  let line = 1
+  let pos = 0
+  return raw.map((m) => {
+    while (pos < m.offset && pos < source.length) {
+      if (source[pos] === "\n") line++
+      pos++
+    }
+    return { text: m.text, line }
+  })
+}
+
+/** The marker a given 1-based line falls under: the last marker at or above it, or null
+ *  when the line precedes every marker. */
+export const enclosingMarker = (markers: SectionMarker[], line: number): string | null => {
+  let found: string | null = null
+  for (const m of markers) {
+    if (m.line > line) break
+    found = m.text
+  }
+  return found
+}
+
+/** The h1–h6 spine of an HTML document. Empty array = unsectionable (no headings). */
 export function docOutline(html: string): OutlineSection[] {
   const spans = headingSpans(html)
+  // `chars` is the section's raw-source span (offset math, O(1) per heading) — the
+  // same cheap measure the markdown outline uses, not a per-section htmlToMarkdown
+  // reconversion (which made the outline of a heading-heavy doc O(headings × size)).
   return spans.map((s, i) => ({
     level: s.level,
     text: s.text,
     slug: s.slug,
-    chars: htmlToMarkdown(html.slice(s.start, sectionEnd(html, spans, i))).length,
+    chars: sectionEnd(html, spans, i) - s.start,
   }))
 }
 
@@ -561,7 +725,7 @@ const mdHeadings = (src: string): MdHeading[] => {
       if (!fence) fence = run.slice(0, 1).repeat(3)
       else if (run.startsWith(fence)) fence = null
     } else if (!fence) {
-      const h = /^(#{1,3})\s+(.+?)\s*#*\s*$/.exec(line)
+      const h = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line)
       if (h) {
         const text = (h[2] as string).trim()
         out.push({ level: (h[1] as string).length, text, slug: slug(text), start: offset })
@@ -612,7 +776,7 @@ export const elideDataUris = (s: string): string =>
       : m,
   )
 
-/** Outline for any text source (h1–h3 for HTML, ATX `#`–`###` for markdown). */
+/** Outline for any text source (h1–h6 for HTML, ATX `#`–`######` for markdown). */
 export const outlineOf = (source: string, contentType: string): OutlineSection[] => {
   if (isHtmlLike(contentType)) return docOutline(source)
   const hs = mdHeadings(source)
@@ -623,6 +787,11 @@ export const outlineOf = (source: string, contentType: string): OutlineSection[]
     chars: mdSectionEnd(source, hs, i) - h.start,
   }))
 }
+
+/** The landmark map for an HTML page with no heading spine (empty for markdown, and
+ *  for HTML that has headings — the outline covers those, this is the fallback). */
+export const landmarksOf = (source: string, contentType: string): LandmarkRegion[] =>
+  isHtmlLike(contentType) ? landmarkMap(source) : []
 
 /** The SOURCE slice a section slug addresses (raw HTML or raw markdown). */
 export const sectionOf = (source: string, contentType: string, slug: string): string | null => {
@@ -638,22 +807,109 @@ export const sectionOf = (source: string, contentType: string, slug: string): st
 
 export class EditError extends Error {}
 
-// Non-overlapping occurrence count — advances past the whole match, not by one char,
-// so a self-overlapping needle ("aa" in "aaa") counts as the single non-overlapping
-// match a real replace would make, not a spuriously "ambiguous" 2.
-const countOccurrences = (haystack: string, needle: string): number => {
-  let count = 0
+// Non-overlapping occurrence positions — advances past the whole match, not by one
+// char, so a self-overlapping needle ("aa" in "aaa") counts as the single
+// non-overlapping match a real replace would make, not a spuriously "ambiguous" 2.
+const occurrencePositions = (haystack: string, needle: string): number[] => {
+  const out: number[] = []
   for (let i = haystack.indexOf(needle); i !== -1; i = haystack.indexOf(needle, i + needle.length))
-    count++
-  return count
+    out.push(i)
+  return out
+}
+
+// A line, whitespace-tolerant: trimmed and internal runs collapsed to one space —
+// tabs-vs-spaces or a trailing-whitespace difference (the single most common miss)
+// normalizes away, while real content differences still don't match.
+const normalizeLine = (s: string): string => s.trim().replace(/\s+/g, " ")
+
+// Tier 1 is a sliding window: O(haystack lines × needle lines) comparisons. Cheap for
+// a typical small edit on any size document (needle is short), or a large needle on a
+// typical small document — the risk is both being large at once. Cap the product
+// rather than either dimension alone, so neither shape is penalized on its own.
+// 500K comparisons is ~12ms by extrapolation from a measured 36M-comparison/~900ms case.
+const TIER1_MAX_COMPARISONS = 500_000
+
+// Same cap search results already apply per line (see LINE_CLIP in
+// apps/api/src/lib/search.ts) — this file can't import that (packages/core has
+// zero external deps), so it's a local constant, not a shared one.
+const MISS_HINT_LINE_CLIP = 400
+
+const isWordChar = (c: string | undefined): boolean => !!c && /[A-Za-z0-9_]/.test(c)
+
+// Whole-word substring search without a regex (avoids escaping arbitrary user text):
+// `anchor` must not be glued to another word character on either side.
+const includesWord = (line: string, word: string): boolean => {
+  for (let idx = line.indexOf(word); idx !== -1; idx = line.indexOf(word, idx + 1))
+    if (!isWordChar(line[idx - 1]) && !isWordChar(line[idx + word.length])) return true
+  return false
+}
+
+// Diagnose a "not found" old_str: WHY didn't it match, not just that it didn't.
+// Two tiers, cheapest and most common first — never used to auto-apply anything,
+// purely a message so the agent fixes it in one round instead of a blind retry.
+const nearestMissHint = (haystack: string, needle: string): string => {
+  const hLines = haystack.split("\n")
+  const nLines = needle.split("\n")
+  const normN = nLines.map(normalizeLine)
+
+  // Tier 1: the exact same lines exist, just with different whitespace — a sliding
+  // window match on normalized lines, reported at its real (unnormalized) line no.
+  if (hLines.length * normN.length <= TIER1_MAX_COMPARISONS) {
+    for (let i = 0; i + normN.length <= hLines.length; i++) {
+      let allMatch = true
+      for (let j = 0; j < normN.length; j++) {
+        if (normalizeLine(hLines[i + j] as string) !== normN[j]) {
+          allMatch = false
+          break
+        }
+      }
+      if (allMatch)
+        return (
+          ` The text is there at line ${i + 1}, but whitespace differs (tabs vs spaces, or ` +
+          `trailing spaces) — read format:"html" (or the doc's own format) and copy old_str exactly.`
+        )
+    }
+  }
+
+  // Tier 2: the FIRST WORD of old_str's first non-empty line exists somewhere, but
+  // what follows doesn't match — the doc changed since this was written. Show what's
+  // there now. Deliberately just one word, not a phrase: for a single-line old_str the
+  // "first line" IS the whole needle (which by definition didn't match), so requiring
+  // more than a coarse token would never fire — a first-word anchor still locates the
+  // general spot even when everything after it changed. Matched as a whole word (not
+  // a bare substring) so "The" doesn't spuriously anchor onto "Theater".
+  const firstLine = nLines.find((l) => l.trim().length > 0)
+  if (firstLine) {
+    const anchor = firstLine.trim().split(/\s+/)[0] ?? ""
+    const idx = anchor.length >= 3 ? hLines.findIndex((l) => includesWord(l, anchor)) : -1
+    if (idx >= 0) {
+      // Cap each shown line — a real, common shape (a minified/bundled single-line
+      // HTML file) can put tens of thousands of chars on ONE "line", which would
+      // otherwise blow this diagnostic's own token budget. Mirrors the same
+      // line-length cap apps/api/src/lib/search.ts applies to search hits.
+      const clipLine = (s: string): string =>
+        s.length > MISS_HINT_LINE_CLIP ? `${s.slice(0, MISS_HINT_LINE_CLIP)}…` : s
+      const around = hLines
+        .slice(Math.max(0, idx - 1), idx + 2)
+        .map(clipLine)
+        .join("\n")
+      return (
+        ` A similar line exists at line ${idx + 1}, but the rest of old_str doesn't match what's ` +
+        `there now:\n${around}\nRe-read the artifact for the current text.`
+      )
+    }
+  }
+
+  return ' Re-read the artifact (format:"html" for HTML content), or use `search` to find the right spot.'
 }
 
 /**
  * Apply `edits` to `src` in order, each seeing the previous edit's result. Every
- * `old_str` must match EXACTLY ONCE or the whole batch is rejected (nothing partial
- * ever lands) with an error naming the failing edit — the agent adds surrounding
- * context and retries. Same contract as the coding Edit tool, so agents already
- * know how to recover.
+ * `old_str` must match EXACTLY ONCE — unless `occurrence` names which of several
+ * identical matches to replace — or the whole batch is rejected (nothing partial
+ * ever lands). A miss carries a diagnostic (why it didn't match, not just that it
+ * didn't) so the agent fixes it in one round. Same contract as the coding Edit tool,
+ * so agents already know how to recover.
  */
 export function applyEdits(src: string, edits: DocEdit[]): string {
   if (!edits.length)
@@ -662,17 +918,32 @@ export function applyEdits(src: string, edits: DocEdit[]): string {
   for (const [i, e] of edits.entries()) {
     const label = `Edit ${i + 1} of ${edits.length}`
     if (!e.old_str) throw new EditError(`${label} failed: old_str is empty.`)
-    const n = countOccurrences(result, e.old_str)
-    if (n === 0)
+    const positions = occurrencePositions(result, e.old_str)
+    if (positions.length === 0)
       throw new EditError(
-        `${label} failed: old_str not found in the current source. Re-read the artifact ` +
-          `(format:"html" for HTML content) and copy the text exactly.`,
+        `${label} failed: old_str not found in the current source.${nearestMissHint(result, e.old_str)}`,
       )
-    if (n > 1)
+    if (positions.length === 1) {
+      if (e.occurrence !== undefined && e.occurrence !== 1)
+        throw new EditError(
+          `${label} failed: occurrence ${e.occurrence} is out of range — old_str matched once (occurrence 1).`,
+        )
+      result = result.replace(e.old_str, () => e.new_str)
+      continue
+    }
+    // Multiple matches: require `occurrence` to pick one rather than guessing.
+    if (e.occurrence === undefined)
       throw new EditError(
-        `${label} failed: old_str matched ${n} times — include more surrounding context so it is unique.`,
+        `${label} failed: old_str matched ${positions.length} times — add more surrounding context ` +
+          `so it is unique, or pass \`occurrence\` (1..${positions.length}) to pick one.`,
       )
-    result = result.replace(e.old_str, () => e.new_str)
+    if (!Number.isInteger(e.occurrence) || e.occurrence < 1 || e.occurrence > positions.length)
+      throw new EditError(
+        `${label} failed: occurrence ${e.occurrence} is out of range — old_str matched ` +
+          `${positions.length} times (occurrence 1..${positions.length}).`,
+      )
+    const at = positions[e.occurrence - 1] as number
+    result = result.slice(0, at) + e.new_str + result.slice(at + e.old_str.length)
   }
   return result
 }

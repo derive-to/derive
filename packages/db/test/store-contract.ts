@@ -1659,6 +1659,120 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: full-text search index`, () => {
+    const ids = (hits: { id: string }[]) => hits.map((h) => h.id).sort()
+    it("indexes text, finds it ranked, scoped to one org; reindex/unindex mutate it", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const b = await store.createArtifact(newArtifact())
+      const elsewhere = await store.createArtifact(newArtifact({ org_id: `org_${uuid()}` }))
+      await store.indexArtifact(
+        a.id,
+        ORG,
+        "Revenue report",
+        "quarterly revenue grew twenty percent",
+      )
+      await store.indexArtifact(b.id, ORG, "Costs", "operating costs held flat this period")
+      await store.indexArtifact(elsewhere.id, elsewhere.org_id, "Revenue", "revenue in another org")
+
+      // Relevance: "revenue" finds a, not b; "costs" finds b, not a.
+      expect(ids(await store.searchArtifactIds(ORG, "revenue", 10))).toEqual([a.id])
+      expect(ids(await store.searchArtifactIds(ORG, "costs", 10))).toEqual([b.id])
+      // Org isolation: the same-word artifact in another org never leaks into ORG.
+      expect(ids(await store.searchArtifactIds(ORG, "revenue", 10))).not.toContain(elsewhere.id)
+      expect(ids(await store.searchArtifactIds(elsewhere.org_id, "revenue", 10))).toEqual([
+        elsewhere.id,
+      ])
+      // Title is searchable too.
+      expect(ids(await store.searchArtifactIds(ORG, "report", 10))).toEqual([a.id])
+
+      // Reindex (a new version) REPLACES the prior text.
+      await store.indexArtifact(a.id, ORG, "Now", "entirely different subject matter here")
+      expect(await store.searchArtifactIds(ORG, "revenue", 10)).toHaveLength(0)
+      expect(ids(await store.searchArtifactIds(ORG, "subject", 10))).toEqual([a.id])
+
+      // Unindex drops it.
+      await store.unindexArtifact(a.id)
+      expect(await store.searchArtifactIds(ORG, "subject", 10)).toHaveLength(0)
+
+      // A punctuation-only query yields nothing — the literal text is never read as
+      // query syntax (no FTS injection / no error).
+      expect(await store.searchArtifactIds(ORG, "!!! (*)", 10)).toHaveLength(0)
+    })
+
+    it("ranks a more-relevant artifact first, and honours the limit", async () => {
+      const hi = await store.createArtifact(newArtifact())
+      const lo = await store.createArtifact(newArtifact())
+      await store.indexArtifact(hi.id, ORG, null, Array(12).fill("kestrel").join(" "))
+      await store.indexArtifact(lo.id, ORG, null, "kestrel among many unrelated other words here")
+      const ranked = await store.searchArtifactIds(ORG, "kestrel", 10)
+      expect(ranked).toHaveLength(2)
+      expect(ranked[0]?.id).toBe(hi.id) // far more occurrences → higher rank in both dialects
+      expect(ranked[0]?.rank).toBeGreaterThanOrEqual(ranked[1]?.rank ?? 0)
+      expect(await store.searchArtifactIds(ORG, "kestrel", 1)).toHaveLength(1)
+    })
+
+    it("prefix-matches a partial word onto its whole word (both dialects)", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.indexArtifact(a.id, ORG, null, "the authentication flow uses rotating tokens")
+      // A partial word finds the whole word — candidate recall; the caller's grep pass
+      // still enforces the exact literal. Same behaviour on fts5 (`"auth"*`) and
+      // tsvector (`auth:*`).
+      expect(ids(await store.searchArtifactIds(ORG, "auth", 10))).toEqual([a.id])
+      expect(ids(await store.searchArtifactIds(ORG, "rotat", 10))).toEqual([a.id])
+      // Multiple prefix tokens AND together.
+      expect(ids(await store.searchArtifactIds(ORG, "auth token", 10))).toEqual([a.id])
+      // A word absent from the text still doesn't match.
+      expect(await store.searchArtifactIds(ORG, "invoice", 10)).toHaveLength(0)
+    })
+
+    it("deleteArtifact drops the artifact's index row", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.indexArtifact(a.id, ORG, "Ledger", "reconciliation of the general ledger")
+      expect(ids(await store.searchArtifactIds(ORG, "reconciliation", 10))).toEqual([a.id])
+      await store.deleteArtifact(a.id)
+      expect(await store.searchArtifactIds(ORG, "reconciliation", 10)).toHaveLength(0)
+    })
+
+    it("moveArtifactOrg re-scopes the index row to the new workspace", async () => {
+      const target = `org_${uuid()}`
+      const a = await store.createArtifact(newArtifact())
+      await store.indexArtifact(a.id, ORG, null, "migration playbook for the platform team")
+      expect(ids(await store.searchArtifactIds(ORG, "migration", 10))).toEqual([a.id])
+      await store.moveArtifactOrg(a.id, target)
+      // Gone from the old workspace's search; present in the new one (its text is
+      // unchanged by the move — only the scope column moves).
+      expect(await store.searchArtifactIds(ORG, "migration", 10)).toHaveLength(0)
+      expect(ids(await store.searchArtifactIds(target, "migration", 10))).toEqual([a.id])
+    })
+
+    it("is accent-SENSITIVE identically on both dialects (fts5 remove_diacritics 0 == tsvector 'simple')", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.indexArtifact(a.id, ORG, null, "the café résumé report")
+      // The exact accented form matches; the unaccented form does NOT — the same on
+      // fts5 and tsvector, and consistent with the byte-literal grep-confirm ("cafe"
+      // would not grep "café" either). unicode61's default would fold café→cafe and
+      // silently diverge from Postgres; remove_diacritics 0 pins the parity.
+      expect(ids(await store.searchArtifactIds(ORG, "café", 10))).toEqual([a.id])
+      expect(ids(await store.searchArtifactIds(ORG, "résumé", 10))).toEqual([a.id])
+      expect(await store.searchArtifactIds(ORG, "cafe", 10)).toHaveLength(0)
+    })
+
+    it("excludeRemoved drops taken-down rows from listArtifacts (the search visibility gate)", async () => {
+      const a = await store.createArtifact(newArtifact({ listed: "workspace" }))
+      const seen = async (opts: Parameters<typeof store.listArtifacts>[0]) =>
+        (await store.listArtifacts(opts)).map((x) => x.id)
+      expect(await seen({ orgId: ORG, ids: [a.id] })).toEqual([a.id])
+      await store.setArtifactRemoved(a.id, new Date().toISOString())
+      // The default (feed) listing still returns the tombstone; the search gate,
+      // which reads the live blob, must exclude it — this is what keeps a moderated
+      // artifact's text out of workspace search.
+      expect(await seen({ orgId: ORG, ids: [a.id] })).toEqual([a.id])
+      expect(
+        await store.listArtifacts({ orgId: ORG, ids: [a.id], excludeRemoved: true }),
+      ).toHaveLength(0)
+    })
+  })
+
   describe(`${label}: moderation (reports, takedown, audit)`, () => {
     it("files a report, transitions it, takes down an artifact, logs the action", async () => {
       const a = await store.createArtifact(newArtifact())

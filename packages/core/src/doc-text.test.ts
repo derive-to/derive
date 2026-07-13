@@ -4,9 +4,14 @@ import {
   applyEdits,
   docOutline,
   EditError,
+  enclosingMarker,
   headingSlug,
   htmlToMarkdown,
+  landmarkMap,
+  landmarkSlice,
+  landmarksOf,
   outlineOf,
+  sectionMarkers,
   sectionOf,
   sectionSlice,
   toMarkdown,
@@ -214,6 +219,23 @@ describe("docOutline + sectionSlice", () => {
     for (const s of out) expect(s.chars).toBeGreaterThan(0)
   })
 
+  it("covers the full h1–h6 spine, not just h1–h3", () => {
+    const deep = doc(
+      "<h1>One</h1><h2>Two</h2><h3>Three</h3><h4>Four</h4><h5>Five</h5><h6>Six</h6><p>x</p>",
+    )
+    expect(docOutline(deep).map((s) => [s.level, s.slug])).toEqual([
+      [1, "one"],
+      [2, "two"],
+      [3, "three"],
+      [4, "four"],
+      [5, "five"],
+      [6, "six"],
+    ])
+    // A deep heading is addressable, and its section runs to the next same-or-higher.
+    expect(sectionSlice(deep, "four")).toContain("<h4>Four</h4>")
+    expect(outlineOf(deep, "text/html").map((s) => s.level)).toEqual([1, 2, 3, 4, 5, 6])
+  })
+
   it("slices a section up to the next same-or-higher heading", () => {
     const alpha = sectionSlice(html, "alpha")
     expect(alpha).toContain("<h2>Alpha</h2>")
@@ -247,6 +269,105 @@ describe("docOutline + sectionSlice", () => {
     expect(outline.map((s) => s.text)).toEqual(["Real"])
     // And the section it DOES find slices and converts cleanly, with no leaked markup.
     expect(sectionSlice(withScript, "real")).toContain("<h1>Real</h1>")
+  })
+})
+
+describe("landmarkMap (headless-page fallback)", () => {
+  it("maps top-level landmarks with role, label, and size", () => {
+    const html = doc(
+      '<header id="masthead"><p>logo</p></header>' +
+        '<nav aria-label="Primary"><a href="/a">A</a></nav>' +
+        "<main><p>the dashboard body has real content here</p></main>" +
+        "<footer><p>fin</p></footer>",
+    )
+    const map = landmarkMap(html)
+    // Roles are the implicit ARIA landmark roles (banner/navigation/main/contentinfo).
+    expect(map.map((r) => [r.role, r.label])).toEqual([
+      ["banner", "masthead"],
+      ["navigation", "Primary"],
+      ["main", null],
+      ["contentinfo", null],
+    ])
+    for (const r of map) expect(r.chars).toBeGreaterThan(0)
+    // The unlabelled <main> is still recognizable from its text preview.
+    expect(map[2]?.text).toBe("the dashboard body has real content here")
+  })
+
+  it("truncates a long region preview to keep the map compact", () => {
+    const long = "word ".repeat(40)
+    const map = landmarkMap(doc(`<main><p>${long}</p></main>`))
+    expect(map[0]?.text.endsWith("…")).toBe(true)
+    expect(map[0]?.text.length).toBeLessThanOrEqual(81)
+    expect(map[0]?.chars).toBeGreaterThan(100) // chars is the FULL size, not the preview
+  })
+
+  it("folds a nested landmark into its parent (map stays shallow)", () => {
+    const html = doc("<main><section aria-label='inner'><p>x</p></section></main>")
+    expect(landmarkMap(html).map((r) => [r.role, r.label])).toEqual([["main", null]])
+  })
+
+  it("prefers an explicit role attribute, and masks dropped subtrees", () => {
+    const html = doc(
+      '<template><nav aria-label="fake"></nav></template><section role="search" aria-label="Stats"><p>y</p></section>',
+    )
+    const map = landmarkMap(html)
+    expect(map).toHaveLength(1) // the <template> nav is masked
+    expect(map[0]?.role).toBe("search") // explicit role beats the implicit "region"
+    expect(map[0]?.label).toBe("Stats")
+  })
+
+  it("landmarksOf returns [] for markdown and for HTML (via the facade only when html)", () => {
+    expect(landmarksOf("# just markdown", "text/markdown")).toEqual([])
+    expect(landmarksOf(doc("<main><p>hi</p></main>"), "text/html")).toHaveLength(1)
+  })
+})
+
+describe("landmarkSlice (region-addressable reads)", () => {
+  const html = doc(
+    '<nav aria-label="Nav">n</nav><main><p>the main body</p></main><footer>fin</footer>',
+  )
+  it("returns the Nth top-level region's raw HTML, matching the map order", () => {
+    expect(landmarkSlice(html, 1)).toContain("<nav")
+    expect(landmarkSlice(html, 2)).toContain("the main body")
+    expect(landmarkSlice(html, 2)?.startsWith("<main>")).toBe(true)
+    expect(landmarkSlice(html, 3)).toContain("fin")
+    expect(landmarkSlice(html, 4)).toBeNull() // no 4th region
+    expect(landmarkSlice(html, 0)).toBeNull()
+  })
+})
+
+describe("sectionMarkers + enclosingMarker (self-locating search)", () => {
+  it("markers = ATX headings for markdown, with 1-based line numbers", () => {
+    const md = "# Top\nintro\n\n## Alpha\nbody\n\n## Beta\nmore"
+    expect(sectionMarkers(md, "text/markdown")).toEqual([
+      { text: "Top", line: 1 },
+      { text: "Alpha", line: 4 },
+      { text: "Beta", line: 7 },
+    ])
+  })
+
+  it("markers = headings + NESTED labelled landmarks for HTML (the finest section)", () => {
+    // A card inside <main> is the finest enclosing section — top-level-only would miss it.
+    const html =
+      "<body>\n<h1>Report</h1>\n<main>\n<section aria-label='Revenue'>rev</section>\n<section aria-label='Risks'>risk</section>\n</main>\n</body>"
+    const markers = sectionMarkers(html, "text/html")
+    expect(markers).toEqual([
+      { text: "Report", line: 2 },
+      { text: "Revenue", line: 4 },
+      { text: "Risks", line: 5 },
+    ])
+  })
+
+  it("enclosingMarker returns the last marker at or above a line", () => {
+    const markers = [
+      { text: "Report", line: 2 },
+      { text: "Revenue", line: 4 },
+      { text: "Risks", line: 5 },
+    ]
+    expect(enclosingMarker(markers, 1)).toBeNull() // before any marker
+    expect(enclosingMarker(markers, 2)).toBe("Report")
+    expect(enclosingMarker(markers, 4)).toBe("Revenue")
+    expect(enclosingMarker(markers, 10)).toBe("Risks") // after the last marker
   })
 })
 
@@ -305,6 +426,103 @@ describe("applyEdits", () => {
     // ever makes the one match String.replace itself would find; the old counter
     // (advancing by 1 char) double-counted the overlap and rejected this as multi-match.
     expect(applyEdits("aaa", [{ old_str: "aa", new_str: "b" }])).toBe("ba")
+  })
+
+  it("`occurrence` picks which of several identical matches to replace", () => {
+    expect(applyEdits("x x x", [{ old_str: "x", new_str: "y", occurrence: 2 }])).toBe("x y x")
+    expect(applyEdits("x x x", [{ old_str: "x", new_str: "y", occurrence: 1 }])).toBe("y x x")
+    expect(applyEdits("x x x", [{ old_str: "x", new_str: "y", occurrence: 3 }])).toBe("x x y")
+  })
+
+  it("`occurrence` out of range is an actionable error naming the real count", () => {
+    expect(() => applyEdits("x x", [{ old_str: "x", new_str: "y", occurrence: 5 }])).toThrow(
+      /occurrence 5 is out of range.*matched 2 times \(occurrence 1\.\.2\)/,
+    )
+  })
+
+  it("`occurrence` on an already-unique match must be 1, or it's rejected", () => {
+    expect(applyEdits("abc", [{ old_str: "b", new_str: "B", occurrence: 1 }])).toBe("aBc")
+    expect(() => applyEdits("abc", [{ old_str: "b", new_str: "B", occurrence: 2 }])).toThrow(
+      /occurrence 2 is out of range.*matched once/,
+    )
+  })
+
+  it("a multi-match WITHOUT occurrence still asks for more context (default, unambiguous behavior unchanged)", () => {
+    expect(() => applyEdits("x x", [{ old_str: "x", new_str: "y" }])).toThrow(
+      /matched 2 times.*add more surrounding context.*or pass `occurrence`/,
+    )
+  })
+
+  it("a zero-match miss explains WHY: whitespace-normalized hit names its real line", () => {
+    const src = "line one\nline\ttwo  \nline three"
+    expect(() => applyEdits(src, [{ old_str: "line  two", new_str: "x" }])).toThrow(
+      /is there at line 2, but whitespace differs/,
+    )
+  })
+
+  it("a zero-match miss falls back to showing what's actually at a similar line (doc changed since read)", () => {
+    const src = "alpha\nbeta original\ngamma"
+    expect(() => applyEdits(src, [{ old_str: "beta stale text here", new_str: "x" }])).toThrow(
+      /similar line exists at line 2.*beta original/s,
+    )
+  })
+
+  it("a zero-match miss with nothing similar gives the generic re-read steer", () => {
+    expect(() =>
+      applyEdits("abc", [{ old_str: "zzz not present anywhere", new_str: "y" }]),
+    ).toThrow(/Re-read the artifact.*or use `search`/)
+  })
+
+  it("Tier 2's anchor match is whole-word, not a bare substring — 'The' must not spuriously match inside 'Theater' (regression)", () => {
+    const src = "Theater tickets are on sale now.\nOther line here.\nThird line."
+    let msg = ""
+    try {
+      applyEdits(src, [{ old_str: "The show starts at 8pm.\nDoors open at 7.", new_str: "x" }])
+    } catch (e) {
+      msg = e instanceof EditError ? e.message : "wrong error type"
+    }
+    // Before the fix: `.includes("The")` matched inside "Theater", falsely reporting
+    // an unrelated line as "similar". A whole-word match finds nothing here, so this
+    // must fall through to the generic re-read steer instead.
+    expect(msg).not.toMatch(/Theater/)
+    expect(msg).toMatch(/Re-read the artifact.*or use `search`/)
+  })
+
+  it("Tier 2's anchor match still fires for a genuine whole-word match (fix doesn't over-correct)", () => {
+    const src = "alpha\nThe quick brown fox jumps.\ngamma"
+    expect(() =>
+      applyEdits(src, [{ old_str: "The quick red fox runs.\nmore text", new_str: "x" }]),
+    ).toThrow(/similar line exists at line 2.*The quick brown fox jumps/s)
+  })
+
+  it("Tier 2's 'similar line' hint clips an enormous single line — a minified/bundled artifact can legitimately put tens of thousands of chars on one line (regression: found via adversarial testing against a real minified HTML file, where the full line was dumped verbatim into the error message)", () => {
+    const hugeLine = `The quick brown fox jumps. ${"x".repeat(20_000)}`
+    const src = `alpha\n${hugeLine}\ngamma`
+    let msg = ""
+    try {
+      applyEdits(src, [{ old_str: "The quick red fox runs.\nmore text", new_str: "x" }])
+    } catch (e) {
+      msg = e instanceof EditError ? e.message : "wrong error type"
+    }
+    expect(msg).toMatch(/similar line exists at line 2/)
+    expect(msg.length).toBeLessThan(2_000) // nowhere near the real 20,000+ char line
+    expect(msg).toContain("…") // the clip marker
+  })
+
+  it("Tier 1's sliding-window scan is bounded — a large haystack × large needle miss returns fast, not O(haystack×needle) (regression)", () => {
+    // Mirrors the shape that measured ~900ms unbounded in adversarial testing: a large
+    // document combined with a large (but still failing to match) old_str. The bound
+    // must keep this fast regardless of size, not just correct.
+    const hLines = Array.from({ length: 20_000 }, (_, i) => `haystack line ${i} unrelated content`)
+    const nLines = Array.from(
+      { length: 3_000 },
+      (_, i) => `needle line ${i} totally different text`,
+    )
+    const src = hLines.join("\n")
+    const needle = nLines.join("\n")
+    const start = performance.now()
+    expect(() => applyEdits(src, [{ old_str: needle, new_str: "x" }])).toThrow(EditError)
+    expect(performance.now() - start).toBeLessThan(500)
   })
 })
 

@@ -90,6 +90,15 @@ export const version = pgTable(
     preview_key: text("preview_key"),
     preview_status: text("preview_status").$type<PreviewStatus>(),
     preview_error: text("preview_error"),
+    // Two more render-rung variants, agent-facing only — see the matching comment in
+    // schema.ts for what each is and why they're a separate best-effort triple rather
+    // than replacing the OG crop.
+    preview_full_key: text("preview_full_key"),
+    preview_full_status: text("preview_full_status").$type<PreviewStatus>(),
+    preview_full_error: text("preview_full_error"),
+    preview_marked_key: text("preview_marked_key"),
+    preview_marked_status: text("preview_marked_status").$type<PreviewStatus>(),
+    preview_marked_error: text("preview_marked_error"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   // (artifact_id, n) is unique — addVersion relies on it to turn a concurrent
@@ -675,12 +684,30 @@ const TABLES = [
 /** Build the Postgres boot DDL: generated table/index CREATEs + placeholder tables
  *  + perf indexes, then the idempotent ADD COLUMN IF NOT EXISTS migrations. Pure;
  *  exported for the conformance test. */
+// Full-text search index (workspace search substrate) — the Postgres twin of the SQLite
+// fts5 virtual table. A real table holding a precomputed `tsvector` per artifact, with a
+// GIN index for `@@` lookups; the query filters `org_id` to one workspace and ranks with
+// `ts_rank_cd`. Raw DDL (tsvector/GIN aren't in the drizzle defs), appended like the perf
+// indexes so both dialects gain the same capability from one schema pass.
+const ARTIFACT_SEARCH_PG = [
+  `CREATE TABLE IF NOT EXISTS artifact_search (` +
+    `artifact_id text PRIMARY KEY, org_id text NOT NULL, tsv tsvector NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS artifact_search_tsv ON artifact_search USING gin (tsv)`,
+  `CREATE INDEX IF NOT EXISTS artifact_search_org ON artifact_search (org_id)`,
+]
+
 export const buildPgSchemaStatements = (): string[] => {
   const { creates, alters } = generateDdl(TABLES, getTableConfig, {
     ifNotExists: true,
     timestampDefault: PG_TIMESTAMP_DEFAULT,
   })
-  return [...creates, ...placeholderTables(PG_TIMESTAMP_DEFAULT), ...PERF_INDEXES, ...alters]
+  return [
+    ...creates,
+    ...placeholderTables(PG_TIMESTAMP_DEFAULT),
+    ...PERF_INDEXES,
+    ...ARTIFACT_SEARCH_PG,
+    ...alters,
+  ]
 }
 
 export const PG_SCHEMA_STATEMENTS: string[] = buildPgSchemaStatements()

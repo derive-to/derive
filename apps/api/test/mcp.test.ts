@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import type { BlobStore, MetaStore, VersionRecord } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
@@ -9,6 +10,13 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
+import {
+  MAX_INDEX_TEXT,
+  reindexSearchBatch,
+  searchMatcher,
+  searchWorkspace,
+  versionIndexText,
+} from "../src/lib/search"
 
 // The remote MCP endpoint (/mcp) authenticated by an OAuth bearer. We seed a grant
 // straight into the oauth-provider tables (what the consent dance produces), publish
@@ -46,14 +54,15 @@ function appWithGrant(
     new Date(Date.now() + 3_600_000).toISOString(),
   )
   db.close()
+  const blobs = new FsBlobStore(join(dir, `${name}-blobs`))
   const app = createApp({
     meta,
-    blobs: new FsBlobStore(join(dir, `${name}-blobs`)),
+    blobs,
     baseUrl: "http://derive.test",
     token: "tok",
     ...extra,
   })
-  return { app, token: `tok_${name}`, meta }
+  return { app, token: `tok_${name}`, meta, blobs }
 }
 
 type App = ReturnType<typeof createApp>
@@ -112,6 +121,20 @@ const publish = (app: App, token: string, title: string) => {
   })
 }
 
+// Publish arbitrary bytes under a chosen filename (so the sniffer types it), for the
+// search/windowed-read tests that need real multi-line source, not an `<h1>` stub.
+const publishRaw = (app: App, token: string, content: string, filename: string, title: string) => {
+  const form = new FormData()
+  form.append("file", new Blob([new TextEncoder().encode(content)]), filename)
+  form.append("title", title)
+  form.append("visibility", "link")
+  return app.request("/v1/artifacts", {
+    method: "POST",
+    body: form,
+    headers: { authorization: `Bearer ${token}` },
+  })
+}
+
 const call = (app: App, token: string, name: string, args: Record<string, unknown> = {}) =>
   rpc(app, token, {
     jsonrpc: "2.0",
@@ -148,6 +171,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       "list_workspaces",
       "publish",
       "read",
+      "search",
     ])
     // Consolidated away — folded into catch_up / comment / publish.
     for (const gone of [
@@ -501,6 +525,32 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(cd.entry_diff).toContain("V2 Title")
   })
 
+  it("catch_up wait blocks until a NEW VERSION lands (no review round involved) — live co-editing", async () => {
+    const { app, token } = appWithGrant("waitver", "openid derive:read derive:publish")
+    const shortId = (await (await publish(app, token, "V1")).json()).short_id
+
+    const t0 = Date.now()
+    // Start a long-poll (no pending review exists) — race it against a publish that
+    // lands shortly after, well inside the wait window, and confirm it wakes fast
+    // rather than sitting out the full timeout.
+    const waited = call(app, token, "catch_up", { short_id: shortId, since_version: 1, wait: 20 })
+    await new Promise((r) => setTimeout(r, 30))
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("<h1>V2</h1>")]), "index.html")
+    const rep = await app.request(`/v1/artifacts/${shortId}/versions`, {
+      method: "POST",
+      body: form,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(rep.status).toBe(201)
+
+    const c = JSON.parse(toolText(await waited))
+    const elapsedMs = Date.now() - t0
+    expect(elapsedMs).toBeLessThan(15_000) // woke on the event, not the 20s timeout
+    expect(c.head).toBe(2) // sees the version that landed while it was waiting
+    expect(c.new_versions.map((v: { n: number }) => v.n)).toContain(2)
+  })
+
   it("catch_up detailed diffs the markdown conversion, not raw HTML tag noise", async () => {
     const { app, token } = appWithGrant("catchupmd", "openid derive:read derive:publish")
     const v1 =
@@ -596,6 +646,726 @@ describe("remote MCP endpoint (/mcp)", () => {
       toolText(await call(app, token, "catch_up", { short_id: shortId, since_version: 1 })),
     )
     expect(cu.pages_changed.added).toContain("new.html")
+  })
+
+  it("search: literal matches with line numbers, context, case, and regex", async () => {
+    const { app, token } = appWithGrant("search", "openid derive:read derive:publish")
+    const md = [
+      "# Plan",
+      "",
+      "alpha line",
+      "beta line with Pricing",
+      "gamma line",
+      "more pricing here",
+    ].join("\n")
+    const id = (await (await publishRaw(app, token, md, "plan.md", "Plan")).json()).short_id
+
+    // Literal, case-insensitive by default: both "Pricing" and "pricing" lines match.
+    const hit = toolText(await call(app, token, "search", { short_id: id, query: "pricing" }))
+    expect(hit).toContain("2 matches")
+    expect(hit).toContain("4: beta line with Pricing")
+    expect(hit).toContain("6: more pricing here")
+
+    // Case-sensitive narrows to the capital-P line only.
+    const cs = toolText(
+      await call(app, token, "search", { short_id: id, query: "Pricing", case_sensitive: true }),
+    )
+    expect(cs).toContain("1 match")
+    expect(cs).toContain("4: beta line with Pricing")
+    expect(cs).not.toContain("6:")
+
+    // Context shows neighbouring lines with a dash marker, matches with a colon.
+    const withCtx = toolText(
+      await call(app, token, "search", { short_id: id, query: "beta", context: 1 }),
+    )
+    expect(withCtx).toContain("3- alpha line")
+    expect(withCtx).toContain("4: beta line with Pricing")
+    expect(withCtx).toContain("5- gamma line")
+
+    // The query is matched LITERALLY: regex metacharacters are not special, so a
+    // pattern-shaped query only matches that verbatim text (and can't backtrack).
+    const literalMeta = toolText(
+      await call(app, token, "search", { short_id: id, query: "^gamma" }),
+    )
+    expect(literalMeta).toContain("no matches") // there is no literal "^gamma" in the doc
+    const literal = toolText(await call(app, token, "search", { short_id: id, query: "line with" }))
+    expect(literal).toContain("4: beta line with Pricing")
+
+    // No matches steers toward the text scope.
+    const none = toolText(await call(app, token, "search", { short_id: id, query: "zzznothere" }))
+    expect(none).toContain("no matches")
+  })
+
+  it("search: source vs text scope on HTML, and bundles grouped by page", async () => {
+    const { app, token } = appWithGrant("search2", "openid derive:read derive:publish")
+    const html = "<h1>Heading</h1>\n<p>visible pricing text</p>"
+    const id = (await (await publishRaw(app, token, html, "page.html", "Page")).json()).short_id
+
+    // Source search sees the tags; text search sees only the visible words.
+    const inSource = toolText(await call(app, token, "search", { short_id: id, query: "h1" }))
+    expect(inSource).toContain("in source")
+    expect(inSource).toContain("<h1>Heading</h1>")
+    const inText = toolText(
+      await call(app, token, "search", { short_id: id, query: "h1", in: "text" }),
+    )
+    expect(inText).toContain("no matches")
+    const wordInText = toolText(
+      await call(app, token, "search", { short_id: id, query: "pricing", in: "text" }),
+    )
+    expect(wordInText).toContain("in text")
+    expect(wordInText).toContain("pricing")
+
+    // The steer names the format whose line numbers the results match, so the
+    // follow-up windowed read lands on the same coordinate space.
+    expect(inSource).toContain('read(lines:"from-to", format:"html")')
+    expect(wordInText).toContain('read(lines:"from-to", format:"text")')
+
+    // Bundle: matches across pages are grouped under each page path.
+    const enc = (s: string) => new TextEncoder().encode(s)
+    const form = new FormData()
+    form.append(
+      "file",
+      new Blob([
+        zipSync({
+          "index.html": enc("<h1>needle home</h1>"),
+          "about.html": enc("<p>needle about</p>"),
+        }),
+      ]),
+      "site.zip",
+    )
+    form.append("title", "Site")
+    form.append("visibility", "link")
+    const bundleId = (
+      await (
+        await app.request("/v1/artifacts", {
+          method: "POST",
+          body: form,
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).json()
+    ).short_id
+    const across = toolText(
+      await call(app, token, "search", { short_id: bundleId, query: "needle" }),
+    )
+    expect(across).toContain("index.html")
+    expect(across).toContain("about.html")
+    expect(across).toContain("2 matches")
+  })
+
+  it("search: matches are self-locating (§ section labels)", async () => {
+    const { app, token } = appWithGrant("srchsec", "openid derive:read derive:publish")
+    const md = [
+      "# Doc",
+      "",
+      "## Budget",
+      "spend is high",
+      "",
+      "## Risks",
+      "the churn risk is real",
+    ].join("\n")
+    const id = (await (await publishRaw(app, token, md, "plan.md", "Plan")).json()).short_id
+
+    // A term in each section is labelled with the heading it falls under.
+    const budget = toolText(await call(app, token, "search", { short_id: id, query: "spend" }))
+    expect(budget).toContain("§ Budget")
+    const risk = toolText(await call(app, token, "search", { short_id: id, query: "churn" }))
+    expect(risk).toContain("§ Risks")
+
+    // On HTML, a nested labelled landmark is the section (not just top-level).
+    const html =
+      "<body>\n<main>\n<section aria-label='Revenue'>the pricing tier</section>\n</main>\n</body>"
+    const hid = (await (await publishRaw(app, token, html, "d.html", "D")).json()).short_id
+    const s = toolText(await call(app, token, "search", { short_id: hid, query: "pricing" }))
+    expect(s).toContain("§ Revenue")
+  })
+
+  it("search (workspace mode, short_id omitted): greps across accessible artifacts, grouped by artifact, and NEVER leaks a private artifact's content to a viewer who isn't its member (regression)", async () => {
+    const { app, token, meta, blobs } = appWithGrant(
+      "wssearch",
+      "openid derive:read derive:publish",
+    )
+    const r1 = (
+      await (
+        await publishRaw(
+          app,
+          token,
+          "# Report\n\nthe visible-needle-alpha is here",
+          "r1.md",
+          "Report One",
+        )
+      ).json()
+    ).short_id
+    const r2 = (
+      await (
+        await publishRaw(app, token, "# Notes\n\nnothing relevant in here", "r2.md", "Notes")
+      ).json()
+    ).short_id
+
+    // Finds the hit and names which artifact it's in — the whole point of the mode.
+    const found = toolText(await call(app, token, "search", { query: "visible-needle-alpha" }))
+    expect(found).toContain(r1)
+    expect(found).toContain("Report One")
+    expect(found).toContain("1 match")
+    expect(found).not.toContain(r2) // no hit there — must not appear as an empty section
+
+    // A DIFFERENT artifact — listed:"none" (private) and NOT a member — must never
+    // surface, even though it lives in the same workspace. This mirrors exactly the
+    // visibility rule list_artifacts already enforces (artifactListConditions: listed
+    // != 'none' OR isMember); workspace search reuses listArtifacts with the same
+    // viewerId, so this pins that it didn't accidentally widen the scope. Crucially we
+    // ALSO index it below (indexArtifact) so the FTS layer genuinely NOMINATES it as a
+    // candidate — otherwise the negative below would pass vacuously (an unindexed doc
+    // is never a candidate). This proves the listArtifacts gate, not an empty index,
+    // is what drops it.
+    const owner = await meta.getByShortId(r1)
+    if (!owner) throw new Error("expected the visible artifact to exist")
+    const secret = "# Secret\n\nthe private-needle-zulu lives here"
+    const key = await blobs.put(new TextEncoder().encode(secret))
+    await meta.createArtifact({
+      id: "a_stranger_private",
+      short_id: "strangr1",
+      org_id: owner.org_id,
+      slug: null,
+      title: "Stranger's Private Doc",
+      workspace_access: "member",
+      link_role: "none",
+      listed: "none",
+      kind: "file",
+      spa: 0,
+    })
+    await meta.addVersion("a_stranger_private", {
+      id: "v_stranger1",
+      blob_key: key,
+      content_type: "text/markdown",
+      author: "stranger",
+      message: null,
+    })
+    // The index HAS the private artifact + its needle (org-scoped, no visibility) — so
+    // searchArtifactIds will nominate it. The visibility gate must still drop it.
+    await meta.indexArtifact("a_stranger_private", owner.org_id, "Stranger's Private Doc", secret)
+
+    const afterPrivate = toolText(
+      await call(app, token, "search", { query: "private-needle-zulu" }),
+    )
+    // "No matches for ... private-needle-zulu" legitimately echoes the searched
+    // query — the leak to guard against is the private artifact's short_id or its
+    // OWN content surfacing anywhere in the report, neither of which it should.
+    expect(afterPrivate).toContain("No matches")
+    expect(afterPrivate).not.toContain("strangr1")
+    expect(afterPrivate).not.toContain("Secret")
+  })
+
+  it("search (workspace mode): a freshly published artifact is findable across the workspace (publish indexes it)", async () => {
+    // End-to-end proof of the write-path: publishing runs emitVersionBump →
+    // indexArtifactVersion, so the new content is in the index and workspace search
+    // (index → visibility → grep-confirm) surfaces it — no short_id needed.
+    const { app, token } = appWithGrant("wsidx", "openid derive:read derive:publish")
+    await publishRaw(
+      app,
+      token,
+      "# Onboarding\n\nThe kestrel protocol handles retries.",
+      "doc.md",
+      "Onboarding",
+    )
+    const res = toolText(await call(app, token, "search", { query: "kestrel" }))
+    expect(res).toContain("kestrel") // grep-confirmed hunk
+    expect(res).toContain("Onboarding") // grouped under its artifact
+  })
+
+  // Seed N indexed artifacts that all match one query, so the grep-confirm cap is
+  // exercised. Uses the direct meta path (fast) plus indexArtifact — the same row the
+  // publish write-path would write — rather than N slow tool publishes.
+  const seedMatching = async (
+    meta: MetaStore,
+    blobs: BlobStore,
+    orgId: string,
+    prefix: string,
+    n: number,
+  ): Promise<void> => {
+    const key = await blobs.put(new TextEncoder().encode("every doc mentions widget here"))
+    for (let i = 0; i < n; i++) {
+      const id = `a_${prefix}_${i}`
+      const title = `${prefix} ${i} widget`
+      await meta.createArtifact({
+        id,
+        short_id: `${prefix}${i.toString().padStart(4, "0")}`,
+        org_id: orgId,
+        slug: null,
+        title,
+        workspace_access: "member",
+        link_role: "viewer",
+        listed: "workspace",
+        kind: "file",
+        spa: 0,
+      })
+      await meta.addVersion(id, {
+        id: `v_${prefix}_${i}`,
+        blob_key: key,
+        content_type: "text/markdown",
+        author: "seeder",
+        message: null,
+      })
+      await meta.indexArtifact(id, orgId, title, "every doc mentions widget here")
+    }
+  }
+
+  it("search (workspace mode): ranks the whole corpus and shows an honest truncation note past the grep-confirm cap", async () => {
+    const { app, token, meta, blobs } = appWithGrant("wscap", "openid derive:read derive:publish")
+    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
+    const owner = await meta.getByShortId(seed)
+    if (!owner) throw new Error("expected the seed artifact to exist")
+    // 31 matching artifacts — one more than WORKSPACE_SEARCH_ARTIFACT_CAP (30), so the
+    // grep-confirm cap engages and the truncation note must appear.
+    await seedMatching(meta, blobs, owner.org_id, "bulk", 31)
+    const res = toolText(await call(app, token, "search", { query: "widget" }))
+    expect(res).toContain("candidate artifacts you can see") // the relevance-truncation note
+    expect(res).toContain("top 30 of 31")
+  })
+
+  it("search (workspace mode): EXACTLY the cap (30) matching artifacts shows NO truncation note", async () => {
+    const { app, token, meta, blobs } = appWithGrant(
+      "wscapexact",
+      "openid derive:read derive:publish",
+    )
+    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
+    const owner = await meta.getByShortId(seed)
+    if (!owner) throw new Error("expected the seed artifact to exist")
+    // Exactly 30 matching artifacts (the seed doesn't match "widget"): the strict `>`
+    // boundary means no truncation note fires.
+    await seedMatching(meta, blobs, owner.org_id, "exct", 30)
+    const res = toolText(await call(app, token, "search", { query: "widget" }))
+    expect(res).not.toContain("candidate artifacts you can see")
+    expect(res).not.toContain("matched the index")
+  })
+
+  it("search (workspace mode): resolves >90 candidates correctly across visibility chunks (D1 bound-param safety)", async () => {
+    const { app, token, meta, blobs } = appWithGrant("wschunk", "openid derive:read derive:publish")
+    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
+    const owner = await meta.getByShortId(seed)
+    if (!owner) throw new Error("expected the seed artifact to exist")
+    // 120 matching artifacts exceed the 90-id visibility chunk, so candidate ids resolve
+    // over multiple listArtifacts calls (each stays under D1's 100 bound-parameter cap).
+    // The merged, re-ranked result must count all 120 — nothing dropped or duplicated at
+    // the chunk boundary.
+    await seedMatching(meta, blobs, owner.org_id, "chunk", 120)
+    const res = toolText(await call(app, token, "search", { query: "widget" }))
+    expect(res).toContain("top 30 of 120")
+  })
+
+  it("search (workspace mode): a taken-down artifact's content is NOT grep-exfiltratable via search (tombstone hole)", async () => {
+    const { app, token, meta } = appWithGrant("wstomb", "openid derive:read derive:publish")
+    const sid = (
+      await (
+        await publishRaw(app, token, "# Secret\n\nthe tombstoneneedle lives here", "s.md", "Secret")
+      ).json()
+    ).short_id
+    // Findable while live — proves it's indexed (so the negative below is non-vacuous).
+    expect(toolText(await call(app, token, "search", { query: "tombstoneneedle" }))).toContain(
+      "tombstoneneedle",
+    )
+    // Take it down. Takedown deliberately does NOT unindex (a restore must stay cheap), so
+    // the index row survives and still nominates it — the ONLY thing keeping its content
+    // out of search is searchWorkspace's excludeRemoved gate. This pins that hole shut:
+    // the content must not be grep-readable even though the read endpoint 410s it.
+    const art = await meta.getByShortId(sid)
+    if (!art) throw new Error("expected the artifact to exist")
+    await meta.setArtifactRemoved(art.id, new Date().toISOString())
+    const after = toolText(await call(app, token, "search", { query: "tombstoneneedle" }))
+    expect(after).toContain("No matches")
+    expect(after).not.toContain("Secret")
+    expect(after).not.toContain(sid)
+  })
+
+  it("read/search (one-artifact): a taken-down artifact serves no content, mirroring the web 410", async () => {
+    const { app, token, meta } = appWithGrant("wsone", "openid derive:read derive:publish")
+    const sid = (
+      await (
+        await publishRaw(app, token, "# Secret\n\nthe onedocneedle lives here", "s.md", "Secret")
+      ).json()
+    ).short_id
+    // Readable by short_id while live.
+    expect(toolText(await call(app, token, "read", { short_id: sid }))).toContain("onedocneedle")
+    const art = await meta.getByShortId(sid)
+    if (!art) throw new Error("expected the artifact to exist")
+    await meta.setArtifactRemoved(art.id, new Date().toISOString())
+    // After takedown, the direct one-artifact paths (which resolve through reach, not the
+    // index) must ALSO refuse content — otherwise knowing the short_id bypasses the 410.
+    const read = toolText(await call(app, token, "read", { short_id: sid }))
+    expect(read).toContain("taken down")
+    expect(read).not.toContain("onedocneedle")
+    const one = toolText(await call(app, token, "search", { short_id: sid, query: "onedocneedle" }))
+    expect(one).toContain("taken down")
+    expect(one).not.toContain("onedocneedle")
+  })
+
+  it("search (workspace mode): index nominations lacking the exact literal are not reported as matches (recall vs precision)", async () => {
+    const { app, token, meta, blobs } = appWithGrant("wsprec", "openid derive:read derive:publish")
+    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
+    const owner = await meta.getByShortId(seed)
+    if (!owner) throw new Error("expected the seed artifact to exist")
+    // Both words are present but never the contiguous phrase "alpha omega".
+    const key = await blobs.put(
+      new TextEncoder().encode("alpha here and omega there, not adjacent"),
+    )
+    for (let i = 0; i < 3; i++) {
+      const id = `a_prec_${i}`
+      await meta.createArtifact({
+        id,
+        short_id: `prec${i.toString().padStart(5, "0")}`,
+        org_id: owner.org_id,
+        slug: null,
+        title: `Prec ${i}`,
+        workspace_access: "member",
+        link_role: "viewer",
+        listed: "workspace",
+        kind: "file",
+        spa: 0,
+      })
+      await meta.addVersion(id, {
+        id: `v_prec_${i}`,
+        blob_key: key,
+        content_type: "text/markdown",
+        author: "s",
+        message: null,
+      })
+      await meta.indexArtifact(
+        id,
+        owner.org_id,
+        `Prec ${i}`,
+        "alpha here and omega there, not adjacent",
+      )
+    }
+    // The index nominates all three (both prefix tokens present), but grep-confirm for the
+    // contiguous literal finds nothing → honestly "No matches", never a false hit.
+    const res = toolText(await call(app, token, "search", { query: "alpha omega" }))
+    expect(res).toContain("No matches")
+  })
+
+  it("searchWorkspace hides a public-but-password-locked artifact's content from the anonymous (publicOnly) path, not from members", async () => {
+    const { app, token, meta, blobs } = appWithGrant("wslock", "openid derive:read derive:publish")
+    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
+    const owner = await meta.getByShortId(seed)
+    if (!owner) throw new Error("expected the seed artifact to exist")
+    const org = owner.org_id
+    const key = await blobs.put(new TextEncoder().encode("the gatedneedle lives inside"))
+    // Two PUBLIC-listed artifacts with the same content; one is password-locked (a lock on
+    // its world link). The content differs only in whether reading it needs the password.
+    const mk = async (id: string, locked: boolean) => {
+      await meta.createArtifact({
+        id,
+        short_id: id,
+        org_id: org,
+        slug: null,
+        title: `Doc ${id}`,
+        workspace_access: "member",
+        link_role: "viewer",
+        listed: "public",
+        password_hash: locked ? "a-real-hash" : null,
+        kind: "file",
+        spa: 0,
+      })
+      await meta.addVersion(id, {
+        id: `v_${id}`,
+        blob_key: key,
+        content_type: "text/markdown",
+        author: "o",
+        message: null,
+      })
+      await meta.indexArtifact(id, org, `Doc ${id}`, "the gatedneedle lives inside")
+    }
+    await mk("aopen", false)
+    await mk("alock", true)
+    const sourceText = async (v: { blob_key: string; content_type: string }) => {
+      const b = await blobs.get(v.blob_key)
+      return b ? new TextDecoder().decode(b) : null
+    }
+    const deps = { blobs, sourceText, meta }
+    const base = {
+      orgId: org,
+      query: "gatedneedle",
+      re: searchMatcher("gatedneedle", false),
+      where: "text" as const,
+      ctxLines: 0,
+      cap: 40,
+    }
+    // Anonymous / non-member (publicOnly): the locked doc's body must NOT be grep-readable —
+    // reading it needs the password, and search must not bypass that.
+    const anon = await searchWorkspace(deps, { ...base, publicOnly: true })
+    expect(anon.results.map((r) => r.short_id).sort()).toEqual(["aopen"])
+    // A member/trusted caller (no publicOnly) reaches content through membership, not the
+    // link, so the lock doesn't apply — both surface.
+    const member = await searchWorkspace(deps, base)
+    expect(member.results.map((r) => r.short_id).sort()).toEqual(["alock", "aopen"])
+  })
+
+  it("versionIndexText degrades safely on the non-happy paths (never throws)", async () => {
+    // These branches are load-bearing: they keep a publish from throwing, and a throw
+    // here would only be swallowed by emitVersionBump's best-effort catch (silently
+    // dropping the artifact from search). Pin them so a refactor can't regress them.
+    const dir = mkdtempSync(join(tmpdir(), "vit-"))
+    const blobs = new FsBlobStore(join(dir, "b"))
+    const v = (blobKey: string, ct: string) =>
+      ({ blob_key: blobKey, content_type: ct }) as VersionRecord
+    // Happy single-file: the source is indexed.
+    const md = await blobs.put(new TextEncoder().encode("# Title\n\nthe indexed body"))
+    expect(await versionIndexText(blobs, v(md, "text/markdown"))).toContain("indexed body")
+    // Oversized source is capped, not unbounded.
+    const big = await blobs.put(new TextEncoder().encode("x".repeat(MAX_INDEX_TEXT + 5000)))
+    expect((await versionIndexText(blobs, v(big, "text/markdown"))).length).toBeLessThanOrEqual(
+      MAX_INDEX_TEXT,
+    )
+    // Degrade branches → "" (never a throw):
+    const img = await blobs.put(new Uint8Array([1, 2, 3, 4]))
+    expect(await versionIndexText(blobs, v(img, "image/png"))).toBe("") // non-text single file
+    expect(await versionIndexText(blobs, v("0".repeat(64), "text/html"))).toBe("") // missing blob
+    const badBundle = await blobs.put(new TextEncoder().encode("not-a-json-manifest"))
+    expect(await versionIndexText(blobs, v(badBundle, "derive/bundle"))).toBe("") // unparseable manifest
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("search reindex (backfill): a bounded, resumable sweep makes pre-existing (never-indexed) artifacts findable", async () => {
+    const { app, token, meta, blobs } = appWithGrant("reidx", "openid derive:read derive:publish")
+    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
+    const owner = await meta.getByShortId(seed)
+    if (!owner) throw new Error("expected the seed artifact to exist")
+    // 3 artifacts created via the DIRECT meta path (createArtifact + addVersion, no
+    // emitVersionBump) — exactly what a pre-feature / imported artifact looks like: it
+    // exists but was never indexed.
+    const key = await blobs.put(new TextEncoder().encode("the backfillneedle appears here"))
+    for (let i = 0; i < 3; i++) {
+      await meta.createArtifact({
+        id: `a_pre_${i}`,
+        short_id: `pre${i.toString().padStart(5, "0")}`,
+        org_id: owner.org_id,
+        slug: null,
+        title: `Pre ${i}`,
+        workspace_access: "member",
+        link_role: "viewer",
+        listed: "workspace",
+        kind: "file",
+        spa: 0,
+      })
+      await meta.addVersion(`a_pre_${i}`, {
+        id: `v_pre_${i}`,
+        blob_key: key,
+        content_type: "text/markdown",
+        author: "importer",
+        message: null,
+      })
+    }
+    // Not findable before the backfill — the index has no row for them.
+    expect(toolText(await call(app, token, "search", { query: "backfillneedle" }))).toContain(
+      "No matches",
+    )
+    // Drive the bounded sweep to completion (limit:2 forces multiple pages across the
+    // seed + 3 artifacts, exercising the cursor).
+    let cursor: { created_at: string; id: string } | null | undefined
+    let pages = 0
+    let indexed = 0
+    do {
+      const r = await reindexSearchBatch({ meta, blobs }, { cursor: cursor ?? undefined, limit: 2 })
+      indexed += r.indexed
+      cursor = r.nextCursor
+      pages++
+    } while (cursor)
+    expect(pages).toBeGreaterThan(1) // actually paginated, not one big pass
+    expect(indexed).toBeGreaterThanOrEqual(3)
+    // Now findable — grouped under their artifacts.
+    const found = toolText(await call(app, token, "search", { query: "backfillneedle" }))
+    expect(found).toContain("backfillneedle")
+    expect(found).toContain("Pre 0")
+  })
+
+  it("read: a region ref (@N) reads that region directly, with actionable errors", async () => {
+    const { app, token } = appWithGrant("region", "openid derive:read derive:publish")
+    const html =
+      "<!DOCTYPE html><html><body><nav aria-label='Nav'>n</nav><main><p>the main body here</p></main><footer>fin</footer></body></html>"
+    const id = (await (await publishRaw(app, token, html, "app.html", "App")).json()).short_id
+
+    const region2 = toolText(await call(app, token, "read", { short_id: id, section: "@2" }))
+    expect(region2).toContain("section: @2 of 3 regions")
+    expect(region2).toContain("the main body here")
+    // Out-of-range ref names the real count; a doc with no regions says so.
+    const bad = toolText(await call(app, token, "read", { short_id: id, section: "@9" }))
+    expect(bad).toContain("@1..@3")
+    const md = (await (await publishRaw(app, token, "# Just markdown", "x.md", "X")).json())
+      .short_id
+    const none = toolText(await call(app, token, "read", { short_id: md, section: "@1" }))
+    expect(none).toContain("no landmark regions")
+  })
+
+  it('read render:"top" — the publish→look loop (pending, ready as an image, failed)', async () => {
+    const { app, token, meta, blobs } = appWithGrant("render", "openid derive:read derive:publish")
+    const pub = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Styled page",
+          content: "<!DOCTYPE html><html><body><h1>Hi</h1></body></html>",
+          filename: "page.html",
+        }),
+      ),
+    )
+    const id = pub.short_id
+    // The publish receipt steers to the render read.
+    expect(pub.render).toContain('render:"top"')
+
+    // Before the pipeline finishes: an actionable not-ready message, not a failure.
+    const pending = toolText(await call(app, token, "read", { short_id: id, render: "top" }))
+    expect(pending).toContain("isn't ready yet")
+
+    // render + section/lines is rejected as contradictory.
+    const both = toolText(
+      await call(app, token, "read", { short_id: id, render: "top", lines: "1" }),
+    )
+    expect(both).toContain("pass it alone")
+
+    // Seed a ready render (what the previews worker writes) and read it back as an image.
+    const art = await meta.getByShortId(id)
+    if (!art) throw new Error("no artifact")
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4])
+    const key = await blobs.put(png)
+    await meta.setVersionPreview(art.id, 1, { preview_key: key, preview_status: "ready" })
+    const r = await call(app, token, "read", { short_id: id, render: "top" })
+    const content = (
+      r.parsed?.result as {
+        content?: { type: string; text?: string; mimeType?: string; data?: string }[]
+      }
+    )?.content
+    expect(content?.[0]?.text).toContain(`render:top of "${id}" v1`)
+    expect(content?.[1]?.type).toBe("image")
+    expect(content?.[1]?.mimeType).toBe("image/png")
+    expect(content?.[1]?.data?.length).toBeGreaterThan(0)
+
+    // A failed render reports the reason and points at the page.
+    await meta.setVersionPreview(art.id, 1, { preview_status: "failed", preview_error: "timeout" })
+    const failed = toolText(await call(app, token, "read", { short_id: id, render: "top" }))
+    expect(failed).toContain("failed (timeout)")
+  })
+
+  it('read render:"full"/"marked" are independent of render:"top" and of each other', async () => {
+    const { app, token, meta, blobs } = appWithGrant("renderv", "openid derive:read derive:publish")
+    const pub = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Dash",
+          content: "<!DOCTYPE html><html><body><main>x</main></body></html>",
+          filename: "dash.html",
+        }),
+      ),
+    )
+    const id = pub.short_id
+    const art = await meta.getByShortId(id)
+    if (!art) throw new Error("no artifact")
+
+    // "full" not ready yet, independent of "top"/"marked" (neither seeded either).
+    const fullPending = toolText(await call(app, token, "read", { short_id: id, render: "full" }))
+    expect(fullPending).toContain("isn't ready yet")
+
+    // Seed ONLY the marked variant as ready — top/full stay untouched.
+    const png = new Uint8Array([1, 2, 3, 4])
+    const key = await blobs.put(png)
+    await meta.setVersionPreviewVariant(art.id, 1, "marked", { key, status: "ready" })
+    const marked = await call(app, token, "read", { short_id: id, render: "marked" })
+    const markedContent = (marked.parsed?.result as { content?: { type: string; text?: string }[] })
+      ?.content
+    expect(markedContent?.[0]?.text).toContain(`render:marked of "${id}" v1`)
+    expect(markedContent?.[0]?.text).toContain("region map's @N refs")
+    expect(markedContent?.[1]?.type).toBe("image")
+    // "full" is STILL not ready — the marked seed didn't touch it.
+    const fullStill = toolText(await call(app, token, "read", { short_id: id, render: "full" }))
+    expect(fullStill).toContain("isn't ready yet")
+    // "top" is unaffected too — nothing was ever seeded for it.
+    const topStill = toolText(await call(app, token, "read", { short_id: id, render: "top" }))
+    expect(topStill).toContain("isn't ready yet")
+
+    // A "full" failure is reported distinctly from a "marked" one.
+    await meta.setVersionPreviewVariant(art.id, 1, "full", { status: "failed", error: "oom" })
+    const fullFailed = toolText(await call(app, token, "read", { short_id: id, render: "full" }))
+    expect(fullFailed).toContain("render:full")
+    expect(fullFailed).toContain("failed (oom)")
+  })
+
+  it("read: windowed `lines` returns a range, and rejects bad input", async () => {
+    const { app, token } = appWithGrant("window", "openid derive:read derive:publish")
+    const md = ["# Doc", "line two", "line three", "line four", "line five"].join("\n")
+    const id = (await (await publishRaw(app, token, md, "doc.md", "Doc")).json()).short_id
+
+    const win = toolText(await call(app, token, "read", { short_id: id, lines: "2-3" }))
+    expect(win).toContain("lines: 2-3 of 5")
+    expect(win).toContain("line two")
+    expect(win).toContain("line three")
+    expect(win).not.toContain("line four")
+
+    // "4-" runs to the end; a single number is one line.
+    const toEnd = toolText(await call(app, token, "read", { short_id: id, lines: "4-" }))
+    expect(toEnd).toContain("lines: 4-5 of 5")
+    expect(toEnd).toContain("line five")
+    const one = toolText(await call(app, token, "read", { short_id: id, lines: "1" }))
+    expect(one).toContain("lines: 1-1 of 5")
+
+    // lines + section is rejected; a malformed range is an actionable error.
+    const both = await call(app, token, "read", { short_id: id, lines: "2-3", section: "doc" })
+    expect(toolText(both)).toContain("Pass `lines` OR `section`")
+    const bad = await call(app, token, "read", { short_id: id, lines: "nope" })
+    expect(toolText(bad)).toContain("Bad `lines`")
+
+    // A start past the end is an error naming the real range, not an empty "999-5" window.
+    const past = toolText(await call(app, token, "read", { short_id: id, lines: "999-1000" }))
+    expect(past).toContain("Bad `lines`")
+    expect(past).not.toContain("999-5")
+    const zero = toolText(await call(app, token, "read", { short_id: id, lines: "0" }))
+    expect(zero).toContain("Bad `lines`")
+  })
+
+  it("read: a large headless HTML page returns a landmark map, not a blind dump", async () => {
+    const { app, token } = appWithGrant("landmark", "openid derive:read derive:publish")
+    // A designed, heading-less page bigger than the outline-first threshold.
+    const filler = "<p>card content that repeats to exceed the outline threshold. </p>".repeat(700)
+    const html = `<!DOCTYPE html><html><body><nav aria-label="Primary">x</nav><main>${filler}</main><footer>fin</footer></body></html>`
+    const id = (await (await publishRaw(app, token, html, "dash.html", "Dashboard")).json())
+      .short_id
+
+    const res = JSON.parse(toolText(await call(app, token, "read", { short_id: id })))
+    expect(res.regions.map((r: { role: string }) => r.role)).toEqual([
+      "navigation",
+      "main",
+      "contentinfo",
+    ])
+    expect(res.regions[0].label).toBe("Primary")
+    expect(res.next).toContain("search")
+    // And it is not the old blind clipped dump.
+    expect(res.sections).toBeUndefined()
+  })
+
+  it("read: a headless card grid caps the region map instead of blowing the budget", async () => {
+    const { app, token } = appWithGrant("mapcap", "openid derive:read derive:publish")
+    // 400 top-level sections (a card grid) — each a landmark, no headings anywhere.
+    const cards = Array.from(
+      { length: 400 },
+      (_, i) => `<section aria-label="Card ${i}"><p>${"content ".repeat(20)}</p></section>`,
+    ).join("")
+    const html = `<!DOCTYPE html><html><body><main>x</main>${cards}</body></html>`
+    const id = (await (await publishRaw(app, token, html, "grid.html", "Grid")).json()).short_id
+    const res = JSON.parse(toolText(await call(app, token, "read", { short_id: id })))
+    expect(res.regions).toHaveLength(50) // capped
+    expect(res.more_regions).toBe(351) // 401 total (main + 400 cards) - 50 shown
+    // The whole response stays well under the ~80k char / 25k token budget.
+    const raw = toolText(await call(app, token, "read", { short_id: id }))
+    expect(raw.length).toBeLessThan(20_000)
+  })
+
+  it("read: outline now covers the full h1–h6 spine", async () => {
+    const { app, token } = appWithGrant("deep", "openid derive:read derive:publish")
+    const md = ["# One", "## Two", "### Three", "#### Four", "##### Five", "###### Six", "", "body"]
+      .join("\n")
+      // Pad past the outline-first threshold so `read` returns the outline.
+      .concat(`\n\n${"filler line\n".repeat(4000)}`)
+    const id = (await (await publishRaw(app, token, md, "deep.md", "Deep")).json()).short_id
+    const res = JSON.parse(toolText(await call(app, token, "read", { short_id: id })))
+    expect(res.sections.map((s: { level: number }) => s.level)).toEqual([1, 2, 3, 4, 5, 6])
+    // A level-4 heading is addressable as a section.
+    const sec = toolText(await call(app, token, "read", { short_id: id, section: "four" }))
+    expect(sec).toContain("Four")
   })
 
   it("read: formats, heading sections, and the outline-first threshold", async () => {
@@ -1325,13 +2095,18 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     expect(afterFailed).toContain("x y gamma") // unchanged — a failed batch applies nothing
 
-    // base_version conflict: the artifact is at v2, but the agent read v1.
+    // base_version conflict: the artifact is at v2, but the agent read v1. The error
+    // shows WHAT changed (v1 → v2), not just that it did.
     const stale = await call(app, token, "publish", {
       short_id: shortId,
       base_version: 1,
       edits: [{ old_str: "Title", new_str: "T2" }],
     })
-    expect(toolText(stale)).toMatch(/moved to v2/)
+    const staleText = toolText(stale)
+    expect(staleText).toMatch(/moved to v2/)
+    expect(staleText).toContain("What changed (v1 → v2)")
+    expect(staleText).toContain("+")
+    expect(staleText).toContain("-")
 
     // edits + content is rejected; edits with no short_id is rejected.
     expect(

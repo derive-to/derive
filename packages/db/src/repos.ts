@@ -155,10 +155,21 @@ import {
  * once, not in two places (the listArtifacts the review flagged as duplicated).
  */
 export function artifactListConditions(
-  art: { title: Column; created_at: Column; id: Column; org_id: Column; listed: Column },
+  art: {
+    title: Column
+    created_at: Column
+    id: Column
+    org_id: Column
+    listed: Column
+    removed_at: Column
+  },
   opts?: ListArtifactsOpts,
 ): SQL[] {
   const conds: SQL[] = []
+  // Tombstone filter — OFF by default (the feed shows removed rows as tombstone cards),
+  // ON for content-reading callers like search so a moderated artifact's text can't be
+  // grepped out of the index. See ListArtifactsOpts.excludeRemoved.
+  if (opts?.excludeRemoved) conds.push(isNull(art.removed_at))
   // Anonymous / non-member callers only ever see the public directory — a
   // workspace-listed title must not leak to someone outside the workspace.
   if (opts?.publicOnly) conds.push(eq(art.listed, "public"))
@@ -508,6 +519,31 @@ export function makeRepos(db: SqliteDb) {
       .run()
   }
 
+  const setVersionPreviewVariant = async (
+    artifactId: string,
+    n: number,
+    variant: "full" | "marked",
+    fields: { key?: string | null; status?: PreviewStatus | null; error?: string | null },
+  ): Promise<void> => {
+    const set =
+      variant === "full"
+        ? {
+            preview_full_key: fields.key,
+            preview_full_status: fields.status,
+            preview_full_error: fields.error,
+          }
+        : {
+            preview_marked_key: fields.key,
+            preview_marked_status: fields.status,
+            preview_marked_error: fields.error,
+          }
+    await db
+      .update(version)
+      .set(set)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+      .run()
+  }
+
   const listArtifacts = async (opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> => {
     if (opts?.ids && opts.ids.length === 0) return []
     const conds = artifactListConditions(artifact, opts)
@@ -529,6 +565,62 @@ export function makeRepos(db: SqliteDb) {
       .where(conds.length ? and(...conds) : undefined)
       .orderBy(desc(artifact.created_at), desc(artifact.id))
     return opts?.limit ? rows.limit(opts.limit).all() : rows.all()
+  }
+
+  // ---- full-text search index (workspace search substrate) ----
+  // Translate a LITERAL user query into a safe FTS5 MATCH: alnum tokens AND'd as quoted
+  // PREFIX phrases (`"auth"*`), so the user's text is never read as FTS5 syntax
+  // (AND/OR/NEAR/*/parens/quotes) AND a partial word finds its whole word ("auth" →
+  // "authentication") — the grep-confirm pass the caller runs still enforces the exact
+  // literal, so the prefix only widens candidate RECALL, never final precision. Quoting
+  // before the star keeps it valid for every token shape (numeric-leading, unicode).
+  // No tokens (all punctuation) → no query → no matches.
+  const fts5Match = (query: string): string | null => {
+    const tokens = query.match(/[\p{L}\p{N}]+/gu)
+    return tokens?.length ? tokens.map((t) => `"${t}"*`).join(" ") : null
+  }
+  // FTS5 has no UPSERT, so index = delete-then-insert the one row. `text` is title + body
+  // so a title hit ranks the artifact too. Contentless: the source of truth stays the blob.
+  const indexArtifact = async (
+    id: string,
+    orgId: string,
+    title: string | null,
+    text: string,
+  ): Promise<void> => {
+    const content = title ? `${title}\n\n${text}` : text
+    await db.run(sql`DELETE FROM artifact_search WHERE artifact_id = ${id}`)
+    await db.run(
+      sql`INSERT INTO artifact_search (text, artifact_id, org_id) VALUES (${content}, ${id}, ${orgId})`,
+    )
+  }
+  const unindexArtifact = async (id: string): Promise<void> => {
+    await db.run(sql`DELETE FROM artifact_search WHERE artifact_id = ${id}`)
+  }
+  const searchArtifactIds = async (
+    orgId: string,
+    query: string,
+    limit: number,
+  ): Promise<{ id: string; rank: number }[]> => {
+    const match = fts5Match(query)
+    if (!match) return []
+    // bm25() is smaller-is-better; negate so the interface's "higher = more relevant" holds.
+    const rows = (await db.all(sql`
+      SELECT artifact_id, -bm25(artifact_search) AS rank
+      FROM artifact_search
+      WHERE org_id = ${orgId} AND artifact_search MATCH ${match}
+      ORDER BY rank DESC
+      LIMIT ${limit}`)) as { artifact_id: string; rank: number }[]
+    // fts5 has no UNIQUE(artifact_id) and index = DELETE-then-INSERT (two statements), so a
+    // race between two same-artifact publishes can momentarily leave two rows. Dedup on read
+    // (keep the best-ranked) so a caller never sees an id twice. (Postgres can't: PK upsert.)
+    const seen = new Set<string>()
+    const out: { id: string; rank: number }[] = []
+    for (const r of rows) {
+      if (seen.has(r.artifact_id)) continue
+      seen.add(r.artifact_id)
+      out.push({ id: r.artifact_id, rank: r.rank })
+    }
+    return out
   }
 
   const artifactIdsByTag = async (tag: string): Promise<string[]> =>
@@ -2460,11 +2552,21 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
     await db.delete(slackThreadLink).where(eq(slackThreadLink.artifact_id, id)).run()
     await db.delete(artifact).where(eq(artifact.id, id)).run()
+    // Drop the search-index row too. Contentless FTS/tsvector rows aren't drizzle
+    // tables, so they ride the same raw-SQL path unindexArtifact uses.
+    await unindexArtifact(id)
   }
 
   // Sequential move (used by D1). better-sqlite3 + pg override with a transaction.
   const moveArtifactOrg = async (artifactId: string, targetOrgId: string): Promise<void> => {
     await db.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId)).run()
+    // Keep the search-index row's org in step so the moved artifact is findable in its
+    // new workspace immediately (its text is unchanged by a move — only the scope is).
+    // A stale org here could never LEAK it: listArtifacts re-checks org against the live
+    // row, so this is a findability fix, not a visibility one.
+    await db.run(
+      sql`UPDATE artifact_search SET org_id = ${targetOrgId} WHERE artifact_id = ${artifactId}`,
+    )
     // Collections are org-scoped groupings; the artifact leaves all of them.
     await db.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId)).run()
     // An org-scoped webhook that targeted this one artifact falls back to org-wide
@@ -2547,7 +2649,11 @@ export function makeRepos(db: SqliteDb) {
     getVersion,
     reclassifyVersion,
     setVersionPreview,
+    setVersionPreviewVariant,
     listArtifacts,
+    indexArtifact,
+    unindexArtifact,
+    searchArtifactIds,
     artifactIdsByTag,
     artifactIdsByAuthor,
     artifactIdsOwnedBy,

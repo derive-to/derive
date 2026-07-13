@@ -115,6 +115,20 @@ export const version = sqliteTable(
     preview_key: text("preview_key"),
     preview_status: text("preview_status").$type<PreviewStatus>(),
     preview_error: text("preview_error"),
+    // Two more render-rung variants, agent-facing only (never used for og:image/
+    // unfurls, which stay the fixed 1200x630 crop above): the whole page as authored
+    // (`preview_full_*`, full-page fullPage:true screenshot — catches below-the-fold
+    // breakage the OG crop can't) and the same full-page render with the region map's
+    // @N refs drawn on it (`preview_marked_*` — see marks-script.ts), so an agent's
+    // visual read lines up with what it reads/searches by. Same nullable triple shape
+    // and lifecycle as the OG columns; best-effort, computed after the OG render in
+    // the SAME publish job (see previews.ts) rather than a separate queue entry.
+    preview_full_key: text("preview_full_key"),
+    preview_full_status: text("preview_full_status").$type<PreviewStatus>(),
+    preview_full_error: text("preview_full_error"),
+    preview_marked_key: text("preview_marked_key"),
+    preview_marked_status: text("preview_marked_status").$type<PreviewStatus>(),
+    preview_marked_error: text("preview_marked_error"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [uniqueIndex("artifact_version").on(t.artifact_id, t.n)],
@@ -805,10 +819,27 @@ const ddl = generateDdl(TABLES, getTableConfig, {
  * the not-yet-queried placeholder tables (principal/view) and the perf indexes
  * have no drizzle def and stay explicit (see ./ddl).
  */
+// Full-text search index (workspace search substrate). A contentless FTS5 virtual table:
+// `text` is tokenized/searched; `artifact_id`/`org_id` are stored-but-UNINDEXED so a query
+// can filter to one workspace (`org_id = ?`) and return the id, ranked by `bm25()`. Not a
+// drizzle def (FTS5 is raw DDL only), so it lives here explicitly like the perf indexes.
+// D1 ships FTS5; better-sqlite3 ships it too.
+// `remove_diacritics 0` keeps fts5 accent-SENSITIVE, matching both Postgres
+// `to_tsvector('simple', …)` (which preserves diacritics) and the literal grep-confirm
+// pass — so "café" is found by "café", not by "cafe", identically on every tier.
+// unicode61's default folds accents, which would silently diverge the two dialects
+// AND nominate docs the literal grep then drops. Word/whitespace tokenization still
+// differs across dialects for scripts without spaces (CJK) and tokens >2047 bytes
+// (Postgres drops those) — a documented limit of a lexical index, not fixed here.
+const ARTIFACT_SEARCH_FTS5 =
+  `CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(` +
+  `text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61 remove_diacritics 0')`
+
 export const SCHEMA_STATEMENTS: string[] = [
   ...ddl.creates,
   ...placeholderTables(SQLITE_TIMESTAMP_DEFAULT),
   ...PERF_INDEXES,
+  ARTIFACT_SEARCH_FTS5,
 ]
 
 /**

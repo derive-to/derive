@@ -101,6 +101,13 @@ export interface ListArtifactsOpts {
    *  An empty/omitted set with a profile query ⇒ public-only. Used by `listUserWorks`
    *  so a person's profile never leaks non-public work the viewer can't open. */
   visibleOrgIds?: string[]
+  /** Drop taken-down (`removed_at` set) rows. OFF by default because a plain listing
+   *  (the feed) deliberately keeps them to render a tombstone card — it never exposes
+   *  their content. Search MUST set this: it reads the live blob, so a surviving index
+   *  row for a moderated artifact would otherwise let its text be grepped out, bypassing
+   *  the read path's 410 tombstone. `listArtifacts` alone is therefore NOT a complete
+   *  visibility gate for content — this flag closes the tombstone hole. */
+  excludeRemoved?: boolean
 }
 
 export type PreviewStatus = "pending" | "ready" | "failed"
@@ -148,6 +155,18 @@ export interface VersionRecord {
   preview_status: PreviewStatus | null
   /** Short failure reason when preview_status === "failed". */
   preview_error: string | null
+  /** The whole page as authored (fullPage:true), agent-facing only — never the
+   *  og:image/unfurl crop above. Catches below-the-fold breakage the 1200x630 OG
+   *  crop can't. Same nullable lifecycle as the OG triple; best-effort, computed
+   *  after it in the same publish job (see previews.ts). */
+  preview_full_key: string | null
+  preview_full_status: PreviewStatus | null
+  preview_full_error: string | null
+  /** The full-page render again, with the region map's @N refs drawn on it (see
+   *  marks-script.ts) — the richest agent verify+navigate view. */
+  preview_marked_key: string | null
+  preview_marked_status: PreviewStatus | null
+  preview_marked_error: string | null
   created_at: string
 }
 
@@ -236,6 +255,21 @@ export interface ArtifactStore {
       preview_error?: string | null
     },
   ): Promise<void>
+  /** Set the full-page or marked-render variant's result (blob key + status + error).
+   *  Partial; only given fields are written. Separate from `setVersionPreview` (the
+   *  OG crop) because these two variants are best-effort and written independently —
+   *  one failing must never block or overwrite the other, or the OG image unfurls
+   *  already depend on. */
+  setVersionPreviewVariant(
+    artifactId: string,
+    n: number,
+    variant: "full" | "marked",
+    fields: {
+      key?: string | null
+      status?: PreviewStatus | null
+      error?: string | null
+    },
+  ): Promise<void>
   // ---- Render-job queue (screenshot rendering outbox) --------------------
   /** Enqueue a new render job (status defaults to "pending", attempts to 0). */
   enqueueRenderJob(j: NewRenderJob): Promise<void>
@@ -305,6 +339,20 @@ export interface ArtifactQueryStore {
    * `ids` array matches nothing.
    */
   listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]>
+  /** Full-text search index over an artifact's current visible text (+ title), keyed by
+   *  id and scoped by org — the substrate that lifts workspace search past a live-grep of
+   *  the N most-recent artifacts to the whole corpus. `indexArtifact` upserts (call on every
+   *  publish/move with the new current text); `unindexArtifact` drops it (on delete).
+   *  `searchArtifactIds` returns the best-matching ids in ONE org, ranked (higher = more
+   *  relevant, dialect-normalized), with NO visibility filter — the caller re-applies
+   *  visibility via `listArtifacts({ ids })` so that rule lives in exactly one place. */
+  indexArtifact(id: string, orgId: string, title: string | null, text: string): Promise<void>
+  unindexArtifact(id: string): Promise<void>
+  searchArtifactIds(
+    orgId: string,
+    query: string,
+    limit: number,
+  ): Promise<{ id: string; rank: number }[]>
   /** Artifact ids carrying a tag (server-side tag filtering). */
   artifactIdsByTag(tag: string): Promise<string[]>
   /** Artifact ids in a workspace whose current author_login matches `login`

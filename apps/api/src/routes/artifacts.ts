@@ -57,6 +57,14 @@ import {
   toBody,
   workspaceAccessOf,
 } from "../lib/http"
+import {
+  searchArtifactVersion,
+  searchMatcher,
+  searchReport,
+  searchWorkspace,
+  toSearchHits,
+  workspaceSearchReport,
+} from "../lib/search"
 import { enqueueSlackReviewRequestedDm } from "../lib/slack-dm"
 import { Artifact } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
@@ -824,6 +832,114 @@ export const artifactRoutes = (ctx: AppContext) => {
 
   app.post("/v1/artifacts", (c) => handlePublish(c))
   app.post("/v1/artifacts/:shortId/versions", (c) => handlePublish(c, c.req.param("shortId")))
+
+  // Registered BEFORE GET /v1/artifacts/{shortId} below: Hono's router matches
+  // routes in REGISTRATION order, not by static-vs-param specificity, so
+  // /v1/artifacts/search must come first or it's shadowed by :shortId="search"
+  // (caught by a regression test in test/search-rest.test.ts).
+  //
+  // Common query-param parsing for both search routes below — case_sensitive/in/
+  // context/max_matches share the same defaults and bounds as the MCP `search`
+  // tool (apps/api/src/mcp.ts), so a query behaves identically whichever surface
+  // (remote MCP, this REST route, or the stdio CLI that calls it) issues it.
+  const parseSearchParams = (c: Context) => ({
+    query: c.req.query("query"),
+    re: searchMatcher(c.req.query("query") ?? "", c.req.query("case_sensitive") === "true"),
+    where: (c.req.query("in") === "text" ? "text" : "source") as "source" | "text",
+    ctxLines: Math.min(Math.max(Number(c.req.query("context")) || 0, 0), 5),
+    cap: Math.min(Math.max(Number(c.req.query("max_matches")) || 40, 1), 200),
+  })
+
+  // Grep ACROSS a workspace's artifacts — the REST counterpart of the MCP `search`
+  // tool's short_id-omitted mode. Visibility mirrors GET /v1/artifacts exactly (same
+  // memberKey/publicOnly derivation): a caller sees the same artifacts here as they
+  // would in a listing, never more.
+  app.get("/v1/artifacts/search", async (c) => {
+    const me = await currentUser(c)
+    const agent = me ? null : await agentFor(c)
+    if (!me && !agent && !isToken(c)) return bail(fail(c, 401, "unauthenticated"))
+    const { query, re, where, ctxLines, cap } = parseSearchParams(c)
+    if (!query) return fail(c, 400, "`query` is required")
+
+    const memberKey = me?.id ?? agent?.created_by ?? agent?.id ?? null
+    const listOrg = await activeWorkspace(c)
+    const isOperator = isToken(c)
+    const baselineRole = me
+      ? ((await meta.getMembership(listOrg, me.id))?.role ?? null)
+      : agent && agent.org_id === listOrg
+        ? agent.role
+        : null
+    const publicOnly = !(isOperator || baselineRole !== null)
+
+    // `?format=json` is the UI shape (the ⌘K palette): a small, ranked hit list with a
+    // snippet per artifact instead of the agent-facing ripgrep text report. A typeahead
+    // caller keeps the grep-confirm count tiny (bounded 1..12) so a debounced keystroke
+    // reads only a few blobs; the text report keeps the full agent depth.
+    const isJson = c.req.query("format") === "json"
+    const limit = isJson ? Math.min(Math.max(Number(c.req.query("limit")) || 6, 1), 12) : undefined
+    // Keep the whole JSON request cheap, not just the blob reads: a small candidate cap
+    // means the visibility resolve is a SINGLE chunked query and the FTS scan is small —
+    // the palette only shows a handful, so deep recall would be wasted work on a hot path.
+    const candidateCap = isJson ? 60 : undefined
+
+    const { results, note } = await searchWorkspace(
+      { blobs, sourceText, meta },
+      {
+        orgId: listOrg,
+        viewerId: isOperator ? undefined : (memberKey ?? undefined),
+        publicOnly,
+        query,
+        re,
+        where,
+        ctxLines,
+        cap,
+        limit,
+        candidateCap,
+      },
+    )
+    if (isJson) {
+      c.header("X-Content-Type-Options", "nosniff")
+      c.header("Cache-Control", "no-store")
+      return c.json({ hits: toSearchHits(results, query), truncated: note !== null })
+    }
+    c.header("Access-Control-Allow-Origin", "*")
+    c.header("X-Content-Type-Options", "nosniff")
+    c.header("Content-Type", "text/plain; charset=utf-8")
+    return c.body(workspaceSearchReport(query, where, results, note))
+  })
+
+  // Grep WITHIN one artifact — the REST counterpart of the MCP `search` tool's
+  // short_id-present mode, and what the self-hosted stdio CLI's search calls (the
+  // remote MCP server talks to this same meta/blobs store directly instead, but the
+  // grep logic itself — lib/search.ts — is the identical shared engine either way).
+  // This one is safe registered anywhere relative to :shortId's OTHER routes (its
+  // path has an extra /search segment, so it can't collide the way the bare
+  // /v1/artifacts/search route above can) but stays next to it for cohesion.
+  app.get("/v1/artifacts/:shortId/search", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
+      return fail(c, 404, "not found")
+    if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
+    const { query, re, where, ctxLines, cap } = parseSearchParams(c)
+    if (!query) return fail(c, 400, "`query` is required")
+    const v = c.req.query("v") ? Number(c.req.query("v")) : artifact.current_version
+    if (!Number.isInteger(v)) return fail(c, 400, "bad version")
+    const version = await meta.getVersion(artifact.id, v)
+    if (!version) return fail(c, 404, `no version ${v}`)
+
+    const { groups, total, note } = await searchArtifactVersion(
+      { blobs, sourceText },
+      version,
+      re,
+      where,
+      ctxLines,
+      cap,
+    )
+    c.header("Access-Control-Allow-Origin", "*")
+    c.header("X-Content-Type-Options", "nosniff")
+    c.header("Content-Type", "text/plain; charset=utf-8")
+    return c.body(searchReport(c.req.param("shortId"), query, where, total, cap, groups, note))
+  })
 
   app.openapi(
     createRoute({

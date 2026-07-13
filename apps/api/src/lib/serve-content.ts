@@ -3,6 +3,7 @@ import {
   type BundleManifest,
   isBundleContentType,
   looksLikeHtmlDocument,
+  MARKS_SCRIPT,
   mimeFor,
   parseFrontmatter,
   reflowHtml,
@@ -50,9 +51,18 @@ export const serveContent = async (
   const headers = { ...RAW_HEADERS, "Cache-Control": cacheControl }
   const tx = (doc: string) => (transformHtml ? transformHtml(doc) : Promise.resolve(doc))
   const rf = (doc: string) => (reflow ? reflowHtml(doc) : doc)
+  // ?marks=1 draws numbered @N badges on the page's top-level landmark regions — the
+  // marked-render variant of the render rung (see marks-script.ts). Gated on a query
+  // param so it costs a normal read NOTHING: never baked into a plain page load, an
+  // og:image unfurl, or the previews worker's OG crop. Anyone who can already view
+  // the artifact can add it (a lightweight "inspect regions" mode), same auth as any
+  // other read.
+  const wantsMarks = ["1", "true"].includes(c.req.query("marks") ?? "")
+  const marks = wantsMarks ? MARKS_SCRIPT : ""
   // Produce the final HTML body for a document: cross-doc rewrite + auto-reflow, then append
-  // the anchor client (for comment anchoring + live cursors).
-  const htmlBody = async (doc: string): Promise<string> => rf(await tx(doc)) + SELECTION_SCRIPT
+  // the anchor client (for comment anchoring + live cursors) and, when asked, the marks overlay.
+  const htmlBody = async (doc: string): Promise<string> =>
+    rf(await tx(doc)) + SELECTION_SCRIPT + marks
   let path = rawPath
   if (isBundleContentType(content.content_type)) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -73,7 +83,9 @@ export const serveContent = async (
     if (entry.type.startsWith("text/html") || entry.type.startsWith("text/css")) {
       const rewritten = rewriteAbsoluteUrls(new TextDecoder().decode(data), prefix.slice(0, -1))
       // Bundle pages get the anchor client too — comments stick everywhere.
-      const out = entry.type.startsWith("text/html") ? rf(rewritten) + SELECTION_SCRIPT : rewritten
+      const out = entry.type.startsWith("text/html")
+        ? rf(rewritten) + SELECTION_SCRIPT + marks
+        : rewritten
       return c.body(out, 200, { ...headers, "Content-Type": entry.type })
     }
     // Markdown pages (a skill's SKILL.md, a doc bundle's pages) render through the

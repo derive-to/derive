@@ -13,11 +13,15 @@
 // shaped to the agent's workflow (not the API surface), high-signal responses with
 // truncate-and-steer, semantic ids (short_id / vN / page path — never UUIDs),
 // actionable errors, and identity carried in the server `instructions` rather than a
-// tool slot. Five tools, one per intent — FIND (list_artifacts), READ content (read),
-// CATCH UP on state/feedback/history (catch_up), COMMENT (comment), and WRITE
-// (publish). Variation lives in parameters: `since_version`/`to_version` turn
-// catch_up into a diff, `reply_to`/`set_state` fold reply+resolve into comment, and
-// `for_review`/role turn publish into a human-reviewed proposal.
+// tool slot. Seven tools, one per intent — WORKSPACES (list_workspaces), FIND
+// (list_artifacts), READ content (read), GREP (search), CATCH UP on state/feedback/
+// history (catch_up), COMMENT (comment), and WRITE (publish). Variation lives in
+// parameters, never a new tool: `since_version`/`to_version` turn catch_up into a
+// diff, `reply_to`/`set_state` fold reply+resolve into comment, `for_review`/role
+// turn publish into a human-reviewed proposal, and omitting `short_id` turns
+// `search` from grep-one-artifact into grep-the-workspace. A new capability is a
+// parameter on an existing tool, not a new tool — every extra tool costs the agent
+// a slot to understand and choose between.
 
 import {
   type AgentRecord,
@@ -29,15 +33,15 @@ import {
   capRole,
   diffLines,
   EditError,
-  elideDataUris,
   formatDiff,
   isHtmlLike,
+  landmarkSlice,
+  landmarksOf,
   looksLikeHtmlDocument,
   newId,
   type OutlineSection,
   outlineOf,
   PublishError,
-  pageText,
   parseBrandprint,
   parseFrontmatter,
   profileState,
@@ -66,11 +70,23 @@ import {
   manifestOf as sharedManifestOf,
   zipBundleFiles,
 } from "./lib/bundle"
+import { clip, MAX_CHARS } from "./lib/clip"
 import { parseMeta, quoteOf, REACTIONS } from "./lib/comments"
 import { type MaterializedEdits, materializeEdits, preservingFilename } from "./lib/edits"
 import { buildReviewEmail } from "./lib/email"
 import { MAX_UPLOAD_BYTES } from "./lib/http"
 import { notifyCommentBells } from "./lib/notify-comment"
+import {
+  baseType,
+  isTextType,
+  present,
+  type ReadFormat,
+  searchArtifactVersion,
+  searchMatcher,
+  searchReport,
+  searchWorkspace,
+  workspaceSearchReport,
+} from "./lib/search"
 import { enqueueSlackReviewRequestedDm } from "./lib/slack-dm"
 import { enqueueChannelDelivery } from "./webhooks"
 
@@ -87,18 +103,15 @@ const err = (s: string) => ({
   isError: true as const,
 })
 
-// Tool reads are bounded so a big artifact can never blow the client's context
-// window (Claude caps tool responses at ~25k tokens; ~80k chars is a safe ceiling).
-const MAX_CHARS = 80_000
-const clip = (s: string) =>
-  s.length > MAX_CHARS
-    ? `${s.slice(0, MAX_CHARS)}\n\n…[truncated ${s.length - MAX_CHARS} chars — narrow the range]`
-    : s
-
 // Above this, a section-less read of a sectionable doc returns its OUTLINE instead of
 // a blind dump: ~9k tokens leaves room to read on, small enough that most docs still
 // arrive whole. Measured on the formatted body, not the raw source.
 const FULL_DOC_MAX = 30_000
+
+// Cap on landmark regions in a headless-page map: a card grid can have thousands of
+// top-level sections/articles, and the map (built to AVOID a wall of text) must not
+// itself blow the response budget. The rest are summarized as a "+N more" count.
+const PAGE_MAP_MAX = 50
 
 // clip(), but the truncation steer names sections that actually resolve.
 const clipDoc = (s: string, sections: OutlineSection[]) => {
@@ -124,19 +137,6 @@ const doc = (meta: Record<string, string | number | null | undefined>, body: str
   return text(`---\n${head}\n---\n\n${body}`)
 }
 
-// The reading form for stored source at a given format. `markdown` converts HTML;
-// `text` is the flat visible text (exactly what comment quotes anchor against);
-// `html` is the exact source. Markdown/plain sources ARE their own visible text.
-type ReadFormat = "markdown" | "html" | "text"
-const baseType = (t: string) => t.split(";")[0]?.trim() ?? t
-const isTextType = (t: string) => baseType(t) === "text/html" || baseType(t) === "text/markdown"
-// Only the `markdown` format elides data: URIs (never `html`, which `edits` matches
-// byte-for-byte against, or `text`, the comment-anchor source) — see elideDataUris.
-const present = (source: string, contentType: string, format: ReadFormat): string => {
-  if (format === "html") return source
-  if (format === "text") return isHtmlLike(contentType) ? pageText(source) : source
-  return elideDataUris(toMarkdown(source, contentType))
-}
 const formatLabel = (contentType: string, format: ReadFormat): string => {
   if (format === "markdown")
     return isHtmlLike(contentType)
@@ -163,6 +163,20 @@ const toBase64 = (bytes: Uint8Array): string => {
     out += c === undefined ? "=" : B64[c & 63]
   }
   return out
+}
+
+// A 1-indexed, inclusive line range for windowed reads: "40-120", "40" (one line),
+// or "40-" (from 40 to the end). Returns null on a malformed, inverted, or
+// out-of-range start (a `from` past the end has no valid window — the caller errors
+// with the real line count rather than returning an empty "999-5" window).
+const parseLineRange = (spec: string, total: number): { from: number; to: number } | null => {
+  const m = spec.trim().match(/^(\d+)(?:-(\d*))?$/)
+  if (!m) return null
+  const from = Number(m[1])
+  if (from < 1 || from > total) return null
+  const to = m[2] === undefined ? from : m[2] === "" ? total : Number(m[2])
+  if (to < from) return null
+  return { from, to: Math.min(to, total) }
 }
 
 const summarizeArtifact = (a: ArtifactRecord) => ({
@@ -316,7 +330,13 @@ async function buildServer(
         `Start a session with catch_up to re-sync on what changed and what feedback is open; use ` +
         `read to view content — it returns Markdown by default (HTML is converted) and an outline ` +
         `first for large documents or bundles, so pull sections by heading slug or page path once ` +
-        `you know what you want; pass format:'html' for the exact source. Use comment to leave or ` +
+        `you know what you want; pass format:'html' for the exact source. On a large artifact, use ` +
+        `search to grep for a spot and read's \`lines\` to window just that range, instead of ` +
+        `pulling the whole thing. Not sure WHICH artifact has something? Call search without ` +
+        `short_id to grep across the workspace instead — same tool, that one parameter omitted. ` +
+        `After publishing a styled page, call read with render:"top" (or ` +
+        `"full"/"marked") to SEE what shipped — it catches visual breakage no text ` +
+        `read can. Use comment to leave or ` +
         `resolve feedback. ${writeGuidance}To change PART of an artifact, prefer publish's edits ` +
         `(exact-match search/replace against the stored source) over resending everything. When a ` +
         `revision fixes specific feedback, pass those thread ids as publish's "addresses" so the ` +
@@ -527,6 +547,12 @@ async function buildServer(
         (await ctx.meta.getArtifactMember(a.id, agent.id))
       if (!ok) return null
     }
+    // A taken-down artifact serves NO content, mirroring the web /raw 410: read, search,
+    // comment, and publish all resolve through here, so gating it once covers every
+    // one-artifact tool. It stays visible as a tombstone in list_artifacts (metadata
+    // only). Checked AFTER the reach/membership gates so it never confirms a removed
+    // short_id to someone who couldn't have reached it anyway (they still get notFound).
+    if (a.removed_at) return { error: `"${shortId}" was taken down and is no longer available.` }
     return { a, org, role }
   }
   const notFound = (shortId: string) =>
@@ -604,7 +630,7 @@ async function buildServer(
           .string()
           .optional()
           .describe(
-            'What to read. Single-file doc: a heading slug from the outline (e.g. rollout-plan). Bundle: a page path (agentic-loop.html), optionally with a slug (agentic-loop.html#risks). Pass "*" (or "page.html#*" for a bundle page) to force the full (clipped) document/page. Omit it: small docs/pages return whole, large ones return their outline.',
+            'What to read. Single-file doc: a heading slug from the outline (e.g. rollout-plan), or a region ref like "@2" from a headless page\'s map. Bundle: a page path (agentic-loop.html), optionally with a slug (agentic-loop.html#risks). Pass "*" (or "page.html#*" for a bundle page) to force the full (clipped) document/page. Omit it: small docs/pages return whole, large ones return their outline or region map.',
           ),
         format: z
           .enum(["markdown", "html", "text"])
@@ -612,11 +638,23 @@ async function buildServer(
           .describe(
             "markdown (default): HTML converted to structured Markdown — headings, lists, tables, code fences; Markdown sources return as-is. html: the exact stored source — read this BEFORE publish `edits` on an HTML artifact (edits match raw source). text: flat visible text, exactly what comment `quote`s anchor against.",
           ),
+        lines: z
+          .string()
+          .optional()
+          .describe(
+            'Windowed read: a 1-indexed inclusive line range of the body in the chosen format — "40-120", "40" (one line), or "40-" (to the end). Windows a single-file doc, or one bundle page named by a bare `section` path. Pair with format:"html" to window the exact source before an edit. Skips the outline; still capped.',
+          ),
+        render: z
+          .enum(["top", "full", "marked"])
+          .optional()
+          .describe(
+            'SEE the published page instead of reading its text — what a viewer actually sees, catching visual breakage (a failed font, a broken layout) no text read can. "top": the 1200x630 crop (fastest, what an og:image unfurl shows). "full": the whole page, fullPage screenshot — catches below-the-fold breakage "top" misses. "marked": "full" again with the region map\'s @N refs drawn on it — pairs with a no-heading page\'s region map so what you SEE lines up with what you READ. All three computed a few seconds after each publish; pass alone (optionally with `version`).',
+          ),
         version: z.number().optional().describe("Defaults to the current version."),
         workspace: wsArg,
       },
     },
-    async ({ short_id, section, format, version, workspace }) => {
+    async ({ short_id, section, format, version, lines, render, workspace }) => {
       const fmt: ReadFormat = format ?? "markdown"
       const r = await reach(short_id, workspace)
       if (r && "error" in r) return err(r.error)
@@ -628,6 +666,67 @@ async function buildServer(
       const v = await ctx.meta.getVersion(a.id, n)
       if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
       const url = artifactUrl(ctx.deps.baseUrl, a)
+
+      // The render rung: the version's screenshot, so an agent SEES what it shipped.
+      // The preview pipeline computes all three variants per publish (previews.ts);
+      // this surfaces whichever one was asked for. Each lives on its own
+      // key/status/error triple, so "full"/"marked" failing never blocks "top" (the
+      // OG crop og:image unfurls depend on) and vice versa.
+      if (render) {
+        if (section || lines)
+          return err(
+            "`render` is a view of the whole version — pass it alone (with `version` for history).",
+          )
+        const variant =
+          render === "top"
+            ? { key: v.preview_key, status: v.preview_status, error: v.preview_error }
+            : render === "full"
+              ? {
+                  key: v.preview_full_key,
+                  status: v.preview_full_status,
+                  error: v.preview_full_error,
+                }
+              : {
+                  key: v.preview_marked_key,
+                  status: v.preview_marked_status,
+                  error: v.preview_marked_error,
+                }
+        const label =
+          render === "top"
+            ? "the top of the page, 1200x630"
+            : render === "full"
+              ? "the whole page"
+              : "the whole page, with the region map's @N refs drawn on it"
+        if (variant.status === "ready" && variant.key) {
+          const png = await ctx.blobs.get(variant.key)
+          if (png) {
+            if (png.length > IMAGE_INLINE_MAX)
+              return json({
+                short_id,
+                version: n,
+                render: "ready",
+                bytes: png.length,
+                note: `Too large to inline over MCP — open ${url} to view the page.`,
+              })
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `render:${render} of "${short_id}" v${n} — ${label} (${png.length} bytes), as a viewer sees it. The source is untouched; use read/search for the text.`,
+                },
+                { type: "image" as const, data: toBase64(png), mimeType: "image/png" },
+              ],
+            }
+          }
+        }
+        if (variant.status === "failed")
+          return err(
+            `The render:${render} of "${short_id}" v${n} failed${variant.error ? ` (${variant.error})` : ""} — the page may still be fine; open ${url} to check, or republish to retry.`,
+          )
+        return err(
+          `The render:${render} of "${short_id}" v${n} isn't ready yet — screenshots are computed a few seconds after publish. Try again shortly.`,
+        )
+      }
       const manifest = await manifestOf(ctx, v)
 
       if (!manifest) {
@@ -641,6 +740,47 @@ async function buildServer(
           kind: a.kind,
           format: formatLabel(ct, fmt),
           url,
+        }
+        if (lines) {
+          if (section && section !== "*")
+            return err("Pass `lines` OR `section`, not both — windowing applies to the whole doc.")
+          const body = present(src, ct, fmt)
+          const all = body.split("\n")
+          const range = parseLineRange(lines, all.length)
+          if (!range)
+            return err(
+              `Bad \`lines\` "${lines}" for "${short_id}" v${n} (1..${all.length}) — use "40-120", "40", or "40-".`,
+            )
+          const windowed = all.slice(range.from - 1, range.to).join("\n")
+          return doc(
+            {
+              ...meta,
+              lines: `${range.from}-${range.to} of ${all.length}`,
+              chars: windowed.length,
+            },
+            clip(windowed),
+          )
+        }
+        // Region read: "@N" pulls the Nth landmark region from the page map, so a
+        // headless page's map is directly readable, not just orientation.
+        const regionRef = section?.match(/^@(\d+)$/)
+        if (regionRef) {
+          const idx = Number(regionRef[1])
+          const slice = landmarkSlice(src, idx)
+          if (slice === null) {
+            const count = landmarksOf(src, ct).length
+            return err(
+              count
+                ? `No region @${idx} in "${short_id}" — it has ${count} region(s), @1..@${count}. Read with no \`section\` for the map.`
+                : `"${short_id}" has no landmark regions — read a heading \`section\`, a \`lines\` range, or the whole doc.`,
+            )
+          }
+          const body = present(slice, ct, fmt)
+          const count = landmarksOf(src, ct).length
+          return doc(
+            { ...meta, section: `@${idx} of ${count} regions`, chars: body.length },
+            clip(body),
+          )
         }
         if (section && section !== "*") {
           const slice = sectionOf(src, ct, section)
@@ -683,8 +823,30 @@ async function buildServer(
               sections: outline,
               next: 'Large document — call read again with a `section` slug for just that part, or section:"*" for the full clipped text. To revise it, publish with `edits` instead of resending content.',
             })
-          // No headings to summarize by — fall through to a plain (clipped) return,
-          // reusing the already-computed (empty) outline instead of asking again.
+          // No headings — a designed, headless HTML page (dashboard, card grid) still
+          // has landmark structure. Return that map so the agent can search/window in
+          // rather than blindly dumping a clipped wall of text.
+          const regions = landmarksOf(src, ct)
+          if (regions.length)
+            return json({
+              short_id,
+              title: a.title,
+              kind: a.kind,
+              version: n,
+              source: ct,
+              format: fmt,
+              doc_chars: body.length,
+              url,
+              regions: regions
+                .slice(0, PAGE_MAP_MAX)
+                .map((region, i) => ({ ref: `@${i + 1}`, ...region })),
+              ...(regions.length > PAGE_MAP_MAX
+                ? { more_regions: regions.length - PAGE_MAP_MAX }
+                : {}),
+              next: 'This page has no headings — it is mapped by region above. Read a region directly with its `ref` (e.g. section:"@1"), or `search` for a term. section:"*" forces the full clipped text.',
+            })
+          // Truly unstructured — fall through to a plain (clipped) return, reusing the
+          // already-computed (empty) outline instead of asking again.
           return doc({ ...meta, chars: body.length }, clipDoc(body, outline))
         }
         // Under FULL_DOC_MAX: clipDoc's MAX_CHARS ceiling is far above this body's
@@ -799,6 +961,27 @@ async function buildServer(
         url,
         type: file.type,
       }
+      if (lines) {
+        if (slug)
+          return err("Pass `lines` OR a #slug, not both — windowing applies to a whole page.")
+        const pageBody = isText ? present(raw, file.type, fmt) : raw
+        const all = pageBody.split("\n")
+        const range = parseLineRange(lines, all.length)
+        if (!range)
+          return err(
+            `Bad \`lines\` "${lines}" for "${cleanPath(pagePath)}" (1..${all.length}) — use "40-120", "40", or "40-".`,
+          )
+        const windowed = all.slice(range.from - 1, range.to).join("\n")
+        return doc(
+          {
+            ...meta,
+            section: cleanPath(pagePath),
+            lines: `${range.from}-${range.to} of ${all.length}`,
+            chars: windowed.length,
+          },
+          clip(windowed),
+        )
+      }
       if (slug) {
         if (!isText)
           return err(`"${pagePath}" is ${file.type} — heading sections only apply to text pages.`)
@@ -844,6 +1027,24 @@ async function buildServer(
             sections: outline,
             next: `Large page — call read again with \`section\` set to "${cleanPath(pagePath)}#slug" for just that part, or "${cleanPath(pagePath)}#*" for the full clipped text.`,
           })
+        const regions = landmarksOf(raw, file.type)
+        if (regions.length)
+          return json({
+            short_id,
+            title: a.title,
+            kind: "bundle",
+            version: n,
+            section: cleanPath(pagePath),
+            source: file.type,
+            format: fmt,
+            doc_chars: body.length,
+            url,
+            regions: regions.slice(0, PAGE_MAP_MAX),
+            ...(regions.length > PAGE_MAP_MAX
+              ? { more_regions: regions.length - PAGE_MAP_MAX }
+              : {}),
+            next: `This page has no headings — it is mapped by region above. Use \`search\` to find a term, then read with \`lines:"from-to"\` to window that part, or "${cleanPath(pagePath)}#*" for the full clipped text.`,
+          })
         return doc(
           { ...meta, section: cleanPath(pagePath), chars: body.length },
           clipDoc(body, outline),
@@ -862,6 +1063,89 @@ async function buildServer(
     },
   )
 
+  // SEARCH — grep within one artifact, so an agent finds a spot without a full read
+  server.registerTool(
+    "search",
+    {
+      description:
+        "Find text within ONE artifact, or across a WORKSPACE. Pass short_id to grep one artifact (not a full read): matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range (in the format the result names) or `edit` that spot. A bundle is searched across all its text pages, grouped by page. Omit short_id to search across the workspace — the artifacts you can see (same visibility rules as list_artifacts), ranked by relevance and grouped by artifact — so you can find WHICH doc has something before opening it; a note tells you when more matched than were shown. Searches the exact source by default (in:'text' searches the visible text instead). The query is matched literally (metacharacters are not special).",
+      inputSchema: {
+        short_id: z
+          .string()
+          .optional()
+          .describe(
+            "The artifact's short id, e.g. nk0dsral. Omit to search across the workspace instead of one artifact.",
+          ),
+        query: z.string().describe("The literal text to find (metacharacters are not special)."),
+        case_sensitive: z.boolean().optional().describe("Default false."),
+        in: z
+          .enum(["source", "text"])
+          .optional()
+          .describe(
+            "source (default): the exact stored bytes — the positions you'd `edit`. text: the visible text a reader sees (HTML tags stripped).",
+          ),
+        context: z
+          .number()
+          .optional()
+          .describe("Lines of surrounding context to show around each match (default 0, max 5)."),
+        max_matches: z
+          .number()
+          .optional()
+          .describe(
+            "Cap on matches returned per artifact (default 40, max 200). Applies to each artifact scanned in workspace mode too.",
+          ),
+        version: z
+          .number()
+          .optional()
+          .describe("Defaults to the current version. Ignored in workspace mode (always current)."),
+        workspace: wsArg,
+      },
+    },
+    async ({
+      short_id,
+      query,
+      case_sensitive,
+      in: scope,
+      context,
+      max_matches,
+      version,
+      workspace,
+    }) => {
+      if (!query) return err("`query` is required.")
+      const re = searchMatcher(query, case_sensitive ?? false)
+      const ctxLines = Math.min(Math.max(context ?? 0, 0), 5)
+      const cap = Math.min(Math.max(max_matches ?? 40, 1), 200)
+      const where = scope ?? "source"
+
+      if (!short_id) {
+        const t = await resolveWs(workspace)
+        if ("error" in t) return err(t.error)
+        const { results, note } = await searchWorkspace(ctx, {
+          orgId: t.org,
+          viewerId: actingFor?.id ?? agent.id,
+          query,
+          re,
+          where,
+          ctxLines,
+          cap,
+        })
+        return text(workspaceSearchReport(query, where, results, note))
+      }
+
+      const r = await reach(short_id, workspace)
+      if (r && "error" in r) return err(r.error)
+      if (!r) return notFound(short_id)
+      const a = r.a
+      const n = version ?? a.current_version
+      if (n < 1 || n > a.current_version)
+        return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
+      const v = await ctx.meta.getVersion(a.id, n)
+      if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
+      const { groups, total, note } = await searchArtifactVersion(ctx, v, re, where, ctxLines, cap)
+      return text(searchReport(short_id, query, where, total, cap, groups, note))
+    },
+  )
+
   // CATCH UP — state, feedback, history, and diffs all in one ------------------
   server.registerTool(
     "catch_up",
@@ -870,7 +1154,7 @@ async function buildServer(
         "START HERE on an artifact. The state of it in one call: a one-line summary, the versions that landed since `since_version`, which pages changed, the open (and outdated) comment threads, and the full version history. " +
         "Pass `comments` (open / addressed / resolved / outdated) to instead get that filtered thread list — your feedback to-do queue. " +
         "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to include a line-by-line diff between two versions — of their READABLE Markdown form, not raw HTML, so it shows what changed rather than tag noise. " +
-        "WAITING ON A REVIEW? Pass `wait` (seconds, max 50): the call blocks until the human sends back / approves / comments (or the time runs out), then returns the fresh state. Chain wait calls instead of sleeping between polls — feedback reaches you in seconds.",
+        "WAITING ON SOMETHING? Pass `wait` (seconds, max 50): the call blocks until the human sends back / approves / comments / publishes a new version (or the time runs out), then returns the fresh state — including anything new since `since_version`. Works with no pending review too: co-editing live with a human, `wait` blocks until THEIR next save lands. Chain wait calls instead of sleeping between polls — feedback reaches you in seconds.",
       inputSchema: {
         short_id: z.string(),
         since_version: z
@@ -900,7 +1184,7 @@ async function buildServer(
           .max(50)
           .optional()
           .describe(
-            "Long-poll: block up to this many seconds for the human's next action (send back, approve, or a new comment) before returning. Returns immediately when something is already actionable.",
+            "Long-poll: block up to this many seconds for the human's next action (send back, approve, a new comment, or a new published version — e.g. co-editing the artifact live) before returning. Returns immediately when something is already actionable.",
           ),
         workspace: wsArg,
       },
@@ -1279,14 +1563,20 @@ async function buildServer(
               old_str: z
                 .string()
                 .describe(
-                  "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once.",
+                  "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once, unless `occurrence` picks one of several.",
                 ),
               new_str: z.string().describe("Replacement text. Empty string deletes."),
+              occurrence: z
+                .number()
+                .optional()
+                .describe(
+                  "1-based index of WHICH match to replace, when old_str is intentionally non-unique (a phrase repeated verbatim). Omit when old_str already matches once.",
+                ),
             }),
           )
           .optional()
           .describe(
-            "Surgical revision of a SINGLE-FILE artifact without resending it: exact-match search/replace against the current stored source, applied in order (each edit sees the previous one's result). Errors — applying nothing — if any old_str matches zero or multiple times; add surrounding context to disambiguate. Requires `short_id`; use INSTEAD of `content`. Composes with for_review, addresses, message, request_review.",
+            "Surgical revision of a SINGLE-FILE artifact without resending it: exact-match search/replace against the current stored source, applied in order (each edit sees the previous one's result). Errors — applying nothing — if any old_str matches zero times, or matches more than once without `occurrence`; a miss's error explains why (whitespace difference, or the doc changed) so you can fix it in one round. Requires `short_id`; use INSTEAD of `content`. Composes with for_review, addresses, message, request_review.",
           ),
         base_version: z
           .number()
@@ -1667,6 +1957,9 @@ async function buildServer(
           // they sent.
           ...(artifact.kind === "file" ? { content_sha256: version.blob_key } : {}),
           ...(pageUrls ? { page_urls: pageUrls } : {}),
+          // The publish→look loop: a screenshot of the served page is queued at every
+          // publish; seeing it is the only way to catch purely-visual breakage.
+          render: `queued — call read(short_id:"${artifact.short_id}", render:"top") in a few seconds to SEE the published page ("full"/"marked" for the whole page, or with the region map's @N refs drawn on it).`,
           title: artifact.title,
           workspace_access: artifact.workspace_access,
           link_role: artifact.link_role,

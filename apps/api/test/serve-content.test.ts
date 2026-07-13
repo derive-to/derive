@@ -60,6 +60,51 @@ describe("serveContent — single-file artifacts", () => {
     expectSandbox(res)
   })
 
+  it("omits the marks overlay on a normal read — zero cost to a plain page load", async () => {
+    const res = await serveContent(
+      ctx(),
+      blobStore({ k: "<main>Hi</main>" }),
+      { blob_key: "k", content_type: "text/html" },
+      "Title",
+      "/",
+      "",
+    )
+    const body = await res.text()
+    expect(body).not.toContain("var TAGS")
+  })
+
+  it("?marks=1 (or marks=true) injects the region-overlay script; anything else doesn't", async () => {
+    const withMarks1 = await serveContent(
+      ctx({ marks: "1" }),
+      blobStore({ k: "<main>Hi</main>" }),
+      { blob_key: "k", content_type: "text/html" },
+      "Title",
+      "/",
+      "",
+    )
+    expect(await withMarks1.text()).toContain("var TAGS")
+
+    const withMarksTrue = await serveContent(
+      ctx({ marks: "true" }),
+      blobStore({ k: "<main>Hi</main>" }),
+      { blob_key: "k", content_type: "text/html" },
+      "Title",
+      "/",
+      "",
+    )
+    expect(await withMarksTrue.text()).toContain("var TAGS")
+
+    const withMarksOther = await serveContent(
+      ctx({ marks: "0" }),
+      blobStore({ k: "<main>Hi</main>" }),
+      { blob_key: "k", content_type: "text/html" },
+      "Title",
+      "/",
+      "",
+    )
+    expect(await withMarksOther.text()).not.toContain("var TAGS")
+  })
+
   it("renders markdown to HTML", async () => {
     const res = await serveContent(
       ctx(),
@@ -174,6 +219,13 @@ describe("serveContent — bundles", () => {
     expect(body).toContain('href="/raw/abc/v/1/deep"') // root-absolute link kept in scope
     expect(body).toContain(SCRIPT)
     expectSandbox(res)
+  })
+
+  it("?marks=1 injects the region overlay on a bundle HTML page too", async () => {
+    const res = await serveContent(ctx({ marks: "1" }), bundleBlobs(), content, "Site", prefix, "")
+    expect(await res.text()).toContain("var TAGS")
+    const plain = await serveContent(ctx(), bundleBlobs(), content, "Site", prefix, "")
+    expect(await plain.text()).not.toContain("var TAGS")
   })
 
   it("serves a CSS page rewritten but WITHOUT the anchor client", async () => {

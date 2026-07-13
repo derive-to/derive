@@ -179,6 +179,18 @@ export interface OutlineSectionJson {
   chars: number
 }
 
+export interface SearchOpts {
+  caseSensitive?: boolean
+  /** source (default): the exact stored bytes. text: the visible text (tags stripped). */
+  in?: "source" | "text"
+  /** Lines of surrounding context per match (default 0, max 5, server-clamped). */
+  context?: number
+  /** Cap on matches returned per artifact (default 40, max 200, server-clamped). */
+  maxMatches?: number
+  /** Single-artifact search only; ignored in workspace-wide mode. */
+  version?: number
+}
+
 export interface DeriveClient {
   /** List the workspace's artifacts (optionally filtered by a title query). */
   list(query?: string): Promise<ArtifactSummaryJson[]>
@@ -187,6 +199,10 @@ export interface DeriveClient {
   propose(shortId: string, args: ProposeArgs): Promise<ProposalJson>
   get(shortId: string): Promise<ArtifactJson>
   getContent(shortId: string, opts?: ContentOpts): Promise<ContentResult>
+  /** Grep WITHIN one artifact (shortId set) or ACROSS the workspace (shortId
+   *  omitted) — the same engine and ripgrep-style text report the remote MCP
+   *  `search` tool returns, relayed here verbatim. */
+  search(shortId: string | undefined, query: string, opts?: SearchOpts): Promise<string>
   /** The heading (single-file) or page (bundle) outline. Empty `sections` on an
    *  older server that doesn't understand `?outline=1` (it 400s or ignores it). */
   getOutline(
@@ -332,6 +348,24 @@ export function createClient(opts: ClientOptions): DeriveClient {
         // whole-artifact content and not assume format/section were honored.
         supportsParams: format !== null,
       }
+    },
+
+    async search(shortId, query, opts) {
+      const q = new URLSearchParams({ query })
+      if (opts?.caseSensitive) q.set("case_sensitive", "true")
+      if (opts?.in) q.set("in", opts.in)
+      if (opts?.context != null) q.set("context", String(opts.context))
+      if (opts?.maxMatches != null) q.set("max_matches", String(opts.maxMatches))
+      if (opts?.version != null) q.set("v", String(opts.version))
+      const path = shortId
+        ? `${base}/v1/artifacts/${shortId}/search?${q}`
+        : `${base}/v1/artifacts/search?${q}`
+      const res = await f(path, { headers: authHeaders })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(`derive ${res.status}: ${body.error ?? res.statusText}`)
+      }
+      return res.text()
     },
 
     async getOutline(shortId, version) {

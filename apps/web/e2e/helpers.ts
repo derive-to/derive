@@ -36,21 +36,26 @@ export async function signUp(page: Page, name = "E2E Tester", email?: string): P
 
 // Publish an artifact straight through the authenticated API and return its
 // short id. Faster and less flaky than driving the file picker, and the UI
-// reads the same data back.
+// reads the same data back. `body` accepts raw bytes too (a zip buffer for a
+// bundle publish) — pass `mimeType` to match (the server sniffs by FILENAME
+// first, so `name`'s extension is what actually decides content type; mimeType
+// is sent for correctness but isn't load-bearing for markdown/html).
 export async function publishArtifact(
   page: Page,
   name = "doc.md",
-  body = "# Doc\n\nbody text",
+  body: string | Uint8Array = "# Doc\n\nbody text",
+  mimeType = "text/markdown",
 ): Promise<string> {
   // Retry the publish: in multi-workspace mode a brand-new user's personal
   // workspace is provisioned lazily on first request, so the very first publish
   // can briefly race that. toPass re-issues it until it succeeds (eventual
   // consistency, not flake-masking) within a short window.
+  const buffer = typeof body === "string" ? Buffer.from(body) : Buffer.from(body)
   let shortId = ""
   await expect(async () => {
     const res = await page.request.post("/v1/artifacts", {
       multipart: {
-        file: { name, mimeType: "text/markdown", buffer: Buffer.from(body) },
+        file: { name, mimeType, buffer },
         // A world view-link explicitly: most specs hand the artifact to a second
         // user or an anonymous page, which the team-draft default would lock out.
         // Specs about the default itself publish without the helper.

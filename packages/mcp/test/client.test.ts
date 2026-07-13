@@ -176,6 +176,53 @@ describe("derive client (the MCP server's backend) over real HTTP", () => {
     expect(none.some((x) => x.short_id === a.short_id)).toBe(false)
   })
 
+  it("search: greps within one artifact (short_id set) over real HTTP", async () => {
+    const a = await client.publish({
+      content: "# Plan\n\nalpha line\nbeta line with Pricing\ngamma line",
+      filename: "search1.md",
+      title: "Search Target",
+    })
+    const hit = await client.search(a.short_id, "pricing")
+    expect(hit).toContain("1 match")
+    expect(hit).toContain("beta line with Pricing")
+
+    const cs = await client.search(a.short_id, "Pricing", { caseSensitive: true })
+    expect(cs).toContain("1 match")
+    const csMiss = await client.search(a.short_id, "PRICING", { caseSensitive: true })
+    expect(csMiss).toContain("no matches")
+
+    const html = await client.publish({
+      content: "<h1>Heading</h1>\n<p>visible pricing text</p>",
+      filename: "search1.html",
+      title: "Search HTML",
+    })
+    const inSource = await client.search(html.short_id, "h1")
+    expect(inSource).toContain("<h1>Heading</h1>")
+    const inText = await client.search(html.short_id, "h1", { in: "text" })
+    expect(inText).toContain("no matches")
+  })
+
+  it("search: greps ACROSS the workspace when short_id is omitted, over real HTTP (route-order + cross-artifact grouping)", async () => {
+    const a = await client.publish({
+      content: "# Doc One\n\nthe stdio-workspace-needle-alpha lives here",
+      filename: "wsA.md",
+      title: "Workspace Doc A",
+    })
+    await client.publish({
+      content: "# Doc Two\n\nnothing relevant in this one",
+      filename: "wsB.md",
+      title: "Workspace Doc B",
+    })
+    // A route-order regression (workspace search shadowed by GET /v1/artifacts/:id)
+    // would 404 here instead of returning a report — this exercises the client's
+    // real HTTP path, not just the REST layer directly (packages/mcp is a SEPARATE
+    // package/build from apps/api, so this is genuine end-to-end coverage).
+    const report = await client.search(undefined, "stdio-workspace-needle-alpha")
+    expect(report).toContain(a.short_id)
+    expect(report).toContain("Workspace Doc A")
+    expect(report).not.toContain("Workspace Doc B")
+  })
+
   it("proposes a single-file revision for review (with and without addresses)", async () => {
     const a = await client.publish({ content: "# headline", filename: "p.md", title: "Proposable" })
     const c = await client.createComment(a.short_id, { body_md: "fix headline", author: "jess" })
