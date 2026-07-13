@@ -456,7 +456,9 @@ variants.
   lives behind the ⋯ — the render is the hero, the chrome recedes.
 - **Live cursors** — peers' cursors are a slim arrow tinted by their **identity**: a stable,
   distinct tint from the shared identity palette (`colorForName`, the same palette avatar
-  tints draw from), keyed on the server-stamped handle that also names them in presence.
+  tints draw from), keyed on the peer's stable **id** — not their display name, which
+  collapses (a handle-less account is "someone", a missing name "Guest") and would paint
+  distinct people one color; the id is always unique, so every peer gets a distinct tint.
   Color follows the person — one tint per peer for the session, never a per-cursor pick — with
   a `font-medium` name flag that fades on stillness. The identity tint stops at the cursor **on
   purpose**: a cursor *moves*, so color pre-attentively separates two arrows scrubbing at once
