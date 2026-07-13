@@ -416,6 +416,7 @@ const LIST_ID_CHUNK = 90
 export interface WorkspaceSearchResult {
   short_id: string
   title: string
+  current_version: number
   groups: { path: string | null; hunks: SearchHunk[] }[]
   total: number
 }
@@ -438,6 +439,10 @@ export const searchWorkspace = async (
     where: "source" | "text"
     ctxLines: number
     cap: number
+    // How many visible candidates to grep-confirm. Defaults to WORKSPACE_SEARCH_ARTIFACT_CAP
+    // (agents want depth); a typeahead surface passes a small value so a debounced keystroke
+    // reads only a handful of blobs.
+    limit?: number
   },
 ): Promise<{ results: WorkspaceSearchResult[]; note: string | null }> => {
   // Tier 1 — the index nominates the most relevant candidate ids across the whole
@@ -479,7 +484,8 @@ export const searchWorkspace = async (
   // real cost, so it stays bounded. A candidate the index nominated on token overlap
   // but whose exact literal/scope isn't actually present yields no hunks and drops out
   // here: the index is RECALL, the grep is PRECISION.
-  const toGrep = visible.slice(0, WORKSPACE_SEARCH_ARTIFACT_CAP)
+  const grepCap = opts.limit ?? WORKSPACE_SEARCH_ARTIFACT_CAP
+  const toGrep = visible.slice(0, grepCap)
   // 4, not searchArtifactVersion's inner 8: the two fan-outs compose (a batch of
   // bundles each opens its own 8-wide page fan-out), so peak blob reads is the product
   // — 4×8=32 keeps that worst case reasonable without a cross-cutting semaphore.
@@ -495,7 +501,15 @@ export const searchWorkspace = async (
       opts.ctxLines,
       opts.cap,
     )
-    return total ? { short_id: a.short_id, title: a.title ?? a.short_id, groups, total } : null
+    return total
+      ? {
+          short_id: a.short_id,
+          title: a.title ?? a.short_id,
+          current_version: a.current_version,
+          groups,
+          total,
+        }
+      : null
   }
   const results: WorkspaceSearchResult[] = []
   for (let i = 0; i < toGrep.length; i += CONCURRENCY) {
@@ -508,9 +522,9 @@ export const searchWorkspace = async (
   // wording says "candidates", never "matches". `grepTruncated`: more visible candidates
   // than we confirmed. `moreCandidates`: the index had still more below the window
   // (detected by the over-fetched sentinel) — hence the `+`.
-  const grepTruncated = visible.length > WORKSPACE_SEARCH_ARTIFACT_CAP
+  const grepTruncated = visible.length > grepCap
   const note = grepTruncated
-    ? `ranked by relevance — grep-confirmed the top ${WORKSPACE_SEARCH_ARTIFACT_CAP} of ${visible.length}${
+    ? `ranked by relevance — grep-confirmed the top ${grepCap} of ${visible.length}${
         moreCandidates ? "+" : ""
       } candidate artifacts you can see; refine the query to reach the rest`
     : moreCandidates
@@ -543,3 +557,45 @@ export const workspaceSearchReport = (
   const steer = `\n\nOpen one with search(short_id:"...", query:"${query}") for full context, or read(short_id:"...", lines:"from-to", format:"${fmt}").`
   return clip(`${head}\n\n${body}${steer}`)
 }
+
+// ---------------------------------------------------------------------------
+// JSON hits — the same workspace results shaped for a UI (the ⌘K palette) instead of
+// the agent text report: one artifact per hit, with a single-line snippet of WHERE it
+// matched so a human sees why it surfaced. The client highlights the term itself.
+// ---------------------------------------------------------------------------
+
+export interface SearchHit {
+  short_id: string
+  title: string
+  current_version: number
+  /** One line of the matching text, windowed around the first match (…elided ends). */
+  snippet: string
+}
+
+const SNIPPET_RADIUS = 90
+
+// Window a long line around the first occurrence of `query` so the match stays visible
+// instead of scrolling off a clipped line. Whitespace is collapsed (a source line can be
+// deeply indented). Falls back to the head of the line when the literal isn't found on it.
+export const snippetAround = (line: string, query: string): string => {
+  const flat = line.replace(/\s+/g, " ").trim()
+  const q = query.trim()
+  if (flat.length <= SNIPPET_RADIUS * 2) return flat
+  const at = flat.toLowerCase().indexOf(q.toLowerCase())
+  if (at < 0) return `${flat.slice(0, SNIPPET_RADIUS * 2)}…`
+  const start = Math.max(0, at - SNIPPET_RADIUS)
+  const end = Math.min(flat.length, at + q.length + SNIPPET_RADIUS)
+  return `${start > 0 ? "…" : ""}${flat.slice(start, end)}${end < flat.length ? "…" : ""}`
+}
+
+export const toSearchHits = (results: WorkspaceSearchResult[], query: string): SearchHit[] =>
+  results.map((r) => {
+    // The first HIT line across the artifact's groups is the most relevant snippet source.
+    const hit = r.groups.flatMap((g) => g.hunks.flatMap((h) => h.lines)).find((l) => l.hit)
+    return {
+      short_id: r.short_id,
+      title: r.title,
+      current_version: r.current_version,
+      snippet: hit ? snippetAround(hit.text, query) : "",
+    }
+  })

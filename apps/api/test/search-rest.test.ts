@@ -123,4 +123,39 @@ describe("/v1/artifacts/:shortId/search and /v1/artifacts/search — REST search
     const res = await a.request("/v1/artifacts/search?query=x") // no headers at all
     expect(res.status).toBe(401)
   })
+
+  it("?format=json returns ranked hits with a match snippet (the ⌘K palette shape)", async () => {
+    const { app: a } = makeAuthedApp("rest-search-json", users, "editor")
+    await publishAs(
+      a,
+      "# Notes\n\nthe quarterly kestrel review is scheduled for friday",
+      { title: "Notes", listed: "workspace" },
+      as("search-owner@x.test"),
+    )
+    const res = await a.request("/v1/artifacts/search?format=json&in=text&query=kestrel", {
+      headers: as("search-owner@x.test"),
+    })
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toContain("application/json")
+    const body = (await res.json()) as {
+      hits: { short_id: string; title: string; current_version: number; snippet: string }[]
+      truncated: boolean
+    }
+    const hit = body.hits.find((h) => h.title === "Notes")
+    if (!hit) throw new Error("expected the Notes artifact in the hits")
+    expect(hit.short_id).toBeTruthy()
+    expect(hit.current_version).toBe(1)
+    // The snippet is the matching line — what the palette highlights.
+    expect(hit.snippet.toLowerCase()).toContain("kestrel")
+    expect(typeof body.truncated).toBe("boolean")
+    // Visibility is the SAME searchWorkspace gate the text path uses (results are
+    // filtered before toSearchHits), so a private artifact can't leak here either — a
+    // word absent from anything visible returns no hits.
+    const none = await (
+      await a.request("/v1/artifacts/search?format=json&query=zznomatchzz", {
+        headers: as("search-owner@x.test"),
+      })
+    ).json()
+    expect(none.hits).toEqual([])
+  })
 })

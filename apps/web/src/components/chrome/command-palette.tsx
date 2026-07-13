@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
-import { type Artifact, api, type PublicProfile, workspaceDisplayName } from "@/api"
+import { type Artifact, api, type PublicProfile, type SearchHit, workspaceDisplayName } from "@/api"
 import { Icon } from "@/components/icons"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
@@ -14,6 +14,7 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { colorForName } from "@/lib/avatar-tints"
+import { splitMatches } from "@/lib/highlight"
 import { getInitials } from "@/lib/initials"
 import { collectionsQuery, workspacesQuery } from "@/lib/queries"
 import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
@@ -21,6 +22,23 @@ import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
 import { useShell } from "./shell-context"
+
+// Emphasize the query where it appears in a content snippet — the surrounding text is
+// muted (the caller styles it), the match reads at full weight. Splitting is pure +
+// tested in lib/highlight; here we just render the marked segments.
+function highlight(text: string, query: string): React.ReactNode[] {
+  return splitMatches(text, query).map((seg, i) =>
+    seg.match ? (
+      // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional + stable per render
+      <span key={i} className="font-semibold text-foreground">
+        {seg.text}
+      </span>
+    ) : (
+      // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional + stable per render
+      <span key={i}>{seg.text}</span>
+    ),
+  )
+}
 
 // ⌘K palette: jump to any artifact (server search) or to a feed (All / Favorites /
 // Following), a collection, or another workspace — from anywhere, incl. inside an artifact.
@@ -36,8 +54,10 @@ export function CommandPalette() {
   const prefetch = usePrefetchArtifact()
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<Artifact[]>([])
+  const [contentHits, setContentHits] = useState<SearchHit[]>([])
   const [people, setPeople] = useState<PublicProfile[]>([])
   const [loading, setLoading] = useState(false)
+  const [contentLoading, setContentLoading] = useState(false)
   const [peopleLoading, setPeopleLoading] = useState(false)
 
   // Fresh query each open.
@@ -45,6 +65,7 @@ export function CommandPalette() {
     if (paletteOpen) {
       setQuery("")
       setResults([])
+      setContentHits([])
       setPeople([])
     }
   }, [paletteOpen])
@@ -94,12 +115,44 @@ export function CommandPalette() {
     }
   }, [query, paletteOpen])
 
+  // Debounced CONTENT search (the persisted index) — finds artifacts by what's inside
+  // them, not just their title, with a snippet of the match. Gated to ≥2 chars and a
+  // small limit so a debounced keystroke reads only a few blobs. Slightly longer debounce
+  // than the title lookup: it's the heavier call.
+  useEffect(() => {
+    if (!paletteOpen) return
+    const term = query.trim()
+    if (term.length < 2) {
+      setContentHits([])
+      setContentLoading(false)
+      return
+    }
+    let alive = true
+    setContentLoading(true)
+    const t = setTimeout(() => {
+      api
+        .searchContent(term, 6)
+        .then((r) => alive && setContentHits(r.hits))
+        // frontend-ignore: debounced typeahead — clearing on an aborted/failed keystroke is intended, not a hidden load failure
+        .catch(() => alive && setContentHits([]))
+        .finally(() => alive && setContentLoading(false))
+    }, 220)
+    return () => {
+      alive = false
+      clearTimeout(t)
+    }
+  }, [query, paletteOpen])
+
   const go = (fn: () => void) => {
     setPaletteOpen(false)
     fn()
   }
 
   const q = query.trim().toLowerCase()
+  // An artifact whose TITLE matched already shows in "Artifacts" — don't repeat it as a
+  // content hit; the content group is for docs found only by what's inside them.
+  const titleIds = new Set(results.map((r) => r.short_id))
+  const contentOnly = contentHits.filter((h) => !titleIds.has(h.short_id))
   // Brandprint-pointed collections are managed on /brandprint, not jumped to here.
   const brandprintIds = useBrandprintCollectionIds()
   const matchedCollections = collections.filter(
@@ -128,7 +181,9 @@ export function CommandPalette() {
           placeholder="Search artifacts, people, collections…"
         />
         <CommandList>
-          <CommandEmpty>{loading ? "Searching…" : "No results."}</CommandEmpty>
+          <CommandEmpty>
+            {loading || contentLoading || peopleLoading ? "Searching…" : "No results."}
+          </CommandEmpty>
 
           {(showAll || showFav || showFollowing) && (
             <CommandGroup heading="Jump to">
@@ -180,6 +235,36 @@ export function CommandPalette() {
                   <span className="font-mono text-2xs text-muted-foreground tabular-nums">
                     v{a.current_version}
                   </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+
+          {contentOnly.length > 0 && (
+            <CommandGroup
+              heading="In content"
+              className={cn(contentLoading && "opacity-60 transition-opacity")}
+            >
+              {contentOnly.map((h) => (
+                <CommandItem
+                  key={`content-${h.short_id}`}
+                  value={`content-${h.short_id}`}
+                  onSelect={() =>
+                    go(() => nav({ to: "/artifacts/$ref", params: { ref: refFor(h) } }))
+                  }
+                  onMouseEnter={() => prefetch(h.short_id, h.current_version)}
+                  onFocus={() => prefetch(h.short_id, h.current_version)}
+                  className="flex-col items-start gap-0.5"
+                >
+                  <div className="flex w-full items-center gap-2">
+                    <Icon name="all" size={16} className="text-muted-foreground" />
+                    <span className="flex-1 truncate">{h.title}</span>
+                  </div>
+                  {h.snippet && (
+                    <span className="w-full truncate pl-6 text-xs text-muted-foreground">
+                      {highlight(h.snippet, query)}
+                    </span>
+                  )}
                 </CommandItem>
               ))}
             </CommandGroup>
