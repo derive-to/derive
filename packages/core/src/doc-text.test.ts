@@ -427,6 +427,51 @@ describe("applyEdits", () => {
     // (advancing by 1 char) double-counted the overlap and rejected this as multi-match.
     expect(applyEdits("aaa", [{ old_str: "aa", new_str: "b" }])).toBe("ba")
   })
+
+  it("`occurrence` picks which of several identical matches to replace", () => {
+    expect(applyEdits("x x x", [{ old_str: "x", new_str: "y", occurrence: 2 }])).toBe("x y x")
+    expect(applyEdits("x x x", [{ old_str: "x", new_str: "y", occurrence: 1 }])).toBe("y x x")
+    expect(applyEdits("x x x", [{ old_str: "x", new_str: "y", occurrence: 3 }])).toBe("x x y")
+  })
+
+  it("`occurrence` out of range is an actionable error naming the real count", () => {
+    expect(() => applyEdits("x x", [{ old_str: "x", new_str: "y", occurrence: 5 }])).toThrow(
+      /occurrence 5 is out of range.*matched 2 times \(occurrence 1\.\.2\)/,
+    )
+  })
+
+  it("`occurrence` on an already-unique match must be 1, or it's rejected", () => {
+    expect(applyEdits("abc", [{ old_str: "b", new_str: "B", occurrence: 1 }])).toBe("aBc")
+    expect(() => applyEdits("abc", [{ old_str: "b", new_str: "B", occurrence: 2 }])).toThrow(
+      /occurrence 2 is out of range.*matched once/,
+    )
+  })
+
+  it("a multi-match WITHOUT occurrence still asks for more context (default, unambiguous behavior unchanged)", () => {
+    expect(() => applyEdits("x x", [{ old_str: "x", new_str: "y" }])).toThrow(
+      /matched 2 times.*add more surrounding context.*or pass `occurrence`/,
+    )
+  })
+
+  it("a zero-match miss explains WHY: whitespace-normalized hit names its real line", () => {
+    const src = "line one\nline\ttwo  \nline three"
+    expect(() => applyEdits(src, [{ old_str: "line  two", new_str: "x" }])).toThrow(
+      /is there at line 2, but whitespace differs/,
+    )
+  })
+
+  it("a zero-match miss falls back to showing what's actually at a similar line (doc changed since read)", () => {
+    const src = "alpha\nbeta original\ngamma"
+    expect(() => applyEdits(src, [{ old_str: "beta stale text here", new_str: "x" }])).toThrow(
+      /similar line exists at line 2.*beta original/s,
+    )
+  })
+
+  it("a zero-match miss with nothing similar gives the generic re-read steer", () => {
+    expect(() =>
+      applyEdits("abc", [{ old_str: "zzz not present anywhere", new_str: "y" }]),
+    ).toThrow(/Re-read the artifact.*or use `search`/)
+  })
 })
 
 describe("decodeEntities extraction keeps pageText behavior", () => {

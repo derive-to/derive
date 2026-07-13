@@ -35,6 +35,10 @@ export interface LandmarkRegion {
 export interface DocEdit {
   old_str: string
   new_str: string
+  /** 1-based index of WHICH match to replace, for an `old_str` that is intentionally
+   *  non-unique (a phrase repeated verbatim in several spots). Omit when `old_str`
+   *  already matches exactly once — this only disambiguates a multi-match. */
+  occurrence?: number
 }
 
 // ---------------------------------------------------------------------------------
@@ -799,22 +803,75 @@ export const sectionOf = (source: string, contentType: string, slug: string): st
 
 export class EditError extends Error {}
 
-// Non-overlapping occurrence count — advances past the whole match, not by one char,
-// so a self-overlapping needle ("aa" in "aaa") counts as the single non-overlapping
-// match a real replace would make, not a spuriously "ambiguous" 2.
-const countOccurrences = (haystack: string, needle: string): number => {
-  let count = 0
+// Non-overlapping occurrence positions — advances past the whole match, not by one
+// char, so a self-overlapping needle ("aa" in "aaa") counts as the single
+// non-overlapping match a real replace would make, not a spuriously "ambiguous" 2.
+const occurrencePositions = (haystack: string, needle: string): number[] => {
+  const out: number[] = []
   for (let i = haystack.indexOf(needle); i !== -1; i = haystack.indexOf(needle, i + needle.length))
-    count++
-  return count
+    out.push(i)
+  return out
+}
+
+// A line, whitespace-tolerant: trimmed and internal runs collapsed to one space —
+// tabs-vs-spaces or a trailing-whitespace difference (the single most common miss)
+// normalizes away, while real content differences still don't match.
+const normalizeLine = (s: string): string => s.trim().replace(/\s+/g, " ")
+
+// Diagnose a "not found" old_str: WHY didn't it match, not just that it didn't.
+// Two tiers, cheapest and most common first — never used to auto-apply anything,
+// purely a message so the agent fixes it in one round instead of a blind retry.
+const nearestMissHint = (haystack: string, needle: string): string => {
+  const hLines = haystack.split("\n")
+  const nLines = needle.split("\n")
+  const normN = nLines.map(normalizeLine)
+
+  // Tier 1: the exact same lines exist, just with different whitespace — a sliding
+  // window match on normalized lines, reported at its real (unnormalized) line no.
+  for (let i = 0; i + normN.length <= hLines.length; i++) {
+    let allMatch = true
+    for (let j = 0; j < normN.length; j++) {
+      if (normalizeLine(hLines[i + j] as string) !== normN[j]) {
+        allMatch = false
+        break
+      }
+    }
+    if (allMatch)
+      return (
+        ` The text is there at line ${i + 1}, but whitespace differs (tabs vs spaces, or ` +
+        `trailing spaces) — read format:"html" (or the doc's own format) and copy old_str exactly.`
+      )
+  }
+
+  // Tier 2: the FIRST WORD of old_str's first non-empty line exists somewhere, but
+  // what follows doesn't match — the doc changed since this was written. Show what's
+  // there now. Deliberately just one word, not a phrase: for a single-line old_str the
+  // "first line" IS the whole needle (which by definition didn't match), so requiring
+  // more than a coarse token would never fire — a first-word anchor still locates the
+  // general spot even when everything after it changed.
+  const firstLine = nLines.find((l) => l.trim().length > 0)
+  if (firstLine) {
+    const anchor = firstLine.trim().split(/\s+/)[0] ?? ""
+    const idx = anchor.length >= 3 ? hLines.findIndex((l) => l.includes(anchor)) : -1
+    if (idx >= 0) {
+      const around = hLines.slice(Math.max(0, idx - 1), idx + 2).join("\n")
+      return (
+        ` A similar line exists at line ${idx + 1}, but the rest of old_str doesn't match what's ` +
+        `there now:\n${around}\nRe-read the artifact for the current text.`
+      )
+    }
+  }
+
+  return ' Re-read the artifact (format:"html" for HTML content), or use `search` to find the right spot.'
 }
 
 /**
  * Apply `edits` to `src` in order, each seeing the previous edit's result. Every
- * `old_str` must match EXACTLY ONCE or the whole batch is rejected (nothing partial
- * ever lands) with an error naming the failing edit — the agent adds surrounding
- * context and retries. Same contract as the coding Edit tool, so agents already
- * know how to recover.
+ * `old_str` must match EXACTLY ONCE — unless `occurrence` names which of several
+ * identical matches to replace — or the whole batch is rejected (nothing partial
+ * ever lands). A miss carries a diagnostic (why it didn't match, not just that it
+ * didn't) so the agent fixes it in one round. Same contract as the coding Edit tool,
+ * so agents already know how to recover.
  */
 export function applyEdits(src: string, edits: DocEdit[]): string {
   if (!edits.length)
@@ -823,17 +880,32 @@ export function applyEdits(src: string, edits: DocEdit[]): string {
   for (const [i, e] of edits.entries()) {
     const label = `Edit ${i + 1} of ${edits.length}`
     if (!e.old_str) throw new EditError(`${label} failed: old_str is empty.`)
-    const n = countOccurrences(result, e.old_str)
-    if (n === 0)
+    const positions = occurrencePositions(result, e.old_str)
+    if (positions.length === 0)
       throw new EditError(
-        `${label} failed: old_str not found in the current source. Re-read the artifact ` +
-          `(format:"html" for HTML content) and copy the text exactly.`,
+        `${label} failed: old_str not found in the current source.${nearestMissHint(result, e.old_str)}`,
       )
-    if (n > 1)
+    if (positions.length === 1) {
+      if (e.occurrence !== undefined && e.occurrence !== 1)
+        throw new EditError(
+          `${label} failed: occurrence ${e.occurrence} is out of range — old_str matched once (occurrence 1).`,
+        )
+      result = result.replace(e.old_str, () => e.new_str)
+      continue
+    }
+    // Multiple matches: require `occurrence` to pick one rather than guessing.
+    if (e.occurrence === undefined)
       throw new EditError(
-        `${label} failed: old_str matched ${n} times — include more surrounding context so it is unique.`,
+        `${label} failed: old_str matched ${positions.length} times — add more surrounding context ` +
+          `so it is unique, or pass \`occurrence\` (1..${positions.length}) to pick one.`,
       )
-    result = result.replace(e.old_str, () => e.new_str)
+    if (!Number.isInteger(e.occurrence) || e.occurrence < 1 || e.occurrence > positions.length)
+      throw new EditError(
+        `${label} failed: occurrence ${e.occurrence} is out of range — old_str matched ` +
+          `${positions.length} times (occurrence 1..${positions.length}).`,
+      )
+    const at = positions[e.occurrence - 1] as number
+    result = result.slice(0, at) + e.new_str + result.slice(at + e.old_str.length)
   }
   return result
 }

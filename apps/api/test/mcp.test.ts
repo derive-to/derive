@@ -517,6 +517,32 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(cd.entry_diff).toContain("V2 Title")
   })
 
+  it("catch_up wait blocks until a NEW VERSION lands (no review round involved) — live co-editing", async () => {
+    const { app, token } = appWithGrant("waitver", "openid derive:read derive:publish")
+    const shortId = (await (await publish(app, token, "V1")).json()).short_id
+
+    const t0 = Date.now()
+    // Start a long-poll (no pending review exists) — race it against a publish that
+    // lands shortly after, well inside the wait window, and confirm it wakes fast
+    // rather than sitting out the full timeout.
+    const waited = call(app, token, "catch_up", { short_id: shortId, since_version: 1, wait: 20 })
+    await new Promise((r) => setTimeout(r, 30))
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("<h1>V2</h1>")]), "index.html")
+    const rep = await app.request(`/v1/artifacts/${shortId}/versions`, {
+      method: "POST",
+      body: form,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(rep.status).toBe(201)
+
+    const c = JSON.parse(toolText(await waited))
+    const elapsedMs = Date.now() - t0
+    expect(elapsedMs).toBeLessThan(15_000) // woke on the event, not the 20s timeout
+    expect(c.head).toBe(2) // sees the version that landed while it was waiting
+    expect(c.new_versions.map((v: { n: number }) => v.n)).toContain(2)
+  })
+
   it("catch_up detailed diffs the markdown conversion, not raw HTML tag noise", async () => {
     const { app, token } = appWithGrant("catchupmd", "openid derive:read derive:publish")
     const v1 =
@@ -1621,13 +1647,18 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     expect(afterFailed).toContain("x y gamma") // unchanged — a failed batch applies nothing
 
-    // base_version conflict: the artifact is at v2, but the agent read v1.
+    // base_version conflict: the artifact is at v2, but the agent read v1. The error
+    // shows WHAT changed (v1 → v2), not just that it did.
     const stale = await call(app, token, "publish", {
       short_id: shortId,
       base_version: 1,
       edits: [{ old_str: "Title", new_str: "T2" }],
     })
-    expect(toolText(stale)).toMatch(/moved to v2/)
+    const staleText = toolText(stale)
+    expect(staleText).toMatch(/moved to v2/)
+    expect(staleText).toContain("What changed (v1 → v2)")
+    expect(staleText).toContain("+")
+    expect(staleText).toContain("-")
 
     // edits + content is rejected; edits with no short_id is rejected.
     expect(

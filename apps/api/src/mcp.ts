@@ -1278,7 +1278,7 @@ async function buildServer(
         "START HERE on an artifact. The state of it in one call: a one-line summary, the versions that landed since `since_version`, which pages changed, the open (and outdated) comment threads, and the full version history. " +
         "Pass `comments` (open / addressed / resolved / outdated) to instead get that filtered thread list — your feedback to-do queue. " +
         "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to include a line-by-line diff between two versions — of their READABLE Markdown form, not raw HTML, so it shows what changed rather than tag noise. " +
-        "WAITING ON A REVIEW? Pass `wait` (seconds, max 50): the call blocks until the human sends back / approves / comments (or the time runs out), then returns the fresh state. Chain wait calls instead of sleeping between polls — feedback reaches you in seconds.",
+        "WAITING ON SOMETHING? Pass `wait` (seconds, max 50): the call blocks until the human sends back / approves / comments / publishes a new version (or the time runs out), then returns the fresh state — including anything new since `since_version`. Works with no pending review too: co-editing live with a human, `wait` blocks until THEIR next save lands. Chain wait calls instead of sleeping between polls — feedback reaches you in seconds.",
       inputSchema: {
         short_id: z.string(),
         since_version: z
@@ -1308,7 +1308,7 @@ async function buildServer(
           .max(50)
           .optional()
           .describe(
-            "Long-poll: block up to this many seconds for the human's next action (send back, approve, or a new comment) before returning. Returns immediately when something is already actionable.",
+            "Long-poll: block up to this many seconds for the human's next action (send back, approve, a new comment, or a new published version — e.g. co-editing the artifact live) before returning. Returns immediately when something is already actionable.",
           ),
         workspace: wsArg,
       },
@@ -1687,14 +1687,20 @@ async function buildServer(
               old_str: z
                 .string()
                 .describe(
-                  "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once.",
+                  "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once, unless `occurrence` picks one of several.",
                 ),
               new_str: z.string().describe("Replacement text. Empty string deletes."),
+              occurrence: z
+                .number()
+                .optional()
+                .describe(
+                  "1-based index of WHICH match to replace, when old_str is intentionally non-unique (a phrase repeated verbatim). Omit when old_str already matches once.",
+                ),
             }),
           )
           .optional()
           .describe(
-            "Surgical revision of a SINGLE-FILE artifact without resending it: exact-match search/replace against the current stored source, applied in order (each edit sees the previous one's result). Errors — applying nothing — if any old_str matches zero or multiple times; add surrounding context to disambiguate. Requires `short_id`; use INSTEAD of `content`. Composes with for_review, addresses, message, request_review.",
+            "Surgical revision of a SINGLE-FILE artifact without resending it: exact-match search/replace against the current stored source, applied in order (each edit sees the previous one's result). Errors — applying nothing — if any old_str matches zero times, or matches more than once without `occurrence`; a miss's error explains why (whitespace difference, or the doc changed) so you can fix it in one round. Requires `short_id`; use INSTEAD of `content`. Composes with for_review, addresses, message, request_review.",
           ),
         base_version: z
           .number()

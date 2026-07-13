@@ -1,8 +1,11 @@
 import {
   type ArtifactRecord,
   applyEdits,
+  type DiffOp,
   type DocEdit,
+  diffLines,
   EditError,
+  toMarkdown,
   type VersionRecord,
 } from "@derive/core"
 
@@ -11,6 +14,31 @@ import {
  *  so REST callers can map it to 409 instead of 400, matching the pre-consolidation
  *  status codes this helper's callers already committed to in their tests. */
 export class EditConflictError extends EditError {}
+
+// Keep a stale-version conflict's diff short — it's context inside an error message,
+// not a full read, so an unrelated change deep in a large doc must not drown it in
+// hundreds of unchanged context lines. Unified-diff-hunk style: only changed lines
+// plus `context` lines either side, long unchanged runs collapsed to "…". A final
+// char cap is still a safety net for a document that changed almost entirely.
+const CONFLICT_DIFF_MAX = 800
+const compactDiff = (ops: DiffOp[], context = 1): string => {
+  const keep = new Array<boolean>(ops.length).fill(false)
+  ops.forEach((o, i) => {
+    if (o.t === "ctx") return
+    for (let j = Math.max(0, i - context); j <= Math.min(ops.length - 1, i + context); j++)
+      keep[j] = true
+  })
+  const lines: string[] = []
+  let last = -2
+  ops.forEach((o, i) => {
+    if (!keep[i]) return
+    if (i > last + 1) lines.push("…")
+    lines.push(`${o.t === "add" ? "+" : o.t === "del" ? "-" : " "} ${o.line}`)
+    last = i
+  })
+  const out = lines.join("\n")
+  return out.length > CONFLICT_DIFF_MAX ? `${out.slice(0, CONFLICT_DIFF_MAX)}\n…[truncated]` : out
+}
 
 export interface MaterializeEditsDeps {
   getVersion: (artifactId: string, n: number) => Promise<VersionRecord | null>
@@ -28,6 +56,35 @@ export interface MaterializedEdits {
  *  re-types a markdown doc as HTML, and the browser then swallows its text as markup. */
 export const preservingFilename = (contentType: string | null): string =>
   (contentType ?? "").split(";")[0]?.trim() === "text/markdown" ? "index.md" : "index.html"
+
+// A short line diff (readable Markdown form, like catch_up's detailed diff) between
+// the version an edit was based on and the artifact's actual current version — best
+// effort: any lookup failure (a purged version, an unreadable blob) falls back to no
+// diff rather than failing the conflict report itself.
+const conflictDiffNote = async (
+  deps: MaterializeEditsDeps,
+  artifact: Pick<ArtifactRecord, "id" | "current_version">,
+  baseVersion: number,
+): Promise<string> => {
+  if (baseVersion < 1 || baseVersion >= artifact.current_version) return ""
+  try {
+    const [base, head] = await Promise.all([
+      deps.getVersion(artifact.id, baseVersion),
+      deps.getVersion(artifact.id, artifact.current_version),
+    ])
+    if (!base || !head) return ""
+    const [baseSrc, headSrc] = await Promise.all([deps.sourceText(base), deps.sourceText(head)])
+    if (baseSrc === null || headSrc === null) return ""
+    const ops = diffLines(
+      toMarkdown(baseSrc, base.content_type),
+      toMarkdown(headSrc, head.content_type),
+    )
+    if (!ops.some((o) => o.t !== "ctx")) return "" // identical readable text — nothing to show
+    return `\n\nWhat changed (v${baseVersion} → v${artifact.current_version}):\n${compactDiff(ops)}`
+  } catch {
+    return ""
+  }
+}
 
 /**
  * Turn an `edits` request into stored-revision bytes: validate the artifact can take
@@ -53,10 +110,14 @@ export async function materializeEdits(
     throw new EditConflictError(
       `"${artifact.short_id}" is a multi-page bundle — \`edits\` applies to single-file artifacts; republish the changed page via \`files\` (+ \`merge\`).`,
     )
-  if (baseVersion !== undefined && baseVersion !== artifact.current_version)
-    throw new EditConflictError(
-      `"${artifact.short_id}" moved to v${artifact.current_version} while you were editing (you read v${baseVersion}) — catch_up, re-read, then retry.`,
-    )
+  if (baseVersion !== undefined && baseVersion !== artifact.current_version) {
+    const head = `"${artifact.short_id}" moved to v${artifact.current_version} while you were editing (you read v${baseVersion}).`
+    // Show WHAT changed, not just that it did — a human (or another agent) may have
+    // published in between, and seeing the delta often tells you whether your edit
+    // still makes sense at all, without a separate catch_up round trip.
+    const diffNote = await conflictDiffNote(deps, artifact, baseVersion)
+    throw new EditConflictError(`${head}${diffNote} Re-read, then retry.`)
+  }
   const cur = await deps.getVersion(artifact.id, artifact.current_version)
   const src = cur ? await deps.sourceText(cur) : null
   if (!cur || src === null)
