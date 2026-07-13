@@ -4,12 +4,14 @@ import {
   elideDataUris,
   enclosingMarker,
   isHtmlLike,
+  type MetaStore,
   pageText,
   type SectionMarker,
   sectionMarkers,
   toMarkdown,
   type VersionRecord,
 } from "@derive/core"
+import { log } from "../log"
 import { cleanPath, manifestOf } from "./bundle"
 import { clip } from "./clip"
 
@@ -30,9 +32,16 @@ export interface WorkspaceSearchDeps extends SearchDeps {
       orgId?: string
       viewerId?: string
       publicOnly?: boolean
+      excludeRemoved?: boolean
+      ids?: string[]
       limit?: number
     }): Promise<ArtifactRecord[]>
     getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
+    searchArtifactIds(
+      orgId: string,
+      query: string,
+      limit: number,
+    ): Promise<{ id: string; rank: number }[]>
   }
 }
 
@@ -262,28 +271,156 @@ export const searchReport = (
 }
 
 // ---------------------------------------------------------------------------
-// Workspace-wide search — the same one-artifact engine fanned out across the
-// artifacts a viewer can see, grouped by artifact.
+// Index maintenance — the WRITE side of workspace search. The persisted FTS/
+// tsvector index behind searchArtifactIds needs the current version's text kept in
+// step: emitVersionBump calls indexArtifactVersion on every publish/restore/
+// proposal-approve, and the DB layer maintains it on deleteArtifact/moveArtifactOrg.
 // ---------------------------------------------------------------------------
 
-// Cap on how many of a workspace's artifacts a workspace-wide search scans (most
-// recently created first, same ordering list_artifacts uses) — a live grep with no
-// index behind it can't scan an unbounded workspace within one request. Mirrors
-// ARTIFACT_PAGE_SCAN_CAP's shape: a documented, honest cap with a truncation note,
-// not a silent one.
+// Bound the indexed text per artifact (in JS chars — real artifacts are far smaller).
+// This keeps the index lean and stays comfortably under Postgres's ~1MB-per-tsvector
+// ceiling: 256K UTF-16 code units is at most ~1MB of UTF-8, and a tsvector is no larger
+// than its input, so `to_tsvector` won't overflow on normal input. Applied on BOTH
+// dialects so the index content matches. The tail of a giant doc isn't FTS-findable,
+// but once the index nominates the artifact the one-artifact grep still reads the live
+// blob in full — so a past-the-bound hit is reported there, just not discovered
+// workspace-wide.
+export const MAX_INDEX_TEXT = 256 * 1024
+
+// The text an artifact version contributes to the search index: its raw SOURCE — so
+// the default source-scope search finds tag/attribute content, not only visible text —
+// across every text page of a bundle. The index is a RECALL-APPROXIMATE candidate
+// generator, not a strict superset of what grep-confirm reads: data: URIs are elided
+// (megabytes of inlined base64 are bloat, never a real target), text past MAX_INDEX_TEXT
+// is dropped, and — because the source is indexed, not the rendered text — an `in:'text'`
+// query for a word split across inline tags (foo<b>bar</b> → visible "foobar") may not
+// be nominated. All three are workspace-discovery gaps only: the one-artifact grep still
+// finds those hits directly. A non-text single file (a bare uploaded image) adds nothing.
+export async function versionIndexText(blobs: BlobStore, v: VersionRecord): Promise<string> {
+  const clipText = (s: string) => (s.length > MAX_INDEX_TEXT ? s.slice(0, MAX_INDEX_TEXT) : s)
+  const manifest = await manifestOf(blobs, v)
+  if (!manifest) {
+    if (!isTextType(v.content_type)) return ""
+    const bytes = await blobs.get(v.blob_key)
+    return bytes ? clipText(elideDataUris(new TextDecoder().decode(bytes))) : ""
+  }
+  const pages = Object.keys(manifest.files).filter((p) => isTextType(manifest.files[p]?.type ?? ""))
+  const parts: string[] = []
+  let used = 0
+  for (const p of pages) {
+    if (used >= MAX_INDEX_TEXT) break // enough text collected; skip the rest
+    const key = manifest.files[p]?.key
+    if (!key) continue
+    const bytes = await blobs.get(key)
+    if (!bytes) continue
+    const t = elideDataUris(new TextDecoder().decode(bytes))
+    parts.push(t)
+    used += t.length
+  }
+  return clipText(parts.join("\n\n"))
+}
+
+// Upsert an artifact's current-version text into the search index. Called from
+// emitVersionBump so publish, restore, and proposal-approve all keep it current.
+export async function indexArtifactVersion(
+  meta: Pick<MetaStore, "indexArtifact">,
+  blobs: BlobStore,
+  artifact: Pick<ArtifactRecord, "id" | "org_id" | "title">,
+  v: VersionRecord,
+): Promise<void> {
+  await meta.indexArtifact(
+    artifact.id,
+    artifact.org_id,
+    artifact.title,
+    await versionIndexText(blobs, v),
+  )
+}
+
+// Backfill — index artifacts that predate the write-path (or were created outside it).
+// Publishing keeps the index current going forward; this one-time sweep covers the
+// existing corpus. Idempotent (indexArtifact upserts), operator-driven in bounded
+// batches (POST /v1/system/search-reindex), resumed by passing nextCursor back until
+// it's null. Runs at operator scope (no viewerId) but with `excludeRemoved` so it walks
+// every LIVE artifact and never indexes a taken-down one.
+export interface ReindexSearchDeps {
+  blobs: BlobStore
+  meta: Pick<MetaStore, "indexArtifact" | "getVersion" | "listArtifacts">
+}
+
+export interface ReindexBatchResult {
+  scanned: number
+  indexed: number
+  nextCursor: { created_at: string; id: string } | null
+}
+
+export const reindexSearchBatch = async (
+  deps: ReindexSearchDeps,
+  opts: { orgId?: string; cursor?: { created_at: string; id: string }; limit: number },
+): Promise<ReindexBatchResult> => {
+  const arts = await deps.meta.listArtifacts({
+    orgId: opts.orgId,
+    cursor: opts.cursor,
+    limit: opts.limit,
+    excludeRemoved: true,
+  })
+  let indexed = 0
+  for (const a of arts) {
+    // Isolate each artifact: a single unreadable blob / transient store error must not
+    // abort the whole batch and wedge the operator's cursor (unlike the publish path,
+    // this loop is the only driver). Log and move on — the row can be re-swept later.
+    try {
+      const v = await deps.meta.getVersion(a.id, a.current_version)
+      if (!v) continue // no readable current version — skip rather than index empty
+      await indexArtifactVersion(deps.meta, deps.blobs, a, v)
+      indexed++
+    } catch (err) {
+      log.error("search reindex skipped one artifact", { artifact: a.id, err: String(err) })
+    }
+  }
+  // A full page implies there may be more; the last row is the keyset for the next call
+  // (listArtifacts is newest-first, keyset on created_at+id — the same cursor the list
+  // route uses). A short page means we've reached the end.
+  const last = arts[arts.length - 1]
+  const nextCursor =
+    arts.length >= opts.limit && last ? { created_at: last.created_at, id: last.id } : null
+  return { scanned: arts.length, indexed, nextCursor }
+}
+
+// ---------------------------------------------------------------------------
+// Workspace-wide search — two-tier retrieval over the WHOLE corpus: the persisted
+// index nominates the most relevant candidate artifacts (searchArtifactIds), those
+// ids are re-resolved through the one visibility gate (listArtifacts), and the same
+// one-artifact grep engine confirms the exact literal on the top-ranked survivors.
+// This replaced a live grep of only the 30 most-RECENT artifacts, which was
+// structurally blind to everything older.
+// ---------------------------------------------------------------------------
+
+// How many ranked candidates the index returns. Generous headroom over the
+// grep-confirm cap so the visibility filter (which drops candidates the viewer can't
+// see) still leaves plenty to confirm. Org-ranked, so the top of this window is the
+// most relevant across the whole corpus — not the most recent.
+export const WORKSPACE_SEARCH_CANDIDATE_CAP = 200
+
+// How many visible, relevance-ranked candidates get the expensive grep-confirm (blob
+// read + literal scan). The real cost bound — was the old "scan the 30 most recent",
+// now "grep-confirm the 30 most RELEVANT you can see".
 export const WORKSPACE_SEARCH_ARTIFACT_CAP = 30
+
+// The candidate ids are resolved through listArtifacts in chunks this size: `ids`
+// compiles to `id IN (?…)`, one bound parameter each, and D1 rejects any statement
+// with >100 of them (a 500). 90 leaves room for the query's other bound params
+// (org, viewer, listed). Postgres could take all 200 at once but chunking is harmless
+// there. The chunks are independent visibility queries; their rows just concatenate.
+const LIST_ID_CHUNK = 90
 
 export interface WorkspaceSearchResult {
   short_id: string
   title: string
+  current_version: number
   groups: { path: string | null; hunks: SearchHunk[] }[]
   total: number
 }
 
-// Fan out searchArtifactVersion across the artifacts a viewer can see, batched for
-// cost (same shape as the bundle-page batching above). listArtifacts is called with
-// the SAME viewerId/orgId list_artifacts uses — that's the one true source of what
-// an agent can see, so this can't accidentally widen visibility past it.
 export const searchWorkspace = async (
   deps: WorkspaceSearchDeps,
   opts: {
@@ -295,32 +432,71 @@ export const searchWorkspace = async (
     // route this also backs can be called anonymously.
     viewerId?: string
     publicOnly?: boolean
+    // The raw literal query drives the index lookup (`query`) AND the grep-confirm
+    // (`re`, the same literal compiled) — both derive from the one user string.
+    query: string
     re: RegExp
     where: "source" | "text"
     ctxLines: number
     cap: number
+    // How many visible candidates to grep-confirm. Defaults to WORKSPACE_SEARCH_ARTIFACT_CAP
+    // (agents want depth); a typeahead surface passes a small value so a debounced keystroke
+    // reads only a handful of blobs. NOTE: this bounds only the blob-read + grep stage, not
+    // the (indexed, cheap) candidate scan or the visibility resolve — cap those with
+    // `candidateCap` when the caller wants the whole request small.
+    limit?: number
+    // How many ranked candidates to nominate + visibility-check. Defaults to
+    // WORKSPACE_SEARCH_CANDIDATE_CAP (deep recall for agents); a typeahead surface passes a
+    // small value (≤ LIST_ID_CHUNK) so the visibility resolve is a SINGLE query, not three.
+    candidateCap?: number
   },
 ): Promise<{ results: WorkspaceSearchResult[]; note: string | null }> => {
-  // Fetch one past the cap — the same over-fetch-by-one pagination idiom the
-  // GET /v1/artifacts list route already uses — so "exactly WORKSPACE_SEARCH_
-  // ARTIFACT_CAP accessible artifacts" and "more than that" are distinguishable.
-  // Without the +1, a workspace with EXACTLY the cap worth of artifacts always
-  // reports "there may be more" even though there isn't. The sentinel row itself
-  // is never scanned (sliced off below) — its only job is answering that question.
-  const arts = await deps.meta.listArtifacts({
-    orgId: opts.orgId,
-    viewerId: opts.viewerId,
-    publicOnly: opts.publicOnly,
-    limit: WORKSPACE_SEARCH_ARTIFACT_CAP + 1,
-  })
-  const hasMore = arts.length > WORKSPACE_SEARCH_ARTIFACT_CAP
-  const scanned = hasMore ? arts.slice(0, WORKSPACE_SEARCH_ARTIFACT_CAP) : arts
-  // Lower than searchArtifactVersion's own inner CONCURRENCY=8 (bundle-page
-  // batching) on purpose: this outer batch and that inner one aren't composed —
-  // if several of the artifacts landing in one outer batch are themselves bundles,
-  // each independently opens its own 8-wide inner fan-out, so peak concurrent blob
-  // reads is the PRODUCT of the two, not either alone. 4×8=32 keeps that worst case
-  // reasonable without adding a cross-cutting semaphore for a bound this small.
+  // Tier 1 — the index nominates the most relevant candidate ids across the whole
+  // corpus. Org-scoped and ranked, but with NO visibility knowledge by design. Fetch one
+  // past the cap: the sentinel row (never resolved) just answers "were there more?".
+  const candidateCap = opts.candidateCap ?? WORKSPACE_SEARCH_CANDIDATE_CAP
+  const nominated = await deps.meta.searchArtifactIds(opts.orgId, opts.query, candidateCap + 1)
+  if (nominated.length === 0) return { results: [], note: null }
+  const moreCandidates = nominated.length > candidateCap
+  const candidates = nominated.slice(0, candidateCap)
+  const rankOf = new Map(candidates.map((c, i) => [c.id, i]))
+
+  // Tier 2 gate — THE visibility check. Re-resolve the nominated ids through
+  // listArtifacts with the SAME orgId/viewerId/publicOnly list_artifacts uses, PLUS
+  // excludeRemoved (the index can outlive a takedown, and listArtifacts keeps tombstones
+  // for the feed — so search must drop them explicitly, else a moderated artifact's text
+  // is grep-readable). An id the index nominated survives only if this call returns it,
+  // so the index — a pure relevance oracle with no access knowledge — can never widen
+  // visibility. Chunked to stay under D1's bound-parameter cap (see LIST_ID_CHUNK).
+  const visible: ArtifactRecord[] = []
+  const candidateIds = candidates.map((c) => c.id)
+  for (let i = 0; i < candidateIds.length; i += LIST_ID_CHUNK) {
+    const rows = await deps.meta.listArtifacts({
+      orgId: opts.orgId,
+      viewerId: opts.viewerId,
+      publicOnly: opts.publicOnly,
+      excludeRemoved: true,
+      ids: candidateIds.slice(i, i + LIST_ID_CHUNK),
+    })
+    visible.push(...rows)
+  }
+  // A password lock gates the world-link CONTENT behind a password — read 401s without it.
+  // The publicOnly caller IS that anonymous/link visitor, so drop locked artifacts here,
+  // else their body would be grep-readable, bypassing the unlock. A member (viewerId)
+  // reaches content through membership, not the link, so the lock never applies to them.
+  const gated = opts.publicOnly ? visible.filter((a) => !a.password_hash) : visible
+  // listArtifacts returns in its own (recency) order; restore relevance order.
+  gated.sort((a, b) => (rankOf.get(a.id) ?? Infinity) - (rankOf.get(b.id) ?? Infinity))
+
+  // Grep-confirm only the top-N most-relevant survivors — the blob-read+scan is the
+  // real cost, so it stays bounded. A candidate the index nominated on token overlap
+  // but whose exact literal/scope isn't actually present yields no hunks and drops out
+  // here: the index is RECALL, the grep is PRECISION.
+  const grepCap = opts.limit ?? WORKSPACE_SEARCH_ARTIFACT_CAP
+  const toGrep = gated.slice(0, grepCap)
+  // 4, not searchArtifactVersion's inner 8: the two fan-outs compose (a batch of
+  // bundles each opens its own 8-wide page fan-out), so peak blob reads is the product
+  // — 4×8=32 keeps that worst case reasonable without a cross-cutting semaphore.
   const CONCURRENCY = 4
   const scanArtifact = async (a: ArtifactRecord): Promise<WorkspaceSearchResult | null> => {
     const v = await deps.meta.getVersion(a.id, a.current_version)
@@ -333,16 +509,35 @@ export const searchWorkspace = async (
       opts.ctxLines,
       opts.cap,
     )
-    return total ? { short_id: a.short_id, title: a.title ?? a.short_id, groups, total } : null
+    return total
+      ? {
+          short_id: a.short_id,
+          title: a.title ?? a.short_id,
+          current_version: a.current_version,
+          groups,
+          total,
+        }
+      : null
   }
   const results: WorkspaceSearchResult[] = []
-  for (let i = 0; i < scanned.length; i += CONCURRENCY) {
-    const batch = await Promise.all(scanned.slice(i, i + CONCURRENCY).map(scanArtifact))
+  for (let i = 0; i < toGrep.length; i += CONCURRENCY) {
+    const batch = await Promise.all(toGrep.slice(i, i + CONCURRENCY).map(scanArtifact))
     for (const r of batch) if (r) results.push(r)
   }
-  const note = hasMore
-    ? `scanned the ${WORKSPACE_SEARCH_ARTIFACT_CAP} most recently created artifacts you can see — there may be more`
-    : null
+
+  // Honest truncation. These are CANDIDATE counts (index nominations that passed
+  // visibility), not confirmed-hit counts: grep-confirm may still drop some, so the
+  // wording says "candidates", never "matches". `grepTruncated`: more visible candidates
+  // than we confirmed. `moreCandidates`: the index had still more below the window
+  // (detected by the over-fetched sentinel) — hence the `+`.
+  const grepTruncated = gated.length > grepCap
+  const note = grepTruncated
+    ? `ranked by relevance — grep-confirmed the top ${grepCap} of ${gated.length}${
+        moreCandidates ? "+" : ""
+      } candidate artifacts you can see; refine the query to reach the rest`
+    : moreCandidates
+      ? `ranked by relevance — more than ${candidateCap} artifacts matched the index; refine the query to narrow`
+      : null
   return { results, note }
 }
 
@@ -370,3 +565,51 @@ export const workspaceSearchReport = (
   const steer = `\n\nOpen one with search(short_id:"...", query:"${query}") for full context, or read(short_id:"...", lines:"from-to", format:"${fmt}").`
   return clip(`${head}\n\n${body}${steer}`)
 }
+
+// ---------------------------------------------------------------------------
+// JSON hits — the same workspace results shaped for a UI (the ⌘K palette) instead of
+// the agent text report: one artifact per hit, with a single-line snippet of WHERE it
+// matched so a human sees why it surfaced. The client highlights the term itself.
+// ---------------------------------------------------------------------------
+
+export interface SearchHit {
+  short_id: string
+  title: string
+  current_version: number
+  /** One line of the matching text, windowed around the first match (…elided ends). */
+  snippet: string
+}
+
+// A short lead of context BEFORE the match, then the rest trailing. The window is biased
+// left on purpose: the palette renders the snippet in a single left-truncating line, so a
+// centered window would push the highlighted term off the right edge — the common case
+// here, where agent-authored markdown writes each paragraph as one long unwrapped line.
+const SNIPPET_LEAD = 16
+const SNIPPET_LEN = 160
+
+// Window a line so the first occurrence of `query` sits near the visible LEFT edge and
+// survives truncation. Whitespace in both the line and the query is collapsed (a source
+// line can be deeply indented; a query may carry stray spaces) so the match stays
+// locatable. Falls back to the head of the line when the literal isn't on it (shouldn't
+// happen after grep-confirm, but stays safe).
+export const snippetAround = (line: string, query: string): string => {
+  const flat = line.replace(/\s+/g, " ").trim()
+  const q = query.replace(/\s+/g, " ").trim()
+  const at = q ? flat.toLowerCase().indexOf(q.toLowerCase()) : -1
+  if (at < 0) return flat.length > SNIPPET_LEN ? `${flat.slice(0, SNIPPET_LEN)}…` : flat
+  const start = Math.max(0, at - SNIPPET_LEAD)
+  const end = Math.min(flat.length, start + SNIPPET_LEN)
+  return `${start > 0 ? "…" : ""}${flat.slice(start, end)}${end < flat.length ? "…" : ""}`
+}
+
+export const toSearchHits = (results: WorkspaceSearchResult[], query: string): SearchHit[] =>
+  results.map((r) => {
+    // The first HIT line across the artifact's groups is the most relevant snippet source.
+    const hit = r.groups.flatMap((g) => g.hunks.flatMap((h) => h.lines)).find((l) => l.hit)
+    return {
+      short_id: r.short_id,
+      title: r.title,
+      current_version: r.current_version,
+      snippet: hit ? snippetAround(hit.text, query) : "",
+    }
+  })

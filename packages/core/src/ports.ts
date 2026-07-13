@@ -101,6 +101,13 @@ export interface ListArtifactsOpts {
    *  An empty/omitted set with a profile query ⇒ public-only. Used by `listUserWorks`
    *  so a person's profile never leaks non-public work the viewer can't open. */
   visibleOrgIds?: string[]
+  /** Drop taken-down (`removed_at` set) rows. OFF by default because a plain listing
+   *  (the feed) deliberately keeps them to render a tombstone card — it never exposes
+   *  their content. Search MUST set this: it reads the live blob, so a surviving index
+   *  row for a moderated artifact would otherwise let its text be grepped out, bypassing
+   *  the read path's 410 tombstone. `listArtifacts` alone is therefore NOT a complete
+   *  visibility gate for content — this flag closes the tombstone hole. */
+  excludeRemoved?: boolean
 }
 
 export type PreviewStatus = "pending" | "ready" | "failed"
@@ -332,6 +339,20 @@ export interface ArtifactQueryStore {
    * `ids` array matches nothing.
    */
   listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]>
+  /** Full-text search index over an artifact's current visible text (+ title), keyed by
+   *  id and scoped by org — the substrate that lifts workspace search past a live-grep of
+   *  the N most-recent artifacts to the whole corpus. `indexArtifact` upserts (call on every
+   *  publish/move with the new current text); `unindexArtifact` drops it (on delete).
+   *  `searchArtifactIds` returns the best-matching ids in ONE org, ranked (higher = more
+   *  relevant, dialect-normalized), with NO visibility filter — the caller re-applies
+   *  visibility via `listArtifacts({ ids })` so that rule lives in exactly one place. */
+  indexArtifact(id: string, orgId: string, title: string | null, text: string): Promise<void>
+  unindexArtifact(id: string): Promise<void>
+  searchArtifactIds(
+    orgId: string,
+    query: string,
+    limit: number,
+  ): Promise<{ id: string; rank: number }[]>
   /** Artifact ids carrying a tag (server-side tag filtering). */
   artifactIdsByTag(tag: string): Promise<string[]>
   /** Artifact ids in a workspace whose current author_login matches `login`

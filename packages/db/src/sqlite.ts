@@ -179,6 +179,10 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
         db.delete(artifact).where(eq(artifact.id, id)).run()
       })()
+      // The contentless fts5 row isn't a drizzle table, so it rides the inherited
+      // unindexArtifact (raw SQL) after the delete commits. An orphan left by a crash
+      // here is harmless: listArtifacts filters the deleted artifact out of any result.
+      await repos.unindexArtifact(id)
     },
 
     // Atomic move: org_id flips, collection membership and any artifact-targeted
@@ -192,6 +196,12 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
           .where(eq(webhook.artifact_id, artifactId))
           .run()
       })()
+      // Re-scope the fts5 row to match (raw, since it's not a drizzle model). A stale org
+      // can't leak the artifact — listArtifacts re-checks org against the live row — so
+      // this is only a findability fix, safe to run outside the move's transaction.
+      raw
+        .prepare(`UPDATE artifact_search SET org_id = ? WHERE artifact_id = ?`)
+        .run(targetOrgId, artifactId)
     },
 
     // Atomic takedown: the tombstone, the bulk open-report resolution, and the

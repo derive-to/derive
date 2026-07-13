@@ -819,10 +819,27 @@ const ddl = generateDdl(TABLES, getTableConfig, {
  * the not-yet-queried placeholder tables (principal/view) and the perf indexes
  * have no drizzle def and stay explicit (see ./ddl).
  */
+// Full-text search index (workspace search substrate). A contentless FTS5 virtual table:
+// `text` is tokenized/searched; `artifact_id`/`org_id` are stored-but-UNINDEXED so a query
+// can filter to one workspace (`org_id = ?`) and return the id, ranked by `bm25()`. Not a
+// drizzle def (FTS5 is raw DDL only), so it lives here explicitly like the perf indexes.
+// D1 ships FTS5; better-sqlite3 ships it too.
+// `remove_diacritics 0` keeps fts5 accent-SENSITIVE, matching both Postgres
+// `to_tsvector('simple', …)` (which preserves diacritics) and the literal grep-confirm
+// pass — so "café" is found by "café", not by "cafe", identically on every tier.
+// unicode61's default folds accents, which would silently diverge the two dialects
+// AND nominate docs the literal grep then drops. Word/whitespace tokenization still
+// differs across dialects for scripts without spaces (CJK) and tokens >2047 bytes
+// (Postgres drops those) — a documented limit of a lexical index, not fixed here.
+const ARTIFACT_SEARCH_FTS5 =
+  `CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(` +
+  `text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61 remove_diacritics 0')`
+
 export const SCHEMA_STATEMENTS: string[] = [
   ...ddl.creates,
   ...placeholderTables(SQLITE_TIMESTAMP_DEFAULT),
   ...PERF_INDEXES,
+  ARTIFACT_SEARCH_FTS5,
 ]
 
 /**

@@ -684,12 +684,30 @@ const TABLES = [
 /** Build the Postgres boot DDL: generated table/index CREATEs + placeholder tables
  *  + perf indexes, then the idempotent ADD COLUMN IF NOT EXISTS migrations. Pure;
  *  exported for the conformance test. */
+// Full-text search index (workspace search substrate) — the Postgres twin of the SQLite
+// fts5 virtual table. A real table holding a precomputed `tsvector` per artifact, with a
+// GIN index for `@@` lookups; the query filters `org_id` to one workspace and ranks with
+// `ts_rank_cd`. Raw DDL (tsvector/GIN aren't in the drizzle defs), appended like the perf
+// indexes so both dialects gain the same capability from one schema pass.
+const ARTIFACT_SEARCH_PG = [
+  `CREATE TABLE IF NOT EXISTS artifact_search (` +
+    `artifact_id text PRIMARY KEY, org_id text NOT NULL, tsv tsvector NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS artifact_search_tsv ON artifact_search USING gin (tsv)`,
+  `CREATE INDEX IF NOT EXISTS artifact_search_org ON artifact_search (org_id)`,
+]
+
 export const buildPgSchemaStatements = (): string[] => {
   const { creates, alters } = generateDdl(TABLES, getTableConfig, {
     ifNotExists: true,
     timestampDefault: PG_TIMESTAMP_DEFAULT,
   })
-  return [...creates, ...placeholderTables(PG_TIMESTAMP_DEFAULT), ...PERF_INDEXES, ...alters]
+  return [
+    ...creates,
+    ...placeholderTables(PG_TIMESTAMP_DEFAULT),
+    ...PERF_INDEXES,
+    ...ARTIFACT_SEARCH_PG,
+    ...alters,
+  ]
 }
 
 export const PG_SCHEMA_STATEMENTS: string[] = buildPgSchemaStatements()

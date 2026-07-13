@@ -547,6 +547,12 @@ async function buildServer(
         (await ctx.meta.getArtifactMember(a.id, agent.id))
       if (!ok) return null
     }
+    // A taken-down artifact serves NO content, mirroring the web /raw 410: read, search,
+    // comment, and publish all resolve through here, so gating it once covers every
+    // one-artifact tool. It stays visible as a tombstone in list_artifacts (metadata
+    // only). Checked AFTER the reach/membership gates so it never confirms a removed
+    // short_id to someone who couldn't have reached it anyway (they still get notFound).
+    if (a.removed_at) return { error: `"${shortId}" was taken down and is no longer available.` }
     return { a, org, role }
   }
   const notFound = (shortId: string) =>
@@ -1062,7 +1068,7 @@ async function buildServer(
     "search",
     {
       description:
-        "Find text within ONE artifact, or across a WORKSPACE. Pass short_id to grep one artifact (not a full read): matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range (in the format the result names) or `edit` that spot. A bundle is searched across all its text pages, grouped by page. Omit short_id to grep instead across the most recently created artifacts you can see in a workspace — same visibility rules as list_artifacts — grouped by artifact, so you can find WHICH doc has something before opening it. Searches the exact source by default (in:'text' searches the visible text instead). The query is matched literally (metacharacters are not special).",
+        "Find text within ONE artifact, or across a WORKSPACE. Pass short_id to grep one artifact (not a full read): matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range (in the format the result names) or `edit` that spot. A bundle is searched across all its text pages, grouped by page. Omit short_id to search across the workspace — the artifacts you can see (same visibility rules as list_artifacts), ranked by relevance and grouped by artifact — so you can find WHICH doc has something before opening it; a note tells you when more matched than were shown. Searches the exact source by default (in:'text' searches the visible text instead). The query is matched literally (metacharacters are not special).",
       inputSchema: {
         short_id: z
           .string()
@@ -1117,6 +1123,7 @@ async function buildServer(
         const { results, note } = await searchWorkspace(ctx, {
           orgId: t.org,
           viewerId: actingFor?.id ?? agent.id,
+          query,
           re,
           where,
           ctxLines,

@@ -277,6 +277,16 @@ const mapMe = (u: SessionUser): Me => ({
   brandprint: parseBrandprint(u.brandprint),
 })
 
+// A workspace content-search hit. Hand-written (not generated): the search endpoint's
+// `?format=json` shape is a plain route, not part of the OpenAPI contract.
+export interface SearchHit {
+  short_id: string
+  title: string
+  current_version: number
+  /** One line of the matching text, windowed around the match (server-side). */
+  snippet: string
+}
+
 export const api = {
   // The ONE identity read — behind meQuery, and re-read after login/signup to seed the
   // auth cache. Prerender-safe (null at build — no document); a resolved null for an
@@ -343,6 +353,19 @@ export const api = {
   // Find opted-in people by @handle or name (signed-in; empty q → []).
   searchPeople: (q: string): Promise<{ users: PublicProfile[] }> =>
     f(`/v1/users/search?query=${encodeURIComponent(q)}`, opts()).then(j),
+  // Content search across the workspace via the persisted index: hits ranked by
+  // relevance, each with a one-line snippet of WHERE it matched (visible text, so the
+  // snippet reads as prose). Empty q → []. A small `limit` keeps the palette's debounced
+  // typeahead to a few blob reads. Same visibility rules as list_artifacts.
+  searchContent: (q: string, limit = 6): Promise<{ hits: SearchHit[]; truncated: boolean }> => {
+    const term = q.trim()
+    return term
+      ? f(
+          `/v1/artifacts/search?format=json&in=text&limit=${limit}&query=${encodeURIComponent(term)}`,
+          opts(),
+        ).then(j)
+      : Promise.resolve({ hits: [], truncated: false })
+  },
   // The People directory: browse opted-in people (empty q) or search them (signed-in).
   // Unlike searchPeople, an empty query BROWSES the discoverable set.
   people: (q?: string): Promise<{ users: PublicProfile[] }> =>

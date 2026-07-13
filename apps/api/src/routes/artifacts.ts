@@ -62,6 +62,7 @@ import {
   searchMatcher,
   searchReport,
   searchWorkspace,
+  toSearchHits,
   workspaceSearchReport,
 } from "../lib/search"
 import { enqueueSlackReviewRequestedDm } from "../lib/slack-dm"
@@ -870,18 +871,37 @@ export const artifactRoutes = (ctx: AppContext) => {
         : null
     const publicOnly = !(isOperator || baselineRole !== null)
 
+    // `?format=json` is the UI shape (the ⌘K palette): a small, ranked hit list with a
+    // snippet per artifact instead of the agent-facing ripgrep text report. A typeahead
+    // caller keeps the grep-confirm count tiny (bounded 1..12) so a debounced keystroke
+    // reads only a few blobs; the text report keeps the full agent depth.
+    const isJson = c.req.query("format") === "json"
+    const limit = isJson ? Math.min(Math.max(Number(c.req.query("limit")) || 6, 1), 12) : undefined
+    // Keep the whole JSON request cheap, not just the blob reads: a small candidate cap
+    // means the visibility resolve is a SINGLE chunked query and the FTS scan is small —
+    // the palette only shows a handful, so deep recall would be wasted work on a hot path.
+    const candidateCap = isJson ? 60 : undefined
+
     const { results, note } = await searchWorkspace(
       { blobs, sourceText, meta },
       {
         orgId: listOrg,
         viewerId: isOperator ? undefined : (memberKey ?? undefined),
         publicOnly,
+        query,
         re,
         where,
         ctxLines,
         cap,
+        limit,
+        candidateCap,
       },
     )
+    if (isJson) {
+      c.header("X-Content-Type-Options", "nosniff")
+      c.header("Cache-Control", "no-store")
+      return c.json({ hits: toSearchHits(results, query), truncated: note !== null })
+    }
     c.header("Access-Control-Allow-Origin", "*")
     c.header("X-Content-Type-Options", "nosniff")
     c.header("Content-Type", "text/plain; charset=utf-8")

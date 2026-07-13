@@ -587,6 +587,52 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(artifact.created_at), desc(artifact.id))
     return opts?.limit ? q.limit(opts.limit) : q
   }
+  // ---- full-text search index (workspace search substrate) — the tsvector twin of the
+  // SQLite fts5 path. `ts_rank_cd` ranks (higher = more relevant). `text` is title + body
+  // so a title hit ranks the artifact too.
+  //
+  // Query building is the tsquery twin of repos.ts `fts5Match`: the raw user text is
+  // reduced to alnum tokens, then AND'd as `:*` PREFIX lexemes so a partial word finds its
+  // whole word ("auth" → "authentication"), matching the fts5 prefix behaviour. Because the
+  // tokens are alnum-only they can never carry tsquery operators (& | ! ( ) : *), so
+  // `to_tsquery` can't be injected — the prefix only widens candidate RECALL; the caller's
+  // grep-confirm still enforces the exact literal. No tokens → null → no query, no matches.
+  private tsPrefixQuery(query: string): string | null {
+    const tokens = query.match(/[\p{L}\p{N}]+/gu)
+    return tokens?.length ? tokens.map((t) => `${t}:*`).join(" & ") : null
+  }
+  async indexArtifact(
+    id: string,
+    orgId: string,
+    title: string | null,
+    text: string,
+  ): Promise<void> {
+    const content = title ? `${title}\n\n${text}` : text
+    await this.pool.query(
+      `INSERT INTO artifact_search (artifact_id, org_id, tsv) VALUES ($1, $2, to_tsvector('simple', $3))
+       ON CONFLICT (artifact_id) DO UPDATE SET org_id = $2, tsv = to_tsvector('simple', $3)`,
+      [id, orgId, content],
+    )
+  }
+  async unindexArtifact(id: string): Promise<void> {
+    await this.pool.query(`DELETE FROM artifact_search WHERE artifact_id = $1`, [id])
+  }
+  async searchArtifactIds(
+    orgId: string,
+    query: string,
+    limit: number,
+  ): Promise<{ id: string; rank: number }[]> {
+    const ts = this.tsPrefixQuery(query)
+    if (!ts) return []
+    const r = await this.pool.query<{ artifact_id: string; rank: number }>(
+      `SELECT artifact_id, ts_rank_cd(tsv, to_tsquery('simple', $2)) AS rank
+       FROM artifact_search
+       WHERE org_id = $1 AND tsv @@ to_tsquery('simple', $2)
+       ORDER BY rank DESC LIMIT $3`,
+      [orgId, ts, limit],
+    )
+    return r.rows.map((row) => ({ id: row.artifact_id, rank: Number(row.rank) }))
+  }
   async artifactIdsByTag(tag: string): Promise<string[]> {
     const rows = await this.db
       .select({ id: artifactTag.artifact_id })
@@ -2526,6 +2572,10 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(agentMention).where(eq(agentMention.artifact_id, id))
       await tx.delete(artifact).where(eq(artifact.id, id))
     })
+    // Drop the search-index row after the delete commits (the tombstone table isn't a
+    // drizzle model, so it stays outside the tx). An orphaned row left by a crash here
+    // is harmless: listArtifacts filters the now-deleted artifact out of any result.
+    await this.unindexArtifact(id)
   }
 
   // Atomic move: org_id flips, collection membership and any artifact-targeted
@@ -2536,6 +2586,13 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId))
       await tx.update(webhook).set({ artifact_id: null }).where(eq(webhook.artifact_id, artifactId))
     })
+    // Re-scope the search-index row to match. Non-atomic with the move is fine: a stale
+    // org can't leak the artifact (listArtifacts re-checks org live) — it's only a
+    // findability fix, so it re-scopes on next publish/backfill even if this misses.
+    await this.pool.query(`UPDATE artifact_search SET org_id = $2 WHERE artifact_id = $1`, [
+      artifactId,
+      targetOrgId,
+    ])
   }
 
   // Atomic takedown: tombstone + bulk open-report resolution + audit entry in one
