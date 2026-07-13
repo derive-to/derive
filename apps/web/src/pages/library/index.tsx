@@ -113,6 +113,18 @@ function LibraryBody({ view }: { view: LibraryView }) {
     const t = setTimeout(() => setDebouncedQ(query.trim()), 280)
     return () => clearTimeout(t)
   }, [query])
+  // Reflect the SETTLED search in the URL so a filtered library is shareable/deep-linkable —
+  // the field seeds FROM ?query= above but must also write back. `replace` so keystrokes
+  // don't stack history; the guard skips a no-op nav (and its re-render loop). Keeps the
+  // current route (one of five feeds) and the other params (tag/collection/author).
+  useEffect(() => {
+    if (debouncedQ === (search.query ?? "").trim()) return
+    nav({
+      to: ".",
+      search: (prev) => ({ ...prev, query: debouncedQ || undefined }),
+      replace: true,
+    })
+  }, [debouncedQ, search.query, nav])
   // "Searching" tracks the LIVE input, not the debounced value — so the greeting/publish/
   // triage collapse the instant you type, not 280 ms later (the old whole-header jump).
   // Results still key off the debounced value (network), so requests stay throttled.
