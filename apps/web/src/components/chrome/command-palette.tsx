@@ -34,7 +34,9 @@ const EMPTY_CONTENT: ContentState = { hits: [], truncated: false, q: "" }
 // tested in lib/highlight; here we just render the marked segments. Index keys are safe:
 // the segments are stateless text spans, so a shifted boundary only re-renders text.
 function highlight(text: string, query: string): React.ReactNode[] {
-  return splitMatches(text, query).map((seg, i) =>
+  // Collapse the query's whitespace to match the server-collapsed snippet, so a multi-space
+  // query is still located (and highlighted) in the single-spaced snippet text.
+  return splitMatches(text, query.replace(/\s+/g, " ")).map((seg, i) =>
     seg.match ? (
       // biome-ignore lint/suspicious/noArrayIndexKey: stateless text segments
       <span key={i} className="font-semibold text-foreground">
@@ -280,7 +282,7 @@ export function CommandPalette() {
               ))}
               {content.truncated && (
                 <div className="px-2 py-1.5 text-2xs text-muted-foreground">
-                  More matches — refine the query to narrow.
+                  More may match — refine to narrow.
                 </div>
               )}
             </CommandGroup>

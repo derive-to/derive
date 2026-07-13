@@ -575,21 +575,25 @@ export interface SearchHit {
   snippet: string
 }
 
-const SNIPPET_RADIUS = 90
+// A short lead of context BEFORE the match, then the rest trailing. The window is biased
+// left on purpose: the palette renders the snippet in a single left-truncating line, so a
+// centered window would push the highlighted term off the right edge — the common case
+// here, where agent-authored markdown writes each paragraph as one long unwrapped line.
+const SNIPPET_LEAD = 16
+const SNIPPET_LEN = 160
 
-// Window a long line around the first occurrence of `query` so the match stays visible
-// instead of scrolling off a clipped line. Whitespace is collapsed (a source line can be
-// deeply indented). Falls back to the head of the line when the literal isn't found on it.
+// Window a line so the first occurrence of `query` sits near the visible LEFT edge and
+// survives truncation. Whitespace in both the line and the query is collapsed (a source
+// line can be deeply indented; a query may carry stray spaces) so the match stays
+// locatable. Falls back to the head of the line when the literal isn't on it (shouldn't
+// happen after grep-confirm, but stays safe).
 export const snippetAround = (line: string, query: string): string => {
   const flat = line.replace(/\s+/g, " ").trim()
-  // Collapse the query's whitespace too, so a multi-space/tab query still locates its
-  // match in the collapsed line (else it'd fall to the head-of-line branch).
   const q = query.replace(/\s+/g, " ").trim()
-  if (flat.length <= SNIPPET_RADIUS * 2) return flat
-  const at = flat.toLowerCase().indexOf(q.toLowerCase())
-  if (at < 0) return `${flat.slice(0, SNIPPET_RADIUS * 2)}…`
-  const start = Math.max(0, at - SNIPPET_RADIUS)
-  const end = Math.min(flat.length, at + q.length + SNIPPET_RADIUS)
+  const at = q ? flat.toLowerCase().indexOf(q.toLowerCase()) : -1
+  if (at < 0) return flat.length > SNIPPET_LEN ? `${flat.slice(0, SNIPPET_LEN)}…` : flat
+  const start = Math.max(0, at - SNIPPET_LEAD)
+  const end = Math.min(flat.length, start + SNIPPET_LEN)
   return `${start > 0 ? "…" : ""}${flat.slice(start, end)}${end < flat.length ? "…" : ""}`
 }
 
