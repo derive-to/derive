@@ -549,7 +549,11 @@ const IMPLICIT_ROLE: Record<string, string> = {
   article: "article",
   form: "form",
 }
-const LANDMARK = new Set(Object.keys(IMPLICIT_ROLE))
+/** The lowercase landmark tag names, exported so the marked-render overlay script
+ *  (marks-script.ts) numbers the SAME top-level elements this module's landmarkMap
+ *  does — one list, not two that could drift. */
+export const LANDMARK_TAGS: string[] = Object.keys(IMPLICIT_ROLE)
+const LANDMARK = new Set(LANDMARK_TAGS)
 
 // Top-level landmark spans, balanced-matched by tag name (so nested same-name tags
 // don't close a parent early). Drop-subtree content is masked out first, exactly like

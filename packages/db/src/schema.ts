@@ -115,6 +115,20 @@ export const version = sqliteTable(
     preview_key: text("preview_key"),
     preview_status: text("preview_status").$type<PreviewStatus>(),
     preview_error: text("preview_error"),
+    // Two more render-rung variants, agent-facing only (never used for og:image/
+    // unfurls, which stay the fixed 1200x630 crop above): the whole page as authored
+    // (`preview_full_*`, full-page fullPage:true screenshot — catches below-the-fold
+    // breakage the OG crop can't) and the same full-page render with the region map's
+    // @N refs drawn on it (`preview_marked_*` — see marks-script.ts), so an agent's
+    // visual read lines up with what it reads/searches by. Same nullable triple shape
+    // and lifecycle as the OG columns; best-effort, computed after the OG render in
+    // the SAME publish job (see previews.ts) rather than a separate queue entry.
+    preview_full_key: text("preview_full_key"),
+    preview_full_status: text("preview_full_status").$type<PreviewStatus>(),
+    preview_full_error: text("preview_full_error"),
+    preview_marked_key: text("preview_marked_key"),
+    preview_marked_status: text("preview_marked_status").$type<PreviewStatus>(),
+    preview_marked_error: text("preview_marked_error"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [uniqueIndex("artifact_version").on(t.artifact_id, t.n)],

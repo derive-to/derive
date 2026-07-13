@@ -508,6 +508,31 @@ export function makeRepos(db: SqliteDb) {
       .run()
   }
 
+  const setVersionPreviewVariant = async (
+    artifactId: string,
+    n: number,
+    variant: "full" | "marked",
+    fields: { key?: string | null; status?: PreviewStatus | null; error?: string | null },
+  ): Promise<void> => {
+    const set =
+      variant === "full"
+        ? {
+            preview_full_key: fields.key,
+            preview_full_status: fields.status,
+            preview_full_error: fields.error,
+          }
+        : {
+            preview_marked_key: fields.key,
+            preview_marked_status: fields.status,
+            preview_marked_error: fields.error,
+          }
+    await db
+      .update(version)
+      .set(set)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+      .run()
+  }
+
   const listArtifacts = async (opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> => {
     if (opts?.ids && opts.ids.length === 0) return []
     const conds = artifactListConditions(artifact, opts)
@@ -2525,6 +2550,7 @@ export function makeRepos(db: SqliteDb) {
     getVersion,
     reclassifyVersion,
     setVersionPreview,
+    setVersionPreviewVariant,
     listArtifacts,
     artifactIdsByTag,
     artifactIdsByAuthor,

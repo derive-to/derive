@@ -71,6 +71,12 @@ type FakeVersion = {
   preview_key: string | null
   preview_status: PreviewStatus | null
   preview_error: string | null
+  preview_full_key: string | null
+  preview_full_status: PreviewStatus | null
+  preview_full_error: string | null
+  preview_marked_key: string | null
+  preview_marked_status: PreviewStatus | null
+  preview_marked_error: string | null
   created_at: string
 }
 
@@ -131,6 +137,24 @@ const makeFakes = (): FakeMeta => {
       if ("preview_key" in fields) v.preview_key = fields.preview_key ?? null
       if ("preview_status" in fields) v.preview_status = fields.preview_status ?? null
       if ("preview_error" in fields) v.preview_error = fields.preview_error ?? null
+    },
+    setVersionPreviewVariant: async (
+      artifactId: string,
+      n: number,
+      variant: "full" | "marked",
+      fields: { key?: string | null; status?: PreviewStatus | null; error?: string | null },
+    ): Promise<void> => {
+      const v = versions.get(`${artifactId}:${n}`)
+      if (!v) return
+      if (variant === "full") {
+        if ("key" in fields) v.preview_full_key = fields.key ?? null
+        if ("status" in fields) v.preview_full_status = fields.status ?? null
+        if ("error" in fields) v.preview_full_error = fields.error ?? null
+      } else {
+        if ("key" in fields) v.preview_marked_key = fields.key ?? null
+        if ("status" in fields) v.preview_marked_status = fields.status ?? null
+        if ("error" in fields) v.preview_marked_error = fields.error ?? null
+      }
     },
 
     // render job helpers
@@ -254,6 +278,12 @@ const seedArtifact = async (
     preview_key: null,
     preview_status: null,
     preview_error: null,
+    preview_full_key: null,
+    preview_full_status: null,
+    preview_full_error: null,
+    preview_marked_key: null,
+    preview_marked_status: null,
+    preview_marked_error: null,
     created_at: new Date().toISOString(),
   }
   fakes.versions.set(`${id}:${versionN}`, ver)
@@ -298,6 +328,81 @@ describe("previews: enqueueRender + runRenderTick", () => {
     expect(fakes.versions.get("a1:1")?.preview_key).toBeTruthy()
     expect(fakes.versions.get("a1:1")?.preview_error).toBeNull()
     // Job is done
+    const job = [...fakes.jobs.values()][0]
+    if (!job) throw new Error("expected a render job")
+    expect(job.status).toBe("done")
+  })
+
+  it("Test A2: after the OG render, full-page and marked variants render too, sequentially, with fullPage:true", async () => {
+    const fakes = makeFakes()
+    await seedArtifact(fakes, { id: "a1v", shortId: "short1v", versionN: 1 })
+
+    const calls: { url: string; opts?: { fullPage?: boolean } }[] = []
+    const renderer = {
+      screenshot: async (url: string, opts?: { fullPage?: boolean }) => {
+        calls.push({ url, opts })
+        return new Uint8Array([1, 2, 3])
+      },
+    }
+
+    await enqueueRender(fakes.meta, "a1v", 1)
+    const n = await runRenderTick({
+      meta: fakes.meta,
+      blobs: makeBlobs(),
+      renderer,
+      baseUrl: "https://d.to",
+      secret: "test-secret",
+    })
+    expect(n).toBe(1)
+
+    // Three screenshots per job: OG, full, marked — in that order, sequentially (a
+    // single renderer instance handling one call at a time proves no overlap).
+    expect(calls).toHaveLength(3)
+    const [og, full, marked] = calls
+    expect(og?.opts?.fullPage).toBeFalsy()
+    expect(full?.url).toBe(og?.url) // same page, just fullPage:true
+    expect(full?.opts?.fullPage).toBe(true)
+    expect(marked?.url).toBe(`${og?.url}&marks=1`)
+    expect(marked?.opts?.fullPage).toBe(true)
+
+    const v = fakes.versions.get("a1v:1")
+    expect(v?.preview_status).toBe("ready")
+    expect(v?.preview_full_status).toBe("ready")
+    expect(v?.preview_full_key).toBeTruthy()
+    expect(v?.preview_marked_status).toBe("ready")
+    expect(v?.preview_marked_key).toBeTruthy()
+  })
+
+  it("Test A3: a variant failure never fails the OG render or the job — independent status per variant", async () => {
+    const fakes = makeFakes()
+    await seedArtifact(fakes, { id: "a1f", shortId: "short1f", versionN: 1 })
+
+    // Only the MARKED request fails (it's the one with &marks=1); OG and full succeed.
+    const renderer = {
+      screenshot: async (url: string): Promise<Uint8Array> => {
+        if (url.includes("marks=1")) throw new Error("marked render crashed")
+        return new Uint8Array([1, 2, 3])
+      },
+    }
+
+    await enqueueRender(fakes.meta, "a1f", 1)
+    const n = await runRenderTick({
+      meta: fakes.meta,
+      blobs: makeBlobs(),
+      renderer,
+      baseUrl: "https://d.to",
+      secret: "test-secret",
+    })
+    expect(n).toBe(1)
+
+    const v = fakes.versions.get("a1f:1")
+    // The OG image (what unfurls depend on) is unaffected by the marked failure.
+    expect(v?.preview_status).toBe("ready")
+    expect(v?.preview_full_status).toBe("ready")
+    expect(v?.preview_marked_status).toBe("failed")
+    expect(v?.preview_marked_error).toContain("marked render crashed")
+    // The job itself completes normally — a variant failure is never retried via
+    // the job queue, so it must not leave the OG render's own job stuck pending.
     const job = [...fakes.jobs.values()][0]
     if (!job) throw new Error("expected a render job")
     expect(job.status).toBe("done")
@@ -394,6 +499,12 @@ describe("previews: enqueueRender + runRenderTick", () => {
       preview_key: null,
       preview_status: null,
       preview_error: null,
+      preview_full_key: null,
+      preview_full_status: null,
+      preview_full_error: null,
+      preview_marked_key: null,
+      preview_marked_status: null,
+      preview_marked_error: null,
       created_at: new Date().toISOString(),
     })
 

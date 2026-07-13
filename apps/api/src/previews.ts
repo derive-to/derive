@@ -138,6 +138,36 @@ export const sweepMissingRenders = async (
   return missing.length
 }
 
+/**
+ * Render one agent-facing preview variant (full-page or marked) and record the
+ * result on ITS OWN status/error columns via `setVersionPreviewVariant` — never
+ * throws, so a failure here can't fail the OG render or the job it rides on.
+ */
+const renderPreviewVariant = async (
+  deps: RenderTickDeps,
+  artifactId: string,
+  n: number,
+  variant: "full" | "marked",
+  url: string,
+  opts: ScreenshotOpts,
+): Promise<void> => {
+  try {
+    const png = await withTimeout(deps.renderer.screenshot(url, opts), opts.timeoutMs + 1_000)
+    const key = await deps.blobs.put(png)
+    await deps.meta.setVersionPreviewVariant(artifactId, n, variant, {
+      key,
+      status: "ready",
+      error: null,
+    })
+  } catch (err) {
+    const msg = (err instanceof Error ? err.message : String(err)).slice(0, 200)
+    await deps.meta.setVersionPreviewVariant(artifactId, n, variant, {
+      status: "failed",
+      error: msg,
+    })
+  }
+}
+
 export const runRenderTick = async (
   deps: RenderTickDeps,
   limit = RENDER_CLAIM_LIMIT,
@@ -190,6 +220,30 @@ export const runRenderTick = async (
         preview_status: "ready",
         preview_error: null,
       })
+
+      // The two agent-facing render variants: the whole page (fullPage:true, catches
+      // below-the-fold breakage the 1200x630 OG crop above can't) and the same
+      // full-page render with the region map's @N refs drawn on it (?marks=1, see
+      // marks-script.ts). Best-effort and INDEPENDENT of the OG image and of each
+      // other — a failure here never fails this job (the OG crop that unfurls/embeds
+      // depend on is already committed above) and is never retried via the job
+      // queue; a stale variant just gets a fresh attempt on the next publish. Run
+      // SEQUENTIALLY, not in parallel: each screenshot() launches its own browser,
+      // and the single-consumer invariant (one browser at a time, no parallel
+      // rendering billing) applies to every render this job makes, not just the OG one.
+      await renderPreviewVariant(deps, artifact.id, job.version_n, "full", url, {
+        width: OG_W,
+        height: OG_H,
+        fullPage: true,
+        timeoutMs: RENDER_TIMEOUT_MS,
+      })
+      await renderPreviewVariant(deps, artifact.id, job.version_n, "marked", `${url}&marks=1`, {
+        width: OG_W,
+        height: OG_H,
+        fullPage: true,
+        timeoutMs: RENDER_TIMEOUT_MS,
+      })
+
       await deps.meta.updateRenderJob(job.id, {
         status: "done",
         attempts: job.attempts,

@@ -90,6 +90,15 @@ export const version = pgTable(
     preview_key: text("preview_key"),
     preview_status: text("preview_status").$type<PreviewStatus>(),
     preview_error: text("preview_error"),
+    // Two more render-rung variants, agent-facing only — see the matching comment in
+    // schema.ts for what each is and why they're a separate best-effort triple rather
+    // than replacing the OG crop.
+    preview_full_key: text("preview_full_key"),
+    preview_full_status: text("preview_full_status").$type<PreviewStatus>(),
+    preview_full_error: text("preview_full_error"),
+    preview_marked_key: text("preview_marked_key"),
+    preview_marked_status: text("preview_marked_status").$type<PreviewStatus>(),
+    preview_marked_error: text("preview_marked_error"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   // (artifact_id, n) is unique — addVersion relies on it to turn a concurrent

@@ -419,6 +419,30 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
   }
 
+  async setVersionPreviewVariant(
+    artifactId: string,
+    n: number,
+    variant: "full" | "marked",
+    fields: { key?: string | null; status?: PreviewStatus | null; error?: string | null },
+  ): Promise<void> {
+    const set =
+      variant === "full"
+        ? {
+            preview_full_key: fields.key,
+            preview_full_status: fields.status,
+            preview_full_error: fields.error,
+          }
+        : {
+            preview_marked_key: fields.key,
+            preview_marked_status: fields.status,
+            preview_marked_error: fields.error,
+          }
+    await this.db
+      .update(version)
+      .set(set)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+  }
+
   async createComment(c: NewComment): Promise<CommentRecord> {
     const rows = await this.db.insert(comment).values(c).returning()
     return one(rows)

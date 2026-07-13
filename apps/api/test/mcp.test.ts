@@ -789,7 +789,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(none).toContain("no landmark regions")
   })
 
-  it("read render:true — the publish→look loop (pending, ready as an image, failed)", async () => {
+  it('read render:"top" — the publish→look loop (pending, ready as an image, failed)', async () => {
     const { app, token, meta, blobs } = appWithGrant("render", "openid derive:read derive:publish")
     const pub = JSON.parse(
       toolText(
@@ -802,15 +802,15 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     const id = pub.short_id
     // The publish receipt steers to the render read.
-    expect(pub.render).toContain("render:true")
+    expect(pub.render).toContain('render:"top"')
 
     // Before the pipeline finishes: an actionable not-ready message, not a failure.
-    const pending = toolText(await call(app, token, "read", { short_id: id, render: true }))
+    const pending = toolText(await call(app, token, "read", { short_id: id, render: "top" }))
     expect(pending).toContain("isn't ready yet")
 
     // render + section/lines is rejected as contradictory.
     const both = toolText(
-      await call(app, token, "read", { short_id: id, render: true, lines: "1" }),
+      await call(app, token, "read", { short_id: id, render: "top", lines: "1" }),
     )
     expect(both).toContain("pass it alone")
 
@@ -820,21 +820,64 @@ describe("remote MCP endpoint (/mcp)", () => {
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4])
     const key = await blobs.put(png)
     await meta.setVersionPreview(art.id, 1, { preview_key: key, preview_status: "ready" })
-    const r = await call(app, token, "read", { short_id: id, render: true })
+    const r = await call(app, token, "read", { short_id: id, render: "top" })
     const content = (
       r.parsed?.result as {
         content?: { type: string; text?: string; mimeType?: string; data?: string }[]
       }
     )?.content
-    expect(content?.[0]?.text).toContain(`render of "${id}" v1`)
+    expect(content?.[0]?.text).toContain(`render:top of "${id}" v1`)
     expect(content?.[1]?.type).toBe("image")
     expect(content?.[1]?.mimeType).toBe("image/png")
     expect(content?.[1]?.data?.length).toBeGreaterThan(0)
 
     // A failed render reports the reason and points at the page.
     await meta.setVersionPreview(art.id, 1, { preview_status: "failed", preview_error: "timeout" })
-    const failed = toolText(await call(app, token, "read", { short_id: id, render: true }))
+    const failed = toolText(await call(app, token, "read", { short_id: id, render: "top" }))
     expect(failed).toContain("failed (timeout)")
+  })
+
+  it('read render:"full"/"marked" are independent of render:"top" and of each other', async () => {
+    const { app, token, meta, blobs } = appWithGrant("renderv", "openid derive:read derive:publish")
+    const pub = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Dash",
+          content: "<!DOCTYPE html><html><body><main>x</main></body></html>",
+          filename: "dash.html",
+        }),
+      ),
+    )
+    const id = pub.short_id
+    const art = await meta.getByShortId(id)
+    if (!art) throw new Error("no artifact")
+
+    // "full" not ready yet, independent of "top"/"marked" (neither seeded either).
+    const fullPending = toolText(await call(app, token, "read", { short_id: id, render: "full" }))
+    expect(fullPending).toContain("isn't ready yet")
+
+    // Seed ONLY the marked variant as ready — top/full stay untouched.
+    const png = new Uint8Array([1, 2, 3, 4])
+    const key = await blobs.put(png)
+    await meta.setVersionPreviewVariant(art.id, 1, "marked", { key, status: "ready" })
+    const marked = await call(app, token, "read", { short_id: id, render: "marked" })
+    const markedContent = (marked.parsed?.result as { content?: { type: string; text?: string }[] })
+      ?.content
+    expect(markedContent?.[0]?.text).toContain(`render:marked of "${id}" v1`)
+    expect(markedContent?.[0]?.text).toContain("region map's @N refs")
+    expect(markedContent?.[1]?.type).toBe("image")
+    // "full" is STILL not ready — the marked seed didn't touch it.
+    const fullStill = toolText(await call(app, token, "read", { short_id: id, render: "full" }))
+    expect(fullStill).toContain("isn't ready yet")
+    // "top" is unaffected too — nothing was ever seeded for it.
+    const topStill = toolText(await call(app, token, "read", { short_id: id, render: "top" }))
+    expect(topStill).toContain("isn't ready yet")
+
+    // A "full" failure is reported distinctly from a "marked" one.
+    await meta.setVersionPreviewVariant(art.id, 1, "full", { status: "failed", error: "oom" })
+    const fullFailed = toolText(await call(app, token, "read", { short_id: id, render: "full" }))
+    expect(fullFailed).toContain("render:full")
+    expect(fullFailed).toContain("failed (oom)")
   })
 
   it("read: windowed `lines` returns a range, and rejects bad input", async () => {
