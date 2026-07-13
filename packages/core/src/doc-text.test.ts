@@ -460,6 +460,31 @@ describe("applyEdits", () => {
     )
   })
 
+  it("skips the whitespace-normalized scan on a very large source, and stays fast (bounds O(n·m) wall time)", () => {
+    // The Tier-1 scan re-normalized each haystack line per window; on a multi-MB doc with
+    // long lines a single failed edit took seconds (found via adversarial testing on a
+    // ~50MB doc). Above the source cap the scan is skipped entirely — the miss still gets
+    // a diagnostic, just not the whitespace one — so it can't block the request budget.
+    const line = "x".repeat(2_000)
+    const src = Array.from({ length: 600 }, () => line).join("\n") // ~1.2 MB, over the cap
+    expect(src.length).toBeGreaterThan(1_000_000)
+    const start = performance.now()
+    // old_str is a whitespace-variant of every line: without the size guard this is the
+    // exact pathological scan; with it, the guard short-circuits before any O(n·m) work.
+    expect(() => applyEdits(src, [{ old_str: `${line} `, new_str: "y" }])).toThrow(
+      /not found in the current source/,
+    )
+    expect(performance.now() - start).toBeLessThan(200)
+    // The whitespace hint (the skipped scan) must NOT appear — proof the guard fired.
+    let msg = ""
+    try {
+      applyEdits(src, [{ old_str: `${line} `, new_str: "y" }])
+    } catch (e) {
+      msg = e instanceof EditError ? e.message : ""
+    }
+    expect(msg).not.toMatch(/whitespace differs/)
+  })
+
   it("a zero-match miss falls back to showing what's actually at a similar line (doc changed since read)", () => {
     const src = "alpha\nbeta original\ngamma"
     expect(() => applyEdits(src, [{ old_str: "beta stale text here", new_str: "x" }])).toThrow(

@@ -829,6 +829,15 @@ const normalizeLine = (s: string): string => s.trim().replace(/\s+/g, " ")
 // 500K comparisons is ~12ms by extrapolation from a measured 36M-comparison/~900ms case.
 const TIER1_MAX_COMPARISONS = 500_000
 
+// The comparison COUNT above doesn't bound wall time on its own: a doc with a few very
+// long lines re-normalizes tens of thousands of chars per window, so the same "budget" of
+// comparisons measured seconds on a ~50MB doc (found via adversarial testing). Skip the
+// whitespace scan entirely past this source size — a live O(n·m) scan can't run within a
+// request budget on a multi-MB doc (mirrors edits.ts's CONFLICT_DIFF_MAX_SRC_CHARS guard).
+// Above it, a miss just gets the generic re-read steer. Well above any real artifact, far
+// below the upload ceiling. (Within it, normalizing each line ONCE keeps the scan cheap.)
+const WS_HINT_MAX_SRC = 1_000_000
+
 // Same cap search results already apply per line (see LINE_CLIP in
 // apps/api/src/lib/search.ts) — this file can't import that (packages/core has
 // zero external deps), so it's a local constant, not a shared one.
@@ -854,11 +863,16 @@ const nearestMissHint = (haystack: string, needle: string): string => {
 
   // Tier 1: the exact same lines exist, just with different whitespace — a sliding
   // window match on normalized lines, reported at its real (unnormalized) line no.
-  if (hLines.length * normN.length <= TIER1_MAX_COMPARISONS) {
+  // Two guards bound the cost: skip huge sources (WS_HINT_MAX_SRC) so the scan can't
+  // blow the request budget, and normalize each haystack line ONCE up front rather than
+  // re-normalizing it for every window it appears in (the per-window re-normalization,
+  // not the comparison count, is what made a large doc's failed edit take seconds).
+  if (haystack.length <= WS_HINT_MAX_SRC && hLines.length * normN.length <= TIER1_MAX_COMPARISONS) {
+    const normH = hLines.map(normalizeLine)
     for (let i = 0; i + normN.length <= hLines.length; i++) {
       let allMatch = true
       for (let j = 0; j < normN.length; j++) {
-        if (normalizeLine(hLines[i + j] as string) !== normN[j]) {
+        if (normH[i + j] !== normN[j]) {
           allMatch = false
           break
         }
