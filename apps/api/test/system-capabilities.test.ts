@@ -36,3 +36,29 @@ describe("GET /v1/system/capabilities", () => {
     expect(body.capabilities.find((c) => c.id === "email")?.status).toBe("on")
   })
 })
+
+describe("POST /v1/system/search-reindex", () => {
+  it("accepts cursor:null as 'start from the top' — the natural resume loop echoes the final nextCursor back", async () => {
+    // A resumable client re-POSTs the previous `nextCursor`, which is literally `null` on the
+    // last page. The endpoint's `cursor` is `.nullish()`, so that must be a 200 (start over),
+    // not a 400 — otherwise a curl loop that doesn't special-case null wedges on its own output.
+    const res = await app.request("/v1/system/search-reindex", {
+      method: "POST",
+      headers: { ...bearer(TEST_TOKEN), "content-type": "application/json" },
+      body: JSON.stringify({ cursor: null, limit: 1 }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { scanned: number; indexed: number; nextCursor: unknown }
+    expect(typeof body.scanned).toBe("number")
+    expect(typeof body.indexed).toBe("number")
+  })
+
+  it("forbids a non-operator", async () => {
+    const res = await anonApp.request("/v1/system/search-reindex", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ limit: 1 }),
+    })
+    expect(res.status).toBe(403)
+  })
+})
