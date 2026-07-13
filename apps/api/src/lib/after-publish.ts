@@ -17,7 +17,9 @@ import {
 } from "@derive/core"
 import type { Backplane } from "../bus"
 import type { WebhookEvent } from "../events"
+import { log } from "../log"
 import { publishSweepEvents } from "./anchor-sweep"
+import { indexArtifactVersion } from "./search"
 
 /** The realtime + render + re-anchor core shared by every version bump (publish, restore,
  *  proposal-approve): announce the new version so open tabs live-reload, enqueue its preview
@@ -40,6 +42,15 @@ export const emitVersionBump = async (
   bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
   notifyRender?.(artifact, version.n)
   await publishSweepEvents(meta, blobs, bus, artifact.id, version)
+  // Keep the workspace search index current for the new live version. Best-effort:
+  // a search-index hiccup must never fail a publish that already succeeded, so log
+  // and move on — the artifact re-indexes on its next publish (and the backfill
+  // sweep is the safety net for anything missed).
+  try {
+    await indexArtifactVersion(meta, blobs, artifact, version)
+  } catch (err) {
+    log.error("search index update failed", { artifact: artifact.id, err: String(err) })
+  }
 }
 
 export interface AfterPublishDeps extends VersionBumpDeps {

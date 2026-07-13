@@ -558,11 +558,15 @@ export function makeRepos(db: SqliteDb) {
 
   // ---- full-text search index (workspace search substrate) ----
   // Translate a LITERAL user query into a safe FTS5 MATCH: alnum tokens AND'd as quoted
-  // phrases, so the user's text is never read as FTS5 syntax (AND/OR/NEAR/*/parens/quotes).
+  // PREFIX phrases (`"auth"*`), so the user's text is never read as FTS5 syntax
+  // (AND/OR/NEAR/*/parens/quotes) AND a partial word finds its whole word ("auth" →
+  // "authentication") — the grep-confirm pass the caller runs still enforces the exact
+  // literal, so the prefix only widens candidate RECALL, never final precision. Quoting
+  // before the star keeps it valid for every token shape (numeric-leading, unicode).
   // No tokens (all punctuation) → no query → no matches.
   const fts5Match = (query: string): string | null => {
     const tokens = query.match(/[\p{L}\p{N}]+/gu)
-    return tokens?.length ? tokens.map((t) => `"${t}"`).join(" ") : null
+    return tokens?.length ? tokens.map((t) => `"${t}"*`).join(" ") : null
   }
   // FTS5 has no UPSERT, so index = delete-then-insert the one row. `text` is title + body
   // so a title hit ranks the artifact too. Contentless: the source of truth stays the blob.
@@ -2526,11 +2530,21 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(notification).where(eq(notification.artifact_id, id)).run()
     await db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
     await db.delete(artifact).where(eq(artifact.id, id)).run()
+    // Drop the search-index row too. Contentless FTS/tsvector rows aren't drizzle
+    // tables, so they ride the same raw-SQL path unindexArtifact uses.
+    await unindexArtifact(id)
   }
 
   // Sequential move (used by D1). better-sqlite3 + pg override with a transaction.
   const moveArtifactOrg = async (artifactId: string, targetOrgId: string): Promise<void> => {
     await db.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId)).run()
+    // Keep the search-index row's org in step so the moved artifact is findable in its
+    // new workspace immediately (its text is unchanged by a move — only the scope is).
+    // A stale org here could never LEAK it: listArtifacts re-checks org against the live
+    // row, so this is a findability fix, not a visibility one.
+    await db.run(
+      sql`UPDATE artifact_search SET org_id = ${targetOrgId} WHERE artifact_id = ${artifactId}`,
+    )
     // Collections are org-scoped groupings; the artifact leaves all of them.
     await db.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId)).run()
     // An org-scoped webhook that targeted this one artifact falls back to org-wide

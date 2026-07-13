@@ -876,6 +876,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         orgId: listOrg,
         viewerId: isOperator ? undefined : (memberKey ?? undefined),
         publicOnly,
+        query,
         re,
         where,
         ctxLines,

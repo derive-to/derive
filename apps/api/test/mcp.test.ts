@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import type { BlobStore, MetaStore } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
@@ -9,6 +10,7 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
+import { reindexSearchBatch } from "../src/lib/search"
 
 // The remote MCP endpoint (/mcp) authenticated by an OAuth bearer. We seed a grant
 // straight into the oauth-provider tables (what the consent dance produces), publish
@@ -804,12 +806,15 @@ describe("remote MCP endpoint (/mcp)", () => {
     // surface, even though it lives in the same workspace. This mirrors exactly the
     // visibility rule list_artifacts already enforces (artifactListConditions: listed
     // != 'none' OR isMember); workspace search reuses listArtifacts with the same
-    // viewerId, so this pins that it didn't accidentally widen the scope.
+    // viewerId, so this pins that it didn't accidentally widen the scope. Crucially we
+    // ALSO index it below (indexArtifact) so the FTS layer genuinely NOMINATES it as a
+    // candidate — otherwise the negative below would pass vacuously (an unindexed doc
+    // is never a candidate). This proves the listArtifacts gate, not an empty index,
+    // is what drops it.
     const owner = await meta.getByShortId(r1)
     if (!owner) throw new Error("expected the visible artifact to exist")
-    const key = await blobs.put(
-      new TextEncoder().encode("# Secret\n\nthe private-needle-zulu lives here"),
-    )
+    const secret = "# Secret\n\nthe private-needle-zulu lives here"
+    const key = await blobs.put(new TextEncoder().encode(secret))
     await meta.createArtifact({
       id: "a_stranger_private",
       short_id: "strangr1",
@@ -829,6 +834,9 @@ describe("remote MCP endpoint (/mcp)", () => {
       author: "stranger",
       message: null,
     })
+    // The index HAS the private artifact + its needle (org-scoped, no visibility) — so
+    // searchArtifactIds will nominate it. The visibility gate must still drop it.
+    await meta.indexArtifact("a_stranger_private", owner.org_id, "Stranger's Private Doc", secret)
 
     const afterPrivate = toolText(
       await call(app, token, "search", { query: "private-needle-zulu" }),
@@ -841,21 +849,43 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(afterPrivate).not.toContain("Secret")
   })
 
-  it("search (workspace mode): caps the scan at the most recent artifacts, with an honest truncation note (not silent)", async () => {
-    const { app, token, meta, blobs } = appWithGrant("wscap", "openid derive:read derive:publish")
-    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
-    const owner = await meta.getByShortId(seed)
-    if (!owner) throw new Error("expected the seed artifact to exist")
-    const key = await blobs.put(new TextEncoder().encode("filler content, nothing to find"))
-    // One more than WORKSPACE_SEARCH_ARTIFACT_CAP (30) so the cap must engage.
-    for (let i = 0; i < 31; i++) {
-      const id = `a_bulk_${i}`
+  it("search (workspace mode): a freshly published artifact is findable across the workspace (publish indexes it)", async () => {
+    // End-to-end proof of the write-path: publishing runs emitVersionBump →
+    // indexArtifactVersion, so the new content is in the index and workspace search
+    // (index → visibility → grep-confirm) surfaces it — no short_id needed.
+    const { app, token } = appWithGrant("wsidx", "openid derive:read derive:publish")
+    await publishRaw(
+      app,
+      token,
+      "# Onboarding\n\nThe kestrel protocol handles retries.",
+      "doc.md",
+      "Onboarding",
+    )
+    const res = toolText(await call(app, token, "search", { query: "kestrel" }))
+    expect(res).toContain("kestrel") // grep-confirmed hunk
+    expect(res).toContain("Onboarding") // grouped under its artifact
+  })
+
+  // Seed N indexed artifacts that all match one query, so the grep-confirm cap is
+  // exercised. Uses the direct meta path (fast) plus indexArtifact — the same row the
+  // publish write-path would write — rather than N slow tool publishes.
+  const seedMatching = async (
+    meta: MetaStore,
+    blobs: BlobStore,
+    orgId: string,
+    prefix: string,
+    n: number,
+  ): Promise<void> => {
+    const key = await blobs.put(new TextEncoder().encode("every doc mentions widget here"))
+    for (let i = 0; i < n; i++) {
+      const id = `a_${prefix}_${i}`
+      const title = `${prefix} ${i} widget`
       await meta.createArtifact({
         id,
-        short_id: `bulk${i.toString().padStart(4, "0")}`,
-        org_id: owner.org_id,
+        short_id: `${prefix}${i.toString().padStart(4, "0")}`,
+        org_id: orgId,
         slug: null,
-        title: `Bulk ${i}`,
+        title,
         workspace_access: "member",
         link_role: "viewer",
         listed: "workspace",
@@ -863,18 +893,30 @@ describe("remote MCP endpoint (/mcp)", () => {
         spa: 0,
       })
       await meta.addVersion(id, {
-        id: `v_bulk_${i}`,
+        id: `v_${prefix}_${i}`,
         blob_key: key,
         content_type: "text/markdown",
         author: "seeder",
         message: null,
       })
+      await meta.indexArtifact(id, orgId, title, "every doc mentions widget here")
     }
-    const res = toolText(await call(app, token, "search", { query: "zzz-nothing-matches-zzz" }))
-    expect(res).toContain("scanned the 30 most recently created artifacts you can see")
+  }
+
+  it("search (workspace mode): ranks the whole corpus and shows an honest truncation note past the grep-confirm cap", async () => {
+    const { app, token, meta, blobs } = appWithGrant("wscap", "openid derive:read derive:publish")
+    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
+    const owner = await meta.getByShortId(seed)
+    if (!owner) throw new Error("expected the seed artifact to exist")
+    // 31 matching artifacts — one more than WORKSPACE_SEARCH_ARTIFACT_CAP (30), so the
+    // grep-confirm cap engages and the truncation note must appear.
+    await seedMatching(meta, blobs, owner.org_id, "bulk", 31)
+    const res = toolText(await call(app, token, "search", { query: "widget" }))
+    expect(res).toContain("matching artifacts you can see") // the relevance-truncation note
+    expect(res).toContain("top 30 of 31")
   })
 
-  it("search (workspace mode): EXACTLY WORKSPACE_SEARCH_ARTIFACT_CAP (30) artifacts must NOT show the truncation note (boundary regression — a naive `arts.length === cap` check false-positives here since a plain `limit:30` fetch always returns exactly 30 when there are 30+)", async () => {
+  it("search (workspace mode): EXACTLY the cap (30) matching artifacts shows NO truncation note", async () => {
     const { app, token, meta, blobs } = appWithGrant(
       "wscapexact",
       "openid derive:read derive:publish",
@@ -882,33 +924,65 @@ describe("remote MCP endpoint (/mcp)", () => {
     const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
     const owner = await meta.getByShortId(seed)
     if (!owner) throw new Error("expected the seed artifact to exist")
-    const key = await blobs.put(new TextEncoder().encode("filler content, nothing to find"))
-    // 29 here + the seed artifact published above = exactly 30
-    // (WORKSPACE_SEARCH_ARTIFACT_CAP), not one more.
-    for (let i = 0; i < 29; i++) {
-      const id = `a_exact_${i}`
+    // Exactly 30 matching artifacts (the seed doesn't match "widget"): the strict `>`
+    // boundary means no truncation note fires.
+    await seedMatching(meta, blobs, owner.org_id, "exct", 30)
+    const res = toolText(await call(app, token, "search", { query: "widget" }))
+    expect(res).not.toContain("matching artifacts you can see")
+    expect(res).not.toContain("there may be more")
+  })
+
+  it("search reindex (backfill): a bounded, resumable sweep makes pre-existing (never-indexed) artifacts findable", async () => {
+    const { app, token, meta, blobs } = appWithGrant("reidx", "openid derive:read derive:publish")
+    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
+    const owner = await meta.getByShortId(seed)
+    if (!owner) throw new Error("expected the seed artifact to exist")
+    // 3 artifacts created via the DIRECT meta path (createArtifact + addVersion, no
+    // emitVersionBump) — exactly what a pre-feature / imported artifact looks like: it
+    // exists but was never indexed.
+    const key = await blobs.put(new TextEncoder().encode("the backfillneedle appears here"))
+    for (let i = 0; i < 3; i++) {
       await meta.createArtifact({
-        id,
-        short_id: `exct${i.toString().padStart(4, "0")}`,
+        id: `a_pre_${i}`,
+        short_id: `pre${i.toString().padStart(5, "0")}`,
         org_id: owner.org_id,
         slug: null,
-        title: `Exact ${i}`,
+        title: `Pre ${i}`,
         workspace_access: "member",
         link_role: "viewer",
         listed: "workspace",
         kind: "file",
         spa: 0,
       })
-      await meta.addVersion(id, {
-        id: `v_exact_${i}`,
+      await meta.addVersion(`a_pre_${i}`, {
+        id: `v_pre_${i}`,
         blob_key: key,
         content_type: "text/markdown",
-        author: "seeder",
+        author: "importer",
         message: null,
       })
     }
-    const res = toolText(await call(app, token, "search", { query: "zzz-nothing-matches-zzz" }))
-    expect(res).not.toContain("there may be more")
+    // Not findable before the backfill — the index has no row for them.
+    expect(toolText(await call(app, token, "search", { query: "backfillneedle" }))).toContain(
+      "No matches",
+    )
+    // Drive the bounded sweep to completion (limit:2 forces multiple pages across the
+    // seed + 3 artifacts, exercising the cursor).
+    let cursor: { created_at: string; id: string } | null | undefined
+    let pages = 0
+    let indexed = 0
+    do {
+      const r = await reindexSearchBatch({ meta, blobs }, { cursor: cursor ?? undefined, limit: 2 })
+      indexed += r.indexed
+      cursor = r.nextCursor
+      pages++
+    } while (cursor)
+    expect(pages).toBeGreaterThan(1) // actually paginated, not one big pass
+    expect(indexed).toBeGreaterThanOrEqual(3)
+    // Now findable — grouped under their artifacts.
+    const found = toolText(await call(app, token, "search", { query: "backfillneedle" }))
+    expect(found).toContain("backfillneedle")
+    expect(found).toContain("Pre 0")
   })
 
   it("read: a region ref (@N) reads that region directly, with actionable errors", async () => {

@@ -1062,7 +1062,7 @@ async function buildServer(
     "search",
     {
       description:
-        "Find text within ONE artifact, or across a WORKSPACE. Pass short_id to grep one artifact (not a full read): matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range (in the format the result names) or `edit` that spot. A bundle is searched across all its text pages, grouped by page. Omit short_id to grep instead across the most recently created artifacts you can see in a workspace — same visibility rules as list_artifacts — grouped by artifact, so you can find WHICH doc has something before opening it. Searches the exact source by default (in:'text' searches the visible text instead). The query is matched literally (metacharacters are not special).",
+        "Find text within ONE artifact, or across a WORKSPACE. Pass short_id to grep one artifact (not a full read): matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range (in the format the result names) or `edit` that spot. A bundle is searched across all its text pages, grouped by page. Omit short_id to search the WHOLE workspace — every artifact you can see (same visibility rules as list_artifacts), ranked by relevance, grouped by artifact — so you can find WHICH doc has something before opening it. Searches the exact source by default (in:'text' searches the visible text instead). The query is matched literally (metacharacters are not special).",
       inputSchema: {
         short_id: z
           .string()
@@ -1117,6 +1117,7 @@ async function buildServer(
         const { results, note } = await searchWorkspace(ctx, {
           orgId: t.org,
           viewerId: actingFor?.id ?? agent.id,
+          query,
           re,
           where,
           ctxLines,

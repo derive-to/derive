@@ -1,7 +1,9 @@
+import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
 import { capabilityReport } from "../config-manifest"
 import type { AppContext } from "../context"
-import { fail } from "../lib/http"
+import { fail, readJson } from "../lib/http"
+import { reindexSearchBatch } from "../lib/search"
 import { log } from "../log"
 
 /** Operational endpoints: liveness (/healthz), readiness (/readyz — proves the datastore
@@ -49,6 +51,34 @@ export const systemRoutes = (ctx: AppContext) => {
         : cap,
     )
     return c.json({ capabilities })
+  })
+
+  // Backfill the workspace search index over the EXISTING corpus. Publishing keeps the
+  // index current going forward (emitVersionBump), but artifacts published before that
+  // wiring — or created outside it — need a one-time sweep. Operator-only, idempotent,
+  // and bounded: it indexes one page (default 100, max 500) and returns `nextCursor`;
+  // the operator re-POSTs with that cursor until it comes back null. Keeping each call
+  // bounded is what fits the Workers CPU budget rather than one unbounded pass.
+  //   curl -XPOST -H "authorization: Bearer $DERIVE_TOKEN" .../v1/system/search-reindex
+  //   # then repeat, passing {"cursor": <nextCursor>} until nextCursor is null
+  app.post("/v1/system/search-reindex", async (c) => {
+    if (!isToken(c) && !(await isSuperAdmin(c)))
+      return fail(c, 403, "operator access required (DERIVE_TOKEN or a super-admin account)")
+    const body = await readJson(
+      c,
+      z.object({
+        orgId: z.string().optional(),
+        cursor: z.object({ created_at: z.string(), id: z.string() }).optional(),
+        limit: z.number().int().optional(),
+      }),
+    )
+    if (body instanceof Response) return body
+    const limit = Math.min(Math.max(body.limit ?? 100, 1), 500)
+    const result = await reindexSearchBatch(
+      { meta, blobs },
+      { orgId: body.orgId, cursor: body.cursor, limit },
+    )
+    return c.json(result)
   })
 
   // A minimal API-origin landing. Skipped when the SPA is bundled in-process

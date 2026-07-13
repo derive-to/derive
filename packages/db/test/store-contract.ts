@@ -1644,6 +1644,40 @@ export function runStoreContract(
       expect(ranked[0]?.rank).toBeGreaterThanOrEqual(ranked[1]?.rank ?? 0)
       expect(await store.searchArtifactIds(ORG, "kestrel", 1)).toHaveLength(1)
     })
+
+    it("prefix-matches a partial word onto its whole word (both dialects)", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.indexArtifact(a.id, ORG, null, "the authentication flow uses rotating tokens")
+      // A partial word finds the whole word — candidate recall; the caller's grep pass
+      // still enforces the exact literal. Same behaviour on fts5 (`"auth"*`) and
+      // tsvector (`auth:*`).
+      expect(ids(await store.searchArtifactIds(ORG, "auth", 10))).toEqual([a.id])
+      expect(ids(await store.searchArtifactIds(ORG, "rotat", 10))).toEqual([a.id])
+      // Multiple prefix tokens AND together.
+      expect(ids(await store.searchArtifactIds(ORG, "auth token", 10))).toEqual([a.id])
+      // A word absent from the text still doesn't match.
+      expect(await store.searchArtifactIds(ORG, "invoice", 10)).toHaveLength(0)
+    })
+
+    it("deleteArtifact drops the artifact's index row", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.indexArtifact(a.id, ORG, "Ledger", "reconciliation of the general ledger")
+      expect(ids(await store.searchArtifactIds(ORG, "reconciliation", 10))).toEqual([a.id])
+      await store.deleteArtifact(a.id)
+      expect(await store.searchArtifactIds(ORG, "reconciliation", 10)).toHaveLength(0)
+    })
+
+    it("moveArtifactOrg re-scopes the index row to the new workspace", async () => {
+      const target = `org_${uuid()}`
+      const a = await store.createArtifact(newArtifact())
+      await store.indexArtifact(a.id, ORG, null, "migration playbook for the platform team")
+      expect(ids(await store.searchArtifactIds(ORG, "migration", 10))).toEqual([a.id])
+      await store.moveArtifactOrg(a.id, target)
+      // Gone from the old workspace's search; present in the new one (its text is
+      // unchanged by the move — only the scope column moves).
+      expect(await store.searchArtifactIds(ORG, "migration", 10)).toHaveLength(0)
+      expect(ids(await store.searchArtifactIds(target, "migration", 10))).toEqual([a.id])
+    })
   })
 
   describe(`${label}: moderation (reports, takedown, audit)`, () => {
