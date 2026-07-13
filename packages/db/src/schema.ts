@@ -819,10 +819,20 @@ const ddl = generateDdl(TABLES, getTableConfig, {
  * the not-yet-queried placeholder tables (principal/view) and the perf indexes
  * have no drizzle def and stay explicit (see ./ddl).
  */
+// Full-text search index (workspace search substrate). A contentless FTS5 virtual table:
+// `text` is tokenized/searched; `artifact_id`/`org_id` are stored-but-UNINDEXED so a query
+// can filter to one workspace (`org_id = ?`) and return the id, ranked by `bm25()`. Not a
+// drizzle def (FTS5 is raw DDL only), so it lives here explicitly like the perf indexes.
+// D1 ships FTS5; better-sqlite3 ships it too.
+const ARTIFACT_SEARCH_FTS5 =
+  `CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(` +
+  `text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61')`
+
 export const SCHEMA_STATEMENTS: string[] = [
   ...ddl.creates,
   ...placeholderTables(SQLITE_TIMESTAMP_DEFAULT),
   ...PERF_INDEXES,
+  ARTIFACT_SEARCH_FTS5,
 ]
 
 /**

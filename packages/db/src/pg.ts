@@ -587,6 +587,40 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(artifact.created_at), desc(artifact.id))
     return opts?.limit ? q.limit(opts.limit) : q
   }
+  // ---- full-text search index (workspace search substrate) — the tsvector twin of the
+  // SQLite fts5 path. `plainto_tsquery` turns the raw user text into an AND of its words,
+  // safely (no query-syntax injection); `ts_rank_cd` ranks (higher = more relevant). `text`
+  // is title + body so a title hit ranks the artifact too.
+  async indexArtifact(
+    id: string,
+    orgId: string,
+    title: string | null,
+    text: string,
+  ): Promise<void> {
+    const content = title ? `${title}\n\n${text}` : text
+    await this.pool.query(
+      `INSERT INTO artifact_search (artifact_id, org_id, tsv) VALUES ($1, $2, to_tsvector('simple', $3))
+       ON CONFLICT (artifact_id) DO UPDATE SET org_id = $2, tsv = to_tsvector('simple', $3)`,
+      [id, orgId, content],
+    )
+  }
+  async unindexArtifact(id: string): Promise<void> {
+    await this.pool.query(`DELETE FROM artifact_search WHERE artifact_id = $1`, [id])
+  }
+  async searchArtifactIds(
+    orgId: string,
+    query: string,
+    limit: number,
+  ): Promise<{ id: string; rank: number }[]> {
+    const r = await this.pool.query<{ artifact_id: string; rank: number }>(
+      `SELECT artifact_id, ts_rank_cd(tsv, plainto_tsquery('simple', $2)) AS rank
+       FROM artifact_search
+       WHERE org_id = $1 AND tsv @@ plainto_tsquery('simple', $2)
+       ORDER BY rank DESC LIMIT $3`,
+      [orgId, query, limit],
+    )
+    return r.rows.map((row) => ({ id: row.artifact_id, rank: Number(row.rank) }))
+  }
   async artifactIdsByTag(tag: string): Promise<string[]> {
     const rows = await this.db
       .select({ id: artifactTag.artifact_id })

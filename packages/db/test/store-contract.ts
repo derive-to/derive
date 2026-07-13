@@ -1593,6 +1593,59 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: full-text search index`, () => {
+    const ids = (hits: { id: string }[]) => hits.map((h) => h.id).sort()
+    it("indexes text, finds it ranked, scoped to one org; reindex/unindex mutate it", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const b = await store.createArtifact(newArtifact())
+      const elsewhere = await store.createArtifact(newArtifact({ org_id: `org_${uuid()}` }))
+      await store.indexArtifact(
+        a.id,
+        ORG,
+        "Revenue report",
+        "quarterly revenue grew twenty percent",
+      )
+      await store.indexArtifact(b.id, ORG, "Costs", "operating costs held flat this period")
+      await store.indexArtifact(elsewhere.id, elsewhere.org_id, "Revenue", "revenue in another org")
+
+      // Relevance: "revenue" finds a, not b; "costs" finds b, not a.
+      expect(ids(await store.searchArtifactIds(ORG, "revenue", 10))).toEqual([a.id])
+      expect(ids(await store.searchArtifactIds(ORG, "costs", 10))).toEqual([b.id])
+      // Org isolation: the same-word artifact in another org never leaks into ORG.
+      expect(ids(await store.searchArtifactIds(ORG, "revenue", 10))).not.toContain(elsewhere.id)
+      expect(ids(await store.searchArtifactIds(elsewhere.org_id, "revenue", 10))).toEqual([
+        elsewhere.id,
+      ])
+      // Title is searchable too.
+      expect(ids(await store.searchArtifactIds(ORG, "report", 10))).toEqual([a.id])
+
+      // Reindex (a new version) REPLACES the prior text.
+      await store.indexArtifact(a.id, ORG, "Now", "entirely different subject matter here")
+      expect(await store.searchArtifactIds(ORG, "revenue", 10)).toHaveLength(0)
+      expect(ids(await store.searchArtifactIds(ORG, "subject", 10))).toEqual([a.id])
+
+      // Unindex drops it.
+      await store.unindexArtifact(a.id)
+      expect(await store.searchArtifactIds(ORG, "subject", 10)).toHaveLength(0)
+
+      // A punctuation-only query yields nothing — the literal text is never read as
+      // query syntax (no FTS injection / no error).
+      expect(await store.searchArtifactIds(ORG, "!!! (*)", 10)).toHaveLength(0)
+    })
+
+    it("ranks a more-relevant artifact first, and honours the limit", async () => {
+      const hi = await store.createArtifact(newArtifact())
+      const lo = await store.createArtifact(newArtifact())
+      await store.indexArtifact(hi.id, ORG, null, Array(12).fill("kestrel").join(" "))
+      await store.indexArtifact(lo.id, ORG, null, "kestrel among many unrelated other words here")
+      const ranked = await store.searchArtifactIds(ORG, "kestrel", 10)
+      expect(ranked).toHaveLength(2)
+      expect(ranked[0]?.id).toBe(hi.id) // far more occurrences → higher rank in both dialects
+      expect(ranked[0]?.rank).toBeGreaterThanOrEqual(ranked[1]?.rank ?? 0)
+      expect(await store.searchArtifactIds(ORG, "kestrel", 1)).toHaveLength(1)
+    })
+  })
+
   describe(`${label}: moderation (reports, takedown, audit)`, () => {
     it("files a report, transitions it, takes down an artifact, logs the action", async () => {
       const a = await store.createArtifact(newArtifact())

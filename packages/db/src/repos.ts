@@ -556,6 +556,48 @@ export function makeRepos(db: SqliteDb) {
     return opts?.limit ? rows.limit(opts.limit).all() : rows.all()
   }
 
+  // ---- full-text search index (workspace search substrate) ----
+  // Translate a LITERAL user query into a safe FTS5 MATCH: alnum tokens AND'd as quoted
+  // phrases, so the user's text is never read as FTS5 syntax (AND/OR/NEAR/*/parens/quotes).
+  // No tokens (all punctuation) → no query → no matches.
+  const fts5Match = (query: string): string | null => {
+    const tokens = query.match(/[\p{L}\p{N}]+/gu)
+    return tokens?.length ? tokens.map((t) => `"${t}"`).join(" ") : null
+  }
+  // FTS5 has no UPSERT, so index = delete-then-insert the one row. `text` is title + body
+  // so a title hit ranks the artifact too. Contentless: the source of truth stays the blob.
+  const indexArtifact = async (
+    id: string,
+    orgId: string,
+    title: string | null,
+    text: string,
+  ): Promise<void> => {
+    const content = title ? `${title}\n\n${text}` : text
+    await db.run(sql`DELETE FROM artifact_search WHERE artifact_id = ${id}`)
+    await db.run(
+      sql`INSERT INTO artifact_search (text, artifact_id, org_id) VALUES (${content}, ${id}, ${orgId})`,
+    )
+  }
+  const unindexArtifact = async (id: string): Promise<void> => {
+    await db.run(sql`DELETE FROM artifact_search WHERE artifact_id = ${id}`)
+  }
+  const searchArtifactIds = async (
+    orgId: string,
+    query: string,
+    limit: number,
+  ): Promise<{ id: string; rank: number }[]> => {
+    const match = fts5Match(query)
+    if (!match) return []
+    // bm25() is smaller-is-better; negate so the interface's "higher = more relevant" holds.
+    const rows = (await db.all(sql`
+      SELECT artifact_id, -bm25(artifact_search) AS rank
+      FROM artifact_search
+      WHERE org_id = ${orgId} AND artifact_search MATCH ${match}
+      ORDER BY rank DESC
+      LIMIT ${limit}`)) as { artifact_id: string; rank: number }[]
+    return rows.map((r) => ({ id: r.artifact_id, rank: r.rank }))
+  }
+
   const artifactIdsByTag = async (tag: string): Promise<string[]> =>
     (
       await db
@@ -2573,6 +2615,9 @@ export function makeRepos(db: SqliteDb) {
     setVersionPreview,
     setVersionPreviewVariant,
     listArtifacts,
+    indexArtifact,
+    unindexArtifact,
+    searchArtifactIds,
     artifactIdsByTag,
     artifactIdsByAuthor,
     artifactIdsOwnedBy,
