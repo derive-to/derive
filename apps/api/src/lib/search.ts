@@ -301,12 +301,20 @@ export const searchWorkspace = async (
     cap: number
   },
 ): Promise<{ results: WorkspaceSearchResult[]; note: string | null }> => {
+  // Fetch one past the cap — the same over-fetch-by-one pagination idiom the
+  // GET /v1/artifacts list route already uses — so "exactly WORKSPACE_SEARCH_
+  // ARTIFACT_CAP accessible artifacts" and "more than that" are distinguishable.
+  // Without the +1, a workspace with EXACTLY the cap worth of artifacts always
+  // reports "there may be more" even though there isn't. The sentinel row itself
+  // is never scanned (sliced off below) — its only job is answering that question.
   const arts = await deps.meta.listArtifacts({
     orgId: opts.orgId,
     viewerId: opts.viewerId,
     publicOnly: opts.publicOnly,
-    limit: WORKSPACE_SEARCH_ARTIFACT_CAP,
+    limit: WORKSPACE_SEARCH_ARTIFACT_CAP + 1,
   })
+  const hasMore = arts.length > WORKSPACE_SEARCH_ARTIFACT_CAP
+  const scanned = hasMore ? arts.slice(0, WORKSPACE_SEARCH_ARTIFACT_CAP) : arts
   // Lower than searchArtifactVersion's own inner CONCURRENCY=8 (bundle-page
   // batching) on purpose: this outer batch and that inner one aren't composed —
   // if several of the artifacts landing in one outer batch are themselves bundles,
@@ -328,18 +336,13 @@ export const searchWorkspace = async (
     return total ? { short_id: a.short_id, title: a.title ?? a.short_id, groups, total } : null
   }
   const results: WorkspaceSearchResult[] = []
-  for (let i = 0; i < arts.length; i += CONCURRENCY) {
-    const batch = await Promise.all(arts.slice(i, i + CONCURRENCY).map(scanArtifact))
+  for (let i = 0; i < scanned.length; i += CONCURRENCY) {
+    const batch = await Promise.all(scanned.slice(i, i + CONCURRENCY).map(scanArtifact))
     for (const r of batch) if (r) results.push(r)
   }
-  // A count of ALL artifacts in the org (not viewer-scoped) would over-report here
-  // for anyone who can't see everything — a full page back from listArtifacts
-  // (itself already viewer-scoped) is the honest signal that more MIGHT exist,
-  // without a second query or a leaked total.
-  const note =
-    arts.length === WORKSPACE_SEARCH_ARTIFACT_CAP
-      ? `scanned the ${WORKSPACE_SEARCH_ARTIFACT_CAP} most recently created artifacts you can see — there may be more`
-      : null
+  const note = hasMore
+    ? `scanned the ${WORKSPACE_SEARCH_ARTIFACT_CAP} most recently created artifacts you can see — there may be more`
+    : null
   return { results, note }
 }
 

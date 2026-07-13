@@ -874,6 +874,43 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(res).toContain("scanned the 30 most recently created artifacts you can see")
   })
 
+  it("search (workspace mode): EXACTLY WORKSPACE_SEARCH_ARTIFACT_CAP (30) artifacts must NOT show the truncation note (boundary regression — a naive `arts.length === cap` check false-positives here since a plain `limit:30` fetch always returns exactly 30 when there are 30+)", async () => {
+    const { app, token, meta, blobs } = appWithGrant(
+      "wscapexact",
+      "openid derive:read derive:publish",
+    )
+    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
+    const owner = await meta.getByShortId(seed)
+    if (!owner) throw new Error("expected the seed artifact to exist")
+    const key = await blobs.put(new TextEncoder().encode("filler content, nothing to find"))
+    // 29 here + the seed artifact published above = exactly 30
+    // (WORKSPACE_SEARCH_ARTIFACT_CAP), not one more.
+    for (let i = 0; i < 29; i++) {
+      const id = `a_exact_${i}`
+      await meta.createArtifact({
+        id,
+        short_id: `exct${i.toString().padStart(4, "0")}`,
+        org_id: owner.org_id,
+        slug: null,
+        title: `Exact ${i}`,
+        workspace_access: "member",
+        link_role: "viewer",
+        listed: "workspace",
+        kind: "file",
+        spa: 0,
+      })
+      await meta.addVersion(id, {
+        id: `v_exact_${i}`,
+        blob_key: key,
+        content_type: "text/markdown",
+        author: "seeder",
+        message: null,
+      })
+    }
+    const res = toolText(await call(app, token, "search", { query: "zzz-nothing-matches-zzz" }))
+    expect(res).not.toContain("there may be more")
+  })
+
   it("read: a region ref (@N) reads that region directly, with actionable errors", async () => {
     const { app, token } = appWithGrant("region", "openid derive:read derive:publish")
     const html =
