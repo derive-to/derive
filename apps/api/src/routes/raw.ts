@@ -57,6 +57,8 @@ export const rawRoutes = (ctx: AppContext) => {
       // so a tab like `walkthrough.html` navigates to the walkthrough artifact instead
       // of re-serving this page. No-op unless this artifact is GitHub-synced.
       crossDocTransform(meta, artifact),
+      // Mobile auto-reflow is opt-in per artifact ([Q2]) — byte-faithful by default.
+      !!artifact.reflow,
     )
   }
 
@@ -133,7 +135,20 @@ export const rawRoutes = (ctx: AppContext) => {
     const path = decodeURIComponent(c.req.path.slice(prefix.length))
     // A proposal is in-review, transient content (it can be withdrawn or change);
     // never let a shared cache hold it, regardless of the artifact's visibility.
-    return serveContent(c, blobs, proposal, artifact.title, prefix, path, "private, no-store")
+    // A proposal previews exactly as the live version would serve — including the
+    // artifact's own opt-in reflow flag ([Q2]).
+    return serveContent(
+      c,
+      blobs,
+      proposal,
+      artifact.title,
+      prefix,
+      path,
+      "private, no-store",
+      undefined,
+      undefined,
+      !!artifact.reflow,
+    )
   })
 
   return app

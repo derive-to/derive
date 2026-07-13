@@ -43,10 +43,11 @@ export const serveContent = async (
   transformHtml?: (html: string) => Promise<string>,
   /** Auto-reflow non-mobile-optimized HTML at serve time (inject a viewport tag + a
    *  conservative overflow reset, only when the document declares no viewport). Detection-
-   *  gated and non-destructive — the stored bytes are untouched. Default on; pass false to
-   *  serve the document exactly as authored. Never applied to markdown-rendered output,
-   *  which is already responsive. */
-  reflow = true,
+   *  gated and non-destructive — the stored bytes are untouched. OPT-IN as of [Q2]
+   *  (2026-07-13): default OFF — byte-faith wins; callers pass the artifact's own
+   *  `reflow` flag (set at publish) to enable it. Never applied to markdown-rendered
+   *  output, which is already responsive. */
+  reflow = false,
 ) => {
   const headers = { ...RAW_HEADERS, "Cache-Control": cacheControl }
   const tx = (doc: string) => (transformHtml ? transformHtml(doc) : Promise.resolve(doc))

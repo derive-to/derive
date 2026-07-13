@@ -40,6 +40,11 @@ export interface ArtifactRecord {
   password_hash: string | null
   kind: ArtifactKind
   spa: 0 | 1
+  /** Opt-IN mobile auto-reflow ([Q2], 2026-07-13): 1 = Derive may inject a viewport
+   *  tag + responsive CSS caps into viewport-less HTML at serve time; 0 (default) =
+   *  byte-faithful, the page serves exactly as authored. Set on create, like the
+   *  access triple. */
+  reflow: 0 | 1
   /** Locked: direct publishes are rejected; changes must go through a proposal. */
   locked: 0 | 1
   current_version: number
@@ -200,6 +205,8 @@ export interface NewArtifact {
   password_hash?: string | null
   kind: ArtifactKind
   spa: 0 | 1
+  /** Omitted ⇒ 0 (byte-faithful serving; see ArtifactRecord.reflow). */
+  reflow?: 0 | 1
 }
 
 export interface NewVersion {

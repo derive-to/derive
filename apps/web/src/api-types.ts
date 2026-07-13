@@ -4917,6 +4917,8 @@ export interface components {
             raw_token?: string;
             /** @description true when the bundle is a single-page app (all paths route to the entry). */
             spa?: boolean;
+            /** @description true = Derive may inject mobile-reflow CSS into viewport-less HTML at serve time; false/omitted = the page serves byte-faithful, exactly as authored. */
+            reflow?: boolean;
             /** @description Latest version number; 0 before any content is published. */
             current_version: number;
             versions: {

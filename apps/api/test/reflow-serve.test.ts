@@ -1,32 +1,46 @@
 import { describe, expect, it } from "vitest"
 import { app, upload } from "./helpers"
 
-// End-to-end: a non-mobile-optimized HTML artifact gets the viewport tag + reflow CSS
-// injected at serve time, while already-responsive HTML and markdown are left alone.
+// End-to-end: mobile auto-reflow is OPT-IN per artifact ([Q2], 2026-07-13). By
+// default a viewport-less page serves byte-faithful — exactly as authored; a
+// publisher passes reflow=true to let Derive inject the viewport tag + reflow CSS
+// at serve time. Already-responsive HTML and markdown are never touched either way.
 const raw = async (shortId: string) => (await app.request(`/raw/${shortId}/v/1/index.html`)).text()
 
-const publish = async (name: string, content: string): Promise<string> =>
-  (await (await upload(name, content)).json()).short_id as string
+const publish = async (
+  name: string,
+  content: string,
+  fields: Record<string, string> = {},
+): Promise<string> => (await (await upload(name, content, fields)).json()).short_id as string
 
-describe("serve-time HTML auto-reflow", () => {
-  it("injects viewport + reflow CSS into a fixed-width page with no viewport", async () => {
-    const html =
-      "<!doctype html><html><head><title>Report</title></head>" +
-      '<body><div style="width:1200px">wide</div></body></html>'
-    const body = await raw(await publish("report.html", html))
-    expect(body).toContain('name="viewport"')
-    expect(body).toContain("width=device-width")
-    expect(body).toContain("data-derive-reflow")
-    // Original content is preserved; the anchor client is still appended.
+const FIXED_WIDTH_HTML =
+  "<!doctype html><html><head><title>Report</title></head>" +
+  '<body><div style="width:1200px">wide</div></body></html>'
+
+describe("serve-time HTML auto-reflow (opt-in)", () => {
+  it("BY DEFAULT serves a viewport-less page byte-faithful — no injection (the [Q2] flip)", async () => {
+    const body = await raw(await publish("report.html", FIXED_WIDTH_HTML))
+    expect(body).not.toContain("data-derive-reflow")
+    expect(body).not.toContain('name="viewport"')
+    // Content and the anchor client are untouched by the flip.
     expect(body).toContain("wide")
     expect(body).toContain("derive-client.js")
   })
 
-  it("leaves an already-responsive page alone (no reflow injected)", async () => {
+  it("publishing with reflow=true opts in: viewport + reflow CSS are injected", async () => {
+    const body = await raw(await publish("report.html", FIXED_WIDTH_HTML, { reflow: "true" }))
+    expect(body).toContain('name="viewport"')
+    expect(body).toContain("width=device-width")
+    expect(body).toContain("data-derive-reflow")
+    expect(body).toContain("wide")
+    expect(body).toContain("derive-client.js")
+  })
+
+  it("even opted-in, an already-responsive page is left alone (detection still gates)", async () => {
     const html =
       '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">' +
       "<title>Responsive</title></head><body>hi</body></html>"
-    const body = await raw(await publish("responsive.html", html))
+    const body = await raw(await publish("responsive.html", html, { reflow: "true" }))
     expect(body).not.toContain("data-derive-reflow")
     // Exactly the one viewport the author wrote — we didn't add a second.
     expect(body.match(/name="viewport"/g)).toHaveLength(1)

@@ -627,6 +627,8 @@ export const artifactRoutes = (ctx: AppContext) => {
           title: str(body["title"]),
           slug: str(body["slug"]),
           spa: body["spa"] === "true" || body["spa"] === "1",
+          // Opt-IN mobile auto-reflow ([Q2]): omitted = byte-faithful serving.
+          reflow: body["reflow"] === "true" || body["reflow"] === "1",
           message: str(body["message"]),
           // Author is the authenticated identity, never a client-supplied field — a
           // logged-in publish must be attributed to that person. The human behind the
