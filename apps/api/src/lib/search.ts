@@ -416,6 +416,7 @@ const LIST_ID_CHUNK = 90
 export interface WorkspaceSearchResult {
   short_id: string
   title: string
+  current_version: number
   groups: { path: string | null; hunks: SearchHunk[] }[]
   total: number
 }
@@ -438,19 +439,26 @@ export const searchWorkspace = async (
     where: "source" | "text"
     ctxLines: number
     cap: number
+    // How many visible candidates to grep-confirm. Defaults to WORKSPACE_SEARCH_ARTIFACT_CAP
+    // (agents want depth); a typeahead surface passes a small value so a debounced keystroke
+    // reads only a handful of blobs. NOTE: this bounds only the blob-read + grep stage, not
+    // the (indexed, cheap) candidate scan or the visibility resolve — cap those with
+    // `candidateCap` when the caller wants the whole request small.
+    limit?: number
+    // How many ranked candidates to nominate + visibility-check. Defaults to
+    // WORKSPACE_SEARCH_CANDIDATE_CAP (deep recall for agents); a typeahead surface passes a
+    // small value (≤ LIST_ID_CHUNK) so the visibility resolve is a SINGLE query, not three.
+    candidateCap?: number
   },
 ): Promise<{ results: WorkspaceSearchResult[]; note: string | null }> => {
   // Tier 1 — the index nominates the most relevant candidate ids across the whole
   // corpus. Org-scoped and ranked, but with NO visibility knowledge by design. Fetch one
   // past the cap: the sentinel row (never resolved) just answers "were there more?".
-  const nominated = await deps.meta.searchArtifactIds(
-    opts.orgId,
-    opts.query,
-    WORKSPACE_SEARCH_CANDIDATE_CAP + 1,
-  )
+  const candidateCap = opts.candidateCap ?? WORKSPACE_SEARCH_CANDIDATE_CAP
+  const nominated = await deps.meta.searchArtifactIds(opts.orgId, opts.query, candidateCap + 1)
   if (nominated.length === 0) return { results: [], note: null }
-  const moreCandidates = nominated.length > WORKSPACE_SEARCH_CANDIDATE_CAP
-  const candidates = nominated.slice(0, WORKSPACE_SEARCH_CANDIDATE_CAP)
+  const moreCandidates = nominated.length > candidateCap
+  const candidates = nominated.slice(0, candidateCap)
   const rankOf = new Map(candidates.map((c, i) => [c.id, i]))
 
   // Tier 2 gate — THE visibility check. Re-resolve the nominated ids through
@@ -472,14 +480,20 @@ export const searchWorkspace = async (
     })
     visible.push(...rows)
   }
+  // A password lock gates the world-link CONTENT behind a password — read 401s without it.
+  // The publicOnly caller IS that anonymous/link visitor, so drop locked artifacts here,
+  // else their body would be grep-readable, bypassing the unlock. A member (viewerId)
+  // reaches content through membership, not the link, so the lock never applies to them.
+  const gated = opts.publicOnly ? visible.filter((a) => !a.password_hash) : visible
   // listArtifacts returns in its own (recency) order; restore relevance order.
-  visible.sort((a, b) => (rankOf.get(a.id) ?? Infinity) - (rankOf.get(b.id) ?? Infinity))
+  gated.sort((a, b) => (rankOf.get(a.id) ?? Infinity) - (rankOf.get(b.id) ?? Infinity))
 
   // Grep-confirm only the top-N most-relevant survivors — the blob-read+scan is the
   // real cost, so it stays bounded. A candidate the index nominated on token overlap
   // but whose exact literal/scope isn't actually present yields no hunks and drops out
   // here: the index is RECALL, the grep is PRECISION.
-  const toGrep = visible.slice(0, WORKSPACE_SEARCH_ARTIFACT_CAP)
+  const grepCap = opts.limit ?? WORKSPACE_SEARCH_ARTIFACT_CAP
+  const toGrep = gated.slice(0, grepCap)
   // 4, not searchArtifactVersion's inner 8: the two fan-outs compose (a batch of
   // bundles each opens its own 8-wide page fan-out), so peak blob reads is the product
   // — 4×8=32 keeps that worst case reasonable without a cross-cutting semaphore.
@@ -495,7 +509,15 @@ export const searchWorkspace = async (
       opts.ctxLines,
       opts.cap,
     )
-    return total ? { short_id: a.short_id, title: a.title ?? a.short_id, groups, total } : null
+    return total
+      ? {
+          short_id: a.short_id,
+          title: a.title ?? a.short_id,
+          current_version: a.current_version,
+          groups,
+          total,
+        }
+      : null
   }
   const results: WorkspaceSearchResult[] = []
   for (let i = 0; i < toGrep.length; i += CONCURRENCY) {
@@ -508,13 +530,13 @@ export const searchWorkspace = async (
   // wording says "candidates", never "matches". `grepTruncated`: more visible candidates
   // than we confirmed. `moreCandidates`: the index had still more below the window
   // (detected by the over-fetched sentinel) — hence the `+`.
-  const grepTruncated = visible.length > WORKSPACE_SEARCH_ARTIFACT_CAP
+  const grepTruncated = gated.length > grepCap
   const note = grepTruncated
-    ? `ranked by relevance — grep-confirmed the top ${WORKSPACE_SEARCH_ARTIFACT_CAP} of ${visible.length}${
+    ? `ranked by relevance — grep-confirmed the top ${grepCap} of ${gated.length}${
         moreCandidates ? "+" : ""
       } candidate artifacts you can see; refine the query to reach the rest`
     : moreCandidates
-      ? `ranked by relevance — more than ${WORKSPACE_SEARCH_CANDIDATE_CAP} artifacts matched the index; refine the query to narrow`
+      ? `ranked by relevance — more than ${candidateCap} artifacts matched the index; refine the query to narrow`
       : null
   return { results, note }
 }
@@ -543,3 +565,51 @@ export const workspaceSearchReport = (
   const steer = `\n\nOpen one with search(short_id:"...", query:"${query}") for full context, or read(short_id:"...", lines:"from-to", format:"${fmt}").`
   return clip(`${head}\n\n${body}${steer}`)
 }
+
+// ---------------------------------------------------------------------------
+// JSON hits — the same workspace results shaped for a UI (the ⌘K palette) instead of
+// the agent text report: one artifact per hit, with a single-line snippet of WHERE it
+// matched so a human sees why it surfaced. The client highlights the term itself.
+// ---------------------------------------------------------------------------
+
+export interface SearchHit {
+  short_id: string
+  title: string
+  current_version: number
+  /** One line of the matching text, windowed around the first match (…elided ends). */
+  snippet: string
+}
+
+// A short lead of context BEFORE the match, then the rest trailing. The window is biased
+// left on purpose: the palette renders the snippet in a single left-truncating line, so a
+// centered window would push the highlighted term off the right edge — the common case
+// here, where agent-authored markdown writes each paragraph as one long unwrapped line.
+const SNIPPET_LEAD = 16
+const SNIPPET_LEN = 160
+
+// Window a line so the first occurrence of `query` sits near the visible LEFT edge and
+// survives truncation. Whitespace in both the line and the query is collapsed (a source
+// line can be deeply indented; a query may carry stray spaces) so the match stays
+// locatable. Falls back to the head of the line when the literal isn't on it (shouldn't
+// happen after grep-confirm, but stays safe).
+export const snippetAround = (line: string, query: string): string => {
+  const flat = line.replace(/\s+/g, " ").trim()
+  const q = query.replace(/\s+/g, " ").trim()
+  const at = q ? flat.toLowerCase().indexOf(q.toLowerCase()) : -1
+  if (at < 0) return flat.length > SNIPPET_LEN ? `${flat.slice(0, SNIPPET_LEN)}…` : flat
+  const start = Math.max(0, at - SNIPPET_LEAD)
+  const end = Math.min(flat.length, start + SNIPPET_LEN)
+  return `${start > 0 ? "…" : ""}${flat.slice(start, end)}${end < flat.length ? "…" : ""}`
+}
+
+export const toSearchHits = (results: WorkspaceSearchResult[], query: string): SearchHit[] =>
+  results.map((r) => {
+    // The first HIT line across the artifact's groups is the most relevant snippet source.
+    const hit = r.groups.flatMap((g) => g.hunks.flatMap((h) => h.lines)).find((l) => l.hit)
+    return {
+      short_id: r.short_id,
+      title: r.title,
+      current_version: r.current_version,
+      snippet: hit ? snippetAround(hit.text, query) : "",
+    }
+  })

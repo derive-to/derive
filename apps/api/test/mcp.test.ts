@@ -10,7 +10,13 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
-import { MAX_INDEX_TEXT, reindexSearchBatch, versionIndexText } from "../src/lib/search"
+import {
+  MAX_INDEX_TEXT,
+  reindexSearchBatch,
+  searchMatcher,
+  searchWorkspace,
+  versionIndexText,
+} from "../src/lib/search"
 
 // The remote MCP endpoint (/mcp) authenticated by an OAuth bearer. We seed a grant
 // straight into the oauth-provider tables (what the consent dance produces), publish
@@ -1033,6 +1039,63 @@ describe("remote MCP endpoint (/mcp)", () => {
     // contiguous literal finds nothing → honestly "No matches", never a false hit.
     const res = toolText(await call(app, token, "search", { query: "alpha omega" }))
     expect(res).toContain("No matches")
+  })
+
+  it("searchWorkspace hides a public-but-password-locked artifact's content from the anonymous (publicOnly) path, not from members", async () => {
+    const { app, token, meta, blobs } = appWithGrant("wslock", "openid derive:read derive:publish")
+    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
+    const owner = await meta.getByShortId(seed)
+    if (!owner) throw new Error("expected the seed artifact to exist")
+    const org = owner.org_id
+    const key = await blobs.put(new TextEncoder().encode("the gatedneedle lives inside"))
+    // Two PUBLIC-listed artifacts with the same content; one is password-locked (a lock on
+    // its world link). The content differs only in whether reading it needs the password.
+    const mk = async (id: string, locked: boolean) => {
+      await meta.createArtifact({
+        id,
+        short_id: id,
+        org_id: org,
+        slug: null,
+        title: `Doc ${id}`,
+        workspace_access: "member",
+        link_role: "viewer",
+        listed: "public",
+        password_hash: locked ? "a-real-hash" : null,
+        kind: "file",
+        spa: 0,
+      })
+      await meta.addVersion(id, {
+        id: `v_${id}`,
+        blob_key: key,
+        content_type: "text/markdown",
+        author: "o",
+        message: null,
+      })
+      await meta.indexArtifact(id, org, `Doc ${id}`, "the gatedneedle lives inside")
+    }
+    await mk("aopen", false)
+    await mk("alock", true)
+    const sourceText = async (v: { blob_key: string; content_type: string }) => {
+      const b = await blobs.get(v.blob_key)
+      return b ? new TextDecoder().decode(b) : null
+    }
+    const deps = { blobs, sourceText, meta }
+    const base = {
+      orgId: org,
+      query: "gatedneedle",
+      re: searchMatcher("gatedneedle", false),
+      where: "text" as const,
+      ctxLines: 0,
+      cap: 40,
+    }
+    // Anonymous / non-member (publicOnly): the locked doc's body must NOT be grep-readable —
+    // reading it needs the password, and search must not bypass that.
+    const anon = await searchWorkspace(deps, { ...base, publicOnly: true })
+    expect(anon.results.map((r) => r.short_id).sort()).toEqual(["aopen"])
+    // A member/trusted caller (no publicOnly) reaches content through membership, not the
+    // link, so the lock doesn't apply — both surface.
+    const member = await searchWorkspace(deps, base)
+    expect(member.results.map((r) => r.short_id).sort()).toEqual(["alock", "aopen"])
   })
 
   it("versionIndexText degrades safely on the non-happy paths (never throws)", async () => {
