@@ -829,6 +829,11 @@ const normalizeLine = (s: string): string => s.trim().replace(/\s+/g, " ")
 // 500K comparisons is ~12ms by extrapolation from a measured 36M-comparison/~900ms case.
 const TIER1_MAX_COMPARISONS = 500_000
 
+// Same cap search results already apply per line (see LINE_CLIP in
+// apps/api/src/lib/search.ts) — this file can't import that (packages/core has
+// zero external deps), so it's a local constant, not a shared one.
+const MISS_HINT_LINE_CLIP = 400
+
 const isWordChar = (c: string | undefined): boolean => !!c && /[A-Za-z0-9_]/.test(c)
 
 // Whole-word substring search without a regex (avoids escaping arbitrary user text):
@@ -878,7 +883,16 @@ const nearestMissHint = (haystack: string, needle: string): string => {
     const anchor = firstLine.trim().split(/\s+/)[0] ?? ""
     const idx = anchor.length >= 3 ? hLines.findIndex((l) => includesWord(l, anchor)) : -1
     if (idx >= 0) {
-      const around = hLines.slice(Math.max(0, idx - 1), idx + 2).join("\n")
+      // Cap each shown line — a real, common shape (a minified/bundled single-line
+      // HTML file) can put tens of thousands of chars on ONE "line", which would
+      // otherwise blow this diagnostic's own token budget. Mirrors the same
+      // line-length cap apps/api/src/lib/search.ts applies to search hits.
+      const clipLine = (s: string): string =>
+        s.length > MISS_HINT_LINE_CLIP ? `${s.slice(0, MISS_HINT_LINE_CLIP)}…` : s
+      const around = hLines
+        .slice(Math.max(0, idx - 1), idx + 2)
+        .map(clipLine)
+        .join("\n")
       return (
         ` A similar line exists at line ${idx + 1}, but the rest of old_str doesn't match what's ` +
         `there now:\n${around}\nRe-read the artifact for the current text.`

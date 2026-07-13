@@ -495,6 +495,20 @@ describe("applyEdits", () => {
     ).toThrow(/similar line exists at line 2.*The quick brown fox jumps/s)
   })
 
+  it("Tier 2's 'similar line' hint clips an enormous single line — a minified/bundled artifact can legitimately put tens of thousands of chars on one line (regression: found via adversarial testing against a real minified HTML file, where the full line was dumped verbatim into the error message)", () => {
+    const hugeLine = `The quick brown fox jumps. ${"x".repeat(20_000)}`
+    const src = `alpha\n${hugeLine}\ngamma`
+    let msg = ""
+    try {
+      applyEdits(src, [{ old_str: "The quick red fox runs.\nmore text", new_str: "x" }])
+    } catch (e) {
+      msg = e instanceof EditError ? e.message : "wrong error type"
+    }
+    expect(msg).toMatch(/similar line exists at line 2/)
+    expect(msg.length).toBeLessThan(2_000) // nowhere near the real 20,000+ char line
+    expect(msg).toContain("…") // the clip marker
+  })
+
   it("Tier 1's sliding-window scan is bounded — a large haystack × large needle miss returns fast, not O(haystack×needle) (regression)", () => {
     // Mirrors the shape that measured ~900ms unbounded in adversarial testing: a large
     // document combined with a large (but still failing to match) old_str. The bound
