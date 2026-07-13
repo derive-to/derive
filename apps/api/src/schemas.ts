@@ -142,6 +142,12 @@ export const Artifact = z
       .boolean()
       .optional()
       .describe("true when the bundle is a single-page app (all paths route to the entry)."),
+    reflow: z
+      .boolean()
+      .optional()
+      .describe(
+        "true = Derive may inject mobile-reflow CSS into viewport-less HTML at serve time; false/omitted = the page serves byte-faithful, exactly as authored.",
+      ),
     current_version: z
       .number()
       .describe("Latest version number; 0 before any content is published."),

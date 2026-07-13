@@ -34,6 +34,8 @@ export interface PublishInput {
   title?: string
   slug?: string
   spa?: boolean
+  /** Opt-IN mobile auto-reflow for viewport-less HTML ([Q2]); omitted = byte-faithful. */
+  reflow?: boolean
   message?: string
   author?: string
   /** The GitHub identity behind this publish (sync only): the commit author's login,
@@ -286,6 +288,7 @@ export async function publish(
     password_hash: input.passwordHash ?? null,
     kind,
     spa: input.spa ? 1 : 0,
+    reflow: input.reflow ? 1 : 0,
   })
   const version = await meta.addVersion(artifact.id, {
     id: newId("v"),
@@ -418,6 +421,7 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   // `locked`, which is the publish lock (changes must go through proposals).
   password_protected: !!a.password_hash,
   spa: !!a.spa,
+  reflow: !!a.reflow,
   locked: !!a.locked,
   current_version: a.current_version,
   created_at: a.created_at,

@@ -3,19 +3,32 @@
 // descriptions do). The REST route carries them as a field; both MCP servers fold
 // them into their notes. Plan: docs/plans/agent-artifact-learnings.md §4.
 
+import { looksLikeHtmlDocument } from "./publish"
 import { needsReflow } from "./reflow"
 
 /** Advisory strings for a just-published single file — empty when nothing to say. */
 export const publishAdvisories = (content: string, contentType: string): string[] => {
   const out: string[] = []
 
-  // A page with no viewport meta gets the mobile-reflow injection, whose media
-  // caps can fight an intentional layout (see reflow.ts).
+  // Reflow is opt-in as of [Q2] (2026-07-13): a viewport-less page now serves
+  // byte-faithful, which means phones render it zoomed-out. Nudge, don't mutate.
   if (contentType === "text/html" && needsReflow(content))
     out.push(
-      'This page has no <meta name="viewport">, so Derive injects mobile-reflow CSS ' +
-        "(its media caps can fight intentional layouts; data-reflow-exempt on an element " +
-        "opts a component out). Declare your own viewport meta to skip the injection.",
+      'This page has no <meta name="viewport">, so phones will render it zoomed-out. ' +
+        "Add your own viewport meta (best), or republish with reflow:true to let Derive " +
+        "inject conservative mobile-reflow CSS at serve time (data-reflow-exempt opts an " +
+        "element out).",
+    )
+
+  // Extension/content mismatch: a full HTML document stored under a markdown type
+  // (an explicit .md filename overrode the sniffer) renders as ESCAPED SOURCE, not
+  // a page — the second half of the retype-incident class the filename sniffer
+  // (#416) fixed for the filename-less path.
+  if (contentType === "text/markdown" && looksLikeHtmlDocument(content))
+    out.push(
+      "The content is a full HTML document but the filename typed it as markdown, so " +
+        "it will render as escaped source instead of a page. If it should render, " +
+        "republish with an .html filename.",
     )
 
   // Large inlined base64 usually means binaries were pasted through a tool call

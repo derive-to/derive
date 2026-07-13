@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS artifact (
   password_hash TEXT,
   kind TEXT NOT NULL,
   spa INTEGER NOT NULL DEFAULT 0,
+  reflow INTEGER NOT NULL DEFAULT 0,
   locked INTEGER NOT NULL DEFAULT 0,
   current_version INTEGER NOT NULL DEFAULT 0,
   current_content_type TEXT,

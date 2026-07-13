@@ -234,6 +234,10 @@
             "type": "boolean",
             "description": "true when the bundle is a single-page app (all paths route to the entry)."
           },
+          "reflow": {
+            "type": "boolean",
+            "description": "true = Derive may inject mobile-reflow CSS into viewport-less HTML at serve time; false/omitted = the page serves byte-faithful, exactly as authored."
+          },
           "current_version": {
             "type": "number",
             "description": "Latest version number; 0 before any content is published."
