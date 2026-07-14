@@ -334,6 +334,7 @@ export function Artifact() {
     onCanonical: (canonical) =>
       nav({ to: "/artifacts/$ref", params: { ref: canonical }, search: (s) => s, replace: true }),
     onLoginBounce: () => nav({ to: "/login" }),
+    onOpenReview: () => setReviewing(true),
     post,
     setPanel,
     setActiveThread,

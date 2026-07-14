@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer"
 import {
   activateThread,
   addComment,
@@ -52,6 +53,53 @@ test("owner shares an artifact and the member appears", async ({ owner, secondUs
   await owner.getByTestId("share-add").click()
 
   await expect(owner.locator('[data-testid^="share-member-row-"]')).toHaveCount(2)
+})
+
+test("brandprint 'Review & comment' opens the pending profile proposal", async ({ owner }) => {
+  // Seed the profile hand-off state through the real API: a v1 profile stub, a
+  // workspace Brandprint pointing at it, and an open proposal standing in for the
+  // agent's build.
+  const profileId = await publishArtifact(
+    owner,
+    "index.html",
+    "<h1>Brand profile</h1><p>Not generated yet.</p>",
+    "text/html",
+  )
+  const colRes = await owner.request.post("/v1/collections", { data: { title: "Brandprint" } })
+  expect(colRes.ok(), `collection create: ${colRes.status()} ${await colRes.text()}`).toBeTruthy()
+  const col = await colRes.json()
+  const setRes = await owner.request.patch("/v1/workspace/settings", {
+    data: { brandprint: { collectionId: col.id, profileId } },
+  })
+  expect(setRes.ok(), `settings patch: ${setRes.status()} ${await setRes.text()}`).toBeTruthy()
+  const echo = await (await owner.request.get("/v1/workspace/settings")).json()
+  expect(
+    echo.brandprint?.profileId,
+    `settings round-trip: ${JSON.stringify(echo.brandprint ?? null)}`,
+  ).toBe(profileId)
+  const propRes = await owner.request.post(`/v1/artifacts/${profileId}/proposals`, {
+    multipart: {
+      file: {
+        name: "index.html",
+        mimeType: "text/html",
+        buffer: Buffer.from("<h1>Proposed profile</h1>"),
+      },
+    },
+  })
+  expect(propRes.ok(), `proposal: ${propRes.status()} ${await propRes.text()}`).toBeTruthy()
+
+  // The seeding above went around the app, so the persisted query cache (settings
+  // are Infinity-fresh) still holds the pre-seed state. Clear it BEFORE the app
+  // boots on the next load — an in-page clear races the persister's throttled
+  // flush. Real flows write through the app's mutations, which invalidate.
+  await owner.addInitScript(() => window.localStorage.clear())
+  await owner.goto("/brandprint")
+  await owner.getByTestId("brandprint-profile-review").click()
+  // The ?review deep link must open the review overlay on the proposal — not strand
+  // the reviewer on the live version, which for a pending profile is the v1 stub.
+  await expect(owner).toHaveURL(/review=true/)
+  await expect(owner.getByTestId("review-title")).toBeVisible()
+  await expect(owner.getByTestId("review-frame")).toHaveAttribute("src", /\/p\//)
 })
 
 test("settings save and theme switch persist", async ({ owner }) => {

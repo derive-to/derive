@@ -70,7 +70,7 @@ export function ProfilePanel({ profileId }: { profileId: string }) {
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" asChild data-testid="brandprint-profile-review">
-              <Link to="/artifacts/$ref" params={{ ref: refFor(art) }}>
+              <Link to="/artifacts/$ref" params={{ ref: refFor(art) }} search={{ review: true }}>
                 Review &amp; comment
               </Link>
             </Button>
