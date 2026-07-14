@@ -11,24 +11,14 @@ import {
   type WorkspaceSearchResult,
   workspaceSearchReport,
 } from "../src/lib/search"
-import {
-  CHUNK_CHARS,
-  CHUNK_OVERLAP,
-  chunkText,
-  DENSE_MIN_SCORE,
-  EMBED_BATCH,
-  MAX_CHUNKS,
-  type VectorizeLike,
-  VectorizeSearchIndex,
-  type WorkersAiLike,
-} from "../src/search-vectorize"
+import { CHUNK_CHARS, CHUNK_OVERLAP, chunkText, MAX_CHUNKS } from "../src/search-chunk"
 
 // Hybrid (lexical FTS + dense/semantic) workspace search. These are pure-logic tests over the
-// fusion + orchestration and the Cloudflare adapter — with in-memory fakes for both the FTS arm
-// and the dense arm, so the Vectorize/Workers-AI wiring itself is what's deployment-verified, but
-// the RRF fusion, the recall-gap fix, the visibility gate over the new arm, and the adapter's
-// embed/filter/preview contract are all pinned here. The existing lexical-only behavior is proven
-// unchanged (no SearchIndex bound ⇒ byte-for-byte the old path) in mcp/search-rest.
+// fusion + orchestration — with in-memory fakes for both the FTS arm and the dense SearchIndex, so
+// the RRF fusion, the recall-gap fix, and the visibility gate over the dense arm are pinned here
+// independent of any backend. The concrete adapters are tested separately (search-pgvector.test.ts +
+// the real-pgvector store test in @derive/db); chunk-level logic lives in search-chunk. The existing
+// lexical-only behavior is proven unchanged (no SearchIndex bound ⇒ byte-for-byte the old path).
 
 const ORG = "org_test"
 const enc = (s: string) => new TextEncoder().encode(s)
@@ -241,43 +231,6 @@ describe("searchWorkspace — hybrid retrieval", () => {
   })
 })
 
-// --- The Cloudflare adapter, over fake Vectorize + Workers AI bindings ------------------------
-
-const makeAi = () => {
-  const runs: { model: string; text: string[]; truncate?: boolean }[] = []
-  const ai: WorkersAiLike = {
-    run: async (model, inputs) => {
-      runs.push({ model, text: inputs.text, truncate: inputs.truncate_inputs })
-      return { data: inputs.text.map(() => [0.1, 0.2, 0.3]) }
-    },
-  }
-  return { ai, runs }
-}
-
-const makeVectorize = () => {
-  const store = new Map<string, { values: number[]; metadata?: Record<string, string> }>()
-  const seen = { deletes: [] as string[][], queries: [] as Parameters<VectorizeLike["query"]>[1][] }
-  const vectorize: VectorizeLike = {
-    upsert: async (vectors) => {
-      for (const v of vectors) store.set(v.id, { values: v.values, metadata: v.metadata })
-    },
-    deleteByIds: async (ids) => {
-      seen.deletes.push(ids)
-      for (const id of ids) store.delete(id)
-    },
-    query: async (_vector, opts) => {
-      seen.queries.push(opts)
-      const org = opts.filter?.org_id
-      const matches = [...store.entries()]
-        .filter(([, v]) => org === undefined || v.metadata?.org_id === org)
-        .slice(0, opts.topK ?? 10)
-        .map(([id, v]) => ({ id, score: 0.5, metadata: v.metadata as Record<string, unknown> }))
-      return { matches }
-    },
-  }
-  return { vectorize, store, seen }
-}
-
 describe("chunkText", () => {
   it("returns one trimmed chunk for short text, [] for blank", () => {
     expect(chunkText("  hello world  ")).toEqual(["hello world"])
@@ -302,199 +255,6 @@ describe("chunkText", () => {
     expect(chunks.length).toBeGreaterThan(2)
     for (let i = 0; i < chunks.length - 1; i++)
       expect(chunks[i]?.slice(-CHUNK_OVERLAP)).toBe(chunks[i + 1]?.slice(0, CHUNK_OVERLAP))
-  })
-})
-
-describe("VectorizeSearchIndex (Cloudflare adapter)", () => {
-  it("indexArtifact chunks the body, embeds title+chunk, upserts id#i with artifact_id + chunk metadata", async () => {
-    const { vectorize, store } = makeVectorize()
-    const { ai, runs } = makeAi()
-    await new VectorizeSearchIndex(vectorize, ai).indexArtifact(
-      "a1",
-      "org1",
-      "Onboarding",
-      "the golden path",
-    )
-    expect(runs[0]?.model).toBe("@cf/baai/bge-m3")
-    expect(runs[0]?.text).toEqual(["Onboarding\n\nthe golden path"]) // title prepended for context
-    expect(runs[0]?.truncate).toBe(true)
-    expect(store.has("a1#0")).toBe(true) // keyed by chunk id, not the bare artifact id
-    expect(store.has("a1")).toBe(false) // the bare/legacy id is cleared
-    expect(store.get("a1#0")?.metadata?.org_id).toBe("org1")
-    expect(store.get("a1#0")?.metadata?.artifact_id).toBe("a1")
-    expect(store.get("a1#0")?.metadata?.chunk).toBe("the golden path")
-  })
-
-  it("indexArtifact of a long doc writes multiple chunk vectors, and re-index clears stale slots", async () => {
-    const { vectorize, store } = makeVectorize()
-    const { ai } = makeAi()
-    const idx = new VectorizeSearchIndex(vectorize, ai)
-    await idx.indexArtifact("a1", "org1", null, "para ".repeat(1500)) // ~7.5k chars → several chunks
-    expect([...store.keys()].filter((k) => k.startsWith("a1#")).length).toBeGreaterThan(1)
-    // Re-index SHORTER → one chunk; the old extra chunk slots must be gone.
-    await idx.indexArtifact("a1", "org1", null, "short")
-    expect([...store.keys()].filter((k) => k.startsWith("a1#"))).toEqual(["a1#0"])
-  })
-
-  it("search rolls chunk hits up to the best chunk per artifact", async () => {
-    const meta = (artifact_id: string, chunk: string) => ({ org_id: "o", artifact_id, chunk })
-    const vectorize: VectorizeLike = {
-      upsert: async () => {},
-      deleteByIds: async () => {},
-      query: async () => ({
-        matches: [
-          { id: "a1#1", score: 0.7, metadata: meta("a1", "the best chunk") },
-          { id: "a1#0", score: 0.6, metadata: meta("a1", "weaker chunk") },
-          { id: "a2#0", score: 0.55, metadata: meta("a2", "other doc") },
-        ],
-      }),
-    }
-    const { ai } = makeAi()
-    const hits = await new VectorizeSearchIndex(vectorize, ai).search("o", "q", 6)
-    expect(hits.map((h) => h.id)).toEqual(["a1", "a2"]) // one hit per artifact, best-score order
-    expect(hits[0]?.chunk).toBe("the best chunk") // the higher-scoring chunk wins the snippet
-    expect(hits[0]?.score).toBe(0.7)
-  })
-
-  it("search over-fetches topK 50, filters by org_id, rolls the chunk up to its artifact id", async () => {
-    const { vectorize, seen } = makeVectorize()
-    const { ai } = makeAi()
-    const idx = new VectorizeSearchIndex(vectorize, ai)
-    await idx.indexArtifact("a1", "org1", "Onboarding", "the golden path")
-    await idx.indexArtifact("a2", "org2", "Other", "different workspace")
-    const hits = await idx.search("org1", "getting started", 6)
-    expect(hits.map((h) => h.id)).toEqual(["a1"]) // org filter excludes a2; rolled up to the artifact id
-    expect(hits[0]?.chunk).toBe("the golden path")
-    expect(seen.queries[0]?.filter).toEqual({ org_id: "org1" })
-    expect(seen.queries[0]?.returnMetadata).toBe("all")
-    expect(seen.queries[0]?.topK).toBe(50) // over-fetch chunks; rollup reduces to distinct artifacts
-  })
-
-  it("search stays robust to a LEGACY whole-doc vector (no artifact_id, `preview` snippet)", async () => {
-    const vectorize: VectorizeLike = {
-      upsert: async () => {},
-      deleteByIds: async () => {},
-      query: async () => ({
-        matches: [
-          { id: "legacyArt", score: 0.6, metadata: { org_id: "o", preview: "legacy snippet" } },
-        ],
-      }),
-    }
-    const { ai } = makeAi()
-    const hits = await new VectorizeSearchIndex(vectorize, ai).search("o", "q", 6)
-    expect(hits).toEqual([{ id: "legacyArt", score: 0.6, chunk: "legacy snippet" }]) // id + preview fallback
-  })
-
-  it("unindexArtifact deletes every chunk slot + the bare id; empty content upserts nothing", async () => {
-    const { vectorize, store, seen } = makeVectorize()
-    const { ai } = makeAi()
-    const idx = new VectorizeSearchIndex(vectorize, ai)
-    await idx.indexArtifact("a1", "org1", "T", "body")
-    expect(store.has("a1#0")).toBe(true)
-    await idx.unindexArtifact("a1")
-    expect(store.has("a1#0")).toBe(false)
-    const deleted = seen.deletes.flat()
-    expect(deleted).toContain("a1") // the bare legacy id
-    expect(deleted).toContain("a1#0")
-    expect(deleted).toContain(`a1#${MAX_CHUNKS - 1}`) // all chunk slots
-    // empty content → no vector upserted
-    await idx.indexArtifact("a2", "org1", null, "   ")
-    expect(store.has("a2#0")).toBe(false)
-  })
-
-  it("search with a blank query short-circuits without calling the model", async () => {
-    const { vectorize } = makeVectorize()
-    const { ai, runs } = makeAi()
-    expect(await new VectorizeSearchIndex(vectorize, ai).search("org1", "   ", 6)).toEqual([])
-    expect(runs).toHaveLength(0)
-  })
-
-  it("search applies the relevance floor at DENSE_MIN_SCORE (>= kept, just-below dropped)", async () => {
-    const { ai } = makeAi()
-    const vectorize: VectorizeLike = {
-      upsert: async () => {},
-      deleteByIds: async () => {},
-      query: async () => ({
-        matches: [
-          { id: "above", score: 0.6, metadata: { preview: "above" } },
-          { id: "at", score: DENSE_MIN_SCORE, metadata: { preview: "exactly at the floor" } },
-          { id: "below", score: DENSE_MIN_SCORE - 0.001, metadata: { preview: "just below" } },
-        ],
-      }),
-    }
-    const hits = await new VectorizeSearchIndex(vectorize, ai).search("org1", "q", 6)
-    expect(hits.map((h) => h.id)).toEqual(["above", "at"]) // >= floor kept; just-below dropped
-  })
-
-  it("indexArtifacts batches chunks across artifacts, drops empties, stores artifact_id + chunk", async () => {
-    const { vectorize, store } = makeVectorize()
-    const { ai, runs } = makeAi()
-    await new VectorizeSearchIndex(vectorize, ai).indexArtifacts([
-      { id: "a1", orgId: "org1", title: "T1", text: "body one" },
-      { id: "a2", orgId: "org1", title: null, text: "body two" },
-      { id: "a3", orgId: "org1", title: null, text: "   " }, // empty → no vector
-    ])
-    expect(store.has("a1#0")).toBe(true)
-    expect(store.has("a2#0")).toBe(true)
-    expect(store.has("a3#0")).toBe(false) // empty content: no upsert
-    expect(store.get("a1#0")?.metadata?.org_id).toBe("org1")
-    expect(store.get("a1#0")?.metadata?.artifact_id).toBe("a1")
-    expect(store.get("a1#0")?.metadata?.chunk).toBe("body one")
-    expect(runs).toHaveLength(1) // both chunks embedded in one call
-    expect(runs[0]?.text).toEqual(["T1\n\nbody one", "body two"])
-    expect(runs[0]?.truncate).toBe(true)
-  })
-
-  it("indexArtifacts sub-batches a large page (embed+upsert per EMBED_BATCH), preserving id↔text order", async () => {
-    const { vectorize, store } = makeVectorize()
-    const { ai, runs } = makeAi()
-    const n = EMBED_BATCH + 5
-    const items = Array.from({ length: n }, (_, i) => ({
-      id: `id${i}`,
-      orgId: "org1",
-      title: null,
-      text: `body ${i}`,
-    }))
-    await new VectorizeSearchIndex(vectorize, ai).indexArtifacts(items)
-    expect(runs.length).toBe(2) // ceil((EMBED_BATCH+5)/EMBED_BATCH) = 2 sub-batches
-    expect(runs[0]?.text).toHaveLength(EMBED_BATCH)
-    expect(runs[1]?.text).toEqual([
-      `body ${EMBED_BATCH}`,
-      `body ${EMBED_BATCH + 1}`,
-      `body ${EMBED_BATCH + 2}`,
-      `body ${EMBED_BATCH + 3}`,
-      `body ${EMBED_BATCH + 4}`,
-    ])
-    expect([...store.keys()].filter((k) => k.endsWith("#0")).length).toBe(n) // one chunk vector each
-    expect(store.has(`id${EMBED_BATCH}#0`)).toBe(true) // first of the 2nd sub-batch
-  })
-
-  it("indexArtifacts throws (not misaligns) if the model returns fewer vectors than inputs", async () => {
-    const { vectorize } = makeVectorize()
-    const ai: WorkersAiLike = { run: async () => ({ data: [[0.1, 0.2]] }) } // 1 vector for N inputs
-    await expect(
-      new VectorizeSearchIndex(vectorize, ai).indexArtifacts([
-        { id: "a", orgId: "o", title: null, text: "x" },
-        { id: "b", orgId: "o", title: null, text: "y" },
-      ]),
-    ).rejects.toThrow(/returned 1 vectors for 2/)
-  })
-
-  it("indexArtifacts batches stale deletes under the Vectorize 1000/call cap", async () => {
-    const { vectorize, seen } = makeVectorize()
-    const { ai } = makeAi()
-    // 30 single-chunk artifacts → 30 × (1 legacy + 19 empty slots) = 600 stale ids > MUTATE_BATCH(500).
-    const items = Array.from({ length: 30 }, (_, i) => ({
-      id: `id${i}`,
-      orgId: "org1",
-      title: null,
-      text: `body ${i}`,
-    }))
-    await new VectorizeSearchIndex(vectorize, ai).indexArtifacts(items)
-    const total = seen.deletes.reduce((n, b) => n + b.length, 0)
-    expect(total).toBe(30 * MAX_CHUNKS) // 1 legacy id + (MAX_CHUNKS-1) empty slots per artifact
-    expect(seen.deletes.length).toBeGreaterThan(1) // split across calls
-    for (const batch of seen.deletes) expect(batch.length).toBeLessThanOrEqual(500)
   })
 })
 

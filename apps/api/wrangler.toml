@@ -45,19 +45,12 @@ id = "10b9d78afcdb46ad8f8db7ad449fb2b3"
 binding = "BUCKET"
 bucket_name = "derive-blobs"
 
-# Optional semantic search (the dense/hybrid arm of workspace search): Cloudflare Vectorize
-# (vector index) + Workers AI (bge-m3 embeddings). Bind BOTH to enable it; omit to stay
-# lexical-only (self-host parity — the worker gates on `env.VECTORIZE && env.AI`). The metadata
-# index MUST exist before any vector is inserted, so create both up front, then backfill:
-#   wrangler vectorize create derive-search --dimensions=1024 --metric=cosine
-#   wrangler vectorize create-metadata-index derive-search --property-name=org_id --type=string
-#   # then, per workspace corpus: POST /v1/system/search-reindex with the operator token
-# See DEPLOY.md. ENABLED: the `derive-search` index + its org_id metadata index are provisioned
-# on the account, so the worker binds Vectorize + Workers AI and workspace search goes hybrid.
-[[vectorize]]
-binding = "VECTORIZE"
-index_name = "derive-search"
-
+# Semantic search (the dense/hybrid arm of workspace search) embeds with Workers AI (bge-m3) and
+# stores the vectors in pgvector in the SAME Hyperdrive Postgres as the metadata — no separate
+# vector store. Bind AI (with HYPERDRIVE) to enable it; omit AI to stay lexical-only (self-host
+# parity — the worker gates on `env.AI && env.HYPERDRIVE`). The pgvector table is created out of
+# band by `deploy:pg-schema`; then backfill per workspace corpus: POST /v1/system/search-reindex
+# with the operator token. See DEPLOY.md.
 [ai]
 binding = "AI"
 

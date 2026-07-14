@@ -30,7 +30,6 @@ import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
 import { PgvectorSearchIndex } from "./search-pgvector"
-import { type VectorizeLike, VectorizeSearchIndex } from "./search-vectorize"
 import { enqueueChannelDelivery } from "./webhooks"
 
 export { PreviewRenderer } from "./preview-do"
@@ -80,10 +79,9 @@ export interface Env {
   // every declared binding to resolve). Unbound ⇒ D1 is the store (the default).
   HYPERDRIVE?: Hyperdrive
   BUCKET: R2Bucket
-  // Optional semantic search: a Vectorize index + Workers AI (embeddings). Bind BOTH to add the
-  // dense/hybrid arm to workspace search; omit either ⇒ search stays lexical-only, exactly as
-  // self-host. Structurally typed (see search-vectorize.ts) — the real bindings satisfy them.
-  VECTORIZE?: VectorizeLike
+  // Optional semantic search: Workers AI embeddings (bge-m3) for the dense arm, stored in pgvector
+  // in the Hyperdrive Postgres. Bind AI (+ HYPERDRIVE) to add the dense/hybrid arm; omit ⇒ search
+  // stays lexical-only, exactly as self-host. Structurally typed (see embedder.ts).
   AI?: WorkersAiLike
   ROOMS: DurableObjectNamespace
   // The webhook outbox drainer DO (a single named instance). Declared in wrangler.toml.
@@ -214,21 +212,18 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // was dead on prod. Undefined when unset ⇒ isToken stays false, as before.
         token: env.DERIVE_TOKEN,
         blobs: new R2BlobStore(env.BUCKET),
-        // Hybrid search's dense arm, embeddings from Workers AI (env.AI). On the Postgres path
-        // (HYPERDRIVE) the vectors live in pgvector in that same Postgres — the table is created out
-        // of band by apply-pg-schema, and PgVectorStore rides the request-scoped livePgPool exactly
-        // as the metadata store does. Falls back to Vectorize on a D1 edge (no pgvector on D1). No
-        // AI binding, or neither store ⇒ undefined ⇒ pure-lexical, identical to self-host.
-        search: env.AI
-          ? env.HYPERDRIVE
+        // Hybrid search's dense arm, embeddings from Workers AI (env.AI). The vectors live in
+        // pgvector in the SAME Postgres as metadata (HYPERDRIVE) — the table is created out of band
+        // by apply-pg-schema, and PgVectorStore rides the request-scoped livePgPool exactly as the
+        // metadata store does. Needs BOTH bindings; a D1 edge (no HYPERDRIVE) or no AI ⇒ undefined ⇒
+        // pure-lexical, identical to self-host without an embedder (D1 can't host pgvector anyway).
+        search:
+          env.AI && env.HYPERDRIVE
             ? new PgvectorSearchIndex(
                 bindingEmbedder(env.AI),
                 new PgVectorStore(livePgPool, EMBED_DIMENSIONS),
               )
-            : env.VECTORIZE
-              ? new VectorizeSearchIndex(env.VECTORIZE, env.AI)
-              : undefined
-          : undefined,
+            : undefined,
         backplane: createDoBackplane(env.ROOMS),
         baseUrl,
         auth,

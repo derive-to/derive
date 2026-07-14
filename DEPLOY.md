@@ -283,40 +283,42 @@ catch-all that otherwise hijacks `/assets/*`); see `scripts/prep-edge-assets.mjs
 
 ### Semantic search (optional)
 
-Workspace search is lexical (SQLite/D1 FTS + Postgres tsvector) everywhere by default. On the
-Cloudflare edge you can add a **hybrid dense arm** — embeddings via Workers AI, nearest-neighbour
-over Vectorize — fused with the lexical arm (reciprocal-rank fusion). It finds documents by meaning,
-not just literal tokens (e.g. "getting started" matches an *onboarding* doc), and the multilingual
-`bge-m3` model also covers CJK, which the lexical tokenizer handles poorly. Visibility is unchanged:
-the vector index only *nominates* candidates — the same `listArtifacts` gate re-checks every one, so
-it can never widen what a viewer sees.
+Workspace search is lexical (SQLite/D1 FTS + Postgres tsvector) everywhere by default. You can add a
+**hybrid dense arm** — chunk-level embeddings fused with the lexical arm (reciprocal-rank fusion) —
+that finds documents by meaning, not just literal tokens (e.g. "getting started" matches an
+*onboarding* doc); the multilingual `bge-m3` model also covers CJK, which the lexical tokenizer
+handles poorly. Visibility is unchanged: the vector index only *nominates* candidates — the same
+`listArtifacts` gate re-checks every one, so it can never widen what a viewer sees.
 
-It activates only when **both** the `VECTORIZE` and `AI` bindings are present (see the commented
-block in `wrangler.toml`); omit either and search stays lexical, exactly as self-host. The Vectorize
-metadata index **must exist before any vector is inserted**, so provision it first, then deploy, then
-backfill the existing corpus:
+The vectors live in **pgvector in your Postgres** — the same DB as everything else, so there's no
+separate vector store, no per-query vector billing, and a committed vector is queryable on the next
+request (pgvector indexes synchronously). Only the embedder differs by tier:
+
+- **Cloudflare edge** (Workers + Hyperdrive Postgres): embeddings from the Workers AI `AI` binding.
+  Activates when both `AI` and `HYPERDRIVE` are bound. The pgvector table (`artifact_vec`) + its
+  HNSW index are created out of band by `deploy:pg-schema` (part of `pnpm deploy`), which also sets
+  `hnsw.ef_search` DB-wide — nothing to provision by hand.
+- **Node self-host** (Postgres): set `DERIVE_EMBED_CF_ACCOUNT_ID` + `DERIVE_EMBED_CF_API_TOKEN` to
+  embed via Workers AI over REST (a local-model embedder is a planned follow-up). The table is
+  created at boot. With the embedded-SQLite default there's no pgvector, so search stays lexical.
+
+After enabling + deploying, backfill the existing corpus (new publishes index automatically):
 
 ```bash
-# 1. Create the index (bge-m3 is 1024-dim) and its org-scoping metadata index — BEFORE any insert:
-wrangler vectorize create derive-search --dimensions=1024 --metric=cosine
-wrangler vectorize create-metadata-index derive-search --property-name=org_id --type=string
-# 2. Uncomment the [[vectorize]] + [ai] blocks in wrangler.toml, then deploy.
-# 3. Backfill: new publishes index automatically; sweep the existing corpus with the operator token,
-#    re-POSTing with the returned nextCursor until it comes back null (bundle-dense? lower `limit`):
+# Sweep the existing corpus with the operator token, re-POSTing the returned nextCursor until it
+# comes back null (bundle-dense? lower `limit`):
 curl -XPOST -H "authorization: Bearer $DERIVE_TOKEN" https://<host>/v1/system/search-reindex
 ```
 
-Vectorize is eventually consistent (a just-upserted vector is queryable within seconds–minutes), but
-the synchronous lexical arm answers read-your-writes for a fresh publish, so this never shows to a
-user. Left off by default so a deploy without the index provisioned never fails.
+The dense arm is best-effort on both write and read: an embed/store hiccup never fails a publish, and
+a query failure falls back to the (synchronous, read-your-writes) lexical arm — so search degrades to
+lexical rather than erroring. Left off by default so a deploy without an embedder never fails.
 
-**Cost note.** Each artifact is chunk-embedded (one vector per ~1800-char passage, ≤20/doc), so the
-index holds ~5–20× more vectors than one-vector-per-doc would. Vectorize bills queried dimensions on
-*stored-vector count* (not `topK`), so that multiplier scales both stored **and** per-search cost:
-e.g. a ~240-doc corpus grows to ≤~4.8k vectors, which can exhaust the free queried-dimension tier in
-a handful of searches/month. This is the deliberate price of chunk-level precision; Workers-AI
-embedding tokens rise only ~1.2–1.5×. See the Cloudflare Vectorize + Workers AI pricing pages, and
-re-run the backfill after changing chunking so stored vectors match the new scheme.
+**Note.** Each artifact is chunk-embedded (one vector per ~1800-char passage, ≤20/doc), so the index
+holds ~5–20× more rows than one-vector-per-doc would — trivial for pgvector at this scale (HNSW reads
+stay a few ms). Re-run the backfill after changing the chunking scheme or the embedder model so the
+stored vectors match; an embedder swap that changes the dimension needs the table dropped first (the
+`ensureSchema` dimension guard refuses to mix incompatible vector spaces).
 
 ---
 
