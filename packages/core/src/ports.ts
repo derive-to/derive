@@ -30,6 +30,12 @@ export interface SearchIndex {
    *  chunk-level embedding for finer long-doc recall is a later enhancement), scoped by org.
    *  Driven by the same publish/restore/approve chokepoint as the FTS index. */
   indexArtifact(id: string, orgId: string, title: string | null, text: string): Promise<void>
+  /** Batch variant of {@link indexArtifact} for the backfill sweep: embed + upsert a page in
+   *  sub-batches — far fewer Workers-AI calls + Vectorize mutations than one call per artifact.
+   *  Single publishes still use indexArtifact. Best-effort like the rest. */
+  indexArtifacts(
+    items: { id: string; orgId: string; title: string | null; text: string }[],
+  ): Promise<void>
   /** Drop an artifact's vectors (hard delete). Best-effort; the gate covers a miss. Named to
    *  match its lexical sibling {@link MetaStore.unindexArtifact}. */
   unindexArtifact(id: string): Promise<void>

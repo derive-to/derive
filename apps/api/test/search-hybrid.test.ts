@@ -12,6 +12,8 @@ import {
   workspaceSearchReport,
 } from "../src/lib/search"
 import {
+  DENSE_MIN_SCORE,
+  EMBED_BATCH,
   type VectorizeLike,
   VectorizeSearchIndex,
   type WorkersAiLike,
@@ -70,6 +72,7 @@ const denseIndex = (
   byQuery: Record<string, { id: string; score: number; chunk: string }[]>,
 ): SearchIndex => ({
   indexArtifact: async () => {},
+  indexArtifacts: async () => {},
   unindexArtifact: async () => {},
   search: async (_org, query, limit) => (byQuery[query] ?? []).slice(0, limit),
 })
@@ -223,6 +226,7 @@ describe("searchWorkspace — hybrid retrieval", () => {
     }
     const boom: SearchIndex = {
       indexArtifact: async () => {},
+      indexArtifacts: async () => {},
       unindexArtifact: async () => {},
       search: async () => {
         throw new Error("vectorize unavailable")
@@ -321,6 +325,76 @@ describe("VectorizeSearchIndex (Cloudflare adapter)", () => {
     expect(await new VectorizeSearchIndex(vectorize, ai).search("org1", "   ", 6)).toEqual([])
     expect(runs).toHaveLength(0)
   })
+
+  it("search applies the relevance floor at DENSE_MIN_SCORE (>= kept, just-below dropped)", async () => {
+    const { ai } = makeAi()
+    const vectorize: VectorizeLike = {
+      upsert: async () => {},
+      deleteByIds: async () => {},
+      query: async () => ({
+        matches: [
+          { id: "above", score: 0.6, metadata: { preview: "above" } },
+          { id: "at", score: DENSE_MIN_SCORE, metadata: { preview: "exactly at the floor" } },
+          { id: "below", score: DENSE_MIN_SCORE - 0.001, metadata: { preview: "just below" } },
+        ],
+      }),
+    }
+    const hits = await new VectorizeSearchIndex(vectorize, ai).search("org1", "q", 6)
+    expect(hits.map((h) => h.id)).toEqual(["above", "at"]) // >= floor kept; just-below dropped
+  })
+
+  it("indexArtifacts batches: one embed call for the page, empties dropped, org_id + preview stored", async () => {
+    const { vectorize, store } = makeVectorize()
+    const { ai, runs } = makeAi()
+    await new VectorizeSearchIndex(vectorize, ai).indexArtifacts([
+      { id: "a1", orgId: "org1", title: "T1", text: "body one" },
+      { id: "a2", orgId: "org1", title: null, text: "body two" },
+      { id: "a3", orgId: "org1", title: null, text: "   " }, // empty → no vector
+    ])
+    expect(store.has("a1")).toBe(true)
+    expect(store.has("a2")).toBe(true)
+    expect(store.has("a3")).toBe(false) // empty content: no upsert
+    expect(store.get("a1")?.metadata?.org_id).toBe("org1")
+    expect(store.get("a1")?.metadata?.preview).toContain("T1")
+    expect(runs).toHaveLength(1) // batched — one AI call for both embeddable texts, not two
+    expect(runs[0]?.text).toEqual(["T1\n\nbody one", "body two"])
+    expect(runs[0]?.truncate).toBe(true)
+  })
+
+  it("indexArtifacts sub-batches a large page (embed+upsert per EMBED_BATCH), preserving id↔text order", async () => {
+    const { vectorize, store } = makeVectorize()
+    const { ai, runs } = makeAi()
+    const n = EMBED_BATCH + 5
+    const items = Array.from({ length: n }, (_, i) => ({
+      id: `id${i}`,
+      orgId: "org1",
+      title: null,
+      text: `body ${i}`,
+    }))
+    await new VectorizeSearchIndex(vectorize, ai).indexArtifacts(items)
+    expect(runs.length).toBe(2) // ceil((EMBED_BATCH+5)/EMBED_BATCH) = 2 sub-batches
+    expect(runs[0]?.text).toHaveLength(EMBED_BATCH)
+    expect(runs[1]?.text).toEqual([
+      `body ${EMBED_BATCH}`,
+      `body ${EMBED_BATCH + 1}`,
+      `body ${EMBED_BATCH + 2}`,
+      `body ${EMBED_BATCH + 3}`,
+      `body ${EMBED_BATCH + 4}`,
+    ])
+    expect(store.size).toBe(n) // every artifact upserted, across the sub-batch seam
+    expect(store.has(`id${EMBED_BATCH}`)).toBe(true) // first of the 2nd sub-batch
+  })
+
+  it("indexArtifacts throws (not misaligns) if the model returns fewer vectors than inputs", async () => {
+    const { vectorize } = makeVectorize()
+    const ai: WorkersAiLike = { run: async () => ({ data: [[0.1, 0.2]] }) } // 1 vector for N inputs
+    await expect(
+      new VectorizeSearchIndex(vectorize, ai).indexArtifacts([
+        { id: "a", orgId: "o", title: null, text: "x" },
+        { id: "b", orgId: "o", title: null, text: "y" },
+      ]),
+    ).rejects.toThrow(/returned 1 vectors for 2/)
+  })
 })
 
 describe("workspaceSearchReport — semantic rendering", () => {
@@ -406,14 +480,19 @@ describe("write path — dense arm best-effort + backfill", () => {
       getVersion: async () => ({ blob_key: "k", content_type: "text/markdown" }) as VersionRecord,
     }
     const blobs = { get: async () => enc("body"), put: async () => "k" }
+    let denseCalls = 0
     const search: SearchIndex = {
-      indexArtifact: async (id) => {
-        dense.push(id)
+      indexArtifact: async () => {},
+      // backfill uses the BATCH path now — record the ids, and count the calls
+      indexArtifacts: async (items) => {
+        denseCalls++
+        dense.push(...items.map((i) => i.id))
       },
       unindexArtifact: async () => {},
       search: async () => [],
     }
     const res = await reindexSearchBatch({ meta, blobs, search }, { limit: 10 })
+    expect(denseCalls).toBe(1) // ONE batched dense call for the page, not one per artifact
     expect(dense).toEqual(["a", "b"])
     expect(res.indexed).toBe(2)
   })
