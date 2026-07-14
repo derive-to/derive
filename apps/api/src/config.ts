@@ -80,6 +80,11 @@ export interface Config {
   resendApiKey?: string
   /** Slack App credentials (connect flow + Events API). All three set ⇒ Slack on. */
   slack?: { clientId: string; clientSecret: string; signingSecret: string }
+  /** Dense/semantic search embedder credentials (Cloudflare Workers AI over REST). Both set ⇒ the
+   *  pgvector dense arm is wired — but ONLY when Postgres is the datastore (pgvector lives there);
+   *  with the embedded-SQLite default it's skipped with a warning. Unset ⇒ lexical-only, as before.
+   *  The eventual local-ONNX embedder will make this optional. */
+  denseSearch?: { accountId: string; apiToken: string }
 }
 
 /**
@@ -158,6 +163,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     emailFrom: env.EMAIL_FROM,
     resendApiKey: env.RESEND_API_KEY,
     slack: slackFromEnv(env),
+    denseSearch:
+      env.DERIVE_EMBED_CF_ACCOUNT_ID && env.DERIVE_EMBED_CF_API_TOKEN
+        ? {
+            accountId: env.DERIVE_EMBED_CF_ACCOUNT_ID,
+            apiToken: env.DERIVE_EMBED_CF_API_TOKEN,
+          }
+        : undefined,
     webDir,
     webShell,
     serveWeb: existsSync(webShell),

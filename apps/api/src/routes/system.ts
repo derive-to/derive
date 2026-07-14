@@ -45,11 +45,19 @@ export const systemRoutes = (ctx: AppContext) => {
     // Service binding (NOT a process.env var) on the edge. So its true on/off is the app's
     // already-resolved `emailEnabled`, not a guess from RESEND_API_KEY (unset on the edge).
     // The other capabilities are gated on secrets that populate_process_env mirrors on both.
-    const capabilities = capabilityReport(process.env).map((cap) =>
-      cap.id === "email" && deps.emailEnabled
-        ? { ...cap, status: "on" as const, missing: [] }
-        : cap,
-    )
+    const capabilities = capabilityReport(process.env).map((cap) => {
+      // Email's true on/off is the resolved transport, not an env guess (see below).
+      if (cap.id === "email" && deps.emailEnabled)
+        return { ...cap, status: "on" as const, missing: [] }
+      // Semantic search's true on/off is whether the dense arm actually got wired: the embedder
+      // vars alone report "on", but the arm needs Postgres (pgvector) and a working setup, so on
+      // SQLite — or when dense setup failed — `search` is undefined and it's really off.
+      if (cap.id === "semanticSearch")
+        return search
+          ? { ...cap, status: "on" as const, missing: [] }
+          : { ...cap, status: "off" as const }
+      return cap
+    })
     return c.json({ capabilities })
   })
 

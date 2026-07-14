@@ -11,7 +11,10 @@ set -euo pipefail
 PASSWORD=postgres
 DB=derive_test
 NAME="derive-pg-test-$$"
-IMAGE="${DERIVE_PG_IMAGE:-postgres:16-alpine}"
+# pgvector/pgvector (Postgres + the `vector` extension) so the pgvector store test can
+# `CREATE EXTENSION vector` — a superset of stock postgres:16, so the MetaStore specs are
+# unaffected. Override with DERIVE_PG_IMAGE.
+IMAGE="${DERIVE_PG_IMAGE:-pgvector/pgvector:pg16}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }

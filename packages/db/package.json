@@ -13,6 +13,7 @@
     ".": "./src/index.ts",
     "./sqlite": "./src/sqlite.ts",
     "./pg": "./src/pg.ts",
+    "./pgvector": "./src/pgvector.ts",
     "./d1": "./src/d1.ts",
     "./schema": "./src/schema.ts"
   },
@@ -21,7 +22,7 @@
     "typecheck:tsc": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:coverage": "vitest run --coverage --passWithNoTests",
-    "test:pg": "vitest run --config vitest.pg.config.ts --coverage test/pg-store.test.ts test/pg-schema-conformance.test.ts",
+    "test:pg": "vitest run --config vitest.pg.config.ts --coverage test/pg-store.test.ts test/pg-schema-conformance.test.ts test/pgvector.test.ts",
     "test:d1": "vitest run --config vitest.d1.config.ts test/d1-store.test.ts",
     "gen:d1-schema": "vitest run test/d1-schema.test.ts -u"
   },
