@@ -4,6 +4,7 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { encryptSecret, signState, verifyState } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { searchMatcher, searchWorkspace, toSearchHits } from "../lib/search"
 import {
   exchangeSlackOAuth,
   exchangeSlackOidc,
@@ -13,6 +14,7 @@ import {
   slackOidcUserinfo,
   verifySlackSignature,
 } from "../lib/slack"
+import { deriveRecentBlocks, deriveResultsBlocks, notLinkedBlocks } from "../lib/slack-commands"
 import {
   enqueueSlackReplyIngest,
   SLACK_THREAD_ACTION,
@@ -33,6 +35,7 @@ import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
 export const slackRoutes = (ctx: AppContext) => {
   const { meta, deps, bus, notify, requireUser } = ctx
   const { activeWorkspace, workspaceCan, requireWorkspace } = ctx
+  const { blobs, sourceText, search } = ctx
   const app = new OpenAPIHono<BlankEnv>()
   const slack = deps.slack
   const redirectUri = new URL("/v1/slack/oauth/callback", deps.baseUrl).toString()
@@ -348,6 +351,100 @@ export const slackRoutes = (ctx: AppContext) => {
       }
     }
     return c.json({ ok: true })
+  })
+
+  // Slash command: `/derive <query>` searches the invoker's workspace, `/derive` alone lists
+  // their recent artifacts. Results are scoped to what the LINKED Derive user can see — an
+  // unlinked user is prompted to link first (there's no principal to scope a raw Slack user
+  // to). Signature-gated like the other Slack webhooks; the reply is an EPHEMERAL message so
+  // only the invoker sees it. The link check + recent-list are single fast queries answered
+  // inline; a full-text search can fan out (dense arm + blob greps), so it's acked immediately
+  // and delivered via response_url — the same deferral the events/interactivity handlers use to
+  // stay under Slack's 3s deadline.
+  // authz-exempt: Slack signs every request with the signing secret (verifySlackSignature).
+  app.post("/v1/slack/commands", async (c) => {
+    if (!slack) return fail(c, 404, "Slack is not configured")
+    const raw = await c.req.text()
+    if (
+      !verifySlackSignature(
+        slack.signingSecret,
+        c.req.header("x-slack-request-timestamp"),
+        raw,
+        c.req.header("x-slack-signature"),
+      )
+    )
+      return fail(c, 401, "bad signature")
+
+    const form = new URLSearchParams(raw)
+    const teamId = form.get("team_id")
+    const slackUserId = form.get("user_id")
+    const responseUrl = form.get("response_url")
+    const text = (form.get("text") ?? "").trim()
+    if (!teamId || !slackUserId)
+      return c.json({ response_type: "ephemeral", text: "Sorry — malformed command." })
+
+    // Resolve the acting Derive user (and their workspace) from the account link. No link →
+    // we can't scope results to them, so prompt them to link rather than leak or over-share.
+    const link = await meta.getSlackUserLinkBySlackId(teamId, slackUserId)
+    if (!link) return c.json({ response_type: "ephemeral", blocks: notLinkedBlocks(deps.baseUrl) })
+
+    const publicOnly = !(await meta.getMembership(link.org_id, link.user_id))
+    // Bare /derive: one indexed listArtifacts query — fast enough to answer inline.
+    if (!text) {
+      const recent = await meta.listArtifacts({
+        orgId: link.org_id,
+        viewerId: link.user_id,
+        publicOnly,
+        excludeRemoved: true,
+        limit: 8,
+      })
+      return c.json({
+        response_type: "ephemeral",
+        blocks: deriveRecentBlocks(deps.baseUrl, recent),
+      })
+    }
+
+    const runSearch = async (): Promise<unknown[]> => {
+      const { results } = await searchWorkspace(
+        { blobs, sourceText, meta, search },
+        {
+          orgId: link.org_id,
+          viewerId: link.user_id,
+          publicOnly,
+          query: text,
+          re: searchMatcher(text, false),
+          where: "text",
+          ctxLines: 1,
+          cap: 5,
+          limit: 8,
+          // Clamp the nomination so the visibility re-resolve is a single chunked query, not
+          // three (mirrors the typeahead path) — keeps the deferred work cheap.
+          candidateCap: 60,
+        },
+      )
+      return deriveResultsBlocks(deps.baseUrl, text, toSearchHits(results, text))
+    }
+
+    // Search off the ack path: ack "Searching…" now, deliver the result to response_url when
+    // ready (waitUntil on Workers; in-process on Node). Fall back to inline if — unexpectedly
+    // for a slash command — there's no response_url.
+    if (!responseUrl) return c.json({ response_type: "ephemeral", blocks: await runSearch() })
+    const deliver = runSearch()
+      .then((blocks) =>
+        postSlackResponseUrl(responseUrl, { text: "Results", blocks, replace_original: true }),
+      )
+      .catch(() =>
+        postSlackResponseUrl(responseUrl, {
+          text: "Sorry — the search failed. Try again.",
+          replace_original: true,
+        }),
+      )
+    try {
+      c.executionCtx.waitUntil(deliver)
+    } catch {
+      void deliver
+    }
+    return c.json({ response_type: "ephemeral", text: "Searching…" })
   })
 
   // Connection status for the Settings UI: whether Slack is configured at all, whether

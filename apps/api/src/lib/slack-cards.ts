@@ -24,6 +24,11 @@ export const markdownToMrkdwn = (md: string): string => {
   return truncate(s.trim(), MAX_SECTION)
 }
 
+/** Escape the three mrkdwn control chars so untrusted text (an artifact title) can't break
+ *  out of a `<url|text>` link or inject markup. Slack unescapes these back to literals. */
+export const escapeMrkdwn = (s: string): string =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+
 // Block Kit primitives, shared by every Slack message builder (the comment mirror, DMs)
 // so block scaffolding lives in one place.
 export const section = (text: string) => ({ type: "section", text: { type: "mrkdwn", text } })

@@ -24,6 +24,15 @@ export const buildSlackManifest = (baseUrl: string) => {
     },
     features: {
       bot_user: { display_name: "Derive", always_online: true },
+      slash_commands: [
+        {
+          command: "/derive",
+          url: u("/v1/slack/commands"),
+          description: "Search your Derive artifacts",
+          usage_hint: "[query]",
+          should_escape: false,
+        },
+      ],
     },
     oauth_config: {
       // The bot install callback + the per-user "Sign in with Slack" (OIDC) link callback.
