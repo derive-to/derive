@@ -174,6 +174,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       "read",
       "search",
       "stage_asset",
+      "stage_publish",
     ])
     // Consolidated away — folded into catch_up / comment / publish.
     for (const gone of [
@@ -220,6 +221,82 @@ describe("remote MCP endpoint (/mcp)", () => {
     const { app, token } = appWithGrant("stagenosecret", "openid derive:read derive:publish")
     const r = await call(app, token, "stage_asset")
     expect(toolText(r)).toContain("bearer token")
+  })
+
+  it("stage_publish mints a URL an anonymous shell can publish a whole file through", async () => {
+    const { app, token, meta } = appWithGrant("stagepub", "openid derive:read derive:publish", {
+      encryptionKey: "mcp-publish-secret",
+    })
+    const staged = JSON.parse(toolText(await call(app, token, "stage_publish")))
+    expect(staged.upload_url).toContain("/v1/artifacts/t/")
+    expect(staged.mode).toBe("create")
+
+    // In prod the OAuth grantor is a workspace member; the harness doesn't seed
+    // that, and the tokened route re-checks it — so add the membership the grant
+    // implies before spending the URL.
+    await meta.setMembership({
+      id: "m_stagepub",
+      org_id: staged.workspace,
+      user_id: "u_o",
+      role: "editor",
+    })
+
+    // Publish a file with NO auth header — the minted token is the only credential.
+    const fd = new FormData()
+    fd.append(
+      "file",
+      new File([new TextEncoder().encode("<h1>Staged</h1>") as BlobPart], "page.html", {
+        type: "text/html",
+      }),
+      "page.html",
+    )
+    fd.append("title", "Staged via MCP")
+    const up = await app.request(new URL(staged.upload_url).pathname, { method: "POST", body: fd })
+    expect(up.status).toBe(201)
+    const art = await up.json()
+    expect(art.short_id).toBeTruthy()
+
+    // Owned by + attributed to the grantor, exactly like a session publish.
+    const rec = await meta.getByShortId(art.short_id)
+    if (!rec) throw new Error("expected the published artifact")
+    expect(await meta.getArtifactMember(rec.id, "u_o")).toBeTruthy()
+  })
+
+  it("stage_publish fails actionably when no signing secret is configured", async () => {
+    const { app, token } = appWithGrant("stagepubnosecret", "openid derive:read derive:publish")
+    expect(toolText(await call(app, token, "stage_publish"))).toContain("bearer token")
+  })
+
+  it("stage_publish revise mints a versions URL that publishes a new version", async () => {
+    const { app, token, meta } = appWithGrant("stagepubrev", "openid derive:read derive:publish", {
+      encryptionKey: "mcp-publish-secret",
+    })
+    // Create v1 through the normal publish tool, then stage a revise.
+    const created = await (await publish(app, token, "Revisable")).json()
+    const shortId = created.short_id
+    await meta.setMembership({
+      id: "m_stagepubrev",
+      org_id: (await meta.getByShortId(shortId))?.org_id ?? "",
+      user_id: "u_o",
+      role: "editor",
+    })
+    const staged = JSON.parse(
+      toolText(await call(app, token, "stage_publish", { short_id: shortId })),
+    )
+    expect(staged.upload_url).toContain(`/v1/artifacts/${shortId}/versions/t/`)
+    expect(staged.mode).toBe(`revise ${shortId}`)
+
+    const fd = new FormData()
+    fd.append(
+      "file",
+      new File([new TextEncoder().encode("<h1>v2</h1>") as BlobPart], "x.html", {
+        type: "text/html",
+      }),
+      "x.html",
+    )
+    const up = await app.request(new URL(staged.upload_url).pathname, { method: "POST", body: fd })
+    expect(up.status).toBe(201)
+    expect((await up.json()).published).toBe(2)
   })
 
   it("exposes the workspace's Brandprint as resources + an instructions pointer", async () => {
