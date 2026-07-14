@@ -786,7 +786,7 @@ async function buildServer(
           const idx = Number(regionRef[1])
           const slice = landmarkSlice(src, idx)
           if (slice === null) {
-            const count = (await landmarksDoc()).length
+            const count = landmarksDoc().length
             return err(
               count
                 ? `No region @${idx} in "${short_id}" — it has ${count} region(s), @1..@${count}. Read with no \`section\` for the map.`
@@ -794,7 +794,7 @@ async function buildServer(
             )
           }
           const body = present(slice, ct, fmt)
-          const count = (await landmarksDoc()).length
+          const count = landmarksDoc().length
           return doc(
             { ...meta, section: `@${idx} of ${count} regions`, chars: body.length },
             clip(body),
@@ -803,7 +803,7 @@ async function buildServer(
         if (section && section !== "*") {
           const slice = sectionOf(src, ct, section)
           if (slice === null) {
-            const slugs = (await outlineDoc()).map((s) => s.slug)
+            const slugs = outlineDoc().map((s) => s.slug)
             return err(
               slugs.length
                 ? `No section "${section}" in "${short_id}" v${n} — sections: ${slugs.join(", ")}.`
@@ -813,7 +813,7 @@ async function buildServer(
           // Also feeds clipDoc's steer below — a single section can itself be huge
           // (e.g. the last one, which runs to </body>), so it needs the same
           // MAX_CHARS ceiling the whole-doc path gets, not an unbounded return.
-          const outline = await outlineDoc()
+          const outline = outlineDoc()
           const i = outline.findIndex((s) => s.slug === section)
           const body = present(slice, ct, fmt)
           return doc(
@@ -827,7 +827,7 @@ async function buildServer(
         }
         const body = await presentDoc(fmt)
         if (!section && body.length > FULL_DOC_MAX) {
-          const outline = await outlineDoc()
+          const outline = outlineDoc()
           if (outline.length)
             return json({
               short_id,
@@ -844,7 +844,7 @@ async function buildServer(
           // No headings — a designed, headless HTML page (dashboard, card grid) still
           // has landmark structure. Return that map so the agent can search/window in
           // rather than blindly dumping a clipped wall of text.
-          const regions = await landmarksDoc()
+          const regions = landmarksDoc()
           if (regions.length)
             return json({
               short_id,
@@ -869,7 +869,7 @@ async function buildServer(
         }
         // Under FULL_DOC_MAX: clipDoc's MAX_CHARS ceiling is far above this body's
         // size, so it can never truncate — skip computing an outline it won't use.
-        const outline = body.length > MAX_CHARS ? await outlineDoc() : []
+        const outline = body.length > MAX_CHARS ? outlineDoc() : []
         return doc({ ...meta, chars: body.length }, clipDoc(body, outline))
       }
 

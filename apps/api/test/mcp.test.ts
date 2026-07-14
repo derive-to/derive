@@ -821,7 +821,8 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(second).toBe(first)
     expect(countDerivedViews("dcache")).toBe(after)
 
-    // The outline-first read comes from the same cached views.
+    // An outline-first read computes its outline INLINE (only markdown + markers
+    // are cached) — cheap path, and it must not add a cache row of its own.
     const outlineRead = toolText(await call(app, token, "read", { short_id: id }))
     expect(outlineRead).toContain("part-777")
     expect(countDerivedViews("dcache")).toBe(after)

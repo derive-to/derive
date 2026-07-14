@@ -129,10 +129,11 @@ export interface NewRenderJob {
   version_n: number
 }
 
-/** A cached bundle of derived views (markdown, text, outline, landmarks, section
- *  markers) for one exact source, keyed by the source's content sha. Content
- *  addressing IS the invalidation: new content is a new sha, so rows never go
- *  stale — an orphaned row for content nothing references anymore is inert. */
+/** A cached bundle of the two EXPENSIVE derived views (markdown conversion +
+ *  section markers) for one exact source, keyed by a generation tag + the
+ *  source's content sha (see DERIVED_CACHE_GEN in the api's derived-cache.ts).
+ *  Content addressing IS the invalidation: new content is a new sha, so rows
+ *  never go stale — an orphaned row for content nothing references is inert. */
 export interface DerivedViewRecord {
   source_sha: string
   blob_key: string

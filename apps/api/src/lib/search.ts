@@ -213,8 +213,9 @@ export const searchArtifactVersion = async (
     // A large HTML doc's SOURCE-scope section markers come through the derived-view
     // cache when one is wired — sectionMarkers is ~83ms on a 4MB doc, and agents
     // search the same doc repeatedly. Only the source-scope, large-HTML case fetches
-    // the cache; a text-scope search's markers are empty (markersFor), and small docs
-    // return null from the cache and take the identical direct path as before.
+    // the cache: an HTML text-scope search's markers are empty, a non-HTML doc's are
+    // cheap line scans (both via markersFor), and small docs return null from the
+    // cache — every one of those takes the identical direct path as before.
     const cached =
       where === "source" && deps.derived
         ? await derivedViewsFor(deps.derived, src, v.content_type)

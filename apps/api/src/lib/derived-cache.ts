@@ -20,15 +20,19 @@ import { log } from "../log"
  * inline — caching them would only make a small view fetch the whole multi-MB blob.
  * Below ~150K chars nothing is cached: the whole ladder is 1-12ms/session there, so
  * the cache would only add I/O — small docs stay byte-for-byte on the direct path.
- * Above ~8M chars nothing is cached either: a miss would compute + serialize a
+ * Above ~5MB (bytes) nothing is cached either: a miss would compute + serialize a
  * multi-MB payload (peak memory a few times the source), and workspace search runs
  * several concurrently — an upper bound keeps a handful of huge docs from exhausting
  * an edge isolate. Giant docs take the direct single-view path, exactly as before.
  *
- * Content addressing IS the invalidation: the key is the sha of the source, so a
- * new version is a new key and rows can never go stale. No TTL, no write-path
- * hook, no eviction logic (rows for content nothing references are inert; the
- * blob store is content-addressed too, so identical republish reuses everything).
+ * Content addressing IS the invalidation: the key is a generation tag + the sha of
+ * the source, so a new version is a new key and rows can never go stale. Content
+ * addressing only covers CONTENT change, though — a change to the view code itself
+ * (toMarkdown, sectionMarkers, elideDataUris, or the cached shape) must bump
+ * DERIVED_CACHE_GEN, or old rows would silently serve the old algorithm's output
+ * forever. No TTL, no write-path hook, no eviction logic (rows for content nothing
+ * references are inert; the blob store is content-addressed too, so identical
+ * republish reuses everything).
  * Every cache interaction is best-effort — a store hiccup falls back to computing
  * exactly what today's path computes, and only the WRITE failure is logged (a
  * read fallback needs no alarm; losing writes silently would).
@@ -58,15 +62,24 @@ export interface DerivedCacheDeps {
  *  ~150K chars is where per-read costs start to matter. */
 export const DERIVED_CACHE_MIN_CHARS = 150_000
 
-/** ABOVE this source size the cache is skipped and the caller takes the direct
- *  single-view path (exactly the pre-cache behavior). A miss computes BOTH views
- *  and JSON-serializes them — a ~3-4x peak-memory multiple of the source — and
- *  workspace search runs up to 4 of these concurrently in one isolate. Uploads can
- *  reach MAX_UPLOAD_BYTES (100MB), so without a ceiling a handful of huge HTML docs
- *  could exhaust a 128MB edge isolate. 8M chars keeps 4 concurrent misses well under
- *  budget while still caching every realistically-large dashboard/deck. Giant docs
- *  are rare and read directly — a single view, no serialized copy, no blob. */
-export const DERIVED_CACHE_MAX_CHARS = 8_000_000
+/** ABOVE this source size (in UTF-8 BYTES — the unit the isolate's memory budget is
+ *  actually spent in; a chars gate undercounts CJK 3x) the cache is skipped and the
+ *  caller takes the direct single-view path, exactly the pre-cache behavior. A miss
+ *  holds the source, both views, the JSON string, and its encoded bytes at once —
+ *  roughly a 3-4x multiple of the source — and workspace search runs up to 4 misses
+ *  concurrently in one isolate, so at 5MB the cache's worst-case concurrent delta is
+ *  ~60-80MB against a 128MB budget. Uploads can reach MAX_UPLOAD_BYTES (100MB);
+ *  without this ceiling a handful of huge HTML docs could exhaust the isolate. Docs
+ *  over the ceiling are rare and read directly — one view, no copies, no blob. */
+export const DERIVED_CACHE_MAX_BYTES = 5_000_000
+
+/** Cache GENERATION, part of every row key. Content addressing invalidates on
+ *  content change; this invalidates on CODE change. Bump it whenever computeViews'
+ *  output could differ for the same source — a semantic change to toMarkdown,
+ *  sectionMarkers, or elideDataUris, or a change to the DerivedViews shape —
+ *  otherwise existing rows keep serving the previous algorithm's output (there is
+ *  no TTL to age them out). Old-generation rows are simply never read again. */
+export const DERIVED_CACHE_GEN = "dv1"
 
 const computeViews = (src: string, contentType: string): DerivedViews => ({
   // Byte-identical to what the direct paths produce: markdown elides data: URIs
@@ -92,20 +105,26 @@ export const derivedViewsFor = async (
   src: string,
   contentType: string,
 ): Promise<DerivedViews | null> => {
-  if (
-    !isHtmlLike(contentType) ||
-    src.length < DERIVED_CACHE_MIN_CHARS ||
-    src.length > DERIVED_CACHE_MAX_CHARS
-  ) {
-    return null
-  }
+  if (!isHtmlLike(contentType) || src.length < DERIVED_CACHE_MIN_CHARS) return null
+  // The upper gate measures BYTES (chars undercount multi-byte text), on the encode
+  // the sha needs anyway — over the ceiling costs one encode, no hash, no I/O.
+  const encoded = new TextEncoder().encode(src)
+  if (encoded.byteLength > DERIVED_CACHE_MAX_BYTES) return null
 
-  const sha = await sha256Hex(new TextEncoder().encode(src))
+  const key = `${DERIVED_CACHE_GEN}:${await sha256Hex(encoded)}`
   try {
-    const rec = await deps.meta.getDerivedView(sha)
+    const rec = await deps.meta.getDerivedView(key)
     if (rec) {
       const bytes = await deps.blobs.get(rec.blob_key)
-      if (bytes) return JSON.parse(new TextDecoder().decode(bytes)) as DerivedViews
+      if (bytes) {
+        // Validate the shape, don't just cast: the generation key already fences
+        // off other generations, so this only catches a corrupt-but-valid-JSON
+        // blob — which must read as a MISS (recompute + overwrite), never flow a
+        // number into a .split() or a non-array into annotateSections.
+        const parsed = JSON.parse(new TextDecoder().decode(bytes)) as Partial<DerivedViews>
+        if (typeof parsed?.markdown === "string" && Array.isArray(parsed.markers))
+          return parsed as DerivedViews
+      }
     }
   } catch {
     // A failed cache READ is a plain fallback to compute — no alarm needed.
@@ -120,10 +139,10 @@ export const derivedViewsFor = async (
   const persist = (async () => {
     try {
       const blobKey = await deps.blobs.put(new TextEncoder().encode(JSON.stringify(views)))
-      await deps.meta.putDerivedView({ source_sha: sha, blob_key: blobKey })
+      await deps.meta.putDerivedView({ source_sha: key, blob_key: blobKey })
     } catch (err) {
       log.warn("derived-view cache write failed", {
-        sourceSha: sha,
+        sourceSha: key,
         error: err instanceof Error ? err.message : String(err),
       })
     }
