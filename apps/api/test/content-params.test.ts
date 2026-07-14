@@ -1,21 +1,10 @@
-import { join } from "node:path"
-import Database from "better-sqlite3"
+import { sha256Hex } from "@derive/core"
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
-import { app, dir, TEST_TOKEN, upload } from "./helpers"
+import { DERIVED_CACHE_GEN } from "../src/lib/derived-cache"
+import { app, meta, TEST_TOKEN, upload } from "./helpers"
 
 const bearer = { authorization: `Bearer ${TEST_TOKEN}` }
-
-// Derived-view cache rows in the shared REST app's db — raw SQL against the same
-// sqlite file makeStore("default") created, mirroring mcp.test.ts's counter.
-const countDerivedViews = (): number => {
-  const db = new Database(join(dir, "default.db"))
-  try {
-    return (db.prepare(`SELECT count(*) AS n FROM derived_view`).get() as { n: number }).n
-  } finally {
-    db.close()
-  }
-}
 
 describe("/v1/artifacts/:shortId/content — format, section, outline params", () => {
   it("defaults to raw source; format=markdown converts; format=text is flat text", async () => {
@@ -54,7 +43,7 @@ describe("/v1/artifacts/:shortId/content — format, section, outline params", (
     expect(missing.status).toBe(404)
   })
 
-  it("format=markdown on a LARGE doc rides the derived-view cache: first read persists a row, the cached read is byte-identical, and raw/outline reads never add rows", async () => {
+  it("format=markdown on a LARGE doc rides the derived-view cache: cheap reads never fill it, the first markdown read persists the row, and the cached read is byte-identical", async () => {
     // Big enough to cross DERIVED_CACHE_MIN_CHARS (150K), with a needle to assert on.
     const html =
       `<!doctype html><html><body><h1>Big</h1>\n` +
@@ -67,26 +56,31 @@ describe("/v1/artifacts/:shortId/content — format, section, outline params", (
     expect(html.length).toBeGreaterThan(150_000)
     const { short_id } = await (await upload("big.html", html)).json()
 
-    const before = countDerivedViews()
-    const mdRes = await app.request(`/v1/artifacts/${short_id}/content?format=markdown`)
-    expect(mdRes.headers.get("x-derive-format")).toBe("markdown")
-    const first = await mdRes.text()
-    expect(first).toContain("rest-dcache-needle")
-    expect(countDerivedViews()).toBe(before + 1) // the miss persisted a row
+    // The exact key this content caches under (generation + sha) — asserted through
+    // the shared meta store itself, so this test runs on BOTH dialects (the pg CI
+    // job has no sqlite file to count rows in).
+    const key = `${DERIVED_CACHE_GEN}:${await sha256Hex(new TextEncoder().encode(html))}`
+    expect(await meta.getDerivedView(key)).toBeNull()
 
-    // Cache hit: byte-identical body (substitution transparency), no new row.
-    const second = await (
-      await app.request(`/v1/artifacts/${short_id}/content?format=markdown`)
-    ).text()
-    expect(second).toBe(first)
-    expect(countDerivedViews()).toBe(before + 1)
-
-    // Raw and outline reads take the direct path — no cache fetch, no new rows.
+    // Raw and outline reads take the direct path — they must NOT fill the cache.
     const raw = await (await app.request(`/v1/artifacts/${short_id}/content`)).text()
     expect(raw).toBe(html)
     const outline = await (await app.request(`/v1/artifacts/${short_id}/content?outline=1`)).json()
     expect(outline.sections.length).toBeGreaterThan(1000)
-    expect(countDerivedViews()).toBe(before + 1)
+    expect(await meta.getDerivedView(key)).toBeNull()
+
+    // The first markdown read is the miss that persists the row...
+    const mdRes = await app.request(`/v1/artifacts/${short_id}/content?format=markdown`)
+    expect(mdRes.headers.get("x-derive-format")).toBe("markdown")
+    const first = await mdRes.text()
+    expect(first).toContain("rest-dcache-needle")
+    expect(await meta.getDerivedView(key)).not.toBeNull()
+
+    // ...and the hit is byte-identical (substitution transparency).
+    const second = await (
+      await app.request(`/v1/artifacts/${short_id}/content?format=markdown`)
+    ).text()
+    expect(second).toBe(first)
   })
 
   it("bundle pages: outline, a page, and page#slug", async () => {
