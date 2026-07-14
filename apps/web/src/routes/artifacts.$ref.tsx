@@ -11,7 +11,7 @@ export const Route = createFileRoute("/artifacts/$ref")({
   // it — landing on the live version would show them the wrong thing, and with several
   // proposals open the overlay must not have to guess which one they meant.
   validateSearch: (s: Record<string, unknown>): { comment?: string; review?: string } => ({
-    ...(typeof s.comment === "string" ? { comment: s.comment } : {}),
+    ...(typeof s.comment === "string" && s.comment ? { comment: s.comment } : {}),
     ...(typeof s.review === "string" && s.review ? { review: s.review } : {}),
   }),
   // Warm the artifact + its comments (and the rendered HTML the iframe loads) so
