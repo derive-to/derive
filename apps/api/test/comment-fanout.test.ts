@@ -235,6 +235,47 @@ describe("connected-channel event cards (publishes / proposals)", () => {
     expect(sent.thread_ts).toBeUndefined() // top-level, not a threaded reply
     expect(JSON.stringify(sent.blocks)).toContain("published")
   })
+
+  it("a proposal card carries Approve / Request-changes buttons", async () => {
+    const { meta } = authed("chan-propcard")
+    await connect(meta)
+    const d: DeliveryRecord = {
+      id: "wd-prop",
+      webhook_id: "internal",
+      url: "",
+      secret: "",
+      kind: "slack_app",
+      event_type: "proposal.created",
+      payload: JSON.stringify({
+        orgId: "default",
+        artifactId: "a1",
+        event: "proposal.created",
+        title: "Doc",
+        link: "https://derive.test/artifacts/a1",
+        author: "Ann",
+        version: null,
+        message: "please review",
+        proposalId: "p9",
+      }),
+      status: "pending",
+      attempts: 0,
+      last_error: null,
+      next_attempt_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    }
+    let sent: { blocks?: unknown } = {}
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { body?: string }) => {
+        sent = JSON.parse(init?.body ?? "{}")
+        return new Response(JSON.stringify({ ok: true, ts: "1.1", channel: "C1" }))
+      }),
+    )
+    await makeSlackSender(meta, "k")(d)
+    const s = JSON.stringify(sent.blocks)
+    expect(s).toContain("derive_proposal_approve")
+    expect(s).toContain("derive_proposal_request_changes")
+  })
 })
 
 describe("review-request + share emails", () => {

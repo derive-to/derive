@@ -17,10 +17,12 @@ import {
 import { deriveRecentBlocks, deriveResultsBlocks, notLinkedBlocks } from "../lib/slack-commands"
 import {
   enqueueSlackReplyIngest,
+  SLACK_PROPOSAL_ACTION,
   SLACK_THREAD_ACTION,
   threadStateBlocks,
 } from "../lib/slack-comments"
 import { enqueueSlackDm, wantsSlackDm } from "../lib/slack-dm"
+import { runSlackProposalAction } from "../lib/slack-proposal"
 import { resolveThreadAction } from "../lib/thread-actions"
 import { log } from "../log"
 import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
@@ -35,7 +37,7 @@ import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
 export const slackRoutes = (ctx: AppContext) => {
   const { meta, deps, bus, notify, requireUser } = ctx
   const { activeWorkspace, workspaceCan, requireWorkspace } = ctx
-  const { blobs, sourceText, search } = ctx
+  const { blobs, sourceText, search, notifyRender } = ctx
   const app = new OpenAPIHono<BlankEnv>()
   const slack = deps.slack
   const redirectUri = new URL("/v1/slack/oauth/callback", deps.baseUrl).toString()
@@ -301,14 +303,51 @@ export const slackRoutes = (ctx: AppContext) => {
     }
 
     const action = payload.actions?.[0]
+    if (payload.type !== "block_actions" || !action?.value) return c.json({ ok: true })
+
+    // Proposal Approve / Request-changes — editor-level, authorized AS the clicker's linked
+    // Derive account. The work (approving publishes a version) can exceed 3s, so ack now and
+    // run it off the ack path; all feedback rides response_url.
+    if (
+      action.action_id === SLACK_PROPOSAL_ACTION.approve ||
+      action.action_id === SLACK_PROPOSAL_ACTION.requestChanges
+    ) {
+      let pt: { a?: string; p?: string }
+      try {
+        pt = JSON.parse(action.value) as { a?: string; p?: string }
+      } catch {
+        return c.json({ ok: true })
+      }
+      if (pt.a && pt.p && payload.team?.id && payload.user?.id) {
+        const work = runSlackProposalAction(
+          { meta, blobs, bus, notify, notifyRender, search },
+          {
+            teamId: payload.team.id,
+            slackUserId: payload.user.id,
+            proposalId: pt.p,
+            artifactId: pt.a,
+            op: action.action_id === SLACK_PROPOSAL_ACTION.approve ? "approve" : "request_changes",
+            responseUrl: payload.response_url,
+            sectionBlock: payload.message?.blocks?.[0],
+          },
+        )
+        try {
+          c.executionCtx.waitUntil(work)
+        } catch {
+          void work
+        }
+      }
+      return c.json({ ok: true })
+    }
+
     const op =
-      action?.action_id === SLACK_THREAD_ACTION.resolve
+      action.action_id === SLACK_THREAD_ACTION.resolve
         ? "resolved"
-        : action?.action_id === SLACK_THREAD_ACTION.reopen
+        : action.action_id === SLACK_THREAD_ACTION.reopen
           ? "open"
           : undefined
     // Not a thread action we handle (or a malformed value) → ack and ignore.
-    if (payload.type !== "block_actions" || !op || !action?.value) return c.json({ ok: true })
+    if (!op) return c.json({ ok: true })
     let target: { a?: string; t?: string }
     try {
       target = JSON.parse(action.value) as { a?: string; t?: string }
