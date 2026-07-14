@@ -25,6 +25,11 @@ if (PG_URL) {
     )}`,
     max: 2,
   })
+  // Mirror prod: widen the HNSW candidate breadth per connection (node.ts does this via the pool's
+  // connect handler; the edge via ALTER DATABASE). Lets the ef_search guard test below reach 50.
+  pool.on("connect", (c) => {
+    c.query("SET hnsw.ef_search = 100").catch(() => {})
+  })
 
   const boot = async () => {
     const b = new Pool({ connectionString: url, max: 1 })
@@ -166,6 +171,25 @@ if (PG_URL) {
     it("deleteByIds([]) is a no-op (no malformed SQL)", async () => {
       const store = await boot()
       await expect(store.deleteByIds([])).resolves.toBeUndefined()
+    })
+
+    it("honors hnsw.ef_search so a topK-50 query isn't capped at pgvector's default of 40", async () => {
+      const store = await boot()
+      // 60 distinct single-chunk vectors in one org. With ef_search=100 (set on the pool above,
+      // as prod does) a topK-50 query returns 50 — NOT the ≤40 an HNSW scan yields at the default
+      // ef_search=40. This regression-guards the ef_search wiring: remove the SET and this drops.
+      await store.upsert(
+        Array.from({ length: 60 }, (_, i) => ({
+          vectorId: `ef#${i}`,
+          artifactId: `ef${i}`,
+          orgId: "oef",
+          chunk: 0,
+          embedding: [1, i / 200, 0, 0],
+          snippet: `s${i}`,
+        })),
+      )
+      const hits = await store.query("oef", [1, 0, 0, 0], 50)
+      expect(hits.length).toBe(50)
     })
 
     it("upsert splits >UPSERT_BATCH(200) rows across statements, storing them all", async () => {

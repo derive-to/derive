@@ -352,6 +352,25 @@ export async function indexArtifactVersion(
   }
 }
 
+// Hard-delete an artifact from BOTH search arms. `meta.deleteArtifact` drops the row + its FTS
+// entry inside the DB; the dense vector lives OUTSIDE the DB, so it must be dropped separately —
+// best-effort, since an orphan is only wasted storage (the Tier-2 gate filters a stale nomination).
+// Every hard-delete path MUST go through this: the dense arm silently drifted from the FTS on the
+// repo-sync `wipe` path exactly because it called meta.deleteArtifact directly. Not for takedown
+// (that soft-removes, keeping the vector valid) or account deletion (that anonymizes + retains).
+export async function deleteArtifactAndUnindex(
+  meta: Pick<MetaStore, "deleteArtifact">,
+  search: Pick<SearchIndex, "unindexArtifact"> | undefined,
+  id: string,
+  orgId: string,
+): Promise<void> {
+  await meta.deleteArtifact(id, orgId)
+  if (search)
+    await search
+      .unindexArtifact(id)
+      .catch((err) => log.error("dense unindex failed", { artifact: id, err: String(err) }))
+}
+
 // Backfill — index artifacts that predate the write-path (or were created outside it).
 // Publishing keeps the index current going forward; this one-time sweep covers the
 // existing corpus. Idempotent (indexArtifact upserts), operator-driven in bounded

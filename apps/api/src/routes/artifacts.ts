@@ -58,6 +58,7 @@ import {
   workspaceAccessOf,
 } from "../lib/http"
 import {
+  deleteArtifactAndUnindex,
   indexArtifactVersion,
   searchArtifactVersion,
   searchMatcher,
@@ -1289,15 +1290,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     async (c) => {
       const artifact = await requireArtifact(c, "manage", { split: true })
       if (artifact instanceof Response) return bail(artifact)
-      await meta.deleteArtifact(artifact.id, artifact.org_id)
-      // The FTS row is dropped inside deleteArtifact; the dense index lives outside the DB, so
-      // drop its vector here too. Best-effort — an orphan the Tier-2 gate already filters out,
-      // otherwise reclaimed by the reconcile/backfill sweep.
-      await search
-        ?.unindexArtifact(artifact.id)
-        .catch((err) =>
-          log.error("dense unindex failed", { artifact: artifact.id, err: String(err) }),
-        )
+      // Drops the row + FTS entry (in deleteArtifact) AND the dense vector (best-effort) — one
+      // helper so a hard-delete path can't clean one arm and forget the other.
+      await deleteArtifactAndUnindex(meta, search, artifact.id, artifact.org_id)
       return c.body(null, 204)
     },
   )
