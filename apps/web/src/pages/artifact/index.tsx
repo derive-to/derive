@@ -124,7 +124,9 @@ export function Artifact() {
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [focus])
-  const [reviewing, setReviewing] = useState(false)
+  // The review overlay: null = closed. A ?review deep link (or a surface that knows
+  // which proposal it means) opens it ON that proposal; the ⋯ menu opens it bare.
+  const [reviewing, setReviewing] = useState<{ proposalId?: string } | null>(null)
   // Which "⋯ More" surface is open (large dialog / drawer).
   const [surface, setSurface] = useState<null | "insights" | "history">(null)
   const [proposeMsg, setProposeMsg] = useState("")
@@ -334,7 +336,7 @@ export function Artifact() {
     onCanonical: (canonical) =>
       nav({ to: "/artifacts/$ref", params: { ref: canonical }, search: (s) => s, replace: true }),
     onLoginBounce: () => nav({ to: "/login" }),
-    onOpenReview: () => setReviewing(true),
+    onOpenReview: (proposalId: string) => setReviewing({ proposalId }),
     post,
     setPanel,
     setActiveThread,
@@ -376,7 +378,7 @@ export function Artifact() {
         to: "/artifacts/$ref",
         params: { ref: refFor({ short_id: shortId, title: art?.title }) },
       }),
-    onOpenReview: () => setReviewing(true),
+    onOpenReview: () => setReviewing({}),
     setEditing,
     setSrc,
     setTitle: setEditTitle,
@@ -582,7 +584,8 @@ export function Artifact() {
             currentVersion={art.current_version}
             myRole={art.my_role}
             meName={me?.name ?? me?.email ?? null}
-            onClose={() => setReviewing(false)}
+            initialProposalId={reviewing.proposalId}
+            onClose={() => setReviewing(null)}
             onApplied={load}
           />
         </Suspense>
@@ -713,7 +716,7 @@ export function Artifact() {
               }
               onInsights={() => setSurface("insights")}
               onHistory={() => setSurface("history")}
-              onReview={() => setReviewing(true)}
+              onReview={() => setReviewing({})}
               onStartEdit={startEdit}
               onToggleComments={() => setPanel((pn) => (pn === "open" ? "hidden" : "open"))}
               onFocus={() => setFocus(true)}

@@ -5,13 +5,14 @@ import { candidateShortIds, parseRef } from "../pages/artifact/parse-ref"
 import { WorkbenchSkeleton } from "../pages/artifact/workbench-skeleton"
 
 export const Route = createFileRoute("/artifacts/$ref")({
-  // `comment` deep-links to a comment thread (opens the panel + focuses its anchor);
-  // `review` opens the proposal-review overlay on arrival — the entry for surfaces
-  // that point a human at a pending proposal (the Brandprint profile panel's
-  // "Review & comment"), where landing on the live version would show the wrong thing.
-  validateSearch: (s: Record<string, unknown>): { comment?: string; review?: boolean } => ({
+  // Two deep links, each naming its target: `comment` opens a thread (panel + anchor),
+  // `review` opens the proposal-review overlay on that proposal. Surfaces that point a
+  // human at a pending proposal (the Brandprint profile panel's "Review & comment") use
+  // it — landing on the live version would show them the wrong thing, and with several
+  // proposals open the overlay must not have to guess which one they meant.
+  validateSearch: (s: Record<string, unknown>): { comment?: string; review?: string } => ({
     ...(typeof s.comment === "string" ? { comment: s.comment } : {}),
-    ...(s.review === true || s.review === "true" || s.review === "1" ? { review: true } : {}),
+    ...(typeof s.review === "string" && s.review ? { review: s.review } : {}),
   }),
   // Warm the artifact + its comments (and the rendered HTML the iframe loads) so
   // an intent-preloaded link opens instantly. Best-effort: the page owns the

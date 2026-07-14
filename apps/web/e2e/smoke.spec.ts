@@ -1,9 +1,9 @@
-import { Buffer } from "node:buffer"
 import {
   activateThread,
   addComment,
   expect,
   openArtifact,
+  proposeEdit,
   publishArtifact,
   signUp,
   test,
@@ -56,7 +56,7 @@ test("owner shares an artifact and the member appears", async ({ owner, secondUs
 })
 
 test("brandprint 'Review & comment' opens the pending profile proposal", async ({ owner }) => {
-  // Seed the profile hand-off state through the real API: a v1 profile stub, a
+  // The profile hand-off state, seeded through the real API: a v1 profile stub, a
   // workspace Brandprint pointing at it, and an open proposal standing in for the
   // agent's build.
   const profileId = await publishArtifact(
@@ -65,39 +65,32 @@ test("brandprint 'Review & comment' opens the pending profile proposal", async (
     "<h1>Brand profile</h1><p>Not generated yet.</p>",
     "text/html",
   )
-  const colRes = await owner.request.post("/v1/collections", { data: { title: "Brandprint" } })
-  expect(colRes.ok(), `collection create: ${colRes.status()} ${await colRes.text()}`).toBeTruthy()
-  const col = await colRes.json()
-  const setRes = await owner.request.patch("/v1/workspace/settings", {
-    data: { brandprint: { collectionId: col.id, profileId } },
-  })
-  expect(setRes.ok(), `settings patch: ${setRes.status()} ${await setRes.text()}`).toBeTruthy()
-  const echo = await (await owner.request.get("/v1/workspace/settings")).json()
-  expect(
-    echo.brandprint?.profileId,
-    `settings round-trip: ${JSON.stringify(echo.brandprint ?? null)}`,
-  ).toBe(profileId)
-  const propRes = await owner.request.post(`/v1/artifacts/${profileId}/proposals`, {
-    multipart: {
-      file: {
-        name: "index.html",
-        mimeType: "text/html",
-        buffer: Buffer.from("<h1>Proposed profile</h1>"),
-      },
-    },
-  })
-  expect(propRes.ok(), `proposal: ${propRes.status()} ${await propRes.text()}`).toBeTruthy()
+  const col = await (
+    await owner.request.post("/v1/collections", { data: { title: "Brandprint" } })
+  ).json()
+  // Write the pointer and read it back: a fresh account's personal workspace is
+  // provisioned lazily, so the first write can land before the page's workspace is the
+  // one it reads (publishArtifact retries for the same reason).
+  await expect(async () => {
+    const res = await owner.request.patch("/v1/workspace/settings", {
+      data: { brandprint: { collectionId: col.id, profileId } },
+    })
+    expect(res.ok(), `settings patch: ${res.status()}`).toBeTruthy()
+    const echo = await (await owner.request.get("/v1/workspace/settings")).json()
+    expect(echo.brandprint?.profileId).toBe(profileId)
+  }).toPass({ timeout: 10_000 })
+  await proposeEdit(owner.request, profileId, "the build", "<h1>Proposed profile</h1>")
 
-  // The seeding above went around the app, so the persisted query cache (settings
-  // are Infinity-fresh) still holds the pre-seed state. Clear it BEFORE the app
-  // boots on the next load — an in-page clear races the persister's throttled
-  // flush. Real flows write through the app's mutations, which invalidate.
-  await owner.addInitScript(() => window.localStorage.clear())
+  // That seeding went around the app, and workspace settings are Infinity-fresh in the
+  // query cache the app restores from IndexedDB on boot (lib/persist.ts) — so drop the
+  // persisted entry before the app starts, or it paints the pre-seed state and never
+  // refetches. Real flows write through the app's mutations, which invalidate.
+  await owner.addInitScript(() => indexedDB.deleteDatabase("keyval-store"))
   await owner.goto("/brandprint")
   await owner.getByTestId("brandprint-profile-review").click()
-  // The ?review deep link must open the review overlay on the proposal — not strand
-  // the reviewer on the live version, which for a pending profile is the v1 stub.
-  await expect(owner).toHaveURL(/review=true/)
+  // The link names the proposal, and the overlay opens on it — landing on the live
+  // version would show the reviewer the v1 stub they came here to replace.
+  await expect(owner).toHaveURL(/review=p_/)
   await expect(owner.getByTestId("review-title")).toBeVisible()
   await expect(owner.getByTestId("review-frame")).toHaveAttribute("src", /\/p\//)
 })

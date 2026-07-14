@@ -13,9 +13,8 @@ import type { Panel } from "./types"
  *    transient 5xx/network failure (which also nulls `me`), so an outage doesn't eject them;
  *  - honour a ?comment=<thread> deep link once comments arrive (open the panel, activate
  *    the thread, scroll to its highlight), exactly once;
- *  - honour a ?review deep link once the artifact loads (open the proposal-review
- *    overlay), exactly once — the entry for surfaces that point a human at a pending
- *    proposal, like the Brandprint profile panel.
+ *  - honour a ?review=<proposal> deep link once the artifact loads (open the review
+ *    overlay on that proposal), exactly once.
  *
  * `nav` stays in the page: the two navigations are passed in as `onCanonical`/
  * `onLoginBounce` so this hook is router-type-free (matching artifact-actions).
@@ -34,8 +33,8 @@ export function useArtifactRoute(p: {
   error: unknown
   onCanonical: (canonicalRef: string) => void
   onLoginBounce: () => void
-  /** Open the proposal-review overlay (the ?review deep link's target). */
-  onOpenReview: () => void
+  /** Open the proposal-review overlay on a specific proposal (the ?review deep link). */
+  onOpenReview: (proposalId: string) => void
   post: (msg: Record<string, unknown>) => void
   setPanel: Dispatch<SetStateAction<Panel>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
@@ -63,15 +62,15 @@ export function useArtifactRoute(p: {
     if (!loading && !authed && failed && !locked && gated) onLoginBounce()
   }, [loading, authed, failed, locked, error, onLoginBounce])
 
-  // Deep link: ?review opens the proposal-review overlay. Runs once, after the artifact
-  // is in — the overlay owns proposal loading and the role-appropriate view, so this
-  // only has to flip it open. Signed-in viewers only (proposals are account-gated).
+  // Deep link: ?review=<proposal> opens the review overlay on that proposal. Runs once,
+  // after the artifact is in — the overlay owns loading and the role-appropriate view,
+  // so this only names the target. Signed-in viewers only (proposals are account-gated).
   const reviewLinked = useRef(false)
   useEffect(() => {
     if (reviewLinked.current || !art || art.removed || !authed) return
     reviewLinked.current = true
-    const wantsReview = new URLSearchParams(window.location.search).get("review")
-    if (wantsReview && wantsReview !== "false") onOpenReview()
+    const proposalId = new URLSearchParams(window.location.search).get("review")
+    if (proposalId) onOpenReview(proposalId)
   }, [art, authed, onOpenReview])
 
   // Deep link: ?comment=<thread> opens the panel, activates that thread, and jumps to
