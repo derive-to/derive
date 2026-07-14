@@ -16,6 +16,7 @@ import { workspacesBlockingDeletion } from "./lib/account"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
+import { sharesRegistrableDomain } from "./lib/http"
 import { mountWeb } from "./lib/serve-web"
 import { makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
@@ -352,6 +353,25 @@ if (!cfg.sandboxOrigin && (cfg.crossSite || cfg.webOrigins.length)) {
   log.warn(
     "DERIVE_SANDBOX_URL is unset on a cross-site deployment. Artifact HTML will be served from the app origin; set DERIVE_SANDBOX_URL to a separate domain to isolate untrusted content from session cookies.",
   )
+}
+
+// Loud warning for the isolation footgun: per-artifact subdomain hosts receive the
+// `allow-same-origin` capability grant, so DERIVE_SUBDOMAIN_BASE MUST be a different
+// registrable domain than the app / auth-cookie host — otherwise an artifact could set
+// a Domain-scoped cookie the app trusts (session / CSRF-token injection). The intended
+// prod config (derived.app vs derive.to) is safe; this catches the misconfiguration.
+if (cfg.subdomainBase) {
+  const appHost = (() => {
+    try {
+      return new URL(cfg.baseUrl).hostname.toLowerCase()
+    } catch {
+      return null
+    }
+  })()
+  if (sharesRegistrableDomain(appHost, cfg.subdomainBase))
+    log.warn(
+      `DERIVE_SUBDOMAIN_BASE (${cfg.subdomainBase}) shares a registrable domain with the app host (${appHost}). Per-artifact subdomains get an allow-same-origin capability grant, so the base MUST be a separate registrable domain (e.g. derived.app when the app is derive.to) — otherwise an artifact can inject Domain-scoped cookies the app trusts.`,
+    )
 }
 
 // Half-configured optional features (an OAuth id without its secret, an email key without

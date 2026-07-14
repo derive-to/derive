@@ -4,7 +4,12 @@ import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { autoSubdomainLabel, maybeAssignIsolatedSubdomain } from "../src/lib/after-publish"
-import { headersFor, ISOLATED_RAW_HEADERS, RAW_HEADERS } from "../src/lib/http"
+import {
+  headersFor,
+  ISOLATED_RAW_HEADERS,
+  RAW_HEADERS,
+  sharesRegistrableDomain,
+} from "../src/lib/http"
 import { dir, makeStore } from "./helpers"
 
 const csp = (h: Record<string, string>) => h["Content-Security-Policy"] ?? ""
@@ -20,7 +25,33 @@ describe("origin isolation — headersFor (2a)", () => {
     // (still sandboxed, still allow-scripts, still nosniff/noindex).
     expect(csp(ISOLATED_RAW_HEADERS)).toContain("sandbox")
     expect(csp(ISOLATED_RAW_HEADERS)).toContain("allow-scripts")
+    // Neither top-navigation nor popup-escape is granted — an isolated artifact is
+    // still cross-origin to the app/embedder and can't reach a parent context.
+    expect(csp(ISOLATED_RAW_HEADERS)).not.toContain("allow-top-navigation")
+    expect(csp(ISOLATED_RAW_HEADERS)).not.toContain("allow-popups-to-escape-sandbox")
     expect(ISOLATED_RAW_HEADERS["X-Content-Type-Options"]).toBe("nosniff")
+  })
+})
+
+describe("origin isolation — deployment-invariant guard (sharesRegistrableDomain)", () => {
+  it("flags a subdomain base on the SAME registrable domain as the app host (the cookie-injection footgun)", () => {
+    // The dangerous misconfigurations: base == app host, base under the app host, or
+    // the app host under the base — all share a registrable domain, so a Domain-scoped
+    // cookie set by an artifact could reach the app.
+    expect(sharesRegistrableDomain("derive.to", "derive.to")).toBe(true)
+    expect(sharesRegistrableDomain("derive.to", "usercontent.derive.to")).toBe(true)
+    expect(sharesRegistrableDomain("app.derive.to", "derive.to")).toBe(true)
+    // Tolerates stray leading/trailing dots on the configured base.
+    expect(sharesRegistrableDomain("derive.to", ".derive.to.")).toBe(true)
+  })
+
+  it("passes the intended prod config: a genuinely separate registrable domain", () => {
+    expect(sharesRegistrableDomain("derive.to", "derived.app")).toBe(false)
+    // A shared trailing LABEL that isn't a dotted-suffix must not false-positive
+    // (derived.app vs derive.to share nothing; xderive.to is not a suffix of derive.to).
+    expect(sharesRegistrableDomain("derive.to", "xderive.to")).toBe(false)
+    expect(sharesRegistrableDomain(null, "derived.app")).toBe(false)
+    expect(sharesRegistrableDomain("derive.to", "")).toBe(false)
   })
 })
 
@@ -102,7 +133,6 @@ describe("origin isolation — auto-assigned subdomains (2b)", () => {
       listed: "public",
       kind: opts.kind,
       spa: opts.spa,
-      reflow: 0,
     })
     void key
     return a
