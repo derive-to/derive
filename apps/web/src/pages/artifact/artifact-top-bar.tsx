@@ -15,6 +15,7 @@ import {
 import { useCursorPref } from "@/ctx"
 import { cn } from "@/lib/utils"
 import { MoveToWorkspaceDialog, ReportDialog, StarButton } from "./header-actions"
+import { ReworkConnectDialog, ReworkMenuItem } from "./rework-menu-item"
 import { ShareButton } from "./share-dialog"
 
 /**
@@ -79,6 +80,7 @@ export function ArtifactTopBar(props: {
   const [tagsOpen, setTagsOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
   const [moveOpen, setMoveOpen] = useState(false)
+  const [reworkConnectOpen, setReworkConnectOpen] = useState(false)
   return (
     <>
       {/* Actions cluster — the filled Share leads (the one primary), then the favorited
@@ -156,6 +158,10 @@ export function ArtifactTopBar(props: {
                 </span>
               )}
             </DropdownMenuItem>
+
+            {/* Apply the Brandprint — the ask-agent handoff scoped to the whole artifact. */}
+            <DropdownMenuSeparator />
+            <ReworkMenuItem shortId={shortId} onConnect={() => setReworkConnectOpen(true)} />
 
             {/* Activity. */}
             <DropdownMenuSeparator />
@@ -243,6 +249,7 @@ export function ArtifactTopBar(props: {
         open={moveOpen}
         onOpenChange={setMoveOpen}
       />
+      <ReworkConnectDialog open={reworkConnectOpen} onOpenChange={setReworkConnectOpen} />
     </>
   )
 }
