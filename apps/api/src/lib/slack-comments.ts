@@ -63,13 +63,26 @@ export const enqueueSlackComment = async (
  *  event cards and the comment mirror share the kind without a payload discriminator. */
 interface SlackEventPayload {
   orgId: string
+  artifactId: string
   event: WebhookEvent
   title: string
   link: string
   author: string
   version: number | null
   message: string | null
+  /** The proposal id, for a proposal.created card — carried on its Approve buttons. */
+  proposalId: string | null
 }
+
+/** The interactivity `action_id`s an in-channel proposal card's buttons carry. */
+export const SLACK_PROPOSAL_ACTION = {
+  approve: "derive_proposal_approve",
+  requestChanges: "derive_proposal_request_changes",
+} as const
+
+/** Encode a proposal button's `value`: which proposal on which artifact to act on. */
+export const encodeProposalAction = (artifactId: string, proposalId: string): string =>
+  JSON.stringify({ a: artifactId, p: proposalId })
 
 /** Artifact-lifecycle events that post a top-level card to the connected channel (comments
  *  mirror separately + threaded, so they're NOT here). Everything else `notify` fans out to
@@ -102,12 +115,14 @@ export const enqueueSlackChannelEvent = async (
   const actor = [data.author, data.approver, data.reviewer].find((v) => typeof v === "string")
   const payload: SlackEventPayload = {
     orgId: artifact.org_id,
+    artifactId: artifact.id,
     event,
     title: artifact.title ?? artifact.short_id,
     link: artifactUrl(baseUrl, artifact),
     author: typeof actor === "string" ? actor : "someone",
     version: typeof data.version === "number" ? data.version : null,
     message: typeof data.message === "string" ? data.message : null,
+    proposalId: typeof data.proposal_id === "string" ? data.proposal_id : null,
   }
   await enqueueChannelDelivery(meta, "slack_app", event, payload)
   return true
@@ -136,7 +151,20 @@ const eventBlocks = (p: SlackEventPayload): unknown[] => {
       head = `${link} — ${escapeMrkdwn(p.event)}`
   }
   const body = p.message ? `${head}\n> ${escapeMrkdwn(truncate(p.message, 280))}` : head
-  return [section(body), context(`Derive · ${p.event}`)]
+  const blocks: unknown[] = [section(body)]
+  // An open proposal gets Approve / Request-changes buttons (the clicker is authorized as
+  // their linked Derive user in the interactivity handler).
+  if (p.event === "proposal.created" && p.proposalId) {
+    const value = encodeProposalAction(p.artifactId, p.proposalId)
+    blocks.push(
+      actions([
+        actionButton(SLACK_PROPOSAL_ACTION.approve, "Approve", value, "primary"),
+        actionButton(SLACK_PROPOSAL_ACTION.requestChanges, "Request changes", value),
+      ]),
+    )
+  }
+  blocks.push(context(`Derive · ${p.event}`))
+  return blocks
 }
 
 /** The interactivity `action_id`s a comment card's buttons carry. The handler in
