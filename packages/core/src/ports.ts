@@ -1854,11 +1854,17 @@ export type DeliveryStatus = "pending" | "delivered" | "dead"
  * GitHub PR comments (inline review or top-level issue comment). Internal-channel
  * rows carry `webhook_id = "internal"` (no backing `webhook` row); the per-kind
  * sender knows how to build credentials + destination from the payload.
+ *
+ * `slack_ingest` runs the seam the other way: an *inbound* Slack thread reply the events
+ * endpoint enqueues so the slow work (users.info + the comment write) happens on the
+ * worker — the endpoint acks Slack under its 3s deadline and the outbox retries a
+ * transient failure instead of dropping the reply.
  */
 export type DeliveryKind =
   | WebhookKind
   | "slack_app"
   | "slack_dm"
+  | "slack_ingest"
   | "github_review_comment"
   | "github_issue_comment"
   | "email"
@@ -1988,6 +1994,9 @@ export interface NewComment {
   body_md: string
   author: string
   author_id?: string | null
+  /** Opaque JSON sidecar (e.g. the Slack `{ts,channel}` origin marker). Set at insert so a
+   *  dedupe key is written atomically with the row, not in a second write a retry can skip. */
+  meta?: string | null
 }
 
 /** Options for {@link MetaStore.listComments}. */

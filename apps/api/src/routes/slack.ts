@@ -2,15 +2,10 @@ import { newId, type SlackInstallRecord } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { decryptSecret, encryptSecret, signState, verifyState } from "../lib/crypto"
+import { encryptSecret, signState, verifyState } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
-import {
-  exchangeSlackOAuth,
-  slackAuthorizeUrl,
-  slackUserName,
-  verifySlackSignature,
-} from "../lib/slack"
-import { ingestSlackReply } from "../lib/slack-comments"
+import { exchangeSlackOAuth, slackAuthorizeUrl, verifySlackSignature } from "../lib/slack"
+import { enqueueSlackReplyIngest } from "../lib/slack-comments"
 import { enqueueSlackDm, wantsSlackDm } from "../lib/slack-dm"
 import { log } from "../log"
 import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
@@ -23,7 +18,7 @@ import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
  *  the web client's type; the OAuth redirects and the Slack Events webhook stay plain
  *  routes (not typed JSON). */
 export const slackRoutes = (ctx: AppContext) => {
-  const { meta, deps, bus, requireUser } = ctx
+  const { meta, deps, requireUser } = ctx
   const { activeWorkspace, workspaceCan, requireWorkspace } = ctx
   const app = new OpenAPIHono<BlankEnv>()
   const slack = deps.slack
@@ -152,21 +147,21 @@ export const slackRoutes = (ctx: AppContext) => {
       ev.user &&
       ev.text
     ) {
+      // Gate on a cheap indexed lookup (only replies under a message we posted map to a
+      // Derive thread) so channel chatter never floods the outbox, then defer the slow work
+      // — users.info + the comment write — to the worker. That keeps this handler well under
+      // Slack's 3s ack deadline, and the outbox retries a transient failure instead of
+      // dropping the reply (the old inline path did all of it before acking).
       const link = await meta.getSlackThreadLinkByTs(ev.channel, ev.thread_ts)
-      if (link && deps.encryptionKey && (await meta.getOrgSettings(link.org_id)).slackPost) {
-        const install = await meta.getSlackInstall(link.org_id)
-        if (install) {
-          const token = decryptSecret(install.bot_token, deps.encryptionKey)
-          const name = await slackUserName(token, ev.user)
-          const created = await ingestSlackReply(meta, link, {
-            ts: ev.ts ?? "",
-            userId: ev.user,
-            userName: name,
-            text: ev.text,
-            botUserId: install.bot_user_id,
-          })
-          if (created) bus.publish(created.artifact_id, { type: "comment.created" })
-        }
+      if (link) {
+        await enqueueSlackReplyIngest(meta, {
+          channel: ev.channel,
+          threadTs: ev.thread_ts,
+          userId: ev.user,
+          text: ev.text,
+          ts: ev.ts ?? "",
+        })
+        deps.pokeWebhooks?.()
       }
     }
     return c.json({ ok: true })

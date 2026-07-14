@@ -4,7 +4,7 @@ import { tickStore } from "./edge-pg"
 import { cloudflareEmailSender, type SendEmailBinding } from "./email-cf"
 import { emailDeliverySender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
-import { makeSlackSender } from "./lib/slack-comments"
+import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
 import { type ChannelSenders, edgeGuard, runDeliveryTick } from "./webhooks"
 
@@ -64,6 +64,10 @@ export class WebhookOutbox {
       github_issue_comment: makeGithubCommentSender(store, env.DERIVE_AUTH_SECRET),
       slack_app: makeSlackSender(store, env.DERIVE_AUTH_SECRET),
       slack_dm: makeSlackDmSender(store, env.DERIVE_AUTH_SECRET),
+      // Inbound Slack thread reply deferred by the events endpoint. No bus here: the DO
+      // is a separate isolate from the SSE request handlers, so the comment lands and
+      // shows on the viewer's next read rather than a live push.
+      slack_ingest: makeSlackIngestSender(store, env.DERIVE_AUTH_SECRET),
     }
   }
 

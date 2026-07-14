@@ -19,7 +19,7 @@ export const buildSlackManifest = (baseUrl: string) => {
     display_information: {
       name: "Derive",
       description:
-        "Get Derive comments, publishes, proposals and reviews in Slack, and reply back from a thread.",
+        "Get Derive comments in a Slack channel, reply back from the thread, and DM members for mentions, review requests and shares.",
       background_color: "#1a1a2e",
     },
     features: {
