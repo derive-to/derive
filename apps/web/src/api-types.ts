@@ -5521,6 +5521,8 @@ export interface components {
             needs_reauth: boolean;
             /** @description The caller's "DM me for interrupts" preference (mentions, review requests, shares) */
             slack_dm: boolean;
+            /** @description Whether the caller has linked their Slack identity for the connected team */
+            linked: boolean;
         };
         Report: {
             id: string;

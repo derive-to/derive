@@ -166,14 +166,24 @@ export const makeSlackDmSender =
     const p = JSON.parse(d.payload) as SlackDmPayload
     const bot = await resolveBotToken(meta, p.orgId, encryptionKey)
     if (!bot) return { ok: true, status: "skipped: slack not connected" }
-    const [user] = await meta.getUsers([p.userId])
-    if (!user?.email) return { ok: true, status: "skipped: no email on file" }
 
-    let slackUserId: string | null
-    try {
-      slackUserId = await resolveSlackUserIdByEmail(bot.token, user.email)
-    } catch (err) {
-      return slackFailure(meta, p.orgId, err)
+    // Prefer the reliable account link (the user linked their Slack identity); fall back to
+    // guessing by account email only for users who haven't linked — so a Derive email that
+    // differs from the Slack email no longer silently drops the DM. (A linked user whose Slack
+    // account was later deactivated retries then dead-letters rather than falling back to email
+    // — rare, and re-linking or unlinking fixes it.)
+    let slackUserId: string | null = null
+    const link = await meta.getSlackUserLinkByUser(bot.install.team_id, p.userId)
+    if (link) {
+      slackUserId = link.slack_user_id
+    } else {
+      const [user] = await meta.getUsers([p.userId])
+      if (!user?.email) return { ok: true, status: "skipped: not linked, no email on file" }
+      try {
+        slackUserId = await resolveSlackUserIdByEmail(bot.token, user.email)
+      } catch (err) {
+        return slackFailure(meta, p.orgId, err)
+      }
     }
     if (!slackUserId) return { ok: true, status: "skipped: no matching Slack account" }
 

@@ -523,6 +523,25 @@ export const slackThreadLink = sqliteTable(
   ],
 )
 
+// Derive user ↔ their Slack identity in a workspace (from the "Link Slack account" OIDC
+// flow). Keyed on (team_id, slack_user_id) — a Slack user id is per-workspace — so a Slack
+// event/DM resolves to the real Derive account instead of an email guess.
+export const slackUserLink = sqliteTable(
+  "slack_user_link",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id").notNull(),
+    team_id: text("team_id").notNull(),
+    slack_user_id: text("slack_user_id").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [
+    uniqueIndex("slack_user_link_slack").on(t.team_id, t.slack_user_id),
+    index("slack_user_link_user").on(t.team_id, t.user_id),
+  ],
+)
+
 export const githubApp = sqliteTable("github_app", {
   id: text("id").primaryKey(),
   app_id: text("app_id").notNull(),
@@ -793,6 +812,7 @@ const TABLES = [
   orgSettings,
   slackInstall,
   slackThreadLink,
+  slackUserLink,
   userNotificationPref,
   githubApp,
   githubInstallation,

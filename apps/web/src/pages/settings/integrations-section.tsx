@@ -72,6 +72,12 @@ export function IntegrationsSection() {
     success: "Test DM sent",
   })
   const sendTestDm = () => testDm.mutate()
+  const unlink = useApiMutation({
+    mutationFn: () => api.unlinkSlack(),
+    success: "Slack account unlinked",
+    invalidate: [slackQuery().queryKey],
+  })
+  const unlinkSlack = () => unlink.mutate()
 
   return (
     <SettingsSection
@@ -195,7 +201,7 @@ export function IntegrationsSection() {
             <SettingRow
               htmlFor="toggle-slack-dm"
               label="DM me for interrupts"
-              description="A Slack direct message when someone @mentions you, requests your review, or shares a doc with you — the same events that email you. Resolved by your account email — no separate Slack sign-in needed."
+              description="A Slack direct message when someone @mentions you, requests your review, or shares a doc with you — the same events that email you. Link your Slack account below for reliable delivery; otherwise Derive matches you by account email."
             >
               <div className="flex items-center gap-2">
                 <Button
@@ -214,6 +220,30 @@ export function IntegrationsSection() {
                   onCheckedChange={toggleSlackDm}
                 />
               </div>
+            </SettingRow>
+            <SettingRow
+              label="Your Slack account"
+              description={
+                slack.linked
+                  ? "Linked. DMs and thread attribution resolve to your Slack identity directly."
+                  : "Link your Slack account so DMs reach you even if your Slack email differs, and Slack replies are attributed to you."
+              }
+            >
+              {slack.linked ? (
+                <Button
+                  data-testid="slack-unlink"
+                  variant="outline"
+                  size="sm"
+                  onClick={unlinkSlack}
+                  loading={unlink.isPending}
+                >
+                  Unlink
+                </Button>
+              ) : (
+                <Button data-testid="slack-link" variant="default" size="sm" asChild>
+                  <a href="/v1/slack/link">Link account</a>
+                </Button>
+              )}
             </SettingRow>
             <FormField label="Default channel ID" htmlFor="slack-channel" className="max-w-sm">
               <div className="flex gap-2">

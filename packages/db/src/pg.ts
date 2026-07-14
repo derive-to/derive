@@ -78,6 +78,7 @@ import type {
   SessionState,
   SlackInstallRecord,
   SlackThreadLinkRecord,
+  SlackUserLinkRecord,
   TakedownInput,
   UserDir,
   UserNotificationPrefRecord,
@@ -143,6 +144,7 @@ import {
   sessionMessage,
   slackInstall,
   slackThreadLink,
+  slackUserLink,
   userNotificationPref,
   version,
   webhook,
@@ -1628,6 +1630,38 @@ export class PgMetaStore implements MetaStore {
       .insert(slackThreadLink)
       .values(l)
       .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
+  }
+  async getSlackUserLinkBySlackId(
+    teamId: string,
+    slackUserId: string,
+  ): Promise<SlackUserLinkRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(slackUserLink)
+      .where(and(eq(slackUserLink.team_id, teamId), eq(slackUserLink.slack_user_id, slackUserId)))
+    return rows[0] ?? null
+  }
+  async getSlackUserLinkByUser(
+    teamId: string,
+    userId: string,
+  ): Promise<SlackUserLinkRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(slackUserLink)
+      .where(and(eq(slackUserLink.team_id, teamId), eq(slackUserLink.user_id, userId)))
+    return rows[0] ?? null
+  }
+  async setSlackUserLink(l: SlackUserLinkRecord): Promise<void> {
+    const { id: _i, created_at: _c, ...set } = l
+    await this.db
+      .insert(slackUserLink)
+      .values(l)
+      .onConflictDoUpdate({ target: [slackUserLink.team_id, slackUserLink.slack_user_id], set })
+  }
+  async deleteSlackUserLink(teamId: string, userId: string): Promise<void> {
+    await this.db
+      .delete(slackUserLink)
+      .where(and(eq(slackUserLink.team_id, teamId), eq(slackUserLink.user_id, userId)))
   }
   async getUserNotificationPref(
     orgId: string,
