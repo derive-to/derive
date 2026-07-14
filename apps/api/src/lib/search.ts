@@ -711,6 +711,11 @@ export interface SearchHit {
   current_version: number
   /** One line of the matching text, windowed around the first match (…elided ends). */
   snippet: string
+  /** True when this is a SEMANTIC-only match — the query matched by meaning, with no literal
+   *  occurrence in the text (so the snippet is the dense passage, not a highlightable line). Lets
+   *  the UI badge it as a meaning match. A hit found literally (with or without also matching
+   *  semantically) is false. */
+  semantic: boolean
 }
 
 // A short lead of context BEFORE the match, then the rest trailing. The window is biased
@@ -745,5 +750,7 @@ export const toSearchHits = (results: WorkspaceSearchResult[], query: string): S
       current_version: r.current_version,
       // A literal hit line is the best snippet; a dense-only hit falls back to its chunk snippet.
       snippet: hit ? snippetAround(hit.text, query) : (r.semantic?.snippet ?? ""),
+      // Semantic-only when there's no literal hit line but a dense passage carried it here.
+      semantic: !hit && !!r.semantic?.snippet,
     }
   })

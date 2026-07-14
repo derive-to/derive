@@ -285,6 +285,8 @@ export interface SearchHit {
   current_version: number
   /** One line of the matching text, windowed around the match (server-side). */
   snippet: string
+  /** True when this matched by MEANING only (no literal occurrence) — the UI badges it. */
+  semantic: boolean
 }
 
 export const api = {

@@ -170,6 +170,18 @@ export const peopleQuery = (query: string) =>
     placeholderData: keepPreviousData,
   })
 
+// Full workspace search for the /search results page — the same hybrid (lexical + dense/semantic)
+// endpoint the ⌘K palette uses, but a deeper page (default 30 vs the palette's 6). Gated to ≥2
+// chars (the server also requires a query); keepPreviousData holds the list across refinements so
+// it never flashes empty mid-type.
+export const searchQuery = (query: string, limit = 30) =>
+  queryOptions({
+    queryKey: ["search", query, limit] as const,
+    queryFn: () => api.searchContent(query, limit),
+    enabled: query.trim().length >= 2,
+    placeholderData: keepPreviousData,
+  })
+
 // The directory's "your workspaces" section — people you already work with,
 // listed ahead of the global browse (and regardless of their discoverability).
 export const workspacePeopleQuery = () =>
