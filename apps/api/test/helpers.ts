@@ -145,7 +145,7 @@ const seedSqliteTeam = (path: string, team: Seat[]): void => {
 
 // One metadata store per named test app: Postgres schema or SQLite file. Seeds
 // the Better Auth `user` table so the share/mention routes can resolve email→id.
-const makeStore = (name: string, users: TestUser[], team: Seat[] = []): TestStore => {
+export const makeStore = (name: string, users: TestUser[], team: Seat[] = []): TestStore => {
   if (PG_URL) {
     const s = makePgStore(name, users, team)
     pgStores.push(s)

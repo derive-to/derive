@@ -167,6 +167,32 @@ export const RAW_HEADERS: Record<string, string> = {
 }
 
 /**
+ * Headers for an ISOLATED per-artifact origin (an artifact-bound domain row: a
+ * vanity/auto subdomain or a per-artifact custom host). There — and ONLY there —
+ * `allow-same-origin` is safe: the host serves exactly one artifact, carries no
+ * app/auth cookies, and (once the base domain is on the Public Suffix List) the
+ * browser walls each sibling subdomain off from every other. The grant is what
+ * turns a rendered page into a working app: localStorage/IndexedDB persist,
+ * History/pushState works, service workers can register.
+ *
+ * The same grant anywhere shared would be an escape hatch: on the app origin it
+ * reaches session cookies; on the shared sandbox origin (DERIVE_SANDBOX_URL) or a
+ * WORKSPACE domain (`<host>/<ref>`, many artifacts on one host) it would let one
+ * artifact read another's storage. Those callers keep RAW_HEADERS — which is why
+ * this is a per-request choice (`headersFor`) and no longer only a module constant.
+ */
+export const ISOLATED_RAW_HEADERS: Record<string, string> = {
+  ...RAW_HEADERS,
+  "Content-Security-Policy":
+    "sandbox allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads",
+}
+
+/** The sandbox header set for a serve: isolated per-artifact origins get the
+ *  capability grant, everything else the opaque-origin wall. */
+export const headersFor = (isolated: boolean): Record<string, string> =>
+  isolated ? ISOLATED_RAW_HEADERS : RAW_HEADERS
+
+/**
  * Cache-Control for an artifact's bytes by access model. Only an UNLOCKED
  * artifact whose world link grants access (`link_role != none`) is safe to sit
  * in a shared/CDN cache: everyone hitting the URL reads the same bytes. Workspace-

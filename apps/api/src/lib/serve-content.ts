@@ -1,6 +1,7 @@
 import {
   type BlobStore,
   type BundleManifest,
+  HISTORY_SHIM,
   isBundleContentType,
   looksLikeHtmlDocument,
   MARKS_SCRIPT,
@@ -11,14 +12,15 @@ import {
   SELECTION_SCRIPT,
 } from "@derive/core"
 import type { Context } from "hono"
-import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
+import { headersFor, IMMUTABLE_CACHE, rewriteAbsoluteUrls, toBody } from "./http"
 
 /**
  * Serve stored artifact content (a version or a proposal) under `prefix`, resolving
  * a sub-`path` for bundles. Shared by the `/raw/*` sandbox routes and domain mode:
  * for `/raw/:id/v/:n/` the prefix carries the path; for a vanity host the prefix is
  * `/`, so the absolute-URL rewriting becomes a no-op and the artifact serves at its
- * own origin root. Always carries the opaque-origin CSP (RAW_HEADERS).
+ * own origin root. Carries the opaque-origin CSP by default; an isolated
+ * per-artifact origin passes `isolated` for the capability grant (headersFor).
  *
  * `cacheControl` sets Cache-Control per the artifact's access model (see
  * `cacheControlFor`): a shared cache must never store a gated artifact's bytes and
@@ -47,8 +49,14 @@ export const serveContent = async (
    *  serve the document exactly as authored. Never applied to markdown-rendered output,
    *  which is already responsive. */
   reflow = true,
+  /** This response is being served on an ISOLATED per-artifact origin (an
+   *  artifact-bound domain host): use the capability-granting header set
+   *  (`allow-same-origin` — see headersFor in http.ts) and inject the history
+   *  shim so an EMBEDDED copy of the artifact can't grow the embedder's tab
+   *  history. Default off: /raw and workspace-domain serves stay opaque. */
+  isolated = false,
 ) => {
-  const headers = { ...RAW_HEADERS, "Cache-Control": cacheControl }
+  const headers = { ...headersFor(isolated), "Cache-Control": cacheControl }
   const tx = (doc: string) => (transformHtml ? transformHtml(doc) : Promise.resolve(doc))
   const rf = (doc: string) => (reflow ? reflowHtml(doc) : doc)
   // ?marks=1 draws numbered @N badges on the page's top-level landmark regions — the
@@ -59,10 +67,13 @@ export const serveContent = async (
   // other read.
   const wantsMarks = ["1", "true"].includes(c.req.query("marks") ?? "")
   const marks = wantsMarks ? MARKS_SCRIPT : ""
+  // On an isolated origin the page has real History access — ship the back-button
+  // shim with every HTML response there (a no-op unless the page is iframed).
+  const shim = isolated ? HISTORY_SHIM : ""
   // Produce the final HTML body for a document: cross-doc rewrite + auto-reflow, then append
   // the anchor client (for comment anchoring + live cursors) and, when asked, the marks overlay.
   const htmlBody = async (doc: string): Promise<string> =>
-    rf(await tx(doc)) + SELECTION_SCRIPT + marks
+    rf(await tx(doc)) + SELECTION_SCRIPT + marks + shim
   let path = rawPath
   if (isBundleContentType(content.content_type)) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -84,7 +95,7 @@ export const serveContent = async (
       const rewritten = rewriteAbsoluteUrls(new TextDecoder().decode(data), prefix.slice(0, -1))
       // Bundle pages get the anchor client too — comments stick everywhere.
       const out = entry.type.startsWith("text/html")
-        ? rf(rewritten) + SELECTION_SCRIPT + marks
+        ? rf(rewritten) + SELECTION_SCRIPT + marks + shim
         : rewritten
       return c.body(out, 200, { ...headers, "Content-Type": entry.type })
     }
