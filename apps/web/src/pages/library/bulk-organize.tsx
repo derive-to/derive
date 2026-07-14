@@ -19,7 +19,7 @@ import { artifactQuery, collectionsQuery, summaryQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
 import { cn } from "@/lib/utils"
-import { bulkApply, summarize } from "./bulk-apply"
+import { summarize } from "./bulk-apply"
 
 // The two organize dialogs in their MANY-artifact form, opened from the selection bar.
 // They mirror the single-artifact dialogs in components/shared/organize-dialogs (same
@@ -46,7 +46,8 @@ export function BulkTagsDialog({
   open,
   onOpenChange,
 }: {
-  // Already narrowed to what the caller can tag (owner/editor).
+  // The full selection — the server authorizes each artifact and skips what the caller
+  // can't edit. `skipped` is the caller's own pre-action estimate for the preview line.
   items: Artifact[]
   skipped: number
   listKey: QueryKey
@@ -58,13 +59,14 @@ export function BulkTagsDialog({
   const [adding, setAdding] = useState<string[]>([])
 
   const apply = useApiMutation({
-    // setTags REPLACES an artifact's set, so the union is computed per artifact from the
-    // tags already on its card. The server then normalizes (lowercase, dedupe, cap 20).
+    // One call over the whole selection: the server ADDS the tags to each artifact's
+    // existing set (computing the union itself, so the client sends only the tags to add)
+    // and authorizes every artifact on its own — anything the caller can't edit comes back
+    // in `skipped`. Normalization (lowercase, dedupe, cap 20) is the server's too.
     mutationFn: (tags: string[]) =>
-      bulkApply(
-        items,
-        (a) => api.setTags(a.short_id, [...new Set([...(a.tags ?? []), ...tags])]),
-        skipped,
+      api.bulkTags(
+        items.map((a) => a.short_id),
+        tags,
       ),
     invalidate: [
       listKey,
@@ -177,11 +179,13 @@ export function BulkCollectionsDialog({
   const pickable = all.filter((col) => !brandprintIds.has(col.id))
 
   const apply = useApiMutation({
-    // One unit of work per ARTIFACT (its collection adds run together), so the summary
-    // counts artifacts moved, not requests made.
+    // One call: the server folds the whole selection into every picked collection,
+    // authorizing each artifact for "share" (adding to a shared collection re-shares it),
+    // so the summary counts artifacts added and reports the rest as skipped.
     mutationFn: (ids: string[]) =>
-      bulkApply(items, (a) =>
-        Promise.all(ids.map((colId) => api.addToCollection(colId, a.short_id))),
+      api.bulkAddToCollections(
+        items.map((a) => a.short_id),
+        ids,
       ),
     invalidate: [
       listKey,

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { collectionsQuery, summaryQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
-import { bulkApply, summarize } from "./bulk-apply"
+import { summarize } from "./bulk-apply"
 import { BulkCollectionsDialog, BulkTagsDialog } from "./bulk-organize"
 
 // One action in the bar. The label is the button's text on a roomy viewport and its
@@ -75,21 +75,25 @@ export function SelectionBar({
   const [showDelete, setShowDelete] = useState(false)
 
   const n = items.length
+  const shortIds = items.map((a) => a.short_id)
+  // Client-side role counts drive the button-enable + the pre-action preview text ONLY.
+  // The server is the source of truth for what actually happens: each bulk call sends the
+  // whole selection and reports back what it could and couldn't touch.
   const taggable = items.filter((a) => a.my_role === "owner" || a.my_role === "editor")
   const deletable = items.filter((a) => a.my_role === "owner")
   // All-starred → the star becomes the un-star (the card's own toggle, at scale).
   const allFavorite = n > 0 && items.every((a) => a.favorite)
 
   const favorite = useApiMutation({
-    mutationFn: (on: boolean) => bulkApply(items, (a) => api.favorite(a.short_id, on)),
+    mutationFn: (on: boolean) => api.bulkFavorite(shortIds, on),
     invalidate: [listKey, summaryQuery().queryKey],
     success: (r) => summarize(allFavorite ? "Unstarred" : "Starred", r),
     onSuccess: onClear,
   })
 
   const remove = useApiMutation({
-    mutationFn: () =>
-      bulkApply(deletable, (a) => api.deleteArtifact(a.short_id), n - deletable.length),
+    // Send the whole selection; the server deletes what the caller owns and skips the rest.
+    mutationFn: () => api.bulkDelete(shortIds),
     invalidate: [listKey, summaryQuery().queryKey, collectionsQuery().queryKey],
     success: (r) => summarize("Deleted", r),
     onSuccess: onClear,
@@ -193,8 +197,10 @@ export function SelectionBar({
       </div>
 
       {showTags && (
+        // The FULL selection goes to the dialog; the server tags what the caller can edit
+        // and reports the rest as skipped. `skipped` here is only the pre-action preview.
         <BulkTagsDialog
-          items={taggable}
+          items={items}
           skipped={n - taggable.length}
           listKey={listKey}
           open={showTags}
