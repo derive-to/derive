@@ -36,6 +36,7 @@ import { afterPublish } from "../lib/after-publish"
 import { authorProfile, resolveHandles, resolveUserBylines } from "../lib/author"
 import { cleanPath, manifestOf } from "../lib/bundle"
 import { hashPassword, signState, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
+import { type DerivedViews, derivedViewsFor } from "../lib/derived-cache"
 import {
   EditConflictError,
   type MaterializedEdits,
@@ -883,7 +884,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const candidateCap = isJson ? 60 : undefined
 
     const { results, note } = await searchWorkspace(
-      { blobs, sourceText, meta },
+      { blobs, sourceText, meta, derived: { meta, blobs, background } },
       {
         orgId: listOrg,
         viewerId: isOperator ? undefined : (memberKey ?? undefined),
@@ -928,7 +929,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!version) return fail(c, 404, `no version ${v}`)
 
     const { groups, total, note } = await searchArtifactVersion(
-      { blobs, sourceText },
+      { blobs, sourceText, derived: { meta, blobs, background } },
       version,
       re,
       where,
@@ -1476,25 +1477,39 @@ export const artifactRoutes = (ctx: AppContext) => {
 
     const manifest = await manifestOf(blobs, version)
     if (!manifest) {
-      // Single-file artifact.
+      // Single-file artifact. Only the MARKDOWN conversion of a large HTML doc
+      // comes through the derived-view cache (the one expensive full-doc view,
+      // ~41ms on a 4MB doc) — the same substitution-transparent cache the MCP
+      // read tool uses. It's fetched lazily and once, so an outline read, a text
+      // read, or a raw byte read never pays a cache fetch. Outline and text are
+      // cheap (~6ms) and computed inline; small docs / non-HTML resolve null and
+      // take the identical direct path. Section slices stay direct (a slice is
+      // its own content, small by construction).
       const src = await sourceText(version)
       if (src === null) return fail(c, 500, "blob missing")
+      const ct = version.content_type
+      let mdPromise: Promise<DerivedViews | null> | undefined
+      const cachedMd = (): Promise<DerivedViews | null> =>
+        (mdPromise ??= derivedViewsFor({ meta, blobs, background }, src, ct))
       if (outline) {
         c.header("X-Derive-Format", "outline")
-        return c.json({ sections: outlineOf(src, version.content_type) })
+        return c.json({ sections: outlineOf(src, ct) })
       }
       if (section) {
-        const slice = sectionOf(src, version.content_type, section)
+        const slice = sectionOf(src, ct, section)
         if (slice === null) return fail(c, 404, `no section "${section}"`)
-        const body = present(slice, version.content_type)
+        const body = present(slice, ct)
         c.header("X-Derive-Format", format ?? "raw")
         c.header("X-Derive-Section", section)
         c.header("Content-Type", "text/plain; charset=utf-8")
         return c.body(body)
       }
-      const body = present(src, version.content_type)
+      const body =
+        format === "markdown"
+          ? ((await cachedMd())?.markdown ?? present(src, ct))
+          : present(src, ct)
       c.header("X-Derive-Format", format ?? "raw")
-      c.header("X-Derive-Sections", String(outlineOf(src, version.content_type).length))
+      c.header("X-Derive-Sections", String(outlineOf(src, ct).length))
       c.header("Content-Type", "text/plain; charset=utf-8")
       return c.body(body)
     }

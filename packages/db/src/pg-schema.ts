@@ -165,6 +165,14 @@ export const renderJob = pgTable("render_job", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
+// Derived-view cache — see schema.ts's derivedView for the design notes (content
+// addressing is the invalidation; lazy write on first large-doc read).
+export const derivedView = pgTable("derived_view", {
+  source_sha: text("source_sha").primaryKey(),
+  blob_key: text("blob_key").notNull(),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+
 export const membership = pgTable(
   "membership",
   {
@@ -647,6 +655,7 @@ const TABLES = [
   webhook,
   webhookDelivery,
   renderJob,
+  derivedView,
   membership,
   workspace,
   artifactMember,

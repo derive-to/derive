@@ -1,6 +1,8 @@
+import { sha256Hex } from "@derive/core"
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
-import { app, TEST_TOKEN, upload } from "./helpers"
+import { DERIVED_CACHE_GEN } from "../src/lib/derived-cache"
+import { app, meta, TEST_TOKEN, upload } from "./helpers"
 
 const bearer = { authorization: `Bearer ${TEST_TOKEN}` }
 
@@ -39,6 +41,46 @@ describe("/v1/artifacts/:shortId/content — format, section, outline params", (
 
     const missing = await app.request(`/v1/artifacts/${short_id}/content?section=nope`)
     expect(missing.status).toBe(404)
+  })
+
+  it("format=markdown on a LARGE doc rides the derived-view cache: cheap reads never fill it, the first markdown read persists the row, and the cached read is byte-identical", async () => {
+    // Big enough to cross DERIVED_CACHE_MIN_CHARS (150K), with a needle to assert on.
+    const html =
+      `<!doctype html><html><body><h1>Big</h1>\n` +
+      Array.from(
+        { length: 1400 },
+        (_, i) =>
+          `<section><h2>Part ${i}</h2><p>body of part ${i}${i === 42 ? " rest-dcache-needle" : ""}, padded for size padded for size padded for size.</p></section>`,
+      ).join("\n") +
+      `\n</body></html>`
+    expect(html.length).toBeGreaterThan(150_000)
+    const { short_id } = await (await upload("big.html", html)).json()
+
+    // The exact key this content caches under (generation + sha) — asserted through
+    // the shared meta store itself, so this test runs on BOTH dialects (the pg CI
+    // job has no sqlite file to count rows in).
+    const key = `${DERIVED_CACHE_GEN}:${await sha256Hex(new TextEncoder().encode(html))}`
+    expect(await meta.getDerivedView(key)).toBeNull()
+
+    // Raw and outline reads take the direct path — they must NOT fill the cache.
+    const raw = await (await app.request(`/v1/artifacts/${short_id}/content`)).text()
+    expect(raw).toBe(html)
+    const outline = await (await app.request(`/v1/artifacts/${short_id}/content?outline=1`)).json()
+    expect(outline.sections.length).toBeGreaterThan(1000)
+    expect(await meta.getDerivedView(key)).toBeNull()
+
+    // The first markdown read is the miss that persists the row...
+    const mdRes = await app.request(`/v1/artifacts/${short_id}/content?format=markdown`)
+    expect(mdRes.headers.get("x-derive-format")).toBe("markdown")
+    const first = await mdRes.text()
+    expect(first).toContain("rest-dcache-needle")
+    expect(await meta.getDerivedView(key)).not.toBeNull()
+
+    // ...and the hit is byte-identical (substitution transparency).
+    const second = await (
+      await app.request(`/v1/artifacts/${short_id}/content?format=markdown`)
+    ).text()
+    expect(second).toBe(first)
   })
 
   it("bundle pages: outline, a page, and page#slug", async () => {

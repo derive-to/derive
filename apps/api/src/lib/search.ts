@@ -14,6 +14,7 @@ import {
 import { log } from "../log"
 import { cleanPath, manifestOf } from "./bundle"
 import { clip } from "./clip"
+import { type DerivedCacheDeps, derivedViewsFor } from "./derived-cache"
 
 // The minimal store surface search needs — a BlobStore, a version→text resolver
 // (works for a version OR a proposal, same as the rest of the app), and (only for
@@ -24,6 +25,10 @@ import { clip } from "./clip"
 export interface SearchDeps {
   blobs: BlobStore
   sourceText: (v: Pick<VersionRecord, "blob_key" | "content_type">) => Promise<string | null>
+  /** Optional derived-view cache (lib/derived-cache.ts) — when present, a large
+   *  HTML doc's section markers and text conversion come from the cache instead
+   *  of being recomputed per search. Absent ⇒ the identical direct path. */
+  derived?: DerivedCacheDeps
 }
 
 export interface WorkspaceSearchDeps extends SearchDeps {
@@ -204,8 +209,20 @@ export const searchArtifactVersion = async (
 
   if (!manifest) {
     const src = (await deps.sourceText(v)) ?? ""
-    const { hunks, total } = scanLines(contentFor(src, v.content_type), re, ctxLines, cap)
-    annotateSections(hunks, markersFor(src, v.content_type))
+    const content = contentFor(src, v.content_type)
+    // A large HTML doc's SOURCE-scope section markers come through the derived-view
+    // cache when one is wired — sectionMarkers is ~83ms on a 4MB doc, and agents
+    // search the same doc repeatedly. Only the source-scope, large-HTML case fetches
+    // the cache: an HTML text-scope search's markers are empty, a non-HTML doc's are
+    // cheap line scans (both via markersFor), and small docs return null from the
+    // cache — every one of those takes the identical direct path as before.
+    const cached =
+      where === "source" && deps.derived
+        ? await derivedViewsFor(deps.derived, src, v.content_type)
+        : null
+    const markers = cached?.markers ?? markersFor(src, v.content_type)
+    const { hunks, total } = scanLines(content, re, ctxLines, cap)
+    annotateSections(hunks, markers)
     return { groups: [{ path: null, hunks }], total, note: null }
   }
 

@@ -193,6 +193,19 @@ export const renderJob = sqliteTable("render_job", {
   created_at: text("created_at").notNull().default(now),
 })
 
+// Derived-view cache: where the two precomputed EXPENSIVE views (markdown
+// conversion + section markers) for one exact source live, keyed by a generation
+// tag + the source's content sha (DERIVED_CACHE_GEN in the api's derived-cache.ts;
+// a code change to the view functions bumps the tag). Content addressing IS the
+// invalidation — new content is a new sha — so there is no staleness state, no
+// TTL, and no write-path hook: rows are written lazily on first read of a large
+// doc and never touched again.
+export const derivedView = sqliteTable("derived_view", {
+  source_sha: text("source_sha").primaryKey(),
+  blob_key: text("blob_key").notNull(),
+  created_at: text("created_at").notNull().default(now),
+})
+
 export const membership = sqliteTable(
   "membership",
   {
@@ -774,6 +787,7 @@ const TABLES = [
   webhook,
   webhookDelivery,
   renderJob,
+  derivedView,
   membership,
   workspace,
   artifactMember,
