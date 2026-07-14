@@ -308,8 +308,15 @@ curl -XPOST -H "authorization: Bearer $DERIVE_TOKEN" https://<host>/v1/system/se
 
 Vectorize is eventually consistent (a just-upserted vector is queryable within seconds–minutes), but
 the synchronous lexical arm answers read-your-writes for a fresh publish, so this never shows to a
-user. Costs are modest (Workers AI embeddings + Vectorize stored/queried dimensions); see the
-Cloudflare pricing pages. Left off by default so a deploy without the index provisioned never fails.
+user. Left off by default so a deploy without the index provisioned never fails.
+
+**Cost note.** Each artifact is chunk-embedded (one vector per ~1800-char passage, ≤20/doc), so the
+index holds ~5–20× more vectors than one-vector-per-doc would. Vectorize bills queried dimensions on
+*stored-vector count* (not `topK`), so that multiplier scales both stored **and** per-search cost:
+e.g. a ~240-doc corpus grows to ≤~4.8k vectors, which can exhaust the free queried-dimension tier in
+a handful of searches/month. This is the deliberate price of chunk-level precision; Workers-AI
+embedding tokens rise only ~1.2–1.5×. See the Cloudflare Vectorize + Workers AI pricing pages, and
+re-run the backfill after changing chunking so stored vectors match the new scheme.
 
 ---
 
