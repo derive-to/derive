@@ -28,8 +28,7 @@ export default defineConfig({
   fullyParallel: true,
   // 1 worker on CI. Each multi-context spec (owner + secondUser) already spawns two
   // browser contexts, so even 2 workers put 4 renderers on a 2-vCPU CI box — the
-  // oversubscription that starved the UI and flaked toBeVisible. 1 is the safe floor;
-  // deep-suite wall-clock is recovered by sharding, not more workers. Local keeps 3.
+  // oversubscription that starved the UI and flaked toBeVisible. Local keeps 3.
   workers: process.env.CI ? 1 : 3,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 1,
@@ -47,13 +46,11 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
-  // Two suites, one shared server (multi-workspace isolation makes that safe):
-  //  • smoke — one fast critical path per surface; the post-merge gate.
-  //  • deep  — comprehensive per-surface + responsive; the nightly/regression run.
-  // `--project=smoke` / `--project=deep` selects one; no flag runs both.
+  // One smoke project (the post-merge gate) plus the two special-purpose
+  // harnesses below, sharing a server (multi-workspace isolation makes that
+  // safe). `--project=smoke` selects just it; no flag runs everything.
   projects: [
-    { name: "smoke", testMatch: /smoke\/.*\.spec\.ts$/ },
-    { name: "deep", testMatch: /deep\/.*\.spec\.ts$/ },
+    { name: "smoke", testMatch: /smoke\.spec\.ts$/ },
     // Visual-QA capture harness (not a test gate): seeds a realistic workspace and
     // screenshots the real, auth-walled dashboard across themes + viewports. Its
     // specs self-skip unless SHOTS=1, so a bare `playwright test` never runs them.
