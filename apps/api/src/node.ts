@@ -14,6 +14,7 @@ import { type AuthDb, makeAuth, migrateAuth, OAUTH_ANON_CLIENT_TTL_MS } from "./
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
 import { configWarnings } from "./config-manifest"
 import { restEmbedder } from "./embedder"
+import { loadLocalEmbedder } from "./embedder-local"
 import { workspacesBlockingDeletion } from "./lib/account"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
@@ -84,9 +85,9 @@ mkdirSync(join(cfg.dataDir, "blobs"), { recursive: true })
 // stateless multi-instance topology), else embedded SQLite (zero-config).
 let meta: MetaStore
 let authDb: AuthDb
-// The dense/semantic search arm — pgvector in the same Postgres, embeddings via Workers AI REST.
-// Only on the Postgres datastore (pgvector lives there); undefined ⇒ searchWorkspace stays
-// lexical-only, identical to the edge without its Vectorize bindings.
+// The dense/semantic search arm — pgvector in the same Postgres, embeddings from a local ONNX model
+// or Workers AI REST (DERIVE_EMBED_PROVIDER). Only on the Postgres datastore (pgvector lives there);
+// undefined ⇒ searchWorkspace stays lexical-only.
 let search: SearchIndex | undefined
 // Closes the metadata store + the Better Auth datastore (separate handles onto
 // the same backend) for graceful shutdown.
@@ -110,7 +111,24 @@ if (cfg.databaseUrl) {
   if (cfg.denseSearch) {
     const dense = cfg.denseSearch
     try {
-      const embedder = restEmbedder(dense.accountId, dense.apiToken)
+      // `local` loads an in-process ONNX model (bge-small, no creds; downloads on first boot then
+      // cached); `workersai` calls Cloudflare Workers AI over REST. The store's dimension follows
+      // whichever embedder — they must not be mixed on one DB (the dimension guard enforces it).
+      // The local load is raced against a timeout so a STALLED model download (vs a clean failure,
+      // which the try/catch already handles) can't hang boot forever — it degrades to lexical.
+      const embedder =
+        dense.provider === "local"
+          ? await Promise.race([
+              loadLocalEmbedder(),
+              new Promise<never>((_, reject) => {
+                setTimeout(
+                  () =>
+                    reject(new Error("local embedder load timed out (model download stalled?)")),
+                  120_000,
+                ).unref()
+              }),
+            ])
+          : restEmbedder(dense.accountId, dense.apiToken)
       const vectorPool = new Pool({ connectionString: cfg.databaseUrl, max: 4 })
       // Register cleanup BEFORE the throwable ensureSchema so a failure can't orphan the pool.
       closeVector = () => vectorPool.end()
@@ -128,12 +146,13 @@ if (cfg.databaseUrl) {
       search = new PgvectorSearchIndex(embedder, store)
       log.info("dense search enabled", {
         store: "pgvector",
+        provider: dense.provider,
         embedder: embedder.model,
         dimensions: embedder.dimensions,
       })
     } catch (e) {
       log.error(
-        "dense search setup failed — falling back to lexical-only. Check the Postgres role can CREATE EXTENSION vector (or pre-create it) and the embedder credentials.",
+        "dense search setup failed — falling back to lexical-only. Check the Postgres role can CREATE EXTENSION vector (or pre-create it), and the embedder (local model download, or Workers AI credentials).",
         { error: e instanceof Error ? e.message : String(e) },
       )
       await closeVector()

@@ -93,6 +93,6 @@ export class PgvectorSearchIndex implements SearchIndex {
     const [vector] = await this.embedder.embed([q])
     if (!vector) return []
     const matches = await this.store.query(orgId, vector, SEARCH_TOPK)
-    return rollupBestChunk(matches, limit)
+    return rollupBestChunk(matches, limit, this.embedder.minScore)
   }
 }

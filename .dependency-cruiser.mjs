@@ -41,6 +41,14 @@ export default {
       from: { path: "^(apps/web|packages/(cli|mcp|runner))/src" },
       to: { path: "^packages/core/src", dependencyTypesNot: ["type-only"] },
     },
+    {
+      name: "local-embedder-node-only",
+      severity: "error",
+      comment:
+        "embedder-local pulls onnxruntime-node (a native module) — ONLY node.ts may import it, so it never reaches the Worker bundle. Load it lazily (dynamic import) from the Node entry.",
+      from: { path: "^apps/api/src", pathNot: "^apps/api/src/node\\.ts$" },
+      to: { path: "^apps/api/src/embedder-local\\.ts$" },
+    },
   ],
   options: {
     // A resolution-only tsconfig with @derive/* path aliases (see the file) so a forbidden
