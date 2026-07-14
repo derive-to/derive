@@ -2,12 +2,10 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     "apps/api": {
-      "entry": ["gen-auth-schema.ts"],
-      "ignoreDependencies": ["cloudflare"]
+      "entry": ["gen-auth-schema.ts"]
     },
     "apps/web": {
-      "entry": ["src/components/ui/**", "e2e/**/*.screens.ts"],
-      "ignoreDependencies": ["openapi-typescript"]
+      "entry": ["src/components/ui/**", "e2e/**/*.screens.ts"]
     },
     "packages/core": {
       "entry": ["src/anchor-client.ts"]

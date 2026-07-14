@@ -20,6 +20,7 @@ import {
   principalOwnerId,
   type Role,
   roleAllows,
+  type SearchIndex,
 } from "@derive/core"
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
@@ -65,6 +66,9 @@ export interface SessionUser {
 export interface AppDeps {
   meta: MetaStore
   blobs: BlobStore
+  /** Optional dense/semantic search index. Unbound ⇒ workspace search stays lexical-only
+   *  (self-host, unchanged). The Cloudflare edge entry injects a Vectorize + Workers AI adapter. */
+  search?: SearchIndex
   /** Realtime relay + presence. In-process when unset (self-host); the Cloudflare
    *  edge entry injects a Durable Object backplane. */
   backplane?: Backplane
@@ -866,6 +870,7 @@ export function buildContext(deps: AppDeps) {
     deps,
     meta,
     blobs,
+    search: deps.search,
     bus,
     presence,
     backplane,

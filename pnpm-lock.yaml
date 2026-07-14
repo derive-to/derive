@@ -14,6 +14,9 @@ patchedDependencies:
   '@better-auth/oauth-provider@1.6.19':
     hash: da96def66da8f71821804f1d1e269964333ef0d4a0c4a703ee8c306f4f49e981
     path: patches/@better-auth__oauth-provider@1.6.19.patch
+  knip@6.16.1:
+    hash: cf79d735b85aab963d81af049c0d567430915a8e181d52739592a4a33bc91189
+    path: patches/knip@6.16.1.patch
 
 importers:
 
@@ -36,7 +39,7 @@ importers:
         version: 0.28.1
       knip:
         specifier: ^6.16.1
-        version: 6.16.1
+        version: 6.16.1(patch_hash=cf79d735b85aab963d81af049c0d567430915a8e181d52739592a4a33bc91189)
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -852,11 +855,11 @@ packages:
 
   '@esbuild-kit/core-utils@3.3.2':
     resolution: {integrity: sha512-sPRAnw9CdSsRmEtnsl2WXWdyquogVpB3yZ3dgwJfe8zrOzTsV7cJvmwrKVa+0ma5BoiGJ+BoqkMvawbayKUsqQ==}
-    deprecated: 'Merged into tsx: https://tsx.is'
+    deprecated: 'Merged into tsx: https://tsx.hirok.io'
 
   '@esbuild-kit/esm-loader@2.6.5':
     resolution: {integrity: sha512-FxEMIkJKnodyA1OaCUoEvbYRkoZlLZ4d/eXFu9Fh8CbBBgP5EmZxrfTRyN0qpXZ4vOvqnE5YdRdcrmUUXuU+dA==}
-    deprecated: 'Merged into tsx: https://tsx.is'
+    deprecated: 'Merged into tsx: https://tsx.hirok.io'
 
   '@esbuild/aix-ppc64@0.28.1':
     resolution: {integrity: sha512-Svl7tq8k/08+p6CXPpRjQ1fKX+1odH/BQbb48fV6fj3CWHhsoIOoY87w1oHXm0qEpkIK3ZfVgp0hed3XBXzXMQ==}
@@ -1332,12 +1335,6 @@ packages:
     peerDependenciesMeta:
       '@cfworker/json-schema':
         optional: true
-
-  '@napi-rs/wasm-runtime@1.1.5':
-    resolution: {integrity: sha512-AWPoBRJ9tsnVhor4sjO7rkni+7p+2IAEFj6cx06UgP10jkQHqay/36uRV/bFkgrh18D9vb4cr8Q0Pthskgzy+Q==}
-    peerDependencies:
-      '@emnapi/core': ^1.7.1
-      '@emnapi/runtime': ^1.7.1
 
   '@napi-rs/wasm-runtime@1.1.6':
     resolution: {integrity: sha512-ZLv/JdUfkvOy9eCnnBaGfiO+XimbjebAeO+MRQqD/B+FR1tnRN0tpKSJHRbE8sFfS6aqsXZ67TQjfwfsxULVbg==}
@@ -3493,9 +3490,6 @@ packages:
 
   '@ts-morph/common@0.27.0':
     resolution: {integrity: sha512-Wf29UqxWDpc+i61k3oIOzcUfQt79PIT9y/MWfAGlrkjg6lBC1hwDECLXPVJAhWjiGbfBCxZd65F/LIZF3+jeJQ==}
-
-  '@tybys/wasm-util@0.10.2':
-    resolution: {integrity: sha512-RoBvJ2X0wuKlWFIjrwffGw1IqZHKQqzIchKaadZZfnNpsAYp2mM0h36JtPCjNDAHGgYez/15uMBpfGwchhiMgg==}
 
   '@tybys/wasm-util@0.10.3':
     resolution: {integrity: sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg==}
@@ -7356,7 +7350,7 @@ snapshots:
 
   '@img/sharp-wasm32@0.34.5':
     dependencies:
-      '@emnapi/runtime': 1.10.0
+      '@emnapi/runtime': 1.11.1
     optional: true
 
   '@img/sharp-win32-arm64@0.34.5':
@@ -7473,11 +7467,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@napi-rs/wasm-runtime@1.1.5(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
+  '@napi-rs/wasm-runtime@1.1.6(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
     dependencies:
       '@emnapi/core': 1.10.0
       '@emnapi/runtime': 1.10.0
-      '@tybys/wasm-util': 0.10.2
+      '@tybys/wasm-util': 0.10.3
     optional: true
 
   '@napi-rs/wasm-runtime@1.1.6(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
@@ -7655,7 +7649,7 @@ snapshots:
     dependencies:
       '@emnapi/core': 1.10.0
       '@emnapi/runtime': 1.10.0
-      '@napi-rs/wasm-runtime': 1.1.5(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
+      '@napi-rs/wasm-runtime': 1.1.6(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
     optional: true
 
   '@oxc-parser/binding-wasm32-wasi@0.138.0':
@@ -7787,7 +7781,7 @@ snapshots:
     dependencies:
       '@emnapi/core': 1.10.0
       '@emnapi/runtime': 1.10.0
-      '@napi-rs/wasm-runtime': 1.1.5(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
+      '@napi-rs/wasm-runtime': 1.1.6(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
     optional: true
 
   '@oxc-resolver/binding-wasm32-wasi@11.23.0':
@@ -8914,7 +8908,7 @@ snapshots:
     dependencies:
       '@emnapi/core': 1.10.0
       '@emnapi/runtime': 1.10.0
-      '@napi-rs/wasm-runtime': 1.1.5(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
+      '@napi-rs/wasm-runtime': 1.1.6(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
     optional: true
 
   '@rolldown/binding-win32-arm64-msvc@1.0.3':
@@ -9403,11 +9397,6 @@ snapshots:
       fast-glob: 3.3.3
       minimatch: 10.2.5
       path-browserify: 1.0.1
-
-  '@tybys/wasm-util@0.10.2':
-    dependencies:
-      tslib: 2.8.1
-    optional: true
 
   '@tybys/wasm-util@0.10.3':
     dependencies:
@@ -9969,7 +9958,7 @@ snapshots:
       json-schema-typed: 7.0.3
       onetime: 5.1.2
       pkg-up: 3.1.0
-      semver: 7.8.4
+      semver: 7.8.5
 
   conf@15.1.0:
     dependencies:
@@ -10834,7 +10823,7 @@ snapshots:
 
   kleur@4.1.5: {}
 
-  knip@6.16.1:
+  knip@6.16.1(patch_hash=cf79d735b85aab963d81af049c0d567430915a8e181d52739592a4a33bc91189):
     dependencies:
       fdir: 6.5.0(picomatch@4.0.4)
       formatly: 0.3.0
@@ -10949,7 +10938,7 @@ snapshots:
 
   make-dir@4.0.0:
     dependencies:
-      semver: 7.8.4
+      semver: 7.8.5
 
   marked@18.0.5: {}
 
@@ -11031,7 +11020,7 @@ snapshots:
 
   node-abi@3.92.0:
     dependencies:
-      semver: 7.8.4
+      semver: 7.8.5
 
   node-releases@2.0.47: {}
 
@@ -11887,7 +11876,7 @@ snapshots:
     dependencies:
       '@img/colour': 1.1.0
       detect-libc: 2.1.2
-      semver: 7.8.4
+      semver: 7.8.5
     optionalDependencies:
       '@img/sharp-darwin-arm64': 0.34.5
       '@img/sharp-darwin-x64': 0.34.5

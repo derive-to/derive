@@ -10,6 +10,7 @@ import {
   type BlobStore,
   type MetaStore,
   type ProposalRecord,
+  type SearchIndex,
   type VersionRecord,
 } from "@derive/core"
 import type { Backplane } from "../bus"
@@ -25,6 +26,9 @@ export interface ProposalActionDeps {
   /** Enqueue a screenshot render for the newly-published version. Fire-and-forget; optional
    *  so a caller without render access (e.g. a test) can omit it. */
   notifyRender?: (a: ArtifactRecord, n: number) => void
+  /** The optional dense/semantic index — an approved proposal is a version bump, so it keeps
+   *  the index current too (best-effort, via emitVersionBump). Absent on self-host. */
+  search?: SearchIndex
 }
 
 /** Approve: the proposed content becomes the new live version. Mirrors the approve route. */
@@ -35,12 +39,12 @@ export const approveProposalAction = async (
   approver: string | null,
   note: string | null,
 ): Promise<VersionRecord> => {
-  const { meta, blobs, bus, notify, notifyRender } = deps
+  const { meta, blobs, bus, notify, notifyRender, search } = deps
   const version = await approveProposal(meta, blobs, proposal, approver, note)
   bus.publish(artifact.id, { type: "proposal.approved", proposal_id: proposal.id, n: version.n })
   // The approved candidate is now live content: run the shared version-bump core (announce
   // the version so open tabs reload, enqueue the preview render, re-anchor existing threads).
-  await emitVersionBump({ meta, blobs, bus, notifyRender }, artifact, version)
+  await emitVersionBump({ meta, blobs, bus, notifyRender, search }, artifact, version)
   // Threads this proposal addressed are now settled.
   for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "resolved"))
     bus.publish(artifact.id, { type: "comment.addressed", thread_id: threadId, state: "resolved" })

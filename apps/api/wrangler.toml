@@ -45,6 +45,21 @@ id = "10b9d78afcdb46ad8f8db7ad449fb2b3"
 binding = "BUCKET"
 bucket_name = "derive-blobs"
 
+# Optional semantic search (the dense/hybrid arm of workspace search): Cloudflare Vectorize
+# (vector index) + Workers AI (bge-m3 embeddings). Bind BOTH to enable it; omit to stay
+# lexical-only (self-host parity — the worker gates on `env.VECTORIZE && env.AI`). The metadata
+# index MUST exist before any vector is inserted, so create both up front, then backfill:
+#   wrangler vectorize create derive-search --dimensions=1024 --metric=cosine
+#   wrangler vectorize create-metadata-index derive-search --property-name=org_id --type=string
+#   # then, per workspace corpus: POST /v1/system/search-reindex with the operator token
+# See DEPLOY.md. Left commented so a deploy without the index provisioned doesn't fail.
+# [[vectorize]]
+# binding = "VECTORIZE"
+# index_name = "derive-search"
+#
+# [ai]
+# binding = "AI"
+
 [[durable_objects.bindings]]
 name = "ROOMS"
 class_name = "ArtifactRoom"
