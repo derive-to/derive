@@ -16,6 +16,7 @@ import {
 import { ingestGithubPrComment, upsertPreviewComment } from "../lib/github-comments"
 import { bail, fail, readJson } from "../lib/http"
 import { makePrPreview } from "../lib/pr-preview"
+import { deleteArtifactAndUnindex } from "../lib/search"
 import { effectiveToken, isSyncing, runToCompletion } from "../lib/sync-runner"
 import { log } from "../log"
 
@@ -846,7 +847,10 @@ export const syncRoutes = (ctx: AppContext) => {
         try {
           const map = JSON.parse(source.files || "{}") as Record<string, { artifact_id?: string }>
           for (const entry of Object.values(map)) {
-            if (entry.artifact_id) await meta.deleteArtifact(entry.artifact_id, org)
+            // Drop from BOTH search arms (FTS in deleteArtifact + the dense vector) — a plain
+            // meta.deleteArtifact here used to orphan the dense vector.
+            if (entry.artifact_id)
+              await deleteArtifactAndUnindex(meta, deps.search, entry.artifact_id, org)
           }
         } catch {
           /* malformed files map — skip */

@@ -1,6 +1,7 @@
 import type { ArtifactRecord, SearchIndex, VersionRecord } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import {
+  deleteArtifactAndUnindex,
   indexArtifactVersion,
   reindexSearchBatch,
   rrfFuse,
@@ -356,5 +357,50 @@ describe("write path — dense arm best-effort + backfill", () => {
     expect(denseCalls).toBe(1) // ONE batched dense call for the page, not one per artifact
     expect(dense).toEqual(["a", "b"])
     expect(res.indexed).toBe(2)
+  })
+
+  it("deleteArtifactAndUnindex drops BOTH arms — the FTS row (in deleteArtifact) and the dense vector", async () => {
+    const deleted: [string, string][] = []
+    const unindexed: string[] = []
+    const meta = {
+      deleteArtifact: async (id: string, org: string) => {
+        deleted.push([id, org])
+      },
+    }
+    const search = {
+      unindexArtifact: async (id: string) => {
+        unindexed.push(id)
+      },
+    }
+    await deleteArtifactAndUnindex(meta, search, "a1", ORG)
+    expect(deleted).toEqual([["a1", ORG]])
+    expect(unindexed).toEqual(["a1"]) // the dense vector is dropped too, not just the FTS row
+  })
+
+  it("deleteArtifactAndUnindex: a throwing dense arm neither blocks the DB delete nor throws", async () => {
+    const deleted: string[] = []
+    const meta = {
+      deleteArtifact: async (id: string) => {
+        deleted.push(id)
+      },
+    }
+    const boom = {
+      unindexArtifact: async () => {
+        throw new Error("dense down")
+      },
+    }
+    await expect(deleteArtifactAndUnindex(meta, boom, "a1", ORG)).resolves.toBeUndefined()
+    expect(deleted).toEqual(["a1"]) // the DB delete committed despite the dense failure
+  })
+
+  it("deleteArtifactAndUnindex with no dense arm bound just deletes (no throw)", async () => {
+    let deleted = false
+    const meta = {
+      deleteArtifact: async () => {
+        deleted = true
+      },
+    }
+    await expect(deleteArtifactAndUnindex(meta, undefined, "a1", ORG)).resolves.toBeUndefined()
+    expect(deleted).toBe(true)
   })
 })
