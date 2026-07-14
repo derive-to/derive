@@ -283,8 +283,14 @@ async function buildServer(
 
   // Resolve the Brandprint for this actor: the workspace's conventions merged with the
   // owner's personal ones (profile wins). Each convention doc becomes a readable resource;
-  // a one-line pointer goes in the instructions (bodies load lazily on read).
-  const resolved = await resolveActorBrandprint(ctx.meta, agent.org_id, ownerId)
+  // a one-line pointer goes in the instructions (bodies load lazily on read). The agent's
+  // pending requests ride the same batch (independent reads): requests exist only for
+  // registered agents — the @mention fan-out keys on the agent table's id — so an OAuth
+  // grant's list is simply empty.
+  const [resolved, pendingRequests] = await Promise.all([
+    resolveActorBrandprint(ctx.meta, agent.org_id, ownerId),
+    ctx.meta.listPendingAgentMentions(agent.id, 50),
+  ])
   const conventionDocs: ArtifactRecord[] = []
   const seenBp = new Set<string>()
   for (const collectionId of resolved.collectionIds) {
@@ -311,6 +317,17 @@ async function buildServer(
   // The profile artifact rides in the Brandprint collection but is not a source doc:
   // pending it's an empty stub, live it's served as derive://brandprint/profile below.
   const bpSources = conventionDocs.filter((d) => d.short_id !== resolved.profileId)
+
+  // Work handed to this agent (an ask-agent or Rework @mention) waits in a pull
+  // inbox, and this connection may be the only runtime that ever reads it — so the
+  // queue goes in front of the agent at connect instead of waiting to be asked.
+  const requestsPointer = pendingRequests.length
+    ? ` You have ${pendingRequests.length} pending request${
+        pendingRequests.length === 1 ? "" : "s"
+      }: teammates @mentioned you with work to do. Call check_requests FIRST — read each ` +
+      `request, do what it asks on the named artifact, then pass the handled ids back via ` +
+      `check_requests({ack:[…]}) so they leave the queue.`
+    : ""
 
   const server = new McpServer(
     { name: "derive", version: "1.0.0" },
@@ -345,7 +362,8 @@ async function buildServer(
         `then pass a workspace id or name as the "workspace" argument to act in another one (read, ` +
         `catch_up, comment, publish, list_artifacts). read/catch_up/comment also find a short_id in ` +
         `any of them automatically, so you never need to switch just to open a doc.` +
-        brandprintInstructions(bpSources.length, bpProfile),
+        brandprintInstructions(bpSources.length, bpProfile) +
+        requestsPointer,
     },
   )
 
@@ -569,6 +587,52 @@ async function buildServer(
     )
 
   // WORKSPACES — the switcher: every workspace this one login can reach --------
+  // WORK QUEUE ------------------------------------------------------------------
+  // The pull inbox behind the ask-agent and Rework buttons: a teammate @mentions
+  // this agent in a comment and the request waits here until some session of the
+  // agent reads and acks it. Registered for every connection — a human grant simply
+  // has an empty queue — so the tool surface can't differ by auth kind.
+  server.registerTool(
+    "check_requests",
+    {
+      description:
+        "Your work queue: pending requests teammates handed you by @mentioning you in a comment (the ask-agent and Rework buttons land here). Each entry names the artifact, the comment thread, and what to do. Handle a request on its artifact — usually read it, do the asked revision, and publish with the thread id in `addresses` — then call this again with ack:[id,…] to clear what you finished. Unacked requests stay queued for your next session.",
+      inputSchema: {
+        ack: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Request ids you have HANDLED — acknowledges them off the queue. Ack after the work lands (a publish or a reply), not on read; an unknown or already-acked id is skipped, never an error.",
+          ),
+      },
+    },
+    async ({ ack }) => {
+      // `acked` counts what actually LEFT the queue: guard by the current pending
+      // set so a repeated or unknown id is a silent no-op, not a phantom ack (the
+      // store's ack matches the row whether or not it was already acknowledged).
+      let acked = 0
+      if (ack?.length) {
+        const current = new Set(
+          (await ctx.meta.listPendingAgentMentions(agent.id, 50)).map((m) => m.id),
+        )
+        for (const id of ack)
+          if (current.has(id) && (await ctx.meta.ackAgentMention(agent.id, id))) acked++
+      }
+      const pending = await ctx.meta.listPendingAgentMentions(agent.id, 50)
+      return json({
+        acked,
+        pending: pending.map((m) => ({
+          id: m.id,
+          artifact: m.artifact_short_id,
+          thread: m.thread_id,
+          author: m.author,
+          request: m.body,
+          created_at: m.created_at,
+        })),
+      })
+    },
+  )
+
   server.registerTool(
     "list_workspaces",
     {
