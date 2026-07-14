@@ -3399,6 +3399,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/rework": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask a registered agent to rework this artifact to match the Brandprint. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        /** @description Which agent to ask; omit to use the sole registered agent. */
+                        agentId?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description The rework request was posted and landed in the agent's pull inbox. 409 needsAgent when no agent is registered; 409 needsBrandprint when no Brandprint resolves. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description The request comment's thread id. */
+                            requestId: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/comments": {
         parameters: {
             query?: never;
