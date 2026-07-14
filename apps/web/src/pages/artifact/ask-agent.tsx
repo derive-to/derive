@@ -12,6 +12,12 @@ import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 import type { AgentTarget } from "./types"
 
+/** Directory rows an ask-an-agent affordance can actually address: named agents
+ *  only. The directory query already drops nameless rows; the type predicate is what
+ *  narrows `name` to non-null for TS. Shared with the Rework ⋯ item. */
+export const usableAgents = (agents: DirUser[]) =>
+  agents.filter((a): a is DirUser & { name: string } => !!a.name)
+
 // The "ask an agent to revise this selection" affordance, shared by the desktop
 // selection pill and the mobile selection bar. This is Derive's agent-native moat: a
 // human hands a scoped change to a registered agent, whose MCP inbox the request lands
@@ -29,7 +35,7 @@ export function AskAgentButton({
   size?: "default" | "bar"
   className?: string
 }) {
-  const usable = agents.filter((a): a is DirUser & { name: string } => !!a.name)
+  const usable = usableAgents(agents)
   const single = usable.length === 1 ? usable[0] : null
   if (usable.length === 0 || (usable.length === 1 && !single)) return null
 

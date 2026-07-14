@@ -1,6 +1,6 @@
 # Brandprint
 
-Status: living spec. Phases 0 and 1 have shipped end to end. Phase 2, the brand profile (our take on tasteprofile.io), is built and in review (#392); Rework (Phase 3) is the next build.
+Status: living spec. Phases 0–2 have shipped end to end (#392 merged the brand profile). Phase 3, Rework, is built (this PR); Phase 4 remains directional.
 Owner: Connor
 Related prior art: `feat/house-style` (Anir, unmerged; ported forward as Phase 0)
 
@@ -18,11 +18,11 @@ Every team gets a **Brandprint**: their voice, style, and rules captured once, d
 | Phase 1: docs managed on `/brandprint` only (collection hidden from Collections) + team-scope dialog copy | Shipped (#386) |
 | Phase 1: shared Connect-an-agent surface | Shipped (#388) |
 | Phase 1: onboarding step + owner home nudge | Shipped (#388) |
-| Phase 2: the brand profile (agent-generated, tasteprofile take) | Built, in review (#392) |
-| Phase 3: Rework button + endpoint + no-agent routing | **Next up** |
+| Phase 2: the brand profile (agent-generated, tasteprofile take) | Shipped (#392) |
+| Phase 3: Rework button + endpoint + no-agent routing | Built (this PR) |
 | Phase 4: enrichment, visual theming from profile tokens, "Always review Reworks" | Later |
 
-Sections below marked **(shipped)** describe behavior now on main; sections marked **(built, in review #392)** are built and awaiting merge. Everything else is still spec, and it is what we build next.
+Sections below marked **(shipped)** describe behavior now on main; the Rework section (Phase 3) is built on this PR and lands when it merges. Only Phase 4 is still spec.
 
 ## Why this exists
 
@@ -68,11 +68,11 @@ The user-facing name is **Brandprint**. Anir's branch called it "House Style" in
 
 ## Architecture overview
 
-Three layers; capture and delivery have shipped, the generated profile (Phase 2) and on-demand apply (Phase 3) are next.
+Three layers; capture, delivery, and the generated profile (Phase 2, #392) have shipped; on-demand apply (Phase 3, Rework) is built on this PR.
 
 ```
-Capture (shipped)         Deliver (shipped)             Apply
------------------         -----------------             -----
+Capture (shipped)         Deliver (shipped)             Apply (built)
+-----------------         -----------------             -------------
 create dialog ->  Brandprint pointer (collection)  ->  default (shipped): agent reads
 (upload look/read,   + brand profile (Phase 2):          derive://brandprint/* before
  write, or pick)     their agent reads sources +         authoring (auto)
@@ -140,7 +140,7 @@ This is the default, automatic path. A connected agent reads the Brandprint on i
 
 Built once, reused everywhere the feature would otherwise dead-end. `components/shared/connect-agent.tsx` holds the paste-into-your-agent block extracted from `welcome.tsx` Step 2 (hosted prompt, self-host toggle, copy button), plus a one-line `ConnectAgentButton` that opens it in a dialog from anywhere. Welcome's e2e testids were preserved via a prefix parameter.
 
-Four entry points render the same surface: onboarding Step 2, the library's "Connect an agent" empty state (which previously dead-ended on the workspace-bot token form in Settings → Agents, the known IA gap, now fixed), the owner home nudge (below), and the `/brandprint` saved-but-inert band. The profile hand-off card (Phase 2) and the Rework menu item (Phase 3) become the fifth and sixth.
+Four entry points render the same surface: onboarding Step 2, the library's "Connect an agent" empty state (which previously dead-ended on the workspace-bot token form in Settings → Agents, the known IA gap, now fixed), the owner home nudge (below), and the `/brandprint` saved-but-inert band. The profile hand-off card (Phase 2) and the Rework menu item (Phase 3) became the fifth and sixth.
 
 The honest framing shown to the user: Brandprint is captured and saved immediately, but it has nobody to *apply* it until an agent is connected. When a Brandprint exists but the caller has never authorized an MCP agent, the `/brandprint` page says so plainly, with the Connect surface one tap away. The signal is the OAuth connected-agents list, a query now shared with Security's revocation section rather than duplicated there.
 
@@ -156,9 +156,9 @@ Step 3 in `apps/web/src/pages/welcome.tsx`, after Step 2 (Connect an agent), ful
 
 ---
 
-Everything below this line is **not yet on main**. The brand profile is built and awaiting merge (#392); the rest is the roadmap, in build order.
+Below this line are the later phases: the brand profile, shipped (#392); Rework (Phase 3), built on this PR; and Phase 4, still directional roadmap.
 
-## The brand profile (built, in review #392)
+## The brand profile (shipped, #392)
 
 Our take on tasteprofile.io ("Brand guides are PDFs. AI tools need data."): every Brandprint culminates in one generated, beautiful, machine-readable HTML page, the **brand profile**, assembled by the user's own agent. Derive ships reference material and plumbing only; it never runs inference and never owns an agent.
 
@@ -224,7 +224,7 @@ Brand is a team property; the profile treatment is workspace-only. Personal Bran
 - **API**: placeholder creation in the intake path; `profileId` tenancy validation; the MCP serving matrix (no profile / pending / approved) asserting resource sets and instructions copy for both states.
 - **Web**: the five page states, testid'd like the rest of Brandprint; e2e remains the standing follow-up.
 
-## Apply on demand: the Rework button (Phase 3)
+## Apply on demand: the Rework button (Phase 3, built on this PR)
 
 New surface, existing plumbing. Rework is a canned version of the ask-agent handoff, scoped to the whole artifact.
 
@@ -257,7 +257,8 @@ Endpoint (thin wrapper over the existing @mention-to-inbox path, so the canned p
 ```
 POST /v1/artifacts/:shortId/rework
 body: { agentId?: string }   // omit to use the sole registered agent
--> { requestId }             // 409 needsAgent when the workspace has none
+-> { requestId }             // 409 needsAgent when the workspace has none;
+                             // 409 needsBrandprint guards an empty brief
 ```
 
 ### Output
@@ -273,10 +274,13 @@ Shipped (#378):
 - `PATCH /v1/workspace/settings` accepts `brandprint: { collectionId?, theme? } | null` (deep merge one level, null clears; collection ownership validated).
 - `POST /v1/me/profile` accepts `brandprint: { ... } | null` alongside `profession` and `about` (membership validated).
 
-Not built, still specced:
+Shipped (this PR, Phase 3):
 
-- Phase 2 (brand profile) adds **no endpoints**, held in #392: the placeholder rides the existing publish path, `profileId` rides the existing settings/profile PATCH routes (with the same tenancy validation), and approval is the existing proposals route. The reference resources are MCP-only.
-- `POST /v1/artifacts/:shortId/rework` (Phase 3): compose and post the canned @mention request to a chosen or sole registered agent; `409 needsAgent` when none.
+- `POST /v1/artifacts/:shortId/rework`: composes the canned @mention request server-side and posts it to the chosen or sole registered agent's inbox; `409 needsAgent` / `409 needsBrandprint`.
+
+Not built — by design or superseded:
+
+- Phase 2 (brand profile) added **no endpoints**, by design (#392): the placeholder rides the existing publish path, `profileId` rides the existing settings/profile PATCH routes (with the same tenancy validation), and approval is the existing proposals route. The reference resources are MCP-only.
 - `POST /v1/brandprint/seed`: superseded by the shipped client-side composition. The onboarding step (#388) shipped without it, settling the open question (Decisions log #6); dead unless a future caller needs a single atomic round-trip.
 
 Any new endpoint is defined in the contract-first Zod spec (#331), so the web client is regenerated rather than hand-written.
@@ -291,15 +295,15 @@ Shipped:
 - `pages/welcome.tsx` (#388): skippable Step 3 with the Brandprint explainer and notes intake via the shared `useBrandprintImport` hook.
 - `pages/library/brandprint-nudge.tsx` (#388): one-time dismissible owner nudge on the home library.
 
-In review (#392):
+Shipped (#392):
 
 - `pages/brandprint/profile-panel.tsx`: the hand-off card (three-line brief through the shared PromptBlock, ConnectAgent one tap away), the polled reveal (full-width proposal preview, Approve, Review & comment), and the live profile with Regenerate. The page mounts it instead of the inert nudge whenever `profileId` is set.
 - `pages/brandprint/profile-placeholder.ts` + `use-brandprint-import.ts`: every workspace pointer-write (intake, picker, or the dialog's collection tab) seeds the placeholder and stores `profileId`; the docs list hides the profile artifact, since the panel is its home.
 - Onboarding Step 3: closing copy points at the Brandprint page to finish (one string).
 
-Next (Phase 3):
+Built (this PR, Phase 3):
 
-- `pages/artifact/artifact-top-bar.tsx`: "Rework with Brandprint" ⋯ item, four-state per the gate above.
+- `pages/artifact/rework-menu-item.tsx` + `rework-state.ts`: the "Rework with Brandprint" ⋯ item, four-state per the gate above, mounted from `artifact-top-bar.tsx`.
 
 ## Testing
 
@@ -310,18 +314,18 @@ Shipped coverage (#378, #383):
 - **MCP:** an end-to-end test seeds a collection, points the workspace at it, and asserts the `derive://brandprint/*` resources and instructions pointer.
 - **Web:** none yet; the create dialog and page carry testids (`brandprint-create-*`, `brandprint-upload-look/read-*`, `brandprint-notes-*`, `brandprint-pick-collection-*`, `nav-brandprint`) for an e2e follow-up.
 
-To write with the remaining phases:
+Coverage added with the later phases:
 
 - **Phase 2: written in #392** — `profileId` tenancy on both routes, the MCP serving matrix (pending and live states, reference resources), and `profileState`. Still standing: the page states carry testids for the e2e follow-up, and the agent-in-the-loop run (brief → proposal → approve → next session reads the profile) is a manual pre-merge pass.
-- **API (Phase 3):** `artifacts/:id/rework` composes the correct @mention, lands it in the agent inbox, and returns `needsAgent` when the workspace has none.
-- **Web:** onboarding Step 3 renders, saves, and skips; the Rework item shows the correct one of set-up / connect / fire / picker for its four states; an e2e over the create dialog.
+- **API (Phase 3): written (this PR)** — `rework.test.ts` covers the gates (`needsAgent`, `needsBrandprint`, cross-workspace 404s) and the firing (sole-agent default, chosen agent among several, a live profile named as the first read), asserting the canned @mention lands in the agent inbox.
+- **Web (Phase 3): written (this PR)** — the four-state resolver test (`rework-state.test.ts`) covers set-up / connect / fire / picker. Still standing: onboarding Step 3 renders, saves, and skips; an e2e over the create dialog.
 
 ## Phasing
 
 - **Phase 0 (foundation): shipped** (#378). Anir's Phase A ported forward, renamed, with the cross-tenant ownership validation added in review.
 - **Phase 1 (capture): shipped** (#383, #384, #386, #388). The create dialog on the `/brandprint` page, the docs' one home, the shared ConnectAgent surface, onboarding Step 3, and both nudges. No seed endpoint, settled.
-- **Phase 2 (the brand profile): built, in review** (#392). The hand-off flow, the placeholder-proposal mechanics, the two reference resources, the page states, profile-first delivery, and the `BrandprintTheme` removal.
-- **Phase 3 (apply): next up.** The Rework ⋯ item (gated on a Brandprint existing), the rework endpoint, and the no-agent routing.
+- **Phase 2 (the brand profile): shipped** (#392). The hand-off flow, the placeholder-proposal mechanics, the two reference resources, the page states, profile-first delivery, and the `BrandprintTheme` removal.
+- **Phase 3 (apply): built (this PR).** The Rework ⋯ item (gated on a Brandprint existing), the rework endpoint, and the no-agent routing.
 - **Phase 4 (later, optional):** agent enrichment of the Brandprint doc, visual theme application fed by the profile's embedded tokens, and an "Always review Reworks" setting.
 
 ## Decisions log

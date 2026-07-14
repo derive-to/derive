@@ -5974,6 +5974,61 @@
         }
       }
     },
+    "/v1/artifacts/{shortId}/rework": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Ask a registered agent to rework this artifact to match the Brandprint.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agentId": {
+                    "type": "string",
+                    "description": "Which agent to ask; omit to use the sole registered agent."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The rework request was posted and landed in the agent's pull inbox. 409 needsAgent when no agent is registered; 409 needsBrandprint when no Brandprint resolves.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "requestId": {
+                      "type": "string",
+                      "description": "The request comment's thread id."
+                    }
+                  },
+                  "required": [
+                    "requestId"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/artifacts/{shortId}/comments": {
       "post": {
         "tags": [

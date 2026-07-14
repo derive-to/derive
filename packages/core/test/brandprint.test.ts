@@ -4,6 +4,7 @@ import {
   parseBrandprint,
   profileState,
   resolveBrandprint,
+  reworkInstruction,
 } from "../src/brandprint"
 
 describe("profileState", () => {
@@ -71,5 +72,21 @@ describe("brandprintInstructions", () => {
     expect(s).toContain("abc123")
     expect(s).toContain("derive://brandprint/reference")
     expect(s.toLowerCase()).not.toContain("offer")
+  })
+})
+
+describe("reworkInstruction", () => {
+  it("points at the brandprint resources and asks for a new version", () => {
+    const s = reworkInstruction(false)
+    expect(s).toContain("derive://brandprint/*")
+    expect(s).toContain("Preserve the meaning and the facts")
+    expect(s).toContain("Publish the result as a new version.")
+    expect(s).not.toContain("derive://brandprint/profile")
+  })
+
+  it("names the live profile as the first read", () => {
+    const s = reworkInstruction(true)
+    expect(s).toContain("Read derive://brandprint/profile first")
+    expect(s).toContain("derive://brandprint/*")
   })
 })

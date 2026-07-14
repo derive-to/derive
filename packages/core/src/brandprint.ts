@@ -74,3 +74,16 @@ export const brandprintInstructions = (
     )
   return docs
 }
+
+/**
+ * The canned Rework instruction — kept server-side as the single source of truth
+ * (the client fires the endpoint; it never carries the prompt). With a live brand
+ * profile, the profile is named as the first read.
+ */
+export const reworkInstruction = (profileLive: boolean): string =>
+  (profileLive
+    ? "Rework this artifact to match our Brandprint. Read derive://brandprint/profile first, then the rest of the derive://brandprint/* resources, "
+    : "Rework this artifact to match our Brandprint. Read the derive://brandprint/* resources first, ") +
+  "then revise the whole document so its voice, structure, and formatting match. " +
+  "Preserve the meaning and the facts; change how it reads, not what it says. " +
+  "Publish the result as a new version."
