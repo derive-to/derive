@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto"
-import { type InvitationRecord, newId, type Role } from "@derive/core"
+import { newId, type Role } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
