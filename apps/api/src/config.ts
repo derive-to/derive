@@ -94,13 +94,24 @@ export interface Config {
  *  capability report). Any other value (incl. unset) ⇒ undefined ⇒ lexical-only. */
 function denseSearchFromEnv(env: NodeJS.ProcessEnv): Config["denseSearch"] {
   const provider = env.DERIVE_EMBED_PROVIDER
+  if (!provider) return undefined // unset = lexical-only (the default), no warning
   if (provider === "local") return { provider: "local" }
-  if (provider === "workersai" && env.DERIVE_EMBED_CF_ACCOUNT_ID && env.DERIVE_EMBED_CF_API_TOKEN)
-    return {
-      provider: "workersai",
-      accountId: env.DERIVE_EMBED_CF_ACCOUNT_ID,
-      apiToken: env.DERIVE_EMBED_CF_API_TOKEN,
-    }
+  if (provider === "workersai") {
+    if (env.DERIVE_EMBED_CF_ACCOUNT_ID && env.DERIVE_EMBED_CF_API_TOKEN)
+      return {
+        provider: "workersai",
+        accountId: env.DERIVE_EMBED_CF_ACCOUNT_ID,
+        apiToken: env.DERIVE_EMBED_CF_API_TOKEN,
+      }
+    // Set-but-incomplete is a likely misconfiguration — warn instead of silently staying lexical.
+    log.warn(
+      "DERIVE_EMBED_PROVIDER=workersai but DERIVE_EMBED_CF_ACCOUNT_ID / DERIVE_EMBED_CF_API_TOKEN is missing — semantic search stays OFF (lexical-only)",
+    )
+    return undefined
+  }
+  log.warn(
+    `ignoring DERIVE_EMBED_PROVIDER=${provider} (expected "local" or "workersai") — semantic search stays OFF`,
+  )
   return undefined
 }
 

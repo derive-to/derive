@@ -44,8 +44,8 @@ export interface WorkspaceSearchDeps extends SearchDeps {
       limit: number,
     ): Promise<{ id: string; rank: number }[]>
   }
-  /** The optional dense/semantic arm (Cloudflare Vectorize + Workers AI). Absent on
-   *  self-host ⇒ nomination stays pure-lexical, byte-identical to before. */
+  /** The optional dense/semantic arm (pgvector + an embedder). Absent when no embedder is
+   *  configured (or on SQLite) ⇒ nomination stays pure-lexical, byte-identical to before. */
   search?: SearchIndex
 }
 
@@ -339,7 +339,7 @@ export async function indexArtifactVersion(
 ): Promise<void> {
   const text = await versionIndexText(blobs, v)
   await meta.indexArtifact(artifact.id, artifact.org_id, artifact.title, text)
-  // The dense arm is independently best-effort: a Vectorize/Workers-AI hiccup must never undo
+  // The dense arm is independently best-effort: a dense-arm (embed or store) hiccup must never undo
   // the lexical upsert that already committed, nor fail the publish. Log and move on — the next
   // publish re-embeds and the backfill sweep is the safety net. (emitVersionBump's own catch
   // covers the lexical arm; this inner catch keeps a dense failure from ever reaching it.)
@@ -399,7 +399,7 @@ export const reindexSearchBatch = async (
     }
   }
   // Dense arm: batched embed+upsert (in sub-batches) instead of one-per-artifact — far fewer
-  // Workers-AI calls + Vectorize mutations, so a bundle-dense page is much less likely to breach the
+  // embed calls + vector-store writes, so a bundle-dense page is much less likely to breach the
   // subrequest ceiling. Best-effort, like the publish path: a dense hiccup logs and moves on — the
   // lexical arm already committed and the next publish/sweep re-adds. NOTE: `indexed` counts LEXICAL
   // successes, so a dense-arm failure won't show as `indexed < scanned`; a full re-sweep is the
@@ -526,7 +526,7 @@ export const searchWorkspace = async (
     deps.meta.searchArtifactIds(opts.orgId, opts.query, candidateCap + 1),
     deps.search
       ? deps.search.search(opts.orgId, opts.query, candidateCap).catch((err) => {
-          // The dense arm is best-effort on READ too: a Vectorize/Workers-AI hiccup degrades this
+          // The dense arm is best-effort on READ too: a dense-arm (embed or store) hiccup degrades this
           // query to lexical-only rather than 500-ing a search the lexical arm could still serve.
           log.error("semantic search arm failed; falling back to lexical", { err: String(err) })
           return [] as { id: string; score: number; chunk: string }[]

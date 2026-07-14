@@ -1,8 +1,8 @@
-// Backend-agnostic chunk-level dense-search logic, shared by every SearchIndex adapter (the
-// Cloudflare Vectorize edge adapter and the pgvector self-host adapter). Keeping the chunker,
-// the per-chunk unit shape, the stale-id math, and the best-chunk rollup in ONE place is what
-// stops the edge and self-host corpora from silently diverging — a change to chunk size or the
-// relevance floor lands in both at once. Pure + unit-tested; no store or embedder dependency.
+// Backend-agnostic chunk-level dense-search logic, shared by the SearchIndex adapter across both
+// tiers (edge and self-host both run PgvectorSearchIndex). Keeping the chunker, the per-chunk unit
+// shape, the stale-id math, and the best-chunk rollup in ONE place is what stops the edge and self-
+// host corpora from silently diverging — a change to chunk size or the relevance floor lands in
+// both at once. Pure + unit-tested; no store or embedder dependency.
 
 // Target chunk size in chars (~450 bge-m3 tokens at ~4 chars/token for Latin text) with ~15%
 // overlap so a match spanning a boundary still lands wholly in a chunk.

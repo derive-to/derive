@@ -3,10 +3,10 @@ import type { VectorStore } from "@derive/db/pgvector"
 import { EMBED_BATCH } from "./embedder"
 import { type ChunkUnit, rollupBestChunk, staleIds, unitsFor } from "./search-chunk"
 
-// The self-host dense-search adapter: chunk-level semantic search backed by pgvector in the SAME
-// Postgres as the artifacts. It's the storage-agnostic counterpart to the Cloudflare Vectorize
-// adapter — same SearchIndex port, same chunking + best-chunk rollup (shared via search-chunk),
-// same visibility contract (none: the caller's Tier-2 gate owns it). It composes an Embedder (the
+// The dense-search adapter (used by BOTH tiers — edge and Postgres self-host): chunk-level semantic
+// search backed by pgvector in the SAME Postgres as the artifacts. Same SearchIndex port, same
+// chunking + best-chunk rollup (shared via search-chunk), same visibility contract (none: the
+// caller's Tier-2 gate owns it). It composes an Embedder (the
 // generation half) with a PgVectorStore (the storage half); the two must agree on dimensions, which
 // PgVectorStore.ensureSchema enforces against the table. The caller runs this best-effort after the
 // lexical index (its own try/catch in lib/search.ts) — NOT in the metadata transaction — but a
@@ -16,8 +16,8 @@ import { type ChunkUnit, rollupBestChunk, staleIds, unitsFor } from "./search-ch
 // Over-fetch this many chunk hits, then roll up to the best chunk per artifact. Several top chunks
 // can belong to one doc, so this yields fewer DISTINCT artifacts than raw hits — fine: the dense
 // arm fuses with lexical (which dominates recall on the wide agent path) and precision is the win.
-// Matches the Vectorize adapter's topK so both arms behave alike (the vector pool sets
-// hnsw.ef_search ≥ this so pgvector doesn't cap the fetch — see node.ts / pgvector.ts).
+// The vector pool sets hnsw.ef_search ≥ this so pgvector's ANN scan doesn't cap the fetch below it
+// (see node.ts / apply-pg-schema.ts).
 const SEARCH_TOPK = 50
 
 export class PgvectorSearchIndex implements SearchIndex {
@@ -27,9 +27,9 @@ export class PgvectorSearchIndex implements SearchIndex {
   ) {}
 
   // Embed + upsert a flat unit list in EMBED_BATCH groups, interleaved (not embed-all-then-write) —
-  // bounds peak memory to one batch of vectors and, like the Vectorize adapter, lands earlier
-  // groups before a later embed can fail. A count mismatch throws rather than misaligning vector↔
-  // chunk (bge-m3 returns one vector per input, in order).
+  // bounds peak memory to one batch of vectors and lands earlier groups before a later embed can
+  // fail. A count mismatch throws rather than misaligning vector↔chunk (the embedder returns one
+  // vector per input, in order).
   private async embedAndStore(units: ChunkUnit[]): Promise<void> {
     for (let i = 0; i < units.length; i += EMBED_BATCH) {
       const group = units.slice(i, i + EMBED_BATCH)
@@ -59,7 +59,7 @@ export class PgvectorSearchIndex implements SearchIndex {
     // Upsert the fresh chunks first, then clear any chunk slots beyond the new count (a shrunk doc)
     // plus the bare legacy id. Empty content ⇒ no units ⇒ this clears everything for the artifact.
     // (upsert-then-delete, two statements: a delete failure leaves orphan chunks that self-heal on
-    // the next index — best-effort, matching the Vectorize adapter and the port's contract.)
+    // the next index — best-effort, per the port's contract.)
     if (units.length) await this.embedAndStore(units)
     await this.store.deleteByIds(staleIds(id, units.length))
   }

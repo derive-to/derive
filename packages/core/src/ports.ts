@@ -13,8 +13,9 @@ export interface BlobStore {
 /**
  * An optional SEMANTIC search index — the dense (embedding) arm of workspace search,
  * paired with the lexical FTS the MetaStore already provides ({@link MetaStore.searchArtifactIds}).
- * Unbound on self-host (search stays lexical-only, unchanged); the Cloudflare edge injects a
- * Vectorize + Workers AI adapter. The caller fuses these candidates with the lexical ones
+ * Unset ⇒ search stays lexical-only; otherwise the edge and a Postgres self-host both inject a
+ * pgvector adapter (embeddings from Workers AI or a local model). The caller fuses these with the
+ * lexical ones
  * (reciprocal-rank fusion) and re-applies visibility through `listArtifacts({ ids })`, so this
  * port — exactly like the FTS — has NO visibility knowledge and can never widen what a viewer
  * sees. Runs on Node AND Workers (no Node APIs), same as every other port here.
@@ -30,7 +31,7 @@ export interface SearchIndex {
    *  scoped by org. Driven by the same publish/restore/approve chokepoint as the FTS index. */
   indexArtifact(id: string, orgId: string, title: string | null, text: string): Promise<void>
   /** Batch variant of {@link indexArtifact} for the backfill sweep: embed + upsert a page in
-   *  sub-batches — far fewer Workers-AI calls + Vectorize mutations than one call per artifact.
+   *  sub-batches — far fewer embed calls + vector-store writes than one call per artifact.
    *  Single publishes still use indexArtifact. Best-effort like the rest. */
   indexArtifacts(
     items: { id: string; orgId: string; title: string | null; text: string }[],
@@ -54,18 +55,19 @@ export interface SearchIndex {
 /**
  * Turns text into embedding vectors — the generation half of the dense arm, split from the
  * storage half ({@link SearchIndex}) so the two vary independently: a deployment pairs whatever
- * embedder it can run (Cloudflare Workers AI on the edge, a local ONNX model or a hosted API on
- * a self-host box) with whatever vector store it has (Vectorize, pgvector). A `SearchIndex`
- * adapter that needs to embed composes an `Embedder`; the two MUST agree on `dimensions`.
+ * embedder it can run (Cloudflare Workers AI on the edge, a local ONNX model or the Workers AI REST
+ * API on a self-host box) with the pgvector store. A `SearchIndex` adapter that needs to embed
+ * composes an `Embedder`; the two MUST agree on `dimensions`.
  *
  * `model` + `dimensions` identify the vector space: a corpus embedded with one model can't be
- * queried with another (the geometry differs), so a store tags its vectors with the model and
- * treats an embedder change as a full re-backfill, never an in-place mix. Runs on Node AND
- * Workers (no Node APIs in the interface itself).
+ * queried with another (the geometry differs), so an embedder change is a full re-backfill, never an
+ * in-place mix. The pgvector store guards this by DIMENSION (its column is `vector(dimensions)`, and
+ * ensureSchema refuses a differently-sized swap) — enough today because the embedders differ in
+ * dimension (bge-m3 1024, bge-small 384); a same-dimension swap would need the old vectors dropped
+ * manually. Runs on Node AND Workers (no Node APIs in the interface itself).
  */
 export interface Embedder {
-  /** Stable model id, e.g. `@cf/baai/bge-m3`. Pinned — never "latest" — and stored alongside
-   *  vectors so a mismatch on read is detectable rather than silently wrong. */
+  /** Stable model id, e.g. `@cf/baai/bge-m3`. Pinned — never "latest". */
   readonly model: string
   /** Output vector length (e.g. 1024 for bge-m3, 384 for bge-small). The vector store's column
    *  type / index is sized to this; a change forces a new index + re-backfill. */

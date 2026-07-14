@@ -298,9 +298,12 @@ request (pgvector indexes synchronously). Only the embedder differs by tier:
   Activates when both `AI` and `HYPERDRIVE` are bound. The pgvector table (`artifact_vec`) + its
   HNSW index are created out of band by `deploy:pg-schema` (part of `pnpm deploy`), which also sets
   `hnsw.ef_search` DB-wide — nothing to provision by hand.
-- **Node self-host** (Postgres): set `DERIVE_EMBED_CF_ACCOUNT_ID` + `DERIVE_EMBED_CF_API_TOKEN` to
-  embed via Workers AI over REST (a local-model embedder is a planned follow-up). The table is
-  created at boot. With the embedded-SQLite default there's no pgvector, so search stays lexical.
+- **Node self-host** (Postgres): set `DERIVE_EMBED_PROVIDER` to pick the embedder. `local` (the
+  zero-config, no-Cloudflare choice) runs an in-process ONNX model (bge-small, ~30 MB, downloaded on
+  first boot and cached) — nothing else to set. `workersai` embeds via Cloudflare Workers AI over
+  REST and additionally needs `DERIVE_EMBED_CF_ACCOUNT_ID` + `DERIVE_EMBED_CF_API_TOKEN`. Either way
+  the `artifact_vec` table is created at boot. With the embedded-SQLite default there's no pgvector,
+  so `DERIVE_EMBED_PROVIDER` is ignored and search stays lexical (a warning is logged).
 
 After enabling + deploying, backfill the existing corpus (new publishes index automatically):
 
