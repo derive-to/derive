@@ -27,7 +27,8 @@
       "ws": "^8.21.0"
     },
     "patchedDependencies": {
-      "@better-auth/oauth-provider@1.6.19": "patches/@better-auth__oauth-provider@1.6.19.patch"
+      "@better-auth/oauth-provider@1.6.19": "patches/@better-auth__oauth-provider@1.6.19.patch",
+      "knip@6.16.1": "patches/knip@6.16.1.patch"
     }
   },
   "scripts": {
@@ -72,7 +73,6 @@
     "dependency-cruiser": "^18.0.0",
     "esbuild": "0.28.1",
     "knip": "^6.16.1",
-    "typescript": "^6.0.3",
-    "wrangler": "^4.110.0"
+    "typescript": "^6.0.3"
   }
 }
