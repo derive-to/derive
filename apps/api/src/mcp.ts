@@ -602,11 +602,14 @@ async function buildServer(
       },
     },
     async ({ ack }) => {
-      const queue = await ctx.meta.listPendingAgentMentions(agent.id, AGENT_INBOX_PAGE)
+      // The queue this request already read at connect (a fresh server per request, so
+      // it is this call's snapshot — and empty without a re-read for a grant that has
+      // no inbox at all).
+      const queue = pendingRequests
       // `acked` counts what actually LEFT the queue, so acking is idempotent: the store
       // matches a row whether or not it was already acknowledged, so an unknown or
-      // repeated id would otherwise inflate the count. Ack against the queue we just
-      // read, and answer from it — no second round-trip.
+      // repeated id would otherwise inflate the count. Ack against the snapshot, and
+      // answer from it.
       const handled = new Set((ack ?? []).filter((id) => queue.some((m) => m.id === id)))
       let acked = 0
       for (const id of handled) if (await ctx.meta.ackAgentMention(agent.id, id)) acked++
