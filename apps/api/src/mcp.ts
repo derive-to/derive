@@ -1851,6 +1851,8 @@ async function buildServer(
             notify: ctx.notify,
             notifyRender: ctx.notifyRender,
             background: ctx.background,
+            subdomainBase: ctx.deps.subdomainBase,
+            subdomainSalt: ctx.deps.encryptionKey,
           },
           artifact,
           version,

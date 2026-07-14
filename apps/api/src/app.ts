@@ -181,6 +181,11 @@ export function createApp(deps: AppDeps): Hono {
       n: number,
       prefix: string,
       rawPath: string,
+      // An artifact-bound host (a subdomain serving ONE artifact at its root) is
+      // that artifact's own isolated origin — safe for the `allow-same-origin`
+      // capability grant. A workspace domain (`<host>/<ref>`, many artifacts on one
+      // host) is NOT: it stays the opaque sandbox so one can't read another's storage.
+      isolated: boolean,
     ) => {
       if (!(await ctx.authorize(c, "read", a))) return c.text("not found", 404)
       if (a.removed_at) return c.text(TOMBSTONE, 410)
@@ -198,6 +203,7 @@ export function createApp(deps: AppDeps): Hono {
         undefined,
         // Mobile auto-reflow is opt-in per artifact ([Q2]) — byte-faithful by default.
         !!a.reflow,
+        isolated,
       )
     }
     app.use("*", async (c, next) => {
@@ -214,6 +220,7 @@ export function createApp(deps: AppDeps): Hono {
       if (record?.status !== "active") return isSub ? c.text("not found", 404) : next()
       if (record.artifact_id) {
         // Artifact-bound host (subdomain today): serve that one artifact at the root.
+        // This host IS the artifact's own origin → isolated (capability grant).
         const a = await ctx.meta.getArtifactById(record.artifact_id)
         if (!a) return c.text("not found", 404)
         return serveArtifact(
@@ -222,17 +229,19 @@ export function createApp(deps: AppDeps): Hono {
           a.current_version,
           "/",
           decodeURIComponent(c.req.path.replace(/^\/+/, "")),
+          true,
         )
       }
       // Workspace domain: `<host>/<ref>/<sub>` → the workspace's artifact at <ref>,
       // scoped to the domain's org so a tenant can't serve another tenant's artifact.
+      // Many artifacts share this host, so it is NOT isolated — opaque sandbox.
       const segs = c.req.path.replace(/^\/+/, "").split("/")
       const ref = segs[0] ?? ""
       if (!ref) return c.text("not found", 404)
       const a = await ctx.meta.getByShortId(parseRef(ref).shortId)
       if (!a || a.org_id !== record.org_id) return c.text("not found", 404)
       const n = parseRef(ref).version ?? a.current_version
-      return serveArtifact(c, a, n, `/${ref}/`, decodeURIComponent(segs.slice(1).join("/")))
+      return serveArtifact(c, a, n, `/${ref}/`, decodeURIComponent(segs.slice(1).join("/")), false)
     })
   }
 
