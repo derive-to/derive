@@ -52,13 +52,14 @@ bucket_name = "derive-blobs"
 #   wrangler vectorize create derive-search --dimensions=1024 --metric=cosine
 #   wrangler vectorize create-metadata-index derive-search --property-name=org_id --type=string
 #   # then, per workspace corpus: POST /v1/system/search-reindex with the operator token
-# See DEPLOY.md. Left commented so a deploy without the index provisioned doesn't fail.
-# [[vectorize]]
-# binding = "VECTORIZE"
-# index_name = "derive-search"
-#
-# [ai]
-# binding = "AI"
+# See DEPLOY.md. ENABLED: the `derive-search` index + its org_id metadata index are provisioned
+# on the account, so the worker binds Vectorize + Workers AI and workspace search goes hybrid.
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "derive-search"
+
+[ai]
+binding = "AI"
 
 [[durable_objects.bindings]]
 name = "ROOMS"
