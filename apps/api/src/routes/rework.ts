@@ -23,6 +23,11 @@ import { notifyCommentBells } from "../lib/notify-comment"
  *  MCP pull inbox. The agent does the work and publishes per its grant: a
  *  publish-capable agent posts directly, a lower grant files a proposal — no special
  *  case here. */
+// How deep to look for an already-queued ask. The inbox is a working set, not an
+// archive; an agent that lets it grow past this has stopped acking. (The MCP inbox
+// reader pages by the same number — one constant once both land.)
+const INBOX_SCAN = 50
+
 export const reworkRoutes = (ctx: AppContext) => {
   const { meta, bus, background, notify, actingUser, authorize, limited, commentLimiter } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -91,26 +96,28 @@ export const reworkRoutes = (ctx: AppContext) => {
     return sole
   }
 
-  // One queued ask per (agent, artifact): re-firing while the last request still
-  // waits in the inbox would only stack an identical row (a double-click did exactly
-  // that in the field). Once the agent acks, firing again is allowed.
-  const alreadyQueued = async (agent: AgentRecord, artifactShortId: string) =>
-    (await meta.listPendingAgentMentions(agent.id, 50)).some(
-      (m) => m.artifact_short_id === artifactShortId,
-    )
-
   // Post the canned request: a whole-document comment (no anchor) @mentioning the
   // agent — the same ROW the ask-agent composer writes, but a deliberately narrower
   // fan-out: comment.created + mention/bell notify only, skipping the comment.mention
   // webhook, comment emails, Slack, and the GitHub PR echo. This is a canned,
   // bot-directed note, not a human conversation — mirroring it into those channels
   // would just be noise for people who didn't ask for it.
+  //
+  // One queued ask per (agent, artifact): the inbox is a pull queue, so re-firing while
+  // the last request still waits would stack an identical row for the agent to do twice.
+  // Returns the 409 instead of posting; once the agent acks, firing again is allowed.
   const postRequest = async (
+    c: Context,
     artifact: ArtifactRecord,
     acting: Acting,
     agent: AgentRecord,
     instruction: string,
-  ) => {
+  ): Promise<string | Response> => {
+    const queued = await meta.listPendingAgentMentions(agent.id, INBOX_SCAN)
+    if (queued.some((m) => m.artifact_short_id === artifact.short_id))
+      return fail(c, 409, `a request for this artifact is already queued for ${agent.name}`, {
+        code: "alreadyQueued",
+      })
     const id = newId("c")
     const mentions = [{ id: agent.id, name: agent.name }]
     const created = await meta.createComment({
@@ -169,12 +176,6 @@ export const reworkRoutes = (ctx: AppContext) => {
       ])
       const agent = pickAgent(c, agents, agentId)
       if (agent instanceof Response) return bail(agent)
-      if (await alreadyQueued(agent, artifact.short_id))
-        return bail(
-          fail(c, 409, `a request for this artifact is already queued for ${agent.name}`, {
-            code: "alreadyQueued",
-          }),
-        )
 
       // The resolved Brandprint (workspace ⊕ requester's profile) drives the
       // profile-first line and guards the empty brief: firing the canned instruction
@@ -192,7 +193,14 @@ export const reworkRoutes = (ctx: AppContext) => {
         profileLive = !!prof && profileState(prof.current_version) === "live"
       }
 
-      const requestId = await postRequest(artifact, acting, agent, reworkInstruction(profileLive))
+      const requestId = await postRequest(
+        c,
+        artifact,
+        acting,
+        agent,
+        reworkInstruction(profileLive),
+      )
+      if (requestId instanceof Response) return bail(requestId)
       return c.json({ requestId }, 201)
     },
   )
@@ -223,19 +231,15 @@ export const reworkRoutes = (ctx: AppContext) => {
         return bail(fail(c, 400, "this artifact is not the workspace's brand profile"))
       const agent = pickAgent(c, agents, agentId)
       if (agent instanceof Response) return bail(agent)
-      if (await alreadyQueued(agent, artifact.short_id))
-        return bail(
-          fail(c, 409, `a request for this artifact is already queued for ${agent.name}`, {
-            code: "alreadyQueued",
-          }),
-        )
 
       const requestId = await postRequest(
+        c,
         artifact,
         acting,
         agent,
         buildProfileInstruction(artifact.short_id),
       )
+      if (requestId instanceof Response) return bail(requestId)
       return c.json({ requestId }, 201)
     },
   )

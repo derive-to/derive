@@ -15,7 +15,7 @@ import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { artifactAgentsQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { usableAgents } from "./ask-agent"
+import { ALREADY_QUEUED, queuedFor, usableAgents } from "./ask-agent"
 import { resolveRework } from "./rework-state"
 import type { AgentTarget } from "./types"
 
@@ -53,10 +53,7 @@ export function ReworkMenuItem({
   } = useQuery({ ...artifactAgentsQuery(shortId), enabled: !!me })
   const fire = useApiMutation<{ requestId: string }, AgentTarget>({
     mutationFn: (agent) => api.reworkArtifact(shortId, agent.id),
-    // Honest about the pull model: the request is QUEUED, and runs when the agent
-    // next reads its inbox — "sent" implied something was already happening.
-    success: (_r, agent) =>
-      `Rework queued for ${agent.name}. It runs the next time your agent checks in.`,
+    success: (_r, agent) => queuedFor("Rework", agent.name),
     // The state computed below is a client-side approximation (see the comment on
     // workspaceSettingsQuery above), so a stale cache can draw a 409. Instead of
     // toasting that, route to the state the client should have shown; a re-fire while
@@ -66,8 +63,7 @@ export function ReworkMenuItem({
       const code = err instanceof ApiError ? err.code : undefined
       if (code === "needsAgent") onConnect()
       else if (code === "needsBrandprint") nav({ to: "/brandprint" })
-      else if (code === "alreadyQueued")
-        toast("Already queued for your agent. It runs the next time it checks in.")
+      else if (code === "alreadyQueued") toast(ALREADY_QUEUED)
       else toast.error("Rework request failed — try again.")
     },
   })

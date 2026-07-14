@@ -1,21 +1,14 @@
 import { queryOptions, useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
-import { API_BASE, ApiError, api } from "@/api"
+import { API_BASE, ApiError, api, type DirUser } from "@/api"
 import { ConnectAgentButton, PromptBlock, publicUrl } from "@/components/shared/connect-agent"
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/sonner"
 import { artifactAgentsQuery, artifactQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { usableAgents } from "../artifact/ask-agent"
+import { AgentMenu, ALREADY_QUEUED, queuedFor } from "../artifact/ask-agent"
 import { refFor } from "../artifact/parse-ref"
 import type { AgentTarget } from "../artifact/types"
 
@@ -169,17 +162,16 @@ function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: 
   // the queued state. The proposals poll above flips to the reveal when the build lands.
   const [queued, setQueued] = useState(false)
   const { data: agents = [] } = useQuery(artifactAgentsQuery(profileId))
-  const usable = usableAgents(agents)
   const send = useApiMutation<{ requestId: string }, AgentTarget>({
     mutationFn: (agent) => api.generateProfile(profileId, agent.id),
-    success: (_r, agent) =>
-      `Build request queued for ${agent.name}. It runs the next time your agent checks in.`,
+    success: (_r, agent) => queuedFor("Build request", agent.name),
     errorToast: false,
     onError: (err) => {
       const code = err instanceof ApiError ? err.code : undefined
+      // The queue already holds this ask — that IS the state this card wanted to show.
       if (code === "alreadyQueued") {
         setQueued(true)
-        toast("Already queued. It runs the next time your agent checks in.")
+        toast(ALREADY_QUEUED)
       } else toast.error("Couldn't queue the build — copy the brief below instead.")
     },
     onSuccess: () => setQueued(true),
@@ -228,7 +220,7 @@ function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: 
               Keep current
             </Button>
           )}
-          <SendToAgent agents={usable} pending={send.isPending} onPick={(a) => send.mutate(a)} />
+          <SendToAgent agents={agents} pending={send.isPending} onPick={(a) => send.mutate(a)} />
           <ConnectAgentButton variant="outline" size="sm" testId="brandprint-handoff-connect" />
         </div>
       </div>
@@ -241,53 +233,38 @@ function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: 
   )
 }
 
-// The one-click hand-off: fires the build brief into a registered agent's pull inbox
-// (no copy-paste). Renders nothing without a registered agent — the copyable brief and
-// ConnectAgentButton beside it remain that path. Sole agent fires directly; several
-// open a picker (the AskAgentButton grammar, sized for this card).
+// The one-click hand-off: the build brief goes into a registered agent's pull inbox, no
+// copy-paste. Without a registered agent this renders nothing and the copyable brief +
+// ConnectAgentButton beside it remain the path — the same sole/picker grammar as the
+// selection bar's Ask-an-agent, so the two can't drift.
 function SendToAgent({
   agents,
   pending,
   onPick,
 }: {
-  agents: AgentTarget[]
+  agents: DirUser[]
   pending: boolean
   onPick: (agent: AgentTarget) => void
 }) {
-  if (agents.length === 0) return null
-  const sole = agents.length === 1 ? agents[0] : null
-  if (sole)
-    return (
-      <Button
-        size="sm"
-        data-testid="brandprint-generate"
-        loading={pending}
-        disabled={pending}
-        onClick={() => onPick(sole)}
-      >
-        Send to {sole.name.split(/\s+/)[0]}
-      </Button>
-    )
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button size="sm" data-testid="brandprint-generate" loading={pending} disabled={pending}>
-          Send to your agent
+    <AgentMenu
+      agents={agents}
+      menuLabel="Send the build brief to"
+      testidPrefix="brandprint-generate"
+      align="end"
+      onPick={onPick}
+      trigger={({ sole, onClick }) => (
+        <Button
+          size="sm"
+          data-testid="brandprint-generate"
+          loading={pending}
+          disabled={pending}
+          onClick={onClick}
+        >
+          {sole ? `Send to ${sole.name.split(/\s+/)[0]}` : "Send to your agent"}
         </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel>Send the build brief to</DropdownMenuLabel>
-        {agents.map((a) => (
-          <DropdownMenuItem
-            key={a.id}
-            data-testid={`brandprint-generate-${a.id}`}
-            onSelect={() => onPick(a)}
-          >
-            {a.name}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+      )}
+    />
   )
 }
 
