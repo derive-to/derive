@@ -10,6 +10,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
 import { bail, fail, readJson } from "../lib/http"
 import { resolveUserRef } from "../lib/resolve-user"
 import { ArtifactMember } from "../schemas"
@@ -344,6 +345,58 @@ export const collectionRoutes = (ctx: AppContext) => {
       if (!art || art.org_id !== col.org_id) return bail(fail(c, 404, "artifact not found"))
       await meta.removeCollectionItem(col.id, art.id)
       return c.body(null, 204)
+    },
+  )
+
+  // Bulk add — the library multi-select bar drops many artifacts into one or more
+  // collections in a single call. The collections are authorized once each (you must be
+  // able to publish to a collection to fold artifacts into it); every artifact is then
+  // authorized on its own for "share" exactly like the single add-item route, since adding
+  // to a shared collection re-shares the artifact. Per-artifact refusals come back as
+  // `skipped`, so a mixed selection lands what it can without failing the batch.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/bulk/collections",
+      tags: ["Collections"],
+      summary: "Add many artifacts to one or more collections (per-artifact share-gated).",
+      responses: {
+        200: {
+          description: "How many artifacts were added / skipped / failed.",
+          content: { "application/json": { schema: BulkSummarySchema } },
+        },
+      },
+    }),
+    async (c) => {
+      const body = await readJson(
+        c,
+        z.object({
+          shortIds: z.array(z.string()).min(1).max(BULK_MAX),
+          collectionIds: z.array(z.string()).min(1),
+        }),
+      )
+      if (body instanceof Response) return bail(body)
+      // Resolve the target collections and keep only those the caller can publish to. If
+      // they can manage NONE, that's a flat 403 — nothing to add into.
+      const resolved = await Promise.all(body.collectionIds.map((id) => meta.getCollection(id)))
+      const allowedCols: CollectionRecord[] = []
+      for (const col of resolved) {
+        if (col && (await canManageCollection(c, col, "publish"))) allowedCols.push(col)
+      }
+      if (allowedCols.length === 0) return bail(fail(c, 403, "forbidden"))
+      const summary = await bulkArtifactOp(
+        body.shortIds,
+        (shortId) => meta.getByShortId(shortId),
+        (a) => authorize(c, "share", a),
+        async (a) => {
+          // Same-workspace guard mirrors the single add-item route: a foreign-workspace
+          // artifact (by short_id) is not folded into this workspace's collection.
+          for (const col of allowedCols) {
+            if (col.org_id === a.org_id) await meta.addCollectionItem(col.id, a.id)
+          }
+        },
+      )
+      return c.json(summary)
     },
   )
 

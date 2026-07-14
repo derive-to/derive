@@ -4,6 +4,7 @@ import { AuthorChip } from "@/components/shared/author-chip"
 import { FollowButton } from "@/components/shared/follow-button"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +34,9 @@ export function ArtifactRow({
   onAddToCollection,
   onDelete,
   onPrefetch,
+  selected = false,
+  selectionActive = false,
+  onSelect,
 }: {
   artifact: Artifact
   onOpen: () => void
@@ -48,6 +52,11 @@ export function ArtifactRow({
   onAddToCollection?: () => void
   onDelete?: () => void
   onPrefetch?: () => void
+  // Multi-select — the row's twin of the card's checkbox, same rules: the box is the
+  // only selection gesture, so a click on the row still opens the artifact.
+  selected?: boolean
+  selectionActive?: boolean
+  onSelect?: (shift: boolean) => void
 }) {
   const isOwner = a.my_role === "owner"
   const showTags = !!onEditTags && (a.my_role === "owner" || a.my_role === "editor")
@@ -68,16 +77,39 @@ export function ArtifactRow({
 
   return (
     <div
+      data-selected={selected || undefined}
       className={cn(
         "group relative flex items-center gap-3 rounded-lg border bg-card px-3.5 py-2.5 hover:bg-secondary",
-        // Needs-your-feedback accents — the ink accent is the sanctioned attention signal.
-        a.mentions_me
-          ? "border-primary ring-1 ring-primary/30"
-          : a.i_participated || awaitingReview
-            ? "border-primary/60"
-            : "border-border",
+        // Selection outranks the ambient accents — see ArtifactCard.
+        selected
+          ? "border-primary ring-2 ring-primary/40"
+          : // Needs-your-feedback accents — the ink accent is the sanctioned attention signal.
+            a.mentions_me
+            ? "border-primary ring-1 ring-primary/30"
+            : a.i_participated || awaitingReview
+              ? "border-primary/60"
+              : "border-border",
       )}
     >
+      {/* Leading edge, ahead of the title. It holds its column at rest (opacity, not
+          display) so revealing it on hover never reflows the row. */}
+      {onSelect && (
+        <Checkbox
+          data-testid={`artifact-row-select-${a.short_id}`}
+          aria-label={`Select ${a.title ?? a.short_id}`}
+          checked={selected}
+          onClick={(e) => {
+            e.stopPropagation()
+            onSelect(e.shiftKey)
+          }}
+          className={cn(
+            "relative z-20 shrink-0 transition-opacity",
+            !selected &&
+              !selectionActive &&
+              "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100",
+          )}
+        />
+      )}
       <button
         type="button"
         data-testid={`artifact-row-open-${a.short_id}`}

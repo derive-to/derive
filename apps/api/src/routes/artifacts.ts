@@ -35,6 +35,7 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { afterPublish } from "../lib/after-publish"
 import { authorProfile, resolveHandles, resolveUserBylines } from "../lib/author"
+import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
 import { cleanPath, manifestOf } from "../lib/bundle"
 import { hashPassword, signState, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
 import {
@@ -1372,6 +1373,38 @@ export const artifactRoutes = (ctx: AppContext) => {
       // helper so a hard-delete path can't clean one arm and forget the other.
       await deleteArtifactAndUnindex(meta, search, artifact.id, artifact.org_id)
       return c.body(null, 204)
+    },
+  )
+
+  // Bulk delete — the library multi-select bar. Owner-only per artifact (the same `manage`
+  // gate as the single delete); anything you don't own comes back as `skipped` rather than
+  // failing the batch, so a mixed selection deletes what's yours and leaves the rest.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/bulk/delete",
+      tags: ["Artifacts"],
+      summary: "Permanently delete many artifacts (owner-only per artifact).",
+      responses: {
+        200: {
+          description: "How many were deleted / skipped / failed.",
+          content: { "application/json": { schema: BulkSummarySchema } },
+        },
+      },
+    }),
+    async (c) => {
+      const body = await readJson(
+        c,
+        z.object({ shortIds: z.array(z.string()).min(1).max(BULK_MAX) }),
+      )
+      if (body instanceof Response) return bail(body)
+      const summary = await bulkArtifactOp(
+        body.shortIds,
+        (shortId) => meta.getByShortId(shortId),
+        (a) => authorize(c, "manage", a),
+        (a) => deleteArtifactAndUnindex(meta, search, a.id, a.org_id),
+      )
+      return c.json(summary)
     },
   )
 

@@ -1032,6 +1032,28 @@
           "grantedAt"
         ]
       },
+      "BulkSummary": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "number",
+            "description": "Artifacts the operation applied to."
+          },
+          "skipped": {
+            "type": "number",
+            "description": "Not found, or the caller may not do this to it — not an error."
+          },
+          "failed": {
+            "type": "number",
+            "description": "The write was attempted but threw."
+          }
+        },
+        "required": [
+          "ok",
+          "skipped",
+          "failed"
+        ]
+      },
       "AssetRef": {
         "type": "object",
         "properties": {
@@ -4078,6 +4100,26 @@
         }
       }
     },
+    "/v1/bulk/delete": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Permanently delete many artifacts (owner-only per artifact).",
+        "responses": {
+          "200": {
+            "description": "How many were deleted / skipped / failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/artifacts/{shortId}/move": {
       "post": {
         "tags": [
@@ -4622,6 +4664,46 @@
         }
       }
     },
+    "/v1/bulk/tags": {
+      "post": {
+        "tags": [
+          "Favorites"
+        ],
+        "summary": "Add browse tags to many artifacts (per-artifact editor-gated).",
+        "responses": {
+          "200": {
+            "description": "How many were tagged / skipped / failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bulk/favorite": {
+      "post": {
+        "tags": [
+          "Favorites"
+        ],
+        "summary": "Star or unstar many artifacts (any reader).",
+        "responses": {
+          "200": {
+            "description": "How many were starred / skipped / failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/follows": {
       "get": {
         "tags": [
@@ -4904,6 +4986,26 @@
         "responses": {
           "204": {
             "description": "The artifact was removed."
+          }
+        }
+      }
+    },
+    "/v1/bulk/collections": {
+      "post": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Add many artifacts to one or more collections (per-artifact share-gated).",
+        "responses": {
+          "200": {
+            "description": "How many artifacts were added / skipped / failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkSummary"
+                }
+              }
+            }
           }
         }
       }
