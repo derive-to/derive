@@ -26,7 +26,8 @@ export const buildSlackManifest = (baseUrl: string) => {
       bot_user: { display_name: "Derive", always_online: true },
     },
     oauth_config: {
-      redirect_urls: [u("/v1/slack/oauth/callback")],
+      // The bot install callback + the per-user "Sign in with Slack" (OIDC) link callback.
+      redirect_urls: [u("/v1/slack/oauth/callback"), u("/v1/slack/link/callback")],
       scopes: { bot: SLACK_BOT_SCOPES },
     },
     settings: {

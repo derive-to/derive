@@ -442,6 +442,21 @@ export const slackThreadLink = pgTable(
     uniqueIndex("slack_thread_link_msg").on(t.channel, t.message_ts),
   ],
 )
+export const slackUserLink = pgTable(
+  "slack_user_link",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id").notNull(),
+    team_id: text("team_id").notNull(),
+    slack_user_id: text("slack_user_id").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [
+    uniqueIndex("slack_user_link_slack").on(t.team_id, t.slack_user_id),
+    index("slack_user_link_user").on(t.team_id, t.user_id),
+  ],
+)
 export const githubApp = pgTable("github_app", {
   id: text("id").primaryKey(),
   app_id: text("app_id").notNull(),
@@ -666,6 +681,7 @@ const TABLES = [
   orgSettings,
   slackInstall,
   slackThreadLink,
+  slackUserLink,
   userNotificationPref,
   githubApp,
   githubInstallation,

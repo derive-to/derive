@@ -201,6 +201,42 @@ describe("makeSlackDmSender (delivery)", () => {
     expect(calls.some((c) => c.url.endsWith("/conversations.open"))).toBe(true)
   })
 
+  it("prefers a linked Slack identity over the email lookup", async () => {
+    const meta = make("slack-dm-linked")
+    await connect(meta)
+    await meta.setSlackUserLink({
+      id: "sul-1",
+      org_id: "default",
+      user_id: linked.id,
+      team_id: "T1",
+      slack_user_id: "U-LINKED",
+      created_at: new Date().toISOString(),
+    })
+    const { artifact, comment } = await artifactAndComment(meta)
+    await enqueueSlackMentionDms({ meta, baseUrl }, artifact, comment, [
+      { id: linked.id, name: "Lin" },
+    ])
+
+    const calls: { url: string; body: Record<string, unknown> }[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: { body?: string }) => {
+        calls.push({ url, body: JSON.parse(init?.body ?? "{}") })
+        if (url.endsWith("/conversations.open"))
+          return new Response(JSON.stringify({ ok: true, channel: { id: "D-9" } }))
+        return new Response(JSON.stringify({ ok: true, ts: "1.1", channel: "D-9" }))
+      }),
+    )
+    const [row] = (await claim(meta)).filter((d) => d.kind === "slack_dm")
+    if (!row) throw new Error("no slack_dm row")
+    const res = await makeSlackDmSender(meta, KEY)(row)
+    expect(res.ok).toBe(true)
+    // The link resolved the Slack user directly — no email lookup at all.
+    expect(calls.some((c) => c.url.includes("/users.lookupByEmail"))).toBe(false)
+    const open = calls.find((c) => c.url.endsWith("/conversations.open"))
+    expect(JSON.stringify(open?.body)).toContain("U-LINKED")
+  })
+
   it("is a delivered no-op when the email has no matching Slack account", async () => {
     const meta = make("slack-dm-nomatch")
     await connect(meta)

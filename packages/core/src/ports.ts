@@ -688,6 +688,17 @@ export interface IntegrationStore {
   getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null>
   /** Record the Slack message ↔ Derive thread mapping (idempotent on thread_id). */
   setSlackThreadLink(l: SlackThreadLinkRecord): Promise<void>
+  /** Resolve a Slack user (team + user id) to the Derive user who linked it, or null. */
+  getSlackUserLinkBySlackId(
+    teamId: string,
+    slackUserId: string,
+  ): Promise<SlackUserLinkRecord | null>
+  /** The Slack identity a Derive user linked for a team, or null. */
+  getSlackUserLinkByUser(teamId: string, userId: string): Promise<SlackUserLinkRecord | null>
+  /** Link a Derive user to a Slack identity (idempotent on (team_id, slack_user_id)). */
+  setSlackUserLink(l: SlackUserLinkRecord): Promise<void>
+  /** Remove a Derive user's Slack link for a team. */
+  deleteSlackUserLink(teamId: string, userId: string): Promise<void>
   /** A user's notification preferences in a workspace, or null (⇒ defaults). */
   getUserNotificationPref(orgId: string, userId: string): Promise<UserNotificationPrefRecord | null>
   /** Upsert a user's notification preferences (idempotent on workspace + user). */
@@ -1801,6 +1812,19 @@ export interface SlackThreadLinkRecord {
   thread_id: string
   channel: string
   message_ts: string
+  created_at: string
+}
+
+/** Links a Derive user to their Slack identity, so Slack events/DMs resolve to the real
+ *  account instead of guessing by email. Keyed on (team_id, slack_user_id): a Slack user id
+ *  is unique per workspace, and one Derive user can link across several workspaces. `org_id`
+ *  is the workspace the link was made from (context, not part of the identity key). */
+export interface SlackUserLinkRecord {
+  id: string
+  org_id: string
+  user_id: string
+  team_id: string
+  slack_user_id: string
   created_at: string
 }
 

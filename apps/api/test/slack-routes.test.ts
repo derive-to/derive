@@ -7,7 +7,7 @@ import {
   type SlackThreadLinkRecord,
 } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { encryptSecret } from "../src/lib/crypto"
+import { encryptSecret, signState } from "../src/lib/crypto"
 import {
   ingestSlackReply,
   makeSlackIngestSender,
@@ -211,6 +211,120 @@ describe("slack DM prefs (email-resolved, no linking)", () => {
       new Date(Date.now() + 120_000).toISOString(),
     )
     expect(rows.some((r) => r.kind === "slack_dm")).toBe(true)
+  })
+})
+
+describe("slack account linking (OIDC)", () => {
+  const connect = (meta: MetaStore, teamId = "T1") =>
+    meta.setSlackInstall({
+      org_id: "default",
+      team_id: teamId,
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      default_channel: "C1",
+      created_at: new Date().toISOString(),
+    })
+
+  // Stub the two OIDC back-channel calls (token exchange + userinfo).
+  const stubOidc = (userId: string, teamId: string, email = "o@x.com") =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL | Request) => {
+        const u = String(url)
+        if (u.includes("openid.connect.token"))
+          return new Response(JSON.stringify({ ok: true, access_token: "xoxp-oidc" }), {
+            status: 200,
+          })
+        if (u.includes("openid.connect.userinfo"))
+          return new Response(
+            JSON.stringify({
+              "https://slack.com/user_id": userId,
+              "https://slack.com/team_id": teamId,
+              email,
+            }),
+            { status: 200 },
+          )
+        return new Response("{}", { status: 200 })
+      }),
+    )
+
+  it("starts the OIDC link flow for a signed-in user of a connected workspace", async () => {
+    const { app, meta } = make("slack-link-start")
+    await connect(meta)
+    const r = await app.request("/v1/slack/link", { headers: as(owner.email), redirect: "manual" })
+    expect(r.status).toBe(302)
+    const loc = r.headers.get("location") ?? ""
+    expect(loc).toContain("slack.com/openid/connect/authorize")
+    expect(loc).toContain("scope=openid")
+    expect(loc).toContain("team=T1") // pre-selects the connected workspace
+  })
+
+  it("stores a link on callback, bound to the user in the signed state", async () => {
+    const { app, meta } = make("slack-link-cb")
+    await connect(meta)
+    stubOidc("U777", "T1")
+    const state = signState({ org: "default", uid: owner.id }, KEY)
+    const r = await app.request(
+      `/v1/slack/link/callback?code=abc&state=${encodeURIComponent(state)}`,
+      { redirect: "manual", headers: as(owner.email) },
+    )
+    expect(r.status).toBe(302)
+    expect(r.headers.get("location")).toBe("/settings/integrations")
+    const link = await meta.getSlackUserLinkBySlackId("T1", "U777")
+    expect(link?.user_id).toBe(owner.id)
+    // Reverse + forward lookups both resolve.
+    expect((await meta.getSlackUserLinkByUser("T1", owner.id))?.slack_user_id).toBe("U777")
+    // Status now reports linked for that user.
+    const status = await (await app.request("/v1/slack", { headers: as(owner.email) })).json()
+    expect(status.linked).toBe(true)
+  })
+
+  it("rejects a linked identity from a different Slack team than the install", async () => {
+    const { app, meta } = make("slack-link-team")
+    await connect(meta, "T1")
+    stubOidc("U777", "T-OTHER") // userinfo says a different team
+    const state = signState({ org: "default", uid: owner.id }, KEY)
+    const r = await app.request(
+      `/v1/slack/link/callback?code=abc&state=${encodeURIComponent(state)}`,
+      { redirect: "manual", headers: as(owner.email) },
+    )
+    expect(r.status).toBe(302)
+    expect(r.headers.get("location")).toContain("error=link_team")
+    expect(await meta.getSlackUserLinkBySlackId("T-OTHER", "U777")).toBe(null)
+    expect(await meta.getSlackUserLinkByUser("T1", owner.id)).toBe(null)
+  })
+
+  it("rejects a callback whose session isn't the user in the signed state (link-CSRF guard)", async () => {
+    const { app, meta } = make("slack-link-csrf")
+    await connect(meta)
+    stubOidc("U777", "T1")
+    // State was minted for `owner`, but `editor` completes the callback — must not link.
+    const state = signState({ org: "default", uid: owner.id }, KEY)
+    const r = await app.request(
+      `/v1/slack/link/callback?code=abc&state=${encodeURIComponent(state)}`,
+      { redirect: "manual", headers: as(editor.email) },
+    )
+    expect(r.status).toBe(302)
+    expect(r.headers.get("location")).toContain("error=link")
+    expect(await meta.getSlackUserLinkBySlackId("T1", "U777")).toBe(null)
+    expect(await meta.getSlackUserLinkByUser("T1", owner.id)).toBe(null)
+  })
+
+  it("unlinks the caller's Slack identity", async () => {
+    const { app, meta } = make("slack-link-unlink")
+    await connect(meta)
+    await meta.setSlackUserLink({
+      id: "sul-1",
+      org_id: "default",
+      user_id: owner.id,
+      team_id: "T1",
+      slack_user_id: "U777",
+      created_at: new Date().toISOString(),
+    })
+    const r = await app.request("/v1/slack/link", { method: "DELETE", headers: as(owner.email) })
+    expect(r.status).toBe(204)
+    expect(await meta.getSlackUserLinkByUser("T1", owner.id)).toBe(null)
   })
 })
 
@@ -433,6 +547,53 @@ describe("slack events endpoint", () => {
     await drainIngest(meta)
     const mirrored = (await meta.listComments(artifact.id)).filter((c) => c.thread_id === "t-dup")
     expect(mirrored).toHaveLength(1)
+  })
+
+  it("attributes a reply from a linked Slack user to their Derive account", async () => {
+    const { app, meta } = make("slack-ev-linked")
+    const artifact = await seedThread(meta, {
+      artifact: "a-slk-lnk",
+      short: "slklnk01",
+      thread: "t-lnk",
+      ts: "888.1",
+    })
+    // U777 has linked their Slack identity to `owner` (display name "O").
+    await meta.setSlackUserLink({
+      id: "sul-x",
+      org_id: "default",
+      user_id: owner.id,
+      team_id: "T1",
+      slack_user_id: "U777",
+      created_at: new Date().toISOString(),
+    })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ ok: true, user: { profile: { display_name: "SlackName" } } }),
+            { status: 200 },
+          ),
+      ),
+    )
+    await postEvent(
+      app,
+      JSON.stringify({
+        type: "event_callback",
+        event: {
+          type: "message",
+          user: "U777",
+          text: "hi",
+          channel: "C1",
+          ts: "889.2",
+          thread_ts: "888.1",
+        },
+      }),
+    )
+    await drainIngest(meta)
+    const cm = (await meta.listComments(artifact.id)).find((c) => c.thread_id === "t-lnk")
+    expect(cm?.author_id).toBe(owner.id) // the Derive user, not "slack:U777"
+    expect(cm?.author).toBe("O") // the Derive display name, not the Slack one
   })
 
   it("enqueues nothing for a reply on a channel with no Derive thread link", async () => {

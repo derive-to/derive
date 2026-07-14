@@ -322,6 +322,18 @@ CREATE TABLE IF NOT EXISTS slack_thread_link (
   UNIQUE (channel, message_ts)
 );
 
+CREATE TABLE IF NOT EXISTS slack_user_link (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  team_id TEXT NOT NULL,
+  slack_user_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (team_id, slack_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS slack_user_link_user ON slack_user_link (team_id, user_id);
+
 CREATE TABLE IF NOT EXISTS user_notification_pref (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,

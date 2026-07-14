@@ -67,6 +67,76 @@ export const exchangeSlackOAuth = async (
   }
 }
 
+/** The "Sign in with Slack" (OIDC) authorize URL for the per-user account-link flow. Distinct
+ *  from the bot install (`slackAuthorizeUrl`): Slack rejects mixing `openid` scopes with bot
+ *  scopes in one call, so linking a personal identity is its own lightweight flow. `nonce` is
+ *  required by OIDC; we read identity from the back-channel userinfo, so the signed `state`
+ *  (not the id_token) is what binds the callback to the Derive user who started it. */
+export const slackOidcAuthorizeUrl = (
+  clientId: string,
+  redirectUri: string,
+  state: string,
+  nonce: string,
+  team?: string,
+): string => {
+  const u = new URL("https://slack.com/openid/connect/authorize")
+  u.searchParams.set("response_type", "code")
+  u.searchParams.set("scope", "openid profile email")
+  u.searchParams.set("client_id", clientId)
+  u.searchParams.set("redirect_uri", redirectUri)
+  u.searchParams.set("state", state)
+  u.searchParams.set("nonce", nonce)
+  // Pre-select the connected workspace so the user links the identity for the right team.
+  if (team) u.searchParams.set("team", team)
+  return u.toString()
+}
+
+/** Exchange an OIDC `code` for an access token (openid.connect.token). Back-channel: we
+ *  authenticate with the client secret over TLS, so the token response is trusted. */
+export const exchangeSlackOidc = async (
+  clientId: string,
+  clientSecret: string,
+  code: string,
+  redirectUri: string,
+): Promise<{ accessToken: string }> => {
+  const res = await fetch(`${API}/openid.connect.token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      code,
+      redirect_uri: redirectUri,
+      grant_type: "authorization_code",
+    }),
+  })
+  const data = (await res.json()) as { ok?: boolean; error?: string; access_token?: string }
+  if (!data.access_token) throw new Error(`slack oidc token failed: ${data.error ?? "unknown"}`)
+  return { accessToken: data.access_token }
+}
+
+/** The linked Slack identity (openid.connect.userinfo). The identifying claims are namespaced
+ *  URL keys (`https://slack.com/user_id`, `.../team_id`) — read them literally. These are the
+ *  same `U…`/`T…` ids the bot sees in events, which is what makes the link resolvable. */
+export const slackOidcUserinfo = async (
+  accessToken: string,
+): Promise<{ slackUserId: string; teamId: string; email: string | null }> => {
+  const res = await fetch(`${API}/openid.connect.userinfo`, {
+    headers: { authorization: `Bearer ${accessToken}` },
+  })
+  const data = (await res.json()) as {
+    error?: string
+    "https://slack.com/user_id"?: string
+    "https://slack.com/team_id"?: string
+    email?: string
+  }
+  const slackUserId = data["https://slack.com/user_id"]
+  const teamId = data["https://slack.com/team_id"]
+  if (!slackUserId || !teamId)
+    throw new Error(`slack oidc userinfo failed: ${data.error ?? "no identity"}`)
+  return { slackUserId, teamId, email: data.email ?? null }
+}
+
 export interface SlackPostResult {
   ts: string
   channel: string

@@ -6,8 +6,11 @@ import { encryptSecret, signState, verifyState } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import {
   exchangeSlackOAuth,
+  exchangeSlackOidc,
   postSlackResponseUrl,
   slackAuthorizeUrl,
+  slackOidcAuthorizeUrl,
+  slackOidcUserinfo,
   verifySlackSignature,
 } from "../lib/slack"
 import {
@@ -33,6 +36,7 @@ export const slackRoutes = (ctx: AppContext) => {
   const app = new OpenAPIHono<BlankEnv>()
   const slack = deps.slack
   const redirectUri = new URL("/v1/slack/oauth/callback", deps.baseUrl).toString()
+  const linkRedirectUri = new URL("/v1/slack/link/callback", deps.baseUrl).toString()
 
   interface ConnectState {
     org: string
@@ -60,6 +64,9 @@ export const slackRoutes = (ctx: AppContext) => {
         .describe(
           'The caller\'s "DM me for interrupts" preference (mentions, review requests, shares)',
         ),
+      linked: z
+        .boolean()
+        .describe("Whether the caller has linked their Slack identity for the connected team"),
     })
     .openapi("SlackStatus")
 
@@ -119,6 +126,84 @@ export const slackRoutes = (ctx: AppContext) => {
       log.warn("slack oauth failed", { error: err instanceof Error ? err.message : String(err) })
       return c.redirect("/settings/integrations?error=oauth")
     }
+  })
+
+  // Per-user "Link Slack account" — a lightweight OIDC (Sign in with Slack) flow, separate
+  // from the admin bot install: it maps the signed-in Derive user to their Slack identity so
+  // DMs/attribution resolve to the real account instead of guessing by email. Any signed-in
+  // member (not just admins) may link their own account; the signed state binds the callback
+  // to them. Pre-selects the workspace's connected team so they link the right identity.
+  app.get("/v1/slack/link", async (c) => {
+    if (!slack || !deps.encryptionKey) return fail(c, 404, "Slack is not configured")
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    const org = await activeWorkspace(c)
+    const install = await meta.getSlackInstall(org)
+    if (!install) return c.redirect("/settings/integrations?error=not_connected")
+    const state = signState({ org, uid: me.id }, deps.encryptionKey)
+    return c.redirect(
+      slackOidcAuthorizeUrl(
+        slack.clientId,
+        linkRedirectUri,
+        state,
+        newId("nonce"),
+        install.team_id,
+      ),
+    )
+  })
+
+  // OIDC callback: recover the signed-in user from the signed state, resolve their Slack
+  // identity, and store the link — but only if that identity belongs to the workspace's
+  // connected team (else someone could link an identity from an unrelated workspace).
+  app.get("/v1/slack/link/callback", async (c) => {
+    if (!slack || !deps.encryptionKey) return fail(c, 404, "Slack is not configured")
+    const me = await requireUser(c)
+    const code = c.req.query("code")
+    const stateRaw = c.req.query("state")
+    const state = stateRaw ? verifyState<ConnectState>(stateRaw, deps.encryptionKey) : null
+    // Bind the completion to the SAME signed-in user who started the flow. The signed state
+    // proves who INITIATED it, but it rides the browser URL (leakable / replayable for its
+    // 15-min window), so a session is required and must match — otherwise someone who got a
+    // victim's state could complete the link and route the victim's DMs to their own Slack.
+    if (me instanceof Response || !code || !state || me.id !== state.uid)
+      return c.redirect("/settings/integrations?error=link")
+    try {
+      const { accessToken } = await exchangeSlackOidc(
+        slack.clientId,
+        slack.clientSecret,
+        code,
+        linkRedirectUri,
+      )
+      const identity = await slackOidcUserinfo(accessToken)
+      const install = await meta.getSlackInstall(state.org)
+      if (!install || install.team_id !== identity.teamId)
+        return c.redirect("/settings/integrations?error=link_team")
+      // One link per user per team: clear any prior link, then store the new one, bound to the
+      // Derive user from the signed state (never from the OAuth response).
+      await meta.deleteSlackUserLink(identity.teamId, state.uid)
+      await meta.setSlackUserLink({
+        id: newId("sul"),
+        org_id: state.org,
+        user_id: state.uid,
+        team_id: identity.teamId,
+        slack_user_id: identity.slackUserId,
+        created_at: new Date().toISOString(),
+      })
+      return c.redirect("/settings/integrations")
+    } catch (err) {
+      log.warn("slack link failed", { error: err instanceof Error ? err.message : String(err) })
+      return c.redirect("/settings/integrations?error=link")
+    }
+  })
+
+  // Unlink the caller's Slack identity for the active workspace's team.
+  app.delete("/v1/slack/link", async (c) => {
+    const me = await requireUser(c)
+    if (me instanceof Response) return bail(me)
+    const org = await activeWorkspace(c)
+    const install = await meta.getSlackInstall(org)
+    if (install) await meta.deleteSlackUserLink(install.team_id, me.id)
+    return c.body(null, 204)
   })
 
   // Inbound Events API: url_verification challenge + threaded message replies → Derive.
@@ -288,6 +373,8 @@ export const slackRoutes = (ctx: AppContext) => {
       // Read the DM preference regardless of connection state so the reported value always
       // reflects what's stored (the toggle can be set before/after connecting).
       const pref = await meta.getUserNotificationPref(org, me.id)
+      // Whether THIS user has linked their Slack identity for the connected team.
+      const linked = install ? !!(await meta.getSlackUserLinkByUser(install.team_id, me.id)) : false
       return c.json({
         available: !!slack,
         connected: !!install,
@@ -295,6 +382,7 @@ export const slackRoutes = (ctx: AppContext) => {
         default_channel: install?.default_channel ?? null,
         needs_reauth: install?.needs_reauth === 1,
         slack_dm: wantsSlackDm(pref?.prefs),
+        linked,
       })
     },
   )

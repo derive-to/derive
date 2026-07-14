@@ -180,12 +180,17 @@ export const makeSlackIngestSender =
     const bot = await resolveBotToken(meta, link.org_id, encryptionKey)
     if (!bot) return { ok: true, status: "skipped: slack not connected" }
     const name = await slackUserName(bot.token, p.userId)
+    // If the Slack author has linked their account, attribute the comment to their real Derive
+    // user (and name) instead of an opaque slack:<id>; otherwise fall back to the Slack name.
+    const userLink = await meta.getSlackUserLinkBySlackId(bot.install.team_id, p.userId)
+    const deriveUser = userLink ? (await meta.getUsers([userLink.user_id]))[0] : undefined
     const created = await ingestSlackReply(meta, link, {
       ts: p.ts,
       userId: p.userId,
-      userName: name,
+      userName: deriveUser?.name ?? name,
       text: p.text,
       botUserId: bot.install.bot_user_id,
+      deriveUserId: userLink?.user_id ?? null,
     })
     if (created) bus?.publish(created.artifact_id, { type: "comment.created" })
     return { ok: true, status: created ? "ingested" : "skipped: own or duplicate" }
@@ -197,7 +202,16 @@ export const makeSlackIngestSender =
 export const ingestSlackReply = async (
   meta: MetaStore,
   link: SlackThreadLinkRecord,
-  args: { ts: string; userId: string; userName: string; text: string; botUserId: string | null },
+  args: {
+    ts: string
+    userId: string
+    userName: string
+    text: string
+    botUserId: string | null
+    /** The linked Derive user id, when the Slack author has linked their account — the comment
+     *  is then owned by that account; otherwise it's tagged with the opaque `slack:<id>`. */
+    deriveUserId?: string | null
+  },
 ): Promise<CommentRecord | null> => {
   if (args.botUserId && args.userId === args.botUserId) return null // our own post
   // Dedupe on the Slack message ts (re-deliveries / retries).
@@ -216,7 +230,7 @@ export const ingestSlackReply = async (
     anchor: null,
     body_md: args.text,
     author: args.userName,
-    author_id: `slack:${args.userId}`,
+    author_id: args.deriveUserId ?? `slack:${args.userId}`,
     meta: JSON.stringify({ slack: { ts: args.ts, channel: link.channel } }),
   })
 }

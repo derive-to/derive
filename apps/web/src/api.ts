@@ -760,6 +760,9 @@ export const api = {
     f("/v1/slack/prefs", { ...opts({ slack_dm }), method: "PATCH" }).then(j),
   sendSlackTestDm: (): Promise<{ ok: boolean }> =>
     f("/v1/slack/test-dm", { ...opts({}), method: "POST" }).then(j),
+  // Link is a redirect to /v1/slack/link (full-page navigation); only unlink is a fetch.
+  unlinkSlack: (): Promise<void> =>
+    f("/v1/slack/link", { method: "DELETE", credentials: "include" }).then(() => undefined),
 
   // Workspace name + members (Admin / Creator / Viewer = owner / editor / commenter)
   getWorkspace: (): Promise<Workspace> => f("/v1/workspace", opts()).then(j),

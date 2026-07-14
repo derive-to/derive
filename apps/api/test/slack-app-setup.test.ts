@@ -10,7 +10,10 @@ describe("buildSlackManifest", () => {
     // The whole point: a self-hoster never hand-edits a placeholder (the gap that
     // left reply-back dead). Serialize and assert the token is gone entirely.
     expect(JSON.stringify(m)).not.toContain("<BASE_URL>")
-    expect(m.oauth_config.redirect_urls).toEqual([`${BASE}/v1/slack/oauth/callback`])
+    expect(m.oauth_config.redirect_urls).toEqual([
+      `${BASE}/v1/slack/oauth/callback`,
+      `${BASE}/v1/slack/link/callback`,
+    ])
     expect(m.settings.event_subscriptions.request_url).toBe(`${BASE}/v1/slack/events`)
   })
 

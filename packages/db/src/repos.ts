@@ -75,6 +75,7 @@ import type {
   SessionState,
   SlackInstallRecord,
   SlackThreadLinkRecord,
+  SlackUserLinkRecord,
   TakedownInput,
   UserNotificationPrefRecord,
   UserProfile,
@@ -140,6 +141,7 @@ import {
   sessionMessage,
   slackInstall,
   slackThreadLink,
+  slackUserLink,
   userNotificationPref,
   version,
   webhook,
@@ -1792,6 +1794,38 @@ export function makeRepos(db: SqliteDb) {
       .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
       .run()
   }
+  const getSlackUserLinkBySlackId = async (
+    teamId: string,
+    slackUserId: string,
+  ): Promise<SlackUserLinkRecord | null> =>
+    (await db
+      .select()
+      .from(slackUserLink)
+      .where(and(eq(slackUserLink.team_id, teamId), eq(slackUserLink.slack_user_id, slackUserId)))
+      .get()) ?? null
+  const getSlackUserLinkByUser = async (
+    teamId: string,
+    userId: string,
+  ): Promise<SlackUserLinkRecord | null> =>
+    (await db
+      .select()
+      .from(slackUserLink)
+      .where(and(eq(slackUserLink.team_id, teamId), eq(slackUserLink.user_id, userId)))
+      .get()) ?? null
+  const setSlackUserLink = async (l: SlackUserLinkRecord): Promise<void> => {
+    const { id: _i, created_at: _c, ...set } = l
+    await db
+      .insert(slackUserLink)
+      .values(l)
+      .onConflictDoUpdate({ target: [slackUserLink.team_id, slackUserLink.slack_user_id], set })
+      .run()
+  }
+  const deleteSlackUserLink = async (teamId: string, userId: string): Promise<void> => {
+    await db
+      .delete(slackUserLink)
+      .where(and(eq(slackUserLink.team_id, teamId), eq(slackUserLink.user_id, userId)))
+      .run()
+  }
   const getUserNotificationPref = async (
     orgId: string,
     userId: string,
@@ -2763,6 +2797,10 @@ export function makeRepos(db: SqliteDb) {
     getSlackThreadLinkByThread,
     getSlackThreadLinkByTs,
     setSlackThreadLink,
+    getSlackUserLinkBySlackId,
+    getSlackUserLinkByUser,
+    setSlackUserLink,
+    deleteSlackUserLink,
     getUserNotificationPref,
     setUserNotificationPref,
     upsertGithubInstallation,
