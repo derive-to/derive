@@ -87,3 +87,21 @@ export const reworkInstruction = (profileLive: boolean): string =>
   "then revise the whole document so its voice, structure, and formatting match. " +
   "Preserve the meaning and the facts; change how it reads, not what it says. " +
   "Publish the result as a new version."
+
+/** How many inbox rows a request-queue read pulls at a time. The queue is a working
+ *  set, not an archive — an agent that lets it grow past this has stopped acking. */
+export const AGENT_INBOX_PAGE = 50
+
+/**
+ * The pointer appended to an agent connection's MCP `instructions` when work is
+ * waiting. The inbox is a PULL queue: a connected session may be the only runtime
+ * that ever reads it, so the queue goes in front of the agent at connect rather than
+ * waiting to be asked for.
+ */
+export const pendingRequestsPointer = (count: number): string =>
+  count === 0
+    ? ""
+    : ` You have ${count} pending request${count === 1 ? "" : "s"}: teammates @mentioned you` +
+      ` with work to do. Call check_requests FIRST — read each request, do what it asks on the` +
+      ` named artifact, then pass the handled ids back via check_requests({ack:[…]}) so they` +
+      ` leave the queue.`

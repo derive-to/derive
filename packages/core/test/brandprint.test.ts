@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   brandprintInstructions,
   parseBrandprint,
+  pendingRequestsPointer,
   profileState,
   resolveBrandprint,
   reworkInstruction,
@@ -88,5 +89,14 @@ describe("reworkInstruction", () => {
     const s = reworkInstruction(true)
     expect(s).toContain("Read derive://brandprint/profile first")
     expect(s).toContain("derive://brandprint/*")
+  })
+})
+
+describe("pendingRequestsPointer", () => {
+  it("is empty with nothing queued, and steers to check_requests when work waits", () => {
+    expect(pendingRequestsPointer(0)).toBe("")
+    expect(pendingRequestsPointer(1)).toContain("1 pending request:")
+    expect(pendingRequestsPointer(2)).toContain("2 pending requests:")
+    expect(pendingRequestsPointer(1)).toContain("check_requests")
   })
 })

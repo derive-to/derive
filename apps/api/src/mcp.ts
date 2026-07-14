@@ -13,10 +13,12 @@
 // shaped to the agent's workflow (not the API surface), high-signal responses with
 // truncate-and-steer, semantic ids (short_id / vN / page path — never UUIDs),
 // actionable errors, and identity carried in the server `instructions` rather than a
-// tool slot. Seven tools, one per intent — WORKSPACES (list_workspaces), FIND
+// tool slot. Eight tools, one per intent — WORKSPACES (list_workspaces), FIND
 // (list_artifacts), READ content (read), GREP (search), CATCH UP on state/feedback/
-// history (catch_up), COMMENT (comment), and WRITE (publish). Variation lives in
-// parameters, never a new tool: `since_version`/`to_version` turn catch_up into a
+// history (catch_up), COMMENT (comment), WRITE (publish), and the WORK QUEUE
+// (check_requests: what teammates asked THIS agent to do — the one intent that is
+// about the agent rather than a document, which is why it earns a slot instead of a
+// parameter on catch_up). Variation lives in parameters, never a new tool: `since_version`/`to_version` turn catch_up into a
 // diff, `reply_to`/`set_state` fold reply+resolve into comment, `for_review`/role
 // turn publish into a human-reviewed proposal, and omitting `short_id` turns
 // `search` from grep-one-artifact into grep-the-workspace. A new capability is a
@@ -24,6 +26,7 @@
 // a slot to understand and choose between.
 
 import {
+  AGENT_INBOX_PAGE,
   type AgentRecord,
   type ArtifactRecord,
   artifactUrl,
@@ -43,6 +46,7 @@ import {
   outlineOf,
   PublishError,
   parseFrontmatter,
+  pendingRequestsPointer,
   profileState,
   propose as proposeChange,
   publishAdvisories,
@@ -267,6 +271,9 @@ async function buildServer(
   // re-capped against each roamed workspace's membership — exactly like the
   // X-Derive-Workspace header re-home in agentFor.
   scopeForCap: Role,
+  // A registered workspace agent (dk_agt_ token), not a human's OAuth grant. Only a
+  // registered agent has a request inbox: it is the id an @mention can name.
+  registered: boolean,
   // The workspaces this grant is scoped to (the consent multi-select). EMPTY =
   // "all workspaces" — every workspace the owner belongs to. A non-empty set
   // clamps list_workspaces + the `workspace` arg + cross-workspace read to
@@ -283,13 +290,13 @@ async function buildServer(
 
   // Resolve the Brandprint for this actor: the workspace's conventions merged with the
   // owner's personal ones (profile wins). Each convention doc becomes a readable resource;
-  // a one-line pointer goes in the instructions (bodies load lazily on read). The agent's
-  // pending requests ride the same batch (independent reads): requests exist only for
-  // registered agents — the @mention fan-out keys on the agent table's id — so an OAuth
-  // grant's list is simply empty.
+  // a one-line pointer goes in the instructions (bodies load lazily on read). The request
+  // queue rides the same batch (independent reads), but only for a registered agent: an
+  // OAuth grant's id is synthetic (oauth:<client>) and can never be @mentioned, so
+  // querying its inbox would be a guaranteed-empty read on every human's every call.
   const [resolved, pendingRequests] = await Promise.all([
     resolveActorBrandprint(ctx.meta, agent.org_id, ownerId),
-    ctx.meta.listPendingAgentMentions(agent.id, 50),
+    registered ? ctx.meta.listPendingAgentMentions(agent.id, AGENT_INBOX_PAGE) : [],
   ])
   const conventionDocs: ArtifactRecord[] = []
   const seenBp = new Set<string>()
@@ -317,17 +324,6 @@ async function buildServer(
   // The profile artifact rides in the Brandprint collection but is not a source doc:
   // pending it's an empty stub, live it's served as derive://brandprint/profile below.
   const bpSources = conventionDocs.filter((d) => d.short_id !== resolved.profileId)
-
-  // Work handed to this agent (an ask-agent or Rework @mention) waits in a pull
-  // inbox, and this connection may be the only runtime that ever reads it — so the
-  // queue goes in front of the agent at connect instead of waiting to be asked.
-  const requestsPointer = pendingRequests.length
-    ? ` You have ${pendingRequests.length} pending request${
-        pendingRequests.length === 1 ? "" : "s"
-      }: teammates @mentioned you with work to do. Call check_requests FIRST — read each ` +
-      `request, do what it asks on the named artifact, then pass the handled ids back via ` +
-      `check_requests({ack:[…]}) so they leave the queue.`
-    : ""
 
   const server = new McpServer(
     { name: "derive", version: "1.0.0" },
@@ -363,7 +359,7 @@ async function buildServer(
         `catch_up, comment, publish, list_artifacts). read/catch_up/comment also find a short_id in ` +
         `any of them automatically, so you never need to switch just to open a doc.` +
         brandprintInstructions(bpSources.length, bpProfile) +
-        requestsPointer,
+        pendingRequestsPointer(pendingRequests.length),
     },
   )
 
@@ -586,12 +582,11 @@ async function buildServer(
       "Workspace to act in — its id or name from list_workspaces. Omit for your default workspace; read/catch_up/comment also find a short_id in ANY of your workspaces automatically.",
     )
 
-  // WORKSPACES — the switcher: every workspace this one login can reach --------
-  // WORK QUEUE ------------------------------------------------------------------
-  // The pull inbox behind the ask-agent and Rework buttons: a teammate @mentions
-  // this agent in a comment and the request waits here until some session of the
-  // agent reads and acks it. Registered for every connection — a human grant simply
-  // has an empty queue — so the tool surface can't differ by auth kind.
+  // WORK QUEUE — what teammates asked this agent to do -------------------------
+  // The pull inbox behind the ask-agent and Rework buttons: a teammate @mentions this
+  // agent in a comment and the request waits here until some session of the agent reads
+  // and acks it. Registered on every connection — a human grant simply has an empty
+  // queue — so the tool surface never differs by auth kind.
   server.registerTool(
     "check_requests",
     {
@@ -607,18 +602,15 @@ async function buildServer(
       },
     },
     async ({ ack }) => {
-      // `acked` counts what actually LEFT the queue: guard by the current pending
-      // set so a repeated or unknown id is a silent no-op, not a phantom ack (the
-      // store's ack matches the row whether or not it was already acknowledged).
+      const queue = await ctx.meta.listPendingAgentMentions(agent.id, AGENT_INBOX_PAGE)
+      // `acked` counts what actually LEFT the queue, so acking is idempotent: the store
+      // matches a row whether or not it was already acknowledged, so an unknown or
+      // repeated id would otherwise inflate the count. Ack against the queue we just
+      // read, and answer from it — no second round-trip.
+      const handled = new Set((ack ?? []).filter((id) => queue.some((m) => m.id === id)))
       let acked = 0
-      if (ack?.length) {
-        const current = new Set(
-          (await ctx.meta.listPendingAgentMentions(agent.id, 50)).map((m) => m.id),
-        )
-        for (const id of ack)
-          if (current.has(id) && (await ctx.meta.ackAgentMention(agent.id, id))) acked++
-      }
-      const pending = await ctx.meta.listPendingAgentMentions(agent.id, 50)
+      for (const id of handled) if (await ctx.meta.ackAgentMention(agent.id, id)) acked++
+      const pending = queue.filter((m) => !handled.has(m.id))
       return json({
         acked,
         pending: pending.map((m) => ({
@@ -2129,7 +2121,15 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
     const grant = await ctx.oauthGrant(c)
     const scopeForCap = grant?.scopeRole ?? agent.role
     const boundWorkspaces = grant?.boundWorkspaces ?? []
-    const server = await buildServer(ctx, agent, actingFor, ownerId, scopeForCap, boundWorkspaces)
+    const server = await buildServer(
+      ctx,
+      agent,
+      actingFor,
+      ownerId,
+      scopeForCap,
+      !grant,
+      boundWorkspaces,
+    )
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
     return transport.handleRequest(c)
