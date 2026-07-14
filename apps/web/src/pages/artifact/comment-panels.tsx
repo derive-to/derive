@@ -226,179 +226,177 @@ export function MobileComments({
     if (head.anchor) tree.onJump(head.thread_id)
   }
   return (
-    <>
-      <aside
-        ref={sheetRef}
-        className={cn(
-          // The slide rides the `translate` property (translate-y-full/0), so the
-          // transition MUST target `translate` — not `transform` — or the sheet jumps
-          // in and out instead of sliding. Height changes snap (auto isn't
-          // animatable); the drag handlers suspend/restore this transition inline.
-          "fixed inset-x-0 bottom-0 z-61 flex flex-col rounded-t-2xl border-t border-border bg-card shadow-[var(--shadow-pop)] transition-[translate] duration-200 ease-out",
-          // Heights are CONTENT-WEIGHTED: composing is a compact bar above the
-          // keyboard; expanded hugs its comments up to half the screen (the doc
-          // strip above stays visible and live — no reading mode that owns the
-          // whole screen); peek is a slim bar, one line taller with a preview.
-          composer ? "max-h-[80vh]" : size === "full" ? "max-h-[50vh]" : latest ? "h-24" : "h-18.5",
-          open ? "translate-y-0" : "translate-y-full",
-        )}
-        // While the keyboard is up, lift the sheet's bottom to just above it and cap
-        // its height to the visible band — so the half-height composer sits in view
-        // (with a sliver of document above) instead of behind/under the keyboard.
-        style={kb ? { bottom: kb.inset, maxHeight: kb.height } : undefined}
-        // Non-modal by design: the document above stays visible and interactive in
-        // every state, so this is an aside, not a dialog (no focus trap, no scrim).
-        aria-label="Comments"
+    <aside
+      ref={sheetRef}
+      className={cn(
+        // The slide rides the `translate` property (translate-y-full/0), so the
+        // transition MUST target `translate` — not `transform` — or the sheet jumps
+        // in and out instead of sliding. Height changes snap (auto isn't
+        // animatable); the drag handlers suspend/restore this transition inline.
+        "fixed inset-x-0 bottom-0 z-61 flex flex-col rounded-t-2xl border-t border-border bg-card shadow-[var(--shadow-pop)] transition-[translate] duration-200 ease-out",
+        // Heights are CONTENT-WEIGHTED: composing is a compact bar above the
+        // keyboard; expanded hugs its comments up to half the screen (the doc
+        // strip above stays visible and live — no reading mode that owns the
+        // whole screen); peek is a slim bar, one line taller with a preview.
+        composer ? "max-h-[80vh]" : size === "full" ? "max-h-[50vh]" : latest ? "h-24" : "h-18.5",
+        open ? "translate-y-0" : "translate-y-full",
+      )}
+      // While the keyboard is up, lift the sheet's bottom to just above it and cap
+      // its height to the visible band — so the half-height composer sits in view
+      // (with a sliver of document above) instead of behind/under the keyboard.
+      style={kb ? { bottom: kb.inset, maxHeight: kb.height } : undefined}
+      // Non-modal by design: the document above stays visible and interactive in
+      // every state, so this is an aside, not a dialog (no focus trap, no scrim).
+      aria-label="Comments"
+    >
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: the grip/header strip is a drag handle (pointer events) with tap-to-toggle; the real controls inside are buttons. */}
+      <div
+        className="shrink-0 touch-none"
+        onPointerDown={dragStart}
+        onPointerMove={dragMove}
+        onPointerUp={dragEnd}
+        onPointerCancel={dragEnd}
       >
-        {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: the grip/header strip is a drag handle (pointer events) with tap-to-toggle; the real controls inside are buttons. */}
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: grip toggles the sheet size; keyboard users have the labeled caret button below. */}
         <div
-          className="shrink-0 touch-none"
-          onPointerDown={dragStart}
-          onPointerMove={dragMove}
-          onPointerUp={dragEnd}
-          onPointerCancel={dragEnd}
+          data-testid="comments-sheet-grip"
+          className="flex cursor-grab justify-center pb-1 pt-2"
+          onClick={grip}
+          title="Resize"
         >
-          {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: grip toggles the sheet size; keyboard users have the labeled caret button below. */}
-          <div
-            data-testid="comments-sheet-grip"
-            className="flex cursor-grab justify-center pb-1 pt-2"
-            onClick={grip}
-            title="Resize"
-          >
-            <div className="h-1 w-10 rounded-full bg-border" />
-          </div>
-          <div className="flex items-center gap-2 border-b border-border-soft pb-3 pl-3 pr-2.5 pt-2">
-            <CommentsHeading count={openThreads.length} />
-            {size === "full" && !composer && openThreads.length > 1 && (
-              // Step through the discussion one thread at a time: the card scrolls
-              // into view and an anchored thread scrolls the doc to its highlight.
-              <div className="flex items-center gap-0.5 font-mono text-xs tabular-nums text-muted-foreground">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Previous comment"
-                  data-testid="comments-step-prev"
-                  onClick={() => stepTo(stepIdx - 1)}
-                >
-                  <Icon name="caret" className="size-4 rotate-90" />
-                </Button>
-                {stepIdx + 1}/{openThreads.length}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Next comment"
-                  data-testid="comments-step-next"
-                  onClick={() => stepTo(stepIdx + 1)}
-                >
-                  <Icon name="caret" className="size-4 -rotate-90" />
-                </Button>
-              </div>
-            )}
-            {canComment && (
-              <Button
-                variant="outline"
-                size="sm"
-                data-testid="comments-sheet-new"
-                onClick={() => {
-                  setSize("full")
-                  onNewGeneral()
-                }}
-              >
-                <Icon name="plus" size={16} />
-                New
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={size === "peek" ? "Expand" : "Collapse"}
-              data-testid="comments-sheet-resize"
-              onClick={() => setSize(size === "peek" ? "full" : "peek")}
-            >
-              <Icon name="caret" className={cn("size-4", size === "peek" && "rotate-180")} />
-            </Button>
-          </div>
+          <div className="h-1 w-10 rounded-full bg-border" />
         </div>
-        {composer ? (
-          // Composing ("half open"): just the composer, so the sheet is a compact bar
-          // pinned above the keyboard with the document visible above. The list
-          // reappears once you send or cancel.
-          <div className="overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
-            <Composer
-              quote={selLabel(composer.anchor)}
-              agent={composer.agent}
-              // After posting, open the full list so the new comment is visible (the
-              // sheet would otherwise drop back to the peek bar and hide it).
-              onSubmit={(text, mentions) => {
-                setSize("full")
-                onSubmitNew(text, mentions)
-              }}
-              onCancel={onCancelNew}
-            />
-          </div>
-        ) : size === "full" ? (
-          <CommentTreeProvider value={sheetTree}>
-            <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
-              {empty && (
-                <EmptyState
-                  className="p-8"
-                  icon={<Icon name="comments" strokeWidth={1.75} />}
-                  title="Start the conversation."
-                  description="Select text in the document, or add a general comment."
-                  action={
-                    canComment ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        data-testid="comments-sheet-empty-new"
-                        onClick={() => {
-                          setSize("full")
-                          onNewGeneral()
-                        }}
-                      >
-                        New comment
-                      </Button>
-                    ) : undefined
-                  }
-                />
-              )}
-              {openThreads.map((t) => {
-                const head = t[0]
-                if (!head) return null
-                return (
-                  <div key={head.thread_id} data-thread-id={head.thread_id} className="mb-2.5">
-                    <CommentCard thread={t} />
-                  </div>
-                )
-              })}
-              {resolved.length > 0 && (
-                <CollapsibleThreadSection
-                  label="Resolved"
-                  defaultOpen={false}
-                  testId="resolved-section-toggle"
-                  className="mt-1"
-                  threads={resolved}
-                />
-              )}
+        <div className="flex items-center gap-2 border-b border-border-soft pb-3 pl-3 pr-2.5 pt-2">
+          <CommentsHeading count={openThreads.length} />
+          {size === "full" && !composer && openThreads.length > 1 && (
+            // Step through the discussion one thread at a time: the card scrolls
+            // into view and an anchored thread scrolls the doc to its highlight.
+            <div className="flex items-center gap-0.5 font-mono text-xs tabular-nums text-muted-foreground">
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Previous comment"
+                data-testid="comments-step-prev"
+                onClick={() => stepTo(stepIdx - 1)}
+              >
+                <Icon name="caret" className="size-4 rotate-90" />
+              </Button>
+              {stepIdx + 1}/{openThreads.length}
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Next comment"
+                data-testid="comments-step-next"
+                onClick={() => stepTo(stepIdx + 1)}
+              >
+                <Icon name="caret" className="size-4 -rotate-90" />
+              </Button>
             </div>
-          </CommentTreeProvider>
-        ) : latest ? (
-          // Peek preview: a one-line teaser of the latest comment, so the resting
-          // sheet shows the live discussion. Tapping it expands to the full list.
-          <button
-            type="button"
-            data-testid="comments-peek-preview"
-            onClick={() => setSize("full")}
-            className="flex min-w-0 items-center gap-1.5 px-3 pt-0.5 pb-[max(12px,env(safe-area-inset-bottom))] text-left"
+          )}
+          {canComment && (
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="comments-sheet-new"
+              onClick={() => {
+                setSize("full")
+                onNewGeneral()
+              }}
+            >
+              <Icon name="plus" size={16} />
+              New
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={size === "peek" ? "Expand" : "Collapse"}
+            data-testid="comments-sheet-resize"
+            onClick={() => setSize(size === "peek" ? "full" : "peek")}
           >
-            <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
-              <span className="font-medium text-foreground">{latest.author}</span>{" "}
-              {teaser(latest.body_md)}
-            </span>
-          </button>
-        ) : null}
-      </aside>
-    </>
+            <Icon name="caret" className={cn("size-4", size === "peek" && "rotate-180")} />
+          </Button>
+        </div>
+      </div>
+      {composer ? (
+        // Composing ("half open"): just the composer, so the sheet is a compact bar
+        // pinned above the keyboard with the document visible above. The list
+        // reappears once you send or cancel.
+        <div className="overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
+          <Composer
+            quote={selLabel(composer.anchor)}
+            agent={composer.agent}
+            // After posting, open the full list so the new comment is visible (the
+            // sheet would otherwise drop back to the peek bar and hide it).
+            onSubmit={(text, mentions) => {
+              setSize("full")
+              onSubmitNew(text, mentions)
+            }}
+            onCancel={onCancelNew}
+          />
+        </div>
+      ) : size === "full" ? (
+        <CommentTreeProvider value={sheetTree}>
+          <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
+            {empty && (
+              <EmptyState
+                className="p-8"
+                icon={<Icon name="comments" strokeWidth={1.75} />}
+                title="Start the conversation."
+                description="Select text in the document, or add a general comment."
+                action={
+                  canComment ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid="comments-sheet-empty-new"
+                      onClick={() => {
+                        setSize("full")
+                        onNewGeneral()
+                      }}
+                    >
+                      New comment
+                    </Button>
+                  ) : undefined
+                }
+              />
+            )}
+            {openThreads.map((t) => {
+              const head = t[0]
+              if (!head) return null
+              return (
+                <div key={head.thread_id} data-thread-id={head.thread_id} className="mb-2.5">
+                  <CommentCard thread={t} />
+                </div>
+              )
+            })}
+            {resolved.length > 0 && (
+              <CollapsibleThreadSection
+                label="Resolved"
+                defaultOpen={false}
+                testId="resolved-section-toggle"
+                className="mt-1"
+                threads={resolved}
+              />
+            )}
+          </div>
+        </CommentTreeProvider>
+      ) : latest ? (
+        // Peek preview: a one-line teaser of the latest comment, so the resting
+        // sheet shows the live discussion. Tapping it expands to the full list.
+        <button
+          type="button"
+          data-testid="comments-peek-preview"
+          onClick={() => setSize("full")}
+          className="flex min-w-0 items-center gap-1.5 px-3 pt-0.5 pb-[max(12px,env(safe-area-inset-bottom))] text-left"
+        >
+          <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">{latest.author}</span>{" "}
+            {teaser(latest.body_md)}
+          </span>
+        </button>
+      ) : null}
+    </aside>
   )
 }
 
