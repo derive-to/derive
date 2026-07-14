@@ -34,3 +34,17 @@ export const openButton = (url: string, text = "Open in Derive") => ({
   text: { type: "plain_text", text },
   url,
 })
+/** An interactive button: clicking POSTs to the app's interactivity request URL with the
+ *  `action_id` + `value` (unlike openButton, which is a plain link). `value` ≤ 2000 chars. */
+export const actionButton = (
+  actionId: string,
+  text: string,
+  value: string,
+  style?: "primary" | "danger",
+) => ({
+  type: "button",
+  action_id: actionId,
+  text: { type: "plain_text", text },
+  value,
+  ...(style ? { style } : {}),
+})

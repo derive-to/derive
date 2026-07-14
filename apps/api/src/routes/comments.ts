@@ -25,6 +25,7 @@ import { notifyCommentBells } from "../lib/notify-comment"
 import { enqueueCommentEmails } from "../lib/notify-email"
 import { enqueueSlackComment } from "../lib/slack-comments"
 import { enqueueSlackMentionDms } from "../lib/slack-dm"
+import { resolveThreadAction } from "../lib/thread-actions"
 import { Mention as MentionSchema } from "../schemas"
 
 /** Comments: threaded, anchored to text quotes, with reactions, edits, and soft
@@ -351,9 +352,12 @@ export const commentRoutes = (ctx: AppContext) => {
       const body = await readJson(c, z.object({ state: z.string().optional() }))
       if (body instanceof Response) return bail(body)
       const state: "open" | "resolved" = body.state === "open" ? "open" : "resolved"
-      const updated = await meta.setThreadState(artifact.id, cm.thread_id, state)
-      bus.publish(artifact.id, { type: "comment.resolved", thread_id: cm.thread_id, state })
-      await notify(artifact, "comment.resolved", { state, thread_id: cm.thread_id })
+      const updated = await resolveThreadAction(
+        { meta, bus, notify },
+        artifact,
+        cm.thread_id,
+        state,
+      )
       return c.json({ thread_id: cm.thread_id, state, updated })
     },
   )

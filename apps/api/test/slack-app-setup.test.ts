@@ -35,6 +35,11 @@ describe("buildSlackManifest", () => {
     )
   })
 
+  it("enables interactivity pointed at this instance (comment-card buttons post here)", () => {
+    expect(m.settings.interactivity.is_enabled).toBe(true)
+    expect(m.settings.interactivity.request_url).toBe(`${BASE}/v1/slack/interactivity`)
+  })
+
   it("is named just Derive (Slack caps the app name at 35 chars)", () => {
     expect(m.display_information.name).toBe("Derive")
     expect(m.display_information.name.length).toBeLessThanOrEqual(35)

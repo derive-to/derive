@@ -1,8 +1,18 @@
 import { createHmac } from "node:crypto"
-import type { CommentRecord, MetaStore, NewComment, SlackThreadLinkRecord } from "@derive/core"
+import {
+  type CommentRecord,
+  DEFAULT_ORG_SETTINGS,
+  type MetaStore,
+  type NewComment,
+  type SlackThreadLinkRecord,
+} from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { encryptSecret } from "../src/lib/crypto"
-import { ingestSlackReply, makeSlackIngestSender } from "../src/lib/slack-comments"
+import {
+  ingestSlackReply,
+  makeSlackIngestSender,
+  SLACK_THREAD_ACTION,
+} from "../src/lib/slack-comments"
 import { runDeliveryTick } from "../src/webhooks"
 import { as, quotaApp, type TestUser } from "./helpers"
 
@@ -61,6 +71,31 @@ const postEvent = (app: TestApp, body: string) => {
     body,
   })
 }
+
+// A signed Block Kit interactivity POST (form-encoded: payload=<url-encoded JSON>).
+const postInteract = (app: TestApp, payload: unknown) => {
+  const raw = `payload=${encodeURIComponent(JSON.stringify(payload))}`
+  const ts = String(Math.floor(Date.now() / 1000))
+  return app.request("/v1/slack/interactivity", {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      "x-slack-request-timestamp": ts,
+      "x-slack-signature": sign(ts, raw),
+    },
+    body: raw,
+  })
+}
+
+// "T1" matches the team_id seedResolvable stores on the install (the acting-team authz bind).
+const threadAction = (artifactId: string, threadId: string, actionId: string, teamId = "T1") => ({
+  type: "block_actions",
+  response_url: "https://hooks.slack.test/response",
+  team: { id: teamId },
+  user: { username: "dana" },
+  actions: [{ action_id: actionId, value: JSON.stringify({ a: artifactId, t: threadId }) }],
+  message: { blocks: [{ type: "section", text: { type: "mrkdwn", text: "a comment" } }] },
+})
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -424,5 +459,214 @@ describe("slack events endpoint", () => {
       new Date(Date.now() + 120_000).toISOString(),
     )
     expect(rows.some((d) => d.kind === "slack_ingest")).toBe(false)
+  })
+})
+
+describe("slack interactivity endpoint (resolve/reopen from a button)", () => {
+  // Seed an artifact + connected install + a thread link + a root comment to act on.
+  const seedResolvable = async (
+    meta: MetaStore,
+    ids: { artifact: string; short: string; thread: string },
+  ) => {
+    const artifact = await meta.createArtifact({
+      id: ids.artifact,
+      short_id: ids.short,
+      org_id: "default",
+      slug: null,
+      title: "Doc",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+      kind: "file",
+      spa: 0,
+    })
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      default_channel: "C1",
+      created_at: new Date().toISOString(),
+    })
+    await meta.setSlackThreadLink({
+      id: `stl-${ids.thread}`,
+      org_id: "default",
+      artifact_id: artifact.id,
+      thread_id: ids.thread,
+      channel: "C1",
+      message_ts: `${ids.thread}.1`,
+      created_at: new Date().toISOString(),
+    })
+    // A root comment (thread_id === id) so there's a thread to flip and assert on.
+    await meta.createComment({
+      id: ids.thread,
+      artifact_id: artifact.id,
+      thread_id: ids.thread,
+      base_version: 0,
+      path: null,
+      anchor: null,
+      body_md: "hi",
+      author: "A",
+      author_id: "u1",
+    })
+    return artifact
+  }
+
+  it("rejects an unsigned or wrongly-signed interactivity request", async () => {
+    const { app } = make("slack-int-badsig")
+    const unsigned = await app.request("/v1/slack/interactivity", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "payload=%7B%7D",
+    })
+    expect(unsigned.status).toBe(401)
+    // A present-but-wrong signature is also rejected (constant-time compare, not "any v0=").
+    const ts = String(Math.floor(Date.now() / 1000))
+    const wrong = await app.request("/v1/slack/interactivity", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-slack-request-timestamp": ts,
+        "x-slack-signature": "v0=deadbeef",
+      },
+      body: "payload=%7B%7D",
+    })
+    expect(wrong.status).toBe(401)
+  })
+
+  it("ignores a click whose Slack team does not own the thread's org (cross-org guard)", async () => {
+    const { app, meta } = make("slack-int-xorg")
+    const artifact = await seedResolvable(meta, {
+      artifact: "a-int-x",
+      short: "intxor01",
+      thread: "c-int-x",
+    })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 })),
+    )
+    // Signed + valid ids, but the acting team ("T-EVIL") isn't the org's install team ("T1").
+    const r = await postInteract(
+      app,
+      threadAction(artifact.id, "c-int-x", SLACK_THREAD_ACTION.resolve, "T-EVIL"),
+    )
+    expect(r.status).toBe(200)
+    const cm = (await meta.listComments(artifact.id)).find((c) => c.id === "c-int-x")
+    expect(cm?.state).toBe("open") // not resolved — the team bind blocked it
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+  })
+
+  it("a signed Resolve click resolves the thread and updates the message", async () => {
+    const { app, meta } = make("slack-int-resolve")
+    const artifact = await seedResolvable(meta, {
+      artifact: "a-int-r",
+      short: "intres01",
+      thread: "c-int-r",
+    })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 })),
+    )
+
+    const r = await postInteract(
+      app,
+      threadAction(artifact.id, "c-int-r", SLACK_THREAD_ACTION.resolve),
+    )
+    expect(r.status).toBe(200)
+    const cm = (await meta.listComments(artifact.id)).find((c) => c.id === "c-int-r")
+    expect(cm?.state).toBe("resolved")
+
+    // The card was replaced via response_url with a Reopen button.
+    const call = vi.mocked(fetch).mock.calls.find(([u]) => String(u).includes("hooks.slack.test"))
+    expect(call).toBeTruthy()
+    const sent = JSON.parse(String(call?.[1]?.body))
+    expect(sent.replace_original).toBe(true)
+    expect(JSON.stringify(sent.blocks)).toContain(SLACK_THREAD_ACTION.reopen)
+  })
+
+  it("a Reopen click reopens a resolved thread", async () => {
+    const { app, meta } = make("slack-int-reopen")
+    const artifact = await seedResolvable(meta, {
+      artifact: "a-int-o",
+      short: "intreo01",
+      thread: "c-int-o",
+    })
+    await meta.setThreadState(artifact.id, "c-int-o", "resolved")
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 })),
+    )
+
+    const r = await postInteract(
+      app,
+      threadAction(artifact.id, "c-int-o", SLACK_THREAD_ACTION.reopen),
+    )
+    expect(r.status).toBe(200)
+    const cm = (await meta.listComments(artifact.id)).find((c) => c.id === "c-int-o")
+    expect(cm?.state).toBe("open")
+  })
+
+  it("ignores the click when the org's channel mirror (slackPost) is off", async () => {
+    const { app, meta } = make("slack-int-off")
+    const artifact = await seedResolvable(meta, {
+      artifact: "a-int-f",
+      short: "intoff01",
+      thread: "c-int-f",
+    })
+    await meta.setOrgSettings("default", { ...DEFAULT_ORG_SETTINGS, slackPost: false })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 })),
+    )
+
+    const r = await postInteract(
+      app,
+      threadAction(artifact.id, "c-int-f", SLACK_THREAD_ACTION.resolve),
+    )
+    expect(r.status).toBe(200)
+    // Trust gate closed → thread stays open, no message update sent.
+    const cm = (await meta.listComments(artifact.id)).find((c) => c.id === "c-int-f")
+    expect(cm?.state).toBe("open")
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+  })
+
+  it("ignores a click whose thread has no link (no forged targets)", async () => {
+    const { app, meta } = make("slack-int-nolink")
+    // An artifact + comment, but NO slack_thread_link for the thread.
+    const artifact = await meta.createArtifact({
+      id: "a-int-n",
+      short_id: "intnol01",
+      org_id: "default",
+      slug: null,
+      title: "Doc",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+      kind: "file",
+      spa: 0,
+    })
+    await meta.createComment({
+      id: "c-int-n",
+      artifact_id: artifact.id,
+      thread_id: "c-int-n",
+      base_version: 0,
+      path: null,
+      anchor: null,
+      body_md: "hi",
+      author: "A",
+      author_id: "u1",
+    })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 })),
+    )
+    const r = await postInteract(
+      app,
+      threadAction(artifact.id, "c-int-n", SLACK_THREAD_ACTION.resolve),
+    )
+    expect(r.status).toBe(200)
+    const cm = (await meta.listComments(artifact.id)).find((c) => c.id === "c-int-n")
+    expect(cm?.state).toBe("open")
   })
 })

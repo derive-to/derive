@@ -34,6 +34,11 @@ export const buildSlackManifest = (baseUrl: string) => {
         request_url: u("/v1/slack/events"),
         bot_events: ["message.channels", "message.groups", "message.im"],
       },
+      // Buttons on comment cards (resolve / reopen a thread) POST here.
+      interactivity: {
+        is_enabled: true,
+        request_url: u("/v1/slack/interactivity"),
+      },
       org_deploy_enabled: false,
       socket_mode_enabled: false,
       token_rotation_enabled: false,

@@ -135,6 +135,27 @@ export const postSlackMessage = async (
   return { ts: data.ts, channel: data.channel ?? args.channel }
 }
 
+/** Update the message an interaction came from, via its `response_url` (a signed URL valid
+ *  ~30 min, no token needed). `replace_original` swaps the whole message. Best-effort +
+ *  time-bounded: the interactivity ack must return well under Slack's 3s, and the action it
+ *  reflects has already been applied, so a slow/failed cosmetic update must not block. */
+export const postSlackResponseUrl = async (
+  responseUrl: string,
+  body: { text: string; blocks?: unknown; replace_original?: boolean },
+): Promise<boolean> => {
+  try {
+    const res = await fetch(responseUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(2500),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 /** Join a public channel so the bot can post to it (best-effort; private channels must
  *  invite the bot manually). Returns true on success. */
 export const joinSlackChannel = async (token: string, channel: string): Promise<boolean> => {
