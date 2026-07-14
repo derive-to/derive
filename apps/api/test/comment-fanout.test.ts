@@ -1,6 +1,7 @@
 import type { DeliveryRecord } from "@derive/core"
 import { DEFAULT_ORG_SETTINGS } from "@derive/core"
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { makeSlackSender } from "../src/lib/slack-comments"
 import { as, jsonAs, makeAuthedApp, pub, type TestUser } from "./helpers"
 
 // The other interrupt-worthy emails ride the same outbox: a review request (the
@@ -146,6 +147,93 @@ describe("comment channel fan-out", () => {
     await comment(app, shortId, owner.email)
     const kinds = (await claim(meta)).map((d) => d.kind)
     expect(kinds).not.toContain("slack_app")
+  })
+})
+
+describe("connected-channel event cards (publishes / proposals)", () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  // An install can't exist without the instance having Slack creds, so the app is built with
+  // them (notify only fans to the channel when `deps.slack` is set).
+  const authed = (name: string) =>
+    makeAuthedApp(name, [owner], "editor", {
+      deps: { slack: { clientId: "c", clientSecret: "s", signingSecret: "sig" } },
+    })
+
+  const connect = (meta: Awaited<ReturnType<typeof makeAuthedApp>>["meta"]) =>
+    meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: "xoxb-plain",
+      bot_user_id: "UBOT",
+      default_channel: "C1",
+      created_at: new Date().toISOString(),
+    })
+
+  it("a publish posts a version.published card to the connected channel", async () => {
+    const { app, meta } = authed("chan-publish")
+    await connect(meta)
+    await newArtifact(app) // publishes v1 → version.published
+    const card = (await claim(meta)).find(
+      (d) => d.kind === "slack_app" && d.event_type === "version.published",
+    )
+    expect(card).toBeTruthy()
+  })
+
+  it("does not post a channel card for a PRIVATE artifact's publish (no leak)", async () => {
+    const { app, meta } = authed("chan-private")
+    await connect(meta)
+    await pub(app, "# Secret", { visibility: "private" }, undefined, as(owner.email))
+    expect((await claim(meta)).map((d) => d.kind)).not.toContain("slack_app")
+  })
+
+  it("posts no channel card when the mirror (slackPost) is off", async () => {
+    const { app, meta } = authed("chan-off")
+    await connect(meta)
+    await meta.setOrgSettings("default", { ...DEFAULT_ORG_SETTINGS, slackPost: false })
+    await newArtifact(app)
+    expect((await claim(meta)).map((d) => d.kind)).not.toContain("slack_app")
+  })
+
+  it("the sender posts an event card top-level (not threaded under a comment)", async () => {
+    const { meta } = authed("chan-sender")
+    await connect(meta)
+    const d: DeliveryRecord = {
+      id: "wd-evt",
+      webhook_id: "internal",
+      url: "",
+      secret: "",
+      kind: "slack_app",
+      event_type: "version.published",
+      payload: JSON.stringify({
+        orgId: "default",
+        event: "version.published",
+        title: "Doc",
+        link: "https://derive.test/artifacts/abc",
+        author: "Ann",
+        version: 2,
+        message: null,
+      }),
+      status: "pending",
+      attempts: 0,
+      last_error: null,
+      next_attempt_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    }
+    let sent: { channel?: string; thread_ts?: string; blocks?: unknown } = {}
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { body?: string }) => {
+        sent = JSON.parse(init?.body ?? "{}")
+        return new Response(JSON.stringify({ ok: true, ts: "1.1", channel: "C1" }))
+      }),
+    )
+    const res = await makeSlackSender(meta, "k")(d)
+    expect(res.ok).toBe(true)
+    expect(sent.channel).toBe("C1")
+    expect(sent.thread_ts).toBeUndefined() // top-level, not a threaded reply
+    expect(JSON.stringify(sent.blocks)).toContain("published")
   })
 })
 

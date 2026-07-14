@@ -37,6 +37,7 @@ import {
   type RateLimiters,
   rateLimited,
 } from "./lib/rate-limit"
+import { enqueueSlackChannelEvent } from "./lib/slack-comments"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
@@ -250,20 +251,40 @@ export function buildContext(deps: AppDeps) {
   // delivers). Awaited so the row is durable before we respond, but never fatal.
   // When something was enqueued, poke the drainer so it goes out now instead of on
   // the next interval/alarm tick.
-  const notify = (a: ArtifactRecord, event: WebhookEvent, data: Record<string, unknown>) =>
-    enqueueForEvent(meta, deps.baseUrl, a, event, data)
+  const logEnqueueError =
+    (what: string, a: ArtifactRecord, event: WebhookEvent) => (err: unknown) =>
+      // Non-fatal (the request still succeeds), but a dropped enqueue means the delivery
+      // silently never fires — log it rather than swallow.
+      log.error(`${what} enqueue failed`, {
+        event,
+        artifact: a.short_id,
+        error: err instanceof Error ? err.message : String(err),
+      })
+
+  const notify = (
+    a: ArtifactRecord,
+    event: WebhookEvent,
+    data: Record<string, unknown>,
+  ): Promise<void> => {
+    // The two fan-outs are independent: one's failure must not skip the other's drain poke.
+    // User-configured webhooks (generic + Slack incoming-webhook rows).
+    const webhooks = enqueueForEvent(meta, deps.baseUrl, a, event, data)
       .then((queued) => {
         if (queued > 0) deps.pokeWebhooks?.()
       })
-      .catch((err) =>
-        // Non-fatal (the request still succeeds), but a dropped enqueue means the
-        // webhook silently never fires — log it rather than swallow.
-        log.error("webhook enqueue failed", {
-          event,
-          artifact: a.short_id,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      )
+      .catch(logEnqueueError("webhook", a, event))
+    // The connected Slack App's channel — a top-level card for artifact-lifecycle events
+    // (publish / proposal), gated inside the helper on visibility + connected channel + slackPost.
+    // Skipped entirely when no Slack app is configured on this instance (no wasted lookup).
+    const channel = deps.slack
+      ? enqueueSlackChannelEvent(meta, deps.baseUrl, a, event, data)
+          .then((posted) => {
+            if (posted) deps.pokeWebhooks?.()
+          })
+          .catch(logEnqueueError("slack channel", a, event))
+      : Promise.resolve()
+    return Promise.all([webhooks, channel]).then(() => {})
+  }
 
   // Enqueue a screenshot render for a newly-published version. Fire-and-forget,
   // mirroring `notify` above: non-fatal (logged on error), never awaited in the
