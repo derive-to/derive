@@ -1,6 +1,6 @@
 # Brandprint
 
-Status: living spec. Phases 0 and 1 have shipped end to end. Phase 2, the brand profile (our take on tasteprofile.io), is built and in review (#392); Rework (Phase 3) is the next build.
+Status: living spec. Phases 0–2 have shipped end to end (#392 merged the brand profile). Phase 3, Rework, is built (this PR); Phase 4 remains directional.
 Owner: Connor
 Related prior art: `feat/house-style` (Anir, unmerged; ported forward as Phase 0)
 
@@ -18,8 +18,8 @@ Every team gets a **Brandprint**: their voice, style, and rules captured once, d
 | Phase 1: docs managed on `/brandprint` only (collection hidden from Collections) + team-scope dialog copy | Shipped (#386) |
 | Phase 1: shared Connect-an-agent surface | Shipped (#388) |
 | Phase 1: onboarding step + owner home nudge | Shipped (#388) |
-| Phase 2: the brand profile (agent-generated, tasteprofile take) | Built, in review (#392) |
-| Phase 3: Rework button + endpoint + no-agent routing | **Next up** |
+| Phase 2: the brand profile (agent-generated, tasteprofile take) | Shipped (#392) |
+| Phase 3: Rework button + endpoint + no-agent routing | Built (this PR) |
 | Phase 4: enrichment, visual theming from profile tokens, "Always review Reworks" | Later |
 
 Sections below marked **(shipped)** describe behavior now on main; sections marked **(built, in review #392)** are built and awaiting merge. Everything else is still spec, and it is what we build next.
@@ -272,11 +272,11 @@ Shipped (#378):
 
 - `PATCH /v1/workspace/settings` accepts `brandprint: { collectionId?, theme? } | null` (deep merge one level, null clears; collection ownership validated).
 - `POST /v1/me/profile` accepts `brandprint: { ... } | null` alongside `profession` and `about` (membership validated).
+- `POST /v1/artifacts/:shortId/rework` (Phase 3): composes the canned @mention request server-side and posts it to the chosen or sole registered agent's inbox; `409 needsAgent` / `409 needsBrandprint`.
 
 Not built, still specced:
 
 - Phase 2 (brand profile) adds **no endpoints**, held in #392: the placeholder rides the existing publish path, `profileId` rides the existing settings/profile PATCH routes (with the same tenancy validation), and approval is the existing proposals route. The reference resources are MCP-only.
-- `POST /v1/artifacts/:shortId/rework` (Phase 3): compose and post the canned @mention request to a chosen or sole registered agent; `409 needsAgent` when none.
 - `POST /v1/brandprint/seed`: superseded by the shipped client-side composition. The onboarding step (#388) shipped without it, settling the open question (Decisions log #6); dead unless a future caller needs a single atomic round-trip.
 
 Any new endpoint is defined in the contract-first Zod spec (#331), so the web client is regenerated rather than hand-written.
@@ -321,7 +321,7 @@ To write with the remaining phases:
 - **Phase 0 (foundation): shipped** (#378). Anir's Phase A ported forward, renamed, with the cross-tenant ownership validation added in review.
 - **Phase 1 (capture): shipped** (#383, #384, #386, #388). The create dialog on the `/brandprint` page, the docs' one home, the shared ConnectAgent surface, onboarding Step 3, and both nudges. No seed endpoint, settled.
 - **Phase 2 (the brand profile): built, in review** (#392). The hand-off flow, the placeholder-proposal mechanics, the two reference resources, the page states, profile-first delivery, and the `BrandprintTheme` removal.
-- **Phase 3 (apply): next up.** The Rework ⋯ item (gated on a Brandprint existing), the rework endpoint, and the no-agent routing.
+- **Phase 3 (apply): built (this PR).** The Rework ⋯ item (gated on a Brandprint existing), the rework endpoint, and the no-agent routing.
 - **Phase 4 (later, optional):** agent enrichment of the Brandprint doc, visual theme application fed by the profile's embedded tokens, and an "Always review Reworks" setting.
 
 ## Decisions log
