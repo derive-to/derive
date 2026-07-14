@@ -46,6 +46,47 @@ describe("config: fail-fast env validation", () => {
   })
 })
 
+// The dense-search embedder is selected by DERIVE_EMBED_PROVIDER; `workersai` additionally needs
+// the CF creds. A set-but-incomplete/typo'd provider must resolve to OFF (lexical), not a crash.
+describe("config: denseSearch provider resolution", () => {
+  const base = { PORT: "8080", BASE_URL: "http://derive.test" }
+
+  it("unset ⇒ off (lexical-only, the default)", () => {
+    expect(loadConfig({ ...base }).denseSearch).toBeUndefined()
+  })
+
+  it("provider=local ⇒ local, no credentials required", () => {
+    expect(loadConfig({ ...base, DERIVE_EMBED_PROVIDER: "local" }).denseSearch).toEqual({
+      provider: "local",
+    })
+  })
+
+  it("provider=workersai WITH both CF vars ⇒ workersai", () => {
+    expect(
+      loadConfig({
+        ...base,
+        DERIVE_EMBED_PROVIDER: "workersai",
+        DERIVE_EMBED_CF_ACCOUNT_ID: "acct",
+        DERIVE_EMBED_CF_API_TOKEN: "tok",
+      }).denseSearch,
+    ).toEqual({ provider: "workersai", accountId: "acct", apiToken: "tok" })
+  })
+
+  it("provider=workersai but missing a CF var ⇒ off (not a broken half-config)", () => {
+    expect(
+      loadConfig({
+        ...base,
+        DERIVE_EMBED_PROVIDER: "workersai",
+        DERIVE_EMBED_CF_ACCOUNT_ID: "acct",
+      }).denseSearch,
+    ).toBeUndefined()
+  })
+
+  it("an unknown provider value ⇒ off (not a crash)", () => {
+    expect(loadConfig({ ...base, DERIVE_EMBED_PROVIDER: "openai" }).denseSearch).toBeUndefined()
+  })
+})
+
 // The public origin drives auth cookies + share links. An explicit BASE_URL always
 // wins; otherwise infer the URL a managed host assigned us, so a one-click deploy
 // gets working auth without anyone hand-typing the domain.

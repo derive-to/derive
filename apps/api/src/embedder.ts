@@ -4,8 +4,9 @@ import { DENSE_MIN_SCORE } from "./search-chunk"
 // Embedder implementations (the generation half of the dense arm). Workers AI bge-m3 is reachable
 // two ways with an identical model + 1024-dim output, so the edge and a self-host box can share ONE
 // vector space (a corpus embedded on either is queryable by the other): the `env.AI` BINDING on
-// Cloudflare, or the REST endpoint from any Node process holding an account id + token. A future
-// local-ONNX embedder implements the same `Embedder` port and drops in with no store/wiring change.
+// Cloudflare, or the REST endpoint from any Node process holding an account id + token. The
+// local-ONNX embedder (embedder-local.ts) implements the same `Embedder` port — a self-host box can
+// use it instead of these to need no Cloudflare at all.
 
 export const EMBED_MODEL = "@cf/baai/bge-m3"
 export const EMBED_DIMENSIONS = 1024
@@ -55,8 +56,9 @@ export const bindingEmbedder = (ai: WorkersAiLike): WorkersAiEmbedder =>
   })
 
 /** Self-host embedder: Workers AI over REST, for a Node box with an account id + API token. Same
- *  model/dimension as the binding, so it shares the edge's vector space. (A local-ONNX embedder is
- *  the eventual zero-Cloudflare default; this is the first, dependency-free Node embedder.) */
+ *  model/dimension as the binding, so it shares the edge's vector space. (For a zero-Cloudflare
+ *  self-host, use the local-ONNX embedder in embedder-local.ts instead — this is the dependency-free
+ *  option that keeps the same 1024-dim bge-m3 space as the edge.) */
 export const restEmbedder = (
   accountId: string,
   apiToken: string,

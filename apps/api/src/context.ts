@@ -66,8 +66,9 @@ export interface SessionUser {
 export interface AppDeps {
   meta: MetaStore
   blobs: BlobStore
-  /** Optional dense/semantic search index. Unbound ⇒ workspace search stays lexical-only
-   *  (self-host, unchanged). The Cloudflare edge entry injects a Vectorize + Workers AI adapter. */
+  /** Optional dense/semantic search index. Unset ⇒ workspace search stays lexical-only. Both the
+   *  edge and a Postgres self-host inject a pgvector adapter (embeddings from Workers AI or, on
+   *  self-host, a local ONNX model); it's absent on SQLite / when no embedder is configured. */
   search?: SearchIndex
   /** Realtime relay + presence. In-process when unset (self-host); the Cloudflare
    *  edge entry injects a Durable Object backplane. */
