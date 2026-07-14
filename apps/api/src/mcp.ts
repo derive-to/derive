@@ -76,6 +76,7 @@ import { buildReviewEmail } from "./lib/email"
 import { MAX_UPLOAD_BYTES } from "./lib/http"
 import { MAX_ASSET_BYTES } from "./lib/image"
 import { notifyCommentBells } from "./lib/notify-comment"
+import { PUBLISH_TARGET_CREATE, PUBLISH_TOKEN_TTL_MS, signPublishToken } from "./lib/publish-token"
 import {
   baseType,
   isTextType,
@@ -336,7 +337,9 @@ async function buildServer(
         `read can. For images and web fonts, call stage_asset for a short-lived upload ` +
         `URL, curl the file's raw bytes to it from your shell, and reference the ` +
         `returned permanent url — never base64 binaries through a tool call (a pasted ` +
-        `image usually already sits on disk; upload that file). Use comment to leave or ` +
+        `image usually already sits on disk; upload that file). For a document too large to ` +
+        `inline (a big designed HTML page or a multi-file bundle), call stage_publish and curl ` +
+        `the file/zip to the returned URL instead of chunking it through content/files. Use comment to leave or ` +
         `resolve feedback. ${writeGuidance}To change PART of an artifact, prefer publish's edits ` +
         `(exact-match search/replace against the stored source) over resending everything. When a ` +
         `revision fixes specific feedback, pass those thread ids as publish's "addresses" so the ` +
@@ -1513,6 +1516,80 @@ async function buildServer(
     },
   )
 
+  // STAGE PUBLISH — a tokenless publish URL for large content ------------------
+  // The publish tool carries content INLINE (`content`/`files`), which is model
+  // output — capped by the per-response token ceiling and forced into slow,
+  // expensive multi-turn chunking once a file is bigger than a page or two. This
+  // mints a short-lived signed URL the shell curls the file's bytes to, so a big
+  // designed HTML page or a whole bundle publishes in one shot, zero bytes
+  // through the model's context. Same shell-out shape as stage_asset; scoped
+  // tighter because publishing writes artifacts (see lib/publish-token.ts).
+  server.registerTool(
+    "stage_publish",
+    {
+      description:
+        "Mint a SHORT-LIVED publish URL for pushing a file (or a whole bundle) too large to inline through the publish tool — a big designed HTML page, a multi-file prototype — with NO bearer token. Inline `content`/`files` is model output, so a file past ~a page forces slow, costly multi-turn chunking; this uploads the raw bytes from your shell instead, zero tokens through context. Omit short_id to CREATE a new artifact; pass a short_id to REVISE that one (the token is scoped to exactly that target). Then from your shell: a single file → `curl -sS -F file=@page.html -F title='My Page' <upload_url>`; a bundle → zip the dir first (`cd site && zip -r /tmp/site.zip .`) then `curl -sS -F file=@/tmp/site.zip <upload_url>` (a .zip publishes as a multi-page bundle). The URL is reusable until it expires (~15 min). Prefer the plain publish tool for small docs and for surgical `edits`; reach for this only when inlining would chunk.",
+      inputSchema: {
+        workspace: wsArg,
+        short_id: z
+          .string()
+          .optional()
+          .describe("Revise THIS artifact; omit to create a new one. The token is scoped to it."),
+      },
+    },
+    async ({ workspace, short_id }) => {
+      const t = await resolveWs(workspace)
+      if ("error" in t) return err(t.error)
+      // A publish is attributed to a person and its URL is re-checked against
+      // their live rights — so it needs a known granting user. A static agent
+      // token (dk_agt_/DERIVE_TOKEN) has none, but it also isn't trapped in this
+      // transport: it can POST to /v1/artifacts with that bearer directly.
+      if (!ownerId)
+        return err(
+          "stage_publish needs a signed-in user to attribute the publish to. With a static agent token, POST to /v1/artifacts with that token in the Authorization header instead.",
+        )
+      const secret = ctx.deps.encryptionKey
+      if (!secret)
+        return err(
+          "This server has no signing secret configured, so it can't mint publish URLs. POST to /v1/artifacts with a bearer token instead (DERIVE_TOKEN, or `derive login`).",
+        )
+      // The workspace the token is minted for. For a REVISE it must be the
+      // artifact's ACTUAL workspace — reach() may auto-roam a bare short_id to
+      // another workspace in the grant, and the spend-side org guard would 403 a
+      // token minted against the default one.
+      let org = t.org
+      if (short_id) {
+        const reached = await reach(short_id, workspace)
+        if (reached && "error" in reached) return err(reached.error)
+        if (!reached) return notFound(short_id)
+        org = reached.org
+        // Revising needs artifact-level publish STANDING (share + seat), the same
+        // right the spend-side re-checks — not the workspace seat role, which on a
+        // private artifact grants nothing. Fail at mint for a clear message.
+        if (!(await ctx.authorizeUserStanding(ownerId, "publish", reached.a)))
+          return err("You don't have permission to publish a new version of that artifact.")
+      } else if (!roleAllows(t.role, "publish")) {
+        // Creating is a workspace-level right.
+        return err("Your role in this workspace can't publish (publishing required).")
+      }
+      const expiresAt = Date.now() + PUBLISH_TOKEN_TTL_MS
+      const target = short_id ?? PUBLISH_TARGET_CREATE
+      const tok = await signPublishToken(secret, org, ownerId, target, expiresAt)
+      const base = ctx.deps.baseUrl.replace(/\/$/, "")
+      const uploadUrl = short_id
+        ? `${base}/v1/artifacts/${short_id}/versions/t/${tok}`
+        : `${base}/v1/artifacts/t/${tok}`
+      return json({
+        upload_url: uploadUrl,
+        workspace: org,
+        mode: short_id ? `revise ${short_id}` : "create",
+        expires_in_minutes: Math.round(PUBLISH_TOKEN_TTL_MS / 60_000),
+        max_bytes: MAX_UPLOAD_BYTES,
+        how: `Single file: curl -sS -F file=@<path> ${short_id ? "" : "-F title='<title>' "}"${uploadUrl}". Bundle: zip the dir (zip -r /tmp/b.zip .) then curl -sS -F file=@/tmp/b.zip "${uploadUrl}" — a .zip becomes a multi-page bundle. Returns the artifact {short_id, url, ...}.`,
+      })
+    },
+  )
+
   // WRITE — publish live, or file a proposal for review -----------------------
   server.registerTool(
     "publish",
@@ -1524,7 +1601,7 @@ async function buildServer(
           .string()
           .optional()
           .describe(
-            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. To embed an image OR a web font CHEAPLY (no base64 in this call), call stage_asset for a short-lived upload URL and curl the raw bytes to it (PNG/JPEG/GIF/WebP/WOFF/WOFF2) — the response's `url` is a permanent public link; paste it into an `<img src>`, a CSS `url()`, or markdown `![]()`. Never inline a base64 data: URI here — it tokenizes at roughly 1 token/char (one modest screenshot can cost 100k+ tokens), and content carried through your context can be silently mistranscribed; binaries should travel as bytes. If you have shell access and the file is large, you can also POST it directly to /v1/artifacts (raw body) with your bearer token — zero tokens through this call.",
+            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. To embed an image OR a web font CHEAPLY (no base64 in this call), call stage_asset for a short-lived upload URL and curl the raw bytes to it (PNG/JPEG/GIF/WebP/WOFF/WOFF2) — the response's `url` is a permanent public link; paste it into an `<img src>`, a CSS `url()`, or markdown `![]()`. Never inline a base64 data: URI here — it tokenizes at roughly 1 token/char (one modest screenshot can cost 100k+ tokens), and content carried through your context can be silently mistranscribed; binaries should travel as bytes. If the DOCUMENT ITSELF is large (a big designed HTML page), don't inline it here either — call stage_publish for an upload URL and curl the file's bytes, zero tokens through context.",
           ),
         files: z
           .record(z.string(), z.string())

@@ -22,6 +22,7 @@ import {
   publishAdvisories,
   type Role,
   renderMarkdown,
+  roleAllows,
   sectionOf,
   toJson,
   toMarkdown,
@@ -57,6 +58,7 @@ import {
   toBody,
   workspaceAccessOf,
 } from "../lib/http"
+import { PUBLISH_TARGET_CREATE, verifyPublishToken } from "../lib/publish-token"
 import {
   deleteArtifactAndUnindex,
   indexArtifactVersion,
@@ -119,6 +121,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     agentFor,
     authorize,
     authorizeStanding,
+    authorizeUserStanding,
     requireArtifact,
     workspaceCan,
     collectionRole,
@@ -455,14 +458,39 @@ export const artifactRoutes = (ctx: AppContext) => {
 
   // ---- Publish ----------------------------------------------------------
 
-  const handlePublish = async (c: Context, shortId?: string) => {
+  // `tokenAuth`, when present, is a caller the MCP stage_publish tool authorized
+  // out-of-band with a short-lived capability token (see lib/publish-token.ts):
+  // the route already verified the token, re-checked the user's live membership,
+  // and confirmed the target scope, so this skips the per-request auth and acts
+  // AS the bound user for attribution + ownership. Everything downstream —
+  // quota, body handling, access resolution, the publish itself — is shared with
+  // the session/bearer path, so a tokened publish behaves identically.
+  const handlePublish = async (
+    c: Context,
+    shortId?: string,
+    tokenAuth?: { org: string; user: { id: string; name: string | null } },
+  ) => {
     // Republishing a version needs publish rights on that artifact; creating a
     // new one needs publish rights at the workspace level.
     let existing: ArtifactRecord | null = null
     if (shortId) {
       existing = await meta.getByShortId(shortId)
       if (!existing) return fail(c, 404, "not found")
-      if (!(await authorize(c, "publish", existing))) return fail(c, 403, "forbidden")
+      // A tokened caller is scoped to this artifact's workspace by the token's
+      // own org; refuse if the artifact lives elsewhere, so a token minted for
+      // one workspace can never revise another's artifact via a shared short_id.
+      if (tokenAuth && existing.org_id !== tokenAuth.org) return fail(c, 403, "forbidden")
+      // Publish rights on an EXISTING artifact are artifact-level standing (an
+      // explicit/collection share + workspace seat), NOT the workspace seat alone
+      // — on a private artifact the seat grants nothing, only the share counts. The
+      // session path resolves that from the request; the tokened path resolves the
+      // SAME standing for the bound user, live (revocation-safe). Checking only the
+      // seat here would let a workspace editor with a mere viewer share overwrite a
+      // private doc — an escalation the authed API forbids.
+      const publishOk = tokenAuth
+        ? await authorizeUserStanding(tokenAuth.user.id, "publish", existing)
+        : await authorize(c, "publish", existing)
+      if (!publishOk) return fail(c, 403, "forbidden")
       // A GitHub-synced artifact is read-only in Derive: GitHub is the source of
       // truth, so a republish would be silently overwritten on the next sync.
       // Edit it in the repo instead.
@@ -472,12 +500,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       // The web client routes editors to "propose" when locked, so this is the
       // backstop (and the answer for API/CLI callers).
       if (existing.locked) return fail(c, 409, "artifact is locked — propose a change for review")
-    } else if (!(await workspaceCan(c, "publish"))) {
+    } else if (!tokenAuth && !(await workspaceCan(c, "publish"))) {
       return fail(c, 403, "forbidden")
     }
     // Quotas are per-workspace: a republish counts against the artifact's own
-    // org, a new artifact against the caller's active workspace.
-    const org = existing ? existing.org_id : await activeWorkspace(c)
+    // org, a new artifact against the caller's active workspace (or, for a
+    // tokened create, the workspace the token was minted for).
+    const org = existing ? existing.org_id : tokenAuth ? tokenAuth.org : await activeWorkspace(c)
     const rl = await limited(c, publishLimiter)
     if (rl) return rl
     // A new artifact counts against the artifact cap; republishes don't.
@@ -586,12 +615,17 @@ export const artifactRoutes = (ctx: AppContext) => {
       // as the agent's own name ("Derive CLI", "Claude", or whatever client/model drove it;
       // authored work is the person's, and which tool typed it is an implementation detail).
       // `actor` is only the fallback for an ownerless principal (a pre-column agent).
-      const actor = await actingUser(c)
-      const human = await actingHuman(c)
-      const onBehalf = await privateOwnerId(c)
-      // The agent behind an agent-credentialed publish (registered token / OAuth
-      // bearer) — its name is the actor on the human's notification fan-out below.
-      const agentPrincipal = await agentFor(c)
+      // A tokened publish acts AS the bound user: they are the author byline, the
+      // author_id (their profile/feed), and the private owner — the same identity
+      // the session/bearer path resolves from the request, just supplied by the
+      // token instead. A tokened publish behaves like that user's OWN publish (they
+      // drove it and get the artifact URL back in the curl response), so — like a
+      // session publish, and unlike the agent `publish` tool — it has no agent
+      // principal and fires no "your agent published X" bell to onBehalf.
+      const actor = tokenAuth ? tokenAuth.user : await actingUser(c)
+      const human = tokenAuth ? tokenAuth.user : await actingHuman(c)
+      const onBehalf = tokenAuth ? tokenAuth.user.id : await privateOwnerId(c)
+      const agentPrincipal = tokenAuth ? null : await agentFor(c)
       // Access is set-on-create: a republish never re-stamps it (publish() only adds a
       // version). On a NEW artifact each field resolves independently — explicit request
       // field > legacy `visibility` mapping > the workspace default (factory default is
@@ -637,8 +671,12 @@ export const artifactRoutes = (ctx: AppContext) => {
           // publish reads as the person; a registered agent falls back to its own name.
           // Anonymous callers can't reach this route at all, so a publish is always
           // attributed to a real principal (the token's optional `author` label is the
-          // one headless exception).
-          author: human?.name ?? actor?.name ?? str(body["author"]),
+          // one headless exception). A TOKENED publish is bound to a known user, so it
+          // uses their name and never the client `author` field — otherwise a caller
+          // could stamp an arbitrary byline whenever that user's stored name is null.
+          author: tokenAuth
+            ? (tokenAuth.user.name ?? undefined)
+            : (human?.name ?? actor?.name ?? str(body["author"])),
           authorId: onBehalf,
           name: str(body["name"]),
           orgId: org,
@@ -836,6 +874,45 @@ export const artifactRoutes = (ctx: AppContext) => {
 
   app.post("/v1/artifacts", (c) => handlePublish(c))
   app.post("/v1/artifacts/:shortId/versions", (c) => handlePublish(c, c.req.param("shortId")))
+
+  // Tokened publish: the same handlePublish, but authorized by a short-lived
+  // capability token (minted by the MCP stage_publish tool) instead of a session
+  // or bearer — so a hosted-OAuth agent, whose credential is trapped inside the
+  // MCP transport, can `curl -F file=@…` a file too large to inline through the
+  // publish tool. See lib/publish-token.ts. Verify the token, re-check the bound
+  // user's LIVE membership (revocation kills the URL mid-TTL), enforce the target
+  // scope, then hand off to handlePublish acting as that user. Distinct segment
+  // counts from the routes above, so no registration-order collision.
+  const tokenPublish = async (c: Context, shortId?: string) => {
+    const secret = deps.encryptionKey
+    const token = c.req.param("token") ?? ""
+    const claim = secret ? await verifyPublishToken(secret, token, Date.now()) : null
+    if (!claim) return fail(c, 403, "invalid or expired publish token")
+    // Target scope: a "*" token only creates; a short_id token only revises that
+    // exact artifact. Mismatch is a hard refusal, so a leaked token can't be
+    // repurposed (create → overwrite, or revise-X → touch-Y).
+    if (claim.target === PUBLISH_TARGET_CREATE) {
+      if (shortId) return fail(c, 403, "this token can only create a new artifact")
+      // CREATE is a workspace-level right, and handlePublish skips workspaceCan for
+      // a tokened caller — so re-check the bound user's LIVE workspace publish role
+      // here (revocation-safe). REVISE is an artifact-level right that handlePublish
+      // re-checks itself (authorizeUserStanding), so it needs nothing extra here.
+      const m = await meta.getMembership(claim.orgId, claim.userId)
+      if (!m || !roleAllows(m.role, "publish"))
+        return fail(c, 403, "invalid or expired publish token")
+    } else if (claim.target !== shortId) {
+      return fail(c, 403, "this token cannot publish to that artifact")
+    }
+    const [dir] = await meta.getUsers([claim.userId])
+    return handlePublish(c, shortId, {
+      org: claim.orgId,
+      user: { id: claim.userId, name: dir?.name ?? null },
+    })
+  }
+  app.post("/v1/artifacts/t/:token", (c) => tokenPublish(c))
+  app.post("/v1/artifacts/:shortId/versions/t/:token", (c) =>
+    tokenPublish(c, c.req.param("shortId")),
+  )
 
   // Registered BEFORE GET /v1/artifacts/{shortId} below: Hono's router matches
   // routes in REGISTRATION order, not by static-vs-param specificity, so
