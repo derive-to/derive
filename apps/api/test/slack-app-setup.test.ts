@@ -27,6 +27,14 @@ describe("buildSlackManifest", () => {
     )
   })
 
+  it("declares private-channel history scopes to match the message.groups subscription", () => {
+    // groups:* is what makes reply-back work in a private channel the bot is invited to;
+    // subscribing to message.groups without it (the old gap) silently dropped those replies.
+    expect(m.oauth_config.scopes.bot).toEqual(
+      expect.arrayContaining(["groups:read", "groups:history"]),
+    )
+  })
+
   it("is named just Derive (Slack caps the app name at 35 chars)", () => {
     expect(m.display_information.name).toBe("Derive")
     expect(m.display_information.name.length).toBeLessThanOrEqual(35)

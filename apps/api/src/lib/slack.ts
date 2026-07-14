@@ -206,14 +206,24 @@ export const openSlackDm = async (token: string, userId: string): Promise<string
 
 /** Bot scopes requested at install — the single source of truth, also what the manifest
  *  declares (see slack-app-setup buildSlackManifest). Covers posting the comment mirror +
- *  event cards (chat/channels), reading channel history so a thread reply can flow back in,
- *  and DMing a mentioned user resolved by email (users:read.email, im:write) — no per-user
- *  OAuth. Adding a scope here means existing installs see the re-auth banner until reconnect. */
+ *  event cards (chat/channels), reading channel history so a thread reply can flow back in
+ *  (channels:* for public, groups:* for private channels the bot is invited to — matching
+ *  the message.channels + message.groups event subscriptions), and DMing a mentioned user
+ *  resolved by email (users:read.email, im:write) — no per-user OAuth.
+ *
+ *  Re-auth on scope drift is only automatic for scopes an OUTBOUND call needs: a stale
+ *  install hits `missing_scope`, which flags needs_reauth and shows the reconnect banner.
+ *  Event-delivery scopes (groups:*) are different — Slack simply stops delivering the events
+ *  to a token that lacks them, so Derive makes no failing call and nothing flags the drift.
+ *  Existing installs must reconnect by hand to get private-channel reply-back; there is no
+ *  automatic prompt (a real scope-drift detector is future work). */
 export const SLACK_BOT_SCOPES = [
   "chat:write",
   "channels:read",
   "channels:join",
   "channels:history",
+  "groups:read",
+  "groups:history",
   "users:read",
   "users:read.email",
   "im:write",

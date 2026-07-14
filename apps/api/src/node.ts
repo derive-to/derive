@@ -11,6 +11,7 @@ import Database from "better-sqlite3"
 import { Pool } from "pg"
 import { createApp } from "./app"
 import { type AuthDb, makeAuth, migrateAuth, OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
+import { createInProcessBackplane } from "./bus"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
 import { configWarnings } from "./config-manifest"
 import { restEmbedder } from "./embedder"
@@ -20,7 +21,7 @@ import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
 import { mountWeb } from "./lib/serve-web"
-import { makeSlackSender } from "./lib/slack-comments"
+import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
@@ -274,6 +275,10 @@ const shellHtml = cfg.serveWeb ? readFileSync(cfg.webShell, "utf8") : undefined
 // First-party channel senders for the Node tier. Email uses Resend (over fetch) when
 // RESEND_API_KEY is set, else the log sender (visible in dev, no transport needed).
 // The edge tier wires the Cloudflare Email Service binding instead (see webhook-do.ts).
+// The realtime relay, created here so the inbound Slack-ingest sender (which runs on the
+// worker, outside a request) can publish comment.created to live viewers over the same
+// in-process bus the request handlers use. Passed into createApp below so both share it.
+const backplane = createInProcessBackplane()
 const channelSenders: ChannelSenders = {
   email: emailDeliverySender(
     cfg.resendApiKey && cfg.emailFrom
@@ -288,6 +293,9 @@ const channelSenders: ChannelSenders = {
   // comment thread mirror and per-user DMs (mentions, review requests, shares).
   slack_app: makeSlackSender(meta, authSecret),
   slack_dm: makeSlackDmSender(meta, authSecret),
+  // Inbound: a Slack thread reply the events endpoint deferred — resolve the author and
+  // write the Derive comment here, off the ack path, publishing to the shared bus.
+  slack_ingest: makeSlackIngestSender(meta, authSecret, backplane),
 }
 const webhookWorker = startWebhookWorker(meta, nodeDnsGuard, channelSenders)
 
@@ -313,6 +321,9 @@ const syncRunner = createNodeSyncRunner(meta, blobs, authSecret)
 const app = createApp({
   meta,
   blobs,
+  // Share the realtime relay with the webhook worker so a deferred Slack reply publishes
+  // comment.created to the same in-process subscribers a request would.
+  backplane,
   // Dense/semantic arm (pgvector) when configured on Postgres; undefined ⇒ lexical-only.
   search,
   baseUrl: cfg.baseUrl,

@@ -1,6 +1,9 @@
 import { createHmac } from "node:crypto"
+import type { CommentRecord, MetaStore, NewComment, SlackThreadLinkRecord } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { encryptSecret } from "../src/lib/crypto"
+import { ingestSlackReply, makeSlackIngestSender } from "../src/lib/slack-comments"
+import { runDeliveryTick } from "../src/webhooks"
 import { as, quotaApp, type TestUser } from "./helpers"
 
 const KEY = "enc-key-slack-routes-123456"
@@ -33,6 +36,31 @@ const make = (name: string) => {
 
 const sign = (ts: string, body: string) =>
   `v0=${createHmac("sha256", SIGNING).update(`v0:${ts}:${body}`).digest("hex")}`
+
+// The events endpoint acks fast and defers ingestion to the outbox; tests drain it by
+// hand (no worker runs under quotaApp). A no-op address guard: ingestion isn't an HTTP
+// delivery, so there's no URL to SSRF-check.
+const drainIngest = (meta: MetaStore) =>
+  runDeliveryTick(
+    meta,
+    { precheck: async () => null },
+    { slack_ingest: makeSlackIngestSender(meta, KEY) },
+  )
+
+// A signed Slack events POST.
+type TestApp = { request: (path: string, init?: RequestInit) => Response | Promise<Response> }
+const postEvent = (app: TestApp, body: string) => {
+  const ts = String(Math.floor(Date.now() / 1000))
+  return app.request("/v1/slack/events", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-slack-request-timestamp": ts,
+      "x-slack-signature": sign(ts, body),
+    },
+    body,
+  })
+}
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -179,12 +207,13 @@ describe("slack events endpoint", () => {
     expect(r.status).toBe(401)
   })
 
-  it("mirrors a signed thread reply into a Derive comment on the linked thread", async () => {
-    const { app, meta } = make("slack-ev-reply")
-    // Seed an artifact + a thread link for an existing Derive thread.
+  const seedThread = async (
+    meta: MetaStore,
+    ids: { artifact: string; short: string; thread: string; ts: string },
+  ) => {
     const artifact = await meta.createArtifact({
-      id: "a-slack-reply",
-      short_id: "slkreply",
+      id: ids.artifact,
+      short_id: ids.short,
       org_id: "default",
       slug: null,
       title: "Doc",
@@ -204,15 +233,26 @@ describe("slack events endpoint", () => {
       created_at: new Date().toISOString(),
     })
     await meta.setSlackThreadLink({
-      id: "stl-1",
+      id: `stl-${ids.thread}`,
       org_id: "default",
       artifact_id: artifact.id,
-      thread_id: "t-root",
+      thread_id: ids.thread,
       channel: "C1",
-      message_ts: "111.1",
+      message_ts: ids.ts,
       created_at: new Date().toISOString(),
     })
-    // Slack users.info lookup → display name.
+    return artifact
+  }
+
+  it("acks fast and defers a linked thread reply to the outbox, which then mirrors it", async () => {
+    const { app, meta } = make("slack-ev-reply")
+    const artifact = await seedThread(meta, {
+      artifact: "a-slack-reply",
+      short: "slkreply",
+      thread: "t-root",
+      ts: "111.1",
+    })
+    // Slack users.info lookup → display name (only hit on drain, never in the request).
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -223,89 +263,166 @@ describe("slack events endpoint", () => {
       ),
     )
 
-    const ts = String(Math.floor(Date.now() / 1000))
-    const body = JSON.stringify({
-      type: "event_callback",
-      event: {
-        type: "message",
-        user: "U777",
-        text: "from slack",
-        channel: "C1",
-        ts: "222.2",
-        thread_ts: "111.1",
-      },
-    })
-    const r = await app.request("/v1/slack/events", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-slack-request-timestamp": ts,
-        "x-slack-signature": sign(ts, body),
-      },
-      body,
-    })
+    const r = await postEvent(
+      app,
+      JSON.stringify({
+        type: "event_callback",
+        event: {
+          type: "message",
+          user: "U777",
+          text: "from slack",
+          channel: "C1",
+          ts: "222.2",
+          thread_ts: "111.1",
+        },
+      }),
+    )
     expect(r.status).toBe(200)
-    const comments = await meta.listComments(artifact.id)
-    const mirrored = comments.find((c) => c.thread_id === "t-root")
+    // The endpoint acked without doing the ingest work (no users.info fetch, no comment yet).
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+    expect(await meta.listComments(artifact.id)).toHaveLength(0)
+
+    // The worker drains the enqueued slack_ingest delivery and mirrors the reply.
+    await drainIngest(meta)
+    const mirrored = (await meta.listComments(artifact.id)).find((c) => c.thread_id === "t-root")
     expect(mirrored?.author).toBe("Dana")
     expect(mirrored?.author_id).toBe("slack:U777")
     expect(mirrored?.body_md).toBe("from slack")
   })
 
-  it("ignores our own bot's messages (loop prevention)", async () => {
-    const { app, meta } = make("slack-ev-bot")
-    const artifact = await meta.createArtifact({
-      id: "a-slack-bot",
-      short_id: "slkbot01",
-      org_id: "default",
-      slug: null,
-      title: "Doc",
-      workspace_access: "member",
-      link_role: "viewer",
-      listed: "public",
-      kind: "file",
-      spa: 0,
-    })
-    await meta.setSlackInstall({
-      org_id: "default",
-      team_id: "T1",
-      team_name: "Acme",
-      bot_token: encryptSecret("xoxb-1", KEY),
-      bot_user_id: "UBOT",
-      default_channel: "C1",
-      created_at: new Date().toISOString(),
-    })
-    await meta.setSlackThreadLink({
-      id: "stl-2",
-      org_id: "default",
-      artifact_id: artifact.id,
-      thread_id: "t-bot",
+  it("ingestSlackReply writes the Slack dedupe marker IN the comment insert (atomic)", async () => {
+    // A focused unit test with a hand-built store (not the real adapter): the atomicity is
+    // that the {slack.ts} marker rides the createComment INSERT, not a follow-up write a
+    // crash-retry could skip. The old two-write path called createComment with no meta and
+    // then updateComment — the fake has no updateComment, so that path throws here. Both the
+    // "marker present" and "no second write" facts are pinned, on any adapter.
+    const inserts: NewComment[] = []
+    const link: SlackThreadLinkRecord = {
+      id: "l",
+      org_id: "o",
+      artifact_id: "a",
+      thread_id: "t",
       channel: "C1",
-      message_ts: "333.3",
-      created_at: new Date().toISOString(),
+      message_ts: "111.1",
+      created_at: "",
+    }
+    const fakeMeta = {
+      listComments: async () => [],
+      createComment: async (c: NewComment) => {
+        inserts.push(c)
+        return {
+          ...c,
+          state: "open",
+          created_at: "",
+          meta: c.meta ?? null,
+        } as unknown as CommentRecord
+      },
+    } as unknown as MetaStore
+    const created = await ingestSlackReply(fakeMeta, link, {
+      ts: "222.2",
+      userId: "U1",
+      userName: "Dana",
+      text: "hi",
+      botUserId: "UBOT",
     })
-    const ts = String(Math.floor(Date.now() / 1000))
+    expect(created).not.toBeNull()
+    expect(inserts).toHaveLength(1)
+    expect(JSON.parse(inserts[0]?.meta ?? "{}")).toMatchObject({
+      slack: { ts: "222.2", channel: "C1" },
+    })
+  })
+
+  it("the deferred ingest ignores our own bot's messages (loop prevention)", async () => {
+    const { app, meta } = make("slack-ev-bot")
+    const artifact = await seedThread(meta, {
+      artifact: "a-slack-bot",
+      short: "slkbot01",
+      thread: "t-bot",
+      ts: "333.3",
+    })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })),
+    )
+    const r = await postEvent(
+      app,
+      JSON.stringify({
+        type: "event_callback",
+        event: {
+          type: "message",
+          user: "UBOT",
+          text: "echo",
+          channel: "C1",
+          ts: "444.4",
+          thread_ts: "333.3",
+        },
+      }),
+    )
+    expect(r.status).toBe(200)
+    await drainIngest(meta)
+    expect(await meta.listComments(artifact.id)).toHaveLength(0)
+  })
+
+  it("a redelivered reply (at-least-once) still yields exactly one comment", async () => {
+    const { app, meta } = make("slack-ev-dedupe")
+    const artifact = await seedThread(meta, {
+      artifact: "a-slack-dup",
+      short: "slkdup01",
+      thread: "t-dup",
+      ts: "555.5",
+    })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ ok: true, user: { profile: { display_name: "Dana" } } }), {
+            status: 200,
+          }),
+      ),
+    )
     const body = JSON.stringify({
       type: "event_callback",
       event: {
         type: "message",
-        user: "UBOT",
-        text: "echo",
+        user: "U9",
+        text: "hi",
         channel: "C1",
-        ts: "444.4",
-        thread_ts: "333.3",
+        ts: "666.6",
+        thread_ts: "555.5",
       },
     })
-    const r = await app.request("/v1/slack/events", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-slack-request-timestamp": ts,
-        "x-slack-signature": sign(ts, body),
-      },
-      body,
-    })
+    // Slack redelivers the same event → two enqueued deliveries, drained together.
+    expect((await postEvent(app, body)).status).toBe(200)
+    expect((await postEvent(app, body)).status).toBe(200)
+    await drainIngest(meta)
+    await drainIngest(meta)
+    const mirrored = (await meta.listComments(artifact.id)).filter((c) => c.thread_id === "t-dup")
+    expect(mirrored).toHaveLength(1)
+  })
+
+  it("enqueues nothing for a reply on a channel with no Derive thread link", async () => {
+    const { app, meta } = make("slack-ev-nolink")
+    const r = await postEvent(
+      app,
+      JSON.stringify({
+        type: "event_callback",
+        event: {
+          type: "message",
+          user: "U1",
+          text: "hi",
+          channel: "CZZZ",
+          ts: "9.9",
+          thread_ts: "8.8",
+        },
+      }),
+    )
     expect(r.status).toBe(200)
-    expect(await meta.listComments(artifact.id)).toHaveLength(0)
+    // No thread link ⇒ no delivery enqueued (we don't flood the outbox with channel chatter).
+    const rows = await meta.claimDueDeliveries(
+      new Date(Date.now() + 60_000).toISOString(),
+      100,
+      new Date(Date.now() + 120_000).toISOString(),
+    )
+    expect(rows.some((d) => d.kind === "slack_ingest")).toBe(false)
   })
 })
