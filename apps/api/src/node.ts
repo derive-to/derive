@@ -1,7 +1,8 @@
 import { mkdirSync, readFileSync } from "node:fs"
 import { join, relative, resolve } from "node:path"
-import type { BlobStore, MetaStore } from "@derive/core"
+import type { BlobStore, MetaStore, SearchIndex } from "@derive/core"
 import { PgMetaStore } from "@derive/db/pg"
+import { PgVectorStore } from "@derive/db/pgvector"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import { s3FromUrl } from "@derive/storage/s3"
@@ -12,6 +13,7 @@ import { createApp } from "./app"
 import { type AuthDb, makeAuth, migrateAuth, OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
 import { configWarnings } from "./config-manifest"
+import { restEmbedder } from "./embedder"
 import { workspacesBlockingDeletion } from "./lib/account"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
@@ -24,6 +26,7 @@ import { log } from "./log"
 import { createNodeSyncRunner } from "./node-sync"
 import { playwrightRenderer } from "./preview-node"
 import { startPreviewWorker } from "./previews"
+import { PgvectorSearchIndex } from "./search-pgvector"
 import { type ChannelSenders, enqueueChannelDelivery, startWebhookWorker } from "./webhooks"
 import { nodeDnsGuard } from "./webhooks-node"
 
@@ -81,6 +84,10 @@ mkdirSync(join(cfg.dataDir, "blobs"), { recursive: true })
 // stateless multi-instance topology), else embedded SQLite (zero-config).
 let meta: MetaStore
 let authDb: AuthDb
+// The dense/semantic search arm — pgvector in the same Postgres, embeddings via Workers AI REST.
+// Only on the Postgres datastore (pgvector lives there); undefined ⇒ searchWorkspace stays
+// lexical-only, identical to the edge without its Vectorize bindings.
+let search: SearchIndex | undefined
 // Closes the metadata store + the Better Auth datastore (separate handles onto
 // the same backend) for graceful shutdown.
 let closeStores: () => Promise<void>
@@ -94,9 +101,50 @@ if (cfg.databaseUrl) {
   pool.on("error", (e) => log.error("pg auth pool error", { error: e.message }))
   meta = pgMeta
   authDb = pool
+  // Dense arm on a dedicated small pool (its lifecycle is independent of auth). ensureSchema
+  // creates the extension + vector table + HNSW index once, at boot, before serving. This is an
+  // OPTIONAL feature: if it can't be set up (e.g. the Postgres role can't `CREATE EXTENSION
+  // vector`), we log and fall back to lexical-only — never crash a running instance over a search
+  // add-on, matching the "warn, don't crash" contract the rest of this entrypoint follows.
+  let closeVector = async () => {}
+  if (cfg.denseSearch) {
+    const dense = cfg.denseSearch
+    try {
+      const embedder = restEmbedder(dense.accountId, dense.apiToken)
+      const vectorPool = new Pool({ connectionString: cfg.databaseUrl, max: 4 })
+      // Register cleanup BEFORE the throwable ensureSchema so a failure can't orphan the pool.
+      closeVector = () => vectorPool.end()
+      vectorPool.on("error", (e) => log.error("pg vector pool error", { error: e.message }))
+      // Widen HNSW candidate breadth to ≥ topK (pgvector's default ef_search=40 would cap our
+      // topK-50 over-fetch). Set once per pooled connection; harmless before the extension loads
+      // (accepted as a placeholder, honored on first vector query).
+      vectorPool.on("connect", (c) => {
+        c.query("SET hnsw.ef_search = 100").catch((e) =>
+          log.error("failed to set hnsw.ef_search", { error: e.message }),
+        )
+      })
+      const store = new PgVectorStore(vectorPool, embedder.dimensions)
+      await store.ensureSchema()
+      search = new PgvectorSearchIndex(embedder, store)
+      log.info("dense search enabled", {
+        store: "pgvector",
+        embedder: embedder.model,
+        dimensions: embedder.dimensions,
+      })
+    } catch (e) {
+      log.error(
+        "dense search setup failed — falling back to lexical-only. Check the Postgres role can CREATE EXTENSION vector (or pre-create it) and the embedder credentials.",
+        { error: e instanceof Error ? e.message : String(e) },
+      )
+      await closeVector()
+      closeVector = async () => {} // reset so closeStores doesn't end the pool twice
+      search = undefined
+    }
+  }
   closeStores = async () => {
     await pgMeta.close()
     await pool.end()
+    await closeVector()
   }
 } else {
   const db = new Database(join(cfg.dataDir, "derive.db"))
@@ -108,6 +156,10 @@ if (cfg.databaseUrl) {
   const sqliteMeta = new SqliteMetaStore(join(cfg.dataDir, "derive.db"))
   meta = sqliteMeta
   authDb = db
+  if (cfg.denseSearch)
+    log.warn(
+      "dense search embedder is configured but the datastore is embedded SQLite; pgvector needs Postgres — set DATABASE_URL to enable semantic search. Staying lexical-only.",
+    )
   closeStores = async () => {
     sqliteMeta.close()
     db.close()
@@ -242,6 +294,8 @@ const syncRunner = createNodeSyncRunner(meta, blobs, authSecret)
 const app = createApp({
   meta,
   blobs,
+  // Dense/semantic arm (pgvector) when configured on Postgres; undefined ⇒ lexical-only.
+  search,
   baseUrl: cfg.baseUrl,
   shell: shellHtml,
   token: cfg.token,
