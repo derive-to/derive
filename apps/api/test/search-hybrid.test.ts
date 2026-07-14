@@ -12,8 +12,12 @@ import {
   workspaceSearchReport,
 } from "../src/lib/search"
 import {
+  CHUNK_CHARS,
+  CHUNK_OVERLAP,
+  chunkText,
   DENSE_MIN_SCORE,
   EMBED_BATCH,
+  MAX_CHUNKS,
   type VectorizeLike,
   VectorizeSearchIndex,
   type WorkersAiLike,
@@ -274,8 +278,35 @@ const makeVectorize = () => {
   return { vectorize, store, seen }
 }
 
+describe("chunkText", () => {
+  it("returns one trimmed chunk for short text, [] for blank", () => {
+    expect(chunkText("  hello world  ")).toEqual(["hello world"])
+    expect(chunkText("   ")).toEqual([])
+  })
+  it("splits long text into multiple chunks, each within CHUNK_CHARS, capped at MAX_CHUNKS", () => {
+    const chunks = chunkText("lorem ipsum ".repeat(2000)) // ~24k chars
+    expect(chunks.length).toBeGreaterThan(1)
+    expect(chunks.length).toBeLessThanOrEqual(MAX_CHUNKS)
+    for (const c of chunks) {
+      expect(c.length).toBeGreaterThan(0)
+      expect(c.length).toBeLessThanOrEqual(CHUNK_CHARS)
+    }
+  })
+  it("caps a very long doc at MAX_CHUNKS (tail dropped)", () => {
+    expect(chunkText("word ".repeat(200_000)).length).toBe(MAX_CHUNKS)
+  })
+  it("overlaps consecutive chunks by CHUNK_OVERLAP so a boundary-spanning match is never split", () => {
+    // No-whitespace text: no break adjustment/trim, so the overlap is exact and assertable.
+    const t = "abcdefghij".repeat(500) // 5000 chars, no spaces → deterministic windows
+    const chunks = chunkText(t)
+    expect(chunks.length).toBeGreaterThan(2)
+    for (let i = 0; i < chunks.length - 1; i++)
+      expect(chunks[i]?.slice(-CHUNK_OVERLAP)).toBe(chunks[i + 1]?.slice(0, CHUNK_OVERLAP))
+  })
+})
+
 describe("VectorizeSearchIndex (Cloudflare adapter)", () => {
-  it("indexArtifact embeds title+body and upserts one vector with org_id + preview metadata", async () => {
+  it("indexArtifact chunks the body, embeds title+chunk, upserts id#i with artifact_id + chunk metadata", async () => {
     const { vectorize, store } = makeVectorize()
     const { ai, runs } = makeAi()
     await new VectorizeSearchIndex(vectorize, ai).indexArtifact(
@@ -285,38 +316,90 @@ describe("VectorizeSearchIndex (Cloudflare adapter)", () => {
       "the golden path",
     )
     expect(runs[0]?.model).toBe("@cf/baai/bge-m3")
-    expect(runs[0]?.text).toEqual(["Onboarding\n\nthe golden path"]) // title prepended for the embed
-    expect(runs[0]?.truncate).toBe(true) // over-limit (long/CJK) inputs trim instead of throwing
-    expect(store.get("a1")?.metadata?.org_id).toBe("org1")
-    expect(store.get("a1")?.metadata?.preview).toContain("Onboarding")
+    expect(runs[0]?.text).toEqual(["Onboarding\n\nthe golden path"]) // title prepended for context
+    expect(runs[0]?.truncate).toBe(true)
+    expect(store.has("a1#0")).toBe(true) // keyed by chunk id, not the bare artifact id
+    expect(store.has("a1")).toBe(false) // the bare/legacy id is cleared
+    expect(store.get("a1#0")?.metadata?.org_id).toBe("org1")
+    expect(store.get("a1#0")?.metadata?.artifact_id).toBe("a1")
+    expect(store.get("a1#0")?.metadata?.chunk).toBe("the golden path")
   })
 
-  it("search embeds the query, filters by org_id, requests metadata, and maps preview → chunk", async () => {
+  it("indexArtifact of a long doc writes multiple chunk vectors, and re-index clears stale slots", async () => {
+    const { vectorize, store } = makeVectorize()
+    const { ai } = makeAi()
+    const idx = new VectorizeSearchIndex(vectorize, ai)
+    await idx.indexArtifact("a1", "org1", null, "para ".repeat(1500)) // ~7.5k chars → several chunks
+    expect([...store.keys()].filter((k) => k.startsWith("a1#")).length).toBeGreaterThan(1)
+    // Re-index SHORTER → one chunk; the old extra chunk slots must be gone.
+    await idx.indexArtifact("a1", "org1", null, "short")
+    expect([...store.keys()].filter((k) => k.startsWith("a1#"))).toEqual(["a1#0"])
+  })
+
+  it("search rolls chunk hits up to the best chunk per artifact", async () => {
+    const meta = (artifact_id: string, chunk: string) => ({ org_id: "o", artifact_id, chunk })
+    const vectorize: VectorizeLike = {
+      upsert: async () => {},
+      deleteByIds: async () => {},
+      query: async () => ({
+        matches: [
+          { id: "a1#1", score: 0.7, metadata: meta("a1", "the best chunk") },
+          { id: "a1#0", score: 0.6, metadata: meta("a1", "weaker chunk") },
+          { id: "a2#0", score: 0.55, metadata: meta("a2", "other doc") },
+        ],
+      }),
+    }
+    const { ai } = makeAi()
+    const hits = await new VectorizeSearchIndex(vectorize, ai).search("o", "q", 6)
+    expect(hits.map((h) => h.id)).toEqual(["a1", "a2"]) // one hit per artifact, best-score order
+    expect(hits[0]?.chunk).toBe("the best chunk") // the higher-scoring chunk wins the snippet
+    expect(hits[0]?.score).toBe(0.7)
+  })
+
+  it("search over-fetches topK 50, filters by org_id, rolls the chunk up to its artifact id", async () => {
     const { vectorize, seen } = makeVectorize()
     const { ai } = makeAi()
     const idx = new VectorizeSearchIndex(vectorize, ai)
     await idx.indexArtifact("a1", "org1", "Onboarding", "the golden path")
-    await idx.indexArtifact("a2", "org2", "Other", "a different workspace")
+    await idx.indexArtifact("a2", "org2", "Other", "different workspace")
     const hits = await idx.search("org1", "getting started", 6)
-    expect(hits.map((h) => h.id)).toEqual(["a1"]) // org filter excludes the other workspace
-    expect(hits[0]?.chunk).toContain("Onboarding")
+    expect(hits.map((h) => h.id)).toEqual(["a1"]) // org filter excludes a2; rolled up to the artifact id
+    expect(hits[0]?.chunk).toBe("the golden path")
     expect(seen.queries[0]?.filter).toEqual({ org_id: "org1" })
     expect(seen.queries[0]?.returnMetadata).toBe("all")
-    expect(seen.queries[0]?.topK).toBe(6)
+    expect(seen.queries[0]?.topK).toBe(50) // over-fetch chunks; rollup reduces to distinct artifacts
   })
 
-  it("unindex deletes the vector; empty content unindexes instead of upserting", async () => {
+  it("search stays robust to a LEGACY whole-doc vector (no artifact_id, `preview` snippet)", async () => {
+    const vectorize: VectorizeLike = {
+      upsert: async () => {},
+      deleteByIds: async () => {},
+      query: async () => ({
+        matches: [
+          { id: "legacyArt", score: 0.6, metadata: { org_id: "o", preview: "legacy snippet" } },
+        ],
+      }),
+    }
+    const { ai } = makeAi()
+    const hits = await new VectorizeSearchIndex(vectorize, ai).search("o", "q", 6)
+    expect(hits).toEqual([{ id: "legacyArt", score: 0.6, chunk: "legacy snippet" }]) // id + preview fallback
+  })
+
+  it("unindexArtifact deletes every chunk slot + the bare id; empty content upserts nothing", async () => {
     const { vectorize, store, seen } = makeVectorize()
     const { ai } = makeAi()
     const idx = new VectorizeSearchIndex(vectorize, ai)
     await idx.indexArtifact("a1", "org1", "T", "body")
-    expect(store.has("a1")).toBe(true)
+    expect(store.has("a1#0")).toBe(true)
     await idx.unindexArtifact("a1")
-    expect(store.has("a1")).toBe(false)
-    // A non-text artifact (empty indexable content) must not upsert — and drops any prior vector.
+    expect(store.has("a1#0")).toBe(false)
+    const deleted = seen.deletes.flat()
+    expect(deleted).toContain("a1") // the bare legacy id
+    expect(deleted).toContain("a1#0")
+    expect(deleted).toContain(`a1#${MAX_CHUNKS - 1}`) // all chunk slots
+    // empty content → no vector upserted
     await idx.indexArtifact("a2", "org1", null, "   ")
-    expect(store.has("a2")).toBe(false)
-    expect(seen.deletes).toContainEqual(["a2"])
+    expect(store.has("a2#0")).toBe(false)
   })
 
   it("search with a blank query short-circuits without calling the model", async () => {
@@ -343,7 +426,7 @@ describe("VectorizeSearchIndex (Cloudflare adapter)", () => {
     expect(hits.map((h) => h.id)).toEqual(["above", "at"]) // >= floor kept; just-below dropped
   })
 
-  it("indexArtifacts batches: one embed call for the page, empties dropped, org_id + preview stored", async () => {
+  it("indexArtifacts batches chunks across artifacts, drops empties, stores artifact_id + chunk", async () => {
     const { vectorize, store } = makeVectorize()
     const { ai, runs } = makeAi()
     await new VectorizeSearchIndex(vectorize, ai).indexArtifacts([
@@ -351,12 +434,13 @@ describe("VectorizeSearchIndex (Cloudflare adapter)", () => {
       { id: "a2", orgId: "org1", title: null, text: "body two" },
       { id: "a3", orgId: "org1", title: null, text: "   " }, // empty → no vector
     ])
-    expect(store.has("a1")).toBe(true)
-    expect(store.has("a2")).toBe(true)
-    expect(store.has("a3")).toBe(false) // empty content: no upsert
-    expect(store.get("a1")?.metadata?.org_id).toBe("org1")
-    expect(store.get("a1")?.metadata?.preview).toContain("T1")
-    expect(runs).toHaveLength(1) // batched — one AI call for both embeddable texts, not two
+    expect(store.has("a1#0")).toBe(true)
+    expect(store.has("a2#0")).toBe(true)
+    expect(store.has("a3#0")).toBe(false) // empty content: no upsert
+    expect(store.get("a1#0")?.metadata?.org_id).toBe("org1")
+    expect(store.get("a1#0")?.metadata?.artifact_id).toBe("a1")
+    expect(store.get("a1#0")?.metadata?.chunk).toBe("body one")
+    expect(runs).toHaveLength(1) // both chunks embedded in one call
     expect(runs[0]?.text).toEqual(["T1\n\nbody one", "body two"])
     expect(runs[0]?.truncate).toBe(true)
   })
@@ -381,8 +465,8 @@ describe("VectorizeSearchIndex (Cloudflare adapter)", () => {
       `body ${EMBED_BATCH + 3}`,
       `body ${EMBED_BATCH + 4}`,
     ])
-    expect(store.size).toBe(n) // every artifact upserted, across the sub-batch seam
-    expect(store.has(`id${EMBED_BATCH}`)).toBe(true) // first of the 2nd sub-batch
+    expect([...store.keys()].filter((k) => k.endsWith("#0")).length).toBe(n) // one chunk vector each
+    expect(store.has(`id${EMBED_BATCH}#0`)).toBe(true) // first of the 2nd sub-batch
   })
 
   it("indexArtifacts throws (not misaligns) if the model returns fewer vectors than inputs", async () => {
@@ -394,6 +478,23 @@ describe("VectorizeSearchIndex (Cloudflare adapter)", () => {
         { id: "b", orgId: "o", title: null, text: "y" },
       ]),
     ).rejects.toThrow(/returned 1 vectors for 2/)
+  })
+
+  it("indexArtifacts batches stale deletes under the Vectorize 1000/call cap", async () => {
+    const { vectorize, seen } = makeVectorize()
+    const { ai } = makeAi()
+    // 30 single-chunk artifacts → 30 × (1 legacy + 19 empty slots) = 600 stale ids > MUTATE_BATCH(500).
+    const items = Array.from({ length: 30 }, (_, i) => ({
+      id: `id${i}`,
+      orgId: "org1",
+      title: null,
+      text: `body ${i}`,
+    }))
+    await new VectorizeSearchIndex(vectorize, ai).indexArtifacts(items)
+    const total = seen.deletes.reduce((n, b) => n + b.length, 0)
+    expect(total).toBe(30 * MAX_CHUNKS) // 1 legacy id + (MAX_CHUNKS-1) empty slots per artifact
+    expect(seen.deletes.length).toBeGreaterThan(1) // split across calls
+    for (const batch of seen.deletes) expect(batch.length).toBeLessThanOrEqual(500)
   })
 })
 
