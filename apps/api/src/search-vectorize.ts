@@ -72,14 +72,14 @@ export class VectorizeSearchIndex implements SearchIndex {
   ): Promise<void> {
     const content = title ? `${title}\n\n${text}` : text
     // Nothing embeddable (e.g. a bare uploaded image) — ensure a prior vector doesn't linger.
-    if (!content.trim()) return this.unindex(id)
+    if (!content.trim()) return this.unindexArtifact(id)
     const values = await this.embed(content.slice(0, EMBED_CHAR_BUDGET))
     await this.vectorize.upsert([
       { id, values, metadata: { org_id: orgId, preview: content.slice(0, PREVIEW_CHARS) } },
     ])
   }
 
-  async unindex(id: string): Promise<void> {
+  async unindexArtifact(id: string): Promise<void> {
     await this.vectorize.deleteByIds([id])
   }
 

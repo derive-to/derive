@@ -1,11 +1,15 @@
 import type { ArtifactRecord, SearchIndex, VersionRecord } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import {
+  indexArtifactVersion,
+  reindexSearchBatch,
   rrfFuse,
   searchMatcher,
   searchWorkspace,
   toSearchHits,
   type WorkspaceSearchDeps,
+  type WorkspaceSearchResult,
+  workspaceSearchReport,
 } from "../src/lib/search"
 import {
   type VectorizeLike,
@@ -66,7 +70,7 @@ const denseIndex = (
   byQuery: Record<string, { id: string; score: number; chunk: string }[]>,
 ): SearchIndex => ({
   indexArtifact: async () => {},
-  unindex: async () => {},
+  unindexArtifact: async () => {},
   search: async (_org, query, limit) => (byQuery[query] ?? []).slice(0, limit),
 })
 
@@ -219,7 +223,7 @@ describe("searchWorkspace — hybrid retrieval", () => {
     }
     const boom: SearchIndex = {
       indexArtifact: async () => {},
-      unindex: async () => {},
+      unindexArtifact: async () => {},
       search: async () => {
         throw new Error("vectorize unavailable")
       },
@@ -303,7 +307,7 @@ describe("VectorizeSearchIndex (Cloudflare adapter)", () => {
     const idx = new VectorizeSearchIndex(vectorize, ai)
     await idx.indexArtifact("a1", "org1", "T", "body")
     expect(store.has("a1")).toBe(true)
-    await idx.unindex("a1")
+    await idx.unindexArtifact("a1")
     expect(store.has("a1")).toBe(false)
     // A non-text artifact (empty indexable content) must not upsert — and drops any prior vector.
     await idx.indexArtifact("a2", "org1", null, "   ")
@@ -316,5 +320,101 @@ describe("VectorizeSearchIndex (Cloudflare adapter)", () => {
     const { ai, runs } = makeAi()
     expect(await new VectorizeSearchIndex(vectorize, ai).search("org1", "   ", 6)).toEqual([])
     expect(runs).toHaveLength(0)
+  })
+})
+
+describe("workspaceSearchReport — semantic rendering", () => {
+  const lit = (short_id: string, title: string, total: number): WorkspaceSearchResult => ({
+    short_id,
+    title,
+    current_version: 1,
+    total,
+    groups: [
+      { path: null, hunks: [{ from: 1, lines: [{ n: 1, text: `hit for ${title}`, hit: true }] }] },
+    ],
+  })
+  const sem = (short_id: string, title: string, snippet: string): WorkspaceSearchResult => ({
+    short_id,
+    title,
+    current_version: 1,
+    total: 0,
+    groups: [],
+    semantic: { snippet },
+  })
+
+  it("all-semantic result set reports a semantic-match count (not '0 matches') and renders the chunk", () => {
+    const out = workspaceSearchReport(
+      "getting started",
+      "text",
+      [sem("onb1", "Onboarding", "the golden path")],
+      null,
+    )
+    expect(out).toContain("1 semantic match")
+    expect(out).not.toMatch(/\b0 match/)
+    expect(out).toContain("## onb1 — Onboarding  (semantic match)")
+    expect(out).toContain("the golden path")
+  })
+
+  it("mixed literal + semantic keeps the literal-count header and renders both shapes", () => {
+    const out = workspaceSearchReport(
+      "x",
+      "text",
+      [lit("a1", "A", 2), sem("b1", "B", "chunk B")],
+      null,
+    )
+    expect(out).toContain("2 matches for")
+    expect(out).toContain("## a1 — A\n")
+    expect(out).toContain("## b1 — B  (semantic match)")
+    expect(out).toContain("chunk B")
+  })
+
+  it("empty results → the no-matches line", () => {
+    expect(workspaceSearchReport("q", "text", [], null)).toContain("No matches")
+  })
+})
+
+describe("write path — dense arm best-effort + backfill", () => {
+  it("indexArtifactVersion: a throwing dense arm neither blocks the lexical upsert nor throws", async () => {
+    const lexed: string[] = []
+    const meta = {
+      indexArtifact: async (id: string) => {
+        lexed.push(id)
+      },
+    }
+    const blobs = { get: async () => enc("# T\n\nbody"), put: async () => "k" }
+    const v = { blob_key: "k", content_type: "text/markdown" } as VersionRecord
+    const boom = {
+      indexArtifact: async () => {
+        throw new Error("vectorize down")
+      },
+    }
+    await expect(
+      indexArtifactVersion(meta, blobs, { id: "a", org_id: ORG, title: "T" }, v, boom),
+    ).resolves.toBeUndefined()
+    expect(lexed).toEqual(["a"]) // lexical committed despite the dense failure
+  })
+
+  it("reindexSearchBatch: backfill embeds each artifact into the dense arm too", async () => {
+    const dense: string[] = []
+    const arts = [
+      { id: "a", current_version: 1, org_id: ORG, title: "A", created_at: "t1" },
+      { id: "b", current_version: 1, org_id: ORG, title: "B", created_at: "t2" },
+    ] as ArtifactRecord[]
+    const meta = {
+      indexArtifact: async () => {},
+      listArtifacts: async () => arts,
+      getVersion: async () => ({ blob_key: "k", content_type: "text/markdown" }) as VersionRecord,
+    }
+    const blobs = { get: async () => enc("body"), put: async () => "k" }
+    const search: SearchIndex = {
+      indexArtifact: async (id) => {
+        dense.push(id)
+      },
+      unindexArtifact: async () => {},
+      search: async () => [],
+    }
+    const res = await reindexSearchBatch({ meta, blobs, search }, { limit: 10 })
+    expect(dense).toEqual(["a", "b"])
+    expect(res.indexed).toBe(2)
   })
 })

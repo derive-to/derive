@@ -60,7 +60,11 @@ export const systemRoutes = (ctx: AppContext) => {
   // the operator re-POSTs with that cursor until it comes back null. The cap stays modest
   // because a bundle indexes every page it holds — a bundle-dense page of 500 could breach
   // the Worker's per-invocation subrequest ceiling, which the per-artifact try/catch would
-  // silently swallow as "skipped." Keeping each call bounded is what fits the Workers CPU +
+  // silently swallow as "skipped." NOTE: once that ceiling trips mid-page, every remaining
+  // artifact on the page also throws + skips, yet `nextCursor` still advances past them — so a
+  // page returning `indexed < scanned` left some un-embedded that the normal resume loop won't
+  // revisit. On a bundle-heavy corpus, use a smaller `limit`, and re-sweep from cursor 0 (it's
+  // idempotent) to catch skips. Keeping each call bounded is what fits the Workers CPU +
   // subrequest budget rather than one unbounded pass. Run it as
   // a one-time backfill: under a concurrent live publish it could momentarily write
   // older-version text for that artifact, but grep-confirm reads the live blob (so

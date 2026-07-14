@@ -275,10 +275,14 @@ export const searchReport = (
 }
 
 // ---------------------------------------------------------------------------
-// Index maintenance — the WRITE side of workspace search. The persisted FTS/
-// tsvector index behind searchArtifactIds needs the current version's text kept in
-// step: emitVersionBump calls indexArtifactVersion on every publish/restore/
-// proposal-approve, and the DB layer maintains it on deleteArtifact/moveArtifactOrg.
+// Index maintenance — the WRITE side of workspace search, for BOTH arms: the lexical
+// FTS/tsvector index behind searchArtifactIds, and (when bound) the dense SearchIndex.
+// emitVersionBump calls indexArtifactVersion on every publish/restore/proposal-approve,
+// keeping both current. On delete/move the two diverge by necessity: the FTS lives IN the
+// MetaStore, so deleteArtifact/moveArtifactOrg maintain it transactionally; the dense arm
+// lives outside the DB, so the delete/move ROUTES unindex/re-scope it best-effort — and any
+// orphan left by another path (sync/preview churn, a crash) is reclaimed by the backfill/
+// reconcile sweep. Never a leak: the Tier-2 gate drops a stale vector regardless.
 // ---------------------------------------------------------------------------
 
 // Bound the indexed text per artifact (in JS chars — real artifacts are far smaller).
@@ -494,15 +498,14 @@ export const searchWorkspace = async (
     candidateCap?: number
   },
 ): Promise<{ results: WorkspaceSearchResult[]; note: string | null }> => {
-  // Tier 1 — the index nominates the most relevant candidate ids across the whole
-  // corpus. Org-scoped and ranked, but with NO visibility knowledge by design. Fetch one
-  // past the cap: the sentinel row (never resolved) just answers "were there more?".
   const candidateCap = opts.candidateCap ?? WORKSPACE_SEARCH_CANDIDATE_CAP
-  // Tier 1 — hybrid nomination. The lexical FTS runs always (and answers read-your-writes for a
-  // just-published doc); the dense/semantic arm runs in parallel WHEN a SearchIndex is bound, and
-  // the two are fused by reciprocal-rank fusion. Neither arm knows visibility — the Tier-2 gate
-  // below is still the single authority, so hybrid can't widen what a viewer sees. With no
-  // SearchIndex (self-host), `nominated` is byte-for-byte the old pure-lexical candidate list.
+  // Tier 1 — hybrid nomination across the whole corpus. The lexical FTS runs always (and answers
+  // read-your-writes for a just-published doc); the dense/semantic arm runs in parallel WHEN a
+  // SearchIndex is bound, and the two are fused by reciprocal-rank fusion. Both are org-scoped and
+  // ranked but carry NO visibility knowledge — the Tier-2 gate below is the single authority, so
+  // hybrid can't widen what a viewer sees. Over-fetch one past the cap so the fused list keeps a
+  // sentinel (never resolved) that answers "were there more?". With no SearchIndex (self-host),
+  // `nominated` is byte-for-byte the old pure-lexical candidate list.
   const [lexical, dense] = await Promise.all([
     deps.meta.searchArtifactIds(opts.orgId, opts.query, candidateCap + 1),
     deps.search
@@ -587,6 +590,8 @@ export const searchWorkspace = async (
     // Literal hunks are the lexical arm's precision. A dense-nominated artifact the literal grep
     // can't confirm (total === 0) is still a real semantic match — keep it, carrying its best
     // chunk as evidence. A pure-lexical miss (no hunks and no chunk) drops out exactly as before.
+    // (snippetAround centers on the literal when present; a semantic chunk has none, so it returns
+    // the chunk head — which is exactly the evidence we want here.)
     const chunk = chunkOf.get(a.id)
     if (total === 0 && !chunk) return null
     return {

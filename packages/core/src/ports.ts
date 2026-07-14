@@ -30,12 +30,15 @@ export interface SearchIndex {
    *  chunk-level embedding for finer long-doc recall is a later enhancement), scoped by org.
    *  Driven by the same publish/restore/approve chokepoint as the FTS index. */
   indexArtifact(id: string, orgId: string, title: string | null, text: string): Promise<void>
-  /** Drop an artifact's vectors (hard delete). Best-effort; the gate covers a miss. */
-  unindex(id: string): Promise<void>
+  /** Drop an artifact's vectors (hard delete). Best-effort; the gate covers a miss. Named to
+   *  match its lexical sibling {@link MetaStore.unindexArtifact}. */
+  unindexArtifact(id: string): Promise<void>
   /** The most semantically-relevant artifact ids in ONE org for `query`, ranked (higher
    *  score = more relevant), with NO visibility filter — the caller re-applies visibility
    *  via `listArtifacts({ ids })`. `chunk` is the best-matching passage: the evidence/snippet
-   *  a caller shows for a semantic match the literal grep-confirm pass won't reproduce. */
+   *  a caller shows for a semantic match the literal grep-confirm pass won't reproduce. `score`
+   *  is returned for a future score-weighted fusion / relevance threshold; today's caller fuses
+   *  by rank (RRF) and doesn't read it. */
   search(
     orgId: string,
     query: string,

@@ -1831,6 +1831,9 @@ async function buildServer(
             notify: ctx.notify,
             notifyRender: ctx.notifyRender,
             background: ctx.background,
+            // Thread the dense arm too — agents publish primarily through this tool, so omitting
+            // `search` here would leave the bulk of new content lexically-indexed but never embedded.
+            search: ctx.search,
           },
           artifact,
           version,

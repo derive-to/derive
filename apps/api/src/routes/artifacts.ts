@@ -58,6 +58,7 @@ import {
   workspaceAccessOf,
 } from "../lib/http"
 import {
+  indexArtifactVersion,
   searchArtifactVersion,
   searchMatcher,
   searchReport,
@@ -66,6 +67,7 @@ import {
   workspaceSearchReport,
 } from "../lib/search"
 import { enqueueSlackReviewRequestedDm } from "../lib/slack-dm"
+import { log } from "../log"
 import { Artifact } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
 
@@ -1288,6 +1290,14 @@ export const artifactRoutes = (ctx: AppContext) => {
       const artifact = await requireArtifact(c, "manage", { split: true })
       if (artifact instanceof Response) return bail(artifact)
       await meta.deleteArtifact(artifact.id, artifact.org_id)
+      // The FTS row is dropped inside deleteArtifact; the dense index lives outside the DB, so
+      // drop its vector here too. Best-effort — an orphan the Tier-2 gate already filters out,
+      // otherwise reclaimed by the reconcile/backfill sweep.
+      await search
+        ?.unindexArtifact(artifact.id)
+        .catch((err) =>
+          log.error("dense unindex failed", { artifact: artifact.id, err: String(err) }),
+        )
       return c.body(null, 204)
     },
   )
@@ -1325,6 +1335,24 @@ export const artifactRoutes = (ctx: AppContext) => {
       if ((await meta.getArtifactDomains(artifact.id)).length > 0)
         return bail(fail(c, 409, "remove the custom domain before moving this artifact"))
       await meta.moveArtifactOrg(artifact.id, b.targetOrgId)
+      // moveArtifactOrg re-scopes the FTS row in the DB; the dense vector lives outside it, so
+      // re-embed under the new org here — otherwise it keeps its old org_id metadata and vanishes
+      // from the new workspace's semantic search until the next publish. Best-effort.
+      if (search) {
+        try {
+          const v = await meta.getVersion(artifact.id, artifact.current_version)
+          if (v)
+            await indexArtifactVersion(
+              meta,
+              blobs,
+              { ...artifact, org_id: b.targetOrgId },
+              v,
+              search,
+            )
+        } catch (err) {
+          log.error("dense re-index after move failed", { artifact: artifact.id, err: String(err) })
+        }
+      }
       return c.json({ org_id: b.targetOrgId })
     },
   )

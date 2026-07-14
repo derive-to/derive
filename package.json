@@ -72,6 +72,7 @@
     "dependency-cruiser": "^18.0.0",
     "esbuild": "0.28.1",
     "knip": "^6.16.1",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "wrangler": "^4.110.0"
   }
 }

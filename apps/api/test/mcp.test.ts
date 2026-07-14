@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { BlobStore, MetaStore, VersionRecord } from "@derive/core"
+import type { BlobStore, MetaStore, SearchIndex, VersionRecord } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
@@ -908,6 +908,29 @@ describe("remote MCP endpoint (/mcp)", () => {
       await meta.indexArtifact(id, orgId, title, "every doc mentions widget here")
     }
   }
+
+  it("search (workspace mode): a doc published via the MCP publish tool is indexed into the DENSE arm, not just the FTS (regression)", async () => {
+    const indexed: string[] = []
+    const fakeSearch: SearchIndex = {
+      indexArtifact: async (id) => {
+        indexed.push(id)
+      },
+      unindexArtifact: async () => {},
+      search: async () => [],
+    }
+    const { app, token, meta } = appWithGrant("densepub", "openid derive:read derive:publish", {
+      search: fakeSearch,
+    })
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "Doc", content: "# Doc\n\nsemantic body" }),
+      ),
+    )
+    const art = await meta.getByShortId(created.short_id)
+    expect(art).toBeTruthy()
+    // Before the fix, MCP publish's afterPublish deps omitted `search`, so this was [].
+    expect(indexed).toContain(art?.id)
+  })
 
   it("search (workspace mode): ranks the whole corpus and shows an honest truncation note past the grep-confirm cap", async () => {
     const { app, token, meta, blobs } = appWithGrant("wscap", "openid derive:read derive:publish")
