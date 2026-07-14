@@ -128,8 +128,9 @@ export const enqueueSlackReplyIngest = async (
 
 /** Build the slack_ingest sender: mirror a deferred Slack thread reply into a Derive comment.
  *  Resolves the thread link + install from the payload, fetches the author's display name,
- *  and writes the comment via ingestSlackReply (idempotent on the Slack message ts, so a
- *  redelivery is a no-op). Publishes comment.created on the bus when given one, so a live
+ *  and writes the comment via ingestSlackReply, which dedupes a redelivery on the Slack
+ *  message ts (a scan, not a DB uniqueness constraint — safe because the outbox drains one
+ *  delivery at a time per deployment). Publishes comment.created on the bus when given one, so a live
  *  viewer sees it (Node runs the worker in-process; the edge has no cross-isolate bus here).
  *  No-ops (delivered) when the thread link/install is gone or the channel mirror is off, so
  *  a stale event never dead-letters. */

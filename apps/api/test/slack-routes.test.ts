@@ -283,11 +283,19 @@ describe("slack events endpoint", () => {
     expect(await meta.listComments(artifact.id)).toHaveLength(0)
 
     // The worker drains the enqueued slack_ingest delivery and mirrors the reply.
+    const createSpy = vi.spyOn(meta, "createComment")
     await drainIngest(meta)
     const mirrored = (await meta.listComments(artifact.id)).find((c) => c.thread_id === "t-root")
     expect(mirrored?.author).toBe("Dana")
     expect(mirrored?.author_id).toBe("slack:U777")
     expect(mirrored?.body_md).toBe("from slack")
+    // The dedupe marker is written IN the insert (atomic), not a follow-up updateComment —
+    // so an outbox re-claim after a crash can't create a second comment. The old two-write
+    // path called createComment with no meta, so this assertion pins the atomicity fix.
+    expect(createSpy).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(createSpy.mock.calls[0]?.[0].meta ?? "{}")).toMatchObject({
+      slack: { ts: "222.2", channel: "C1" },
+    })
   })
 
   it("the deferred ingest ignores our own bot's messages (loop prevention)", async () => {
