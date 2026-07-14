@@ -10,6 +10,39 @@ export interface BlobStore {
   get(key: string): Promise<Uint8Array | null>
 }
 
+/**
+ * An optional SEMANTIC search index — the dense (embedding) arm of workspace search,
+ * paired with the lexical FTS the MetaStore already provides ({@link MetaStore.searchArtifactIds}).
+ * Unbound on self-host (search stays lexical-only, unchanged); the Cloudflare edge injects a
+ * Vectorize + Workers AI adapter. The caller fuses these candidates with the lexical ones
+ * (reciprocal-rank fusion) and re-applies visibility through `listArtifacts({ ids })`, so this
+ * port — exactly like the FTS — has NO visibility knowledge and can never widen what a viewer
+ * sees. Runs on Node AND Workers (no Node APIs), same as every other port here.
+ *
+ * Every method is BEST-EFFORT from the caller's side: an index hiccup must never fail a publish,
+ * and a stale row (a delete/move/takedown the caller didn't propagate) is a findability/cost
+ * concern only — the visibility gate drops it, so it can never leak content. Eventual
+ * consistency in the backend (a just-upserted vector isn't instantly queryable) is likewise
+ * invisible to users: the synchronous FTS arm answers read-your-writes; the dense arm catches up.
+ */
+export interface SearchIndex {
+  /** Upsert an artifact's current text (embedded internally — whole-doc in the current adapter;
+   *  chunk-level embedding for finer long-doc recall is a later enhancement), scoped by org.
+   *  Driven by the same publish/restore/approve chokepoint as the FTS index. */
+  indexArtifact(id: string, orgId: string, title: string | null, text: string): Promise<void>
+  /** Drop an artifact's vectors (hard delete). Best-effort; the gate covers a miss. */
+  unindex(id: string): Promise<void>
+  /** The most semantically-relevant artifact ids in ONE org for `query`, ranked (higher
+   *  score = more relevant), with NO visibility filter — the caller re-applies visibility
+   *  via `listArtifacts({ ids })`. `chunk` is the best-matching passage: the evidence/snippet
+   *  a caller shows for a semantic match the literal grep-confirm pass won't reproduce. */
+  search(
+    orgId: string,
+    query: string,
+    limit: number,
+  ): Promise<{ id: string; score: number; chunk: string }[]>
+}
+
 export type ArtifactKind = "file" | "bundle"
 
 /** A platform subdomain (`name.derived.app`) or a customer's own domain. */

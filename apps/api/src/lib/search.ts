@@ -6,6 +6,7 @@ import {
   isHtmlLike,
   type MetaStore,
   pageText,
+  type SearchIndex,
   type SectionMarker,
   sectionMarkers,
   toMarkdown,
@@ -43,6 +44,9 @@ export interface WorkspaceSearchDeps extends SearchDeps {
       limit: number,
     ): Promise<{ id: string; rank: number }[]>
   }
+  /** The optional dense/semantic arm (Cloudflare Vectorize + Workers AI). Absent on
+   *  self-host ⇒ nomination stays pure-lexical, byte-identical to before. */
+  search?: SearchIndex
 }
 
 // ---------------------------------------------------------------------------
@@ -327,13 +331,21 @@ export async function indexArtifactVersion(
   blobs: BlobStore,
   artifact: Pick<ArtifactRecord, "id" | "org_id" | "title">,
   v: VersionRecord,
+  search?: Pick<SearchIndex, "indexArtifact">,
 ): Promise<void> {
-  await meta.indexArtifact(
-    artifact.id,
-    artifact.org_id,
-    artifact.title,
-    await versionIndexText(blobs, v),
-  )
+  const text = await versionIndexText(blobs, v)
+  await meta.indexArtifact(artifact.id, artifact.org_id, artifact.title, text)
+  // The dense arm is independently best-effort: a Vectorize/Workers-AI hiccup must never undo
+  // the lexical upsert that already committed, nor fail the publish. Log and move on — the next
+  // publish re-embeds and the backfill sweep is the safety net. (emitVersionBump's own catch
+  // covers the lexical arm; this inner catch keeps a dense failure from ever reaching it.)
+  if (search) {
+    try {
+      await search.indexArtifact(artifact.id, artifact.org_id, artifact.title, text)
+    } catch (err) {
+      log.error("semantic index update failed", { artifact: artifact.id, err: String(err) })
+    }
+  }
 }
 
 // Backfill — index artifacts that predate the write-path (or were created outside it).
@@ -345,6 +357,8 @@ export async function indexArtifactVersion(
 export interface ReindexSearchDeps {
   blobs: BlobStore
   meta: Pick<MetaStore, "indexArtifact" | "getVersion" | "listArtifacts">
+  /** The optional dense arm — backfill embeds into it too when a SearchIndex is bound. */
+  search?: SearchIndex
 }
 
 export interface ReindexBatchResult {
@@ -371,7 +385,7 @@ export const reindexSearchBatch = async (
     try {
       const v = await deps.meta.getVersion(a.id, a.current_version)
       if (!v) continue // no readable current version — skip rather than index empty
-      await indexArtifactVersion(deps.meta, deps.blobs, a, v)
+      await indexArtifactVersion(deps.meta, deps.blobs, a, v, deps.search)
       indexed++
     } catch (err) {
       log.error("search reindex skipped one artifact", { artifact: a.id, err: String(err) })
@@ -413,12 +427,41 @@ export const WORKSPACE_SEARCH_ARTIFACT_CAP = 30
 // there. The chunks are independent visibility queries; their rows just concatenate.
 const LIST_ID_CHUNK = 90
 
+// Reciprocal-rank fusion: merge the lexical and dense candidate lists by summing 1/(k+rank)
+// across the lists an id appears in (k=60, the standard constant). Rank-based, so it needs no
+// score normalization between BM25 and cosine — an id near the top of EITHER arm ranks well, and
+// one near the top of BOTH ranks best. Carries the dense arm's `chunk` (the semantic snippet
+// source) for the ids the lexical arm didn't also surface. V8's Map preserves insertion order
+// and its sort is stable, so ties resolve lexical-first, deterministically. Pure — unit-tested.
+export const RRF_K = 60
+export const rrfFuse = (
+  lexical: { id: string }[],
+  dense: { id: string; chunk: string }[],
+  limit: number,
+): { id: string; chunk?: string }[] => {
+  const score = new Map<string, number>()
+  const chunkOf = new Map<string, string>()
+  for (const [i, r] of lexical.entries())
+    score.set(r.id, (score.get(r.id) ?? 0) + 1 / (RRF_K + i + 1))
+  for (const [i, r] of dense.entries()) {
+    score.set(r.id, (score.get(r.id) ?? 0) + 1 / (RRF_K + i + 1))
+    chunkOf.set(r.id, r.chunk)
+  }
+  return [...score.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([id]) => ({ id, chunk: chunkOf.get(id) }))
+}
+
 export interface WorkspaceSearchResult {
   short_id: string
   title: string
   current_version: number
   groups: { path: string | null; hunks: SearchHunk[] }[]
   total: number
+  /** Set only for a dense-nominated hit the literal grep-confirm couldn't reproduce
+   *  (total === 0): the best-matching passage, shown as the match evidence. */
+  semantic?: { snippet: string }
 }
 
 export const searchWorkspace = async (
@@ -455,11 +498,32 @@ export const searchWorkspace = async (
   // corpus. Org-scoped and ranked, but with NO visibility knowledge by design. Fetch one
   // past the cap: the sentinel row (never resolved) just answers "were there more?".
   const candidateCap = opts.candidateCap ?? WORKSPACE_SEARCH_CANDIDATE_CAP
-  const nominated = await deps.meta.searchArtifactIds(opts.orgId, opts.query, candidateCap + 1)
+  // Tier 1 — hybrid nomination. The lexical FTS runs always (and answers read-your-writes for a
+  // just-published doc); the dense/semantic arm runs in parallel WHEN a SearchIndex is bound, and
+  // the two are fused by reciprocal-rank fusion. Neither arm knows visibility — the Tier-2 gate
+  // below is still the single authority, so hybrid can't widen what a viewer sees. With no
+  // SearchIndex (self-host), `nominated` is byte-for-byte the old pure-lexical candidate list.
+  const [lexical, dense] = await Promise.all([
+    deps.meta.searchArtifactIds(opts.orgId, opts.query, candidateCap + 1),
+    deps.search
+      ? deps.search.search(opts.orgId, opts.query, candidateCap).catch((err) => {
+          // The dense arm is best-effort on READ too: a Vectorize/Workers-AI hiccup degrades this
+          // query to lexical-only rather than 500-ing a search the lexical arm could still serve.
+          log.error("semantic search arm failed; falling back to lexical", { err: String(err) })
+          return [] as { id: string; score: number; chunk: string }[]
+        })
+      : Promise.resolve([] as { id: string; score: number; chunk: string }[]),
+  ])
+  const nominated: { id: string; chunk?: string }[] = deps.search
+    ? rrfFuse(lexical, dense, candidateCap + 1)
+    : lexical.map((r) => ({ id: r.id }))
   if (nominated.length === 0) return { results: [], note: null }
   const moreCandidates = nominated.length > candidateCap
   const candidates = nominated.slice(0, candidateCap)
   const rankOf = new Map(candidates.map((c, i) => [c.id, i]))
+  // The best dense passage per candidate — the evidence a semantic-only hit shows when the
+  // literal grep-confirm below finds nothing to quote.
+  const chunkOf = new Map(candidates.flatMap((c) => (c.chunk ? [[c.id, c.chunk] as const] : [])))
 
   // Tier 2 gate — THE visibility check. Re-resolve the nominated ids through
   // listArtifacts with the SAME orgId/viewerId/publicOnly list_artifacts uses, PLUS
@@ -520,15 +584,19 @@ export const searchWorkspace = async (
       opts.ctxLines,
       opts.cap,
     )
-    return total
-      ? {
-          short_id: a.short_id,
-          title: a.title ?? a.short_id,
-          current_version: a.current_version,
-          groups,
-          total,
-        }
-      : null
+    // Literal hunks are the lexical arm's precision. A dense-nominated artifact the literal grep
+    // can't confirm (total === 0) is still a real semantic match — keep it, carrying its best
+    // chunk as evidence. A pure-lexical miss (no hunks and no chunk) drops out exactly as before.
+    const chunk = chunkOf.get(a.id)
+    if (total === 0 && !chunk) return null
+    return {
+      short_id: a.short_id,
+      title: a.title ?? a.short_id,
+      current_version: a.current_version,
+      groups,
+      total,
+      semantic: total === 0 && chunk ? { snippet: snippetAround(chunk, opts.query) } : undefined,
+    }
   }
   const results: WorkspaceSearchResult[] = []
   for (let i = 0; i < toGrep.length; i += CONCURRENCY) {
@@ -562,15 +630,29 @@ export const workspaceSearchReport = (
   note: string | null,
 ): string => {
   const grandTotal = results.reduce((sum, r) => sum + r.total, 0)
-  if (grandTotal === 0)
+  // A result with no literal hunks (total 0) but a semantic snippet is a dense-arm match.
+  const hasSemantic = results.some((r) => r.total === 0 && r.semantic)
+  if (grandTotal === 0 && !hasSemantic)
     return `No matches for "${query}" in ${where} across the workspace${note ? ` (${note})` : ""}.${
       where === "source" ? " Try in:'text' to search the visible text." : ""
     }`
-  const head = `${grandTotal} match${grandTotal === 1 ? "" : "es"} for "${query}" in ${where} across ${
-    results.length
-  } artifact${results.length === 1 ? "" : "s"}${note ? ` (${note})` : ""}`
+  // Header keeps the exact literal-match wording when there are any (so the lexical-only path —
+  // every self-host deploy — is unchanged); an all-dense result set reports a semantic-match
+  // count instead of reading as "0 matches".
+  const head =
+    grandTotal > 0
+      ? `${grandTotal} match${grandTotal === 1 ? "" : "es"} for "${query}" in ${where} across ${
+          results.length
+        } artifact${results.length === 1 ? "" : "s"}${note ? ` (${note})` : ""}`
+      : `${results.length} semantic match${results.length === 1 ? "" : "es"} for "${query}" in ${where}${
+          note ? ` (${note})` : ""
+        }`
   const body = results
-    .map((r) => `## ${r.short_id} — ${r.title}\n${renderGroups(r.groups)}`)
+    .map((r) =>
+      r.total > 0
+        ? `## ${r.short_id} — ${r.title}\n${renderGroups(r.groups)}`
+        : `## ${r.short_id} — ${r.title}  (semantic match)\n  ~ ${r.semantic?.snippet ?? ""}`,
+    )
     .join("\n\n")
   const fmt = where === "text" ? "text" : "html"
   const steer = `\n\nOpen one with search(short_id:"...", query:"${query}") for full context, or read(short_id:"...", lines:"from-to", format:"${fmt}").`
@@ -621,6 +703,7 @@ export const toSearchHits = (results: WorkspaceSearchResult[], query: string): S
       short_id: r.short_id,
       title: r.title,
       current_version: r.current_version,
-      snippet: hit ? snippetAround(hit.text, query) : "",
+      // A literal hit line is the best snippet; a dense-only hit falls back to its chunk snippet.
+      snippet: hit ? snippetAround(hit.text, query) : (r.semantic?.snippet ?? ""),
     }
   })

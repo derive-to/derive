@@ -27,6 +27,7 @@ import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/en
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
+import { type VectorizeLike, VectorizeSearchIndex, type WorkersAiLike } from "./search-vectorize"
 import { enqueueChannelDelivery } from "./webhooks"
 
 export { PreviewRenderer } from "./preview-do"
@@ -76,6 +77,11 @@ export interface Env {
   // every declared binding to resolve). Unbound ⇒ D1 is the store (the default).
   HYPERDRIVE?: Hyperdrive
   BUCKET: R2Bucket
+  // Optional semantic search: a Vectorize index + Workers AI (embeddings). Bind BOTH to add the
+  // dense/hybrid arm to workspace search; omit either ⇒ search stays lexical-only, exactly as
+  // self-host. Structurally typed (see search-vectorize.ts) — the real bindings satisfy them.
+  VECTORIZE?: VectorizeLike
+  AI?: WorkersAiLike
   ROOMS: DurableObjectNamespace
   // The webhook outbox drainer DO (a single named instance). Declared in wrangler.toml.
   WEBHOOK_OUTBOX: DurableObjectNamespace
@@ -205,6 +211,11 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // was dead on prod. Undefined when unset ⇒ isToken stays false, as before.
         token: env.DERIVE_TOKEN,
         blobs: new R2BlobStore(env.BUCKET),
+        // Hybrid search's dense arm — only when BOTH the Vectorize index and Workers AI are bound
+        // (create the index + its org_id metadata index first; see wrangler.toml). Unbound ⇒
+        // undefined ⇒ searchWorkspace runs pure-lexical, identical to the Node/self-host path.
+        search:
+          env.VECTORIZE && env.AI ? new VectorizeSearchIndex(env.VECTORIZE, env.AI) : undefined,
         backplane: createDoBackplane(env.ROOMS),
         baseUrl,
         auth,

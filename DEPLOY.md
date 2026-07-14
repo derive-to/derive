@@ -281,6 +281,36 @@ while every other path serves a static file or the SPA shell. `pnpm build:web` b
 apps/web and preps the output (writes `index.html`, drops the Pages-only `_redirects`
 catch-all that otherwise hijacks `/assets/*`); see `scripts/prep-edge-assets.mjs`.
 
+### Semantic search (optional)
+
+Workspace search is lexical (SQLite/D1 FTS + Postgres tsvector) everywhere by default. On the
+Cloudflare edge you can add a **hybrid dense arm** — embeddings via Workers AI, nearest-neighbour
+over Vectorize — fused with the lexical arm (reciprocal-rank fusion). It finds documents by meaning,
+not just literal tokens (e.g. "getting started" matches an *onboarding* doc), and the multilingual
+`bge-m3` model also covers CJK, which the lexical tokenizer handles poorly. Visibility is unchanged:
+the vector index only *nominates* candidates — the same `listArtifacts` gate re-checks every one, so
+it can never widen what a viewer sees.
+
+It activates only when **both** the `VECTORIZE` and `AI` bindings are present (see the commented
+block in `wrangler.toml`); omit either and search stays lexical, exactly as self-host. The Vectorize
+metadata index **must exist before any vector is inserted**, so provision it first, then deploy, then
+backfill the existing corpus:
+
+```bash
+# 1. Create the index (bge-m3 is 1024-dim) and its org-scoping metadata index — BEFORE any insert:
+wrangler vectorize create derive-search --dimensions=1024 --metric=cosine
+wrangler vectorize create-metadata-index derive-search --property-name=org_id --type=string
+# 2. Uncomment the [[vectorize]] + [ai] blocks in wrangler.toml, then deploy.
+# 3. Backfill: new publishes index automatically; sweep the existing corpus with the operator token,
+#    re-POSTing with the returned nextCursor until it comes back null (bundle-dense? lower `limit`):
+curl -XPOST -H "authorization: Bearer $DERIVE_TOKEN" https://<host>/v1/system/search-reindex
+```
+
+Vectorize is eventually consistent (a just-upserted vector is queryable within seconds–minutes), but
+the synchronous lexical arm answers read-your-writes for a fresh publish, so this never shows to a
+user. Costs are modest (Workers AI embeddings + Vectorize stored/queried dimensions); see the
+Cloudflare pricing pages. Left off by default so a deploy without the index provisioned never fails.
+
 ---
 
 ## Cloudflare Scale: Workers + Postgres + Durable Objects

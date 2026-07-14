@@ -9,7 +9,7 @@ import { log } from "../log"
 /** Operational endpoints: liveness (/healthz), readiness (/readyz — proves the datastore
  *  and blob store are reachable), and the minimal API-origin landing page. */
 export const systemRoutes = (ctx: AppContext) => {
-  const { deps, meta, blobs, isToken, isSuperAdmin } = ctx
+  const { deps, meta, blobs, search, isToken, isSuperAdmin } = ctx
   const app = new Hono()
 
   app.get("/healthz", (c) => c.json({ ok: true }))
@@ -83,7 +83,7 @@ export const systemRoutes = (ctx: AppContext) => {
     if (body instanceof Response) return body
     const limit = Math.min(Math.max(body.limit ?? 100, 1), 200)
     const result = await reindexSearchBatch(
-      { meta, blobs },
+      { meta, blobs, search },
       // Normalize null→undefined: reindexSearchBatch's keyset cursor is `{…} | undefined`.
       { orgId: body.orgId, cursor: body.cursor ?? undefined, limit },
     )

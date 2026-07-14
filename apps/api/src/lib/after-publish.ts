@@ -13,6 +13,7 @@ import {
   type BlobStore,
   type MetaStore,
   newId,
+  type SearchIndex,
   type VersionRecord,
 } from "@derive/core"
 import type { Backplane } from "../bus"
@@ -31,6 +32,9 @@ export interface VersionBumpDeps {
   bus: Backplane
   /** Fire-and-forget preview render. Optional so a caller without render access (a test) omits it. */
   notifyRender?: (a: ArtifactRecord, n: number) => void
+  /** The optional dense/semantic search index (Cloudflare edge). When bound, every version
+   *  bump keeps it current alongside the lexical FTS — best-effort, in indexArtifactVersion. */
+  search?: SearchIndex
 }
 
 export const emitVersionBump = async (
@@ -47,7 +51,7 @@ export const emitVersionBump = async (
   // and move on — the artifact re-indexes on its next publish (and the backfill
   // sweep is the safety net for anything missed).
   try {
-    await indexArtifactVersion(meta, blobs, artifact, version)
+    await indexArtifactVersion(meta, blobs, artifact, version, deps.search)
   } catch (err) {
     log.error("search index update failed", { artifact: artifact.id, err: String(err) })
   }
