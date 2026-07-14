@@ -372,8 +372,11 @@ function LibraryBody({ view }: { view: LibraryView }) {
         <SearchField
           value={query}
           onValueChange={setQuery}
-          placeholder="Filter by title…"
-          aria-label="Filter artifacts by title"
+          // The box filters the list by TITLE; Enter escalates to full-text + semantic search
+          // over the whole workspace on the /search page (the reach titles alone can't).
+          onEnter={(v) => nav({ to: "/search", search: { q: v } })}
+          placeholder="Filter by title, or ↵ to search everything…"
+          aria-label="Filter artifacts by title, or press Enter to search all content"
           testId="library-search"
           hotkey
           className="min-w-50 flex-1"

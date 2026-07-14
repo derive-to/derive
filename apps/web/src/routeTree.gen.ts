@@ -14,6 +14,7 @@ import { Route as UnlistedRouteImport } from './routes/unlisted'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as SharedRouteImport } from './routes/shared'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as SearchRouteImport } from './routes/search'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as NewRouteImport } from './routes/new'
@@ -55,6 +56,11 @@ const SharedRoute = SharedRouteImport.update({
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SearchRoute = SearchRouteImport.update({
+  id: '/search',
+  path: '/search',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
@@ -153,6 +159,7 @@ export interface FileRoutesByFullPath {
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/search': typeof SearchRoute
   '/settings': typeof SettingsRouteWithChildren
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
@@ -177,6 +184,7 @@ export interface FileRoutesByTo {
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/search': typeof SearchRoute
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
   '/unlisted': typeof UnlistedRoute
@@ -201,6 +209,7 @@ export interface FileRoutesById {
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/search': typeof SearchRoute
   '/settings': typeof SettingsRouteWithChildren
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
@@ -227,6 +236,7 @@ export interface FileRouteTypes {
     | '/new'
     | '/people'
     | '/reset-password'
+    | '/search'
     | '/settings'
     | '/shared'
     | '/showcase'
@@ -251,6 +261,7 @@ export interface FileRouteTypes {
     | '/new'
     | '/people'
     | '/reset-password'
+    | '/search'
     | '/shared'
     | '/showcase'
     | '/unlisted'
@@ -274,6 +285,7 @@ export interface FileRouteTypes {
     | '/new'
     | '/people'
     | '/reset-password'
+    | '/search'
     | '/settings'
     | '/shared'
     | '/showcase'
@@ -299,6 +311,7 @@ export interface RootRouteChildren {
   NewRoute: typeof NewRoute
   PeopleRoute: typeof PeopleRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  SearchRoute: typeof SearchRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   SharedRoute: typeof SharedRoute
   ShowcaseRoute: typeof ShowcaseRoute
@@ -347,6 +360,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/search': {
+      id: '/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof SearchRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reset-password': {
@@ -495,6 +515,7 @@ const rootRouteChildren: RootRouteChildren = {
   NewRoute: NewRoute,
   PeopleRoute: PeopleRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  SearchRoute: SearchRoute,
   SettingsRoute: SettingsRouteWithChildren,
   SharedRoute: SharedRoute,
   ShowcaseRoute: ShowcaseRoute,

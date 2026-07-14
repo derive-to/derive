@@ -210,6 +210,20 @@ describe("searchWorkspace — hybrid retrieval", () => {
     const hits = toSearchHits(results, "getting started")
     expect(hits).toHaveLength(1)
     expect(hits[0]?.snippet).toContain("golden path")
+    expect(hits[0]?.semantic).toBe(true) // no literal hit line ⇒ flagged as a meaning match
+  })
+
+  it("toSearchHits flags a LITERAL hit as semantic:false (it matched the text directly)", async () => {
+    const doc: Doc = {
+      id: "onb",
+      short_id: "onb1",
+      title: "Onboarding",
+      body: "the onboarding path",
+    }
+    const { results } = await run(makeDeps([doc], denseIndex({})), "onboarding")
+    const hits = toSearchHits(results, "onboarding")
+    expect(hits[0]?.semantic).toBe(false) // a real grep hit isn't a meaning-only match
+    expect(hits[0]?.snippet.toLowerCase()).toContain("onboarding")
   })
 
   it("a throwing dense arm degrades to lexical-only rather than failing the whole search", async () => {

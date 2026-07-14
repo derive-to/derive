@@ -32,6 +32,7 @@ export function SearchField({
   autoFocus = false,
   className,
   testId,
+  onEnter,
   "aria-label": ariaLabel,
 }: {
   value: string
@@ -44,6 +45,8 @@ export function SearchField({
   autoFocus?: boolean
   className?: string
   testId: string
+  /** Fired on Enter with the current value trimmed non-empty — e.g. to submit to a results page. */
+  onEnter?: (value: string) => void
   "aria-label": string
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -59,6 +62,11 @@ export function SearchField({
         value={value}
         onChange={(e) => onValueChange(e.target.value)}
         onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            const v = value.trim()
+            if (onEnter && v) onEnter(v)
+            return
+          }
           if (e.key !== "Escape") return
           if (value) {
             // First Esc clears; inside a dialog, closing stays the second Esc.

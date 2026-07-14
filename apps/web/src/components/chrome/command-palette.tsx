@@ -280,11 +280,18 @@ export function CommandPalette() {
                   </div>
                 </CommandItem>
               ))}
-              {content.truncated && (
-                <div className="px-2 py-1.5 text-2xs text-muted-foreground">
-                  More may match — refine to narrow.
-                </div>
-              )}
+              {/* Escape the 6-row peek: jump to the full, browsable results page. */}
+              <CommandItem
+                value="see-all-results"
+                data-testid="palette-see-all-results"
+                onSelect={() => go(() => nav({ to: "/search", search: { q: query.trim() } }))}
+                className="text-muted-foreground"
+              >
+                <Icon name="search" size={16} />
+                <span>
+                  {content.truncated ? "See all results (more match)" : "See all results"}
+                </span>
+              </CommandItem>
             </CommandGroup>
           )}
 

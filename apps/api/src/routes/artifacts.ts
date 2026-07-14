@@ -875,16 +875,17 @@ export const artifactRoutes = (ctx: AppContext) => {
         : null
     const publicOnly = !(isOperator || baselineRole !== null)
 
-    // `?format=json` is the UI shape (the ⌘K palette): a small, ranked hit list with a
-    // snippet per artifact instead of the agent-facing ripgrep text report. A typeahead
-    // caller keeps the grep-confirm count tiny (bounded 1..12) so a debounced keystroke
-    // reads only a few blobs; the text report keeps the full agent depth.
+    // `?format=json` is the UI shape: a ranked hit list with a snippet per artifact instead of the
+    // agent-facing ripgrep text report. Two callers, one shape: the ⌘K palette typeahead requests a
+    // tiny `limit` (≤~6) so a debounced keystroke reads only a few blobs; the /search results page
+    // requests a deeper page (up to 50). Bounded 1..50 either way — a page reads up to `limit` blobs
+    // for grep-confirm, acceptable off the hot typeahead path but still capped.
     const isJson = c.req.query("format") === "json"
-    const limit = isJson ? Math.min(Math.max(Number(c.req.query("limit")) || 6, 1), 12) : undefined
-    // Keep the whole JSON request cheap, not just the blob reads: a small candidate cap
-    // means the visibility resolve is a SINGLE chunked query and the FTS scan is small —
-    // the palette only shows a handful, so deep recall would be wasted work on a hot path.
-    const candidateCap = isJson ? 60 : undefined
+    const limit = isJson ? Math.min(Math.max(Number(c.req.query("limit")) || 6, 1), 50) : undefined
+    // Nomination breadth scales with the requested depth: the palette (limit ~6) stays at the cheap
+    // 60-candidate single-chunked visibility resolve; the results page (limit ~30) nominates deeper
+    // so the ranked list is fuller. Capped at the workspace default (200) so it can't run away.
+    const candidateCap = isJson ? Math.min(Math.max((limit ?? 6) * 4, 60), 200) : undefined
 
     const { results, note } = await searchWorkspace(
       { blobs, sourceText, meta, search },
