@@ -1,8 +1,11 @@
+import { roleAllows } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
+import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { bail, fail } from "../lib/http"
 import { MAX_ASSET_BYTES, sniffAssetType } from "../lib/image"
+import { verifyUploadToken } from "../lib/upload-token"
 
 const EXT_FOR_TYPE: Record<string, string> = {
   "image/png": "png",
@@ -55,6 +58,51 @@ export const assetRoutes = (ctx: AppContext) => {
     })
     .openapi("AssetRef")
 
+  // The storage half, shared by both entry points below once the caller has proven
+  // a workspace: read the body, sniff, quota-check, store. Returns the handle payload
+  // (each route c.json()s it under its own typed context) or an error Response.
+  const storeAsset = async (c: Context, org: string) => {
+    const declared = Number(c.req.header("content-length") ?? 0)
+    if (declared > MAX_ASSET_BYTES + 4096) return fail(c, 413, "asset too large (max 25MB)")
+
+    // Accept either a multipart `file` field (browsers, the CLI's FormData) or a raw
+    // binary body (curl --data-binary @shot.png), so an agent can stream bytes the
+    // simplest way it has.
+    const contentType = c.req.header("content-type") ?? ""
+    let bytes: Uint8Array
+    if (contentType.includes("multipart/form-data")) {
+      const file = (await c.req.parseBody()).file
+      if (!(file instanceof File)) return fail(c, 400, "multipart field 'file' required")
+      bytes = new Uint8Array(await file.arrayBuffer())
+    } else {
+      bytes = new Uint8Array(await c.req.arrayBuffer())
+    }
+
+    if (bytes.byteLength === 0) return fail(c, 400, "empty asset body")
+    if (bytes.byteLength > MAX_ASSET_BYTES) return fail(c, 413, "asset too large (max 25MB)")
+
+    // Trust the bytes, not the declared type — and only store non-executable formats:
+    // plain raster images and packaged web fonts (no SVG/HTML: served from our origin
+    // they could carry script).
+    const type = sniffAssetType(bytes)
+    if (!type) return fail(c, 400, "unsupported asset (use PNG, JPEG, GIF, WebP, or WOFF/WOFF2)")
+
+    if (await overStorage(org, bytes.byteLength)) return fail(c, 413, "storage quota exceeded")
+
+    const key = await blobs.put(bytes)
+    // Content-addressed row: this is the allowlist that makes GET /blob/:hash
+    // servable at all (the blob store also holds manifests/HTML the route must
+    // never serve) — see routes/blob.ts. A re-upload of the same bytes is a no-op.
+    await meta.createAsset({
+      hash: key,
+      org_id: org,
+      content_type: type,
+      size_bytes: bytes.byteLength,
+    })
+    const url = `${deps.baseUrl.replace(/\/$/, "")}/blob/${key}.${EXT_FOR_TYPE[type]}`
+    return { key, url, ref: `asset:${key}`, type, size: bytes.byteLength }
+  }
+
   app.openapi(
     createRoute({
       method: "post",
@@ -74,49 +122,50 @@ export const assetRoutes = (ctx: AppContext) => {
       // anonymous write-lockdown already blocks unauthenticated POSTs.)
       const org = await requireWorkspace(c, "publish")
       if (org instanceof Response) return bail(org)
+      const r = await storeAsset(c, org)
+      return r instanceof Response ? bail(r) : c.json(r)
+    },
+  )
 
-      const declared = Number(c.req.header("content-length") ?? 0)
-      if (declared > MAX_ASSET_BYTES + 4096) return bail(fail(c, 413, "asset too large (max 25MB)"))
-
-      // Accept either a multipart `file` field (browsers, the CLI's FormData) or a raw
-      // binary body (curl --data-binary @shot.png), so an agent can stream bytes the
-      // simplest way it has.
-      const contentType = c.req.header("content-type") ?? ""
-      let bytes: Uint8Array
-      if (contentType.includes("multipart/form-data")) {
-        const file = (await c.req.parseBody()).file
-        if (!(file instanceof File)) return bail(fail(c, 400, "multipart field 'file' required"))
-        bytes = new Uint8Array(await file.arrayBuffer())
-      } else {
-        bytes = new Uint8Array(await c.req.arrayBuffer())
+  // The tokened entry point: same upload, but the proof of workspace is a
+  // short-lived signed capability in the path instead of a session/bearer. Minted
+  // by the MCP `stage_asset` tool for agents whose only credential lives inside
+  // the MCP transport (hosted OAuth) — their shell can curl this URL with raw
+  // bytes, keeping binaries out of the model's context. The token is
+  // workspace-scoped and expiring; what it can write is bounded exactly like the
+  // authed route above (sniffed formats, size cap, storage quota).
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/assets/t/{token}",
+      tags: ["Assets"],
+      summary: "Stage a binary asset with a short-lived upload token (minted over MCP).",
+      request: { params: z.object({ token: z.string() }) },
+      responses: {
+        200: {
+          description: "The stored asset's public URL and content-addressed handle.",
+          content: { "application/json": { schema: AssetRef } },
+        },
+      },
+    }),
+    async (c) => {
+      const secret = deps.encryptionKey
+      const claim = secret
+        ? await verifyUploadToken(secret, c.req.param("token"), Date.now())
+        : null
+      if (!claim) return bail(fail(c, 403, "invalid or expired upload token"))
+      // The token names the user whose grant minted it; re-check their LIVE
+      // membership so revocation works mid-TTL — demote or remove the person and
+      // their outstanding upload URLs die with the next request, exactly like the
+      // per-request role check on the authed route above. (Empty = an ownerless
+      // legacy agent; the mint-time role check is all there is for those.)
+      if (claim.userId) {
+        const m = await meta.getMembership(claim.orgId, claim.userId)
+        if (!m || !roleAllows(m.role, "publish"))
+          return bail(fail(c, 403, "invalid or expired upload token"))
       }
-
-      if (bytes.byteLength === 0) return bail(fail(c, 400, "empty asset body"))
-      if (bytes.byteLength > MAX_ASSET_BYTES)
-        return bail(fail(c, 413, "asset too large (max 25MB)"))
-
-      // Trust the bytes, not the declared type — and only store non-executable formats:
-      // plain raster images and packaged web fonts (no SVG/HTML: served from our origin
-      // they could carry script).
-      const type = sniffAssetType(bytes)
-      if (!type)
-        return bail(fail(c, 400, "unsupported asset (use PNG, JPEG, GIF, WebP, or WOFF/WOFF2)"))
-
-      if (await overStorage(org, bytes.byteLength))
-        return bail(fail(c, 413, "storage quota exceeded"))
-
-      const key = await blobs.put(bytes)
-      // Content-addressed row: this is the allowlist that makes GET /blob/:hash
-      // servable at all (the blob store also holds manifests/HTML the route must
-      // never serve) — see routes/blob.ts. A re-upload of the same bytes is a no-op.
-      await meta.createAsset({
-        hash: key,
-        org_id: org,
-        content_type: type,
-        size_bytes: bytes.byteLength,
-      })
-      const url = `${deps.baseUrl.replace(/\/$/, "")}/blob/${key}.${EXT_FOR_TYPE[type]}`
-      return c.json({ key, url, ref: `asset:${key}`, type, size: bytes.byteLength })
+      const r = await storeAsset(c, claim.orgId)
+      return r instanceof Response ? bail(r) : c.json(r)
     },
   )
 

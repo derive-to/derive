@@ -92,30 +92,46 @@ export const rawRoutes = (ctx: AppContext) => {
     )
   })
 
+  // The screenshot renderer's entry point: the short-lived preview token minted in
+  // previews.ts (read of exactly one artifact+version, never anything wider) rides as
+  // a PATH segment for the same reason the viewer's `/t/:token/` above does. It used
+  // to arrive as `?pv=` on the plain route below — which authorized the page itself
+  // but not a bundle's own `<img src="picker.webp">` requests (a relative URL keeps
+  // its base's path, not its query string), so private bundles screenshotted with
+  // every image broken. In the path, the proof of access replays automatically on
+  // each nested asset request. Same registration-order constraint as `/t/:token/`.
+  //
+  // Verify BEFORE anything else, and fall through (next()) when the segment isn't a
+  // valid token: this route pattern would otherwise reserve the `pv/` name inside
+  // every artifact — a bundle's own literal `pv/chart.png` would match here, get its
+  // path sliced against the wrong prefix, and 404 for a fully authorized viewer.
+  // A segment that HMAC-verifies can't be a coincidental filename, so a valid token
+  // (even for the wrong artifact — someone replaying it) owns the request, and
+  // everything else is a real file path for the plain route below to serve under
+  // its normal cookie authorization.
+  app.get("/raw/:shortId/v/:n/pv/:pv/*", async (c, next) => {
+    const secret = deps.encryptionKey
+    const claim = secret ? await verifyPreviewToken(secret, c.req.param("pv"), Date.now()) : null
+    if (!claim) return next()
+    const shortId = c.req.param("shortId")
+    const n = Number(c.req.param("n"))
+    const artifact = await meta.getByShortId(shortId)
+    if (!artifact || !Number.isInteger(n)) return c.text("not found", 404)
+    if (claim.artifactId !== artifact.id || claim.n !== n) return c.text("not found", 404)
+    return serveVersion(
+      c,
+      artifact,
+      n,
+      `/raw/${shortId}/v/${c.req.param("n")}/pv/${c.req.param("pv")}/`,
+    )
+  })
+
   app.get("/raw/:shortId/v/:n/*", async (c) => {
     const shortId = c.req.param("shortId")
     const n = Number(c.req.param("n"))
     const artifact = await meta.getByShortId(shortId)
     if (!artifact || !Number.isInteger(n)) return c.text("not found", 404)
-
-    // Preview-access token: a short-lived HMAC token minted by the screenshot
-    // renderer so it can load private/gated artifacts without a session. Grants
-    // read of exactly one artifact+version; never widens anything else.
-    const pv = c.req.query("pv")
-    const secret = deps.encryptionKey
-    let pvAuthorized = false
-    if (pv && secret) {
-      try {
-        const claim = await verifyPreviewToken(secret, pv, Date.now())
-        if (claim && claim.artifactId === artifact.id && claim.n === n) {
-          pvAuthorized = true
-        }
-      } catch {
-        // Malformed token — fall through to normal authorize
-      }
-    }
-
-    if (!pvAuthorized && !(await authorize(c, "read", artifact))) return c.text("not found", 404)
+    if (!(await authorize(c, "read", artifact))) return c.text("not found", 404)
     return serveVersion(c, artifact, n, `/raw/${shortId}/v/${c.req.param("n")}/`)
   })
 

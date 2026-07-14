@@ -337,8 +337,8 @@ describe("previews: enqueueRender + runRenderTick", () => {
     // URL contains the raw route with shortId
     expect(seen[0]).toContain("/raw/")
     expect(seen[0]).toContain("short1")
-    // URL contains the preview token query param
-    expect(seen[0]).toContain("?pv=")
+    // The preview token rides as a path segment so bundle sub-assets inherit it
+    expect(seen[0]).toContain("/pv/")
     // Version is now ready
     expect(fakes.versions.get("a1:1")?.preview_status).toBe("ready")
     expect(fakes.versions.get("a1:1")?.preview_key).toBeTruthy()
@@ -378,7 +378,7 @@ describe("previews: enqueueRender + runRenderTick", () => {
     expect(og?.opts?.fullPage).toBeFalsy()
     expect(full?.url).toBe(og?.url) // same page, just fullPage:true
     expect(full?.opts?.fullPage).toBe(true)
-    expect(marked?.url).toBe(`${og?.url}&marks=1`)
+    expect(marked?.url).toBe(`${og?.url}?marks=1`)
     expect(marked?.opts?.fullPage).toBe(true)
 
     const v = fakes.versions.get("a1v:1")

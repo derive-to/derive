@@ -221,8 +221,10 @@ export const runRenderTick = async (
         Date.now() + CLAIM_LEASE_MS,
       )
 
+      // The token rides as a path segment (not `?pv=`) so a bundle's relative asset
+      // references inherit it — see the `/pv/:pv/` route in routes/raw.ts.
       const origin = deps.sandboxOrigin ?? deps.baseUrl
-      const url = `${origin}/raw/${artifact.short_id}/v/${job.version_n}/index.html?pv=${pv}`
+      const url = `${origin}/raw/${artifact.short_id}/v/${job.version_n}/pv/${pv}/index.html`
 
       // Screenshot with a timeout guard so a hung browser can't wedge the loop
       const png = await withTimeout(
@@ -269,7 +271,7 @@ export const runRenderTick = async (
         fullPage: true,
         timeoutMs: RENDER_TIMEOUT_MS,
       })
-      await renderPreviewVariant(deps, artifact.id, job.version_n, "marked", `${url}&marks=1`, {
+      await renderPreviewVariant(deps, artifact.id, job.version_n, "marked", `${url}?marks=1`, {
         width: OG_W,
         height: OG_H,
         fullPage: true,
