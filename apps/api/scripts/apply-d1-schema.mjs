@@ -10,6 +10,10 @@
 //   2. Diff each table's columns against the live DB and ALTER ... ADD COLUMN only the
 //      missing ones (CREATE-IF-NOT-EXISTS never adds columns to a table that exists).
 //
+// No-op on the Postgres tier: with Hyperdrive → Neon bound, the worker reads Postgres
+// and this D1 sits idle, so its schema is irrelevant. DATABASE_URL set ⇒ skip (see the
+// guard below) — otherwise a drift in a database prod never reads could block deploys.
+//
 //   node scripts/apply-d1-schema.mjs           # --remote (production D1)
 //   node scripts/apply-d1-schema.mjs --local   # local/dev D1
 import { execFileSync } from "node:child_process"
@@ -20,6 +24,20 @@ import { parseExpectedColumns, planColumnAdds } from "./d1-schema-plan.mjs"
 
 const DB = process.env.DERIVE_D1_NAME ?? "derive"
 const TARGET = process.argv.includes("--local") ? "--local" : "--remote"
+
+// Postgres tier: skip. When Hyperdrive → Neon is bound, the worker reads Postgres and
+// the D1 database "sits idle" (see apps/api/wrangler.toml) — its schema never serves a
+// request. Applying it anyway lets a drift in a database prod never reads block every
+// deploy: e.g. a NOT NULL column added to an existing table, which fails the `CREATE
+// INDEX` in the declarative file AND can't be ALTER-added by the additive-only
+// reconciler below — wedging the pipeline over dead weight. DATABASE_URL set means the
+// Postgres tier (the deploy step asserts it before calling this), so bow out cleanly. A
+// D1-tier deploy (no DATABASE_URL) still applies, as does `--local` dev without one.
+if (process.env.DATABASE_URL) {
+  console.log("[d1] DATABASE_URL set (Postgres tier) — D1 is idle; skipping D1 schema apply")
+  process.exit(0)
+}
+
 const here = dirname(fileURLToPath(import.meta.url))
 const schemaPath = join(here, "../../../deploy/d1-schema.sql")
 
