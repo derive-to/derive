@@ -1,17 +1,17 @@
+import { randomUUID } from "node:crypto"
 import { join } from "node:path"
+import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
-import { describe, expect, it } from "vitest"
+import { afterAll, describe, expect, it } from "vitest"
+import { createApp } from "../src/app"
+import { signUploadToken } from "../src/lib/upload-token"
+import { PNG_BYTES } from "./fixtures"
 import { anonApp, app, dir } from "./helpers"
 
 // POST /v1/assets is the "images without base64" path: an agent streams the raw bytes
 // of a screenshot up as binary (no transcription), gets back a content-addressed
 // `asset:<hash>` handle, and references that handle in a `publish` files map — where
 // decodeBundleFiles resolves it back to these exact bytes (see bundle-assets.test.ts).
-
-// A real 1x1 transparent PNG.
-const PNG_B64 =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-const PNG_BYTES = new Uint8Array(Buffer.from(PNG_B64, "base64"))
 
 const postAsset = (body: BodyInit, contentType?: string) =>
   app.request("/v1/assets", {
@@ -83,6 +83,110 @@ describe("POST /v1/assets", () => {
 
   it("is closed to anonymous callers (the write-lockdown)", async () => {
     const res = await anonApp.request("/v1/assets", {
+      method: "POST",
+      headers: { "content-type": "image/png" },
+      body: PNG_BYTES,
+    })
+    expect(res.status).toBe(403)
+  })
+})
+
+// The tokened entry point: a short-lived signed capability (minted by the MCP
+// stage_asset tool) takes the place of the session/bearer, so an agent whose only
+// credential lives inside the MCP transport can still stream raw bytes from its
+// shell. Requests here are deliberately UNAUTHENTICATED — the token is the proof.
+describe("POST /v1/assets/t/:token (MCP-minted upload URL)", () => {
+  const UPLOAD_SECRET = "test-upload-secret-long-enough"
+  const tokMeta = new SqliteMetaStore(join(dir, "upload-token.db"))
+  const tokApp = createApp({
+    meta: tokMeta,
+    blobs: new FsBlobStore(join(dir, "upload-token-blobs")),
+    baseUrl: "http://derive.test",
+    token: "tok",
+    encryptionKey: UPLOAD_SECRET,
+  })
+  afterAll(() => tokMeta.close())
+
+  const postTokened = (token: string, body: BodyInit) =>
+    tokApp.request(`/v1/assets/t/${token}`, {
+      method: "POST",
+      headers: { "content-type": "image/png" },
+      body,
+    })
+
+  // An unbound token (empty principal — what an ownerless legacy agent mints):
+  // no membership re-check, the mint-time role check was all there is.
+  const unbound = (exp: number) => signUploadToken(UPLOAD_SECRET, "default", "", exp)
+
+  it("a valid token stages bytes with no auth header and returns the same handle shape", async () => {
+    const tok = await unbound(Date.now() + 60_000)
+    const res = await postTokened(tok, PNG_BYTES)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.type).toBe("image/png")
+    expect(body.ref).toBe(`asset:${body.key}`)
+    expect(body.url).toBe(`http://derive.test/blob/${body.key}.png`)
+
+    // The permanent URL serves the exact bytes back — same as the authed route.
+    const served = await tokApp.request(new URL(body.url).pathname)
+    expect(served.status).toBe(200)
+    expect(new Uint8Array(await served.arrayBuffer())).toEqual(PNG_BYTES)
+  })
+
+  it("the token is reusable until expiry (one mint stages a batch)", async () => {
+    const tok = await unbound(Date.now() + 60_000)
+    const woff2 = new Uint8Array([0x77, 0x4f, 0x46, 0x32, 0, 1, 2, 3, 4, 5])
+    expect((await postTokened(tok, PNG_BYTES)).status).toBe(200)
+    expect((await postTokened(tok, woff2)).status).toBe(200)
+  })
+
+  it("an expired token → 403", async () => {
+    const tok = await unbound(Date.now() - 1_000)
+    expect((await postTokened(tok, PNG_BYTES)).status).toBe(403)
+  })
+
+  it("a garbage token → 403", async () => {
+    expect((await postTokened("garbage", PNG_BYTES)).status).toBe(403)
+  })
+
+  it("a user-bound token dies with the user's publish rights (revocation mid-TTL)", async () => {
+    // Bind a token to a member who can publish; it works. Demote them to
+    // commenter and the SAME still-unexpired token is refused on the next
+    // request — capability URLs must not outlive the grant that minted them.
+    const uid = "u_upload"
+    await tokMeta.setMembership({
+      id: randomUUID(),
+      org_id: "default",
+      user_id: uid,
+      role: "editor",
+    })
+    const tok = await signUploadToken(UPLOAD_SECRET, "default", uid, Date.now() + 60_000)
+    expect((await postTokened(tok, PNG_BYTES)).status).toBe(200)
+
+    await tokMeta.setMembership({
+      id: randomUUID(),
+      org_id: "default",
+      user_id: uid,
+      role: "commenter",
+    })
+    expect((await postTokened(tok, PNG_BYTES)).status).toBe(403)
+  })
+
+  it("a token bound to a non-member → 403", async () => {
+    const tok = await signUploadToken(UPLOAD_SECRET, "default", "u_ghost", Date.now() + 60_000)
+    expect((await postTokened(tok, PNG_BYTES)).status).toBe(403)
+  })
+
+  it("still sniffs the bytes — a valid token can't stage a non-asset format", async () => {
+    const tok = await unbound(Date.now() + 60_000)
+    const res = await postTokened(tok, new TextEncoder().encode("<svg>not raster</svg>"))
+    expect(res.status).toBe(400)
+  })
+
+  it("fails closed on a server with no signing secret", async () => {
+    // The shared helper app has no encryptionKey; even a well-formed token is 403.
+    const tok = await unbound(Date.now() + 60_000)
+    const res = await anonApp.request(`/v1/assets/t/${tok}`, {
       method: "POST",
       headers: { "content-type": "image/png" },
       body: PNG_BYTES,

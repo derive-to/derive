@@ -75,6 +75,7 @@ import { parseMeta, quoteOf, REACTIONS } from "./lib/comments"
 import { type MaterializedEdits, materializeEdits, preservingFilename } from "./lib/edits"
 import { buildReviewEmail } from "./lib/email"
 import { MAX_UPLOAD_BYTES } from "./lib/http"
+import { MAX_ASSET_BYTES } from "./lib/image"
 import { notifyCommentBells } from "./lib/notify-comment"
 import {
   baseType,
@@ -88,6 +89,7 @@ import {
   workspaceSearchReport,
 } from "./lib/search"
 import { enqueueSlackReviewRequestedDm } from "./lib/slack-dm"
+import { signUploadToken, UPLOAD_TOKEN_TTL_MS } from "./lib/upload-token"
 import { enqueueChannelDelivery } from "./webhooks"
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
@@ -336,7 +338,10 @@ async function buildServer(
         `short_id to grep across the workspace instead — same tool, that one parameter omitted. ` +
         `After publishing a styled page, call read with render:"top" (or ` +
         `"full"/"marked") to SEE what shipped — it catches visual breakage no text ` +
-        `read can. Use comment to leave or ` +
+        `read can. For images and web fonts, call stage_asset for a short-lived upload ` +
+        `URL, curl the file's raw bytes to it from your shell, and reference the ` +
+        `returned permanent url — never base64 binaries through a tool call (a pasted ` +
+        `image usually already sits on disk; upload that file). Use comment to leave or ` +
         `resolve feedback. ${writeGuidance}To change PART of an artifact, prefer publish's edits ` +
         `(exact-match search/replace against the stored source) over resending everything. When a ` +
         `revision fixes specific feedback, pass those thread ids as publish's "addresses" so the ` +
@@ -1472,24 +1477,65 @@ async function buildServer(
     },
   )
 
+  // STAGE ASSETS — a tokenless upload URL for binaries -------------------------
+  // The blessed images path is POST /v1/assets with raw bytes, but a hosted-OAuth
+  // connection's credential lives inside this transport — the agent's shell has no
+  // bearer to curl with, so that path 403s on exactly the agents told to use it.
+  // This tool moves the capability out to the shell: mint a short-lived signed
+  // upload URL over MCP, spend it with curl. The bytes never enter the context.
+  server.registerTool(
+    "stage_asset",
+    {
+      description:
+        "Mint a SHORT-LIVED upload URL for staging binary assets — raster images (PNG/JPEG/GIF/WebP) and web fonts (WOFF/WOFF2), max 25MB — into this workspace, no bearer token needed. POST a file's RAW bytes to the returned URL from your shell (`curl -sS --data-binary @shot.png <upload_url>`); the response carries a permanent public `url` to paste into any artifact's <img src>/CSS url()/markdown, and the `asset:<hash>` `ref` for a publish `files` map. The URL is reusable until it expires (~15 min), so stage a whole batch with one mint. An image PASTED into your conversation is usually ALREADY a file on disk (Claude Code caches pastes and shows the path alongside the image) — upload those bytes; NEVER transcribe an image to base64 through your context (~1 token/byte, and it can be silently corrupted). No shell? Fall back to a base64 data: URI entry in a bundle publish's `files` map — small images only.",
+      inputSchema: { workspace: wsArg },
+    },
+    async ({ workspace }) => {
+      const t = await resolveWs(workspace)
+      if ("error" in t) return err(t.error)
+      // Same bar as POST /v1/assets itself: staging is a publish-side capability.
+      if (!roleAllows(t.role, "publish"))
+        return err("Your role in this workspace can't stage assets (publishing required).")
+      const secret = ctx.deps.encryptionKey
+      if (!secret)
+        return err(
+          "This server has no signing secret configured, so it can't mint upload URLs. POST the bytes to /v1/assets with a bearer token instead (DERIVE_TOKEN, or `derive login`).",
+        )
+      // Bind the token to the granting user so the spend side can re-check live
+      // membership — revoking or demoting them kills outstanding URLs mid-TTL.
+      // An ownerless legacy agent has no user to bind; it mints an unbound token.
+      const expiresAt = Date.now() + UPLOAD_TOKEN_TTL_MS
+      const tok = await signUploadToken(secret, t.org, ownerId ?? "", expiresAt)
+      const uploadUrl = `${ctx.deps.baseUrl.replace(/\/$/, "")}/v1/assets/t/${tok}`
+      return json({
+        upload_url: uploadUrl,
+        workspace: t.org,
+        expires_in_minutes: Math.round(UPLOAD_TOKEN_TTL_MS / 60_000),
+        max_bytes: MAX_ASSET_BYTES,
+        accepts: ["image/png", "image/jpeg", "image/gif", "image/webp", "font/woff", "font/woff2"],
+        how: `curl -sS -X POST --data-binary @<file> "${uploadUrl}" → {url, ref, ...}. Paste \`url\` into content, or use \`ref\` ("asset:<hash>") as a bundle files value. Repeat for each file until expiry.`,
+      })
+    },
+  )
+
   // WRITE — publish live, or file a proposal for review -----------------------
   server.registerTool(
     "publish",
     {
       description:
-        "Save a revision of an artifact. It goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or whenever you pass for_review:true — it is filed as a PROPOSAL a human approves before it goes live. To CHANGE PART of a single-file artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything. Otherwise provide the full `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE (a whole site, images and any binary asset). OMIT short_id to create a NEW artifact (`title` required); PASS short_id to add a version to one you own, matching its kind. A bundle republish REPLACES the whole bundle, so include EVERY page and asset (or use `merge`). Pass `addresses` with the thread ids (from catch_up) this revision resolves. (Proposals are single-file only; bundles must be published directly.) FULLY-STYLED HTML renders as-authored (own <style>/scripts/fonts) in the sandboxed viewer — two rules: declare your own <meta name=\"viewport\"> (pages without one get a mobile-reflow injection whose media caps can fight intentional layouts; `data-reflow-exempt` on an element is the per-component escape hatch), and self-host binaries via POST /v1/assets (images AND woff2 fonts) instead of base64. The response echoes `content_sha256` of the stored bytes — verify it when the content passed through your context.",
+        "Save a revision of an artifact. It goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or whenever you pass for_review:true — it is filed as a PROPOSAL a human approves before it goes live. To CHANGE PART of a single-file artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything. Otherwise provide the full `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE (a whole site, images and any binary asset). OMIT short_id to create a NEW artifact (`title` required); PASS short_id to add a version to one you own, matching its kind. A bundle republish REPLACES the whole bundle, so include EVERY page and asset (or use `merge`). Pass `addresses` with the thread ids (from catch_up) this revision resolves. (Proposals are single-file only; bundles must be published directly.) FULLY-STYLED HTML renders as-authored (own <style>/scripts/fonts) in the sandboxed viewer — two rules: declare your own <meta name=\"viewport\"> (pages without one get a mobile-reflow injection whose media caps can fight intentional layouts; `data-reflow-exempt` on an element is the per-component escape hatch), and self-host binaries via a stage_asset upload URL (images AND woff2 fonts) instead of base64. The response echoes `content_sha256` of the stored bytes — verify it when the content passed through your context.",
       inputSchema: {
         content: z
           .string()
           .optional()
           .describe(
-            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. To embed an image OR a web font CHEAPLY (no base64 in this call), upload the raw bytes to POST /v1/assets first (PNG/JPEG/GIF/WebP/WOFF/WOFF2) — the response's `url` is a permanent public link; paste it into an `<img src>`, a CSS `url()`, or markdown `![]()`. Never inline a base64 data: URI here — it tokenizes at roughly 1 token/char (one modest screenshot can cost 100k+ tokens), and content carried through your context can be silently mistranscribed; binaries should travel as bytes. If you have shell access and the file is large, you can also POST it directly to /v1/artifacts (raw body) with your bearer token — zero tokens through this call.",
+            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. To embed an image OR a web font CHEAPLY (no base64 in this call), call stage_asset for a short-lived upload URL and curl the raw bytes to it (PNG/JPEG/GIF/WebP/WOFF/WOFF2) — the response's `url` is a permanent public link; paste it into an `<img src>`, a CSS `url()`, or markdown `![]()`. Never inline a base64 data: URI here — it tokenizes at roughly 1 token/char (one modest screenshot can cost 100k+ tokens), and content carried through your context can be silently mistranscribed; binaries should travel as bytes. If you have shell access and the file is large, you can also POST it directly to /v1/artifacts (raw body) with your bearer token — zero tokens through this call.",
           ),
         files: z
           .record(z.string(), z.string())
           .optional()
           .describe(
-            'A MULTI-PAGE bundle as a map of path → content — the whole site. Each value is one of: a text page (plain string); a base64 data: URI for a small inline binary ("shot.png":"data:image/png;base64,iVBORw0K…"); or — PREFERRED for real images — an "asset:<hash>" handle returned by uploading the raw bytes to POST /v1/assets first ("shot.png":"asset:9f86d0818…"). The asset handle keeps the call tiny: stream each screenshot up as raw binary (no base64 transcription), then reference the handles here. Example: {"index.html":"<img src=shot.png>","styles.css":"…","shot.png":"asset:9f86d0818…","logo.png":"data:image/png;base64,iVBORw0K…"}. The root index.html (else the shallowest .html) becomes the entry page; pages reference assets by relative path. Served content-type comes from the file extension, so give binary entries a real extension (.png/.jpg/.webp/.woff2). A plain republish REPLACES the bundle (include every page and asset). Keep each call to a few MB; for many/large images, upload them to /v1/assets and reference the handles (or publish pages first, then `merge` asset batches). Each published page is also readable directly at /raw/<short_id>/v/<n>/<path> once live.',
+            'A MULTI-PAGE bundle as a map of path → content — the whole site. Each value is one of: a text page (plain string); a base64 data: URI for a small inline binary ("shot.png":"data:image/png;base64,iVBORw0K…"); or — PREFERRED for real images — an "asset:<hash>" handle: call stage_asset for an upload URL, curl the raw bytes to it, and use the returned `ref` here ("shot.png":"asset:9f86d0818…"). The asset handle keeps the call tiny: stream each screenshot up as raw binary (no base64 transcription), then reference the handles here. Example: {"index.html":"<img src=shot.png>","styles.css":"…","shot.png":"asset:9f86d0818…","logo.png":"data:image/png;base64,iVBORw0K…"}. The root index.html (else the shallowest .html) becomes the entry page; pages reference assets by relative path. Served content-type comes from the file extension, so give binary entries a real extension (.png/.jpg/.webp/.woff2). A plain republish REPLACES the bundle (include every page and asset). Keep each call to a few MB; for many/large images, stage them as assets and reference the handles (or publish pages first, then `merge` asset batches). Each published page is also readable directly at /raw/<short_id>/v/<n>/<path> once live.',
           ),
         title: z
           .string()

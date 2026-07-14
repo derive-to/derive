@@ -4243,6 +4243,36 @@
         }
       }
     },
+    "/v1/assets/t/{token}": {
+      "post": {
+        "tags": [
+          "Assets"
+        ],
+        "summary": "Stage a binary asset with a short-lived upload token (minted over MCP).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "token",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored asset's public URL and content-addressed handle.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetRef"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/artifacts/{shortId}/members": {
       "get": {
         "tags": [

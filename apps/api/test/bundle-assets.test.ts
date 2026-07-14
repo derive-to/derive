@@ -7,6 +7,7 @@ import { FsBlobStore } from "@derive/storage/fs"
 import { unzipSync } from "fflate"
 import { afterAll, describe, expect, it } from "vitest"
 import { manifestOf, mergeBundleZip, zipBundleFiles } from "../src/lib/bundle"
+import { PNG_B64, PNG_BYTES, PNG_SIGNATURE } from "./fixtures"
 
 // MCP `publish` builds its bundle zip from a {path: content} map. Pages are text,
 // but a real site also has images, fonts, etc. — binary that UTF-8 encoding would
@@ -17,12 +18,6 @@ import { manifestOf, mergeBundleZip, zipBundleFiles } from "../src/lib/bundle"
 
 const dir = mkdtempSync(join(tmpdir(), "derive-bundle-assets-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
-
-// A real 1x1 transparent PNG (starts with the 8-byte PNG signature).
-const PNG_B64 =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-const PNG_BYTES = new Uint8Array(Buffer.from(PNG_B64, "base64"))
-const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 
 describe("zipBundleFiles carries binary assets, not just text", () => {
   it("decodes a base64 data: URI to raw bytes and keeps text pages as UTF-8", async () => {

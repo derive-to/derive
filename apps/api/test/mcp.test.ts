@@ -17,6 +17,7 @@ import {
   searchWorkspace,
   versionIndexText,
 } from "../src/lib/search"
+import { PNG_BYTES } from "./fixtures"
 
 // The remote MCP endpoint (/mcp) authenticated by an OAuth bearer. We seed a grant
 // straight into the oauth-provider tables (what the consent dance produces), publish
@@ -172,6 +173,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       "publish",
       "read",
       "search",
+      "stage_asset",
     ])
     // Consolidated away — folded into catch_up / comment / publish.
     for (const gone of [
@@ -185,6 +187,39 @@ describe("remote MCP endpoint (/mcp)", () => {
       "read_section",
     ])
       expect(names).not.toContain(gone)
+  })
+
+  it("stage_asset mints an upload URL an anonymous shell can spend (the pasted-screenshot path)", async () => {
+    // The whole point: the OAuth credential lives inside the MCP transport, so the
+    // agent's shell has no bearer — the minted URL must work with NO auth header.
+    const { app, token } = appWithGrant("stageasset", "openid derive:read derive:publish", {
+      encryptionKey: "mcp-upload-secret",
+    })
+    const staged = JSON.parse(toolText(await call(app, token, "stage_asset")))
+    expect(staged.upload_url).toContain("/v1/assets/t/")
+    expect(staged.max_bytes).toBeGreaterThan(0)
+
+    // A real 1x1 transparent PNG — what `curl --data-binary @shot.png` would send.
+    const png = PNG_BYTES
+    const up = await app.request(new URL(staged.upload_url).pathname, {
+      method: "POST",
+      headers: { "content-type": "image/png" },
+      body: png,
+    })
+    expect(up.status).toBe(200)
+    const asset = await up.json()
+    expect(asset.ref).toBe(`asset:${asset.key}`)
+
+    // The permanent public URL serves the exact bytes back.
+    const served = await app.request(new URL(asset.url).pathname)
+    expect(served.status).toBe(200)
+    expect(new Uint8Array(await served.arrayBuffer())).toEqual(png)
+  })
+
+  it("stage_asset fails actionably when no signing secret is configured", async () => {
+    const { app, token } = appWithGrant("stagenosecret", "openid derive:read derive:publish")
+    const r = await call(app, token, "stage_asset")
+    expect(toolText(r)).toContain("bearer token")
   })
 
   it("exposes the workspace's Brandprint as resources + an instructions pointer", async () => {
