@@ -1,12 +1,14 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { newId } from "@derive/core"
+import { newId, publish } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
+import { zipBundleFiles } from "../src/lib/bundle"
 import { signPreviewToken, verifyPreviewToken } from "../src/lib/preview-token"
+import { PNG_B64, PNG_SIGNATURE } from "./fixtures"
 
 // ---- Unit tests: token sign/verify -----------------------------------------
 
@@ -55,7 +57,7 @@ describe("preview token", () => {
   })
 })
 
-// ---- Route tests: /raw with ?pv= token -------------------------------------
+// ---- Route tests: /raw with a /pv/<token>/ path segment ---------------------
 
 const dir = mkdtempSync(join(tmpdir(), "derive-pvtest-"))
 const meta = new SqliteMetaStore(join(dir, "pv.db"))
@@ -78,7 +80,7 @@ afterAll(() => {
 
 const enc = (s: string) => new TextEncoder().encode(s)
 
-describe("raw route: preview-access token (?pv=)", () => {
+describe("raw route: preview-access token (/pv/<token>/ path segment)", () => {
   let shortId: string
   let artifactId: string
 
@@ -108,60 +110,147 @@ describe("raw route: preview-access token (?pv=)", () => {
     artifactId = a.id
   })
 
-  it("anonymous GET /raw without pv= → 404", async () => {
+  it("anonymous GET /raw without a token → 404", async () => {
     const res = await app.request(`/raw/${shortId}/v/1/index.html`)
     expect(res.status).toBe(404)
   })
 
-  it("anonymous GET /raw with a valid pv= → 200", async () => {
+  it("anonymous GET /raw with a valid /pv/ token → 200", async () => {
     const exp = Date.now() + 60_000
     const tok = await signPreviewToken(TEST_SECRET, artifactId, 1, exp)
-    const res = await app.request(`/raw/${shortId}/v/1/index.html?pv=${tok}`)
+    const res = await app.request(`/raw/${shortId}/v/1/pv/${tok}/index.html`)
     expect(res.status).toBe(200)
     const body = await res.text()
     expect(body).toContain("Private Content")
   })
 
-  it("anonymous GET /raw with an expired pv= → 404", async () => {
-    const exp = Date.now() - 1_000 // already expired
+  it("the legacy ?pv= query form no longer grants access → 404", async () => {
+    // The token moved into the path so a bundle's relative asset references
+    // inherit it; the query form is gone, not just deprecated.
+    const exp = Date.now() + 60_000
     const tok = await signPreviewToken(TEST_SECRET, artifactId, 1, exp)
     const res = await app.request(`/raw/${shortId}/v/1/index.html?pv=${tok}`)
     expect(res.status).toBe(404)
   })
 
-  it("anonymous GET /raw with garbage pv= → 404", async () => {
-    const res = await app.request(`/raw/${shortId}/v/1/index.html?pv=garbage`)
+  it("anonymous GET /raw with an expired /pv/ token → 404", async () => {
+    const exp = Date.now() - 1_000 // already expired
+    const tok = await signPreviewToken(TEST_SECRET, artifactId, 1, exp)
+    const res = await app.request(`/raw/${shortId}/v/1/pv/${tok}/index.html`)
     expect(res.status).toBe(404)
   })
 
-  it("pv= for the right artifact but wrong version → 404", async () => {
+  it("anonymous GET /raw with a garbage /pv/ token → 404", async () => {
+    const res = await app.request(`/raw/${shortId}/v/1/pv/garbage/index.html`)
+    expect(res.status).toBe(404)
+  })
+
+  it("/pv/ token for the right artifact but wrong version → 404", async () => {
     const exp = Date.now() + 60_000
     // Token for version 2 (which doesn't exist), but we're requesting version 1
     const tok = await signPreviewToken(TEST_SECRET, artifactId, 2, exp)
-    const res = await app.request(`/raw/${shortId}/v/1/index.html?pv=${tok}`)
+    const res = await app.request(`/raw/${shortId}/v/1/pv/${tok}/index.html`)
     // Version 2 doesn't exist in meta, so 404 is expected either way
     // But this also tests that version scoping is enforced
     expect(res.status).toBe(404)
   })
 
-  it("pv= for a different artifact → 404", async () => {
+  it("/pv/ token for a different artifact → 404", async () => {
     const exp = Date.now() + 60_000
     // Token signed for a different artifact id
     const tok = await signPreviewToken(TEST_SECRET, "different-artifact-id", 1, exp)
-    const res = await app.request(`/raw/${shortId}/v/1/index.html?pv=${tok}`)
+    const res = await app.request(`/raw/${shortId}/v/1/pv/${tok}/index.html`)
     expect(res.status).toBe(404)
   })
 
-  it("pv= does not apply to the proposal route (nonexistent proposal)", async () => {
+  it("a private bundle's sub-assets load through the /pv/ page URL (the renderer's broken-image regression)", async () => {
+    // The bug: the renderer used to load `index.html?pv=<token>` — the page
+    // authorized, but the browser resolves its `<img src="shot.png">` against the
+    // PATH only, dropping the query, so every sub-asset request arrived anonymous
+    // and 404'd. Private bundles screenshotted with broken images. With the token
+    // as a path segment, the asset URL a browser computes from the page URL
+    // carries the same proof of access automatically.
+    const { artifact } = await publish(meta, blobs, {
+      bytes: await zipBundleFiles({
+        "index.html": '<!doctype html><img src="shot.png">',
+        "shot.png": `data:image/png;base64,${PNG_B64}`,
+      }),
+      filename: "site.zip",
+      isBundle: true,
+      title: "Private Bundle",
+      author: "t",
+      orgId: "default",
+      workspaceAccess: "none",
+      linkRole: "none",
+      listed: "none",
+    })
+    const exp = Date.now() + 60_000
+    const tok = await signPreviewToken(TEST_SECRET, artifact.id, 1, exp)
+
+    // The bundle really is private: no token, no asset.
+    const anon = await app.request(`/raw/${artifact.short_id}/v/1/shot.png`)
+    expect(anon.status).toBe(404)
+
+    // The page loads at the /pv/ URL...
+    const page = await app.request(`/raw/${artifact.short_id}/v/1/pv/${tok}/index.html`)
+    expect(page.status).toBe(200)
+
+    // ...and the sub-asset URL a browser derives from it (relative resolution
+    // keeps the /pv/<token>/ path prefix) serves the actual PNG bytes.
+    const img = await app.request(`/raw/${artifact.short_id}/v/1/pv/${tok}/shot.png`)
+    expect(img.status).toBe(200)
+    const bytes = new Uint8Array(await img.arrayBuffer())
+    expect(Array.from(bytes.slice(0, 8))).toEqual(PNG_SIGNATURE)
+  })
+
+  it("a bundle's own literal pv/ directory still serves — an invalid segment falls through, it is not a reserved name", async () => {
+    // The route pattern /v/:n/pv/:pv/* would otherwise swallow a bundle's real
+    // pv/chart.png (segment consumed as a "token", remainder sliced against the
+    // wrong prefix → 404 for a fully authorized viewer). The handler verifies
+    // FIRST and next()s to the plain route when the segment isn't a real token.
+    const { artifact } = await publish(meta, blobs, {
+      bytes: await zipBundleFiles({
+        "index.html": '<!doctype html><img src="pv/chart.png">',
+        "pv/chart.png": `data:image/png;base64,${PNG_B64}`,
+        "pv/deep/nested.png": `data:image/png;base64,${PNG_B64}`,
+      }),
+      filename: "site.zip",
+      isBundle: true,
+      title: "Bundle With pv Dir",
+      author: "t",
+      orgId: "default",
+      workspaceAccess: "none",
+      linkRole: "none",
+      listed: "none",
+    })
+
+    // An authorized viewer (the owner token) gets the real files under pv/.
+    const authed = (p: string) =>
+      app.request(`/raw/${artifact.short_id}/v/1/${p}`, {
+        headers: { authorization: "Bearer tok" },
+      })
+    const img = await authed("pv/chart.png")
+    expect(img.status).toBe(200)
+    const bytes = new Uint8Array(await img.arrayBuffer())
+    expect(Array.from(bytes.slice(0, 8))).toEqual(PNG_SIGNATURE)
+    // Deeper nesting under pv/ (the "token" segment would have been a directory).
+    expect((await authed("pv/deep/nested.png")).status).toBe(200)
+
+    // The fallthrough grants nothing: anonymous still can't read the private file.
+    const anon = await app.request(`/raw/${artifact.short_id}/v/1/pv/chart.png`)
+    expect(anon.status).toBe(404)
+  })
+
+  it("the pv token does not apply to the proposal route (nonexistent proposal)", async () => {
     const exp = Date.now() + 60_000
     const tok = await signPreviewToken(TEST_SECRET, artifactId, 1, exp)
-    // The proposal route should not be affected by ?pv=
+    // There is no /pv/ segment on the proposal route; a stray query token is inert.
     const res = await app.request(`/raw/${shortId}/p/nonexistent-proposal/?pv=${tok}`)
-    // Should 404 because the proposal doesn't exist (not because pv= granted access)
+    // Should 404 because the proposal doesn't exist (not because pv granted access)
     expect(res.status).toBe(404)
   })
 
-  it("pv= does NOT bypass the proposal route for a real proposal on a private artifact", async () => {
+  it("the pv token does NOT bypass the proposal route for a real proposal on a private artifact", async () => {
     // Create a proposal on the private artifact (using the owner token)
     const propForm = new FormData()
     propForm.append("file", new Blob([new TextEncoder().encode("<h1>proposed</h1>")]), "f.html")
@@ -179,8 +268,8 @@ describe("raw route: preview-access token (?pv=)", () => {
 
     // Anonymous GET to the proposal raw route WITH the pv token — must NOT be authorized
     const res = await app.request(`/raw/${shortId}/p/${proposal.id}/index.html?pv=${tok}`)
-    // The pv bypass only applies to /v/:n/*, not /p/:proposalId/*; anonymous reads
-    // of a private artifact's proposals are rejected (404 — existence never leaks)
+    // The pv grant only exists on /v/:n/pv/:pv/*, not /p/:proposalId/*; anonymous
+    // reads of a private artifact's proposals are rejected (404 — existence never leaks)
     expect(res.status).toBe(404)
   })
 })
