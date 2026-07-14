@@ -1,23 +1,16 @@
 name: e2e smoke
 
-# The fast critical-path suite: one happy path per surface (sign up, publish →
-# comment → resolve, library, share, settings, theme, review). Runs on PRs.
+# The whole e2e gate, one file (apps/web/e2e/smoke.spec.ts): auth, publish →
+# comment → resolve → library, share, settings/theme. Manual only —
+# `gh workflow run e2e-smoke.yml` or the Actions tab, not on every PR.
 #
-# Previously disabled for CPU-contention flakes on the 2-vCPU runner. The
-# reliability fixes now live in playwright.config.ts: workers=1 on CI (each
+# The reliability fixes live in playwright.config.ts: workers=1 on CI (each
 # multi-context spec already opens two browser contexts), a prebuilt SPA served by
 # `vite preview` instead of the on-demand dev server (deterministic first paint),
 # expect.timeout 15s, retries=2. If it proves flaky here, tighten there — don't
 # just bump workers.
 on:
   workflow_dispatch:
-  # Scope to changes that can affect a user flow — skip docs/CI-only PRs so the
-  # (uncached-browser + build + serial specs) minutes don't burn on every PR.
-  pull_request:
-    paths:
-      - "apps/**"
-      - "packages/**"
-      - "pnpm-lock.yaml"
 
 permissions:
   contents: read
