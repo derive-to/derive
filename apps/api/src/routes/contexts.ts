@@ -2,8 +2,6 @@ import {
   type ContextAskerRecord,
   type ContextRecord,
   newId,
-  parseBrandprint,
-  resolveBrandprint,
   type SessionMessageRecord,
   type SessionRecord,
   type SessionState,
@@ -14,6 +12,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { resolveActorBrandprint } from "../lib/brandprint"
 import { bail, fail, readJson } from "../lib/http"
 import { log } from "../log"
 
@@ -223,9 +222,7 @@ export const contextRoutes = (ctx: AppContext) => {
   // simply omitted. A member the runner can't read still appears (it discovers the
   // 404 at materialize time and reports it, mirroring a failed repo clone).
   const resolveContextBrandprint = async (x: ContextRecord) => {
-    const wsBrandprint = (await meta.getOrgSettings(x.org_id)).brandprint
-    const profileBrandprint = parseBrandprint(await meta.getUserBrandprint(x.created_by))
-    const resolved = resolveBrandprint(wsBrandprint, profileBrandprint)
+    const resolved = await resolveActorBrandprint(meta, x.org_id, x.created_by)
     if (resolved.collectionIds.length === 0) return undefined
     const seen = new Set<string>()
     const members: {

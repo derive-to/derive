@@ -7,7 +7,7 @@
 //  - connect: a Brandprint but no agent — the item opens the Connect-an-agent surface
 //  - fire:    exactly one agent — fire immediately
 //  - picker:  several agents — open a picker
-export type ReworkResolution<A> =
+type ReworkResolution<A> =
   | { state: "setup" }
   | { state: "connect" }
   | { state: "fire"; agent: A }

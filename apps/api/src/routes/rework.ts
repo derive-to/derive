@@ -1,13 +1,8 @@
-import {
-  newId,
-  parseBrandprint,
-  profileState,
-  resolveBrandprint,
-  reworkInstruction,
-} from "@derive/core"
+import { newId, profileState, reworkInstruction } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { resolveActorBrandprint } from "../lib/brandprint"
 import { parseMeta, quoteOf } from "../lib/comments"
 import { bail, fail, readJson } from "../lib/http"
 import { notifyMentions } from "../lib/mentions"
@@ -75,7 +70,11 @@ export const reworkRoutes = (ctx: AppContext) => {
       const body = await readJson(c, z.object({ agentId: z.string().optional() }))
       if (body instanceof Response) return bail(body)
 
-      const agents = await meta.listAgents(artifact.org_id)
+      // The agent list and the Brandprint resolution are independent reads; batch them.
+      const [agents, resolved] = await Promise.all([
+        meta.listAgents(artifact.org_id),
+        resolveActorBrandprint(meta, artifact.org_id, acting.id),
+      ])
       if (agents.length === 0)
         return bail(
           fail(c, 409, "no agent is registered in this workspace", { code: "needsAgent" }),
@@ -86,21 +85,18 @@ export const reworkRoutes = (ctx: AppContext) => {
         if (!found) return bail(fail(c, 404, "no such agent in this workspace"))
         agent = found
       } else {
+        // `!sole` can't fire — the empty case 409'd above; it narrows the
+        // destructured element so no unchecked index escapes.
         const [sole, ...rest] = agents
         if (!sole || rest.length > 0)
           return bail(fail(c, 400, "agentId required when several agents are registered"))
         agent = sole
       }
 
-      // Resolve the Brandprint the agent will read (workspace ⊕ requester's profile) —
-      // needed for the profile-first line, and as a guard: firing the canned
-      // instruction with zero derive://brandprint/* resources behind it would hand
-      // the agent an empty brief.
-      const [orgSettings, personalRaw] = await Promise.all([
-        meta.getOrgSettings(artifact.org_id),
-        meta.getUserBrandprint(acting.id),
-      ])
-      const resolved = resolveBrandprint(orgSettings.brandprint, parseBrandprint(personalRaw))
+      // The resolved Brandprint (workspace ⊕ requester's profile) drives the
+      // profile-first line and guards the empty brief: firing the canned instruction
+      // with zero derive://brandprint/* resources behind it would hand the agent
+      // nothing to read.
       if (resolved.collectionIds.length === 0 && !resolved.profileId)
         return bail(
           fail(c, 409, "no Brandprint is set on this workspace or your profile", {

@@ -42,14 +42,12 @@ import {
   type OutlineSection,
   outlineOf,
   PublishError,
-  parseBrandprint,
   parseFrontmatter,
   profileState,
   propose as proposeChange,
   publishAdvisories,
   publish as publishVersion,
   type Role,
-  resolveBrandprint,
   roleAllows,
   SKILL_CONTENT_TYPE,
   sectionOf,
@@ -64,6 +62,7 @@ import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "./brandprint-referenc
 import type { AppContext } from "./context"
 import { markAddressed } from "./lib/addressed"
 import { afterPublish } from "./lib/after-publish"
+import { resolveActorBrandprint } from "./lib/brandprint"
 import {
   cleanPath,
   mergeBundleZip,
@@ -283,11 +282,7 @@ async function buildServer(
   // Resolve the Brandprint for this actor: the workspace's conventions merged with the
   // owner's personal ones (profile wins). Each convention doc becomes a readable resource;
   // a one-line pointer goes in the instructions (bodies load lazily on read).
-  const wsBrandprint = (await ctx.meta.getOrgSettings(agent.org_id)).brandprint
-  const profileBrandprint = parseBrandprint(
-    ownerId ? await ctx.meta.getUserBrandprint(ownerId) : null,
-  )
-  const resolved = resolveBrandprint(wsBrandprint, profileBrandprint)
+  const resolved = await resolveActorBrandprint(ctx.meta, agent.org_id, ownerId)
   const conventionDocs: ArtifactRecord[] = []
   const seenBp = new Set<string>()
   for (const collectionId of resolved.collectionIds) {
