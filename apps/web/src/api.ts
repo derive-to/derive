@@ -884,6 +884,11 @@ export const api = {
       headers: { accept: "application/json" },
     }).then(j),
 
+  // Ask a registered agent to rework the artifact to match the Brandprint. The canned
+  // instruction lives server-side; omit agentId when exactly one agent is registered.
+  reworkArtifact: (shortId: string, agentId?: string): Promise<{ requestId: string }> =>
+    f(`/v1/artifacts/${shortId}/rework`, opts(agentId ? { agentId } : {})).then(j),
+
   // ---- Mention directory + in-app notifications -------------------------
   // `artifact` (a short_id) scopes the directory to that thread's people —
   // workspace members + collaborators + everyone who has commented — so you can
