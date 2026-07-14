@@ -139,12 +139,14 @@ https://derive.example.com/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>
 ### Slack app (optional)
 
 To connect Slack workspaces (Derive comments mirrored to a channel with two-way
-reply-back, plus DMs to a member for mentions, review requests and shares), create one
-Slack app for this instance:
+reply-back and a Resolve/Reopen button on each comment card, plus DMs to a member for
+mentions, review requests and shares), create one Slack app for this instance:
 
-1. Open **Settings → Integrations → Set up Slack app** (or go straight to `/settings/slack/app/new`). This renders the app manifest already filled in with this instance's URL, so the event subscriptions and bot scopes are configured for you — nothing to hand-edit. At [api.slack.com/apps](https://api.slack.com/apps) → **Create New App → From a manifest**, paste it, and create the app.
+1. Open **Settings → Integrations → Set up Slack app** (or go straight to `/settings/slack/app/new`). This renders the app manifest already filled in with this instance's URL, so the event subscriptions, interactivity, and bot scopes are configured for you — nothing to hand-edit. At [api.slack.com/apps](https://api.slack.com/apps) → **Create New App → From a manifest**, paste it, and create the app.
 2. From the app's **Basic Information** page, set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` (all three required, or Slack stays off). On Workers these are secrets: `wrangler secret put SLACK_CLIENT_ID` (and the other two).
 3. Workspace admins connect from **Settings → Integrations → Add to Slack**, then set a default channel and invite the Derive bot to it. Both public and private channels work; a private channel must have the bot invited (it can't self-join). A workspace connected before private-channel support was added must **reconnect** (Add to Slack again) to grant the `groups:*` scopes — there's no automatic reconnect prompt for it.
+
+An app created from an older manifest (before the Resolve/Reopen buttons) won't have **interactivity** enabled, so those buttons do nothing. Re-apply the manifest to your app — Slack app config → **App Manifest** → paste the updated one from `/v1/slack/manifest.json` — to turn it on. This is an app-config change, not a scope change, so it needs no per-workspace reconnect.
 
 The manifest is served (filled) at `/v1/slack/manifest.json`; the setup page is the copy-paste
 front end for it. Bot tokens are stored per workspace, encrypted at rest with `DERIVE_AUTH_SECRET`.

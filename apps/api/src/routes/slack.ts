@@ -4,9 +4,19 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { encryptSecret, signState, verifyState } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
-import { exchangeSlackOAuth, slackAuthorizeUrl, verifySlackSignature } from "../lib/slack"
-import { enqueueSlackReplyIngest } from "../lib/slack-comments"
+import {
+  exchangeSlackOAuth,
+  postSlackResponseUrl,
+  slackAuthorizeUrl,
+  verifySlackSignature,
+} from "../lib/slack"
+import {
+  enqueueSlackReplyIngest,
+  SLACK_THREAD_ACTION,
+  threadStateBlocks,
+} from "../lib/slack-comments"
 import { enqueueSlackDm, wantsSlackDm } from "../lib/slack-dm"
+import { resolveThreadAction } from "../lib/thread-actions"
 import { log } from "../log"
 import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
 
@@ -18,7 +28,7 @@ import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
  *  the web client's type; the OAuth redirects and the Slack Events webhook stay plain
  *  routes (not typed JSON). */
 export const slackRoutes = (ctx: AppContext) => {
-  const { meta, deps, requireUser } = ctx
+  const { meta, deps, bus, notify, requireUser } = ctx
   const { activeWorkspace, workspaceCan, requireWorkspace } = ctx
   const app = new OpenAPIHono<BlankEnv>()
   const slack = deps.slack
@@ -167,6 +177,94 @@ export const slackRoutes = (ctx: AppContext) => {
     return c.json({ ok: true })
   })
 
+  // Block Kit interactivity: a button on a comment card resolves / reopens that thread. Trust,
+  // like reply-back, is by data not a Derive principal — but the target here comes from the
+  // (attacker-influenceable) button value, so we bind it three ways: (1) the Slack signature
+  // authenticates the request; (2) a slack_thread_link maps threadId→artifact→org; (3) the
+  // ACTING Slack team must equal that org's connected install — so one signed workspace can't
+  // act on another org's thread by carrying its ids (the events path is immune to this because
+  // it keys on Slack-assigned channel+ts, not a value). Then the org's slackPost opt-in gates it.
+  // Deliberately NOT gated on a Derive role: any member of the connected channel can resolve, the
+  // same collaboration boundary reply-back already grants for posting — and resolve is reversible.
+  // The state flip is applied + fanned out inline (durable before we ack); the cosmetic Slack
+  // card update is fired without awaiting, so a slow response_url can't push us past the 3s ack.
+  // authz-exempt: Slack signs every request with the signing secret (verifySlackSignature).
+  app.post("/v1/slack/interactivity", async (c) => {
+    if (!slack) return fail(c, 404, "Slack is not configured")
+    const raw = await c.req.text()
+    if (
+      !verifySlackSignature(
+        slack.signingSecret,
+        c.req.header("x-slack-request-timestamp"),
+        raw,
+        c.req.header("x-slack-signature"),
+      )
+    )
+      return fail(c, 401, "bad signature")
+
+    // Interactivity is form-encoded: a single `payload` field holding URL-encoded JSON.
+    const payloadStr = new URLSearchParams(raw).get("payload")
+    if (!payloadStr) return c.json({ ok: true })
+    let payload: SlackInteractionPayload
+    try {
+      payload = JSON.parse(payloadStr) as SlackInteractionPayload
+    } catch {
+      return fail(c, 400, "invalid payload")
+    }
+
+    const action = payload.actions?.[0]
+    const op =
+      action?.action_id === SLACK_THREAD_ACTION.resolve
+        ? "resolved"
+        : action?.action_id === SLACK_THREAD_ACTION.reopen
+          ? "open"
+          : undefined
+    // Not a thread action we handle (or a malformed value) → ack and ignore.
+    if (payload.type !== "block_actions" || !op || !action?.value) return c.json({ ok: true })
+    let target: { a?: string; t?: string }
+    try {
+      target = JSON.parse(action.value) as { a?: string; t?: string }
+    } catch {
+      return c.json({ ok: true })
+    }
+    const { a: artifactId, t: threadId } = target
+    if (!artifactId || !threadId) return c.json({ ok: true })
+
+    // Re-establish trust from data (never the button value alone): the thread link maps this
+    // thread to this artifact + org, the acting Slack team owns that org's install, and the
+    // org's channel mirror is on. Any miss → ack and no-op (a click that changes nothing).
+    const link = await meta.getSlackThreadLinkByThread(threadId)
+    if (link && link.artifact_id === artifactId) {
+      const install = await meta.getSlackInstall(link.org_id)
+      const teamOwnsThread = !!install && !!payload.team?.id && install.team_id === payload.team.id
+      if (teamOwnsThread && (await meta.getOrgSettings(link.org_id)).slackPost) {
+        const artifact = await meta.getArtifactById(artifactId)
+        if (artifact) {
+          await resolveThreadAction({ meta, bus, notify }, artifact, threadId, op)
+          // Reflect the new state in Slack: keep the comment section, swap the button + footer.
+          // Fire-and-forget — the resolve above is already durable, so a slow/failed cosmetic
+          // update must not sit on the ack path (waitUntil on Workers; in-process on Node).
+          const who = payload.user?.username || payload.user?.name || undefined
+          const section0 = payload.message?.blocks?.[0]
+          const blocks = [section0, ...threadStateBlocks(op, action.value, who)].filter(Boolean)
+          if (payload.response_url) {
+            const update = postSlackResponseUrl(payload.response_url, {
+              text: op === "resolved" ? "Thread resolved" : "Thread reopened",
+              blocks,
+              replace_original: true,
+            })
+            try {
+              c.executionCtx.waitUntil(update)
+            } catch {
+              void update // Node has no executionCtx; the promise runs in-process
+            }
+          }
+        }
+      }
+    }
+    return c.json({ ok: true })
+  })
+
   // Connection status for the Settings UI: whether Slack is configured at all, whether
   // this workspace has connected one, and its team + default channel.
   app.openapi(
@@ -303,4 +401,17 @@ interface SlackEventEnvelope {
     ts?: string
     thread_ts?: string
   }
+}
+
+/** The Block Kit interactivity payload (the JSON inside the form's `payload` field). Only the
+ *  fields the thread-action handler reads; `message.blocks` is the original card, reused so
+ *  the resolved/reopened card keeps its comment section. */
+interface SlackInteractionPayload {
+  type?: string
+  response_url?: string
+  /** The workspace the click came from; bound to the thread's org install for authz. */
+  team?: { id?: string }
+  user?: { id?: string; username?: string; name?: string }
+  actions?: Array<{ action_id?: string; value?: string }>
+  message?: { blocks?: unknown[] }
 }

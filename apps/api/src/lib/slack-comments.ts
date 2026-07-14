@@ -17,7 +17,7 @@ import type { EventBus } from "../bus"
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
 import { commentDeepLink, parseMeta } from "./comments"
 import { slackUserName } from "./slack"
-import { context, section } from "./slack-cards"
+import { actionButton, actions, context, section } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
 import { truncate } from "./text"
 
@@ -56,12 +56,47 @@ export const enqueueSlackComment = async (
   await enqueueChannelDelivery(meta, "slack_app", "comment.created", payload)
 }
 
-/** Slack Block Kit blocks for a comment post. */
+/** The interactivity `action_id`s a comment card's buttons carry. The handler in
+ *  routes/slack.ts dispatches on these; they double as the resolve/reopen intent. */
+export const SLACK_THREAD_ACTION = {
+  resolve: "derive_thread_resolve",
+  reopen: "derive_thread_reopen",
+} as const
+
+/** Encode a button's `value`: which thread to act on. Read back by the interactivity
+ *  handler (and re-checked against the thread link — the value is ours, but we don't
+ *  trust it for authorization, only to name the target). */
+export const encodeThreadAction = (artifactId: string, threadId: string): string =>
+  JSON.stringify({ a: artifactId, t: threadId })
+
+/** The action + context blocks under a comment card for a given thread state. Rebuilt by the
+ *  interactivity handler after a resolve/reopen (with `who` = the Slack user who acted) and
+ *  used for the first post (open, no `who`). `value` is the encoded thread target. */
+export const threadStateBlocks = (
+  state: "open" | "resolved",
+  value: string,
+  who?: string,
+): unknown[] =>
+  state === "resolved"
+    ? [
+        actions([actionButton(SLACK_THREAD_ACTION.reopen, "Reopen thread", value)]),
+        context(`Derive · :white_check_mark: resolved${who ? ` by ${who}` : ""}`),
+      ]
+    : [
+        actions([actionButton(SLACK_THREAD_ACTION.resolve, "Resolve thread", value, "primary")]),
+        context(
+          who
+            ? `Derive · reopened by ${who} · reply in this thread to post back`
+            : "Derive · reply in this thread to post back",
+        ),
+      ]
+
+/** Slack Block Kit blocks for a comment post (open thread, with a Resolve button). */
 const blocksFor = (p: SlackCommentPayload): unknown[] => [
   section(
     `:speech_balloon: *${p.author}* commented on <${p.link}|${p.title}>\n${truncate(p.text, 600)}`,
   ),
-  context("Derive · reply in this thread to post back"),
+  ...threadStateBlocks("open", encodeThreadAction(p.artifactId, p.threadId)),
 ]
 
 /** Build the slack_app delivery sender for a runtime. Resolves the channel + thread from
