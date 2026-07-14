@@ -8,6 +8,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
 // The one destructive-confirm surface: every Remove/Delete/Take down goes
 // through this dialog — never window.confirm(). The confirm button keeps the
@@ -23,6 +25,7 @@ export function ConfirmDialog({
   tone = "destructive",
   onConfirm,
   confirmTestId = "confirm-dialog-confirm",
+  confirmPhrase,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -33,11 +36,22 @@ export function ConfirmDialog({
   tone?: "destructive" | "default"
   onConfirm: () => void | Promise<void>
   confirmTestId?: string
+  /** Require the user to TYPE this word before the confirm button enables — the
+   *  extra friction reserved for the highest-stakes destructions (a bulk delete of
+   *  many artifacts at once). Matched case-insensitively, trimmed. Omit for the
+   *  ordinary one-click confirm. */
+  confirmPhrase?: string
 }) {
   const [pending, setPending] = useState(false)
+  const [typed, setTyped] = useState("")
   const cancelRef = useRef<HTMLButtonElement>(null)
 
+  // With a phrase, the confirm button stays inert until it's typed — so Enter can't
+  // destroy anything by reflex, and a pre-focused button can't be mis-clicked into it.
+  const phraseMet = !confirmPhrase || typed.trim().toLowerCase() === confirmPhrase.toLowerCase()
+
   async function handleConfirm() {
+    if (!phraseMet) return
     setPending(true)
     try {
       await onConfirm()
@@ -48,12 +62,24 @@ export function ConfirmDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (pending) return
+        // Reset the typed guard whenever the dialog closes, so re-opening it always
+        // starts locked — a stale match can't carry over into the next deletion.
+        if (!next) setTyped("")
+        onOpenChange(next)
+      }}
+    >
       <DialogContent
         showCloseButton={false}
-        // Initial focus lands on the LEAST destructive action — Enter can't
-        // destroy anything by reflex (the alertdialog convention).
+        // Initial focus: the type-to-confirm input when there is one (so you can type
+        // straight away), otherwise the LEAST destructive action — Enter can't destroy
+        // anything by reflex (the alertdialog convention). The typed button is disabled
+        // until matched, so focusing the input doesn't reintroduce a reflex confirm.
         onOpenAutoFocus={(e) => {
+          if (confirmPhrase) return
           e.preventDefault()
           cancelRef.current?.focus()
         }}
@@ -65,6 +91,27 @@ export function ConfirmDialog({
           <DialogTitle>{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
+        {confirmPhrase && (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="confirm-phrase">
+              Type <span className="font-mono font-semibold text-foreground">{confirmPhrase}</span>{" "}
+              to confirm.
+            </Label>
+            <Input
+              id="confirm-phrase"
+              value={typed}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={confirmPhrase}
+              data-testid="confirm-dialog-phrase"
+              onChange={(e) => setTyped(e.target.value)}
+              // Enter submits only once the phrase matches — the same gate the button has.
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && phraseMet && !pending) handleConfirm()
+              }}
+            />
+          </div>
+        )}
         <DialogFooter>
           <Button
             ref={cancelRef}
@@ -80,6 +127,7 @@ export function ConfirmDialog({
             type="button"
             variant={tone === "destructive" ? "destructive" : "default"}
             loading={pending}
+            disabled={!phraseMet}
             onClick={handleConfirm}
             data-testid={confirmTestId}
           >

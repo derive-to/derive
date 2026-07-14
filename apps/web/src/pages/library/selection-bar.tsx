@@ -234,6 +234,10 @@ export function SelectionBar({
         }
         confirmLabel="Delete"
         confirmTestId="library-selection-delete-confirm"
+        // A bulk delete is the highest-stakes action the bar can take — many artifacts and
+        // their whole version history, at once, unrecoverable — so it asks you to type the
+        // word, not just click. (The card's own ⋯ menu keeps the one-click confirm.)
+        confirmPhrase="delete"
         onConfirm={async () => {
           await remove.mutateAsync()
         }}

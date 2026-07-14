@@ -147,16 +147,24 @@ test("star a set from the bar, then unstar it", async ({ owner }) => {
   await expect(owner.getByTestId(`artifact-card-open-${a}`)).toBeHidden()
 })
 
-test("deleting a set asks first, then removes them", async ({ owner }) => {
+test("deleting a set requires typing 'delete', then removes them", async ({ owner }) => {
   const [a, b, c] = await seedLibrary(owner, 3)
 
   await owner.getByTestId(`artifact-card-select-${a}`).click()
   await owner.getByTestId(`artifact-card-select-${b}`).click()
   await owner.getByTestId("library-selection-delete").click()
 
-  // Destructive, so it goes through the shared confirm — never a bare bulk button.
+  // Destructive AND bulk, so it goes through the shared confirm with a type-to-confirm
+  // gate — the button is inert until the word is typed, so a reflex click can't delete.
   await expect(owner.getByText("Delete 2 artifacts?")).toBeVisible()
-  await owner.getByTestId("library-selection-delete-confirm").click()
+  const confirm = owner.getByTestId("library-selection-delete-confirm")
+  await expect(confirm).toBeDisabled()
+  await confirm.click({ force: true }) // even forced, an inert button does nothing
+  await expect(owner.getByText("Deleted 2 artifacts")).toBeHidden()
+
+  await owner.getByTestId("confirm-dialog-phrase").fill("delete")
+  await expect(confirm).toBeEnabled()
+  await confirm.click()
   await expect(owner.getByText("Deleted 2 artifacts")).toBeVisible()
 
   await expect(owner.getByTestId(`artifact-card-open-${a}`)).toBeHidden()
