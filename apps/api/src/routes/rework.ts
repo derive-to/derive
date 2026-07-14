@@ -107,7 +107,11 @@ export const reworkRoutes = (ctx: AppContext) => {
       }
 
       // The canned request: a whole-document comment (no anchor) @mentioning the
-      // agent — the same row and fan-out the ask-agent composer produces.
+      // agent — the same ROW the ask-agent composer writes, but a deliberately
+      // narrower fan-out: comment.created + mention/bell notify only, skipping the
+      // comment.mention webhook, comment emails, Slack, and the GitHub PR echo. This
+      // is a canned, bot-directed note, not a human conversation — mirroring it into
+      // those channels would just be noise for people who didn't ask for it.
       const id = newId("c")
       const mentions = [{ id: agent.id, name: agent.name }]
       const created = await meta.createComment({

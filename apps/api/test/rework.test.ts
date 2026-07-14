@@ -115,6 +115,28 @@ describe("rework: firing", () => {
     expect(mentions[0]?.body).not.toContain("derive://brandprint/profile")
   })
 
+  it("workspace Brandprint unset, requester's personal profile carries one: still fires", async () => {
+    const { app } = makeAuthedApp("rework-personal", [owner, editor], "editor")
+    const shortId = await newArtifact(app)
+    const ag = await addAgent(app, "Reviser")
+    // No seedBrandprint call — the workspace layer stays unset. Seed the requester's
+    // PERSONAL layer through the real route the web uses (POST /v1/me/profile), same
+    // as profiles.test.ts, pointed at a collection the requester can reach.
+    const col = await (
+      await app.request("/v1/collections", jsonAs(as(editor.email), { title: "My Brandprint" }))
+    ).json()
+    const saved = await app.request(
+      "/v1/me/profile",
+      jsonAs(as(editor.email), { brandprint: { collectionId: col.id } }),
+    )
+    expect(saved.status).toBe(200)
+    const res = await rework(app, shortId)
+    expect(res.status).toBe(201)
+    const mentions = await inboxBodies(app, ag.token)
+    expect(mentions).toHaveLength(1)
+    expect(mentions[0]?.body).toContain("@Reviser")
+  })
+
   it("several agents: omitted agentId 400s; a chosen agentId fires that agent only", async () => {
     const { app, meta } = makeAuthedApp("rework-many", [owner, editor], "editor")
     const shortId = await newArtifact(app)

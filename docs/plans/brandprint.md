@@ -273,9 +273,12 @@ Shipped (#378):
 
 - `PATCH /v1/workspace/settings` accepts `brandprint: { collectionId?, theme? } | null` (deep merge one level, null clears; collection ownership validated).
 - `POST /v1/me/profile` accepts `brandprint: { ... } | null` alongside `profession` and `about` (membership validated).
-- `POST /v1/artifacts/:shortId/rework` (Phase 3): composes the canned @mention request server-side and posts it to the chosen or sole registered agent's inbox; `409 needsAgent` / `409 needsBrandprint`.
 
-Not built, still specced:
+Shipped (this PR, Phase 3):
+
+- `POST /v1/artifacts/:shortId/rework`: composes the canned @mention request server-side and posts it to the chosen or sole registered agent's inbox; `409 needsAgent` / `409 needsBrandprint`.
+
+Not built — by design or superseded:
 
 - Phase 2 (brand profile) added **no endpoints**, by design (#392): the placeholder rides the existing publish path, `profileId` rides the existing settings/profile PATCH routes (with the same tenancy validation), and approval is the existing proposals route. The reference resources are MCP-only.
 - `POST /v1/brandprint/seed`: superseded by the shipped client-side composition. The onboarding step (#388) shipped without it, settling the open question (Decisions log #6); dead unless a future caller needs a single atomic round-trip.

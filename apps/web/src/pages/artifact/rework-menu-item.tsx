@@ -17,6 +17,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
+import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { artifactAgentsQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -39,6 +40,12 @@ export function ReworkMenuItem({
 }) {
   const { me } = useAuth()
   const nav = useNavigate()
+  // workspaceSettingsQuery reads the VIEWER'S ACTIVE workspace, not necessarily the
+  // artifact's — a share recipient or a multi-workspace member looking at another
+  // workspace's artifact can see a stale/wrong approximation here. That's fine: the
+  // server resolves the real workspace and 409s (needsAgent/needsBrandprint) when this
+  // client-side guess disagrees, and the fire mutation's onError below routes those
+  // 409s back to the correct state instead of surfacing the raw mismatch.
   const {
     data: settings,
     isPending: settingsPending,
@@ -52,6 +59,17 @@ export function ReworkMenuItem({
   const fire = useApiMutation<{ requestId: string }, AgentTarget>({
     mutationFn: (agent) => api.reworkArtifact(shortId, agent.id),
     success: (_r, agent) => `Rework request sent to ${agent.name}.`,
+    // The state computed below is a client-side approximation (see the comment on
+    // workspaceSettingsQuery above) — a stale cache can 409 with a raw machine token
+    // ("needsAgent"/"needsBrandprint") the server never meant for display. Opt out of
+    // the global toast and route to the state the client SHOULD have shown instead of
+    // flashing the token at the user.
+    errorToast: false,
+    onError: (err) => {
+      if (err.message === "needsAgent") onConnect()
+      else if (err.message === "needsBrandprint") nav({ to: "/brandprint" })
+      else toast.error("Rework request failed — try again.")
+    },
   })
   // Anonymous viewers can't fire an agent or own a Brandprint — no item at all. This
   // check must stay FIRST: the queries are gated on `me`, and a disabled query reports
@@ -66,7 +84,13 @@ export function ReworkMenuItem({
   // affordance (the ApplyNudge convention on the Brandprint page itself).
   if (settingsError || agentsError) return null
 
-  const hasBrandprint = !!settings?.brandprint?.collectionId || !!me.brandprint?.collectionId
+  // A workspace Brandprint of just { profileId } (no conventions collection, only the
+  // generated brand profile) still counts — both fields are nullish/optional in the
+  // schema, so collectionId alone would wrongly read as "not set up".
+  const hasBrandprint =
+    !!settings?.brandprint?.collectionId ||
+    !!settings?.brandprint?.profileId ||
+    !!me.brandprint?.collectionId
   // artifactAgentsQuery already drops nameless agents; this re-asserts it with a type
   // predicate because a plain filter doesn't narrow `name` to non-null for TS.
   const usable = agents.filter((a): a is typeof a & { name: string } => !!a.name)
