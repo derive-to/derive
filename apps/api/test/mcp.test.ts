@@ -915,6 +915,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       indexArtifact: async (id) => {
         indexed.push(id)
       },
+      indexArtifacts: async () => {},
       unindexArtifact: async () => {},
       search: async () => [],
     }

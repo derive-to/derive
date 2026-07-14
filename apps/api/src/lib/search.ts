@@ -382,6 +382,7 @@ export const reindexSearchBatch = async (
     excludeRemoved: true,
   })
   let indexed = 0
+  const denseItems: { id: string; orgId: string; title: string | null; text: string }[] = []
   for (const a of arts) {
     // Isolate each artifact: a single unreadable blob / transient store error must not
     // abort the whole batch and wedge the operator's cursor (unlike the publish path,
@@ -389,10 +390,25 @@ export const reindexSearchBatch = async (
     try {
       const v = await deps.meta.getVersion(a.id, a.current_version)
       if (!v) continue // no readable current version — skip rather than index empty
-      await indexArtifactVersion(deps.meta, deps.blobs, a, v, deps.search)
+      const text = await versionIndexText(deps.blobs, v)
+      await deps.meta.indexArtifact(a.id, a.org_id, a.title, text) // lexical arm (synchronous truth)
+      denseItems.push({ id: a.id, orgId: a.org_id, title: a.title, text })
       indexed++
     } catch (err) {
       log.error("search reindex skipped one artifact", { artifact: a.id, err: String(err) })
+    }
+  }
+  // Dense arm: batched embed+upsert (in sub-batches) instead of one-per-artifact — far fewer
+  // Workers-AI calls + Vectorize mutations, so a bundle-dense page is much less likely to breach the
+  // subrequest ceiling. Best-effort, like the publish path: a dense hiccup logs and moves on — the
+  // lexical arm already committed and the next publish/sweep re-adds. NOTE: `indexed` counts LEXICAL
+  // successes, so a dense-arm failure won't show as `indexed < scanned`; a full re-sweep is the
+  // dense safety net.
+  if (deps.search && denseItems.length) {
+    try {
+      await deps.search.indexArtifacts(denseItems)
+    } catch (err) {
+      log.error("search reindex: dense batch failed", { err: String(err) })
     }
   }
   // A full page implies there may be more; the last row is the keyset for the next call

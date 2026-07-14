@@ -47,6 +47,19 @@ export const EMBED_MODEL = "@cf/baai/bge-m3"
 export const EMBED_CHAR_BUDGET = 24_000
 // The stored semantic snippet (Vectorize metadata caps at 10 KiB/vector; this stays far under it).
 export const PREVIEW_CHARS = 480
+// Minimum cosine similarity for a dense candidate to count as relevant. Calibrated on the live
+// bge-m3 index from a SMALL sample (3 real + 3 gibberish queries): real-query top matches sat
+// ~0.53–0.60, off-target ones ~0.44–0.54. At 0.48 it removes the lowest slice of noise (a gibberish
+// query drops from ~6 weak hits to 0–1) while preserving every observed real match (lowest ~0.527)
+// — but the ranges OVERLAP, so it's a precision/recall trade point, not a free lunch: noise up to
+// ~0.54 still passes, and a genuinely-relevant-but-weak dense-ONLY match below 0.48 (a pure synonym
+// with zero lexical overlap) is also dropped. A discriminative reranker + chunk-level embeddings are
+// the real precision lever (they need a re-backfill — deliberate follow-up). Tunable; exported so it
+// can be adjusted or referenced in tests.
+export const DENSE_MIN_SCORE = 0.48
+// Embed at most this many texts per Workers-AI call — bge-m3's sync-embed batch ceiling is 100, so
+// 50 is conservative. Exported for the sub-batch test.
+export const EMBED_BATCH = 50
 
 export class VectorizeSearchIndex implements SearchIndex {
   constructor(
@@ -55,11 +68,11 @@ export class VectorizeSearchIndex implements SearchIndex {
     private readonly model: string = EMBED_MODEL,
   ) {}
 
+  // truncate_inputs:true so an over-8192-token body (long or CJK docs, where ~1 char ≈ 1 token)
+  // trims to the limit instead of throwing BadInput — otherwise those docs silently never embed.
   private async embed(text: string): Promise<number[]> {
-    // truncate_inputs:true so an over-8192-token body (long or CJK docs, where ~1 char ≈ 1 token)
-    // trims to the limit instead of throwing BadInput — otherwise those docs silently never embed.
     const { data } = await this.ai.run(this.model, { text: [text], truncate_inputs: true })
-    const vector = data[0]
+    const [vector] = data
     if (!vector) throw new Error("empty embedding from Workers AI")
     return vector
   }
@@ -77,6 +90,42 @@ export class VectorizeSearchIndex implements SearchIndex {
     await this.vectorize.upsert([
       { id, values, metadata: { org_id: orgId, preview: content.slice(0, PREVIEW_CHARS) } },
     ])
+  }
+
+  async indexArtifacts(
+    items: { id: string; orgId: string; title: string | null; text: string }[],
+  ): Promise<void> {
+    const prepared = items.map((it) => ({
+      id: it.id,
+      orgId: it.orgId,
+      content: it.title ? `${it.title}\n\n${it.text}` : it.text,
+    }))
+    // Empty-content artifacts (e.g. a bare image) carry no vector — drop any stale one, as the
+    // single path does.
+    const empty = prepared.filter((p) => !p.content.trim()).map((p) => p.id)
+    if (empty.length) await this.vectorize.deleteByIds(empty)
+    const embeddable = prepared.filter((p) => p.content.trim())
+    // Embed + upsert PER sub-batch (not one flatten over the whole page): a transient failure is
+    // bounded to one sub-batch instead of losing the page's dense arm, and vectors can never
+    // misalign to the wrong artifact across sub-batch seams. bge-m3 returns one vector per input in
+    // order; the length check turns a short/misordered response into a loud failure rather than
+    // silent cross-contamination.
+    for (let i = 0; i < embeddable.length; i += EMBED_BATCH) {
+      const slice = embeddable.slice(i, i + EMBED_BATCH)
+      const { data } = await this.ai.run(this.model, {
+        text: slice.map((p) => p.content.slice(0, EMBED_CHAR_BUDGET)),
+        truncate_inputs: true,
+      })
+      if (data.length !== slice.length)
+        throw new Error(`bge-m3 returned ${data.length} vectors for ${slice.length} inputs`)
+      await this.vectorize.upsert(
+        slice.map((p, j) => ({
+          id: p.id,
+          values: data[j] as number[],
+          metadata: { org_id: p.orgId, preview: p.content.slice(0, PREVIEW_CHARS) },
+        })),
+      )
+    }
   }
 
   async unindexArtifact(id: string): Promise<void> {
@@ -99,10 +148,16 @@ export class VectorizeSearchIndex implements SearchIndex {
       filter: { org_id: orgId },
       returnMetadata: "all",
     })
-    return matches.map((m) => ({
-      id: m.id,
-      score: m.score,
-      chunk: typeof m.metadata?.preview === "string" ? m.metadata.preview : "",
-    }))
+    // Relevance floor: Vectorize always returns its nearest topK however far away they are, so
+    // without this an off-target query surfaces weak noise. Drop sub-threshold matches (see
+    // DENSE_MIN_SCORE) — the grep-confirm/fusion downstream can't recover precision the vector
+    // query already lost.
+    return matches
+      .filter((m) => m.score >= DENSE_MIN_SCORE)
+      .map((m) => ({
+        id: m.id,
+        score: m.score,
+        chunk: typeof m.metadata?.preview === "string" ? m.metadata.preview : "",
+      }))
   }
 }
