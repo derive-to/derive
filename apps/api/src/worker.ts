@@ -11,6 +11,7 @@ import type {
 } from "@cloudflare/workers-types"
 import { createD1Store } from "@derive/db/d1"
 import { PgMetaStore } from "@derive/db/pg"
+import { PgVectorStore } from "@derive/db/pgvector"
 import { R2BlobStore } from "@derive/storage"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { drizzle } from "drizzle-orm/d1"
@@ -20,6 +21,7 @@ import { type AuthDb, makeAuth } from "./auth-config"
 import { authSchema } from "./auth-schema"
 import { hyperdriveConn, livePgPool, requestPg } from "./edge-pg"
 import type { SendEmailBinding } from "./email-cf"
+import { bindingEmbedder, EMBED_DIMENSIONS, type WorkersAiLike } from "./embedder"
 import { workspacesBlockingDeletion } from "./lib/account"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { buildAuthEmail } from "./lib/email"
@@ -27,7 +29,8 @@ import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/en
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
-import { type VectorizeLike, VectorizeSearchIndex, type WorkersAiLike } from "./search-vectorize"
+import { PgvectorSearchIndex } from "./search-pgvector"
+import { type VectorizeLike, VectorizeSearchIndex } from "./search-vectorize"
 import { enqueueChannelDelivery } from "./webhooks"
 
 export { PreviewRenderer } from "./preview-do"
@@ -211,11 +214,21 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // was dead on prod. Undefined when unset ⇒ isToken stays false, as before.
         token: env.DERIVE_TOKEN,
         blobs: new R2BlobStore(env.BUCKET),
-        // Hybrid search's dense arm — only when BOTH the Vectorize index and Workers AI are bound
-        // (create the index + its org_id metadata index first; see wrangler.toml). Unbound ⇒
-        // undefined ⇒ searchWorkspace runs pure-lexical, identical to the Node/self-host path.
-        search:
-          env.VECTORIZE && env.AI ? new VectorizeSearchIndex(env.VECTORIZE, env.AI) : undefined,
+        // Hybrid search's dense arm, embeddings from Workers AI (env.AI). On the Postgres path
+        // (HYPERDRIVE) the vectors live in pgvector in that same Postgres — the table is created out
+        // of band by apply-pg-schema, and PgVectorStore rides the request-scoped livePgPool exactly
+        // as the metadata store does. Falls back to Vectorize on a D1 edge (no pgvector on D1). No
+        // AI binding, or neither store ⇒ undefined ⇒ pure-lexical, identical to self-host.
+        search: env.AI
+          ? env.HYPERDRIVE
+            ? new PgvectorSearchIndex(
+                bindingEmbedder(env.AI),
+                new PgVectorStore(livePgPool, EMBED_DIMENSIONS),
+              )
+            : env.VECTORIZE
+              ? new VectorizeSearchIndex(env.VECTORIZE, env.AI)
+              : undefined
+          : undefined,
         backplane: createDoBackplane(env.ROOMS),
         baseUrl,
         auth,
