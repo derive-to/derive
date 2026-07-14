@@ -209,19 +209,17 @@ export const searchArtifactVersion = async (
 
   if (!manifest) {
     const src = (await deps.sourceText(v)) ?? ""
-    // A large HTML doc's markers (and text-scope conversion) come through the
-    // derived-view cache when one is wired — sectionMarkers alone is ~83ms per
-    // search on a 4MB doc, and agents search the same doc repeatedly. Small docs
-    // return null here and take the identical direct path as before. The cached
-    // markers are SOURCE-line markers, so they substitute only where the direct
-    // path would have computed source markers (source scope) — an HTML text-scope
-    // search keeps its empty marker list, exactly like markersFor.
-    const views = deps.derived ? await derivedViewsFor(deps.derived, src, v.content_type) : null
-    const content = where === "text" ? (views?.text ?? contentFor(src, v.content_type)) : src
-    const markers =
-      where === "source"
-        ? (views?.markers ?? markersFor(src, v.content_type))
-        : markersFor(src, v.content_type)
+    const content = contentFor(src, v.content_type)
+    // A large HTML doc's SOURCE-scope section markers come through the derived-view
+    // cache when one is wired — sectionMarkers is ~83ms on a 4MB doc, and agents
+    // search the same doc repeatedly. Only the source-scope, large-HTML case fetches
+    // the cache; a text-scope search's markers are empty (markersFor), and small docs
+    // return null from the cache and take the identical direct path as before.
+    const cached =
+      where === "source" && deps.derived
+        ? await derivedViewsFor(deps.derived, src, v.content_type)
+        : null
+    const markers = cached?.markers ?? markersFor(src, v.content_type)
     const { hunks, total } = scanLines(content, re, ctxLines, cap)
     annotateSections(hunks, markers)
     return { groups: [{ path: null, hunks }], total, note: null }

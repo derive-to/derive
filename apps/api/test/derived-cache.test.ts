@@ -1,10 +1,11 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { elideDataUris, outlineOf, pageText, sectionMarkers, toMarkdown } from "@derive/core"
+import { elideDataUris, sectionMarkers, toMarkdown } from "@derive/core"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
 import {
+  DERIVED_CACHE_MAX_CHARS,
   DERIVED_CACHE_MIN_CHARS,
   type DerivedViews,
   derivedViewsFor,
@@ -45,12 +46,19 @@ const bigHtml = (marker = "alpha") =>
   `</body></html>`
 
 describe("derivedViewsFor — the lazy content-addressed cache", () => {
-  it("gates: small docs and non-HTML return null and never touch the store", async () => {
+  it("gates: too-small, too-large, and non-HTML sources return null and never touch the store", async () => {
     const { meta, rows } = makeMeta()
     const blobs = new FsBlobStore(join(dir, "gate"))
+    // Too small — the direct path is already ~free.
     expect(await derivedViewsFor({ meta, blobs }, "<h1>tiny</h1>", "text/html")).toBeNull()
+    // Non-HTML — markdown/text are near-passthrough, no round trip earned.
     const bigMd = "# md\n\n".padEnd(DERIVED_CACHE_MIN_CHARS + 10, "x")
     expect(await derivedViewsFor({ meta, blobs }, bigMd, "text/markdown")).toBeNull()
+    // Too large — computing + serializing a multi-MB payload would risk the isolate;
+    // giant docs fall back to the direct single-view path (no cache, no blob).
+    const huge = `<h1>Huge</h1>${"<p>x</p>".repeat(DERIVED_CACHE_MAX_CHARS / 7 + 100)}`
+    expect(huge.length).toBeGreaterThan(DERIVED_CACHE_MAX_CHARS)
+    expect(await derivedViewsFor({ meta, blobs }, huge, "text/html")).toBeNull()
     expect(rows.size).toBe(0)
   })
 
@@ -64,9 +72,9 @@ describe("derivedViewsFor — the lazy content-addressed cache", () => {
     if (!views) throw new Error("expected views for a big HTML doc")
     // Byte-identical to what the read/search paths would compute directly — the
     // whole contract: a cache hit and a direct computation are indistinguishable.
+    // Only the two EXPENSIVE views are cached (markdown + source markers); the
+    // cheap views (text/outline/landmarks) are computed inline by the callers.
     expect(views.markdown).toBe(elideDataUris(toMarkdown(src, "text/html")))
-    expect(views.text).toBe(pageText(src))
-    expect(views.outline).toEqual(outlineOf(src, "text/html"))
     expect(views.markers).toEqual(sectionMarkers(src, "text/html"))
     expect(rows.size).toBe(1)
   })
@@ -81,9 +89,6 @@ describe("derivedViewsFor — the lazy content-addressed cache", () => {
     // second call recomputed instead of reading the cache, it would NOT see this.
     const poisoned: DerivedViews = {
       markdown: "POISONED-MARKDOWN",
-      text: "poisoned",
-      outline: [],
-      landmarks: [],
       markers: [],
     }
     const poisonKey = await blobs.put(new TextEncoder().encode(JSON.stringify(poisoned)))
@@ -107,7 +112,7 @@ describe("derivedViewsFor — the lazy content-addressed cache", () => {
       src,
       "text/html",
     )
-    expect(v1?.text).toBe(pageText(src))
+    expect(v1?.markdown).toBe(elideDataUris(toMarkdown(src, "text/html")))
 
     const putFail = makeMeta({ failPut: true })
     const v2 = await derivedViewsFor(
@@ -115,7 +120,7 @@ describe("derivedViewsFor — the lazy content-addressed cache", () => {
       src,
       "text/html",
     )
-    expect(v2?.text).toBe(pageText(src))
+    expect(v2?.markdown).toBe(elideDataUris(toMarkdown(src, "text/html")))
     expect(putFail.rows.size).toBe(0) // nothing persisted, nothing thrown
   })
 
@@ -128,6 +133,43 @@ describe("derivedViewsFor — the lazy content-addressed cache", () => {
     rows.set([...rows.keys()][0] as string, junkKey)
 
     const views = await derivedViewsFor({ meta, blobs }, src, "text/html")
-    expect(views?.text).toBe(pageText(src))
+    expect(views?.markdown).toBe(elideDataUris(toMarkdown(src, "text/html")))
+  })
+
+  it("routes the miss-path persist through `background` when given (edge waitUntil) and still persists (Node inline-await)", async () => {
+    const { meta, rows } = makeMeta()
+    const blobs = new FsBlobStore(join(dir, "bg"))
+    const src = bigHtml()
+    // A background that awaits inline — exactly what ctx.background does on Node, so
+    // the row is written before the call returns (deterministic for tests + Node).
+    const backgrounded: Promise<unknown>[] = []
+    const background = async (work: Promise<unknown>) => {
+      backgrounded.push(work)
+      await work
+    }
+    const views = await derivedViewsFor({ meta, blobs, background }, src, "text/html")
+    expect(views?.markdown).toBe(elideDataUris(toMarkdown(src, "text/html")))
+    expect(backgrounded).toHaveLength(1) // the persist was routed through background
+    expect(rows.size).toBe(1) // and it completed (Node inline-await)
+    // The persist promise never rejects (safe for edge waitUntil to fire-and-forget).
+    await expect(backgrounded[0]).resolves.toBeUndefined()
+  })
+
+  it("the persist promise NEVER rejects even when the write fails — safe to hand to waitUntil without a catch", async () => {
+    const { meta } = makeMeta({ failPut: true })
+    const src = bigHtml()
+    let handed: Promise<unknown> | undefined
+    const background = async (work: Promise<unknown>) => {
+      handed = work
+      // Deliberately do NOT await here — mimics edge waitUntil registering it to run
+      // after the response; the read must not depend on it, and it must not reject.
+    }
+    const views = await derivedViewsFor(
+      { meta, blobs: new FsBlobStore(join(dir, "bgfail")), background },
+      src,
+      "text/html",
+    )
+    expect(views?.markdown).toBe(elideDataUris(toMarkdown(src, "text/html"))) // read returns regardless
+    await expect(handed).resolves.toBeUndefined() // the write failure was swallowed, not thrown
   })
 })

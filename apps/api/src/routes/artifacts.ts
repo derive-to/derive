@@ -884,7 +884,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const candidateCap = isJson ? 60 : undefined
 
     const { results, note } = await searchWorkspace(
-      { blobs, sourceText, meta, derived: { meta, blobs } },
+      { blobs, sourceText, meta, derived: { meta, blobs, background } },
       {
         orgId: listOrg,
         viewerId: isOperator ? undefined : (memberKey ?? undefined),
@@ -929,7 +929,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!version) return fail(c, 404, `no version ${v}`)
 
     const { groups, total, note } = await searchArtifactVersion(
-      { blobs, sourceText, derived: { meta, blobs } },
+      { blobs, sourceText, derived: { meta, blobs, background } },
       version,
       re,
       where,
@@ -1477,20 +1477,23 @@ export const artifactRoutes = (ctx: AppContext) => {
 
     const manifest = await manifestOf(blobs, version)
     if (!manifest) {
-      // Single-file artifact. Full-doc derived views (outline, markdown/text
-      // conversion) come through the derived-view cache for large HTML docs —
-      // the same substitution-transparent cache the MCP read tool uses; small
-      // docs resolve null and take the identical direct path. Section slices
-      // stay direct (a slice is its own content, small by construction).
+      // Single-file artifact. Only the MARKDOWN conversion of a large HTML doc
+      // comes through the derived-view cache (the one expensive full-doc view,
+      // ~41ms on a 4MB doc) — the same substitution-transparent cache the MCP
+      // read tool uses. It's fetched lazily and once, so an outline read, a text
+      // read, or a raw byte read never pays a cache fetch. Outline and text are
+      // cheap (~6ms) and computed inline; small docs / non-HTML resolve null and
+      // take the identical direct path. Section slices stay direct (a slice is
+      // its own content, small by construction).
       const src = await sourceText(version)
       if (src === null) return fail(c, 500, "blob missing")
       const ct = version.content_type
-      let viewsPromise: Promise<DerivedViews | null> | undefined
-      const views = (): Promise<DerivedViews | null> =>
-        (viewsPromise ??= derivedViewsFor({ meta, blobs }, src, ct))
+      let mdPromise: Promise<DerivedViews | null> | undefined
+      const cachedMd = (): Promise<DerivedViews | null> =>
+        (mdPromise ??= derivedViewsFor({ meta, blobs, background }, src, ct))
       if (outline) {
         c.header("X-Derive-Format", "outline")
-        return c.json({ sections: (await views())?.outline ?? outlineOf(src, ct) })
+        return c.json({ sections: outlineOf(src, ct) })
       }
       if (section) {
         const slice = sectionOf(src, ct, section)
@@ -1501,17 +1504,12 @@ export const artifactRoutes = (ctx: AppContext) => {
         c.header("Content-Type", "text/plain; charset=utf-8")
         return c.body(body)
       }
-      const cached = format ? await views() : null
-      const body = cached
-        ? format === "markdown"
-          ? cached.markdown
-          : cached.text
-        : present(src, ct)
+      const body =
+        format === "markdown"
+          ? ((await cachedMd())?.markdown ?? present(src, ct))
+          : present(src, ct)
       c.header("X-Derive-Format", format ?? "raw")
-      // Only consult the cache for the outline count when a format read already
-      // fetched it — a RAW read is the byte-exact fast path and must not pay a
-      // first-touch cache fill just for a response header.
-      c.header("X-Derive-Sections", String((cached?.outline ?? outlineOf(src, ct)).length))
+      c.header("X-Derive-Sections", String(outlineOf(src, ct).length))
       c.header("Content-Type", "text/plain; charset=utf-8")
       return c.body(body)
     }

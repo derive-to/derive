@@ -869,7 +869,7 @@ export function buildContext(deps: AppDeps) {
     // The derived-view cache's narrow deps (lib/derived-cache.ts) — pre-bundled so
     // any consumer holding an AppContext (the MCP tools pass ctx straight in as
     // SearchDeps) gets the cache without threading meta/blobs separately.
-    derived: { meta, blobs },
+    derived: { meta, blobs, background },
     bus,
     presence,
     backplane,
