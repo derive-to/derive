@@ -62,7 +62,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { title: "Derive" },
     ],
     links: [
-      { rel: "icon", type: "image/svg+xml", href: "/brand/logo-light.svg" },
+      // Theme-aware: dark glyph on light browser chrome, light on dark
+      // (prefers-color-scheme media query inside the SVG).
+      { rel: "icon", type: "image/svg+xml", href: "/brand/favicon.svg" },
       { rel: "icon", type: "image/png", href: "/brand/favicon.png" },
       { rel: "apple-touch-icon", href: "/brand/favicon.png" },
       // Fonts are self-hosted via @fontsource-variable imports in globals.css —
