@@ -735,24 +735,22 @@ async function buildServer(
         // Single-file artifact.
         const src = (await ctx.sourceText(v)) ?? ""
         const ct = v.content_type
-        // Derived-view cache, fetched LAZILY and once: paths that never need a
-        // derived view (format:"html" windows, region slices) stay zero-cost, and
-        // a cache MISS computes the views exactly once per request, not per site.
-        // Small docs / non-HTML resolve to null and every site below falls back to
-        // the identical direct computation this code always did.
-        let viewsPromise: Promise<DerivedViews | null> | undefined
-        const views = (): Promise<DerivedViews | null> =>
-          (viewsPromise ??= derivedViewsFor(ctx.derived, src, ct))
+        // Only MARKDOWN is served from the derived-view cache (the one expensive view
+        // a read produces — ~41ms on a 4MB doc), fetched lazily and once so a
+        // format:"html" window, a region slice, or a text/outline read never pays a
+        // cache fetch at all. A miss / small doc / non-HTML falls back to the identical
+        // direct computation. text, outline and landmarks are cheap (~6ms) — always
+        // computed inline, so a cheap view never drags in the whole multi-MB blob.
+        let mdPromise: Promise<DerivedViews | null> | undefined
+        const cachedMd = (): Promise<DerivedViews | null> =>
+          (mdPromise ??= derivedViewsFor(ctx.derived, src, ct))
         const presentDoc = async (f: ReadFormat): Promise<string> => {
           if (f === "html") return src
-          const cached = await views()
-          if (cached) return f === "markdown" ? cached.markdown : cached.text
+          if (f === "markdown") return (await cachedMd())?.markdown ?? present(src, ct, "markdown")
           return present(src, ct, f)
         }
-        const outlineDoc = async (): Promise<OutlineSection[]> =>
-          (await views())?.outline ?? outlineOf(src, ct)
-        const landmarksDoc = async (): Promise<LandmarkRegion[]> =>
-          (await views())?.landmarks ?? landmarksOf(src, ct)
+        const outlineDoc = (): OutlineSection[] => outlineOf(src, ct)
+        const landmarksDoc = (): LandmarkRegion[] => landmarksOf(src, ct)
         const meta = {
           short_id,
           title: a.title,
