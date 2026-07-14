@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog"
 import {
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -38,45 +39,58 @@ export function ReworkMenuItem({
 }) {
   const { me } = useAuth()
   const nav = useNavigate()
-  const { data: settings, isError: settingsError } = useQuery({
-    ...workspaceSettingsQuery(),
-    enabled: !!me,
-  })
-  const { data: agents = [], isError: agentsError } = useQuery({
-    ...artifactAgentsQuery(shortId),
-    enabled: !!me,
-  })
+  const {
+    data: settings,
+    isPending: settingsPending,
+    isError: settingsError,
+  } = useQuery({ ...workspaceSettingsQuery(), enabled: !!me })
+  const {
+    data: agents = [],
+    isPending: agentsPending,
+    isError: agentsError,
+  } = useQuery({ ...artifactAgentsQuery(shortId), enabled: !!me })
   const fire = useApiMutation<{ requestId: string }, AgentTarget>({
     mutationFn: (agent) => api.reworkArtifact(shortId, agent.id),
     success: (_r, agent) => `Rework request sent to ${agent.name}.`,
   })
-  // Anonymous viewers can't fire an agent or own a Brandprint — no item at all. Same
-  // for a failed ambient read: rather than guess at a state from partial data, hide
-  // the affordance (the ApplyNudge convention on the Brandprint page itself).
-  if (!me || settingsError || agentsError) return null
+  // Anonymous viewers can't fire an agent or own a Brandprint — no item at all. This
+  // check must stay FIRST: the queries are gated on `me`, and a disabled query reports
+  // pending forever, so the pending guard below would otherwise hide the item for good.
+  if (!me) return null
+  // While either read is in flight the state is unknowable — computing it off
+  // undefined data would flash "Set up your Brandprint" at a member whose workspace
+  // Brandprint just hasn't loaded (and a fast click would misroute to /brandprint).
+  // Render nothing until the data settles; the item then appears in its true state.
+  if (settingsPending || agentsPending) return null
+  // A failed ambient read: rather than guess at a state from partial data, hide the
+  // affordance (the ApplyNudge convention on the Brandprint page itself).
+  if (settingsError || agentsError) return null
 
   const hasBrandprint = !!settings?.brandprint?.collectionId || !!me.brandprint?.collectionId
+  // artifactAgentsQuery already drops nameless agents; this re-asserts it with a type
+  // predicate because a plain filter doesn't narrow `name` to non-null for TS.
   const usable = agents.filter((a): a is typeof a & { name: string } => !!a.name)
   const state = reworkState(hasBrandprint, usable.length)
 
+  let item: React.ReactNode
   if (state === "setup")
-    return (
+    item = (
       <DropdownMenuItem data-testid="rework-setup" onSelect={() => nav({ to: "/brandprint" })}>
         <Icon name="sparkles" size={16} /> Set up your Brandprint
       </DropdownMenuItem>
     )
-  if (state === "connect")
-    return (
+  else if (state === "connect")
+    item = (
       <DropdownMenuItem data-testid="rework-connect" onSelect={onConnect}>
         <Icon name="sparkles" size={16} /> Rework with Brandprint
       </DropdownMenuItem>
     )
-  if (state === "fire") {
+  else if (state === "fire") {
     const sole = usable[0]
     // reworkState guarantees exactly one usable agent in this branch; the guard is
     // just to satisfy noUncheckedIndexedAccess, not a real runtime path.
     if (!sole) return null
-    return (
+    item = (
       <DropdownMenuItem
         data-testid="rework-fire"
         disabled={fire.isPending}
@@ -85,24 +99,34 @@ export function ReworkMenuItem({
         <Icon name="sparkles" size={16} /> Rework with Brandprint
       </DropdownMenuItem>
     )
-  }
+  } else
+    item = (
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger data-testid="rework-pick" disabled={fire.isPending}>
+          <Icon name="sparkles" size={16} /> Rework with Brandprint
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          {usable.map((a) => (
+            <DropdownMenuItem
+              key={a.id}
+              data-testid={`rework-pick-${a.id}`}
+              disabled={fire.isPending}
+              onSelect={() => fire.mutate({ id: a.id, name: a.name })}
+            >
+              {a.name}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+    )
+
+  // The leading separator rides WITH the item, so when every guard above bails the
+  // menu doesn't keep an orphaned rule next to the Activity group's own separator.
   return (
-    <DropdownMenuSub>
-      <DropdownMenuSubTrigger data-testid="rework-pick">
-        <Icon name="sparkles" size={16} /> Rework with Brandprint
-      </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent>
-        {usable.map((a) => (
-          <DropdownMenuItem
-            key={a.id}
-            data-testid={`rework-pick-${a.id}`}
-            onSelect={() => fire.mutate({ id: a.id, name: a.name })}
-          >
-            {a.name}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuSubContent>
-    </DropdownMenuSub>
+    <>
+      <DropdownMenuSeparator />
+      {item}
+    </>
   )
 }
 

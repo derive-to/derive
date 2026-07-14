@@ -159,8 +159,9 @@ export function ArtifactTopBar(props: {
               )}
             </DropdownMenuItem>
 
-            {/* Apply the Brandprint — the ask-agent handoff scoped to the whole artifact. */}
-            <DropdownMenuSeparator />
+            {/* Apply the Brandprint — the ask-agent handoff scoped to the whole artifact.
+                The item brings its own leading separator, so both vanish together when it
+                renders nothing (anonymous viewer, pending or failed reads). */}
             <ReworkMenuItem shortId={shortId} onConnect={() => setReworkConnectOpen(true)} />
 
             {/* Activity. */}
