@@ -25,7 +25,6 @@ const NON_CONFIG = new Set([
   "SYNC_RUNNER",
   "PREVIEW_RENDERER",
   "BROWSER",
-  "VECTORIZE",
   "AI",
   "RL_AUTH",
   "RL_INVITE",
