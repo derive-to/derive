@@ -211,7 +211,12 @@ export const postSlackMessage = async (
  *  reflects has already been applied, so a slow/failed cosmetic update must not block. */
 export const postSlackResponseUrl = async (
   responseUrl: string,
-  body: { text: string; blocks?: unknown; replace_original?: boolean },
+  body: {
+    text: string
+    blocks?: unknown
+    replace_original?: boolean
+    response_type?: "ephemeral" | "in_channel"
+  },
 ): Promise<boolean> => {
   try {
     const res = await fetch(responseUrl, {

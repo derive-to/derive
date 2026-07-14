@@ -87,6 +87,21 @@ const postInteract = (app: TestApp, payload: unknown) => {
   })
 }
 
+// A signed slash-command POST (form-encoded fields).
+const postCommand = (app: TestApp, fields: Record<string, string>) => {
+  const raw = new URLSearchParams(fields).toString()
+  const ts = String(Math.floor(Date.now() / 1000))
+  return app.request("/v1/slack/commands", {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      "x-slack-request-timestamp": ts,
+      "x-slack-signature": sign(ts, raw),
+    },
+    body: raw,
+  })
+}
+
 // "T1" matches the team_id seedResolvable stores on the install (the acting-team authz bind).
 const threadAction = (artifactId: string, threadId: string, actionId: string, teamId = "T1") => ({
   type: "block_actions",
@@ -829,5 +844,110 @@ describe("slack interactivity endpoint (resolve/reopen from a button)", () => {
     expect(r.status).toBe(200)
     const cm = (await meta.listComments(artifact.id)).find((c) => c.id === "c-int-n")
     expect(cm?.state).toBe("open")
+  })
+})
+
+describe("slack slash command (/derive)", () => {
+  const link = (meta: MetaStore, slackUserId = "U777", userId = owner.id) =>
+    meta.setSlackUserLink({
+      id: `sul-${slackUserId}`,
+      org_id: "default",
+      user_id: userId,
+      team_id: "T1",
+      slack_user_id: slackUserId,
+      created_at: new Date().toISOString(),
+    })
+
+  const seedArtifact = (
+    meta: MetaStore,
+    id: string,
+    short: string,
+    title: string,
+    listed: "public" | "none",
+  ) =>
+    meta.createArtifact({
+      id,
+      short_id: short,
+      org_id: "default",
+      slug: null,
+      title,
+      workspace_access: listed === "public" ? "member" : "none",
+      link_role: listed === "public" ? "viewer" : "none",
+      listed,
+      kind: "file",
+      spa: 0,
+    })
+
+  it("rejects an unsigned command", async () => {
+    const { app } = make("slack-cmd-badsig")
+    const r = await app.request("/v1/slack/commands", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "team_id=T1&user_id=U1",
+    })
+    expect(r.status).toBe(401)
+  })
+
+  it("prompts an unlinked user to link their account", async () => {
+    const { app } = make("slack-cmd-nolink")
+    const r = await postCommand(app, { team_id: "T1", user_id: "U-UNLINKED", text: "hello" })
+    expect(r.status).toBe(200)
+    const body = await r.json()
+    expect(body.response_type).toBe("ephemeral")
+    expect(JSON.stringify(body.blocks)).toContain("Link your Slack account")
+  })
+
+  it("bare /derive lists only artifacts the linked user can see", async () => {
+    const { app, meta } = make("slack-cmd-recent")
+    await link(meta)
+    await seedArtifact(meta, "a-pub", "pubart01", "Public Doc", "public")
+    await seedArtifact(meta, "a-priv", "privat01", "Private Draft", "none")
+    const r = await postCommand(app, { team_id: "T1", user_id: "U777", text: "" })
+    expect(r.status).toBe(200)
+    const body = await r.json()
+    expect(body.response_type).toBe("ephemeral")
+    const s = JSON.stringify(body.blocks)
+    expect(s).toContain("Public Doc")
+    expect(s).not.toContain("Private Draft") // visibility-scoped to the linked user
+  })
+
+  it("answers a search inline when there's no response_url (fallback)", async () => {
+    const { app, meta } = make("slack-cmd-search")
+    await link(meta)
+    const r = await postCommand(app, { team_id: "T1", user_id: "U777", text: "anything" })
+    expect(r.status).toBe(200)
+    const body = await r.json()
+    expect(body.response_type).toBe("ephemeral")
+    expect(Array.isArray(body.blocks)).toBe(true)
+  })
+
+  it("escapes mrkdwn control chars in artifact titles (no link injection)", async () => {
+    const { app, meta } = make("slack-cmd-escape")
+    await link(meta)
+    await seedArtifact(meta, "a-evil", "evilart1", "Pwn> <https://phish|click", "public")
+    const r = await postCommand(app, { team_id: "T1", user_id: "U777", text: "" })
+    const s = JSON.stringify((await r.json()).blocks)
+    expect(s).toContain("Pwn&gt;") // the title's > was escaped
+    expect(s).not.toContain("<https://phish") // the injected link's < was neutralized to &lt;
+  })
+
+  it("acks a search with 'Searching…' and defers the work to response_url", async () => {
+    const { app, meta } = make("slack-cmd-defer")
+    await link(meta)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 })),
+    )
+    const r = await postCommand(app, {
+      team_id: "T1",
+      user_id: "U777",
+      text: "anything",
+      response_url: "https://hooks.slack.test/cmd",
+    })
+    expect(r.status).toBe(200)
+    const body = await r.json()
+    // The search runs off the ack path — the immediate reply is just the placeholder.
+    expect(body.text).toBe("Searching…")
+    expect(body.blocks).toBeUndefined()
   })
 })

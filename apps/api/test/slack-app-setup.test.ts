@@ -43,6 +43,12 @@ describe("buildSlackManifest", () => {
     expect(m.settings.interactivity.request_url).toBe(`${BASE}/v1/slack/interactivity`)
   })
 
+  it("declares the /derive slash command pointed at this instance", () => {
+    const cmd = m.features.slash_commands?.[0]
+    expect(cmd?.command).toBe("/derive")
+    expect(cmd?.url).toBe(`${BASE}/v1/slack/commands`)
+  })
+
   it("is named just Derive (Slack caps the app name at 35 chars)", () => {
     expect(m.display_information.name).toBe("Derive")
     expect(m.display_information.name.length).toBeLessThanOrEqual(35)
