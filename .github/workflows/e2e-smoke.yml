@@ -1,7 +1,8 @@
 name: e2e smoke
 
 # The whole e2e gate, one file (apps/web/e2e/smoke.spec.ts): auth, publish →
-# comment → resolve → library, share, settings/theme. Runs on PRs.
+# comment → resolve → library, share, settings/theme. Manual only —
+# `gh workflow run e2e-smoke.yml` or the Actions tab, not on every PR.
 #
 # The reliability fixes live in playwright.config.ts: workers=1 on CI (each
 # multi-context spec already opens two browser contexts), a prebuilt SPA served by
@@ -10,13 +11,6 @@ name: e2e smoke
 # just bump workers.
 on:
   workflow_dispatch:
-  # Scope to changes that can affect a user flow — skip docs/CI-only PRs so the
-  # (uncached-browser + build + serial specs) minutes don't burn on every PR.
-  pull_request:
-    paths:
-      - "apps/**"
-      - "packages/**"
-      - "pnpm-lock.yaml"
 
 permissions:
   contents: read

@@ -4,12 +4,13 @@ Playwright end-to-end tests that drive the real web app against a real API.
 
 ## One suite: smoke
 
-| Suite     | Path                | When                  | Run                    |
-| --------- | ------------------- | --------------------- | ----------------------- |
-| **smoke** | `e2e/smoke.spec.ts` | post-merge gate (<2m) | `pnpm test:e2e:smoke`  |
+| Suite     | Path                | When            | Run                    |
+| --------- | ------------------- | ---------------- | ----------------------- |
+| **smoke** | `e2e/smoke.spec.ts` | manual (<2m)     | `pnpm test:e2e:smoke`  |
 
 One file, a handful of independent tests, one fast critical path per surface:
-auth, publish → comment → resolve → library, share, settings/theme.
+auth, publish → comment → resolve → library, share, settings/theme. CI runs it
+via `workflow_dispatch` only (`e2e-smoke.yml`) — not on every PR.
 
 `pnpm test:e2e` runs it (plus the two special-purpose harnesses below). `pnpm
 test:e2e:ui` opens the Playwright UI. `pnpm test:e2e:report` shows the last
