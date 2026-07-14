@@ -1,15 +1,9 @@
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { api } from "@/api"
+import { ApiError, api } from "@/api"
 import { Icon } from "@/components/icons"
-import { ConnectAgent } from "@/components/shared/connect-agent"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { ConnectAgentDialogContent } from "@/components/shared/connect-agent"
+import { Dialog } from "@/components/ui/dialog"
 import {
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -21,14 +15,15 @@ import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { artifactAgentsQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { reworkState } from "./rework-state"
+import { usableAgents } from "./ask-agent"
+import { resolveRework } from "./rework-state"
 import type { AgentTarget } from "./types"
 
-// "Rework with Brandprint" — the ⋯ menu's apply-on-demand entry (Brandprint Phase 3):
-// a canned version of the ask-agent handoff, scoped to the whole artifact. One
-// self-contained component owns the four-state logic (set-up / connect / fire /
-// picker) so the top bar stays lean. The canned instruction lives server-side; this
-// only chooses the agent and fires.
+// "Rework with Brandprint" — the ⋯ menu's apply-on-demand entry: a canned version of
+// the ask-agent handoff, scoped to the whole artifact. One self-contained component
+// owns the four-state logic (set-up / connect / fire / picker) so the top bar stays
+// lean. The canned instruction lives server-side; this only chooses the agent and
+// fires.
 export function ReworkMenuItem({
   shortId,
   onConnect,
@@ -60,14 +55,13 @@ export function ReworkMenuItem({
     mutationFn: (agent) => api.reworkArtifact(shortId, agent.id),
     success: (_r, agent) => `Rework request sent to ${agent.name}.`,
     // The state computed below is a client-side approximation (see the comment on
-    // workspaceSettingsQuery above) — a stale cache can 409 with a raw machine token
-    // ("needsAgent"/"needsBrandprint") the server never meant for display. Opt out of
-    // the global toast and route to the state the client SHOULD have shown instead of
-    // flashing the token at the user.
+    // workspaceSettingsQuery above), so a stale cache can draw a 409. Instead of
+    // toasting that, route to the state the client should have shown.
     errorToast: false,
     onError: (err) => {
-      if (err.message === "needsAgent") onConnect()
-      else if (err.message === "needsBrandprint") nav({ to: "/brandprint" })
+      const code = err instanceof ApiError ? err.code : undefined
+      if (code === "needsAgent") onConnect()
+      else if (code === "needsBrandprint") nav({ to: "/brandprint" })
       else toast.error("Rework request failed — try again.")
     },
   })
@@ -91,46 +85,39 @@ export function ReworkMenuItem({
     !!settings?.brandprint?.collectionId ||
     !!settings?.brandprint?.profileId ||
     !!me.brandprint?.collectionId
-  // artifactAgentsQuery already drops nameless agents; this re-asserts it with a type
-  // predicate because a plain filter doesn't narrow `name` to non-null for TS.
-  const usable = agents.filter((a): a is typeof a & { name: string } => !!a.name)
-  const state = reworkState(hasBrandprint, usable.length)
+  const rework = resolveRework(hasBrandprint, usableAgents(agents))
 
   let item: React.ReactNode
-  if (state === "setup")
+  if (rework.state === "setup")
     item = (
       <DropdownMenuItem data-testid="rework-setup" onSelect={() => nav({ to: "/brandprint" })}>
         <Icon name="sparkles" size={16} /> Set up your Brandprint
       </DropdownMenuItem>
     )
-  else if (state === "connect")
+  else if (rework.state === "connect")
     item = (
       <DropdownMenuItem data-testid="rework-connect" onSelect={onConnect}>
         <Icon name="sparkles" size={16} /> Rework with Brandprint
       </DropdownMenuItem>
     )
-  else if (state === "fire") {
-    const sole = usable[0]
-    // reworkState guarantees exactly one usable agent in this branch; the guard is
-    // just to satisfy noUncheckedIndexedAccess, not a real runtime path.
-    if (!sole) return null
+  else if (rework.state === "fire")
     item = (
       <DropdownMenuItem
         data-testid="rework-fire"
         disabled={fire.isPending}
-        onSelect={() => fire.mutate({ id: sole.id, name: sole.name })}
+        onSelect={() => fire.mutate({ id: rework.agent.id, name: rework.agent.name })}
       >
         <Icon name="sparkles" size={16} /> Rework with Brandprint
       </DropdownMenuItem>
     )
-  } else
+  else
     item = (
       <DropdownMenuSub>
         <DropdownMenuSubTrigger data-testid="rework-pick" disabled={fire.isPending}>
           <Icon name="sparkles" size={16} /> Rework with Brandprint
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent>
-          {usable.map((a) => (
+          {rework.agents.map((a) => (
             <DropdownMenuItem
               key={a.id}
               data-testid={`rework-pick-${a.id}`}
@@ -155,7 +142,7 @@ export function ReworkMenuItem({
 }
 
 // The shared Connect-an-agent surface, dialog-wrapped — Rework's no-agent state is
-// its fifth entry point (see docs/plans/brandprint.md, "one shared surface").
+// one of its entry points (see docs/plans/brandprint.md, "one shared surface").
 export function ReworkConnectDialog({
   open,
   onOpenChange,
@@ -165,16 +152,7 @@ export function ReworkConnectDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Connect an agent</DialogTitle>
-          <DialogDescription>
-            One paste connects any MCP agent to Derive — it can then publish, review, and revise for
-            you.
-          </DialogDescription>
-        </DialogHeader>
-        <ConnectAgent testidPrefix="rework-connect" />
-      </DialogContent>
+      <ConnectAgentDialogContent testidPrefix="rework-connect" />
     </Dialog>
   )
 }

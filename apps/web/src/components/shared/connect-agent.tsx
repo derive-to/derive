@@ -15,9 +15,8 @@ import { Switch } from "@/components/ui/switch"
 
 // The one Connect-an-agent surface: the paste-into-your-agent prompt (hosted, with a
 // self-host toggle), shared by onboarding Step 2, the library's connect empty state,
-// and the Brandprint page's saved-but-inert nudge — extracted from welcome.tsx so
-// every entry point renders the same thing. Rework's no-agent state (Phase 2) lands
-// here too.
+// the Brandprint page's saved-but-inert nudge, and the Rework ⋯ item's no-agent
+// state — extracted from welcome.tsx so every entry point renders the same thing.
 
 // The public origin to hand an agent. A deployed Derive instance's own origin IS its
 // public URL, so that's what we embed — except in local dev (localhost), where we
@@ -122,17 +121,28 @@ export function ConnectAgentButton({
           {children ?? "Connect an agent"}
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Connect an agent</DialogTitle>
-          <DialogDescription>
-            One paste connects any MCP agent to Derive — it can then publish, review, and revise for
-            you.
-          </DialogDescription>
-        </DialogHeader>
-        <ConnectAgent testidPrefix={`${testId}-dialog`} />
-      </DialogContent>
+      <ConnectAgentDialogContent testidPrefix={`${testId}-dialog`} />
     </Dialog>
+  )
+}
+
+/**
+ * The dialog body every Connect-an-agent opening shares — one home for the header
+ * copy, so the button-triggered and externally-controlled (Rework ⋯ menu) dialogs
+ * can't drift apart. Render inside a `Dialog`.
+ */
+export function ConnectAgentDialogContent({ testidPrefix }: { testidPrefix: string }) {
+  return (
+    <DialogContent className="sm:max-w-lg">
+      <DialogHeader>
+        <DialogTitle>Connect an agent</DialogTitle>
+        <DialogDescription>
+          One paste connects any MCP agent to Derive — it can then publish, review, and revise for
+          you.
+        </DialogDescription>
+      </DialogHeader>
+      <ConnectAgent testidPrefix={testidPrefix} />
+    </DialogContent>
   )
 }
 

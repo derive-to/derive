@@ -215,18 +215,23 @@ const u = (path: string) => API_BASE + path
 const f = (path: string, init?: RequestInit) => fetch(u(path), init)
 
 // Thrown error carries the HTTP status so callers can branch (e.g. a 401 on a
-// password artifact means "prompt for the password", not "not found").
+// password artifact means "prompt for the password", not "not found"), plus the
+// server's machine-readable `code` when fail() attached one — branch on that,
+// never on the human-readable message, which is free to be reworded.
 export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly code?: string,
   ) {
     super(message)
   }
 }
 const j = async (r: Response) => {
-  if (!r.ok)
-    throw new ApiError((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`, r.status)
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}))
+    throw new ApiError(body.error ?? `HTTP ${r.status}`, r.status, body.code)
+  }
   return r.json()
 }
 const opts = (body?: unknown): RequestInit => ({

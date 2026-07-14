@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
-// Phase 3 (apply): POST /v1/artifacts/:shortId/rework composes the canned Brandprint
-// instruction server-side and lands it in the chosen agent's pull inbox as an @mention
+// POST /v1/artifacts/:shortId/rework composes the canned Brandprint instruction
+// server-side and lands it in the chosen agent's pull inbox as an @mention
 // comment — the same path the ask-agent composer uses, minus the human typing it.
 
 const owner: TestUser = {
@@ -73,7 +73,7 @@ describe("rework: gating", () => {
     await seedBrandprint(meta, shortId)
     const res = await rework(app, shortId)
     expect(res.status).toBe(409)
-    expect(((await res.json()) as { error: string }).error).toBe("needsAgent")
+    expect(((await res.json()) as { code: string }).code).toBe("needsAgent")
   })
 
   it("409 needsBrandprint when no Brandprint resolves — an empty brief never fires", async () => {
@@ -82,7 +82,7 @@ describe("rework: gating", () => {
     await addAgent(app, "Reviser")
     const res = await rework(app, shortId)
     expect(res.status).toBe(409)
-    expect(((await res.json()) as { error: string }).error).toBe("needsBrandprint")
+    expect(((await res.json()) as { code: string }).code).toBe("needsBrandprint")
   })
 
   it("404 for an unknown artifact; 404 for an agentId from another workspace", async () => {

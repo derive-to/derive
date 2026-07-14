@@ -8,12 +8,12 @@ import {
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { quoteOf } from "../lib/comments"
+import { parseMeta, quoteOf } from "../lib/comments"
 import { bail, fail, readJson } from "../lib/http"
 import { notifyMentions } from "../lib/mentions"
 import { notifyCommentBells } from "../lib/notify-comment"
 
-/** Phase 3 (apply): the Rework button's endpoint. A thin wrapper over the existing
+/** The Rework button's endpoint. A thin wrapper over the existing
  *  @mention-to-inbox path — composes the canned Brandprint instruction server-side
  *  (the single source of truth; the client never carries the prompt) and posts it as
  *  a whole-document comment @mentioning the chosen agent, which drops into that
@@ -70,36 +70,43 @@ export const reworkRoutes = (ctx: AppContext) => {
       if (!acting) return bail(fail(c, 401, "sign in to request a rework"))
       const rl = await limited(c, commentLimiter)
       if (rl) return bail(rl)
-      let agentId: string | undefined
-      if (c.req.header("content-type")?.includes("application/json")) {
-        const body = await readJson(c, z.object({ agentId: z.string().optional() }))
-        if (body instanceof Response) return bail(body)
-        agentId = body.agentId
-      }
+      // readJson tolerates a missing body (it parses to {}), so a bare POST means
+      // "use the sole registered agent".
+      const body = await readJson(c, z.object({ agentId: z.string().optional() }))
+      if (body instanceof Response) return bail(body)
 
       const agents = await meta.listAgents(artifact.org_id)
-      if (agents.length === 0) return bail(fail(c, 409, "needsAgent"))
-      const agent = agentId
-        ? agents.find((a) => a.id === agentId)
-        : agents.length === 1
-          ? agents[0]
-          : undefined
-      if (!agent)
+      if (agents.length === 0)
         return bail(
-          agentId
-            ? fail(c, 404, "no such agent in this workspace")
-            : fail(c, 400, "agentId required when several agents are registered"),
+          fail(c, 409, "no agent is registered in this workspace", { code: "needsAgent" }),
         )
+      let agent: (typeof agents)[number]
+      if (body.agentId) {
+        const found = agents.find((a) => a.id === body.agentId)
+        if (!found) return bail(fail(c, 404, "no such agent in this workspace"))
+        agent = found
+      } else {
+        const [sole, ...rest] = agents
+        if (!sole || rest.length > 0)
+          return bail(fail(c, 400, "agentId required when several agents are registered"))
+        agent = sole
+      }
 
       // Resolve the Brandprint the agent will read (workspace ⊕ requester's profile) —
       // needed for the profile-first line, and as a guard: firing the canned
       // instruction with zero derive://brandprint/* resources behind it would hand
       // the agent an empty brief.
-      const ws = (await meta.getOrgSettings(artifact.org_id)).brandprint
-      const personal = parseBrandprint(await meta.getUserBrandprint(acting.id))
-      const resolved = resolveBrandprint(ws, personal)
+      const [orgSettings, personalRaw] = await Promise.all([
+        meta.getOrgSettings(artifact.org_id),
+        meta.getUserBrandprint(acting.id),
+      ])
+      const resolved = resolveBrandprint(orgSettings.brandprint, parseBrandprint(personalRaw))
       if (resolved.collectionIds.length === 0 && !resolved.profileId)
-        return bail(fail(c, 409, "needsBrandprint"))
+        return bail(
+          fail(c, 409, "no Brandprint is set on this workspace or your profile", {
+            code: "needsBrandprint",
+          }),
+        )
       let profileLive = false
       if (resolved.profileId) {
         const prof = await meta.getByShortId(resolved.profileId)
@@ -125,7 +132,9 @@ export const reworkRoutes = (ctx: AppContext) => {
         author: acting.name,
         author_id: acting.id,
       })
-      await meta.updateComment(created.id, { meta: JSON.stringify({ mentions }) })
+      await meta.updateComment(created.id, {
+        meta: JSON.stringify({ ...parseMeta(created.meta), mentions }),
+      })
       bus.publish(artifact.id, { type: "comment.created" })
       await background(
         (async () => {

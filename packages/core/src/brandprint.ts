@@ -76,9 +76,9 @@ export const brandprintInstructions = (
 }
 
 /**
- * The canned Rework instruction (Phase 3) — kept server-side as the single source of
- * truth (the client fires the endpoint; it never carries the prompt). With a live
- * brand profile, the profile is named as the first read.
+ * The canned Rework instruction — kept server-side as the single source of truth
+ * (the client fires the endpoint; it never carries the prompt). With a live brand
+ * profile, the profile is named as the first read.
  */
 export const reworkInstruction = (profileLive: boolean): string =>
   (profileLive
