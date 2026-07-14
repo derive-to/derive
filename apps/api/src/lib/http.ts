@@ -167,6 +167,53 @@ export const RAW_HEADERS: Record<string, string> = {
 }
 
 /**
+ * Headers for an ISOLATED per-artifact origin (an artifact-bound domain row: a
+ * vanity/auto subdomain or a per-artifact custom host). There — and ONLY there —
+ * `allow-same-origin` is safe: the host serves exactly one artifact and carries no
+ * app/auth cookies. Distinct subdomains are already distinct origins, so SOP (not
+ * the PSL) is what isolates each artifact's localStorage/IndexedDB — that holds
+ * today, pre-registration. What the Public Suffix List adds is closing the
+ * DOMAIN-scoped cookie channel: until the base domain is on the PSL, an artifact
+ * could set a `Domain=<base>` cookie visible to sibling subdomains (a cross-artifact
+ * supercookie), so register it before relying on subdomain isolation at scale (see
+ * the PSL plan). The grant is what turns a rendered page into a working app:
+ * localStorage/IndexedDB persist, History/pushState works, service workers register.
+ *
+ * The same grant anywhere shared would be an escape hatch: on the app origin it
+ * reaches session cookies; on the shared sandbox origin (DERIVE_SANDBOX_URL) or a
+ * WORKSPACE domain (`<host>/<ref>`, many artifacts on one host) it would let one
+ * artifact read another's storage. Those callers keep RAW_HEADERS — which is why
+ * this is a per-request choice (`headersFor`) and no longer only a module constant.
+ */
+export const ISOLATED_RAW_HEADERS: Record<string, string> = {
+  ...RAW_HEADERS,
+  "Content-Security-Policy":
+    "sandbox allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads",
+}
+
+/** The sandbox header set for a serve: isolated per-artifact origins get the
+ *  capability grant, everything else the opaque-origin wall. */
+export const headersFor = (isolated: boolean): Record<string, string> =>
+  isolated ? ISOLATED_RAW_HEADERS : RAW_HEADERS
+
+/**
+ * Do two hosts sit on the same registrable-domain family? A label-aligned suffix
+ * check (equal, or one a dotted-suffix of the other) — the same naive-eTLD spirit as
+ * auth-config's commonParent, no PSL lib needed at startup. Used to catch the one
+ * isolation footgun: since per-artifact subdomain hosts get `allow-same-origin`,
+ * DERIVE_SUBDOMAIN_BASE sharing a registrable domain with the app/auth-cookie host
+ * would let an artifact inject a `Domain=<shared>` cookie the app trusts. Returns
+ * false when either host is missing (nothing to compare).
+ */
+export const sharesRegistrableDomain = (a: string | null, b: string | null): boolean => {
+  if (!a || !b) return false
+  const x = a.toLowerCase().replace(/^\.+|\.+$/g, "")
+  const y = b.toLowerCase().replace(/^\.+|\.+$/g, "")
+  if (!x || !y) return false
+  return x === y || x.endsWith(`.${y}`) || y.endsWith(`.${x}`)
+}
+
+/**
  * Cache-Control for an artifact's bytes by access model. Only an UNLOCKED
  * artifact whose world link grants access (`link_role != none`) is safe to sit
  * in a shared/CDN cache: everyone hitting the URL reads the same bytes. Workspace-
