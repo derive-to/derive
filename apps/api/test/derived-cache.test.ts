@@ -5,7 +5,8 @@ import { elideDataUris, sectionMarkers, toMarkdown } from "@derive/core"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
 import {
-  DERIVED_CACHE_MAX_CHARS,
+  DERIVED_CACHE_GEN,
+  DERIVED_CACHE_MAX_BYTES,
   DERIVED_CACHE_MIN_CHARS,
   type DerivedViews,
   derivedViewsFor,
@@ -56,10 +57,59 @@ describe("derivedViewsFor — the lazy content-addressed cache", () => {
     expect(await derivedViewsFor({ meta, blobs }, bigMd, "text/markdown")).toBeNull()
     // Too large — computing + serializing a multi-MB payload would risk the isolate;
     // giant docs fall back to the direct single-view path (no cache, no blob).
-    const huge = `<h1>Huge</h1>${"<p>x</p>".repeat(DERIVED_CACHE_MAX_CHARS / 7 + 100)}`
-    expect(huge.length).toBeGreaterThan(DERIVED_CACHE_MAX_CHARS)
+    const huge = `<h1>Huge</h1>${"<p>x</p>".repeat(DERIVED_CACHE_MAX_BYTES / 7 + 100)}`
+    expect(huge.length).toBeGreaterThan(DERIVED_CACHE_MAX_BYTES)
     expect(await derivedViewsFor({ meta, blobs }, huge, "text/html")).toBeNull()
     expect(rows.size).toBe(0)
+  })
+
+  it("the upper gate measures BYTES, not chars — multi-byte text under the char count but over the byte budget is skipped", async () => {
+    const { meta, rows } = makeMeta()
+    const blobs = new FsBlobStore(join(dir, "gate-bytes"))
+    // ~2M CJK chars ≈ 6MB UTF-8: comfortably over MAX_BYTES while the same
+    // NUMBER of ASCII chars would have sailed under it. The memory the gate
+    // protects is spent in bytes, so the gate must count bytes.
+    const cjk = `<h1>大</h1><p>${"漢".repeat(2_000_000)}</p>`
+    expect(cjk.length).toBeLessThan(DERIVED_CACHE_MAX_BYTES)
+    expect(new TextEncoder().encode(cjk).byteLength).toBeGreaterThan(DERIVED_CACHE_MAX_BYTES)
+    expect(await derivedViewsFor({ meta, blobs }, cjk, "text/html")).toBeNull()
+    expect(rows.size).toBe(0)
+  })
+
+  it("rows are keyed by GENERATION + sha, so a view-code change (gen bump) orphans old rows instead of serving them", async () => {
+    const { meta, rows } = makeMeta()
+    const blobs = new FsBlobStore(join(dir, "gen"))
+    const src = bigHtml()
+    await derivedViewsFor({ meta, blobs }, src, "text/html")
+    const key = [...rows.keys()][0] as string
+    expect(key.startsWith(`${DERIVED_CACHE_GEN}:`)).toBe(true)
+    // A row written under a DIFFERENT generation (an older algorithm's output)
+    // is invisible: this read misses, recomputes, and writes its own gen row.
+    const staleKey = `dv0:${key.split(":")[1]}`
+    rows.set(staleKey, rows.get(key) as string)
+    rows.delete(key)
+    const views = await derivedViewsFor({ meta, blobs }, src, "text/html")
+    expect(views?.markdown).toBe(elideDataUris(toMarkdown(src, "text/html")))
+    expect(rows.has(key)).toBe(true) // repopulated under the current generation
+  })
+
+  it("a wrong-shape but VALID-JSON blob reads as a miss (recompute + self-repair), never flows bad types to callers", async () => {
+    const { meta, rows } = makeMeta()
+    const blobs = new FsBlobStore(join(dir, "shape"))
+    const src = bigHtml()
+    await derivedViewsFor({ meta, blobs }, src, "text/html")
+    const key = [...rows.keys()][0] as string
+    // markdown is a number, markers is not an array — JSON.parse succeeds, so only
+    // the shape check stands between this and a `.split()` crash in a caller.
+    const badKey = await blobs.put(new TextEncoder().encode(`{"markdown":42,"markers":{}}`))
+    rows.set(key, badKey)
+
+    const views = await derivedViewsFor({ meta, blobs }, src, "text/html")
+    expect(views?.markdown).toBe(elideDataUris(toMarkdown(src, "text/html")))
+    expect(views?.markers).toEqual(sectionMarkers(src, "text/html"))
+    // And the bad row was overwritten by the recompute's persist (self-repair):
+    // the NEXT read hits the cache and gets the good payload.
+    expect(rows.get(key)).not.toBe(badKey)
   })
 
   it("miss computes views that are SUBSTITUTION-TRANSPARENT with the direct path, and persists them", async () => {
