@@ -87,3 +87,16 @@ export const reworkInstruction = (profileLive: boolean): string =>
   "then revise the whole document so its voice, structure, and formatting match. " +
   "Preserve the meaning and the facts; change how it reads, not what it says. " +
   "Publish the result as a new version."
+
+/**
+ * The canned build-the-profile instruction the generate button hands an agent —
+ * server-side single source of truth, the inbox-delivered sibling of the copyable
+ * hand-off brief (which keeps its "connect over MCP" first step; an agent reading
+ * its inbox is already connected).
+ */
+export const buildProfileInstruction = (profileShortId: string): string =>
+  "Build this workspace's brand profile. Read derive://brandprint/reference and " +
+  "derive://brandprint/template, then the source docs (the other derive://brandprint/* " +
+  "resources). Build the profile as ONE self-contained HTML file following the " +
+  `reference, and publish it with for_review: true to artifact ${profileShortId}. ` +
+  "It must land as a proposal a human approves; never publish it live."

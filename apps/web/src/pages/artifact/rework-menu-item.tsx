@@ -53,15 +53,21 @@ export function ReworkMenuItem({
   } = useQuery({ ...artifactAgentsQuery(shortId), enabled: !!me })
   const fire = useApiMutation<{ requestId: string }, AgentTarget>({
     mutationFn: (agent) => api.reworkArtifact(shortId, agent.id),
-    success: (_r, agent) => `Rework request sent to ${agent.name}.`,
+    // Honest about the pull model: the request is QUEUED, and runs when the agent
+    // next reads its inbox — "sent" implied something was already happening.
+    success: (_r, agent) =>
+      `Rework queued for ${agent.name}. It runs the next time your agent checks in.`,
     // The state computed below is a client-side approximation (see the comment on
     // workspaceSettingsQuery above), so a stale cache can draw a 409. Instead of
-    // toasting that, route to the state the client should have shown.
+    // toasting that, route to the state the client should have shown; a re-fire while
+    // the last request still waits is information, not an error.
     errorToast: false,
     onError: (err) => {
       const code = err instanceof ApiError ? err.code : undefined
       if (code === "needsAgent") onConnect()
       else if (code === "needsBrandprint") nav({ to: "/brandprint" })
+      else if (code === "alreadyQueued")
+        toast("Already queued for your agent. It runs the next time it checks in.")
       else toast.error("Rework request failed — try again.")
     },
   })

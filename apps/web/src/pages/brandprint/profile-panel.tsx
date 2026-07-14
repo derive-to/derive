@@ -1,13 +1,23 @@
 import { queryOptions, useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
-import { API_BASE, api } from "@/api"
+import { API_BASE, ApiError, api } from "@/api"
 import { ConnectAgentButton, PromptBlock, publicUrl } from "@/components/shared/connect-agent"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
-import { artifactQuery, workspaceQuery } from "@/lib/queries"
+import { toast } from "@/components/ui/sonner"
+import { artifactAgentsQuery, artifactQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { usableAgents } from "../artifact/ask-agent"
 import { refFor } from "../artifact/parse-ref"
+import type { AgentTarget } from "../artifact/types"
 
 /**
  * The workspace brand profile's home on /brandprint. Renders the panel's three states:
@@ -146,11 +156,51 @@ const briefFor = (url: string, profileId: string) =>
 3. Build our brand profile as ONE self-contained HTML file following the reference, and publish it with for_review: true to artifact ${profileId}.`
 
 // The hand-off card: the spec's state 2 (and state 5, where Connect leads because no
-// agent was ever authorized — ConnectAgentButton is one tap away either way). Persistent
-// and calm; the MCP never pitches, this card is the human-facing backstop. `onDismiss`
-// present means a live profile exists and this is a regenerate.
+// agent was ever authorized — ConnectAgentButton is one tap away either way). With a
+// registered agent, one click queues the build brief straight into its pull inbox and
+// the card flips to the queued state; the copyable brief stays as the fallback for
+// agents that aren't registered here. Persistent and calm; the MCP never pitches, this
+// card is the human-facing backstop. `onDismiss` present means a live profile exists
+// and this is a regenerate.
 function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: () => void }) {
   const regenerating = !!onDismiss
+  // Queued is session-local by design: a reload re-offers the button, and the server's
+  // alreadyQueued dedupe both blocks a duplicate and flips this card straight back to
+  // the queued state. The proposals poll above flips to the reveal when the build lands.
+  const [queued, setQueued] = useState(false)
+  const { data: agents = [] } = useQuery(artifactAgentsQuery(profileId))
+  const usable = usableAgents(agents)
+  const send = useApiMutation<{ requestId: string }, AgentTarget>({
+    mutationFn: (agent) => api.generateProfile(profileId, agent.id),
+    success: (_r, agent) =>
+      `Build request queued for ${agent.name}. It runs the next time your agent checks in.`,
+    errorToast: false,
+    onError: (err) => {
+      const code = err instanceof ApiError ? err.code : undefined
+      if (code === "alreadyQueued") {
+        setQueued(true)
+        toast("Already queued. It runs the next time your agent checks in.")
+      } else toast.error("Couldn't queue the build — copy the brief below instead.")
+    },
+    onSuccess: () => setQueued(true),
+  })
+
+  if (queued)
+    return (
+      <section
+        className="flex flex-col gap-1 rounded-lg border bg-secondary/40 px-4 py-3"
+        data-testid="brandprint-generate-queued"
+      >
+        <h2 className="text-base font-medium text-foreground">
+          Your agent is building your Brandprint
+        </h2>
+        <p className="text-sm text-pretty text-muted-foreground">
+          The build brief is queued to spec. The proposal lands here for your review — check back
+          after your agent's next session, or leave this page open and it appears on its own.
+        </p>
+      </section>
+    )
+
   return (
     <section
       className="flex flex-col gap-3 rounded-lg border bg-secondary/40 px-4 py-3"
@@ -178,6 +228,7 @@ function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: 
               Keep current
             </Button>
           )}
+          <SendToAgent agents={usable} pending={send.isPending} onPick={(a) => send.mutate(a)} />
           <ConnectAgentButton variant="outline" size="sm" testId="brandprint-handoff-connect" />
         </div>
       </div>
@@ -187,6 +238,56 @@ function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: 
         copyLabel="Copy the brief"
       />
     </section>
+  )
+}
+
+// The one-click hand-off: fires the build brief into a registered agent's pull inbox
+// (no copy-paste). Renders nothing without a registered agent — the copyable brief and
+// ConnectAgentButton beside it remain that path. Sole agent fires directly; several
+// open a picker (the AskAgentButton grammar, sized for this card).
+function SendToAgent({
+  agents,
+  pending,
+  onPick,
+}: {
+  agents: AgentTarget[]
+  pending: boolean
+  onPick: (agent: AgentTarget) => void
+}) {
+  if (agents.length === 0) return null
+  const sole = agents.length === 1 ? agents[0] : null
+  if (sole)
+    return (
+      <Button
+        size="sm"
+        data-testid="brandprint-generate"
+        loading={pending}
+        disabled={pending}
+        onClick={() => onPick(sole)}
+      >
+        Send to {sole.name.split(/\s+/)[0]}
+      </Button>
+    )
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="sm" data-testid="brandprint-generate" loading={pending} disabled={pending}>
+          Send to your agent
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel>Send the build brief to</DropdownMenuLabel>
+        {agents.map((a) => (
+          <DropdownMenuItem
+            key={a.id}
+            data-testid={`brandprint-generate-${a.id}`}
+            onSelect={() => onPick(a)}
+          >
+            {a.name}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
