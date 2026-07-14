@@ -9,6 +9,7 @@ import { dirOf } from "@/lib/artifact"
 import { useFollows } from "@/lib/use-follows"
 import { cn } from "@/lib/utils"
 import { ArtifactRow } from "./artifact-row"
+import type { LibrarySelection } from "./use-library-selection"
 
 interface Handlers {
   onOpen: (a: Artifact) => void
@@ -19,6 +20,9 @@ interface Handlers {
   onAddToCollection: (a: Artifact) => void
   onDelete: (a: Artifact) => void
   onPrefetch: (a: Artifact) => void
+  // Multi-select, threaded to every row — a folder view is exactly where selecting a
+  // dozen docs at once earns its keep.
+  selection?: LibrarySelection
 }
 
 /**
@@ -151,6 +155,13 @@ function FolderSection({
               onAddToCollection={() => handlers.onAddToCollection(a)}
               onDelete={() => handlers.onDelete(a)}
               onPrefetch={() => handlers.onPrefetch(a)}
+              selected={handlers.selection?.selected.has(a.short_id)}
+              selectionActive={handlers.selection?.active}
+              onSelect={
+                handlers.selection
+                  ? (shift) => handlers.selection?.toggle(a.short_id, shift)
+                  : undefined
+              }
             />
           ))}
         </div>

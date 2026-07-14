@@ -5,6 +5,7 @@ import { Thumb } from "@/components/shared/thumb"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,6 +38,9 @@ export function ArtifactCard({
   onAddToCollection,
   onDelete,
   onPrefetch,
+  selected = false,
+  selectionActive = false,
+  onSelect,
 }: {
   artifact: Artifact
   onOpen: () => void
@@ -51,6 +55,14 @@ export function ArtifactCard({
   // Warm the artifact (metadata + comments + rendered HTML) when the card is
   // hovered or focused, so the click that follows opens instantly.
   onPrefetch?: () => void
+  // Multi-select. The checkbox is the ONLY selection affordance: a plain click on
+  // the card still opens the artifact, even mid-selection, so the library's one
+  // lifelong gesture never changes meaning underneath you.
+  selected?: boolean
+  // Any selection in progress — every checkbox is pinned visible, not just the
+  // hovered card's, so the set you've built is legible at a glance.
+  selectionActive?: boolean
+  onSelect?: (shift: boolean) => void
 }) {
   const isOwner = a.my_role === "owner"
   const showTags = !!onEditTags && (a.my_role === "owner" || a.my_role === "editor")
@@ -80,16 +92,21 @@ export function ArtifactCard({
 
   return (
     <Card
+      data-selected={selected || undefined}
       className={cn(
         "group relative isolate flex flex-col gap-0 overflow-hidden p-0 shadow-(--shadow-sm)",
-        // A direct @mention gets the full accent + ring; a thread you're in — or
-        // proposals waiting on your review — gets a softer accent border. The ink
-        // accent is the sanctioned attention signal, shown at rest.
-        a.mentions_me
-          ? "border-primary ring-1 ring-primary/30"
-          : a.i_participated || awaitingReview
-            ? "border-primary/60"
-            : "border-border hover:border-foreground/25",
+        // Selection outranks every ambient signal: while you're building a set, the one
+        // thing the card must answer is "am I in it?".
+        selected
+          ? "border-primary ring-2 ring-primary/40"
+          : // A direct @mention gets the full accent + ring; a thread you're in — or
+            // proposals waiting on your review — gets a softer accent border. The ink
+            // accent is the sanctioned attention signal, shown at rest.
+            a.mentions_me
+            ? "border-primary ring-1 ring-primary/30"
+            : a.i_participated || awaitingReview
+              ? "border-primary/60"
+              : "border-border hover:border-foreground/25",
       )}
     >
       <div className="relative">
@@ -99,6 +116,33 @@ export function ArtifactCard({
           typeLabel={artifactTypeLabel(a)}
           hasPreview={a.has_preview}
         />
+        {/* The select box, opposite the actions cluster. Hidden at rest on a mouse (the
+            grid stays a gallery), pinned visible once ANY card is selected, and always
+            visible on touch — where there is no hover to reveal it. The ring keeps it
+            legible over a busy render. */}
+        {onSelect && (
+          <div className="absolute top-2 left-2 z-20">
+            <Checkbox
+              data-testid={`artifact-card-select-${a.short_id}`}
+              aria-label={`Select ${a.title ?? a.short_id}`}
+              checked={selected}
+              // Read the modifier off the CLICK: Radix's onCheckedChange can't see the
+              // shift key, and shift-click (extend the range) is the gesture that makes
+              // selecting twenty cards bearable. The parent owns the set, so letting the
+              // click drive it — not onCheckedChange — keeps one source of truth.
+              onClick={(e) => {
+                e.stopPropagation()
+                onSelect(e.shiftKey)
+              }}
+              className={cn(
+                "size-5 shadow-(--shadow-sm) ring-1 ring-foreground/10 transition-opacity",
+                !selected &&
+                  !selectionActive &&
+                  "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100",
+              )}
+            />
+          </div>
+        )}
         {/* Actions — top-right over the render, revealed on hover/focus (always shown
             on touch; a favourited star persists). Translucent pills read over any
             render, both themes. */}
