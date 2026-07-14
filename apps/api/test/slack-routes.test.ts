@@ -1,8 +1,8 @@
 import { createHmac } from "node:crypto"
-import type { MetaStore } from "@derive/core"
+import type { CommentRecord, MetaStore, NewComment, SlackThreadLinkRecord } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { encryptSecret } from "../src/lib/crypto"
-import { makeSlackIngestSender } from "../src/lib/slack-comments"
+import { ingestSlackReply, makeSlackIngestSender } from "../src/lib/slack-comments"
 import { runDeliveryTick } from "../src/webhooks"
 import { as, quotaApp, type TestUser } from "./helpers"
 
@@ -283,17 +283,51 @@ describe("slack events endpoint", () => {
     expect(await meta.listComments(artifact.id)).toHaveLength(0)
 
     // The worker drains the enqueued slack_ingest delivery and mirrors the reply.
-    const createSpy = vi.spyOn(meta, "createComment")
     await drainIngest(meta)
     const mirrored = (await meta.listComments(artifact.id)).find((c) => c.thread_id === "t-root")
     expect(mirrored?.author).toBe("Dana")
     expect(mirrored?.author_id).toBe("slack:U777")
     expect(mirrored?.body_md).toBe("from slack")
-    // The dedupe marker is written IN the insert (atomic), not a follow-up updateComment —
-    // so an outbox re-claim after a crash can't create a second comment. The old two-write
-    // path called createComment with no meta, so this assertion pins the atomicity fix.
-    expect(createSpy).toHaveBeenCalledTimes(1)
-    expect(JSON.parse(createSpy.mock.calls[0]?.[0].meta ?? "{}")).toMatchObject({
+  })
+
+  it("ingestSlackReply writes the Slack dedupe marker IN the comment insert (atomic)", async () => {
+    // A focused unit test with a hand-built store (not the real adapter): the atomicity is
+    // that the {slack.ts} marker rides the createComment INSERT, not a follow-up write a
+    // crash-retry could skip. The old two-write path called createComment with no meta and
+    // then updateComment — the fake has no updateComment, so that path throws here. Both the
+    // "marker present" and "no second write" facts are pinned, on any adapter.
+    const inserts: NewComment[] = []
+    const link: SlackThreadLinkRecord = {
+      id: "l",
+      org_id: "o",
+      artifact_id: "a",
+      thread_id: "t",
+      channel: "C1",
+      message_ts: "111.1",
+      created_at: "",
+    }
+    const fakeMeta = {
+      listComments: async () => [],
+      createComment: async (c: NewComment) => {
+        inserts.push(c)
+        return {
+          ...c,
+          state: "open",
+          created_at: "",
+          meta: c.meta ?? null,
+        } as unknown as CommentRecord
+      },
+    } as unknown as MetaStore
+    const created = await ingestSlackReply(fakeMeta, link, {
+      ts: "222.2",
+      userId: "U1",
+      userName: "Dana",
+      text: "hi",
+      botUserId: "UBOT",
+    })
+    expect(created).not.toBeNull()
+    expect(inserts).toHaveLength(1)
+    expect(JSON.parse(inserts[0]?.meta ?? "{}")).toMatchObject({
       slack: { ts: "222.2", channel: "C1" },
     })
   })
