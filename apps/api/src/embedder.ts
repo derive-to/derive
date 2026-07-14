@@ -1,4 +1,5 @@
 import type { Embedder } from "@derive/core"
+import { DENSE_MIN_SCORE } from "./search-chunk"
 
 // Embedder implementations (the generation half of the dense arm). Workers AI bge-m3 is reachable
 // two ways with an identical model + 1024-dim output, so the edge and a self-host box can share ONE
@@ -30,6 +31,7 @@ type BatchRunner = (texts: string[]) => Promise<number[][]>
 export class WorkersAiEmbedder implements Embedder {
   readonly model = EMBED_MODEL
   readonly dimensions = EMBED_DIMENSIONS
+  readonly minScore = DENSE_MIN_SCORE
   constructor(private readonly runBatch: BatchRunner) {}
 
   async embed(texts: string[]): Promise<number[][]> {

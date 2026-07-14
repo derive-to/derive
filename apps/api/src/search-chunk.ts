@@ -17,11 +17,11 @@ export const MAX_CHUNKS = 20
 export const EMBED_CHAR_BUDGET = CHUNK_CHARS * MAX_CHUNKS
 // The stored per-chunk snippet (kept well under any store's per-row metadata cap).
 export const PREVIEW_CHARS = 480
-// Minimum cosine similarity for a dense candidate to count as relevant. Calibrated on the live
-// bge-m3 chunk index (3 real + 3 gibberish queries): real-query tops ~0.59–0.62, off-target
-// ~0.44–0.55, real 5th-best ~0.574, so 0.48 trims the clear noise tail with no observed recall
-// loss. Model-specific — a different embedder (e.g. bge-small on self-host) needs its own
-// measurement. Tunable; exported so it can be referenced in tests.
+// The bge-m3 relevance floor. Calibrated on the live bge-m3 chunk index (3 real + 3 gibberish
+// queries): real-query tops ~0.59–0.62, off-target ~0.44–0.55, real 5th-best ~0.574, so 0.48 trims
+// the clear noise tail with no observed recall loss. The floor is MODEL-specific and now rides the
+// Embedder (`Embedder.minScore`); this is the value the Workers-AI bge-m3 embedder uses. Exported
+// so the embedder + tests reference one source.
 export const DENSE_MIN_SCORE = 0.48
 
 // Split `text` into overlapping ~CHUNK_CHARS chunks, breaking at a whitespace boundary near the
@@ -93,16 +93,18 @@ export const staleIds = (id: string, keptChunks: number): string[] => {
 }
 
 // Roll raw scored chunk matches up to the best (highest-score) chunk per artifact, dropping
-// anything below the relevance floor, sorted by score desc and capped at `limit`. Every adapter
-// normalizes its store's rows into this `{ artifactId, score, chunk }` shape first, so the fuse-
-// facing result is identical regardless of backend.
+// anything below `minScore` (the embedder's model-specific relevance floor), sorted by score desc
+// and capped at `limit`. Every adapter normalizes its store's rows into this
+// `{ artifactId, score, chunk }` shape first, so the fuse-facing result is identical regardless of
+// backend.
 export const rollupBestChunk = (
   matches: { artifactId: string; score: number; chunk: string }[],
   limit: number,
+  minScore: number,
 ): { id: string; score: number; chunk: string }[] => {
   const best = new Map<string, { score: number; chunk: string }>()
   for (const m of matches) {
-    if (m.score < DENSE_MIN_SCORE) continue
+    if (m.score < minScore) continue
     const prev = best.get(m.artifactId)
     if (!prev || m.score > prev.score) best.set(m.artifactId, { score: m.score, chunk: m.chunk })
   }

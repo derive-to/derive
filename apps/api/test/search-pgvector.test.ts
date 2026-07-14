@@ -46,6 +46,7 @@ const makeEmbedder = (dim = 4) => {
   const embedder: Embedder = {
     model: "fake-embedder",
     dimensions: dim,
+    minScore: 0.48,
     embed: async (texts) => {
       calls.push(texts)
       return texts.map((_, i) => Array.from({ length: dim }, (_, d) => (i + d + 1) / 100))
@@ -218,6 +219,7 @@ describe("PgvectorSearchIndex", () => {
     const badEmbedder: Embedder = {
       model: "bad",
       dimensions: 4,
+      minScore: 0.48,
       embed: async () => [[0.1, 0.2, 0.3, 0.4]],
     }
     await expect(

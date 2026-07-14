@@ -70,6 +70,11 @@ export interface Embedder {
   /** Output vector length (e.g. 1024 for bge-m3, 384 for bge-small). The vector store's column
    *  type / index is sized to this; a change forces a new index + re-backfill. */
   readonly dimensions: number
+  /** Minimum cosine similarity for a dense hit to count as relevant — the noise floor BELOW which
+   *  matches are dropped. Model-specific: different embedders have different cosine geometries (a
+   *  bge-m3 "relevant" ~0.55 is a bge-small ~0.6), so the floor rides the embedder, not a shared
+   *  constant. Calibrate per model against real vs off-target queries. */
+  readonly minScore: number
   /** Embed a batch of texts, returning one vector per input IN ORDER. Implementations cap the
    *  batch to their backend's ceiling internally; callers may pass any length. Throws if the
    *  backend returns a count that doesn't match the input (no silent misalignment). */

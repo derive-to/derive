@@ -80,11 +80,28 @@ export interface Config {
   resendApiKey?: string
   /** Slack App credentials (connect flow + Events API). All three set ⇒ Slack on. */
   slack?: { clientId: string; clientSecret: string; signingSecret: string }
-  /** Dense/semantic search embedder credentials (Cloudflare Workers AI over REST). Both set ⇒ the
-   *  pgvector dense arm is wired — but ONLY when Postgres is the datastore (pgvector lives there);
-   *  with the embedded-SQLite default it's skipped with a warning. Unset ⇒ lexical-only, as before.
-   *  The eventual local-ONNX embedder will make this optional. */
-  denseSearch?: { accountId: string; apiToken: string }
+  /** Dense/semantic search config (needs Postgres — pgvector lives there; with embedded-SQLite it's
+   *  skipped with a warning). `DERIVE_EMBED_PROVIDER` selects the embedder: `local` runs an in-
+   *  process ONNX model (bge-small, no credentials); `workersai` calls Cloudflare Workers AI over
+   *  REST (needs the account id + token). Unset/invalid ⇒ lexical-only, as before. */
+  denseSearch?:
+    | { provider: "local" }
+    | { provider: "workersai"; accountId: string; apiToken: string }
+}
+
+/** Resolve the dense-search embedder from DERIVE_EMBED_PROVIDER. `local` needs nothing; `workersai`
+ *  needs both CF vars (missing ⇒ off, so a half-config degrades to lexical, surfaced by the
+ *  capability report). Any other value (incl. unset) ⇒ undefined ⇒ lexical-only. */
+function denseSearchFromEnv(env: NodeJS.ProcessEnv): Config["denseSearch"] {
+  const provider = env.DERIVE_EMBED_PROVIDER
+  if (provider === "local") return { provider: "local" }
+  if (provider === "workersai" && env.DERIVE_EMBED_CF_ACCOUNT_ID && env.DERIVE_EMBED_CF_API_TOKEN)
+    return {
+      provider: "workersai",
+      accountId: env.DERIVE_EMBED_CF_ACCOUNT_ID,
+      apiToken: env.DERIVE_EMBED_CF_API_TOKEN,
+    }
+  return undefined
 }
 
 /**
@@ -163,13 +180,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     emailFrom: env.EMAIL_FROM,
     resendApiKey: env.RESEND_API_KEY,
     slack: slackFromEnv(env),
-    denseSearch:
-      env.DERIVE_EMBED_CF_ACCOUNT_ID && env.DERIVE_EMBED_CF_API_TOKEN
-        ? {
-            accountId: env.DERIVE_EMBED_CF_ACCOUNT_ID,
-            apiToken: env.DERIVE_EMBED_CF_API_TOKEN,
-          }
-        : undefined,
+    denseSearch: denseSearchFromEnv(env),
     webDir,
     webShell,
     serveWeb: existsSync(webShell),
