@@ -368,12 +368,12 @@ describe("server-side search + cursor pagination", () => {
     await upload("s2.md", "two")
     await upload("s3.md", "three")
 
-    const desc = (await (await app.request("/v1/artifacts?sort=created")).json()).artifacts.map(
-      (a: { short_id: string }) => a.short_id,
-    )
-    const asc = (await (await app.request("/v1/artifacts?sort=created-asc")).json()).artifacts.map(
-      (a: { short_id: string }) => a.short_id,
-    )
+    const desc = (
+      await (await app.request("/v1/artifacts?sort=created&limit=200")).json()
+    ).artifacts.map((a: { short_id: string }) => a.short_id)
+    const asc = (
+      await (await app.request("/v1/artifacts?sort=created-asc&limit=200")).json()
+    ).artifacts.map((a: { short_id: string }) => a.short_id)
     // asc is the exact reverse of desc — proves ?sort= is read and flips the ordering.
     expect(asc).toEqual([...desc].reverse())
 
