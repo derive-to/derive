@@ -6,7 +6,7 @@ import { commentsQuery } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import type { CommentActions } from "./comment-actions"
 import { toggleReaction } from "./lib/reactions"
-import type { AgentTarget, ComposerState, Sel, Selection } from "./types"
+import type { ComposerState, Sel, Selection } from "./types"
 
 type Me = { name?: string | null; email?: string | null } | null
 
@@ -218,14 +218,6 @@ export function useArtifactActions(p: {
     p.setComposer({ anchor: p.sel.selector, docTop: p.sel.docTop })
     p.setActiveThread(null)
   }
-  // Open the composer as a revision REQUEST addressed to `agent` (the "ask an agent to
-  // revise this selection" flow) — same anchored composer, pre-seeded with the mention so
-  // the posted note lands in the agent's MCP pull inbox.
-  const startSelAgent = (agent: AgentTarget) => {
-    if (!p.sel) return
-    p.setComposer({ anchor: p.sel.selector, docTop: p.sel.docTop, agent })
-    p.setActiveThread(null)
-  }
 
   // Reaction: optimistic toggle, rolled back on failure, then reconciled on settle. Edit is
   // likewise optimistic (below); delete refetches on success. All surface a failure via the
@@ -296,7 +288,6 @@ export function useArtifactActions(p: {
     toggleResolve,
     activate,
     startSelComment,
-    startSelAgent,
     actions,
     restore: (n: number) => restore.mutate(n),
     // Pending flags the page threads into the editor toolbar + version rail, replacing the

@@ -108,7 +108,7 @@ export function PinnedZone({
   // exactly when there's an anchored composer with a resolved position.
   const activeComposer =
     composer?.anchor && composer.docTop != null
-      ? { docTop: composer.docTop, quote: selLabel(composer.anchor), agent: composer.agent }
+      ? { docTop: composer.docTop, quote: selLabel(composer.anchor) }
       : null
   // Everything here is DOC-ABSOLUTE. The pin layer translates the whole stack by
   // `datum − scrollY − offset` imperatively (see use-pin-layer), so a scroll never
@@ -195,12 +195,7 @@ export function PinnedZone({
               transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? activeComposer.docTop)}px)`,
             }}
           >
-            <Composer
-              quote={activeComposer.quote}
-              agent={activeComposer.agent}
-              onSubmit={onSubmitNew}
-              onCancel={onCancelNew}
-            />
+            <Composer quote={activeComposer.quote} onSubmit={onSubmitNew} onCancel={onCancelNew} />
           </div>
         )}
       </div>

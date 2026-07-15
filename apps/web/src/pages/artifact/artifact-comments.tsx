@@ -3,14 +3,12 @@ import type { Comment, DirUser, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { AskAgentButton } from "./ask-agent"
 import { MobileComments, OpenPanel } from "./comment-panels"
 import { CommentScopeProvider } from "./lib/comment-scope"
 import { type CommentTree, CommentTreeProvider } from "./lib/comment-tree"
 import { quoteChipClass } from "./quote-chip"
 import { SelectionMenu } from "./selection-menu"
 import {
-  type AgentTarget,
   type AnchorConf,
   type ComposerState,
   type FrameGeom,
@@ -67,9 +65,8 @@ export function ArtifactComments(p: {
   submitNew: (text: string, mentions?: Mention[]) => void
   jumpTo: (threadId: string) => void
   startSelComment: () => void
-  /** Open the composer as a revision request addressed to `agent`. */
-  startSelAgent: (agent: AgentTarget) => void
-  /** Agents this viewer can hand a revision to (empty ⇒ the affordance is hidden). */
+  /** The artifact's registered agents — used only to tag agent-authored comments
+   *  (agentIds below); the selection composer no longer hands revisions to them. */
   agents: DirUser[]
   /** Deck artifacts: the slide being viewed, and where each thread's text resolved.
    *  Used by comment cards to show a "Slide N" / "moved" badge. */
@@ -190,14 +187,9 @@ export function ArtifactComments(p: {
             frameRef={p.frameRef}
             subscribeGeom={p.subscribeGeom}
             asideWidth={p.asideWidth}
-            agents={p.agents}
             onComment={() => {
               if (panel !== "open") p.setPanel("open")
               p.startSelComment()
-            }}
-            onAgent={(agent) => {
-              if (panel !== "open") p.setPanel("open")
-              p.startSelAgent(agent)
             }}
           />
         )}
@@ -215,15 +207,6 @@ export function ArtifactComments(p: {
                 ? selLabel(sel.selector)
                 : `“${selLabel(sel.selector) ?? ""}”`}
             </span>
-            <AskAgentButton
-              agents={p.agents}
-              size="bar"
-              onPick={(agent) => {
-                primer.current?.focus()
-                p.setPanel("open")
-                p.startSelAgent(agent)
-              }}
-            />
             <Button
               data-testid="mobile-comment-start"
               onClick={() => {

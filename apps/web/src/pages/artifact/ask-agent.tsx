@@ -1,6 +1,4 @@
 import type { DirUser } from "@/api"
-import { Icon } from "@/components/icons"
-import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,7 +7,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { getInitials } from "@/lib/initials"
-import { cn } from "@/lib/utils"
 import type { AgentTarget } from "./types"
 
 /** What "we handed this to your agent" means: the inbox is a PULL queue, so the work
@@ -75,55 +72,5 @@ export function AgentMenu({
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
-  )
-}
-
-// The "ask an agent to revise this selection" affordance, shared by the desktop
-// selection pill and the mobile selection bar. This is Derive's agent-native moat: a
-// human hands a scoped change to a registered agent, whose MCP inbox the request lands
-// in; the agent revises + proposes, and the human reviews. With ONE agent it fires
-// immediately; with several it opens a small picker. `agents` empty ⇒ render nothing.
-export function AskAgentButton({
-  agents,
-  onPick,
-  size = "default",
-  className,
-}: {
-  agents: DirUser[]
-  onPick: (agent: AgentTarget) => void
-  /** "default" desktop pill · "bar" the fuller mobile bar button. */
-  size?: "default" | "bar"
-  className?: string
-}) {
-  // One Button recipe, whether it fires directly (a lone agent) or triggers the picker —
-  // so the affordance's look can't drift between the two paths. Desktop sits inside the
-  // selection bar's popover surface, so it takes the same flat ghost item as Comment; the
-  // mobile bar keeps its standalone rounded pill. onMouseDown preventDefault keeps it from
-  // stealing the document selection it acts on. The desktop pill names a lone agent ("Ask
-  // Reviser"); the mobile bar and the picker use the generic verb.
-  return (
-    <AgentMenu
-      agents={agents}
-      menuLabel="Ask an agent to revise"
-      testidPrefix="ask-agent"
-      onPick={onPick}
-      trigger={({ sole, onClick }) => (
-        <Button
-          variant={size === "bar" ? "outline" : "ghost"}
-          size="sm"
-          data-testid="ask-agent"
-          title={sole ? `Ask ${sole.name} to revise the selection` : undefined}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={onClick}
-          className={cn(
-            size === "bar" && "shrink-0 rounded-full border-primary/30 hover:border-primary/50",
-            className,
-          )}
-        >
-          <Icon name="sparkles" size={size === "bar" ? 16 : 15} className="text-primary" />
-          {sole && size === "default" ? `Ask ${sole.name.split(/\s+/)[0]}` : "Ask an agent"}
-        </Button>
-      )}
-    />
   )
 }

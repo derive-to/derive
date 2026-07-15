@@ -355,7 +355,6 @@ export function Artifact() {
     toggleResolve,
     activate,
     startSelComment,
-    startSelAgent,
     actions,
     restore,
     publishing,
@@ -852,7 +851,6 @@ export function Artifact() {
               submitNew={submitNew}
               jumpTo={jumpTo}
               startSelComment={startSelComment}
-              startSelAgent={startSelAgent}
               agents={agents}
               currentSlide={deck?.i ?? null}
               landedSlides={landedSlides}

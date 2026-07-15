@@ -78,20 +78,19 @@ export type Selection = {
   vRight: number
 } | null
 
-// An agent the composer is pre-addressed to (the "ask an agent to revise" flow): its
-// id + display name, so the request opens with `@Name ` seeded and posts a mention that
-// drops into the agent's MCP pull inbox.
+// A registered agent a canned request can be handed to (the Rework ⋯ item and the
+// Brandprint build request): its id + display name for the mention posted to the
+// agent's MCP inbox. (The selection composer no longer pre-addresses agents — you
+// @mention them by typing, like any collaborator.)
 export type AgentTarget = { id: string; name: string }
 
 // A pending new-comment composer: the anchor it pins to (null = a general, unanchored
 // comment) and the DOC-ABSOLUTE Y of that anchor (null for a general comment). Doc
 // coordinates, same as every pin, so the composer glides with its highlight when the
 // document scrolls — a viewport Y here was the "composer parks while cards glide" bug.
-// `agent` is set when this is a revision REQUEST addressed to an agent.
 export type ComposerState = {
   anchor: Sel | null
   docTop: number | null
-  agent?: AgentTarget
 } | null
 
 // A parsed anchor — text (a quote) or element (a non-text selector), read back from a
