@@ -44,6 +44,7 @@ import { RepoPullRequests } from "./repo-pull-requests"
 import { SelectionBar } from "./selection-bar"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import { DEFAULT_SORT } from "./sort"
+import { SortMenu } from "./sort-menu"
 import { TriageBar } from "./triage-bar"
 import type { Filter, LibrarySearch, LibraryView } from "./types"
 import { useLibraryFeed } from "./use-library-feed"
@@ -442,6 +443,16 @@ function LibraryBody({ view }: { view: LibraryView }) {
             </Button>
           </>
         )}
+        <SortMenu
+          value={search.sort ?? DEFAULT_SORT}
+          onChange={(mode) =>
+            nav({
+              to: ".",
+              search: (prev) => ({ ...prev, sort: mode === DEFAULT_SORT ? undefined : mode }),
+              replace: true,
+            })
+          }
+        />
       </div>
 
       {/* Following feed: the manage strip of current follows sits above the heading. */}
