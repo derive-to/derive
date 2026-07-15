@@ -6,10 +6,12 @@ import {
   bundleDoc,
   can,
   capRole,
+  decodeCursor,
   diffLines,
   EditError,
   effectiveRole,
   elideDataUris,
+  encodeCursor,
   formatDiff,
   groupSessions,
   isHtmlLike,
@@ -177,14 +179,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       // no registrant on record falls back to its own legacy rows.
       const memberKey = me?.id ?? agent?.created_by ?? agent?.id ?? null
       const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 30))
-      // Opaque compound cursor "<created_at>|<id>" — the id tiebreak keeps paging
-      // correct when many artifacts share a created_at.
-      const rawCursor = c.req.query("cursor")
-      const sep = rawCursor?.indexOf("|") ?? -1
-      const cursor =
-        rawCursor && sep > 0
-          ? { created_at: rawCursor.slice(0, sep), id: rawCursor.slice(sep + 1) }
-          : undefined
+      // Opaque compound cursor "<key>|<id>" — the id tiebreak keeps paging
+      // correct when many artifacts share a key.
+      const cursor = decodeCursor(c.req.query("cursor"))
       // Cap the search term: it goes into a SQL LIKE, and an oversized value tripped
       // an unhandled DB error (a long-q 500). No real title search needs > 200 chars.
       const q = c.req.query("query")?.trim().slice(0, 200) || undefined
@@ -310,7 +307,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const hasMore = rows.length > limit
       const page = hasMore ? rows.slice(0, limit) : rows
       const last = page[page.length - 1]
-      const next_cursor = hasMore && last ? `${last.created_at}|${last.id}` : null
+      const next_cursor = hasMore && last ? encodeCursor(last.created_at, last.id) : null
 
       const pageIds = page.map((a) => a.id)
       const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}

@@ -191,8 +191,8 @@ export function artifactListConditions(
   if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
   if (opts?.cursor) {
     const cursor = or(
-      lt(art.created_at, opts.cursor.created_at),
-      and(eq(art.created_at, opts.cursor.created_at), lt(art.id, opts.cursor.id)),
+      lt(art.created_at, opts.cursor.key),
+      and(eq(art.created_at, opts.cursor.key), lt(art.id, opts.cursor.id)),
     )
     if (cursor) conds.push(cursor)
   }

@@ -88,7 +88,7 @@ export const systemRoutes = (ctx: AppContext) => {
         orgId: z.string().optional(),
         // `.nullish()`: the natural resume loop echoes back the previous `nextCursor`, which is
         // literally `null` on the final page — accept it as "start from the top" rather than 400.
-        cursor: z.object({ created_at: z.string(), id: z.string() }).nullish(),
+        cursor: z.object({ key: z.string(), id: z.string() }).nullish(),
         limit: z.number().int().optional(),
       }),
     )

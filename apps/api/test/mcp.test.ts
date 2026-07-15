@@ -1299,7 +1299,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     // Drive the bounded sweep to completion (limit:2 forces multiple pages across the
     // seed + 3 artifacts, exercising the cursor).
-    let cursor: { created_at: string; id: string } | null | undefined
+    let cursor: { key: string; id: string } | null | undefined
     let pages = 0
     let indexed = 0
     do {

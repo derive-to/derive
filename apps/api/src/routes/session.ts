@@ -1,4 +1,11 @@
-import { can, normalizeUsername, toJson, usernameError } from "@derive/core"
+import {
+  can,
+  decodeCursor,
+  encodeCursor,
+  normalizeUsername,
+  toJson,
+  usernameError,
+} from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
@@ -454,12 +461,7 @@ export const sessionRoutes = (ctx: AppContext) => {
         return c.json({ artifacts: [], next_cursor: null })
       const ghIds = await meta.githubIdsForUser(p.id)
       const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 24))
-      const rawCursor = c.req.query("cursor")
-      const sep = rawCursor?.indexOf("|") ?? -1
-      const cursor =
-        rawCursor && sep > 0
-          ? { created_at: rawCursor.slice(0, sep), id: rawCursor.slice(sep + 1) }
-          : undefined
+      const cursor = decodeCursor(c.req.query("cursor"))
       const rows = await meta.listUserWorks(p.id, ghIds, {
         limit: limit + 1,
         cursor,
@@ -468,7 +470,7 @@ export const sessionRoutes = (ctx: AppContext) => {
       const hasMore = rows.length > limit
       const page = hasMore ? rows.slice(0, limit) : rows
       const last = page[page.length - 1]
-      const next_cursor = hasMore && last ? `${last.created_at}|${last.id}` : null
+      const next_cursor = hasMore && last ? encodeCursor(last.created_at, last.id) : null
       const pageIds = page.map((a) => a.id)
       const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
       const tags = await meta.tagsForArtifacts(pageIds)
