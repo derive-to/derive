@@ -43,6 +43,9 @@ export const enqueueSlackComment = async (
 ): Promise<void> => {
   const { meta, baseUrl } = deps
   if (parseMeta(cm.meta).slack) return // came from Slack — don't echo back
+  // Only mirror feed-visible artifacts (same gate as the event cards): a comment on a private
+  // draft must not post its title + body to the org-wide channel where non-collaborators see it.
+  if (artifact.listed === "none") return
   const install = await meta.getSlackInstall(artifact.org_id)
   if (!install?.default_channel) return
   const link = commentDeepLink(baseUrl, artifact, cm.thread_id)

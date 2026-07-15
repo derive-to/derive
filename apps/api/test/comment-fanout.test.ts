@@ -148,6 +148,24 @@ describe("comment channel fan-out", () => {
     const kinds = (await claim(meta)).map((d) => d.kind)
     expect(kinds).not.toContain("slack_app")
   })
+
+  it("does not mirror a comment on a PRIVATE artifact (no leak)", async () => {
+    const { app, meta } = makeAuthedApp("fanout-slack-private", [owner], "editor")
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: "xoxb-stored",
+      bot_user_id: "UBOT",
+      default_channel: "C1",
+      created_at: new Date().toISOString(),
+    })
+    const r = await pub(app, "# Secret", { visibility: "private" }, undefined, as(owner.email))
+    const shortId = (await r.json()).short_id as string
+    await comment(app, shortId, owner.email)
+    // Private draft (listed "none") → its title + comment body never reach the org-wide channel.
+    expect((await claim(meta)).map((d) => d.kind)).not.toContain("slack_app")
+  })
 })
 
 describe("connected-channel event cards (publishes / proposals)", () => {
