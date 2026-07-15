@@ -43,6 +43,7 @@ import { LibraryCollectionsDialog, LibraryTagsDialog } from "./quick-organize"
 import { RepoPullRequests } from "./repo-pull-requests"
 import { SelectionBar } from "./selection-bar"
 import { ShareCollectionDialog } from "./share-collection-dialog"
+import { DEFAULT_SORT } from "./sort"
 import { TriageBar } from "./triage-bar"
 import type { Filter, LibrarySearch, LibraryView } from "./types"
 import { useLibraryFeed } from "./use-library-feed"
@@ -143,6 +144,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
     favorite: view === "favorites" || undefined,
     author: search.author,
     scope: filter.kind === "mine" ? ("mine" as const) : scopeFor(view),
+    sort: search.sort ?? DEFAULT_SORT,
   }
   const { query: feed, items, listQuery, toggleFavorite, deleteArtifact } = useLibraryFeed(params)
   const { isPending, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = feed

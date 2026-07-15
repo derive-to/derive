@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router"
 import { requireOnboarded } from "../lib/route-guards"
 import { Library } from "../pages/library"
 import { LibraryPending } from "../pages/library/library-skeleton"
+import { parseLibrarySort } from "../pages/library/sort"
 import type { LibrarySearch } from "../pages/library/types"
 
 // The Favorites feed: /favorites — the artifacts you've starred. A fixed, named feed
@@ -13,8 +14,9 @@ import type { LibrarySearch } from "../pages/library/types"
 export const Route = createFileRoute("/favorites")({
   beforeLoad: requireOnboarded,
   pendingComponent: LibraryPending,
-  validateSearch: (s: Record<string, unknown>): Pick<LibrarySearch, "query"> => ({
+  validateSearch: (s: Record<string, unknown>): Pick<LibrarySearch, "query" | "sort"> => ({
     query: typeof s.query === "string" ? s.query : undefined,
+    sort: parseLibrarySort(s.sort),
   }),
   component: () => <Library view="favorites" />,
 })
