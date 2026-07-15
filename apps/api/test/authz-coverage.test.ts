@@ -31,6 +31,10 @@ const AUTHZ = new Set([
   "isLastOwner",
   "agentFor",
   "isToken",
+  // A short-lived signed capability token IS the authorization for its route
+  // (the tokened publish endpoints re-check live membership on top). Same role
+  // as `isToken` — the credential is the gate.
+  "verifyPublishToken",
 ])
 
 const EXEMPT = "authz-exempt"

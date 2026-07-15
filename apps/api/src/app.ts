@@ -345,6 +345,8 @@ export function createApp(deps: AppDeps): Hono {
     /^\/v1\/slack\/interactivity$/, // Slack Block Kit actions — signing-secret signature is the gate
     /^\/v1\/slack\/commands$/, // Slack slash command (/derive) — signing-secret signature is the gate
     /^\/v1\/assets\/t\/[^/]+$/, // MCP-minted upload URL — the signed expiring token is the gate
+    /^\/v1\/artifacts\/t\/[^/]+$/, // MCP-minted publish URL (create) — signed token is the gate
+    /^\/v1\/artifacts\/[^/]+\/versions\/t\/[^/]+$/, // MCP-minted publish URL (revise) — signed token is the gate
   ]
   app.use("/v1/*", async (c, next) => {
     const m = c.req.method

@@ -61,7 +61,7 @@ const inboxBodies = async (app: App, token: string) => {
   const inbox = (await (
     await app.request("/v1/agent/inbox", { headers: bearer(token) })
   ).json()) as {
-    mentions: { body: string; artifact: string; thread_id: string }[]
+    mentions: { id: string; body: string; artifact: string; thread_id: string }[]
   }
   return inbox.mentions
 }
@@ -162,13 +162,87 @@ describe("rework: firing", () => {
     await seedBrandprint(meta, shortId, { profileId: profId })
     const pending = await rework(app, shortId)
     expect(pending.status).toBe(201)
+    const first = await inboxBodies(app, ag.token)
+    expect(first[0]?.body).not.toContain("Read derive://brandprint/profile first")
+    // The queue dedupes per (agent, artifact), so the agent acks the handled request
+    // before the second fire — exactly the real loop.
+    await app.request(`/v1/agent/mentions/${first[0]?.id}/ack`, {
+      method: "POST",
+      headers: bearer(ag.token),
+    })
     await publishAs(app, "profile v2", {}, as(owner.email), profId)
     const live = await rework(app, shortId)
     expect(live.status).toBe(201)
-    const bodies = (await inboxBodies(app, ag.token)).map((m) => m.body)
-    expect(bodies).toHaveLength(2)
-    expect(bodies.filter((b) => b.includes("Read derive://brandprint/profile first"))).toHaveLength(
-      1,
-    )
+    const second = await inboxBodies(app, ag.token)
+    expect(second).toHaveLength(1)
+    expect(second[0]?.body).toContain("Read derive://brandprint/profile first")
+  })
+})
+
+// The generate endpoint fires the build-the-profile brief at the workspace's brand
+// profile artifact — same @mention-to-inbox mechanics as rework, different canned text.
+const generate = (
+  app: App,
+  shortId: string,
+  body: Record<string, unknown> = {},
+  who = editor.email,
+) => app.request(`/v1/artifacts/${shortId}/generate-profile`, jsonAs(as(who), body))
+
+describe("generate-profile: gating and firing", () => {
+  it("400 when the artifact is not the workspace's brand profile", async () => {
+    const { app, meta } = makeAuthedApp("gen-notprofile", [owner, editor], "editor")
+    const shortId = await newArtifact(app)
+    await seedBrandprint(meta, shortId) // brandprint set, but no profileId points here
+    await addAgent(app, "Reviser")
+    const res = await generate(app, shortId)
+    expect(res.status).toBe(400)
+  })
+
+  it("409 needsAgent when no agent is registered", async () => {
+    const { app, meta } = makeAuthedApp("gen-noagent", [owner, editor], "editor")
+    const doc = await newArtifact(app)
+    const prof = await newArtifact(app)
+    await seedBrandprint(meta, doc, { profileId: prof })
+    const res = await generate(app, prof)
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { code: string }).code).toBe("needsAgent")
+  })
+
+  it("fires the build brief into the agent inbox; a repeat while queued is alreadyQueued", async () => {
+    const { app, meta } = makeAuthedApp("gen-fire", [owner, editor], "editor")
+    const doc = await newArtifact(app)
+    const prof = await newArtifact(app)
+    await seedBrandprint(meta, doc, { profileId: prof })
+    const ag = await addAgent(app, "Reviser")
+
+    const res = await generate(app, prof)
+    expect(res.status).toBe(201)
+    expect(((await res.json()) as { requestId: string }).requestId).toBeTruthy()
+    const mentions = await inboxBodies(app, ag.token)
+    expect(mentions).toHaveLength(1)
+    expect(mentions[0]?.artifact).toBe(prof)
+    expect(mentions[0]?.body).toContain("@Reviser")
+    expect(mentions[0]?.body).toContain("derive://brandprint/reference")
+    expect(mentions[0]?.body).toContain(`for_review: true to artifact ${prof}`)
+
+    // The queue already holds this ask — a second fire must not stack a duplicate.
+    const again = await generate(app, prof)
+    expect(again.status).toBe(409)
+    expect(((await again.json()) as { code: string }).code).toBe("alreadyQueued")
+    expect(await inboxBodies(app, ag.token)).toHaveLength(1)
+  })
+})
+
+describe("rework: queue dedupe", () => {
+  it("a second rework while one is queued is alreadyQueued, not a duplicate", async () => {
+    const { app, meta } = makeAuthedApp("rework-dedupe", [owner, editor], "editor")
+    const shortId = await newArtifact(app)
+    await seedBrandprint(meta, shortId)
+    const ag = await addAgent(app, "Reviser")
+    expect((await rework(app, shortId)).status).toBe(201)
+    const again = await rework(app, shortId)
+    expect(again.status).toBe(409)
+    expect(((await again.json()) as { code: string }).code).toBe("alreadyQueued")
+    expect(await inboxBodies(app, ag.token)).toHaveLength(1)
   })
 })

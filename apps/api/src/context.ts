@@ -37,6 +37,7 @@ import {
   type RateLimiters,
   rateLimited,
 } from "./lib/rate-limit"
+import { enqueueSlackChannelEvent } from "./lib/slack-comments"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
@@ -250,20 +251,40 @@ export function buildContext(deps: AppDeps) {
   // delivers). Awaited so the row is durable before we respond, but never fatal.
   // When something was enqueued, poke the drainer so it goes out now instead of on
   // the next interval/alarm tick.
-  const notify = (a: ArtifactRecord, event: WebhookEvent, data: Record<string, unknown>) =>
-    enqueueForEvent(meta, deps.baseUrl, a, event, data)
+  const logEnqueueError =
+    (what: string, a: ArtifactRecord, event: WebhookEvent) => (err: unknown) =>
+      // Non-fatal (the request still succeeds), but a dropped enqueue means the delivery
+      // silently never fires — log it rather than swallow.
+      log.error(`${what} enqueue failed`, {
+        event,
+        artifact: a.short_id,
+        error: err instanceof Error ? err.message : String(err),
+      })
+
+  const notify = (
+    a: ArtifactRecord,
+    event: WebhookEvent,
+    data: Record<string, unknown>,
+  ): Promise<void> => {
+    // The two fan-outs are independent: one's failure must not skip the other's drain poke.
+    // User-configured webhooks (generic + Slack incoming-webhook rows).
+    const webhooks = enqueueForEvent(meta, deps.baseUrl, a, event, data)
       .then((queued) => {
         if (queued > 0) deps.pokeWebhooks?.()
       })
-      .catch((err) =>
-        // Non-fatal (the request still succeeds), but a dropped enqueue means the
-        // webhook silently never fires — log it rather than swallow.
-        log.error("webhook enqueue failed", {
-          event,
-          artifact: a.short_id,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      )
+      .catch(logEnqueueError("webhook", a, event))
+    // The connected Slack App's channel — a top-level card for artifact-lifecycle events
+    // (publish / proposal), gated inside the helper on visibility + connected channel + slackPost.
+    // Skipped entirely when no Slack app is configured on this instance (no wasted lookup).
+    const channel = deps.slack
+      ? enqueueSlackChannelEvent(meta, deps.baseUrl, a, event, data)
+          .then((posted) => {
+            if (posted) deps.pokeWebhooks?.()
+          })
+          .catch(logEnqueueError("slack channel", a, event))
+      : Promise.resolve()
+    return Promise.all([webhooks, channel]).then(() => {})
+  }
 
   // Enqueue a screenshot render for a newly-published version. Fire-and-forget,
   // mirroring `notify` above: non-fatal (logged on error), never awaited in the
@@ -726,6 +747,26 @@ export function buildContext(deps: AppDeps) {
   const authorizeStanding = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
     actorFor(c, a).then((actor) => can(actor, action, a.workspace_access, "none"))
 
+  /** Authorize an EXPLICIT user (not the request's principal) against an artifact,
+   *  on STANDING only — their explicit share + collection shares + workspace seat,
+   *  never the world link. The tokened publish path needs this: the request carries
+   *  no session (a capability token authorized it out of band), so we re-check the
+   *  BOUND user's real rights on the target — live, at spend time, so a revoked share
+   *  or lost seat kills the token. Mirrors actorFor's human branch; standing (not the
+   *  link) is what a publisher must hold, so a private artifact's viewer-share can't
+   *  publish even when its holder is a workspace editor. */
+  const authorizeUserStanding = async (
+    userId: string,
+    action: Action,
+    a: ArtifactRecord,
+  ): Promise<boolean> => {
+    const orgRole = (await meta.getMembership(a.org_id, userId))?.role ?? null
+    const am = await meta.getArtifactMember(a.id, userId)
+    const cRoles = await meta.collectionRolesForArtifact(a.id, userId)
+    const artifactRole = maxRole(am?.role ?? null, ...cRoles)
+    return can({ kind: "user", userId, artifactRole, orgRole }, action, a.workspace_access, "none")
+  }
+
   /**
    * True when the caller is an anonymous visitor — they may view public content
    * but nothing collaborative (comments, member list, proposals, analytics).
@@ -904,6 +945,7 @@ export function buildContext(deps: AppDeps) {
     actorFor,
     authorize,
     authorizeStanding,
+    authorizeUserStanding,
     anonLocked,
     isPrincipal,
     isSuperAdmin,

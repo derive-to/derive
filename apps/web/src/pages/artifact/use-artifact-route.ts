@@ -12,7 +12,9 @@ import type { Panel } from "./types"
  *  - bounce a logged-out visitor to /login ONLY on a genuine 404/403 gate — never on a
  *    transient 5xx/network failure (which also nulls `me`), so an outage doesn't eject them;
  *  - honour a ?comment=<thread> deep link once comments arrive (open the panel, activate
- *    the thread, scroll to its highlight), exactly once.
+ *    the thread, scroll to its highlight), exactly once;
+ *  - honour a ?review=<proposal> deep link once the artifact loads (open the review
+ *    overlay on that proposal), exactly once.
  *
  * `nav` stays in the page: the two navigations are passed in as `onCanonical`/
  * `onLoginBounce` so this hook is router-type-free (matching artifact-actions).
@@ -31,12 +33,14 @@ export function useArtifactRoute(p: {
   error: unknown
   onCanonical: (canonicalRef: string) => void
   onLoginBounce: () => void
+  /** Open the proposal-review overlay on a specific proposal (the ?review deep link). */
+  onOpenReview: (proposalId: string) => void
   post: (msg: Record<string, unknown>) => void
   setPanel: Dispatch<SetStateAction<Panel>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
 }) {
   const { art, ref, shortId, version, comments, authed, loading, failed, locked, error } = p
-  const { onCanonical, onLoginBounce, post, setPanel, setActiveThread } = p
+  const { onCanonical, onLoginBounce, onOpenReview, post, setPanel, setActiveThread } = p
 
   // Canonicalise the URL client-side: rewrite any non-canonical ref (bare id, stale
   // name, legacy order) to /artifacts/<name>-<shortId>. Idempotent — once the ref
@@ -57,6 +61,17 @@ export function useArtifactRoute(p: {
     const gated = error instanceof ApiError && (error.status === 404 || error.status === 403)
     if (!loading && !authed && failed && !locked && gated) onLoginBounce()
   }, [loading, authed, failed, locked, error, onLoginBounce])
+
+  // Deep link: ?review=<proposal> opens the review overlay on that proposal. Runs once,
+  // after the artifact is in — the overlay owns loading and the role-appropriate view,
+  // so this only names the target. Signed-in viewers only (proposals are account-gated).
+  const reviewLinked = useRef(false)
+  useEffect(() => {
+    if (reviewLinked.current || !art || art.removed || !authed) return
+    reviewLinked.current = true
+    const proposalId = new URLSearchParams(window.location.search).get("review")
+    if (proposalId) onOpenReview(proposalId)
+  }, [art, authed, onOpenReview])
 
   // Deep link: ?comment=<thread> opens the panel, activates that thread, and jumps to
   // its text. Runs once, after comments are in.

@@ -1032,6 +1032,28 @@
           "grantedAt"
         ]
       },
+      "BulkSummary": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "number",
+            "description": "Artifacts the operation applied to."
+          },
+          "skipped": {
+            "type": "number",
+            "description": "Not found, or the caller may not do this to it — not an error."
+          },
+          "failed": {
+            "type": "number",
+            "description": "The write was attempted but threw."
+          }
+        },
+        "required": [
+          "ok",
+          "skipped",
+          "failed"
+        ]
+      },
       "AssetRef": {
         "type": "object",
         "properties": {
@@ -4078,6 +4100,26 @@
         }
       }
     },
+    "/v1/bulk/delete": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Permanently delete many artifacts (owner-only per artifact).",
+        "responses": {
+          "200": {
+            "description": "How many were deleted / skipped / failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/artifacts/{shortId}/move": {
       "post": {
         "tags": [
@@ -4622,6 +4664,46 @@
         }
       }
     },
+    "/v1/bulk/tags": {
+      "post": {
+        "tags": [
+          "Favorites"
+        ],
+        "summary": "Add browse tags to many artifacts (per-artifact editor-gated).",
+        "responses": {
+          "200": {
+            "description": "How many were tagged / skipped / failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bulk/favorite": {
+      "post": {
+        "tags": [
+          "Favorites"
+        ],
+        "summary": "Star or unstar many artifacts (any reader).",
+        "responses": {
+          "200": {
+            "description": "How many were starred / skipped / failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/follows": {
       "get": {
         "tags": [
@@ -4904,6 +4986,26 @@
         "responses": {
           "204": {
             "description": "The artifact was removed."
+          }
+        }
+      }
+    },
+    "/v1/bulk/collections": {
+      "post": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Add many artifacts to one or more collections (per-artifact share-gated).",
+        "responses": {
+          "200": {
+            "description": "How many artifacts were added / skipped / failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkSummary"
+                }
+              }
+            }
           }
         }
       }
@@ -6043,7 +6145,62 @@
         },
         "responses": {
           "201": {
-            "description": "The rework request was posted and landed in the agent's pull inbox. 409 needsAgent when no agent is registered; 409 needsBrandprint when no Brandprint resolves.",
+            "description": "The rework request was posted and landed in the agent's pull inbox. 409 needsAgent when no agent is registered; 409 needsBrandprint when no Brandprint resolves; 409 alreadyQueued while an earlier request for this artifact still waits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "requestId": {
+                      "type": "string",
+                      "description": "The request comment's thread id."
+                    }
+                  },
+                  "required": [
+                    "requestId"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/generate-profile": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Ask a registered agent to build this workspace's brand profile.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agentId": {
+                    "type": "string",
+                    "description": "Which agent to ask; omit to use the sole registered agent."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The build request was posted and landed in the agent's pull inbox. 400 when the artifact is not the workspace's brand profile; 409 needsAgent when no agent is registered; 409 alreadyQueued while an earlier request still waits.",
             "content": {
               "application/json": {
                 "schema": {

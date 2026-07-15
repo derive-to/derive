@@ -41,10 +41,12 @@ import { LibrarySkeleton } from "./library-skeleton"
 import { PublishCard } from "./publish-card"
 import { LibraryCollectionsDialog, LibraryTagsDialog } from "./quick-organize"
 import { RepoPullRequests } from "./repo-pull-requests"
+import { SelectionBar } from "./selection-bar"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import { TriageBar } from "./triage-bar"
 import type { Filter, LibrarySearch, LibraryView } from "./types"
 import { useLibraryFeed } from "./use-library-feed"
+import { type LibrarySelection, useLibrarySelection } from "./use-library-selection"
 
 // The library surface, shared by five routes: "/" (your work), "/favorites",
 // "/following", "/shared", and "/feedback". The base feed comes from the route (the
@@ -144,6 +146,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
   }
   const { query: feed, items, listQuery, toggleFavorite, deleteArtifact } = useLibraryFeed(params)
   const { isPending, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = feed
+  // Multi-select, scoped to THIS feed: the params are the feed's identity, so changing
+  // the tab, filter, or search drops the selection rather than carrying ids off-screen
+  // into a bulk write.
+  const selection = useLibrarySelection(items, JSON.stringify(params))
   // keepPreviousData holds the OLD grid while a new filter/tab/search loads. With the cache
   // persisted to IndexedDB (lib/persist.ts), a switch to a view you've already seen resolves
   // from cache instantly — the previous grid is simply replaced with no flash, no ceremony.
@@ -524,6 +530,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
           onAddToCollection={setPendingCollections}
           onDelete={setPendingDelete}
           onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+          selection={selection}
         />
       ) : (
         <>
@@ -540,6 +547,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
             onAddToCollection={setPendingCollections}
             onDelete={setPendingDelete}
             onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+            selection={selection}
           />
           {isFetchingNextPage && (
             <div className="flex justify-center py-2" data-testid="library-loading-more">
@@ -547,6 +555,17 @@ function LibraryBody({ view }: { view: LibraryView }) {
             </div>
           )}
         </>
+      )}
+
+      {/* The bulk-action bar — the only surface multi-select adds. It rides at the end of
+          the page content (sticky), so it pins above the fold while you scroll and never
+          overlaps the rail. */}
+      {selection.selectedItems.length > 0 && (
+        <SelectionBar
+          items={selection.selectedItems}
+          listKey={listQuery.queryKey}
+          onClear={selection.clear}
+        />
       )}
 
       {shareCol && (
@@ -600,6 +619,7 @@ function SyncedCollection({
   onAddToCollection,
   onDelete,
   onPrefetch,
+  selection,
 }: {
   items: Artifact[]
   showFolders: boolean
@@ -615,6 +635,7 @@ function SyncedCollection({
   onAddToCollection: (a: Artifact) => void
   onDelete: (a: Artifact) => void
   onPrefetch: (a: Artifact) => void
+  selection?: LibrarySelection
 }) {
   return (
     <div className="flex flex-col gap-3">
@@ -650,6 +671,7 @@ function SyncedCollection({
           onAddToCollection={onAddToCollection}
           onDelete={onDelete}
           onPrefetch={onPrefetch}
+          selection={selection}
         />
       ) : (
         <div className="flex flex-col gap-2" data-testid="library-flat-list">
@@ -665,6 +687,9 @@ function SyncedCollection({
               onAddToCollection={() => onAddToCollection(a)}
               onDelete={() => onDelete(a)}
               onPrefetch={() => onPrefetch(a)}
+              selected={selection?.selected.has(a.short_id)}
+              selectionActive={selection?.active}
+              onSelect={selection ? (shift) => selection.toggle(a.short_id, shift) : undefined}
             />
           ))}
           {(hasNextPage || isFetchingNextPage) && (

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   brandprintInstructions,
+  buildProfileInstruction,
   parseBrandprint,
   pendingRequestsPointer,
   profileState,
@@ -89,6 +90,17 @@ describe("reworkInstruction", () => {
     const s = reworkInstruction(true)
     expect(s).toContain("Read derive://brandprint/profile first")
     expect(s).toContain("derive://brandprint/*")
+  })
+})
+
+describe("buildProfileInstruction", () => {
+  it("names the reference, the template, the sources, and the review-gated target", () => {
+    const s = buildProfileInstruction("czwrd32q")
+    expect(s).toContain("derive://brandprint/reference")
+    expect(s).toContain("derive://brandprint/template")
+    expect(s).toContain("derive://brandprint/*")
+    expect(s).toContain("for_review: true")
+    expect(s).toContain("artifact czwrd32q")
   })
 })
 

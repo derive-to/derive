@@ -11,6 +11,7 @@ import { encryptSecret, signState } from "../src/lib/crypto"
 import {
   ingestSlackReply,
   makeSlackIngestSender,
+  SLACK_PROPOSAL_ACTION,
   SLACK_THREAD_ACTION,
 } from "../src/lib/slack-comments"
 import { runDeliveryTick } from "../src/webhooks"
@@ -101,6 +102,15 @@ const postCommand = (app: TestApp, fields: Record<string, string>) => {
     body: raw,
   })
 }
+
+const proposalAction = (artifactId: string, proposalId: string, actionId: string) => ({
+  type: "block_actions",
+  response_url: "https://hooks.slack.test/response",
+  team: { id: "T1" },
+  user: { id: "U777", username: "dana" },
+  actions: [{ action_id: actionId, value: JSON.stringify({ a: artifactId, p: proposalId }) }],
+  message: { blocks: [{ type: "section", text: { type: "mrkdwn", text: "a proposal" } }] },
+})
 
 // "T1" matches the team_id seedResolvable stores on the install (the acting-team authz bind).
 const threadAction = (artifactId: string, threadId: string, actionId: string, teamId = "T1") => ({
@@ -805,6 +815,18 @@ describe("slack interactivity endpoint (resolve/reopen from a button)", () => {
     const cm = (await meta.listComments(artifact.id)).find((c) => c.id === "c-int-f")
     expect(cm?.state).toBe("open")
     expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+  })
+
+  it("acks a proposal Approve interaction (dispatched off the ack path)", async () => {
+    const { app } = make("slack-int-proposal")
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 })),
+    )
+    // The approve work runs via response_url off the ack path; the endpoint just acks 200
+    // (authorization + execution are covered by slack-proposal.test.ts).
+    const r = await postInteract(app, proposalAction("a-x", "p-x", SLACK_PROPOSAL_ACTION.approve))
+    expect(r.status).toBe(200)
   })
 
   it("ignores a click whose thread has no link (no forged targets)", async () => {

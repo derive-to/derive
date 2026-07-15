@@ -139,8 +139,10 @@ https://derive.example.com/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>
 ### Slack app (optional)
 
 To connect Slack workspaces (Derive comments mirrored to a channel with two-way
-reply-back and a Resolve/Reopen button on each comment card, plus DMs to a member for
-mentions, review requests and shares — reliable once a member links their Slack account),
+reply-back and a Resolve/Reopen button on each comment card, plus top-level cards for
+publishes and proposal updates — with Approve / Request-changes buttons on a proposal
+card, authorized as the clicker's linked Derive account — plus DMs to a member for
+mentions, review requests and shares (reliable once a member links their Slack account),
 create one Slack app for this instance:
 
 1. Open **Settings → Integrations → Set up Slack app** (or go straight to `/settings/slack/app/new`). This renders the app manifest already filled in with this instance's URL, so the event subscriptions, interactivity, and bot scopes are configured for you — nothing to hand-edit. At [api.slack.com/apps](https://api.slack.com/apps) → **Create New App → From a manifest**, paste it, and create the app.

@@ -75,6 +75,8 @@ export type Report = components["schemas"]["Report"]
  *  (kind = manual / repo / pr). Generated from the OpenAPI spec (apps/api/openapi.json)
  *  — a backend shape change surfaces here at `tsc`. */
 export type Collection = components["schemas"]["Collection"]
+/** The result of a /v1/bulk/* op: counts per artifact (skipped = not yours to touch). */
+export type BulkSummary = components["schemas"]["BulkSummary"]
 /** A collection whose sharing reaches an artifact (workspace-open, or invite-only with
  *  members) — the share dialog's disclosure rows. Generated from the OpenAPI spec. */
 export type CollectionGrant = components["schemas"]["CollectionGrant"]
@@ -628,6 +630,20 @@ export const api = {
   setTags: (id: string, tags: string[]): Promise<{ tags: string[] }> =>
     f(`/v1/artifacts/${id}/tags`, { ...opts({ tags }), method: "PUT" }).then(j),
 
+  // Bulk organize — the library multi-select bar. Each is ONE call over a set of
+  // short_ids; the server authorizes every artifact on its own and returns a
+  // {ok, skipped, failed} tally (skipped = not yours to touch), so the client sends the
+  // whole selection and shows what actually landed. Tags ADD (never replace); the server
+  // computes the per-artifact union, so the client sends only the tags to add.
+  bulkTags: (shortIds: string[], add: string[]): Promise<BulkSummary> =>
+    f("/v1/bulk/tags", opts({ shortIds, add })).then(j),
+  bulkFavorite: (shortIds: string[], favorite: boolean): Promise<BulkSummary> =>
+    f("/v1/bulk/favorite", opts({ shortIds, favorite })).then(j),
+  bulkAddToCollections: (shortIds: string[], collectionIds: string[]): Promise<BulkSummary> =>
+    f("/v1/bulk/collections", opts({ shortIds, collectionIds })).then(j),
+  bulkDelete: (shortIds: string[]): Promise<BulkSummary> =>
+    f("/v1/bulk/delete", opts({ shortIds })).then(j),
+
   // Follows (track GitHub authors + repo path prefixes) — the activity feed is
   // listArtifacts({ scope: "following" }). All scoped to the active workspace.
   listFollows: (): Promise<{ follows: Follow[] }> => f("/v1/follows", opts()).then(j),
@@ -898,6 +914,10 @@ export const api = {
   // instruction lives server-side; omit agentId when exactly one agent is registered.
   reworkArtifact: (shortId: string, agentId?: string): Promise<{ requestId: string }> =>
     f(`/v1/artifacts/${shortId}/rework`, opts(agentId ? { agentId } : {})).then(j),
+  // Ask a registered agent to build the workspace's brand profile (shortId must be the
+  // profile artifact). Same queue mechanics as reworkArtifact, different canned brief.
+  generateProfile: (shortId: string, agentId?: string): Promise<{ requestId: string }> =>
+    f(`/v1/artifacts/${shortId}/generate-profile`, opts(agentId ? { agentId } : {})).then(j),
 
   // ---- Mention directory + in-app notifications -------------------------
   // `artifact` (a short_id) scopes the directory to that thread's people —

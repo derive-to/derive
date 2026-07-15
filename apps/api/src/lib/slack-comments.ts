@@ -8,16 +8,18 @@
 import type { DeliveryRecord } from "@derive/core"
 import {
   type ArtifactRecord,
+  artifactUrl,
   type CommentRecord,
   type MetaStore,
   newId,
   type SlackThreadLinkRecord,
 } from "@derive/core"
 import type { EventBus } from "../bus"
+import type { WebhookEvent } from "../events"
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
 import { commentDeepLink, parseMeta } from "./comments"
 import { slackUserName } from "./slack"
-import { actionButton, actions, context, section } from "./slack-cards"
+import { actionButton, actions, context, escapeMrkdwn, section } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
 import { truncate } from "./text"
 
@@ -54,6 +56,115 @@ export const enqueueSlackComment = async (
     author: cm.author,
   }
   await enqueueChannelDelivery(meta, "slack_app", "comment.created", payload)
+}
+
+/** The self-contained payload for a channel EVENT card (publish / proposal lifecycle). Carried
+ *  on a `slack_app` delivery whose `event_type` is the event — the sender routes on that, so
+ *  event cards and the comment mirror share the kind without a payload discriminator. */
+interface SlackEventPayload {
+  orgId: string
+  artifactId: string
+  event: WebhookEvent
+  title: string
+  link: string
+  author: string
+  version: number | null
+  message: string | null
+  /** The proposal id, for a proposal.created card — carried on its Approve buttons. */
+  proposalId: string | null
+}
+
+/** The interactivity `action_id`s an in-channel proposal card's buttons carry. */
+export const SLACK_PROPOSAL_ACTION = {
+  approve: "derive_proposal_approve",
+  requestChanges: "derive_proposal_request_changes",
+} as const
+
+/** Encode a proposal button's `value`: which proposal on which artifact to act on. */
+export const encodeProposalAction = (artifactId: string, proposalId: string): string =>
+  JSON.stringify({ a: artifactId, p: proposalId })
+
+/** Artifact-lifecycle events that post a top-level card to the connected channel (comments
+ *  mirror separately + threaded, so they're NOT here). Everything else `notify` fans out to
+ *  webhooks only. */
+const CHANNEL_EVENTS = new Set<WebhookEvent>([
+  "version.published",
+  "proposal.created",
+  "proposal.approved",
+  "proposal.changes_requested",
+])
+
+/** Enqueue a top-level channel card for an artifact-lifecycle event, when the org has a
+ *  connected channel and the mirror (slackPost) is on. Returns whether it enqueued (so the
+ *  caller can poke the drainer). Cheap no-op for the common case — the event whitelist is
+ *  checked before any DB lookup. */
+export const enqueueSlackChannelEvent = async (
+  meta: MetaStore,
+  baseUrl: string,
+  artifact: ArtifactRecord,
+  event: WebhookEvent,
+  data: Record<string, unknown>,
+): Promise<boolean> => {
+  if (!CHANNEL_EVENTS.has(event)) return false
+  // Only broadcast feed-visible artifacts. A private draft (listed "none") is visible to its
+  // owner + explicit shares — its publish/proposal title must not leak to the org-wide channel.
+  if (artifact.listed === "none") return false
+  const install = await meta.getSlackInstall(artifact.org_id)
+  if (!install?.default_channel) return false
+  if (!(await meta.getOrgSettings(artifact.org_id)).slackPost) return false
+  const actor = [data.author, data.approver, data.reviewer].find((v) => typeof v === "string")
+  const payload: SlackEventPayload = {
+    orgId: artifact.org_id,
+    artifactId: artifact.id,
+    event,
+    title: artifact.title ?? artifact.short_id,
+    link: artifactUrl(baseUrl, artifact),
+    author: typeof actor === "string" ? actor : "someone",
+    version: typeof data.version === "number" ? data.version : null,
+    message: typeof data.message === "string" ? data.message : null,
+    proposalId: typeof data.proposal_id === "string" ? data.proposal_id : null,
+  }
+  await enqueueChannelDelivery(meta, "slack_app", event, payload)
+  return true
+}
+
+/** Block Kit for a channel event card. Untrusted text (title, author, message) is escaped so
+ *  it can't break out of a `<url|text>` link or inject markup. */
+const eventBlocks = (p: SlackEventPayload): unknown[] => {
+  const link = `<${p.link}|${escapeMrkdwn(p.title)}>`
+  const who = escapeMrkdwn(p.author)
+  let head: string
+  switch (p.event) {
+    case "version.published":
+      head = `:package: *${link}* — v${p.version ?? "?"} published by ${who}`
+      break
+    case "proposal.created":
+      head = `:pencil2: *${who}* proposed a change to ${link}`
+      break
+    case "proposal.approved":
+      head = `:white_check_mark: A proposal for ${link} was approved${p.version ? ` — now v${p.version}` : ""}`
+      break
+    case "proposal.changes_requested":
+      head = `:leftwards_arrow_with_hook: Changes were requested on a proposal for ${link}`
+      break
+    default:
+      head = `${link} — ${escapeMrkdwn(p.event)}`
+  }
+  const body = p.message ? `${head}\n> ${escapeMrkdwn(truncate(p.message, 280))}` : head
+  const blocks: unknown[] = [section(body)]
+  // An open proposal gets Approve / Request-changes buttons (the clicker is authorized as
+  // their linked Derive user in the interactivity handler).
+  if (p.event === "proposal.created" && p.proposalId) {
+    const value = encodeProposalAction(p.artifactId, p.proposalId)
+    blocks.push(
+      actions([
+        actionButton(SLACK_PROPOSAL_ACTION.approve, "Approve", value, "primary"),
+        actionButton(SLACK_PROPOSAL_ACTION.requestChanges, "Request changes", value),
+      ]),
+    )
+  }
+  blocks.push(context(`Derive · ${p.event}`))
+  return blocks
 }
 
 /** The interactivity `action_id`s a comment card's buttons carry. The handler in
@@ -106,6 +217,27 @@ const blocksFor = (p: SlackCommentPayload): unknown[] => [
 export const makeSlackSender =
   (meta: MetaStore, encryptionKey: string | undefined) =>
   async (d: DeliveryRecord): Promise<ChannelSendResult> => {
+    // Event cards (publish / proposal lifecycle) ride the same kind but a different event_type,
+    // and post top-level (not threaded under an artifact's comment message).
+    if (d.event_type !== "comment.created") {
+      const e = JSON.parse(d.payload) as SlackEventPayload
+      // Defensive: only enqueueSlackChannelEvent produces non-comment slack_app rows today, but
+      // guard against a future comment-shaped payload mis-routing here (no `event` → skip).
+      if (typeof e.event !== "string") return { ok: true, status: "skipped: not an event payload" }
+      const bot = await resolveBotToken(meta, e.orgId, encryptionKey)
+      if (!bot?.install.default_channel) return { ok: true, status: "skipped: slack not connected" }
+      return postWithRecovery(
+        meta,
+        e.orgId,
+        bot.token,
+        {
+          channel: bot.install.default_channel,
+          text: `${e.author}: ${e.event} · ${e.title}`,
+          blocks: eventBlocks(e),
+        },
+        { autoJoin: true, textFallback: true },
+      )
+    }
     const p = JSON.parse(d.payload) as SlackCommentPayload
     const bot = await resolveBotToken(meta, p.orgId, encryptionKey)
     if (!bot?.install.default_channel) return { ok: true, status: "skipped: slack not connected" }

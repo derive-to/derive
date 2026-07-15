@@ -4,6 +4,7 @@ import type { Artifact } from "@/api"
 import { CARD_GRID_COLS, MIN_CARD_PX } from "@/components/shared/card-grid"
 import { cn } from "@/lib/utils"
 import { ArtifactCard } from "./artifact-card"
+import type { LibrarySelection } from "./use-library-selection"
 
 // Grid geometry comes from card-grid.tsx (one source with the live grid and the
 // skeleton). We virtualize ROWS (each row = `columns` cards), so we derive the
@@ -31,6 +32,7 @@ export function ArtifactGrid({
   onAddToCollection,
   onDelete,
   onPrefetch,
+  selection,
 }: {
   items: Artifact[]
   // The scrolling ancestor (the library's overflow-y-auto container).
@@ -45,6 +47,9 @@ export function ArtifactGrid({
   onAddToCollection: (a: Artifact) => void
   onDelete: (a: Artifact) => void
   onPrefetch: (a: Artifact) => void
+  // Multi-select. The grid only threads it through: the set lives in the library body,
+  // so it survives the virtualizer recycling a card out of the DOM on scroll.
+  selection?: LibrarySelection
 }) {
   const gridRef = useRef<HTMLDivElement>(null)
   const [columns, setColumns] = useState(1)
@@ -127,6 +132,9 @@ export function ArtifactGrid({
                 onAddToCollection={() => onAddToCollection(a)}
                 onDelete={() => onDelete(a)}
                 onPrefetch={() => onPrefetch(a)}
+                selected={selection?.selected.has(a.short_id)}
+                selectionActive={selection?.active}
+                onSelect={selection ? (shift) => selection.toggle(a.short_id, shift) : undefined}
               />
             ))}
           </div>

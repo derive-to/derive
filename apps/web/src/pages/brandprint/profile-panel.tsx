@@ -1,13 +1,16 @@
 import { queryOptions, useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
-import { API_BASE, api } from "@/api"
+import { API_BASE, ApiError, api, type DirUser } from "@/api"
 import { ConnectAgentButton, PromptBlock, publicUrl } from "@/components/shared/connect-agent"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { artifactQuery, workspaceQuery } from "@/lib/queries"
+import { toast } from "@/components/ui/sonner"
+import { artifactAgentsQuery, artifactQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { AgentMenu, ALREADY_QUEUED, queuedFor } from "../artifact/ask-agent"
 import { refFor } from "../artifact/parse-ref"
+import type { AgentTarget } from "../artifact/types"
 
 /**
  * The workspace brand profile's home on /brandprint. Renders the panel's three states:
@@ -70,7 +73,7 @@ export function ProfilePanel({ profileId }: { profileId: string }) {
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" asChild data-testid="brandprint-profile-review">
-              <Link to="/artifacts/$ref" params={{ ref: refFor(art) }}>
+              <Link to="/artifacts/$ref" params={{ ref: refFor(art) }} search={{ review: open.id }}>
                 Review &amp; comment
               </Link>
             </Button>
@@ -146,11 +149,50 @@ const briefFor = (url: string, profileId: string) =>
 3. Build our brand profile as ONE self-contained HTML file following the reference, and publish it with for_review: true to artifact ${profileId}.`
 
 // The hand-off card: the spec's state 2 (and state 5, where Connect leads because no
-// agent was ever authorized — ConnectAgentButton is one tap away either way). Persistent
-// and calm; the MCP never pitches, this card is the human-facing backstop. `onDismiss`
-// present means a live profile exists and this is a regenerate.
+// agent was ever authorized — ConnectAgentButton is one tap away either way). With a
+// registered agent, one click queues the build brief straight into its pull inbox and
+// the card flips to the queued state; the copyable brief stays as the fallback for
+// agents that aren't registered here. Persistent and calm; the MCP never pitches, this
+// card is the human-facing backstop. `onDismiss` present means a live profile exists
+// and this is a regenerate.
 function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: () => void }) {
   const regenerating = !!onDismiss
+  // Queued is session-local by design: a reload re-offers the button, and the server's
+  // alreadyQueued dedupe both blocks a duplicate and flips this card straight back to
+  // the queued state. The proposals poll above flips to the reveal when the build lands.
+  const [queued, setQueued] = useState(false)
+  const { data: agents = [] } = useQuery(artifactAgentsQuery(profileId))
+  const send = useApiMutation<{ requestId: string }, AgentTarget>({
+    mutationFn: (agent) => api.generateProfile(profileId, agent.id),
+    success: (_r, agent) => queuedFor("Build request", agent.name),
+    errorToast: false,
+    onError: (err) => {
+      const code = err instanceof ApiError ? err.code : undefined
+      // The queue already holds this ask — that IS the state this card wanted to show.
+      if (code === "alreadyQueued") {
+        setQueued(true)
+        toast(ALREADY_QUEUED)
+      } else toast.error("Couldn't queue the build — copy the brief below instead.")
+    },
+    onSuccess: () => setQueued(true),
+  })
+
+  if (queued)
+    return (
+      <section
+        className="flex flex-col gap-1 rounded-lg border bg-secondary/40 px-4 py-3"
+        data-testid="brandprint-generate-queued"
+      >
+        <h2 className="text-base font-medium text-foreground">
+          Your agent is building your Brandprint
+        </h2>
+        <p className="text-sm text-pretty text-muted-foreground">
+          The build brief is queued to spec. The proposal lands here for your review — check back
+          after your agent's next session, or leave this page open and it appears on its own.
+        </p>
+      </section>
+    )
+
   return (
     <section
       className="flex flex-col gap-3 rounded-lg border bg-secondary/40 px-4 py-3"
@@ -178,6 +220,7 @@ function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: 
               Keep current
             </Button>
           )}
+          <SendToAgent agents={agents} pending={send.isPending} onPick={(a) => send.mutate(a)} />
           <ConnectAgentButton variant="outline" size="sm" testId="brandprint-handoff-connect" />
         </div>
       </div>
@@ -187,6 +230,41 @@ function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: 
         copyLabel="Copy the brief"
       />
     </section>
+  )
+}
+
+// The one-click hand-off: the build brief goes into a registered agent's pull inbox, no
+// copy-paste. Without a registered agent this renders nothing and the copyable brief +
+// ConnectAgentButton beside it remain the path — the same sole/picker grammar as the
+// selection bar's Ask-an-agent, so the two can't drift.
+function SendToAgent({
+  agents,
+  pending,
+  onPick,
+}: {
+  agents: DirUser[]
+  pending: boolean
+  onPick: (agent: AgentTarget) => void
+}) {
+  return (
+    <AgentMenu
+      agents={agents}
+      menuLabel="Send the build brief to"
+      testidPrefix="brandprint-generate"
+      align="end"
+      onPick={onPick}
+      trigger={({ sole, onClick }) => (
+        <Button
+          size="sm"
+          data-testid="brandprint-generate"
+          loading={pending}
+          disabled={pending}
+          onClick={onClick}
+        >
+          {sole ? `Send to ${sole.name.split(/\s+/)[0]}` : "Send to your agent"}
+        </Button>
+      )}
+    />
   )
 }
 
