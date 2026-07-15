@@ -20,12 +20,14 @@ import {
   outlineOf,
   PublishError,
   pageText,
+  parseSortMode,
   publish,
   publishAdvisories,
   type Role,
   renderMarkdown,
   roleAllows,
   sectionOf,
+  sortKeyOf,
   toJson,
   toMarkdown,
   type WorkspaceAccess,
@@ -136,16 +138,17 @@ export const artifactRoutes = (ctx: AppContext) => {
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
-  // Newest-first, keyset-paginated (?cursor=<created_at>&limit=N), with optional
-  // server-side ?query= (title search), ?tag=, and ?favorite=true. Returns
-  // { artifacts, next_cursor }. tag/favorite resolve to an id set first.
+  // Keyset-paginated (?sort=&cursor=&limit=N; the cursor is keyed on the active sort —
+  // see sortKeyOf), with optional server-side ?query= (title search), ?tag=, and
+  // ?favorite=true. Returns { artifacts, next_cursor }. tag/favorite resolve to an id
+  // set first.
   app.openapi(
     createRoute({
       method: "get",
       path: "/v1/artifacts",
       tags: ["Artifacts"],
       summary:
-        "List artifacts (keyset-paginated; ?query=/tag=/collection=/scope=/author=/favorite=).",
+        "List artifacts (keyset-paginated; ?sort=/query=/tag=/collection=/scope=/author=/favorite=; cursor keyed on the active sort).",
       responses: {
         200: {
           description: "A page of artifacts + next cursor (+ the collection when scoped to one).",
@@ -182,6 +185,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Opaque compound cursor "<key>|<id>" — the id tiebreak keeps paging
       // correct when many artifacts share a key.
       const cursor = decodeCursor(c.req.query("cursor"))
+      // Unknown/absent ?sort= falls back to the default — never errors.
+      const sort = parseSortMode(c.req.query("sort"))
       // Cap the search term: it goes into a SQL LIKE, and an oversized value tripped
       // an unhandled DB error (a long-q 500). No real title search needs > 200 chars.
       const q = c.req.query("query")?.trim().slice(0, 200) || undefined
@@ -283,6 +288,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const rows = await meta.listArtifacts({
         limit: limit + 1,
         cursor,
+        sort,
         q,
         ids,
         collectionId,
@@ -307,7 +313,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const hasMore = rows.length > limit
       const page = hasMore ? rows.slice(0, limit) : rows
       const last = page[page.length - 1]
-      const next_cursor = hasMore && last ? encodeCursor(last.created_at, last.id) : null
+      const next_cursor = hasMore && last ? encodeCursor(sortKeyOf(last, sort), last.id) : null
 
       const pageIds = page.map((a) => a.id)
       const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}

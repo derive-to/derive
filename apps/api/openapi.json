@@ -3824,7 +3824,7 @@
         "tags": [
           "Artifacts"
         ],
-        "summary": "List artifacts (keyset-paginated; ?query=/tag=/collection=/scope=/author=/favorite=).",
+        "summary": "List artifacts (keyset-paginated; ?sort=/query=/tag=/collection=/scope=/author=/favorite=; cursor keyed on the active sort).",
         "responses": {
           "200": {
             "description": "A page of artifacts + next cursor (+ the collection when scoped to one).",

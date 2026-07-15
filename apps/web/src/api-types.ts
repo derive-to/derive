@@ -1156,7 +1156,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List artifacts (keyset-paginated; ?query=/tag=/collection=/scope=/author=/favorite=). */
+        /** List artifacts (keyset-paginated; ?sort=/query=/tag=/collection=/scope=/author=/favorite=; cursor keyed on the active sort). */
         get: {
             parameters: {
                 query?: never;

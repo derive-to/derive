@@ -363,6 +363,35 @@ describe("server-side search + cursor pagination", () => {
     expect(p2.artifacts.some((a: { short_id: string }) => seen.has(a.short_id))).toBe(false)
   })
 
+  it("reads ?sort=, reverses under asc, round-trips the cursor, and falls back on garbage", async () => {
+    await upload("s1.md", "one")
+    await upload("s2.md", "two")
+    await upload("s3.md", "three")
+
+    const desc = (await (await app.request("/v1/artifacts?sort=created")).json()).artifacts.map(
+      (a: { short_id: string }) => a.short_id,
+    )
+    const asc = (await (await app.request("/v1/artifacts?sort=created-asc")).json()).artifacts.map(
+      (a: { short_id: string }) => a.short_id,
+    )
+    // asc is the exact reverse of desc — proves ?sort= is read and flips the ordering.
+    expect(asc).toEqual([...desc].reverse())
+
+    // Keyset cursor round-trip under asc: page 1 + page 2 is a contiguous, dup-free prefix.
+    const p1 = await (await app.request("/v1/artifacts?sort=created-asc&limit=2")).json()
+    expect(p1.next_cursor).toContain("|")
+    const p2 = await (
+      await app.request(
+        `/v1/artifacts?sort=created-asc&cursor=${encodeURIComponent(p1.next_cursor)}`,
+      )
+    ).json()
+    const combined = [...p1.artifacts, ...p2.artifacts].map((a: { short_id: string }) => a.short_id)
+    expect(combined).toEqual(asc.slice(0, combined.length))
+
+    // Garbage sort must not 500 — it falls back to the default.
+    expect((await app.request("/v1/artifacts?sort=not-a-mode")).status).toBe(200)
+  })
+
   it("filters by ?tag= server-side", async () => {
     const { short_id } = await (await upload("tg.md", "x", { title: "Tagged one" })).json()
     await putTags(short_id, ["serverfilter"])
