@@ -27,3 +27,6 @@ apps/api/.e2e-data/
 .local-run-data/
 apps/api/.local-run-data/
 RUNNER.md
+
+# Local scratch DB from manual verification runs
+apps/api/.verify-data/

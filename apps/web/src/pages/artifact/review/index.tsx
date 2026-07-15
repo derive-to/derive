@@ -31,6 +31,7 @@ export function ReviewOverlay({
   currentVersion,
   myRole,
   meName,
+  initialProposalId,
   onClose,
   onApplied,
 }: {
@@ -38,6 +39,8 @@ export function ReviewOverlay({
   currentVersion: number
   myRole?: Role | null
   meName?: string | null
+  /** Open on this proposal (a ?review deep link names one); otherwise the newest open. */
+  initialProposalId?: string
   onClose: () => void
   onApplied: () => void
 }) {
@@ -67,7 +70,8 @@ export function ReviewOverlay({
         }
         setActiveId((cur) => {
           if (cur && live.some((p) => p.id === cur)) return cur
-          const next = live.find((p) => p.state === "open") ?? live[0]
+          const named = initialProposalId ? live.find((p) => p.id === initialProposalId) : undefined
+          const next = named ?? live.find((p) => p.state === "open") ?? live[0]
           return next ? next.id : cur
         })
       })
