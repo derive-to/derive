@@ -106,7 +106,11 @@ export const favoriteRoutes = (ctx: AppContext) => {
   // Bulk tags — the library multi-select bar. ADDS a set of tags to many artifacts at
   // once; it never replaces, so tagging a selection can't wipe the tags its other members
   // already carry. The union is computed per artifact server-side (the client sends only
-  // the tags to add), and each artifact is authorized on its own like the single route.
+  // the tags to add), and each artifact is authorized on its own — the SAME per-artifact
+  // `authorize(publish)` the single PUT /tags route uses, no `requireUser`: tags aren't
+  // user-scoped, so a static-token principal (a CI/agent integration, and the local MCP
+  // server) must be able to tag just like the single route lets it. The hard anonymous
+  // lockdown (app.ts) already refuses tokenless callers at the door.
   app.openapi(
     createRoute({
       method: "post",
@@ -121,8 +125,6 @@ export const favoriteRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const me = await requireUser(c)
-      if (me instanceof Response) return bail(me)
       const body = await readJson(
         c,
         z.object({
