@@ -155,7 +155,9 @@ export interface ListArtifactsOpts {
    */
   cursor?: { key: string; id: string }
   /** How to order the page. Omitted ⇒ `created` (newest-created first) — the historical
-   *  default every non-library caller relies on. The library passes `updated` and the rest. */
+   *  default every non-library caller relies on. The library passes `updated` and the rest.
+   *  `listArtifacts` honors this; `listUserWorks`/`countUserWorks` ignore it and always order
+   *  created-desc. */
   sort?: SortMode
   /** Case-insensitive title search. */
   q?: string
