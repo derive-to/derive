@@ -17,6 +17,7 @@ import { useDocumentTitle } from "@/lib/use-document-title"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
 import { useArtifactActions } from "./artifact-actions"
+import { ArtifactBreadcrumb } from "./artifact-breadcrumb"
 import { ArtifactComments } from "./artifact-comments"
 import { ArtifactDocument } from "./artifact-document"
 import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact-states"
@@ -376,6 +377,8 @@ export function Artifact() {
       nav({
         to: "/artifacts/$ref",
         params: { ref: refFor({ short_id: shortId, title: art?.title }) },
+        // Same artifact — keep the search (the ?collection switcher context, deep links).
+        search: (s) => s,
       }),
     onOpenReview: () => setReviewing({}),
     setEditing,
@@ -609,6 +612,8 @@ export function Artifact() {
               nav({
                 to: "/artifacts/$ref",
                 params: { ref: n === art.current_version ? base : `${base}@v${n}` },
+                // Same artifact, different version — preserve the ?collection context.
+                search: (s) => s,
               })
             }}
             open
@@ -639,12 +644,7 @@ export function Artifact() {
               bar's job is to say WHAT you're viewing and its state, not to be a run
               of icons — the actions collapse to the right. */}
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <h1
-              className="truncate font-serif text-base font-medium leading-tight tracking-tight"
-              title={art.title ?? shortId}
-            >
-              {art.title ?? shortId}
-            </h1>
+            <ArtifactBreadcrumb art={art} focusMode={focus} />
             <span className="truncate font-mono text-2xs tabular-nums text-muted-foreground">
               {artifactTypeLabel(art)} · v{art.current_version}
               {art.updated_at ? ` · updated ${ago(art.updated_at)}` : ""}

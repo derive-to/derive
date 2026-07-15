@@ -99,6 +99,17 @@ export const brandprintDocsQuery = (collectionId: string) =>
       api.listArtifacts({ collection: collectionId, limit: 100 }).then((r) => r.artifacts),
   })
 
+// The artifacts in a collection, for the artifact header's sibling switcher (jump
+// between explorations in the same collection). Flat and capped at 100 in the
+// collection's own (recency) order — the switcher pages within that window; a rarely
+// larger collection just isn't fully reachable via prev/next (the library is).
+export const collectionSiblingsQuery = (collectionId: string) =>
+  queryOptions({
+    queryKey: ["artifacts", "siblings", collectionId] as const,
+    queryFn: () =>
+      api.listArtifacts({ collection: collectionId, limit: 100 }).then((r) => r.artifacts),
+  })
+
 // The active workspace's skills (bundles with a SKILL.md) — the shelf the Brandprint
 // "Add a skill" picker chooses from. Skill-ness rides the denormalized content type,
 // so this is a client-side narrow of the ordinary library listing.
