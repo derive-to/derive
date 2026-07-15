@@ -1,5 +1,6 @@
 import { newId, type SlackInstallRecord } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
+import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { encryptSecret, signState, verifyState } from "../lib/crypto"
@@ -16,6 +17,8 @@ import {
 } from "../lib/slack"
 import { deriveRecentBlocks, deriveResultsBlocks, notLinkedBlocks } from "../lib/slack-commands"
 import {
+  decodeProposalAction,
+  decodeThreadAction,
   enqueueSlackReplyIngest,
   SLACK_PROPOSAL_ACTION,
   SLACK_THREAD_ACTION,
@@ -42,6 +45,42 @@ export const slackRoutes = (ctx: AppContext) => {
   const slack = deps.slack
   const redirectUri = new URL("/v1/slack/oauth/callback", deps.baseUrl).toString()
   const linkRedirectUri = new URL("/v1/slack/link/callback", deps.baseUrl).toString()
+
+  // Every Slack webhook (events, interactivity, commands) is authenticated the same way: Slack
+  // HMACs the raw request body with the signing secret. Factored into one guard so the three
+  // handlers can't drift — a subtly weaker check on any one endpoint would be a real auth hole.
+  // Returns the raw body to parse, or a Response the caller returns as-is (404 unconfigured /
+  // 401 bad signature) — mirrors the requireUser/readJson `X | Response` convention.
+  const verifiedSlackBody = async (c: Context): Promise<string | Response> => {
+    if (!slack) return fail(c, 404, "Slack is not configured")
+    const raw = await c.req.text()
+    if (
+      !verifySlackSignature(
+        slack.signingSecret,
+        c.req.header("x-slack-request-timestamp"),
+        raw,
+        c.req.header("x-slack-signature"),
+      )
+    )
+      return fail(c, 401, "bad signature")
+    return raw
+  }
+
+  // Run best-effort work AFTER we've acked Slack (which demands a reply within 3s). On Workers,
+  // executionCtx.waitUntil keeps the isolate alive until it settles; Node has no executionCtx, so
+  // the promise just runs in-process. Either way a terminal .catch() is attached FIRST: an
+  // unawaited reject (e.g. a lookup throwing inside a deferred proposal action) would otherwise
+  // surface as an unhandledRejection — and under Node's default that can take down the process.
+  const runAfterAck = (c: Context, work: Promise<unknown>): void => {
+    const guarded = Promise.resolve(work).catch((err) =>
+      log.warn("slack deferred work failed", { err: String(err) }),
+    )
+    try {
+      c.executionCtx.waitUntil(guarded)
+    } catch {
+      void guarded // Node has no executionCtx; the promise runs in-process
+    }
+  }
 
   interface ConnectState {
     org: string
@@ -215,17 +254,8 @@ export const slackRoutes = (ctx: AppContext) => {
   // Respond fast and do the work best-effort. Same model as the GitHub App webhook.
   // authz-exempt: Slack signs every request with the signing secret (verifySlackSignature); no session on a webhook.
   app.post("/v1/slack/events", async (c) => {
-    if (!slack) return fail(c, 404, "Slack is not configured")
-    const raw = await c.req.text()
-    if (
-      !verifySlackSignature(
-        slack.signingSecret,
-        c.req.header("x-slack-request-timestamp"),
-        raw,
-        c.req.header("x-slack-signature"),
-      )
-    )
-      return fail(c, 401, "bad signature")
+    const raw = await verifiedSlackBody(c)
+    if (raw instanceof Response) return raw
 
     let body: SlackEventEnvelope
     try {
@@ -280,17 +310,8 @@ export const slackRoutes = (ctx: AppContext) => {
   // card update is fired without awaiting, so a slow response_url can't push us past the 3s ack.
   // authz-exempt: Slack signs every request with the signing secret (verifySlackSignature).
   app.post("/v1/slack/interactivity", async (c) => {
-    if (!slack) return fail(c, 404, "Slack is not configured")
-    const raw = await c.req.text()
-    if (
-      !verifySlackSignature(
-        slack.signingSecret,
-        c.req.header("x-slack-request-timestamp"),
-        raw,
-        c.req.header("x-slack-signature"),
-      )
-    )
-      return fail(c, 401, "bad signature")
+    const raw = await verifiedSlackBody(c)
+    if (raw instanceof Response) return raw
 
     // Interactivity is form-encoded: a single `payload` field holding URL-encoded JSON.
     const payloadStr = new URLSearchParams(raw).get("payload")
@@ -312,30 +333,24 @@ export const slackRoutes = (ctx: AppContext) => {
       action.action_id === SLACK_PROPOSAL_ACTION.approve ||
       action.action_id === SLACK_PROPOSAL_ACTION.requestChanges
     ) {
-      let pt: { a?: string; p?: string }
-      try {
-        pt = JSON.parse(action.value) as { a?: string; p?: string }
-      } catch {
-        return c.json({ ok: true })
-      }
-      if (pt.a && pt.p && payload.team?.id && payload.user?.id) {
-        const work = runSlackProposalAction(
-          { meta, blobs, bus, notify, notifyRender, search },
-          {
-            teamId: payload.team.id,
-            slackUserId: payload.user.id,
-            proposalId: pt.p,
-            artifactId: pt.a,
-            op: action.action_id === SLACK_PROPOSAL_ACTION.approve ? "approve" : "request_changes",
-            responseUrl: payload.response_url,
-            sectionBlock: payload.message?.blocks?.[0],
-          },
+      const pt = decodeProposalAction(action.value)
+      if (pt && payload.team?.id && payload.user?.id) {
+        runAfterAck(
+          c,
+          runSlackProposalAction(
+            { meta, blobs, bus, notify, notifyRender, search },
+            {
+              teamId: payload.team.id,
+              slackUserId: payload.user.id,
+              proposalId: pt.proposalId,
+              artifactId: pt.artifactId,
+              op:
+                action.action_id === SLACK_PROPOSAL_ACTION.approve ? "approve" : "request_changes",
+              responseUrl: payload.response_url,
+              sectionBlock: payload.message?.blocks?.[0],
+            },
+          ),
         )
-        try {
-          c.executionCtx.waitUntil(work)
-        } catch {
-          void work
-        }
       }
       return c.json({ ok: true })
     }
@@ -348,14 +363,9 @@ export const slackRoutes = (ctx: AppContext) => {
           : undefined
     // Not a thread action we handle (or a malformed value) → ack and ignore.
     if (!op) return c.json({ ok: true })
-    let target: { a?: string; t?: string }
-    try {
-      target = JSON.parse(action.value) as { a?: string; t?: string }
-    } catch {
-      return c.json({ ok: true })
-    }
-    const { a: artifactId, t: threadId } = target
-    if (!artifactId || !threadId) return c.json({ ok: true })
+    const target = decodeThreadAction(action.value)
+    if (!target) return c.json({ ok: true })
+    const { artifactId, threadId } = target
 
     // Re-establish trust from data (never the button value alone): the thread link maps this
     // thread to this artifact + org, the acting Slack team owns that org's install, and the
@@ -375,16 +385,14 @@ export const slackRoutes = (ctx: AppContext) => {
           const section0 = payload.message?.blocks?.[0]
           const blocks = [section0, ...threadStateBlocks(op, action.value, who)].filter(Boolean)
           if (payload.response_url) {
-            const update = postSlackResponseUrl(payload.response_url, {
-              text: op === "resolved" ? "Thread resolved" : "Thread reopened",
-              blocks,
-              replace_original: true,
-            })
-            try {
-              c.executionCtx.waitUntil(update)
-            } catch {
-              void update // Node has no executionCtx; the promise runs in-process
-            }
+            runAfterAck(
+              c,
+              postSlackResponseUrl(payload.response_url, {
+                text: op === "resolved" ? "Thread resolved" : "Thread reopened",
+                blocks,
+                replace_original: true,
+              }),
+            )
           }
         }
       }
@@ -402,17 +410,8 @@ export const slackRoutes = (ctx: AppContext) => {
   // stay under Slack's 3s deadline.
   // authz-exempt: Slack signs every request with the signing secret (verifySlackSignature).
   app.post("/v1/slack/commands", async (c) => {
-    if (!slack) return fail(c, 404, "Slack is not configured")
-    const raw = await c.req.text()
-    if (
-      !verifySlackSignature(
-        slack.signingSecret,
-        c.req.header("x-slack-request-timestamp"),
-        raw,
-        c.req.header("x-slack-signature"),
-      )
-    )
-      return fail(c, 401, "bad signature")
+    const raw = await verifiedSlackBody(c)
+    if (raw instanceof Response) return raw
 
     const form = new URLSearchParams(raw)
     const teamId = form.get("team_id")
@@ -478,11 +477,7 @@ export const slackRoutes = (ctx: AppContext) => {
           replace_original: true,
         }),
       )
-    try {
-      c.executionCtx.waitUntil(deliver)
-    } catch {
-      void deliver
-    }
+    runAfterAck(c, deliver)
     return c.json({ response_type: "ephemeral", text: "Searching…" })
   })
 

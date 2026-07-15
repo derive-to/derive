@@ -84,6 +84,21 @@ export const SLACK_PROPOSAL_ACTION = {
 export const encodeProposalAction = (artifactId: string, proposalId: string): string =>
   JSON.stringify({ a: artifactId, p: proposalId })
 
+/** Decode a proposal button `value` back to its target ids — the inverse of
+ *  encodeProposalAction. Tolerant of a malformed/attacker-supplied value (returns null): the
+ *  ids only NAME the target, which the handler re-authorizes against the account link, so a
+ *  bad value can at worst pick a nonexistent proposal. */
+export const decodeProposalAction = (
+  value: string,
+): { artifactId: string; proposalId: string } | null => {
+  try {
+    const { a, p } = JSON.parse(value) as { a?: string; p?: string }
+    return a && p ? { artifactId: a, proposalId: p } : null
+  } catch {
+    return null
+  }
+}
+
 /** Artifact-lifecycle events that post a top-level card to the connected channel (comments
  *  mirror separately + threaded, so they're NOT here). Everything else `notify` fans out to
  *  webhooks only. */
@@ -180,6 +195,20 @@ export const SLACK_THREAD_ACTION = {
 export const encodeThreadAction = (artifactId: string, threadId: string): string =>
   JSON.stringify({ a: artifactId, t: threadId })
 
+/** Decode a thread button `value` back to its target ids — the inverse of encodeThreadAction.
+ *  Tolerant of a malformed value (returns null); the ids are re-checked against the thread
+ *  link before any state change, so they're only a target name, never authorization. */
+export const decodeThreadAction = (
+  value: string,
+): { artifactId: string; threadId: string } | null => {
+  try {
+    const { a, t } = JSON.parse(value) as { a?: string; t?: string }
+    return a && t ? { artifactId: a, threadId: t } : null
+  } catch {
+    return null
+  }
+}
+
 /** The action + context blocks under a comment card for a given thread state. Rebuilt by the
  *  interactivity handler after a resolve/reopen (with `who` = the Slack user who acted) and
  *  used for the first post (open, no `who`). `value` is the encoded thread target. */
@@ -187,25 +216,32 @@ export const threadStateBlocks = (
   state: "open" | "resolved",
   value: string,
   who?: string,
-): unknown[] =>
-  state === "resolved"
+): unknown[] => {
+  // `who` is the acting Slack user's display name (attacker-controllable) landing in a mrkdwn
+  // context block — escape it like every other untrusted field so a name can't inject markup.
+  const w = who ? escapeMrkdwn(who) : undefined
+  return state === "resolved"
     ? [
         actions([actionButton(SLACK_THREAD_ACTION.reopen, "Reopen thread", value)]),
-        context(`Derive · :white_check_mark: resolved${who ? ` by ${who}` : ""}`),
+        context(`Derive · :white_check_mark: resolved${w ? ` by ${w}` : ""}`),
       ]
     : [
         actions([actionButton(SLACK_THREAD_ACTION.resolve, "Resolve thread", value, "primary")]),
         context(
-          who
-            ? `Derive · reopened by ${who} · reply in this thread to post back`
+          w
+            ? `Derive · reopened by ${w} · reply in this thread to post back`
             : "Derive · reply in this thread to post back",
         ),
       ]
+}
 
-/** Slack Block Kit blocks for a comment post (open thread, with a Resolve button). */
+/** Slack Block Kit blocks for a comment post (open thread, with a Resolve button). Every
+ *  untrusted field (author, title, body) is escaped: they land in a mrkdwn section, so an
+ *  unescaped `<!channel>` would ping the channel and a `>` would break out of the link —
+ *  same treatment eventBlocks already gives its fields. */
 const blocksFor = (p: SlackCommentPayload): unknown[] => [
   section(
-    `:speech_balloon: *${p.author}* commented on <${p.link}|${p.title}>\n${truncate(p.text, 600)}`,
+    `:speech_balloon: *${escapeMrkdwn(p.author)}* commented on <${p.link}|${escapeMrkdwn(p.title)}>\n${escapeMrkdwn(truncate(p.text, 600))}`,
   ),
   ...threadStateBlocks("open", encodeThreadAction(p.artifactId, p.threadId)),
 ]
@@ -232,7 +268,10 @@ export const makeSlackSender =
         bot.token,
         {
           channel: bot.install.default_channel,
-          text: `${e.author}: ${e.event} · ${e.title}`,
+          // The fallback text is parsed as mrkdwn too (notifications, blocks-failed render), so
+          // untrusted author/title must be escaped here as well — else a name like `<!channel>`
+          // could ping the channel via the fallback even though the blocks escape it.
+          text: `${escapeMrkdwn(e.author)}: ${e.event} · ${escapeMrkdwn(e.title)}`,
           blocks: eventBlocks(e),
         },
         { autoJoin: true, textFallback: true },
@@ -250,7 +289,7 @@ export const makeSlackSender =
       bot.token,
       {
         channel,
-        text: `${p.author} commented on ${p.title}`,
+        text: `${escapeMrkdwn(p.author)} commented on ${escapeMrkdwn(p.title)}`,
         blocks: blocksFor(p),
         threadTs: existing?.message_ts,
       },
