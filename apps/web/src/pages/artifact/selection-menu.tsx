@@ -1,17 +1,16 @@
 import { type RefObject, useLayoutEffect, useRef } from "react"
-import type { DirUser } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
-import { AskAgentButton } from "./ask-agent"
 import { clamp } from "./lib/layout"
-import type { AgentTarget, FrameGeom, Selection } from "./types"
+import type { FrameGeom, Selection } from "./types"
 
 /**
- * The action bar on a text selection — the SAME interaction as the original pill
- * (a compact horizontal bar above the selection, shown instantly; multiple agents
- * open the picker), restyled onto the popover grammar: surface + ring + pop
- * shadow, one flat item recipe for both verbs, and an arrow tethering it to the
- * highlighted text. No entrance animation — it appears in place, like before.
+ * The action bar on a text selection — a compact horizontal bar above the
+ * selection, shown instantly, restyled onto the popover grammar: surface + ring +
+ * pop shadow and an arrow tethering it to the highlighted text. No entrance
+ * animation — it appears in place. One verb: Comment. Addressing an agent is just
+ * an @mention typed into the composer (see the "Comments, Sessions & Presence"
+ * RFC) — not a parallel action here.
  *
  * The selection lives in the sandboxed iframe, so this positions against the
  * frame-reported rect: doc-absolute top (live against scroll, via the geometry
@@ -30,17 +29,13 @@ export function SelectionMenu({
   frameRef,
   subscribeGeom,
   asideWidth,
-  agents,
   onComment,
-  onAgent,
 }: {
   sel: NonNullable<Selection>
   frameRef: RefObject<HTMLIFrameElement | null>
   subscribeGeom: (cb: (g: FrameGeom) => void) => () => void
   asideWidth: number
-  agents: DirUser[]
   onComment: () => void
-  onAgent: (agent: AgentTarget) => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const { docTop } = sel
@@ -96,10 +91,6 @@ export function SelectionMenu({
         <Icon name="comments" size={15} className="text-muted-foreground" />
         Comment
       </Button>
-      {agents.length > 0 && <span aria-hidden className="h-4 w-px bg-border-soft" />}
-      {/* The agent-native moat: hand the selected span to an agent to revise.
-          Single agent fires directly; several open the picker — as before. */}
-      <AskAgentButton agents={agents} onPick={onAgent} />
       {/* The tether: a rotated square riding the edge nearest the selection,
           its two exposed sides picking up the same hairline as the surface ring. */}
       <span
