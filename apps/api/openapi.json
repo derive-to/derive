@@ -1212,6 +1212,61 @@
           "inviter"
         ]
       },
+      "TagSuggestions": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tags already on the artifact."
+          },
+          "suggested": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tag": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "tag",
+                "count"
+              ]
+            },
+            "description": "Tags from similar artifacts, most-shared first; excludes current tags."
+          },
+          "vocabulary": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tag": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "tag",
+                "count"
+              ]
+            },
+            "description": "Every tag in the workspace with its usage count, most-used first."
+          }
+        },
+        "required": [
+          "current",
+          "suggested",
+          "vocabulary"
+        ]
+      },
       "Follow": {
         "type": "object",
         "properties": {
@@ -4697,6 +4752,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BulkSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/tag-suggestions": {
+      "get": {
+        "tags": [
+          "Favorites"
+        ],
+        "summary": "Suggest browse tags from similar artifacts + the workspace vocabulary.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current tags, suggestions from similar artifacts, and the vocabulary.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagSuggestions"
                 }
               }
             }

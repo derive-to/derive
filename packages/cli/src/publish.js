@@ -66,6 +66,7 @@ export function buildPublishForm({
   slug,
   spa,
   message,
+  tags,
   name,
   workspaceAccess,
   linkRole,
@@ -88,6 +89,9 @@ export function buildPublishForm({
   if (slug) form.append("slug", slug)
   if (spa) form.append("spa", "true")
   if (message) form.append("message", message)
+  // Browse tags: a JSON array the server normalizes (trim/lowercase/dedupe/cap). An empty
+  // array clears; omitted leaves existing tags untouched on a republish.
+  if (tags) form.append("tags", JSON.stringify(tags))
   if (name) form.append("name", name)
   // The canonical v2 access fields; an explicit field wins over the legacy
   // `visibility` alias server-side. Send only what's set (all-absent = the

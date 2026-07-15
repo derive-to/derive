@@ -89,6 +89,8 @@ import {
   workspaceSearchReport,
 } from "./lib/search"
 import { enqueueSlackReviewRequestedDm } from "./lib/slack-dm"
+import { computeTagSuggestions } from "./lib/tag-suggestions"
+import { normalizeTags } from "./lib/tags"
 import { signUploadToken, UPLOAD_TOKEN_TTL_MS } from "./lib/upload-token"
 import { enqueueChannelDelivery } from "./webhooks"
 
@@ -347,7 +349,12 @@ async function buildServer(
         `This one login reaches the workspaces in your grant — call list_workspaces to see them, ` +
         `then pass a workspace id or name as the "workspace" argument to act in another one (read, ` +
         `catch_up, comment, publish, list_artifacts). read/catch_up/comment also find a short_id in ` +
-        `any of them automatically, so you never need to switch just to open a doc.` +
+        `any of them automatically, so you never need to switch just to open a doc. ` +
+        `Keep the library findable: browse tags are how work is discovered later, so tag as you ` +
+        `go — set \`tags\` when you publish, or run suggest_tags on an artifact and apply them with ` +
+        `tag. Reuse the existing vocabulary (list_tags) over near-duplicates; tagging is cheap, so ` +
+        `be generous. Collections group work that genuinely belongs together (list_collections / ` +
+        `collect) — reach for a tag first, a collection when a set is a real unit.` +
         brandprintInstructions(bpSources.length, bpProfile),
     },
   )
@@ -593,9 +600,13 @@ async function buildServer(
     "list_artifacts",
     {
       description:
-        "List the artifacts (docs, plans, sites, skills) in a workspace — short id, title, kind, is_skill, current version, access (workspace_access/link_role/listed). Defaults to your current workspace; pass `workspace` (id or name from list_workspaces) to list another one. Pass skills:true to list only skills (reusable agent procedure). Includes your own unlisted publishes — out of the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
+        "List the artifacts (docs, plans, sites, skills) in a workspace — short id, title, kind, is_skill, current version, access, and its browse `tags`. Defaults to your current workspace; pass `workspace` (id or name from list_workspaces) to list another one. Pass `tag` to list only artifacts carrying that tag (findability — list_tags shows the vocabulary). Pass skills:true to list only skills (reusable agent procedure). Includes your own unlisted publishes — out of the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
       inputSchema: {
         query: z.string().optional().describe("Optional title search filter."),
+        tag: z
+          .string()
+          .optional()
+          .describe("Only artifacts carrying this browse tag (case-insensitive)."),
         skills: z
           .boolean()
           .optional()
@@ -603,21 +614,31 @@ async function buildServer(
         workspace: wsArg,
       },
     },
-    async ({ query, skills, workspace }) => {
+    async ({ query, tag, skills, workspace }) => {
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
+      // A tag filter resolves to an id set first (mirrors the HTTP ?tag= path), which
+      // listArtifacts then scopes to the workspace + re-applies visibility over.
+      const ids = tag ? await ctx.meta.artifactIdsByTag(tag.trim().toLowerCase()) : undefined
+      if (ids && ids.length === 0) return json({ workspace: t.org, count: 0, artifacts: [] })
       // viewerId keeps private rows scoped to the agent's human (mirrors `reach`) —
       // the owner row written at publish is what lets the agent always find its
       // own drafts while a teammate's private work stays invisible.
       const arts = await ctx.meta.listArtifacts({
         orgId: t.org,
         q: query,
+        ids,
         viewerId: actingFor?.id ?? agent.id,
       })
       // Skill-ness isn't a store-level filter (it's the denormalized content type), so
       // narrow here — a title `query` still composes with it.
       const rows = skills ? arts.filter((a) => a.current_content_type === SKILL_CONTENT_TYPE) : arts
-      return json({ workspace: t.org, count: rows.length, artifacts: rows.map(summarizeArtifact) })
+      const tagMap = await ctx.meta.tagsForArtifacts(rows.map((a) => a.id))
+      return json({
+        workspace: t.org,
+        count: rows.length,
+        artifacts: rows.map((a) => ({ ...summarizeArtifact(a), tags: tagMap[a.id] ?? [] })),
+      })
     },
   )
 
@@ -1149,6 +1170,199 @@ async function buildServer(
     },
   )
 
+  // TAGS — discover the vocabulary, suggest from similar docs, apply ------------
+  server.registerTool(
+    "list_tags",
+    {
+      description:
+        'The workspace\'s browse-tag vocabulary — every tag with how many artifacts carry it, most-used first. Call this BEFORE tagging so you reuse an existing tag instead of minting a near-duplicate ("planning" vs "plan"); it\'s how the library stays findable. Then list_artifacts(tag:…) to see what\'s under a tag.',
+      inputSchema: { workspace: wsArg },
+    },
+    async ({ workspace }) => {
+      const t = await resolveWs(workspace)
+      if ("error" in t) return err(t.error)
+      const tags = (await ctx.meta.tagCounts(t.org)).sort(
+        (a, b) => b.count - a.count || a.tag.localeCompare(b.tag),
+      )
+      return json({ workspace: t.org, count: tags.length, tags })
+    },
+  )
+
+  server.registerTool(
+    "suggest_tags",
+    {
+      description:
+        "Suggest browse tags for an artifact. Returns its current tags, `suggested` tags drawn from the most semantically-similar artifacts in the workspace (so you reuse how similar things are already tagged), and the full `vocabulary`. Read this, pick the ones that fit — reuse a suggestion or vocabulary entry over a new coinage — then apply them with `tag` (or set them on `publish`). Be generous: tagging is cheap and makes the library findable.",
+      inputSchema: {
+        short_id: z.string().describe("The artifact to suggest tags for."),
+        workspace: wsArg,
+      },
+    },
+    async ({ short_id, workspace }) => {
+      const reached = await reach(short_id, workspace)
+      if (!reached) return notFound(short_id)
+      if ("error" in reached) return err(reached.error)
+      const suggestions = await computeTagSuggestions(
+        { meta: ctx.meta, search: ctx.search, sourceText: ctx.sourceText },
+        reached.a,
+        actingFor?.id ?? agent.id,
+      )
+      return json({ short_id, ...suggestions })
+    },
+  )
+
+  server.registerTool(
+    "tag",
+    {
+      description:
+        "Add, remove, or replace an artifact's browse tags — one artifact or many at once. Pass `add` and/or `remove` to adjust the set (add is the default gesture — it never drops the tags a doc already has), or `set` to replace it wholesale. Tags are normalized (trimmed, lowercased, deduped, capped 20). Each artifact is authorized on its own; ones you can't edit come back in `skipped`, so a mixed list still tags what it can. Tag freely — reuse the vocabulary (list_tags / suggest_tags) so the library stays findable.",
+      inputSchema: {
+        short_ids: z.array(z.string()).min(1).describe("One or more artifact short ids to tag."),
+        add: z.array(z.string()).optional().describe("Tags to add (union with the existing set)."),
+        remove: z.array(z.string()).optional().describe("Tags to remove."),
+        set: z
+          .array(z.string())
+          .optional()
+          .describe("Replace the WHOLE set with exactly these (overrides add/remove)."),
+        workspace: wsArg,
+      },
+    },
+    async ({ short_ids, add, remove, set, workspace }) => {
+      if (!add && !remove && !set) return err("Pass at least one of `add`, `remove`, or `set`.")
+      const removeSet = new Set(normalizeTags(remove ?? []))
+      let updated = 0
+      let skipped = 0
+      let failed = 0
+      const results: { short_id: string; tags: string[] }[] = []
+      // Per-artifact, sequential: the set is human-sized (a selection), and each write
+      // reads-then-sets, which mustn't interleave on the same artifact.
+      for (const shortId of [...new Set(short_ids)]) {
+        const reached = await reach(shortId, workspace)
+        // Not found or not editable → skipped, never fails the batch.
+        if (!reached || "error" in reached || !roleAllows(reached.role, "publish")) {
+          skipped++
+          continue
+        }
+        try {
+          const next = set
+            ? normalizeTags(set)
+            : normalizeTags([
+                ...((await ctx.meta.tagsForArtifacts([reached.a.id]))[reached.a.id] ?? []),
+                ...(add ?? []),
+              ]).filter((t) => !removeSet.has(t))
+          await ctx.meta.setArtifactTags(reached.a.id, next)
+          updated++
+          results.push({ short_id: shortId, tags: next })
+        } catch {
+          failed++
+        }
+      }
+      return json({ updated, skipped, failed, results })
+    },
+  )
+
+  // COLLECTIONS (light) — see and route into them -------------------------------
+  server.registerTool(
+    "list_collections",
+    {
+      description:
+        "The workspace's collections — shareable groups of artifacts — with each one's item count. Read-only overview so you can route work into an existing collection with `collect` instead of scattering it. Lists the team-visible collections (invite-only ones you don't belong to stay hidden).",
+      inputSchema: { workspace: wsArg },
+    },
+    async ({ workspace }) => {
+      const t = await resolveWs(workspace)
+      if ("error" in t) return err(t.error)
+      const actorId = actingFor?.id ?? agent.id
+      const cols = await ctx.meta.listCollections(t.org)
+      // Light visibility: team-visible collections, plus any the acting user created (their
+      // own invite-only ones). Mirrors the web rail without the full per-collection role
+      // resolve — enough for an agent to pick a routing target.
+      const visible = cols
+        .filter((col) => col.workspace_access === "member" || col.created_by === actorId)
+        .map((col) => ({ id: col.id, title: col.title, count: col.count }))
+      return json({ workspace: t.org, count: visible.length, collections: visible })
+    },
+  )
+
+  server.registerTool(
+    "collect",
+    {
+      description:
+        "Add one or more artifacts to a collection — by `collection_id` (from list_collections) or by `collection` name, creating that collection if no team-visible one matches. Adding to a SHARED collection re-shares the artifacts to its members, so each artifact is authorized for sharing; ones you can't share come back in `skipped`. Collections are heavier than tags — reach for a tag first for plain findability, a collection when a set genuinely belongs together.",
+      inputSchema: {
+        short_ids: z.array(z.string()).min(1).describe("Artifact short ids to add."),
+        collection_id: z.string().optional().describe("An existing collection's id."),
+        collection: z
+          .string()
+          .optional()
+          .describe("A collection name — matched against team-visible collections, else created."),
+        workspace: wsArg,
+      },
+    },
+    async ({ short_ids, collection_id, collection, workspace }) => {
+      if (!collection_id && !collection?.trim())
+        return err("Pass a `collection_id` or a `collection` name.")
+      const t = await resolveWs(workspace)
+      if ("error" in t) return err(t.error)
+      const actorId = actingFor?.id ?? agent.id
+      // Resolve the target collection: by id, then by name, else create it.
+      let col = collection_id ? await ctx.meta.getCollection(collection_id) : null
+      if (col && col.org_id !== t.org) return err("That collection is in another workspace.")
+      if (!col && collection?.trim()) {
+        const name = collection.trim()
+        const existing = (await ctx.meta.listCollections(t.org)).find(
+          (x) =>
+            x.title.toLowerCase() === name.toLowerCase() &&
+            (x.workspace_access === "member" || x.created_by === actorId),
+        )
+        col =
+          existing ??
+          (await (async () => {
+            const created = await ctx.meta.createCollection({
+              id: newId("col"),
+              org_id: t.org,
+              title: name.slice(0, 120),
+              created_by: actorId,
+              workspace_access: "member",
+            })
+            await ctx.meta.setCollectionMember({
+              id: newId("cm"),
+              collection_id: created.id,
+              user_id: actorId,
+              role: "owner",
+            })
+            return created
+          })())
+      }
+      if (!col) return err("Collection not found.")
+      // The caller must be able to MANAGE the collection to fold artifacts in: a
+      // team-visible one at their workspace seat, an invite-only one via an explicit
+      // member row. Mirrors the HTTP route's canManageCollection.
+      const canManage =
+        col.workspace_access === "member"
+          ? roleAllows(t.role, "publish")
+          : roleAllows(
+              (await ctx.meta.getCollectionMember(col.id, actorId))?.role ?? "viewer",
+              "publish",
+            )
+      if (!canManage) return err("You can't add to that collection.")
+
+      let added = 0
+      let skipped = 0
+      for (const shortId of [...new Set(short_ids)]) {
+        const reached = await reach(shortId, workspace)
+        // Adding to a shared collection re-shares the artifact, so it needs share standing.
+        if (!reached || "error" in reached || !roleAllows(reached.role, "share")) {
+          skipped++
+          continue
+        }
+        await ctx.meta.addCollectionItem(col.id, reached.a.id)
+        added++
+      }
+      return json({ collection: { id: col.id, title: col.title }, added, skipped })
+    },
+  )
+
   // CATCH UP — state, feedback, history, and diffs all in one ------------------
   server.registerTool(
     "catch_up",
@@ -1650,6 +1864,12 @@ async function buildServer(
             "Add/overwrite the given `files` INTO the existing bundle instead of replacing it (default false). Build a large site across several calls without re-sending it: publish the pages first, then merge in batches of assets — each call carries only the new files. Requires `short_id` of a bundle; same-path files overwrite, the rest are kept.",
           ),
         message: z.string().optional().describe("What changed — recorded as the version message."),
+        tags: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Browse tags to set on the artifact — workspace-wide labels that make it findable (list_tags shows the vocabulary; suggest_tags proposes from similar docs). Reuse an existing tag over a near-duplicate. Given ⇒ REPLACES the set (normalized: trimmed, lowercased, deduped, capped 20); [] clears; omitted leaves existing tags untouched on a republish.",
+          ),
         filename: z
           .string()
           .optional()
@@ -1715,6 +1935,7 @@ async function buildServer(
       spa,
       merge,
       message,
+      tags,
       filename,
       for_review,
       addresses,
@@ -1957,6 +2178,10 @@ async function buildServer(
           version,
           { isNew: !short_id, onBehalf: actingFor?.id ?? null, resolves: addresses ?? [] },
         )
+        // Tag at publish time — the one-step "auto-tag on create". `tags` given ⇒ set them
+        // (normalized, deduped, capped); an empty array clears; omitted leaves them be, so
+        // a republish that doesn't mention tags keeps the artifact's existing set.
+        if (tags !== undefined) await ctx.meta.setArtifactTags(artifact.id, normalizeTags(tags))
         // The /derive loop: ask the human to review this live version.
         let review_round: string | null = null
         if (request_review && actingFor) {

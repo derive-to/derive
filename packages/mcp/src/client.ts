@@ -17,6 +17,9 @@ export interface PublishArgs {
   slug?: string
   spa?: boolean
   message?: string
+  /** Browse tags to set on the artifact at publish time. Given ⇒ replaces the set;
+   *  omitted ⇒ leaves existing tags untouched on a republish. */
+  tags?: string[]
   /** The v2 access triple for a NEW artifact (see access-model.md); ignored on a
    *  republish. */
   workspaceAccess?: WorkspaceAccess
@@ -61,6 +64,30 @@ export interface ArtifactSummaryJson {
   workspace_access?: string
   link_role?: string
   listed?: string
+  /** Browse tags on the artifact — present when the server returns them (newer servers). */
+  tags?: string[]
+}
+
+export interface TagCountJson {
+  tag: string
+  count: number
+}
+export interface TagSuggestionsJson {
+  current: string[]
+  suggested: TagCountJson[]
+  vocabulary: TagCountJson[]
+}
+/** The result of adding/removing/replacing tags across one or many artifacts. */
+export interface TagResultJson {
+  updated: number
+  skipped: number
+  failed: number
+  results: { short_id: string; tags: string[] }[]
+}
+export interface CollectionSummaryJson {
+  id: string
+  title: string
+  count: number
 }
 
 /** A revision submitted for human review instead of published live. */
@@ -118,6 +145,8 @@ export interface ArtifactJson {
   listed?: string
   current_version: number
   versions: VersionJson[]
+  /** Browse tags — present on the detail endpoint (newer servers). */
+  tags?: string[]
   /** Time-grouped version view (newest-first); present on the detail endpoint. */
   sessions?: SessionJson[]
   /** Publish-response extras (agent-credentialed publishes only). */
@@ -192,8 +221,25 @@ export interface SearchOpts {
 }
 
 export interface DeriveClient {
-  /** List the workspace's artifacts (optionally filtered by a title query). */
-  list(query?: string): Promise<ArtifactSummaryJson[]>
+  /** List the workspace's artifacts (optionally filtered by a title query and/or a browse tag). */
+  list(query?: string, tag?: string): Promise<ArtifactSummaryJson[]>
+  /** The workspace tag vocabulary (tag → count, most-used first). */
+  listTags(): Promise<TagCountJson[]>
+  /** Suggest tags for an artifact: its current tags, neighbors' tags, and the vocabulary. */
+  suggestTags(shortId: string): Promise<TagSuggestionsJson>
+  /** Add/remove/replace browse tags across one or more artifacts. `set` replaces the
+   *  whole set (overriding add/remove); otherwise add then remove. */
+  tag(
+    shortIds: string[],
+    ops: { add?: string[]; remove?: string[]; set?: string[] },
+  ): Promise<TagResultJson>
+  /** The workspace's team-visible collections with item counts. */
+  listCollections(): Promise<CollectionSummaryJson[]>
+  /** Add artifacts to a collection by id or name (creating the collection by name). */
+  collect(
+    shortIds: string[],
+    target: { collectionId?: string; collection?: string },
+  ): Promise<{ collection: { id: string; title: string }; added: number; skipped: number }>
   publish(args: PublishArgs): Promise<ArtifactJson>
   /** Submit a single-file revision for human review (does not go live). */
   propose(shortId: string, args: ProposeArgs): Promise<ProposalJson>
@@ -255,12 +301,146 @@ export function createClient(opts: ClientOptions): DeriveClient {
   }
 
   return {
-    async list(query) {
-      const q = query ? `?query=${encodeURIComponent(query)}` : ""
+    async list(query, tag) {
+      const qs = new URLSearchParams()
+      if (query) qs.set("query", query)
+      if (tag) qs.set("tag", tag.trim().toLowerCase())
+      const q = qs.toString() ? `?${qs}` : ""
       const r = (await ok(await f(`${base}/v1/artifacts${q}`, { headers: authHeaders }))) as {
         artifacts: ArtifactSummaryJson[]
       }
       return r.artifacts
+    },
+
+    async listTags() {
+      const r = (await ok(await f(`${base}/v1/tags`, { headers: authHeaders }))) as {
+        tags: TagCountJson[]
+      }
+      return (r.tags ?? []).slice().sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+    },
+
+    async suggestTags(shortId) {
+      return ok(
+        await f(`${base}/v1/artifacts/${shortId}/tag-suggestions`, { headers: authHeaders }),
+      ) as Promise<TagSuggestionsJson>
+    },
+
+    async tag(shortIds, ops) {
+      // `set` replaces the whole set in one bulk call. Otherwise apply the additive `add`
+      // (the bulk-add route merges per artifact) and/or `remove` — each a bulk call over
+      // the same id set, so the server does the per-artifact authorization + skip counting.
+      const post = (path: string, body: unknown) =>
+        f(`${base}${path}`, {
+          method: "POST",
+          headers: { ...authHeaders, "content-type": "application/json" },
+          body: JSON.stringify(body),
+        })
+      if (ops.set) {
+        // No bulk "set" route; set each artifact's tags directly (the union with nothing).
+        const results: { short_id: string; tags: string[] }[] = []
+        let updated = 0
+        let failed = 0
+        for (const id of shortIds) {
+          try {
+            const r = (await ok(
+              await f(`${base}/v1/artifacts/${id}/tags`, {
+                method: "PUT",
+                headers: { ...authHeaders, "content-type": "application/json" },
+                body: JSON.stringify({ tags: ops.set }),
+              }),
+            )) as { tags: string[] }
+            results.push({ short_id: id, tags: r.tags })
+            updated++
+          } catch {
+            failed++
+          }
+        }
+        return { updated, skipped: 0, failed, results }
+      }
+      let updated = 0
+      let skipped = 0
+      let failed = 0
+      if (ops.add?.length) {
+        const r = (await ok(await post("/v1/bulk/tags", { shortIds, add: ops.add }))) as {
+          ok: number
+          skipped: number
+          failed: number
+        }
+        updated = r.ok
+        skipped = r.skipped
+        failed = r.failed
+      }
+      if (ops.remove?.length) {
+        // No bulk-remove route: read-modify-write each artifact via the single tag route.
+        const removeSet = new Set(ops.remove.map((t) => t.trim().toLowerCase()))
+        for (const id of shortIds) {
+          try {
+            const a = await (ok(
+              await f(`${base}/v1/artifacts/${id}`, { headers: authHeaders }),
+            ) as Promise<{
+              tags?: string[]
+            }>)
+            const next = (a.tags ?? []).filter((t) => !removeSet.has(t))
+            await ok(
+              await f(`${base}/v1/artifacts/${id}/tags`, {
+                method: "PUT",
+                headers: { ...authHeaders, "content-type": "application/json" },
+                body: JSON.stringify({ tags: next }),
+              }),
+            )
+          } catch {
+            /* a remove miss (not editable) is reflected by the add pass's skipped, or ignored */
+          }
+        }
+      }
+      return { updated, skipped, failed, results: [] }
+    },
+
+    async listCollections() {
+      const r = (await ok(await f(`${base}/v1/collections`, { headers: authHeaders }))) as {
+        collections: { id: string; title: string; count: number }[]
+      }
+      return r.collections.map((c) => ({ id: c.id, title: c.title, count: c.count }))
+    },
+
+    async collect(shortIds, target) {
+      // Resolve the collection: an explicit id, else match/create by name.
+      let collectionId = target.collectionId
+      let title = ""
+      const cols = (
+        (await ok(await f(`${base}/v1/collections`, { headers: authHeaders }))) as {
+          collections: { id: string; title: string }[]
+        }
+      ).collections
+      if (collectionId) {
+        title = cols.find((c) => c.id === collectionId)?.title ?? ""
+      } else if (target.collection?.trim()) {
+        const name = target.collection.trim()
+        const existing = cols.find((c) => c.title.toLowerCase() === name.toLowerCase())
+        if (existing) {
+          collectionId = existing.id
+          title = existing.title
+        } else {
+          const created = (await ok(
+            await f(`${base}/v1/collections`, {
+              method: "POST",
+              headers: { ...authHeaders, "content-type": "application/json" },
+              body: JSON.stringify({ title: name }),
+            }),
+          )) as { id: string; title: string }
+          collectionId = created.id
+          title = created.title
+        }
+      }
+      if (!collectionId) throw new Error("collect: pass a collectionId or a collection name")
+      const r = (await ok(
+        await f(`${base}/v1/bulk/collections`, {
+          method: "POST",
+          headers: { ...authHeaders, "content-type": "application/json" },
+          body: JSON.stringify({ shortIds, collectionIds: [collectionId] }),
+        }),
+      )) as { ok: number; skipped: number }
+      return { collection: { id: collectionId, title }, added: r.ok, skipped: r.skipped }
     },
 
     async publish(args) {
@@ -280,6 +460,7 @@ export function createClient(opts: ClientOptions): DeriveClient {
         slug: args.slug,
         spa: args.spa,
         message: args.message,
+        tags: args.tags,
         workspaceAccess: args.workspaceAccess,
         linkRole: args.linkRole,
         listed: args.listed,

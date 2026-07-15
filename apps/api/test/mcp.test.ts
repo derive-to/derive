@@ -167,14 +167,19 @@ describe("remote MCP endpoint (/mcp)", () => {
     const names = toolNames(list)
     expect(names.sort()).toEqual([
       "catch_up",
+      "collect",
       "comment",
       "list_artifacts",
+      "list_collections",
+      "list_tags",
       "list_workspaces",
       "publish",
       "read",
       "search",
       "stage_asset",
       "stage_publish",
+      "suggest_tags",
+      "tag",
     ])
     // Consolidated away — folded into catch_up / comment / publish.
     for (const gone of [
@@ -530,6 +535,65 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(read).toContain("title: My Plan")
     expect(read).toContain("# My Plan")
     expect(read).not.toContain("\\n")
+  })
+
+  it("tags: publish tags, list_tags vocabulary, tag apply, list_artifacts(tag) filter, suggest_tags", async () => {
+    const { app, token } = appWithGrant("tags", "openid derive:read derive:publish")
+    // Auto-tag on publish.
+    const a = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Roadmap",
+          content: "# Roadmap\n\nbody",
+          tags: ["planning", "q3"],
+        }),
+      ),
+    ).short_id
+    const b = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Notes", content: "# Notes\n\nbody" })),
+    ).short_id
+
+    // list_tags shows the vocabulary with counts.
+    const vocab = JSON.parse(toolText(await call(app, token, "list_tags")))
+    expect(vocab.tags.find((t: { tag: string }) => t.tag === "planning")?.count).toBe(1)
+
+    // list_artifacts carries tags, and tag: filters to the tagged doc.
+    const filtered = JSON.parse(toolText(await call(app, token, "list_artifacts", { tag: "q3" })))
+    expect(filtered.artifacts.map((x: { short_id: string }) => x.short_id)).toEqual([a])
+    expect(filtered.artifacts[0].tags.sort()).toEqual(["planning", "q3"])
+
+    // tag adds to b (union) and reports it updated.
+    const tagged = JSON.parse(
+      toolText(await call(app, token, "tag", { short_ids: [b], add: ["planning", "notes"] })),
+    )
+    expect(tagged.updated).toBe(1)
+    expect(tagged.results[0].tags.sort()).toEqual(["notes", "planning"])
+
+    // suggest_tags returns the doc's current tags + the workspace vocabulary (no dense arm here).
+    const sugg = JSON.parse(toolText(await call(app, token, "suggest_tags", { short_id: a })))
+    expect(sugg.current.sort()).toEqual(["planning", "q3"])
+    expect(sugg.vocabulary.map((t: { tag: string }) => t.tag)).toContain("notes")
+  })
+
+  it("collect: creates a collection by name and folds artifacts in", async () => {
+    const { app, token } = appWithGrant("collect", "openid derive:read derive:publish")
+    const a = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "One", content: "# One\n\nbody" })),
+    ).short_id
+    const b = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Two", content: "# Two\n\nbody" })),
+    ).short_id
+
+    const res = JSON.parse(
+      toolText(await call(app, token, "collect", { short_ids: [a, b], collection: "Q3 Work" })),
+    )
+    expect(res.added).toBe(2)
+    expect(res.collection.title).toBe("Q3 Work")
+
+    const cols = JSON.parse(toolText(await call(app, token, "list_collections")))
+    expect(
+      cols.collections.find((c: { title: string; count: number }) => c.title === "Q3 Work")?.count,
+    ).toBe(2)
   })
 
   it("list_artifacts marks skills and filters to them with skills:true", async () => {
