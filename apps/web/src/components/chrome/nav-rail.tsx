@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useLocation, useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
-import { api } from "@/api"
+import { api, type Collection } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
 import { Logo } from "@/components/shared/logo"
 import { Input } from "@/components/ui/input"
@@ -30,6 +30,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAuth } from "@/ctx"
+import { getMonogram } from "@/lib/initials"
 import { prTitle } from "@/lib/pr"
 import { collectionsQuery, summaryQuery, workspacesQuery } from "@/lib/queries"
 import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
@@ -139,6 +140,49 @@ function NavItem({
       <SidebarMenuButton asChild isActive={active} tooltip={label}>
         <Link to={to} {...linkProps}>
           <RowGlyph icon={icon} label={label} count={count} />
+        </Link>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  )
+}
+
+// A collection's leading glyph, chosen by kind: a repo mirror gets the folder-git
+// glyph, a PR preview the pull-request glyph, and an ordinary (manual) collection a
+// monochrome monogram tile — its initial in a neutral chip. The uniform folder icon
+// is gone from manual collections: identical on every row, it differentiated nothing;
+// the monogram gives each collection a leading letter that also survives the collapsed
+// icon rail. Monochrome by design (see icons.tsx) — the chrome stays out of the way of
+// the user's own coloured artifacts. The letter follows the same ink register as the
+// sibling svg glyphs (ROW_ICON): muted at rest, re-inked on hover and on the active
+// row, so a manual row's glyph doesn't read louder or dimmer than a repo/PR row's.
+function CollectionGlyph({ col }: { col: Collection }) {
+  if (col.kind === "repo") return <Icon name="repo" />
+  if (col.kind === "pr") return <Icon name="review" />
+  return (
+    <span
+      aria-hidden="true"
+      className="flex size-4 shrink-0 items-center justify-center rounded-sm bg-sidebar-foreground/10 font-mono text-2xs font-medium text-muted-foreground group-hover/menu-button:text-foreground group-data-[active=true]/menu-button:text-foreground"
+    >
+      {getMonogram(col.title)}
+    </span>
+  )
+}
+
+// One collection row — the common case (a repo with nested PR previews takes the
+// bespoke branch inline in NavRail). Mirrors FilterItem, but the glyph is kind-aware
+// (CollectionGlyph) rather than a fixed IconName, and it carries a tooltip so the
+// collapsed icon rail still names it.
+function CollectionRow({ col, active }: { col: Collection; active: boolean }) {
+  const linkProps = useRowLinkProps(col.title, active, `sidebar-collection-${col.id}`, col.count)
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton asChild isActive={active} tooltip={col.title}>
+        <Link to="/" search={{ collection: col.id }} {...linkProps}>
+          <CollectionGlyph col={col} />
+          <span>{col.title}</span>
+          {col.count > 0 && (
+            <SidebarMenuBadge className={COUNT_BADGE}>{col.count}</SidebarMenuBadge>
+          )}
         </Link>
       </SidebarMenuButton>
     </SidebarMenuItem>
@@ -445,8 +489,11 @@ export function NavRail() {
 
         {/* TIER 2 — your library: the things you've organized. Each list carries a
             mono eyebrow, so the section labels do the tier-separating work (no
-            divider needed between the eyebrowed groups). */}
-        <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+            divider needed between the eyebrowed groups). Collections stay in the
+            collapsed icon rail (each row keeps its kind glyph + a tooltip), so you can
+            still reach a collection with the rail collapsed — the primitive auto-hides
+            the label, the + action, the counts, and any nested PR list in icon mode. */}
+        <SidebarGroup>
           <SidebarGroupLabel>Collections</SidebarGroupLabel>
           {/* The + stays neutral, not the accent: create-in-rail isn't a sanctioned
               ink moment. */}
@@ -481,8 +528,9 @@ export function NavRail() {
                 }}
                 onBlur={submitCollection}
                 // No text-size override: Input's base keeps 16px on touch (iOS
-                // no-zoom) and steps to 14px from sm up.
-                className="mb-1"
+                // no-zoom) and steps to 14px from sm up. Hidden in the collapsed icon
+                // rail (the + that opens it is hidden there too — no way to reach it).
+                className="mb-1 group-data-[collapsible=icon]:hidden"
               />
             )}
             <SidebarMenu>
@@ -496,21 +544,11 @@ export function NavRail() {
                 const childPrs = childPrsByRepo.get(col.id)
                 const colActive = onLibrary && search.collection === col.id
                 if (!childPrs || childPrs.length === 0)
-                  return (
-                    <FilterItem
-                      key={col.id}
-                      icon="collection"
-                      label={col.title}
-                      count={col.count}
-                      search={{ collection: col.id }}
-                      active={colActive}
-                      testId={`sidebar-collection-${col.id}`}
-                    />
-                  )
+                  return <CollectionRow key={col.id} col={col} active={colActive} />
                 const repoCollapsed = collapsedRepos.has(col.id)
                 return (
                   <SidebarMenuItem key={col.id}>
-                    <SidebarMenuButton asChild isActive={colActive}>
+                    <SidebarMenuButton asChild isActive={colActive} tooltip={col.title}>
                       <Link
                         to="/"
                         search={{ collection: col.id }}
@@ -521,7 +559,7 @@ export function NavRail() {
                         // pr-12 clears both the count and the fold action.
                         className={cn(ROW_ICON, col.count > 0 && "pr-12")}
                       >
-                        <Icon name="collection" />
+                        <CollectionGlyph col={col} />
                         <span>{col.title}</span>
                         {col.count > 0 && (
                           <SidebarMenuBadge className={cn(COUNT_BADGE, "right-7")}>
