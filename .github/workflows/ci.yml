@@ -246,12 +246,11 @@ jobs:
         with:
           install: "false"
 
-      # pnpm 10.x audits via npm's legacy audit endpoint, which npm is retiring.
-      # Verified working as of 2026-07; if it starts returning 410, switch to
-      # `pnpm dlx pnpm@11 audit --prod --audit-level=high` (pnpm 11 uses the
-      # bulk-advisories endpoint) or OSV-Scanner (no npm-endpoint dependency).
+      # pnpm 10.x audits via npm's legacy audit endpoint, which npm has now retired
+      # (it returns 410 as of 2026-07-15). pnpm 11's audit uses the bulk-advisories
+      # endpoint, so run it via dlx (the repo stays on pnpm 10 for everything else).
       - name: Audit production dependencies
-        run: pnpm audit --prod --audit-level=high
+        run: pnpm dlx pnpm@11 audit --prod --audit-level=high
 
       - name: Secret scan (gitleaks)
         run: |
