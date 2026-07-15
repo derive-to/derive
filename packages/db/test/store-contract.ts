@@ -1,5 +1,5 @@
 import { randomUUID as uuid } from "node:crypto"
-import type { MetaStore, NewArtifact, NewVersion } from "@derive/core"
+import type { MetaStore, NewArtifact, NewVersion, SortMode } from "@derive/core"
 import { DEFAULT_ORG_SETTINGS } from "@derive/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
@@ -204,6 +204,63 @@ export function runStoreContract(
       await store.addVersion(a.id, newVersion({ blob_key: "other", size_bytes: 50 }))
       // 100 (shared, counted once) + 50 (other) = 150
       expect(await store.storageBytes(ORG)).toBeGreaterThanOrEqual(150)
+    })
+  })
+
+  describe(`${label}: listArtifacts sort modes`, () => {
+    const tick = () => new Promise((r) => setTimeout(r, 2))
+
+    it("orders by each mode and paginates the keyset across a page boundary", async () => {
+      const org = `org_sort_${uuid()}`
+      // Created in this order (created_at strictly increases): first → last.
+      const first = await store.createArtifact(newArtifact({ org_id: org, title: "banana" }))
+      await tick()
+      const second = await store.createArtifact(newArtifact({ org_id: org, title: "Apple" }))
+      await tick()
+      const third = await store.createArtifact(newArtifact({ org_id: org, title: "cherry" }))
+      // updated_at: give `first` the NEWEST update (a fresh version on the oldest doc),
+      // `second` an older update, and leave `third` versionless (updated_at null → created_at).
+      await store.setArtifactUpdatedAt(first.id, "2030-01-01T00:00:00.000Z")
+      await store.setArtifactUpdatedAt(second.id, "2029-01-01T00:00:00.000Z")
+
+      const ids = async (sort: SortMode) =>
+        (await store.listArtifacts({ orgId: org, sort })).map((a) => a.id)
+
+      // updated (default): first (2030) > second (2029) > third (its created_at, ~now).
+      expect(await ids("updated")).toEqual([first.id, second.id, third.id])
+      expect(await ids("updated-asc")).toEqual([third.id, second.id, first.id])
+      // created ignores versions: newest-created first regardless of updates.
+      expect(await ids("created")).toEqual([third.id, second.id, first.id])
+      expect(await ids("created-asc")).toEqual([first.id, second.id, third.id])
+      // title, case-insensitive: Apple, banana, cherry.
+      expect(await ids("az")).toEqual([second.id, first.id, third.id])
+      expect(await ids("za")).toEqual([third.id, first.id, second.id])
+
+      // Keyset pagination under az: page 1 (limit 2), then page 2 from the cursor,
+      // reassembles the full set with no gap/dupe. Cursor = "<lower(title)>|<id>".
+      const p1 = await store.listArtifacts({ orgId: org, sort: "az", limit: 2 })
+      const lastOfP1 = p1[p1.length - 1]
+      const p2 = await store.listArtifacts({
+        orgId: org,
+        sort: "az",
+        limit: 2,
+        cursor: { key: (lastOfP1.title ?? "").toLowerCase(), id: lastOfP1.id },
+      })
+      expect([...p1, ...p2].map((a) => a.id)).toEqual([second.id, first.id, third.id])
+    })
+
+    it("names the version bump as the newest work (the default's whole point)", async () => {
+      const org = `org_bump_${uuid()}`
+      const older = await store.createArtifact(newArtifact({ org_id: org, title: "older" }))
+      await tick()
+      const newer = await store.createArtifact(newArtifact({ org_id: org, title: "newer" }))
+      // `older` is created first but gets a brand-new version → newest work.
+      await store.setArtifactUpdatedAt(older.id, "2031-01-01T00:00:00.000Z")
+
+      const updated = (await store.listArtifacts({ orgId: org, sort: "updated" })).map((a) => a.id)
+      const created = (await store.listArtifacts({ orgId: org, sort: "created" })).map((a) => a.id)
+      expect(updated).toEqual([older.id, newer.id]) // version bump wins
+      expect(created).toEqual([newer.id, older.id]) // created ignores the bump
     })
   })
 

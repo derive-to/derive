@@ -153,6 +153,7 @@ import {
 } from "./pg-schema"
 import {
   artifactListConditions,
+  artifactListOrder,
   collectManagedIds,
   parseOAuthScopes,
   parseOrgSettings,
@@ -579,14 +580,14 @@ export class PgMetaStore implements MetaStore {
         .from(artifact)
         .innerJoin(collectionItem, eq(collectionItem.artifact_id, artifact.id))
         .where(and(...conds))
-        .orderBy(desc(artifact.created_at), desc(artifact.id))
+        .orderBy(...artifactListOrder(artifact, opts?.sort ?? "created"))
       return opts.limit ? q.limit(opts.limit) : q
     }
     const q = this.db
       .select()
       .from(artifact)
       .where(conds.length ? and(...conds) : undefined)
-      .orderBy(desc(artifact.created_at), desc(artifact.id))
+      .orderBy(...artifactListOrder(artifact, opts?.sort ?? "created"))
     return opts?.limit ? q.limit(opts.limit) : q
   }
   // ---- full-text search index (workspace search substrate) — the tsvector twin of the

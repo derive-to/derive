@@ -3,6 +3,7 @@
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
  */
 import type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
+import type { SortMode } from "./sort"
 
 export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
@@ -153,6 +154,9 @@ export interface ListArtifactsOpts {
    * title). Encode/decode via `@derive/core`'s `encodeCursor`/`decodeCursor`.
    */
   cursor?: { key: string; id: string }
+  /** How to order the page. Omitted ⇒ `created` (newest-created first) — the historical
+   *  default every non-library caller relies on. The library passes `updated` and the rest. */
+  sort?: SortMode
   /** Case-insensitive title search. */
   q?: string
   /** Restrict to these artifact ids (tag / favorite filters resolve to ids). Empty ⇒ none. */

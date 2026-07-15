@@ -76,6 +76,7 @@ import type {
   SlackInstallRecord,
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
+  SortMode,
   TakedownInput,
   UserNotificationPrefRecord,
   UserProfile,
@@ -84,7 +85,7 @@ import type {
   WorkspaceAccess,
   WorkspaceRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG, maxRole } from "@derive/core"
+import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG, maxRole, sortFields } from "@derive/core"
 import {
   and,
   asc,
@@ -93,6 +94,7 @@ import {
   desc,
   eq,
   getTableColumns,
+  gt,
   inArray,
   isNotNull,
   isNull,
@@ -160,6 +162,7 @@ export function artifactListConditions(
   art: {
     title: Column
     created_at: Column
+    updated_at: Column
     id: Column
     org_id: Column
     listed: Column
@@ -190,15 +193,39 @@ export function artifactListConditions(
   // A trusted caller (operator token / internal jobs, no viewerId) sees everything.
   if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
   if (opts?.cursor) {
+    const { field, dir } = sortFields(opts.sort ?? "created")
+    const col = artifactSortExpr(art, field)
+    const cmp = dir === "asc" ? gt : lt
     const cursor = or(
-      lt(art.created_at, opts.cursor.key),
-      and(eq(art.created_at, opts.cursor.key), lt(art.id, opts.cursor.id)),
+      cmp(col, opts.cursor.key),
+      and(eq(col, opts.cursor.key), cmp(art.id, opts.cursor.id)),
     )
     if (cursor) conds.push(cursor)
   }
   if (opts?.ids) conds.push(inArray(art.id, opts.ids))
   if (opts?.orgId) conds.push(eq(art.org_id, opts.orgId))
   return conds
+}
+
+/** The keyset/ordering column for a sort field, as SQL valid on both SQLite and Postgres. */
+export function artifactSortExpr(
+  art: { created_at: Column; updated_at: Column; title: Column },
+  field: "updated" | "created" | "title",
+): SQL {
+  if (field === "updated") return sql`coalesce(${art.updated_at}, ${art.created_at})`
+  if (field === "title") return sql`lower(coalesce(${art.title}, ''))`
+  return sql`${art.created_at}`
+}
+
+/** The `ORDER BY` for a sort mode: the mode's column then the `id` tiebreak, same direction —
+ *  the tuple the keyset cursor comparison mirrors. Shared by both drivers so they can't drift. */
+export function artifactListOrder(
+  art: { created_at: Column; updated_at: Column; title: Column; id: Column },
+  mode: SortMode,
+): SQL[] {
+  const { field, dir } = sortFields(mode)
+  const d = dir === "asc" ? asc : desc
+  return [d(artifactSortExpr(art, field)), d(art.id)]
 }
 
 /** The drizzle schema object — shared by the better-sqlite3 and D1 drivers. */
@@ -558,14 +585,14 @@ export function makeRepos(db: SqliteDb) {
         .from(artifact)
         .innerJoin(collectionItem, eq(collectionItem.artifact_id, artifact.id))
         .where(and(...conds))
-        .orderBy(desc(artifact.created_at), desc(artifact.id))
+        .orderBy(...artifactListOrder(artifact, opts?.sort ?? "created"))
       return opts.limit ? rows.limit(opts.limit).all() : rows.all()
     }
     const rows = db
       .select()
       .from(artifact)
       .where(conds.length ? and(...conds) : undefined)
-      .orderBy(desc(artifact.created_at), desc(artifact.id))
+      .orderBy(...artifactListOrder(artifact, opts?.sort ?? "created"))
     return opts?.limit ? rows.limit(opts.limit).all() : rows.all()
   }
 
@@ -1347,7 +1374,7 @@ export function makeRepos(db: SqliteDb) {
   // The WHERE for a person's visible work: not removed, authored by them (author_id or a
   // linked GitHub id), and visible to the viewer (public OR in a shared workspace).
   const userWorksConds = (userId: string, ghIds: string[], opts: ListArtifactsOpts): SQL[] => {
-    // artifactListConditions handles the keyset cursor (created_at,id); we add the rest.
+    // artifactListConditions handles the keyset cursor (key,id); we add the rest.
     const conds: SQL[] = [...artifactListConditions(artifact, opts), isNull(artifact.removed_at)]
     // Authored by them: author_id is the person, OR a linked GitHub id wrote a synced version.
     if (ghIds.length > 0) {
