@@ -15,7 +15,7 @@ import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { artifactAgentsQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { usableAgents } from "./ask-agent"
+import { ALREADY_QUEUED, queuedFor, usableAgents } from "./ask-agent"
 import { resolveRework } from "./rework-state"
 import type { AgentTarget } from "./types"
 
@@ -53,15 +53,17 @@ export function ReworkMenuItem({
   } = useQuery({ ...artifactAgentsQuery(shortId), enabled: !!me })
   const fire = useApiMutation<{ requestId: string }, AgentTarget>({
     mutationFn: (agent) => api.reworkArtifact(shortId, agent.id),
-    success: (_r, agent) => `Rework request sent to ${agent.name}.`,
+    success: (_r, agent) => queuedFor("Rework", agent.name),
     // The state computed below is a client-side approximation (see the comment on
     // workspaceSettingsQuery above), so a stale cache can draw a 409. Instead of
-    // toasting that, route to the state the client should have shown.
+    // toasting that, route to the state the client should have shown; a re-fire while
+    // the last request still waits is information, not an error.
     errorToast: false,
     onError: (err) => {
       const code = err instanceof ApiError ? err.code : undefined
       if (code === "needsAgent") onConnect()
       else if (code === "needsBrandprint") nav({ to: "/brandprint" })
+      else if (code === "alreadyQueued") toast(ALREADY_QUEUED)
       else toast.error("Rework request failed — try again.")
     },
   })

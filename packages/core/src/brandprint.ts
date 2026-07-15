@@ -41,6 +41,14 @@ export const parseBrandprint = (json: string | null | undefined): Brandprint | u
   }
 }
 
+/** The steps that build the profile, stated once: both the MCP nudge (when a human asks)
+ *  and the canned build request the generate button fires say the same thing, so they
+ *  can't drift into two different definitions of the job. */
+const profileBuildSteps = (profileShortId: string): string =>
+  `read derive://brandprint/reference and derive://brandprint/template plus the source docs` +
+  ` (the other derive://brandprint/* resources), then publish the profile with` +
+  ` for_review: true to artifact ${profileShortId}`
+
 /**
  * The pointer appended to the MCP server `instructions`. Progressive disclosure: the
  * agent reads the full docs from the resources. Three states:
@@ -69,8 +77,7 @@ export const brandprintInstructions = (
     return (
       docs +
       ` Its brand profile has not been generated yet. If the user asks to build or finish` +
-      ` their Brandprint, read derive://brandprint/reference and derive://brandprint/template` +
-      ` plus the source docs, then publish the profile with for_review:true to artifact ${profile.shortId}.`
+      ` their Brandprint, ${profileBuildSteps(profile.shortId)}.`
     )
   return docs
 }
@@ -87,3 +94,15 @@ export const reworkInstruction = (profileLive: boolean): string =>
   "then revise the whole document so its voice, structure, and formatting match. " +
   "Preserve the meaning and the facts; change how it reads, not what it says. " +
   "Publish the result as a new version."
+
+/**
+ * The canned build-the-profile instruction the generate button hands an agent —
+ * server-side single source of truth, the inbox-delivered sibling of the copyable
+ * hand-off brief (which keeps its "connect over MCP" first step; an agent reading its
+ * inbox is already connected). Unlike the MCP nudge, this one was asked for, so it
+ * instructs rather than offers.
+ */
+export const buildProfileInstruction = (profileShortId: string): string =>
+  `Build this workspace's brand profile: ${profileBuildSteps(profileShortId)}.` +
+  " Build it as ONE self-contained HTML file following the reference. It must land as a" +
+  " proposal a human approves; never publish it live."
