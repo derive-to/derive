@@ -28,6 +28,11 @@ const DOMAIN_EVENTS = [
   // channel so their open tabs can auto-open the artifact. Not webhook-eligible
   // (it is a per-user UI signal, like `notification`).
   "artifact.pushed",
+  // A request landed in an agent's pull inbox (an @mention of that agent) —
+  // emitted on the agent's `u:<id>` channel so a session long-polling
+  // check_requests({wait}) wakes at once instead of on its next reconnect. A
+  // wake signal only (the handler re-reads the inbox); not webhook-eligible.
+  "request.created",
 ] as const
 export type DomainEvent = (typeof DOMAIN_EVENTS)[number]
 

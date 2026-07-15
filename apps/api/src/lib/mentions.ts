@@ -70,6 +70,15 @@ export const notifyMentions = async (
         body: cm.body_md,
         author: cm.author,
       })
+      // Wake a session that's long-polling this agent's inbox (check_requests's
+      // `wait`). Signal-only, mirroring the human bell path above — no body on the
+      // bus; the handler re-reads the inbox from the store. Fire-and-forget: an
+      // offline agent simply picks the row up on its next connect.
+      bus.publish(`u:${m.id}`, {
+        type: "request.created",
+        artifact: a.short_id,
+        thread_id: cm.thread_id,
+      })
       notified.push(m.name)
     }
   }
