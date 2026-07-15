@@ -381,10 +381,10 @@ async function buildServer(
         `on your user's behalf and returns the answer, or a session id to resume when the runner ` +
         `needs longer. ` +
         `Keep the library findable: browse tags are how work is discovered later, so tag as you ` +
-        `go — set \`tags\` when you publish, or run suggest_tags on an artifact and apply them with ` +
-        `tag. Reuse the existing vocabulary (list_tags) over near-duplicates; tagging is cheap, so ` +
-        `be generous. Collections group work that genuinely belongs together (list_collections / ` +
-        `collect) — reach for a tag first, a collection when a set is a real unit.` +
+        `go — set \`tags\` when you publish, or use the one \`organize\` tool: call it on an ` +
+        `artifact to see its tags + suggestions, then again with \`add\` to apply (or \`collection\` ` +
+        `to group). Call organize with no arguments for the workspace's tag vocabulary — reuse an ` +
+        `existing tag over a near-duplicate; tagging is cheap, so be generous.` +
         brandprintInstructions(bpSources.length, bpProfile) +
         pendingRequestsPointer(pendingRequests.length),
     },
@@ -1317,196 +1317,184 @@ async function buildServer(
     },
   )
 
-  // TAGS — discover the vocabulary, suggest from similar docs, apply ------------
+  // ORGANIZE — ONE tool for the library's findability metadata: tags + collections,
+  // read + write. No short_ids ⇒ the workspace overview (vocabulary + collections).
+  // short_ids alone ⇒ inspect them (current tags/collections + tag suggestions). Any of
+  // add/remove/set/collection ⇒ write. Replaces the old list_tags/suggest_tags/tag/
+  // list_collections/collect point-tools.
   server.registerTool(
-    "list_tags",
+    "organize",
     {
       description:
-        'The workspace\'s browse-tag vocabulary — every tag with how many artifacts carry it, most-used first. Call this BEFORE tagging so you reuse an existing tag instead of minting a near-duplicate ("planning" vs "plan"); it\'s how the library stays findable. Then list_artifacts(tag:…) to see what\'s under a tag.',
-      inputSchema: { workspace: wsArg },
-    },
-    async ({ workspace }) => {
-      const t = await resolveWs(workspace)
-      if ("error" in t) return err(t.error)
-      const tags = (await ctx.meta.tagCounts(t.org)).sort(
-        (a, b) => b.count - a.count || a.tag.localeCompare(b.tag),
-      )
-      return json({ workspace: t.org, count: tags.length, tags })
-    },
-  )
-
-  server.registerTool(
-    "suggest_tags",
-    {
-      description:
-        "Suggest browse tags for an artifact. Returns its current tags, `suggested` tags drawn from the most semantically-similar artifacts in the workspace (so you reuse how similar things are already tagged), and the full `vocabulary`. Read this, pick the ones that fit — reuse a suggestion or vocabulary entry over a new coinage — then apply them with `tag` (or set them on `publish`). Be generous: tagging is cheap and makes the library findable.",
+        "Tags and collections in one tool — the library's findability layer.\n" +
+        "• READ (no `short_ids`): the workspace's tag vocabulary (tag → count) and its collections. Call this before tagging to reuse an existing tag over a near-duplicate.\n" +
+        "• READ (with `short_ids`): those artifacts' current tags + collections, plus `suggested` tags drawn from the most semantically-similar docs (when one id is given).\n" +
+        "• WRITE: pass `add`/`remove`/`set` to change tags (add never drops existing; set replaces the whole set), and/or `collection` (an id, or a name — created if new) to fold the artifacts into a collection. Each artifact is authorized on its own; ones you can't touch come back as skipped.\n" +
+        "Tag freely and reuse the vocabulary — a well-tagged library is findable. Collections are heavier: a tag for plain findability, a collection when a set is a real unit.",
       inputSchema: {
-        short_id: z.string().describe("The artifact to suggest tags for."),
-        workspace: wsArg,
-      },
-    },
-    async ({ short_id, workspace }) => {
-      const reached = await reach(short_id, workspace)
-      if (!reached) return notFound(short_id)
-      if ("error" in reached) return err(reached.error)
-      const suggestions = await computeTagSuggestions(
-        { meta: ctx.meta, search: ctx.search, sourceText: ctx.sourceText },
-        reached.a,
-        actingFor?.id ?? agent.id,
-      )
-      return json({ short_id, ...suggestions })
-    },
-  )
-
-  server.registerTool(
-    "tag",
-    {
-      description:
-        "Add, remove, or replace an artifact's browse tags — one artifact or many at once. Pass `add` and/or `remove` to adjust the set (add is the default gesture — it never drops the tags a doc already has), or `set` to replace it wholesale. Tags are normalized (trimmed, lowercased, deduped, capped 20). Each artifact is authorized on its own; ones you can't edit come back in `skipped`, so a mixed list still tags what it can. Tag freely — reuse the vocabulary (list_tags / suggest_tags) so the library stays findable.",
-      inputSchema: {
-        short_ids: z.array(z.string()).min(1).describe("One or more artifact short ids to tag."),
-        add: z.array(z.string()).optional().describe("Tags to add (union with the existing set)."),
+        short_ids: z
+          .array(z.string())
+          .optional()
+          .describe("Artifacts to inspect or organize. Omit for the workspace overview."),
+        add: z.array(z.string()).optional().describe("Tags to add (union; never drops existing)."),
         remove: z.array(z.string()).optional().describe("Tags to remove."),
         set: z
           .array(z.string())
           .optional()
-          .describe("Replace the WHOLE set with exactly these (overrides add/remove)."),
-        workspace: wsArg,
-      },
-    },
-    async ({ short_ids, add, remove, set, workspace }) => {
-      if (!add && !remove && !set) return err("Pass at least one of `add`, `remove`, or `set`.")
-      const removeSet = new Set(normalizeTags(remove ?? []))
-      let updated = 0
-      let skipped = 0
-      let failed = 0
-      const results: { short_id: string; tags: string[] }[] = []
-      // Per-artifact, sequential: the set is human-sized (a selection), and each write
-      // reads-then-sets, which mustn't interleave on the same artifact.
-      for (const shortId of [...new Set(short_ids)]) {
-        const reached = await reach(shortId, workspace)
-        // Not found or not editable → skipped, never fails the batch.
-        if (!reached || "error" in reached || !roleAllows(reached.role, "publish")) {
-          skipped++
-          continue
-        }
-        try {
-          const next = set
-            ? normalizeTags(set)
-            : normalizeTags([
-                ...((await ctx.meta.tagsForArtifacts([reached.a.id]))[reached.a.id] ?? []),
-                ...(add ?? []),
-              ]).filter((t) => !removeSet.has(t))
-          await ctx.meta.setArtifactTags(reached.a.id, next)
-          updated++
-          results.push({ short_id: shortId, tags: next })
-        } catch {
-          failed++
-        }
-      }
-      return json({ updated, skipped, failed, results })
-    },
-  )
-
-  // COLLECTIONS (light) — see and route into them -------------------------------
-  server.registerTool(
-    "list_collections",
-    {
-      description:
-        "The workspace's collections — shareable groups of artifacts — with each one's item count. Read-only overview so you can route work into an existing collection with `collect` instead of scattering it. Lists the team-visible collections (invite-only ones you don't belong to stay hidden).",
-      inputSchema: { workspace: wsArg },
-    },
-    async ({ workspace }) => {
-      const t = await resolveWs(workspace)
-      if ("error" in t) return err(t.error)
-      const actorId = actingFor?.id ?? agent.id
-      const cols = await ctx.meta.listCollections(t.org)
-      // Light visibility: team-visible collections, plus any the acting user created (their
-      // own invite-only ones). Mirrors the web rail without the full per-collection role
-      // resolve — enough for an agent to pick a routing target.
-      const visible = cols
-        .filter((col) => col.workspace_access === "member" || col.created_by === actorId)
-        .map((col) => ({ id: col.id, title: col.title, count: col.count }))
-      return json({ workspace: t.org, count: visible.length, collections: visible })
-    },
-  )
-
-  server.registerTool(
-    "collect",
-    {
-      description:
-        "Add one or more artifacts to a collection — by `collection_id` (from list_collections) or by `collection` name, creating that collection if no team-visible one matches. Adding to a SHARED collection re-shares the artifacts to its members, so each artifact is authorized for sharing; ones you can't share come back in `skipped`. Collections are heavier than tags — reach for a tag first for plain findability, a collection when a set genuinely belongs together.",
-      inputSchema: {
-        short_ids: z.array(z.string()).min(1).describe("Artifact short ids to add."),
-        collection_id: z.string().optional().describe("An existing collection's id."),
+          .describe("Replace the whole tag set (overrides add/remove)."),
         collection: z
           .string()
           .optional()
-          .describe("A collection name — matched against team-visible collections, else created."),
+          .describe("Fold `short_ids` into this collection — an id, or a name (created if new)."),
         workspace: wsArg,
       },
     },
-    async ({ short_ids, collection_id, collection, workspace }) => {
-      if (!collection_id && !collection?.trim())
-        return err("Pass a `collection_id` or a `collection` name.")
+    async ({ short_ids, add, remove, set, collection, workspace }) => {
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
       const actorId = actingFor?.id ?? agent.id
-      // Resolve the target collection: by id, then by name, else create it.
-      let col = collection_id ? await ctx.meta.getCollection(collection_id) : null
-      if (col && col.org_id !== t.org) return err("That collection is in another workspace.")
-      if (!col && collection?.trim()) {
-        const name = collection.trim()
-        const existing = (await ctx.meta.listCollections(t.org)).find(
-          (x) =>
-            x.title.toLowerCase() === name.toLowerCase() &&
-            (x.workspace_access === "member" || x.created_by === actorId),
-        )
-        col =
-          existing ??
-          (await (async () => {
-            const created = await ctx.meta.createCollection({
-              id: newId("col"),
-              org_id: t.org,
-              title: name.slice(0, 120),
-              created_by: actorId,
-              workspace_access: "member",
-            })
-            await ctx.meta.setCollectionMember({
-              id: newId("cm"),
-              collection_id: created.id,
-              user_id: actorId,
-              role: "owner",
-            })
-            return created
-          })())
-      }
-      if (!col) return err("Collection not found.")
-      // The caller must be able to MANAGE the collection to fold artifacts in: a
-      // team-visible one at their workspace seat, an invite-only one via an explicit
-      // member row. Mirrors the HTTP route's canManageCollection.
-      const canManage =
-        col.workspace_access === "member"
-          ? roleAllows(t.role, "publish")
-          : roleAllows(
-              (await ctx.meta.getCollectionMember(col.id, actorId))?.role ?? "viewer",
-              "publish",
-            )
-      if (!canManage) return err("You can't add to that collection.")
+      const sortVocab = (v: { tag: string; count: number }[]) =>
+        v.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
 
-      let added = 0
-      let skipped = 0
-      for (const shortId of [...new Set(short_ids)]) {
-        const reached = await reach(shortId, workspace)
-        // Adding to a shared collection re-shares the artifact, so it needs share standing.
-        if (!reached || "error" in reached || !roleAllows(reached.role, "share")) {
-          skipped++
-          continue
+      // ---- WRITE: add/remove/set tags and/or fold into a collection ----
+      if (add || remove || set || collection) {
+        if (!short_ids?.length)
+          return err("Pass `short_ids` to organize (with add/remove/set and/or collection).")
+        const out: Record<string, unknown> = {}
+        if (add || remove || set) {
+          const removeSet = new Set(normalizeTags(remove ?? []))
+          let updated = 0
+          let skipped = 0
+          const results: { short_id: string; tags: string[] }[] = []
+          for (const shortId of [...new Set(short_ids)]) {
+            const reached = await reach(shortId, workspace)
+            // Not found or not editable → skipped, never fails the batch.
+            if (!reached || "error" in reached || !roleAllows(reached.role, "publish")) {
+              skipped++
+              continue
+            }
+            const next = set
+              ? normalizeTags(set)
+              : normalizeTags([
+                  ...((await ctx.meta.tagsForArtifacts([reached.a.id]))[reached.a.id] ?? []),
+                  ...(add ?? []),
+                ]).filter((x) => !removeSet.has(x))
+            await ctx.meta.setArtifactTags(reached.a.id, next)
+            updated++
+            results.push({ short_id: shortId, tags: next })
+          }
+          out.tagged = { updated, skipped, results }
         }
-        await ctx.meta.addCollectionItem(col.id, reached.a.id)
-        added++
+        if (collection) {
+          // Resolve the target collection: an id, else a name (matched team-visible, else
+          // created). Then the caller must be able to MANAGE it (mirrors the HTTP route).
+          const ref = collection.trim()
+          let col = await ctx.meta.getCollection(ref)
+          if (col && col.org_id !== t.org) return err("That collection is in another workspace.")
+          if (!col) {
+            const existing = (await ctx.meta.listCollections(t.org)).find(
+              (x) =>
+                x.title.toLowerCase() === ref.toLowerCase() &&
+                (x.workspace_access === "member" || x.created_by === actorId),
+            )
+            if (existing) col = existing
+            else {
+              col = await ctx.meta.createCollection({
+                id: newId("col"),
+                org_id: t.org,
+                title: ref.slice(0, 120),
+                created_by: actorId,
+                workspace_access: "member",
+              })
+              await ctx.meta.setCollectionMember({
+                id: newId("cm"),
+                collection_id: col.id,
+                user_id: actorId,
+                role: "owner",
+              })
+            }
+          }
+          const canManage =
+            col.workspace_access === "member"
+              ? roleAllows(t.role, "publish")
+              : roleAllows(
+                  (await ctx.meta.getCollectionMember(col.id, actorId))?.role ?? "viewer",
+                  "publish",
+                )
+          if (!canManage) return err("You can't add to that collection.")
+          let added = 0
+          let skipped = 0
+          for (const shortId of [...new Set(short_ids)]) {
+            const reached = await reach(shortId, workspace)
+            // Adding to a shared collection re-shares the artifact → needs share standing.
+            if (!reached || "error" in reached || !roleAllows(reached.role, "share")) {
+              skipped++
+              continue
+            }
+            await ctx.meta.addCollectionItem(col.id, reached.a.id)
+            added++
+          }
+          out.collected = { collection: { id: col.id, title: col.title }, added, skipped }
+        }
+        return json(out)
       }
-      return json({ collection: { id: col.id, title: col.title }, added, skipped })
+
+      // ---- READ: inspect specific artifacts (current tags + collections + suggestions) --
+      if (short_ids?.length) {
+        const artifacts: {
+          short_id: string
+          tags?: string[]
+          collections?: string[]
+          error?: string
+        }[] = []
+        let firstReached: ArtifactRecord | null = null
+        for (const shortId of short_ids) {
+          const reached = await reach(shortId, workspace)
+          if (!reached || "error" in reached) {
+            artifacts.push({ short_id: shortId, error: "not reachable" })
+            continue
+          }
+          if (!firstReached) firstReached = reached.a
+          const [tagMap, colIds] = await Promise.all([
+            ctx.meta.tagsForArtifacts([reached.a.id]),
+            ctx.meta.collectionIdsForArtifact(reached.a.id),
+          ])
+          artifacts.push({
+            short_id: shortId,
+            tags: tagMap[reached.a.id] ?? [],
+            collections: colIds,
+          })
+        }
+        // Suggestions only for a SINGLE artifact — aggregating across many is ambiguous.
+        const suggested =
+          short_ids.length === 1 && firstReached
+            ? (
+                await computeTagSuggestions(
+                  { meta: ctx.meta, search: ctx.search, sourceText: ctx.sourceText },
+                  firstReached,
+                  actorId,
+                )
+              ).suggested
+            : undefined
+        return json({
+          artifacts,
+          ...(suggested ? { suggested } : {}),
+          vocabulary: sortVocab(await ctx.meta.tagCounts(t.org)).slice(0, 50),
+        })
+      }
+
+      // ---- READ: workspace overview (vocabulary + collections) ----
+      const [tags, cols] = await Promise.all([
+        ctx.meta.tagCounts(t.org),
+        ctx.meta.listCollections(t.org),
+      ])
+      return json({
+        workspace: t.org,
+        vocabulary: sortVocab(tags),
+        collections: cols
+          .filter((col) => col.workspace_access === "member" || col.created_by === actorId)
+          .map((col) => ({ id: col.id, title: col.title, count: col.count })),
+      })
     },
   )
 

@@ -147,6 +147,8 @@ export interface ArtifactJson {
   versions: VersionJson[]
   /** Browse tags — present on the detail endpoint (newer servers). */
   tags?: string[]
+  /** Collection ids this artifact belongs to — present on the detail endpoint. */
+  collections?: string[]
   /** Time-grouped version view (newest-first); present on the detail endpoint. */
   sessions?: SessionJson[]
   /** Publish-response extras (agent-credentialed publishes only). */
@@ -235,10 +237,10 @@ export interface DeriveClient {
   ): Promise<TagResultJson>
   /** The workspace's team-visible collections with item counts. */
   listCollections(): Promise<CollectionSummaryJson[]>
-  /** Add artifacts to a collection by id or name (creating the collection by name). */
+  /** Add artifacts to a collection identified by id OR name (created if a new name). */
   collect(
     shortIds: string[],
-    target: { collectionId?: string; collection?: string },
+    ref: string,
   ): Promise<{ collection: { id: string; title: string }; added: number; skipped: number }>
   publish(args: PublishArgs): Promise<ArtifactJson>
   /** Submit a single-file revision for human review (does not go live). */
@@ -403,36 +405,28 @@ export function createClient(opts: ClientOptions): DeriveClient {
       return r.collections.map((c) => ({ id: c.id, title: c.title, count: c.count }))
     },
 
-    async collect(shortIds, target) {
-      // Resolve the collection: an explicit id, else match/create by name.
-      let collectionId = target.collectionId
-      let title = ""
+    async collect(shortIds, ref) {
+      // Resolve `ref` against the workspace's collections by id OR title, else create it.
+      const name = ref.trim()
       const cols = (
         (await ok(await f(`${base}/v1/collections`, { headers: authHeaders }))) as {
           collections: { id: string; title: string }[]
         }
       ).collections
-      if (collectionId) {
-        title = cols.find((c) => c.id === collectionId)?.title ?? ""
-      } else if (target.collection?.trim()) {
-        const name = target.collection.trim()
-        const existing = cols.find((c) => c.title.toLowerCase() === name.toLowerCase())
-        if (existing) {
-          collectionId = existing.id
-          title = existing.title
-        } else {
-          const created = (await ok(
-            await f(`${base}/v1/collections`, {
-              method: "POST",
-              headers: { ...authHeaders, "content-type": "application/json" },
-              body: JSON.stringify({ title: name }),
-            }),
-          )) as { id: string; title: string }
-          collectionId = created.id
-          title = created.title
-        }
+      const match = cols.find((c) => c.id === name || c.title.toLowerCase() === name.toLowerCase())
+      let collectionId = match?.id
+      let title = match?.title ?? ""
+      if (!collectionId) {
+        const created = (await ok(
+          await f(`${base}/v1/collections`, {
+            method: "POST",
+            headers: { ...authHeaders, "content-type": "application/json" },
+            body: JSON.stringify({ title: name }),
+          }),
+        )) as { id: string; title: string }
+        collectionId = created.id
+        title = created.title
       }
-      if (!collectionId) throw new Error("collect: pass a collectionId or a collection name")
       const r = (await ok(
         await f(`${base}/v1/bulk/collections`, {
           method: "POST",

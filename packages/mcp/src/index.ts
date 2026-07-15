@@ -617,100 +617,72 @@ server.registerTool(
   },
 )
 
-// TAGS — discover the vocabulary, suggest from similar docs, apply ------------
+// ORGANIZE — ONE tool for the library's findability metadata: tags + collections,
+// read + write. Replaces the old list_tags/suggest_tags/tag/list_collections/collect.
 server.registerTool(
-  "list_tags",
+  "organize",
   {
     description:
-      "The workspace's browse-tag vocabulary — every tag with how many artifacts carry it, most-used first. Call this BEFORE tagging so you reuse an existing tag instead of minting a near-duplicate; it's how the library stays findable. Then list_artifacts(tag:…) to see what's under a tag.",
-    inputSchema: { workspace: wsArg },
-  },
-  async ({ workspace: ws }) => {
-    const tags = await clientFor(ws).listTags()
-    return json({ count: tags.length, tags })
-  },
-)
-
-server.registerTool(
-  "suggest_tags",
-  {
-    description:
-      "Suggest browse tags for an artifact: its current tags, `suggested` tags drawn from the most semantically-similar artifacts (so you reuse how similar things are already tagged), and the full `vocabulary`. Pick the ones that fit — reuse a suggestion or vocabulary entry over a new coinage — then apply them with `tag` (or set them on `publish`). Tagging is cheap; be generous.",
+      "Tags and collections in one tool — the library's findability layer.\n" +
+      "• READ (no `short_ids`): the workspace's tag vocabulary (tag → count) and its collections. Call this before tagging to reuse an existing tag over a near-duplicate.\n" +
+      "• READ (with `short_ids`): those artifacts' current tags + collections, plus `suggested` tags drawn from the most semantically-similar docs (when one id is given).\n" +
+      "• WRITE: pass `add`/`remove`/`set` to change tags (add never drops existing; set replaces the whole set), and/or `collection` (an id, or a name — created if new) to fold the artifacts into a collection. Each artifact is authorized on its own; ones you can't touch are skipped.\n" +
+      "Tag freely and reuse the vocabulary — a well-tagged library is findable. Collections are heavier: a tag for plain findability, a collection when a set is a real unit.",
     inputSchema: {
-      short_id: z.string().describe("The artifact to suggest tags for."),
-      workspace: wsArg,
-    },
-  },
-  async ({ short_id, workspace: ws }) => {
-    try {
-      return json({ short_id, ...(await clientFor(ws).suggestTags(short_id)) })
-    } catch (e) {
-      return err(e instanceof Error ? e.message : "suggest_tags failed")
-    }
-  },
-)
-
-server.registerTool(
-  "tag",
-  {
-    description:
-      "Add, remove, or replace an artifact's browse tags — one artifact or many. Pass `add` and/or `remove` to adjust the set (add never drops existing tags), or `set` to replace it wholesale. Tags are normalized (trimmed, lowercased, deduped, capped 20); artifacts you can't edit are skipped. Tag freely and reuse the vocabulary (list_tags / suggest_tags) so the library stays findable.",
-    inputSchema: {
-      short_ids: z.array(z.string()).min(1).describe("One or more artifact short ids to tag."),
-      add: z.array(z.string()).optional().describe("Tags to add (union with the existing set)."),
+      short_ids: z
+        .array(z.string())
+        .optional()
+        .describe("Artifacts to inspect or organize. Omit for the workspace overview."),
+      add: z.array(z.string()).optional().describe("Tags to add (union; never drops existing)."),
       remove: z.array(z.string()).optional().describe("Tags to remove."),
       set: z
         .array(z.string())
         .optional()
-        .describe("Replace the WHOLE set with exactly these (overrides add/remove)."),
+        .describe("Replace the whole tag set (overrides add/remove)."),
+      collection: z
+        .string()
+        .optional()
+        .describe("Fold `short_ids` into this collection — an id, or a name (created if new)."),
       workspace: wsArg,
     },
   },
-  async ({ short_ids, add, remove, set, workspace: ws }) => {
-    if (!add && !remove && !set) return text("Pass at least one of `add`, `remove`, or `set`.")
+  async ({ short_ids, add, remove, set, collection, workspace: ws }) => {
+    const client = clientFor(ws)
     try {
-      return json(await clientFor(ws).tag(short_ids, { add, remove, set }))
+      // WRITE
+      if (add || remove || set || collection) {
+        if (!short_ids?.length)
+          return text("Pass `short_ids` to organize (with add/remove/set and/or collection).")
+        const out: Record<string, unknown> = {}
+        if (add || remove || set) out.tagged = await client.tag(short_ids, { add, remove, set })
+        if (collection) out.collected = await client.collect(short_ids, collection)
+        return json(out)
+      }
+      // READ: inspect specific artifacts
+      if (short_ids?.length) {
+        const artifacts = await Promise.all(
+          short_ids.map(async (id) => {
+            const a = await client.get(id)
+            return { short_id: id, tags: a.tags ?? [], collections: a.collections ?? [] }
+          }),
+        )
+        // Suggestions only for a single artifact (aggregating across many is ambiguous).
+        const only = short_ids.length === 1 ? short_ids[0] : undefined
+        const suggested = only ? (await client.suggestTags(only)).suggested : undefined
+        return json({
+          artifacts,
+          ...(suggested ? { suggested } : {}),
+          vocabulary: (await client.listTags()).slice(0, 50),
+        })
+      }
+      // READ: workspace overview
+      const [vocabulary, collections] = await Promise.all([
+        client.listTags(),
+        client.listCollections(),
+      ])
+      return json({ vocabulary, collections })
     } catch (e) {
-      return err(e instanceof Error ? e.message : "tag failed")
-    }
-  },
-)
-
-// COLLECTIONS (light) — see and route into them -------------------------------
-server.registerTool(
-  "list_collections",
-  {
-    description:
-      "The workspace's collections — shareable groups of artifacts — with each one's item count. A read-only overview so you can route work into an existing collection with `collect` instead of scattering it.",
-    inputSchema: { workspace: wsArg },
-  },
-  async ({ workspace: ws }) => {
-    const collections = await clientFor(ws).listCollections()
-    return json({ count: collections.length, collections })
-  },
-)
-
-server.registerTool(
-  "collect",
-  {
-    description:
-      "Add one or more artifacts to a collection — by `collection_id` (from list_collections) or by `collection` name, creating that collection if none matches. Adding to a shared collection re-shares the artifacts to its members. Collections are heavier than tags — reach for a tag first for plain findability, a collection when a set genuinely belongs together.",
-    inputSchema: {
-      short_ids: z.array(z.string()).min(1).describe("Artifact short ids to add."),
-      collection_id: z.string().optional().describe("An existing collection's id."),
-      collection: z.string().optional().describe("A collection name — matched, else created."),
-      workspace: wsArg,
-    },
-  },
-  async ({ short_ids, collection_id, collection, workspace: ws }) => {
-    if (!collection_id && !collection?.trim())
-      return text("Pass a `collection_id` or a `collection` name.")
-    try {
-      return json(
-        await clientFor(ws).collect(short_ids, { collectionId: collection_id, collection }),
-      )
-    } catch (e) {
-      return err(e instanceof Error ? e.message : "collect failed")
+      return err(e instanceof Error ? e.message : "organize failed")
     }
   },
 )

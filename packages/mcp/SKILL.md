@@ -22,10 +22,7 @@ Your identity (agent name, workspace, role) is in the server instructions — th
 | Tool | Use |
 |---|---|
 | `list_artifacts` | Find: the artifacts in your workspace (short id, title, kind, version, visibility, and their browse `tags`). Optional `query` filters by title; `tag` filters to one browse tag. |
-| `list_tags` | The workspace tag vocabulary — every tag with how many artifacts carry it. Read it before tagging so you reuse an existing tag over a near-duplicate. |
-| `suggest_tags` | For an artifact: its current tags, `suggested` tags drawn from the most semantically-similar docs, and the full `vocabulary`. Pick the ones that fit, then apply with `tag`. |
-| `tag` | Add / remove / replace an artifact's browse tags — one artifact or many (`short_ids`). `add` (the default gesture) never drops existing tags; `set` replaces the whole set. |
-| `list_collections` / `collect` | Collections group work that belongs together. `list_collections` shows them with counts; `collect` adds artifacts to one (by id or name, creating by name). Lighter-touch than tags — reach for a tag first. |
+| `organize` | Tags + collections in one tool. **No `short_ids`** → the workspace's tag vocabulary + collections (read this before tagging to reuse a tag). **With `short_ids`** → those artifacts' tags + collections + `suggested` tags from similar docs. **`add`/`remove`/`set`** change tags; **`collection`** (id or name, created if new) folds them into a collection. Ones you can't touch are skipped. |
 | `search` | Grep. Pass `short_id` to find text WITHIN one artifact — matching lines with line numbers (and optional `context`), ripgrep-style, so you can `read` a narrow `lines` range or `edit` that spot next. Omit `short_id` to grep instead ACROSS the workspace's most recently created artifacts, grouped by artifact — find WHICH doc has something before opening it. `in:'text'` searches the visible text instead of raw source; the query is matched literally (no regex metacharacters). |
 | `read` | Read an artifact's content by short id, as **Markdown by default** (HTML is converted — headings, lists, tables, code fences; a styled page still renders fully to viewers, only this reading view flattens it). Omit `section` and a small doc/bundle returns whole; a **large one returns its outline first** (heading slugs for a single-file doc, page paths for a bundle) — call again with a `section` (a slug, a bundle page, `page.html#slug`, or `"*"` for the full clipped document). Pass `format:'html'` for the exact stored source (needed before publish `edits`) or `format:'text'` for flat visible text (what comment `quote`s anchor against). Pass `version` to read history. An image page in a bundle comes back as a real image, not garbage text. |
 | `catch_up` | Start here on an artifact: its state in one call — what changed since `since_version`, the open/outdated comment threads, the `review` round state, and version history. Pass `comments` (open/addressed/resolved/outdated) for that filtered feedback queue, or `response_format='detailed'` (with optional `since_version`/`to_version`) to fold in a line diff — of the **readable Markdown form**, not raw HTML, so it shows what changed instead of tag noise. Waiting on a review? Pass `wait` (seconds, max 50) to long-poll: the call blocks until the human sends back / approves / comments — chain these instead of sleeping. |
@@ -62,17 +59,18 @@ human approves rather than live content.
 ## Keep the library findable — tag as you go
 
 Browse tags are how work is discovered later, so tag whenever you publish. The cheap,
-high-reuse loop:
+high-reuse loop, all through the one `organize` tool:
 
-1. `list_tags` (or `suggest_tags <short_id>`) → see the vocabulary and what similar docs
-   are tagged, so you reuse an existing tag instead of minting `plan` next to `planning`.
-2. Set `tags` right on `publish` (auto-tag), or apply them after with `tag`.
+1. `organize()` (no args) or `organize({short_ids: ["x"]})` → see the vocabulary and what
+   similar docs are tagged, so you reuse an existing tag instead of minting `plan` next to
+   `planning`.
+2. Set `tags` right on `publish` (auto-tag), or apply after with
+   `organize({short_ids, add: […]})`.
 3. Find later with `list_artifacts(tag: …)`.
 
 Be generous — tagging is cheap and low-risk, and a well-tagged library is the difference
-between findable and lost. Collections (`list_collections` / `collect`) are heavier: use
-one when a set of artifacts is a real unit (a project, a release), a tag for plain
-findability.
+between findable and lost. Collections are heavier: `organize({short_ids, collection})`
+when a set of artifacts is a real unit (a project, a release), a tag for plain findability.
 
 ## Reading big documents
 

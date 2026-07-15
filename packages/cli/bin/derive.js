@@ -15,9 +15,9 @@
 //   derive account use <ref>               set the default account
 //   derive logout [--account a] [--all]    sign out
 //   derive publish [file|dir] [--id --title --slug --spa --message --tags a,b --name --workspace-access --link-role --listed --password --server --token --workspace --account]  (--visibility is a deprecated shorthand)
-//   derive tags [--json]                   the workspace tag vocabulary (tag → count)
+//   derive tag                             the workspace tag vocabulary (tag → count)
+//   derive tag --suggest [--id]            suggest tags for the artifact (from similar docs)
 //   derive tag <tag…> [--rm a,b] [--set a,b] [--id]  add/remove/replace an artifact's tags
-//   derive suggest-tags [short_id] [--id --json]  suggest tags from similar artifacts
 //   derive comments [--id]                 list the artifact's comment threads
 //   derive pull [short_id] [--v N] [--out f]  print an artifact's source (bundles: entry file)
 //   derive open [short_id] [--id]          open the artifact in a browser
@@ -86,6 +86,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--clear") flags.clear = "true"
   else if (a === "--mock") flags.mock = "true"
   else if (a === "--manage") flags.manage = "true"
+  else if (a === "--suggest") flags.suggest = "true"
   // Repeatable: `--env-file a --env-file b` stacks (equivalent to --env-file a,b).
   else if (a === "--env-file")
     flags["env-file"] = flags["env-file"] ? `${flags["env-file"]},${args[++i]}` : args[++i]
@@ -932,10 +933,8 @@ const LOOP = [
   "status",
   "send-back",
   "approve",
-  // Findability: the workspace tag vocabulary + per-artifact tag apply / suggest.
-  "tags",
+  // Findability: one `tag` verb — vocabulary (no args), suggest (--suggest), or apply.
   "tag",
-  "suggest-tags",
 ]
 if (LOOP.includes(cmd)) {
   let cfg = null
@@ -952,11 +951,16 @@ if (LOOP.includes(cmd)) {
   // <short_id>`: a positional id overrides the repo pin — the fallback an agent
   // runs when a publish reports opened_in_tab:false. (reply/resolve keep their
   // positional for the thread/comment id.)
-  if (positional[0] && ["open", "status", "comments", "pull", "suggest-tags"].includes(cmd))
-    r.id = positional[0]
-  // `tags` is workspace-scoped (the vocabulary), so it needs no artifact id; every other
-  // loop verb does.
-  if (!r.id && cmd !== "tags") {
+  if (positional[0] && ["open", "status", "comments", "pull"].includes(cmd)) r.id = positional[0]
+  // `derive tag` with NO tags + NO --suggest is the workspace vocabulary — needs no artifact
+  // id; every other loop verb (and the apply/suggest forms of `tag`) does.
+  const tagVocab =
+    cmd === "tag" &&
+    positional.length === 0 &&
+    !flags.rm &&
+    flags.set === undefined &&
+    !flags.suggest
+  if (!r.id && !tagVocab) {
     console.error(`error: no artifact id. Set "id" in ${CONFIG_FILE} (publish once), or pass --id.`)
     process.exit(1)
   }
@@ -971,70 +975,64 @@ if (LOOP.includes(cmd)) {
     process.exit(1)
   }
 
-  // ---- Findability: tags vocabulary, per-artifact apply, suggestions --------
-  const splitTags = (v) =>
-    String(v ?? "")
-      .split(/[,\s]+/)
-      .map((t) => t.trim())
-      .filter(Boolean)
-
-  if (cmd === "tags") {
-    const res = await fetch(`${r.server}/v1/tags`, { headers: auth })
-    if (!res.ok) await die(res)
-    const tags = ((await res.json()).tags ?? []).sort(
-      (a, b) => b.count - a.count || a.tag.localeCompare(b.tag),
-    )
-    if (flags.json) {
-      console.log(JSON.stringify(tags))
-    } else if (tags.length === 0) {
-      console.log("(no tags yet)")
-    } else {
-      const w = Math.max(...tags.map((t) => t.tag.length))
-      for (const t of tags) console.log(`  ${t.tag.padEnd(w)}  ${t.count}`)
-    }
-    process.exit(0)
-  }
-
-  if (cmd === "suggest-tags") {
-    const res = await fetch(`${base}/tag-suggestions`, { headers: auth })
-    if (!res.ok) await die(res)
-    const s = await res.json()
-    if (flags.json) {
-      console.log(JSON.stringify(s))
-    } else {
-      console.log(`current:    ${s.current.length ? s.current.join(", ") : "(none)"}`)
-      console.log(
-        `suggested:  ${s.suggested.length ? s.suggested.map((x) => x.tag).join(", ") : "(none — no similar docs)"}`,
-      )
-      console.log(
-        `vocabulary: ${
-          s.vocabulary.length
-            ? s.vocabulary
-                .slice(0, 20)
-                .map((x) => x.tag)
-                .join(", ")
-            : "(empty)"
-        }`,
-      )
-      if (s.suggested.length)
-        console.error(`\n  apply:  derive tag ${s.suggested.map((x) => x.tag).join(" ")}`)
-    }
-    process.exit(0)
-  }
-
+  // ---- Findability: one `derive tag` verb, mirroring the MCP `organize` tool -----
+  //   derive tag                       → the workspace tag vocabulary
+  //   derive tag --suggest [--id]      → tag suggestions for the artifact
+  //   derive tag <tag…> [--rm a,b] [--set a,b] [--id]  → add / remove / replace
   if (cmd === "tag") {
-    // `derive tag foo bar` adds; `--rm x,y` removes; `--set a,b` replaces the whole set.
-    // Operates on the repo-pinned artifact (or --id). Positional tokens are tags to add.
+    const splitTags = (v) =>
+      String(v ?? "")
+        .split(/[,\s]+/)
+        .map((t) => t.trim())
+        .filter(Boolean)
+
+    // No tags + no --suggest → the workspace vocabulary (no artifact id needed).
+    if (tagVocab) {
+      const res = await fetch(`${r.server}/v1/tags`, { headers: auth })
+      if (!res.ok) await die(res)
+      const tags = ((await res.json()).tags ?? []).sort(
+        (a, b) => b.count - a.count || a.tag.localeCompare(b.tag),
+      )
+      if (flags.json) console.log(JSON.stringify(tags))
+      else if (tags.length === 0) console.log("(no tags yet)")
+      else {
+        const w = Math.max(...tags.map((t) => t.tag.length))
+        for (const t of tags) console.log(`  ${t.tag.padEnd(w)}  ${t.count}`)
+      }
+      process.exit(0)
+    }
+
+    if (flags.suggest) {
+      const res = await fetch(`${base}/tag-suggestions`, { headers: auth })
+      if (!res.ok) await die(res)
+      const s = await res.json()
+      if (flags.json) {
+        console.log(JSON.stringify(s))
+      } else {
+        console.log(`current:    ${s.current.length ? s.current.join(", ") : "(none)"}`)
+        console.log(
+          `suggested:  ${s.suggested.length ? s.suggested.map((x) => x.tag).join(", ") : "(none — no similar docs)"}`,
+        )
+        console.log(
+          `vocabulary: ${
+            s.vocabulary.length
+              ? s.vocabulary
+                  .slice(0, 20)
+                  .map((x) => x.tag)
+                  .join(", ")
+              : "(empty)"
+          }`,
+        )
+        if (s.suggested.length)
+          console.error(`\n  apply:  derive tag ${s.suggested.map((x) => x.tag).join(" ")}`)
+      }
+      process.exit(0)
+    }
+
+    // Apply: positional tokens add; `--rm` removes; `--set` replaces the whole set.
     const add = positional
     const remove = splitTags(flags.rm)
     const set = flags.set !== undefined ? splitTags(flags.set) : null
-    if (!add.length && !remove.length && set === null) {
-      console.error(
-        "usage: derive tag <tag…> [--rm a,b] [--set a,b] [--id short_id]\n" +
-          "  add tags (positional), remove (--rm), or replace the set (--set).",
-      )
-      process.exit(1)
-    }
     const put = async (tags) => {
       const res = await fetch(`${base}/tags`, {
         method: "PUT",
