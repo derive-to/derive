@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { getInitials } from "./initials"
+import { getInitials, getMonogram } from "./initials"
 
 describe("getInitials", () => {
   it("takes the first two characters, uppercased", () => {
@@ -19,5 +19,26 @@ describe("getInitials", () => {
   })
   it("uses a caller-supplied fallback", () => {
     expect(getInitials("", "??")).toBe("??")
+  })
+})
+
+describe("getMonogram", () => {
+  it("takes the first character only, uppercased (a chrome-sized tile fits one glyph)", () => {
+    expect(getMonogram("Homepage")).toBe("H")
+    expect(getMonogram("brandprint")).toBe("B")
+  })
+  it("trims surrounding whitespace first", () => {
+    expect(getMonogram("  pricing")).toBe("P")
+  })
+  it("keeps a leading digit or symbol as-is", () => {
+    expect(getMonogram("2024 launch")).toBe("2")
+  })
+  it("keeps a leading emoji whole (no split surrogate pair)", () => {
+    expect(getMonogram("🚀 Launch")).toBe("🚀")
+  })
+  it("falls back for empty / null / undefined", () => {
+    expect(getMonogram("")).toBe("?")
+    expect(getMonogram(null)).toBe("?")
+    expect(getMonogram(undefined)).toBe("?")
   })
 })

@@ -24,6 +24,7 @@ import {
   Fingerprint,
   Flag,
   Folder,
+  FolderGit2,
   Folders,
   GitPullRequest,
   Globe,
@@ -66,6 +67,9 @@ const REG = {
   following: Users,
   collections: Folders,
   collection: Folder,
+  // A mirrored GitHub repo collection — a folder-with-git glyph, distinct from the
+  // plain `collection` folder so a repo reads as code-backed at a glance.
+  repo: FolderGit2,
   context: Bot,
   // Brandprint — the brand's fingerprint.
   brandprint: Fingerprint,

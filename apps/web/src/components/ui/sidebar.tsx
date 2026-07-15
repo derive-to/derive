@@ -371,7 +371,12 @@ function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="sidebar-content"
       data-sidebar="content"
       className={cn(
-        "no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-auto group-data-[collapsible=icon]:overflow-hidden",
+        // Collapsed (icon) rail scrolls vertically when its content is taller than
+        // the viewport — the rail can now hold a data-driven collections list, so a
+        // long one must reach the pinned tools/footer instead of clipping. X stays
+        // hidden (no sideways scroll during the width transition); no-scrollbar hides
+        // the bar, matching the expanded rail.
+        "no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-auto group-data-[collapsible=icon]:overflow-x-hidden group-data-[collapsible=icon]:overflow-y-auto",
         className,
       )}
       {...props}
