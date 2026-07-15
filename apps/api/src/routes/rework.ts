@@ -1,4 +1,5 @@
 import {
+  AGENT_INBOX_PAGE,
   type AgentRecord,
   type ArtifactRecord,
   buildProfileInstruction,
@@ -23,11 +24,6 @@ import { notifyCommentBells } from "../lib/notify-comment"
  *  MCP pull inbox. The agent does the work and publishes per its grant: a
  *  publish-capable agent posts directly, a lower grant files a proposal — no special
  *  case here. */
-// How deep to look for an already-queued ask. The inbox is a working set, not an
-// archive; an agent that lets it grow past this has stopped acking. (The MCP inbox
-// reader pages by the same number — one constant once both land.)
-const INBOX_SCAN = 50
-
 export const reworkRoutes = (ctx: AppContext) => {
   const { meta, bus, background, notify, actingUser, authorize, limited, commentLimiter } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -113,7 +109,7 @@ export const reworkRoutes = (ctx: AppContext) => {
     agent: AgentRecord,
     instruction: string,
   ): Promise<string | Response> => {
-    const queued = await meta.listPendingAgentMentions(agent.id, INBOX_SCAN)
+    const queued = await meta.listPendingAgentMentions(agent.id, AGENT_INBOX_PAGE)
     if (queued.some((m) => m.artifact_short_id === artifact.short_id))
       return fail(c, 409, `a request for this artifact is already queued for ${agent.name}`, {
         code: "alreadyQueued",

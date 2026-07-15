@@ -167,6 +167,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     const names = toolNames(list)
     expect(names.sort()).toEqual([
       "catch_up",
+      "check_requests",
       "comment",
       "list_artifacts",
       "list_workspaces",
@@ -2475,5 +2476,84 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(JSON.parse(toolText(proposed)).proposed).toBe(true)
     await new Promise((r) => setTimeout(r, 20))
     expect(await meta.claimDueRenderJobs(new Date().toISOString(), 10, lease)).toHaveLength(0)
+  })
+})
+
+describe("the agent inbox over MCP (check_requests)", () => {
+  // A registered agent's bearer resolves through the same agentFor bridge as HTTP —
+  // seed the agent store-level (token stored hashed, exactly what POST /v1/agents
+  // writes) and hand it a pending request row (what the comment @mention fan-out
+  // writes; the fan-out itself is pinned by comment-fanout.test.ts and rework.test.ts).
+  const seedInbox = async (name: string) => {
+    const { app, token, meta } = appWithGrant(name, "openid derive:read derive:publish")
+    const shortId = (await (await publish(app, token, "Quarterly notes")).json()).short_id as string
+    const art = await meta.getByShortId(shortId)
+    if (!art) throw new Error("no artifact")
+    const agentToken = `agtok_${name}`
+    const agent = await meta.createAgent({
+      id: `ag_${name}`,
+      org_id: art.org_id,
+      name: "Reviser",
+      token: sha256(agentToken),
+      role: "editor",
+      created_by: "u_o",
+      // biome-ignore lint/suspicious/noExplicitAny: NewAgent optional fields
+    } as any)
+    await meta.createAgentMention({
+      id: `amn_${name}`,
+      agent_id: agent.id,
+      artifact_id: art.id,
+      artifact_short_id: shortId,
+      comment_id: "c_req",
+      thread_id: "c_req",
+      body: "@Reviser Rework this artifact to match our Brandprint.",
+      author: "Owner",
+    })
+    return { app, meta, shortId, agent, agentToken, oauthToken: token }
+  }
+
+  it("announces pending requests in the agent connection's instructions", async () => {
+    const { app, agentToken, oauthToken } = await seedInbox("inboxptr")
+    const init = await rpc(app, agentToken, initBody)
+    const inst = (init.parsed?.result as { instructions?: string }).instructions ?? ""
+    expect(inst).toContain("1 pending request")
+    expect(inst).toContain("check_requests")
+    // The OAuth surface (a human's grant, no inbox of its own) stays quiet.
+    const oinit = await rpc(app, oauthToken, initBody)
+    const oinst = (oinit.parsed?.result as { instructions?: string }).instructions ?? ""
+    expect(oinst).not.toContain("pending request")
+  })
+
+  it("check_requests lists the queue; ack clears exactly what was handled", async () => {
+    const { app, agentToken, shortId } = await seedInbox("inboxack")
+    const listed = await call(app, agentToken, "check_requests")
+    const first = JSON.parse(toolText(listed))
+    expect(first.pending).toHaveLength(1)
+    expect(first.pending[0]).toMatchObject({
+      id: "amn_inboxack",
+      artifact: shortId,
+      thread: "c_req",
+      author: "Owner",
+    })
+    expect(first.pending[0].request).toContain("Rework this artifact")
+
+    const acked = await call(app, agentToken, "check_requests", { ack: ["amn_inboxack"] })
+    const after = JSON.parse(toolText(acked))
+    expect(after.acked).toBe(1)
+    expect(after.pending).toHaveLength(0)
+
+    // Repeated or unknown ids are a no-op, never an error — an agent can retry safely.
+    const again = await call(app, agentToken, "check_requests", {
+      ack: ["amn_inboxack", "amn_nope"],
+    })
+    expect(JSON.parse(toolText(again)).acked).toBe(0)
+  })
+
+  it("a human-grant connection has an empty queue, not an error", async () => {
+    const { app, token } = appWithGrant("inboxoauth", "openid derive:read")
+    const tools = await rpc(app, token, { jsonrpc: "2.0", id: 5, method: "tools/list" })
+    expect(toolNames(tools)).toContain("check_requests")
+    const r = await call(app, token, "check_requests")
+    expect(JSON.parse(toolText(r)).pending).toEqual([])
   })
 })

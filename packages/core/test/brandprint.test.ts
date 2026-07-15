@@ -3,6 +3,7 @@ import {
   brandprintInstructions,
   buildProfileInstruction,
   parseBrandprint,
+  pendingRequestsPointer,
   profileState,
   resolveBrandprint,
   reworkInstruction,
@@ -100,5 +101,14 @@ describe("buildProfileInstruction", () => {
     expect(s).toContain("derive://brandprint/*")
     expect(s).toContain("for_review: true")
     expect(s).toContain("artifact czwrd32q")
+  })
+})
+
+describe("pendingRequestsPointer", () => {
+  it("is empty with nothing queued, and steers to check_requests when work waits", () => {
+    expect(pendingRequestsPointer(0)).toBe("")
+    expect(pendingRequestsPointer(1)).toContain("1 pending request:")
+    expect(pendingRequestsPointer(2)).toContain("2 pending requests:")
+    expect(pendingRequestsPointer(1)).toContain("check_requests")
   })
 })
