@@ -43,6 +43,9 @@ export const enqueueSlackComment = async (
 ): Promise<void> => {
   const { meta, baseUrl } = deps
   if (parseMeta(cm.meta).slack) return // came from Slack — don't echo back
+  // Only mirror feed-visible artifacts (same gate as the event cards): a comment on a private
+  // draft must not post its title + body to the org-wide channel where non-collaborators see it.
+  if (artifact.listed === "none") return
   const install = await meta.getSlackInstall(artifact.org_id)
   if (!install?.default_channel) return
   const link = commentDeepLink(baseUrl, artifact, cm.thread_id)
@@ -187,25 +190,28 @@ export const threadStateBlocks = (
   state: "open" | "resolved",
   value: string,
   who?: string,
-): unknown[] =>
-  state === "resolved"
+): unknown[] => {
+  const w = who ? escapeMrkdwn(who) : undefined // `who` is a Slack-supplied display name
+  return state === "resolved"
     ? [
         actions([actionButton(SLACK_THREAD_ACTION.reopen, "Reopen thread", value)]),
-        context(`Derive · :white_check_mark: resolved${who ? ` by ${who}` : ""}`),
+        context(`Derive · :white_check_mark: resolved${w ? ` by ${w}` : ""}`),
       ]
     : [
         actions([actionButton(SLACK_THREAD_ACTION.resolve, "Resolve thread", value, "primary")]),
         context(
-          who
-            ? `Derive · reopened by ${who} · reply in this thread to post back`
+          w
+            ? `Derive · reopened by ${w} · reply in this thread to post back`
             : "Derive · reply in this thread to post back",
         ),
       ]
+}
 
-/** Slack Block Kit blocks for a comment post (open thread, with a Resolve button). */
+/** Slack Block Kit blocks for a comment post (open thread, with a Resolve button). Untrusted
+ *  text (author, title, body) is escaped so it can't break out of the `<url|text>` link. */
 const blocksFor = (p: SlackCommentPayload): unknown[] => [
   section(
-    `:speech_balloon: *${p.author}* commented on <${p.link}|${p.title}>\n${truncate(p.text, 600)}`,
+    `:speech_balloon: *${escapeMrkdwn(p.author)}* commented on <${p.link}|${escapeMrkdwn(p.title)}>\n${escapeMrkdwn(truncate(p.text, 600))}`,
   ),
   ...threadStateBlocks("open", encodeThreadAction(p.artifactId, p.threadId)),
 ]
