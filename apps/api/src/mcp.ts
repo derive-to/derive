@@ -594,7 +594,7 @@ async function buildServer(
     "check_requests",
     {
       description:
-        "Your work queue: pending requests teammates handed you by @mentioning you in a comment (the ask-agent and Rework buttons land here). Each entry names the artifact, the comment thread, and what to do. Handle a request on its artifact — usually read it, do the asked revision, and publish with the thread id in `addresses` — then call this again with ack:[id,…] to clear what you finished. Unacked requests stay queued for your next session.",
+        "Your work queue: pending requests teammates handed you by @mentioning you in a comment (the ask-agent and Rework buttons land here). Each entry names the artifact, the comment thread, and what to do. Handle a request on its artifact — usually read it, do the asked revision, and publish with the thread id in `addresses` — then call this again with ack:[id,…] to clear what you finished. Unacked requests stay queued for your next session. WAITING FOR WORK? Pass `wait` (seconds, max 50): when the queue is empty the call blocks until a new request lands (or the time runs out), then returns it — chain `wait` calls to react in seconds instead of polling on a cadence.",
       inputSchema: {
         ack: z
           .array(z.string())
@@ -602,9 +602,18 @@ async function buildServer(
           .describe(
             "Request ids you have HANDLED — acknowledges them off the queue. Ack after the work lands (a publish or a reply), not on read; an unknown or already-acked id is skipped, never an error.",
           ),
+        wait: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .describe(
+            "Long-poll: when nothing is queued, block up to this many seconds for a new request to land before returning. Returns immediately when work is already waiting.",
+          ),
       },
     },
-    async ({ ack }) => {
+    async ({ ack, wait }) => {
       // The queue this request already read at connect (a fresh server per request, so
       // it is this call's snapshot — and empty without a re-read for a grant that has
       // no inbox at all).
@@ -616,7 +625,29 @@ async function buildServer(
       const handled = new Set((ack ?? []).filter((id) => queue.some((m) => m.id === id)))
       let acked = 0
       for (const id of handled) if (await ctx.meta.ackAgentMention(agent.id, id)) acked++
-      const pending = queue.filter((m) => !handled.has(m.id))
+      let pending = queue.filter((m) => !handled.has(m.id))
+
+      // Long-poll: only a registered agent has an inbox to wait on. When nothing is
+      // pending, subscribe to this agent's channel, then RE-READ fresh (a request may
+      // have landed since connect, or during the wait) — the same check-then-wait gap
+      // close catch_up uses. The event is only a wake signal; we always answer from a
+      // fresh store read, so a missed or raced wake is never a wrong answer.
+      if (registered && wait && pending.length === 0 && ctx.bus.waitFor) {
+        const release = new AbortController()
+        const woke = ctx.bus
+          .waitFor(`u:${agent.id}`, ["request.created"], wait * 1000, release.signal)
+          .catch(() => null)
+        const fresh = await ctx.meta.listPendingAgentMentions(agent.id, AGENT_INBOX_PAGE)
+        if (fresh.length) {
+          release.abort()
+          await woke
+        } else {
+          await woke
+        }
+        pending = fresh.length
+          ? fresh
+          : await ctx.meta.listPendingAgentMentions(agent.id, AGENT_INBOX_PAGE)
+      }
       return json({
         acked,
         pending: pending.map((m) => ({
