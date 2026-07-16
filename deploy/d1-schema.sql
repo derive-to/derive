@@ -259,6 +259,7 @@ CREATE TABLE IF NOT EXISTS collection_item (
   id TEXT PRIMARY KEY,
   collection_id TEXT NOT NULL,
   artifact_id TEXT NOT NULL,
+  folder_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (collection_id, artifact_id),
   FOREIGN KEY (collection_id) REFERENCES collection(id),
@@ -278,6 +279,7 @@ CREATE TABLE IF NOT EXISTS collection_member (
 CREATE TABLE IF NOT EXISTS folder (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL DEFAULT 'local',
+  collection_id TEXT,
   name TEXT NOT NULL,
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))

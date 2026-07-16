@@ -360,6 +360,9 @@ export const collection = pgTable("collection", {
 export const folder = pgTable("folder", {
   id: text("id").primaryKey(),
   org_id: text("org_id").notNull().default("local"),
+  // The collection this folder organizes (see schema.ts). App-required, nullable at DB,
+  // FK-free.
+  collection_id: text("collection_id"),
   name: text("name").notNull(),
   created_by: text("created_by").notNull(),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
@@ -374,6 +377,8 @@ export const collectionItem = pgTable(
     artifact_id: text("artifact_id")
       .notNull()
       .references(() => artifact.id),
+    // Folder within this collection (see schema.ts); null = unfiled. FK-free.
+    folder_id: text("folder_id"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [uniqueIndex("collection_item_uniq").on(t.collection_id, t.artifact_id)],

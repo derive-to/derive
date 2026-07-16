@@ -1555,6 +1555,7 @@ export function makeRepos(db: SqliteDb) {
   const deleteCollection = async (id: string): Promise<void> => {
     await db.delete(collectionItem).where(eq(collectionItem.collection_id, id)).run()
     await db.delete(collectionMember).where(eq(collectionMember.collection_id, id)).run()
+    await db.delete(folder).where(eq(folder.collection_id, id)).run()
     await db.delete(collection).where(eq(collection.id, id)).run()
   }
   const listCollections = async (
@@ -1572,13 +1573,11 @@ export function makeRepos(db: SqliteDb) {
     const cmap = new Map(counts.map((r) => [r.id, Number(r.c)]))
     return rows.map((r) => ({ ...r, count: cmap.get(r.id) ?? 0 }))
   }
-  // ---- Folders (org grouping for collections) ----------------------------
+  // ---- Folders (organize a collection's artifacts) -----------------------
   const createFolder = async (f: NewFolder): Promise<FolderRecord> =>
     (await db.insert(folder).values(f).returning().get()) as FolderRecord
-  const listFolders = async (orgId?: string): Promise<FolderRecord[]> => {
-    const base = db.select().from(folder)
-    return (orgId ? base.where(eq(folder.org_id, orgId)) : base).all()
-  }
+  const listFolders = async (collectionId: string): Promise<FolderRecord[]> =>
+    db.select().from(folder).where(eq(folder.collection_id, collectionId)).all()
   const getFolder = async (id: string): Promise<FolderRecord | null> =>
     (await db.select().from(folder).where(eq(folder.id, id)).get()) ?? null
   const updateFolder = async (
@@ -1595,21 +1594,44 @@ export function makeRepos(db: SqliteDb) {
         .get()) ?? null
     )
   }
-  // Un-file the folder's collections (they survive), then drop the folder. Sequential
-  // (D1-safe), like deleteCollection.
+  // Un-file this folder's items (they stay in the collection), then drop the folder.
+  // Sequential (D1-safe), like deleteCollection.
   const deleteFolder = async (id: string): Promise<void> => {
-    await db.update(collection).set({ folder_id: null }).where(eq(collection.folder_id, id)).run()
+    await db
+      .update(collectionItem)
+      .set({ folder_id: null })
+      .where(eq(collectionItem.folder_id, id))
+      .run()
     await db.delete(folder).where(eq(folder.id, id)).run()
   }
-  const setCollectionFolder = async (
+  const setItemFolder = async (
     collectionId: string,
+    artifactId: string,
     folderId: string | null,
   ): Promise<void> => {
     await db
-      .update(collection)
+      .update(collectionItem)
       .set({ folder_id: folderId })
-      .where(eq(collection.id, collectionId))
+      .where(
+        and(
+          eq(collectionItem.collection_id, collectionId),
+          eq(collectionItem.artifact_id, artifactId),
+        ),
+      )
       .run()
+  }
+  const collectionItemFolders = async (collectionId: string): Promise<Record<string, string>> => {
+    const rows = await db
+      .select({ s: artifact.short_id, f: collectionItem.folder_id })
+      .from(collectionItem)
+      .innerJoin(artifact, eq(artifact.id, collectionItem.artifact_id))
+      .where(
+        and(eq(collectionItem.collection_id, collectionId), isNotNull(collectionItem.folder_id)),
+      )
+      .all()
+    const map: Record<string, string> = {}
+    for (const r of rows) if (r.f) map[r.s] = r.f
+    return map
   }
 
   const collectionArtifactIds = async (collectionId: string): Promise<string[]> =>
@@ -2845,7 +2867,8 @@ export function makeRepos(db: SqliteDb) {
     getFolder,
     updateFolder,
     deleteFolder,
-    setCollectionFolder,
+    setItemFolder,
+    collectionItemFolders,
     collectionArtifactIds,
     collectionIdsForArtifact,
     addCollectionItem,

@@ -2506,24 +2506,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/folders": {
+    "/v1/collections/{id}/folders": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List the active workspace's folders (members only). */
+        /** A collection's folders + its item→folder assignments (any collection role). */
         get: {
             parameters: {
                 query?: never;
                 header?: never;
-                path?: never;
+                path: {
+                    id: string;
+                };
                 cookie?: never;
             };
             requestBody?: never;
             responses: {
-                /** @description The workspace's folders, in name order. */
+                /** @description Folders (name order) and the artifact→folder map for grouping. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -2531,18 +2533,24 @@ export interface paths {
                     content: {
                         "application/json": {
                             folders: components["schemas"]["Folder"][];
+                            /** @description artifact short_id → folder id (filed items only). */
+                            assignments: {
+                                [key: string]: string;
+                            };
                         };
                     };
                 };
             };
         };
         put?: never;
-        /** Create a folder (workspace owners only). */
+        /** Create a folder in a collection (collection editors). */
         post: {
             parameters: {
                 query?: never;
                 header?: never;
-                path?: never;
+                path: {
+                    id: string;
+                };
                 cookie?: never;
             };
             requestBody?: never;
@@ -2574,7 +2582,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete a folder (workspace owners only); its collections become ungrouped. */
+        /** Delete a folder (collection editors); its items become unfiled, not removed. */
         delete: {
             parameters: {
                 query?: never;
@@ -2586,7 +2594,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Deleted; member collections are un-filed, not removed. */
+                /** @description Deleted; the collection's artifacts are un-filed, not removed. */
                 204: {
                     headers: {
                         [name: string]: unknown;
@@ -2597,7 +2605,7 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** Rename a folder (workspace owners only). */
+        /** Rename a folder (collection editors). */
         patch: {
             parameters: {
                 query?: never;
@@ -2622,7 +2630,7 @@ export interface paths {
         };
         trace?: never;
     };
-    "/v1/collections/{id}/folder": {
+    "/v1/collections/{id}/items/{shortId}/folder": {
         parameters: {
             query?: never;
             header?: never;
@@ -2630,19 +2638,20 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** File a collection under a folder, or ungroup it (workspace owners only). */
+        /** File a collection's artifact under a folder, or unfile it (collection editors). */
         put: {
             parameters: {
                 query?: never;
                 header?: never;
                 path: {
                     id: string;
+                    shortId: string;
                 };
                 cookie?: never;
             };
             requestBody?: never;
             responses: {
-                /** @description Filed (or ungrouped when folderId is null). */
+                /** @description Filed (or unfiled when folderId is null). */
                 204: {
                     headers: {
                         [name: string]: unknown;
@@ -5744,11 +5753,11 @@ export interface components {
             prNumber?: number;
             /** @description For repo/PR collections: the "owner/name" slug. */
             repo?: string;
-            /** @description The org-shared folder this collection is filed under, when any. */
-            folderId?: string;
         };
         Folder: {
             id: string;
+            /** @description The collection this folder organizes. */
+            collectionId: string;
             name: string;
             /** @description Creator's user id ("anon" if created anonymously). */
             created_by: string;

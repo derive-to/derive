@@ -1327,10 +1327,6 @@
           "repo": {
             "type": "string",
             "description": "For repo/PR collections: the \"owner/name\" slug."
-          },
-          "folderId": {
-            "type": "string",
-            "description": "The org-shared folder this collection is filed under, when any."
           }
         },
         "required": [
@@ -1347,6 +1343,10 @@
           "id": {
             "type": "string"
           },
+          "collectionId": {
+            "type": "string",
+            "description": "The collection this folder organizes."
+          },
           "name": {
             "type": "string"
           },
@@ -1360,6 +1360,7 @@
         },
         "required": [
           "id",
+          "collectionId",
           "name",
           "created_by",
           "created_at"
@@ -5143,15 +5144,25 @@
         }
       }
     },
-    "/v1/folders": {
+    "/v1/collections/{id}/folders": {
       "get": {
         "tags": [
           "Folders"
         ],
-        "summary": "List the active workspace's folders (members only).",
+        "summary": "A collection's folders + its item→folder assignments (any collection role).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
         "responses": {
           "200": {
-            "description": "The workspace's folders, in name order.",
+            "description": "Folders (name order) and the artifact→folder map for grouping.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5162,10 +5173,18 @@
                       "items": {
                         "$ref": "#/components/schemas/Folder"
                       }
+                    },
+                    "assignments": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "artifact short_id → folder id (filed items only)."
                     }
                   },
                   "required": [
-                    "folders"
+                    "folders",
+                    "assignments"
                   ]
                 }
               }
@@ -5177,7 +5196,17 @@
         "tags": [
           "Folders"
         ],
-        "summary": "Create a folder (workspace owners only).",
+        "summary": "Create a folder in a collection (collection editors).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
         "responses": {
           "201": {
             "description": "The created folder.",
@@ -5197,7 +5226,7 @@
         "tags": [
           "Folders"
         ],
-        "summary": "Rename a folder (workspace owners only).",
+        "summary": "Rename a folder (collection editors).",
         "parameters": [
           {
             "schema": {
@@ -5225,7 +5254,7 @@
         "tags": [
           "Folders"
         ],
-        "summary": "Delete a folder (workspace owners only); its collections become ungrouped.",
+        "summary": "Delete a folder (collection editors); its items become unfiled, not removed.",
         "parameters": [
           {
             "schema": {
@@ -5238,17 +5267,17 @@
         ],
         "responses": {
           "204": {
-            "description": "Deleted; member collections are un-filed, not removed."
+            "description": "Deleted; the collection's artifacts are un-filed, not removed."
           }
         }
       }
     },
-    "/v1/collections/{id}/folder": {
+    "/v1/collections/{id}/items/{shortId}/folder": {
       "put": {
         "tags": [
           "Folders"
         ],
-        "summary": "File a collection under a folder, or ungroup it (workspace owners only).",
+        "summary": "File a collection's artifact under a folder, or unfile it (collection editors).",
         "parameters": [
           {
             "schema": {
@@ -5257,11 +5286,19 @@
             "required": true,
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
           }
         ],
         "responses": {
           "204": {
-            "description": "Filed (or ungrouped when folderId is null)."
+            "description": "Filed (or unfiled when folderId is null)."
           }
         }
       }
