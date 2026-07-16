@@ -27,6 +27,7 @@ import type {
   ContextRecord,
   DeliveryRecord,
   DomainRecord,
+  FolderRecord,
   FollowRecord,
   GitHubAppRecord,
   GitHubInstallationRecord,
@@ -73,6 +74,7 @@ export interface TypedTables {
   sessionMessage: SessionMessageRecord
   collection: CollectionRecord
   collectionMember: CollectionMemberRecord
+  folder: FolderRecord
   repoSource: RepoSourceRecord
   githubApp: GitHubAppRecord
   githubInstallation: GitHubInstallationRecord

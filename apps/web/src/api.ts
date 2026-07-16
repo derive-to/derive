@@ -75,6 +75,7 @@ export type Report = components["schemas"]["Report"]
  *  (kind = manual / repo / pr). Generated from the OpenAPI spec (apps/api/openapi.json)
  *  — a backend shape change surfaces here at `tsc`. */
 export type Collection = components["schemas"]["Collection"]
+export type Folder = components["schemas"]["Folder"]
 /** The result of a /v1/bulk/* op: counts per artifact (skipped = not yours to touch). */
 export type BulkSummary = components["schemas"]["BulkSummary"]
 /** A collection whose sharing reaches an artifact (workspace-open, or invite-only with
@@ -843,6 +844,19 @@ export const api = {
     f(`/v1/collections/${id}/access`, { ...opts({ workspaceAccess }), method: "PATCH" }).then(j),
   addToCollection: (collectionId: string, shortId: string): Promise<void> =>
     f(`/v1/collections/${collectionId}/items/${shortId}`, { ...opts(), method: "PUT" }).then(
+      () => undefined,
+    ),
+  // Folders (owner-editable org grouping; grant no access). Mutations are workspace-
+  // owner-only server-side — the UI hides them for non-owners.
+  listFolders: (): Promise<{ folders: Folder[] }> => f("/v1/folders", opts()).then(j),
+  createFolder: (name: string): Promise<Folder> => f("/v1/folders", opts({ name })).then(j),
+  renameFolder: (id: string, name: string): Promise<Folder> =>
+    f(`/v1/folders/${id}`, { ...opts({ name }), method: "PATCH" }).then(j),
+  deleteFolder: (id: string): Promise<void> =>
+    f(`/v1/folders/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+  // File a collection under a folder (or null to ungroup).
+  setCollectionFolder: (collectionId: string, folderId: string | null): Promise<void> =>
+    f(`/v1/collections/${collectionId}/folder`, { ...opts({ folderId }), method: "PUT" }).then(
       () => undefined,
     ),
   removeFromCollection: (collectionId: string, shortId: string): Promise<void> =>

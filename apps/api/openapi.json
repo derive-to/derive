@@ -1327,6 +1327,10 @@
           "repo": {
             "type": "string",
             "description": "For repo/PR collections: the \"owner/name\" slug."
+          },
+          "folderId": {
+            "type": "string",
+            "description": "The org-shared folder this collection is filed under, when any."
           }
         },
         "required": [
@@ -1335,6 +1339,30 @@
           "created_by",
           "created_at",
           "count"
+        ]
+      },
+      "Folder": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string",
+            "description": "Creator's user id (\"anon\" if created anonymously)."
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_by",
+          "created_at"
         ]
       },
       "GithubSyncStatus": {
@@ -5111,6 +5139,129 @@
         "responses": {
           "204": {
             "description": "The member was removed."
+          }
+        }
+      }
+    },
+    "/v1/folders": {
+      "get": {
+        "tags": [
+          "Folders"
+        ],
+        "summary": "List the active workspace's folders (members only).",
+        "responses": {
+          "200": {
+            "description": "The workspace's folders, in name order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "folders": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Folder"
+                      }
+                    }
+                  },
+                  "required": [
+                    "folders"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Folders"
+        ],
+        "summary": "Create a folder (workspace owners only).",
+        "responses": {
+          "201": {
+            "description": "The created folder.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Folder"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/folders/{id}": {
+      "patch": {
+        "tags": [
+          "Folders"
+        ],
+        "summary": "Rename a folder (workspace owners only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated folder.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Folder"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Folders"
+        ],
+        "summary": "Delete a folder (workspace owners only); its collections become ungrouped.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted; member collections are un-filed, not removed."
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}/folder": {
+      "put": {
+        "tags": [
+          "Folders"
+        ],
+        "summary": "File a collection under a folder, or ungroup it (workspace owners only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Filed (or ungrouped when folderId is null)."
           }
         }
       }

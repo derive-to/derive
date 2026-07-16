@@ -251,7 +251,8 @@ CREATE TABLE IF NOT EXISTS collection (
   title TEXT NOT NULL,
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  workspace_access TEXT NOT NULL DEFAULT 'member'
+  workspace_access TEXT NOT NULL DEFAULT 'member',
+  folder_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS collection_item (
@@ -272,6 +273,14 @@ CREATE TABLE IF NOT EXISTS collection_member (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (collection_id, user_id),
   FOREIGN KEY (collection_id) REFERENCES collection(id)
+);
+
+CREATE TABLE IF NOT EXISTS folder (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL DEFAULT 'local',
+  name TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
 CREATE TABLE IF NOT EXISTS repo_source (

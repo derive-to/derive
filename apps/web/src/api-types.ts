@@ -2506,6 +2506,158 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/folders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the active workspace's folders (members only). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The workspace's folders, in name order. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            folders: components["schemas"]["Folder"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a folder (workspace owners only). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The created folder. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Folder"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/folders/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a folder (workspace owners only); its collections become ungrouped. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted; member collections are un-filed, not removed. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Rename a folder (workspace owners only). */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The updated folder. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Folder"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/v1/collections/{id}/folder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** File a collection under a folder, or ungroup it (workspace owners only). */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Filed (or ungrouped when folderId is null). */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sync/github/resync-installations": {
         parameters: {
             query?: never;
@@ -5592,6 +5744,15 @@ export interface components {
             prNumber?: number;
             /** @description For repo/PR collections: the "owner/name" slug. */
             repo?: string;
+            /** @description The org-shared folder this collection is filed under, when any. */
+            folderId?: string;
+        };
+        Folder: {
+            id: string;
+            name: string;
+            /** @description Creator's user id ("anon" if created anonymously). */
+            created_by: string;
+            created_at: string;
         };
         GithubSyncStatus: {
             /** @description Branch mirrors, one per connected repo. */

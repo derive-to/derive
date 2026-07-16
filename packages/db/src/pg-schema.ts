@@ -351,6 +351,18 @@ export const collection = pgTable("collection", {
   // See the sqlite dialect's schema.ts for the full comment. Defaults to `member`
   // (not artifact's fail-closed `none`) to match collections' existing behavior.
   workspace_access: text("workspace_access").$type<WorkspaceAccess>().notNull().default("member"),
+  // See schema.ts for the full comment: the org-shared folder this collection is filed
+  // under (null = ungrouped). Plain nullable pointer, NOT a FK — folders grant no access.
+  folder_id: text("folder_id"),
+})
+// A workspace-shared organizing folder for collections (see schema.ts). Grouping only —
+// grants no access, never in any auth path.
+export const folder = pgTable("folder", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull().default("local"),
+  name: text("name").notNull(),
+  created_by: text("created_by").notNull(),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 export const collectionItem = pgTable(
   "collection_item",
@@ -677,6 +689,7 @@ const TABLES = [
   collection,
   collectionItem,
   collectionMember,
+  folder,
   repoSource,
   orgSettings,
   slackInstall,

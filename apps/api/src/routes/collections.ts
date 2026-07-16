@@ -80,6 +80,10 @@ export const collectionRoutes = (ctx: AppContext) => {
         .describe("For a PR preview: the repo collection it nests under, when connected."),
       prNumber: z.number().optional().describe("For a PR preview: the pull-request number."),
       repo: z.string().optional().describe('For repo/PR collections: the "owner/name" slug.'),
+      folderId: z
+        .string()
+        .optional()
+        .describe("The org-shared folder this collection is filed under, when any."),
     })
     .openapi("Collection")
 
@@ -103,11 +107,14 @@ export const collectionRoutes = (ctx: AppContext) => {
     srcByCollection: Map<string, Src>,
     branchByRepo: Map<string, string>,
   ) => {
+    // Expose the stored folder_id under the client's camelCase `folderId` (like
+    // parentId/prNumber). Folders are pure organization — never an auth input.
+    const withFolder = { ...col, folderId: col.folder_id ?? undefined }
     const src = srcByCollection.get(col.id)
-    if (!src) return { ...col, kind: "manual" as const }
-    if (src.pr === null) return { ...col, kind: "repo" as const, repo: src.repo }
+    if (!src) return { ...withFolder, kind: "manual" as const }
+    if (src.pr === null) return { ...withFolder, kind: "repo" as const, repo: src.repo }
     return {
-      ...col,
+      ...withFolder,
       kind: "pr" as const,
       repo: src.repo,
       prNumber: src.pr,
