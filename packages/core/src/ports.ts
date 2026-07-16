@@ -3,6 +3,7 @@
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
  */
 import type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
+import type { SortMode } from "./sort"
 
 export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
@@ -147,11 +148,17 @@ export interface ArtifactRecord {
 export interface ListArtifactsOpts {
   limit?: number
   /**
-   * Keyset cursor — return artifacts strictly older than this (created_at, id)
-   * pair. The `id` tiebreak makes pagination correct even when many artifacts
-   * share a created_at timestamp (sub-millisecond bulk inserts).
+   * Keyset cursor — return artifacts strictly past this `(key, id)` pair, where `key` is the
+   * value of the active sort's ordering expression (see `sort`). The `id` tiebreak keeps
+   * pagination correct when many rows share a key (sub-millisecond bulk inserts, or a shared
+   * title). Encode/decode via `@derive/core`'s `encodeCursor`/`decodeCursor`.
    */
-  cursor?: { created_at: string; id: string }
+  cursor?: { key: string; id: string }
+  /** How to order the page. Omitted ⇒ `created` (newest-created first) — the historical
+   *  default every non-library caller relies on. The library passes `updated` and the rest.
+   *  `listArtifacts` honors this; `listUserWorks`/`countUserWorks` ignore it and always order
+   *  created-desc. */
+  sort?: SortMode
   /** Case-insensitive title search. */
   q?: string
   /** Restrict to these artifact ids (tag / favorite filters resolve to ids). Empty ⇒ none. */

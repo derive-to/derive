@@ -1,4 +1,4 @@
-import type { LinkRole, Listed, Role, WorkspaceAccess } from "@derive/core"
+import type { LinkRole, Listed, Role, SortMode, WorkspaceAccess } from "@derive/core"
 import type { components } from "./api-types"
 import { guestQuery } from "./lib/guest-id"
 
@@ -457,6 +457,9 @@ export const api = {
     scope?: "shared" | "following" | "needs_feedback" | "mine"
     cursor?: string
     limit?: number
+    /** Grid order. Omit to get the route's default, created-desc (the library always sends
+     *  this explicitly); the library's own default is `updated`. */
+    sort?: SortMode
   }): Promise<{
     artifacts: Artifact[]
     next_cursor: string | null
@@ -473,6 +476,7 @@ export const api = {
     if (params?.scope) qs.set("scope", params.scope)
     if (params?.cursor) qs.set("cursor", params.cursor)
     if (params?.limit) qs.set("limit", String(params.limit))
+    if (params?.sort) qs.set("sort", params.sort)
     const s = qs.toString()
     return f(`/v1/artifacts${s ? `?${s}` : ""}`, opts()).then(j)
   },

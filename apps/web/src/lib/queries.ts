@@ -1,3 +1,4 @@
+import type { SortMode } from "@derive/core"
 import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query"
 import { API_BASE, api } from "@/api"
 
@@ -68,6 +69,9 @@ export type LibraryParams = {
   // "needs_feedback" → artifacts with an open thread you're tagged in or commented on;
   // "mine" → everything you've published by hand, any visibility included.
   scope?: "following" | "shared" | "needs_feedback" | "mine"
+  // Grid order; the query key already includes the whole params object, so each sort caches
+  // independently. Absent ⇒ the API default (created); the library passes DEFAULT_SORT.
+  sort?: SortMode
 }
 export const libraryArtifactsQuery = (params: LibraryParams) =>
   infiniteQueryOptions({

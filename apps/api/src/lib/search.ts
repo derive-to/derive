@@ -387,12 +387,12 @@ export interface ReindexSearchDeps {
 export interface ReindexBatchResult {
   scanned: number
   indexed: number
-  nextCursor: { created_at: string; id: string } | null
+  nextCursor: { key: string; id: string } | null
 }
 
 export const reindexSearchBatch = async (
   deps: ReindexSearchDeps,
-  opts: { orgId?: string; cursor?: { created_at: string; id: string }; limit: number },
+  opts: { orgId?: string; cursor?: { key: string; id: string }; limit: number },
 ): Promise<ReindexBatchResult> => {
   const arts = await deps.meta.listArtifacts({
     orgId: opts.orgId,
@@ -430,12 +430,13 @@ export const reindexSearchBatch = async (
       log.error("search reindex: dense batch failed", { err: String(err) })
     }
   }
-  // A full page implies there may be more; the last row is the keyset for the next call
-  // (listArtifacts is newest-first, keyset on created_at+id — the same cursor the list
-  // route uses). A short page means we've reached the end.
+  // A full page implies there may be more; the last row is the keyset for the next call.
+  // The sweep takes the store's default order (created-desc), so the cursor key is
+  // created_at; listArtifacts otherwise keys the cursor on the active ?sort=. A short page
+  // means we've reached the end.
   const last = arts[arts.length - 1]
   const nextCursor =
-    arts.length >= opts.limit && last ? { created_at: last.created_at, id: last.id } : null
+    arts.length >= opts.limit && last ? { key: last.created_at, id: last.id } : null
   return { scanned: arts.length, indexed, nextCursor }
 }
 

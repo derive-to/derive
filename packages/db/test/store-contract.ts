@@ -1,5 +1,5 @@
 import { randomUUID as uuid } from "node:crypto"
-import type { MetaStore, NewArtifact, NewVersion } from "@derive/core"
+import type { MetaStore, NewArtifact, NewVersion, SortMode } from "@derive/core"
 import { DEFAULT_ORG_SETTINGS } from "@derive/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
@@ -204,6 +204,90 @@ export function runStoreContract(
       await store.addVersion(a.id, newVersion({ blob_key: "other", size_bytes: 50 }))
       // 100 (shared, counted once) + 50 (other) = 150
       expect(await store.storageBytes(ORG)).toBeGreaterThanOrEqual(150)
+    })
+  })
+
+  describe(`${label}: listArtifacts sort modes`, () => {
+    const tick = () => new Promise((r) => setTimeout(r, 2))
+
+    it("orders by each mode (title sort case-insensitive + null-safe) and paginates the keyset", async () => {
+      const org = `org_sort_${uuid()}`
+      // Titles chosen so case-SENSITIVE byte order (B=66 < a=97) would rank "Banana" before
+      // "apple", but the store's lower() ranks "apple" first — the az/za assertions only hold if
+      // lower(coalesce(title,'')) is actually applied. `nullish` has a null title to exercise
+      // coalesce(title,'') (sorts as "" → first under az) deterministically on both dialects.
+      const banana = await store.createArtifact(newArtifact({ org_id: org, title: "Banana" }))
+      await tick()
+      const apple = await store.createArtifact(newArtifact({ org_id: org, title: "apple" }))
+      await tick()
+      const cherry = await store.createArtifact(newArtifact({ org_id: org, title: "cherry" }))
+      await tick()
+      const nullish = await store.createArtifact(newArtifact({ org_id: org, title: null }))
+      // updated_at: distinct + independent of created order (banana oldest-created but
+      // newest-updated); nullish left versionless (updated_at null → coalesces to its created_at).
+      await store.setArtifactUpdatedAt(banana.id, "2030-01-01T00:00:00.000Z")
+      await store.setArtifactUpdatedAt(apple.id, "2029-01-01T00:00:00.000Z")
+      await store.setArtifactUpdatedAt(cherry.id, "2028-01-01T00:00:00.000Z")
+
+      const ids = async (sort: SortMode) =>
+        (await store.listArtifacts({ orgId: org, sort })).map((a) => a.id)
+
+      // updated: banana(2030) > apple(2029) > cherry(2028) > nullish(its created_at, ~now < 2028).
+      expect(await ids("updated")).toEqual([banana.id, apple.id, cherry.id, nullish.id])
+      expect(await ids("updated-asc")).toEqual([nullish.id, cherry.id, apple.id, banana.id])
+      // created ignores versions: newest-created first (nullish created last).
+      expect(await ids("created")).toEqual([nullish.id, cherry.id, apple.id, banana.id])
+      expect(await ids("created-asc")).toEqual([banana.id, apple.id, cherry.id, nullish.id])
+      // az: lower(coalesce(title,'')) → "" (nullish), "apple", "banana", "cherry". A case-sensitive
+      // sort would rank "Banana"(66) before "apple"(97); this order proves it does not.
+      expect(await ids("az")).toEqual([nullish.id, apple.id, banana.id, cherry.id])
+      expect(await ids("za")).toEqual([cherry.id, banana.id, apple.id, nullish.id])
+
+      // Keyset pagination under az across a page boundary reassembles the full set, no dup/gap.
+      const p1 = await store.listArtifacts({ orgId: org, sort: "az", limit: 2 })
+      const lastOfP1 = p1[p1.length - 1]
+      const p2 = await store.listArtifacts({
+        orgId: org,
+        sort: "az",
+        limit: 2,
+        cursor: { key: lastOfP1.title ?? "", id: lastOfP1.id },
+      })
+      expect([...p1, ...p2].map((a) => a.id)).toEqual([nullish.id, apple.id, banana.id, cherry.id])
+    })
+
+    it("paginates title sort with no drop/dup, including a non-ASCII-uppercase title", async () => {
+      const org = `org_sort_i18n_${uuid()}`
+      // SQLite's lower() is ASCII-only (leaves Ü); the cursor key must be lowered by the same
+      // engine as the ORDER BY or this row is dropped/duplicated at a page boundary.
+      for (const t of ["Banana", "apple", "Über", "cherry", null]) {
+        await store.createArtifact(newArtifact({ org_id: org, title: t }))
+        await tick()
+      }
+      const full = (await store.listArtifacts({ orgId: org, sort: "az" })).map((a) => a.id)
+      const walked: string[] = []
+      let cursor: { key: string; id: string } | undefined
+      for (let guard = 0; guard < 12; guard++) {
+        const page = await store.listArtifacts({ orgId: org, sort: "az", limit: 1, cursor })
+        if (page.length === 0) break
+        walked.push(...page.map((a) => a.id))
+        const last = page[page.length - 1]
+        cursor = { key: last.title ?? "", id: last.id }
+      }
+      expect(walked).toEqual(full)
+    })
+
+    it("names the version bump as the newest work (the default's whole point)", async () => {
+      const org = `org_bump_${uuid()}`
+      const older = await store.createArtifact(newArtifact({ org_id: org, title: "older" }))
+      await tick()
+      const newer = await store.createArtifact(newArtifact({ org_id: org, title: "newer" }))
+      // `older` is created first but gets a brand-new version → newest work.
+      await store.setArtifactUpdatedAt(older.id, "2031-01-01T00:00:00.000Z")
+
+      const updated = (await store.listArtifacts({ orgId: org, sort: "updated" })).map((a) => a.id)
+      const created = (await store.listArtifacts({ orgId: org, sort: "created" })).map((a) => a.id)
+      expect(updated).toEqual([older.id, newer.id]) // version bump wins
+      expect(created).toEqual([newer.id, older.id]) // created ignores the bump
     })
   })
 

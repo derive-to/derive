@@ -3,6 +3,7 @@ import { needsFeedbackArtifactsQuery, summaryQuery } from "../lib/queries"
 import { requireOnboarded } from "../lib/route-guards"
 import { Library } from "../pages/library"
 import { LibraryPending } from "../pages/library/library-skeleton"
+import { parseLibrarySort } from "../pages/library/sort"
 import type { LibrarySearch } from "../pages/library/types"
 
 export const Route = createFileRoute("/")({
@@ -39,6 +40,7 @@ export const Route = createFileRoute("/")({
     // "drafts" is the tab's retired name — old bookmarks and agent-emitted
     // links keep landing on the same view.
     tab: s.tab === "mine" || s.tab === "drafts" ? "mine" : undefined,
+    sort: parseLibrarySort(s.sort),
   }),
   component: () => <Library view="all" />,
 })

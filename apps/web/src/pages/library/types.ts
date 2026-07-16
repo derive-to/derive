@@ -1,5 +1,7 @@
 // Shared shapes for the library surface (page + sidebar + bars).
 
+import type { SortMode } from "@derive/core"
+
 export type Filter =
   | { kind: "all" }
   | { kind: "favorites" }
@@ -52,4 +54,6 @@ export type LibrarySearch = {
   // query param, not a route — a view of your own work is a filter on the home
   // library, not a separate feed (docs/decisions/0002).
   tab?: "mine"
+  // How the grid is ordered; absent = the default (Recently updated). See ./sort.
+  sort?: SortMode
 }
