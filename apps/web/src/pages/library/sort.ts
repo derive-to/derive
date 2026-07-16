@@ -6,10 +6,10 @@ import type { SortMode } from "@derive/core"
 export const DEFAULT_SORT: SortMode = "updated"
 
 export const LIBRARY_SORTS: { value: SortMode; label: string }[] = [
-  { value: "updated", label: "Recently updated" },
-  { value: "updated-asc", label: "Least recently updated" },
-  { value: "created", label: "Recently created" },
-  { value: "created-asc", label: "Oldest created" },
+  { value: "updated", label: "Newest" },
+  { value: "updated-asc", label: "Oldest" },
+  { value: "revised", label: "Recently updated" },
+  { value: "revised-asc", label: "Least recently updated" },
   { value: "az", label: "Title A–Z" },
   { value: "za", label: "Title Z–A" },
 ]
@@ -21,6 +21,7 @@ const VALUES = new Set<string>(LIBRARY_SORTS.map((s) => s.value))
 export const parseLibrarySort = (raw: unknown): SortMode | undefined =>
   typeof raw === "string" && VALUES.has(raw) && raw !== DEFAULT_SORT ? (raw as SortMode) : undefined
 
-/** The menu label for a mode (falls back to the default's label for an unknown value). */
+/** The menu label for a mode (falls back to the default's label for an unknown value — e.g.
+ *  the `created` store default, which the menu doesn't list). */
 export const sortLabel = (mode: SortMode): string =>
-  LIBRARY_SORTS.find((s) => s.value === mode)?.label ?? "Recently updated"
+  LIBRARY_SORTS.find((s) => s.value === mode)?.label ?? "Newest"
