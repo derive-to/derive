@@ -1382,6 +1382,7 @@ export class PgMetaStore implements MetaStore {
     await this.db.transaction(async (tx) => {
       await tx.delete(collectionItem).where(eq(collectionItem.collection_id, id))
       await tx.delete(collectionMember).where(eq(collectionMember.collection_id, id))
+      await tx.delete(folder).where(eq(folder.collection_id, id))
       await tx.delete(collection).where(eq(collection.id, id))
     })
   }
@@ -1397,14 +1398,13 @@ export class PgMetaStore implements MetaStore {
     const cmap = new Map(counts.map((r) => [r.id, Number(r.c)]))
     return rows.map((r) => ({ ...r, count: cmap.get(r.id) ?? 0 }))
   }
-  // ---- Folders (org grouping for collections) ----------------------------
+  // ---- Folders (organize a collection's artifacts) -----------------------
   async createFolder(f: NewFolder): Promise<FolderRecord> {
     const rows = await this.db.insert(folder).values(f).returning()
     return one(rows)
   }
-  async listFolders(orgId?: string): Promise<FolderRecord[]> {
-    const base = this.db.select().from(folder)
-    return orgId ? base.where(eq(folder.org_id, orgId)) : base
+  async listFolders(collectionId: string): Promise<FolderRecord[]> {
+    return this.db.select().from(folder).where(eq(folder.collection_id, collectionId))
   }
   async getFolder(id: string): Promise<FolderRecord | null> {
     const rows = await this.db.select().from(folder).where(eq(folder.id, id))
@@ -1421,15 +1421,39 @@ export class PgMetaStore implements MetaStore {
   }
   async deleteFolder(id: string): Promise<void> {
     await this.db.transaction(async (tx) => {
-      await tx.update(collection).set({ folder_id: null }).where(eq(collection.folder_id, id))
+      await tx
+        .update(collectionItem)
+        .set({ folder_id: null })
+        .where(eq(collectionItem.folder_id, id))
       await tx.delete(folder).where(eq(folder.id, id))
     })
   }
-  async setCollectionFolder(collectionId: string, folderId: string | null): Promise<void> {
+  async setItemFolder(
+    collectionId: string,
+    artifactId: string,
+    folderId: string | null,
+  ): Promise<void> {
     await this.db
-      .update(collection)
+      .update(collectionItem)
       .set({ folder_id: folderId })
-      .where(eq(collection.id, collectionId))
+      .where(
+        and(
+          eq(collectionItem.collection_id, collectionId),
+          eq(collectionItem.artifact_id, artifactId),
+        ),
+      )
+  }
+  async collectionItemFolders(collectionId: string): Promise<Record<string, string>> {
+    const rows = await this.db
+      .select({ s: artifact.short_id, f: collectionItem.folder_id })
+      .from(collectionItem)
+      .innerJoin(artifact, eq(artifact.id, collectionItem.artifact_id))
+      .where(
+        and(eq(collectionItem.collection_id, collectionId), isNotNull(collectionItem.folder_id)),
+      )
+    const map: Record<string, string> = {}
+    for (const r of rows) if (r.f) map[r.s] = r.f
+    return map
   }
 
   async collectionArtifactIds(collectionId: string): Promise<string[]> {

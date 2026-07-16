@@ -1,6 +1,6 @@
 import type { QueryKey } from "@tanstack/react-query"
 import { type ReactNode, useState } from "react"
-import { type Artifact, api } from "@/api"
+import { type Artifact, api, type Folder } from "@/api"
 import { Icon } from "@/components/icons"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Button } from "@/components/ui/button"
@@ -8,7 +8,7 @@ import { collectionsQuery, summaryQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { summarize } from "./bulk-apply"
-import { BulkCollectionsDialog, BulkTagsDialog } from "./bulk-organize"
+import { BulkCollectionsDialog, BulkFolderDialog, BulkTagsDialog } from "./bulk-organize"
 
 // One action in the bar. The label is the button's text on a roomy viewport and its
 // accessible name everywhere — below `sm` the text collapses and the icon carries it, so
@@ -62,6 +62,7 @@ export function SelectionBar({
   items,
   listKey,
   onClear,
+  folderContext,
 }: {
   // The selection, in feed order — already reconciled against the live feed, so every
   // artifact here is one the user can still see.
@@ -69,9 +70,13 @@ export function SelectionBar({
   // The active feed's list query, so a bulk write reconciles the grid it just changed.
   listKey: QueryKey
   onClear: () => void
+  // Present only in a collection view whose folders the caller can manage — enables the
+  // "Move to folder" action (folders are per-collection, so it needs that collection).
+  folderContext?: { collectionId: string; folders: Folder[] }
 }) {
   const [showTags, setShowTags] = useState(false)
   const [showCollections, setShowCollections] = useState(false)
+  const [showFolder, setShowFolder] = useState(false)
   const [showDelete, setShowDelete] = useState(false)
 
   const n = items.length
@@ -151,6 +156,17 @@ export function SelectionBar({
             onClick={() => setShowCollections(true)}
           />
 
+          {folderContext && (
+            <BarAction
+              testId="library-selection-folder"
+              icon={<Icon name="collection" size={16} />}
+              label="Move to folder"
+              disabled={busy}
+              title="File the selected artifacts under a folder in this collection"
+              onClick={() => setShowFolder(true)}
+            />
+          )}
+
           <BarAction
             testId="library-selection-favorite"
             icon={
@@ -219,6 +235,20 @@ export function SelectionBar({
           onOpenChange={setShowCollections}
           onDone={() => {
             setShowCollections(false)
+            onClear()
+          }}
+        />
+      )}
+      {showFolder && folderContext && (
+        <BulkFolderDialog
+          items={items}
+          collectionId={folderContext.collectionId}
+          folders={folderContext.folders}
+          listKey={listKey}
+          open={showFolder}
+          onOpenChange={setShowFolder}
+          onDone={() => {
+            setShowFolder(false)
             onClear()
           }}
         />

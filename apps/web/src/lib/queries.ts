@@ -35,12 +35,12 @@ export const collectionsQuery = () =>
     queryFn: () => api.listCollections().then((r) => r.collections),
   })
 
-// The workspace's org-shared folders (name order), for the rail's folder grouping and
-// the "Move to folder" picker. Small and warm like collectionsQuery.
-export const foldersQuery = () =>
+// A collection's folders (name order) + its artifact→folder assignment map — drives the
+// collection view's folder grouping and management. Keyed by collection.
+export const collectionFoldersQuery = (collectionId: string) =>
   queryOptions({
-    queryKey: ["folders"] as const,
-    queryFn: () => api.listFolders().then((r) => r.folders),
+    queryKey: ["collection-folders", collectionId] as const,
+    queryFn: () => api.collectionFolders(collectionId),
   })
 
 // Workspaces only change via create/switch/delete — all of which hard-reload — so

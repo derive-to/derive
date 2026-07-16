@@ -850,19 +850,24 @@ export const api = {
     f(`/v1/collections/${collectionId}/items/${shortId}`, { ...opts(), method: "PUT" }).then(
       () => undefined,
     ),
-  // Folders (owner-editable org grouping; grant no access). Mutations are workspace-
-  // owner-only server-side — the UI hides them for non-owners.
-  listFolders: (): Promise<{ folders: Folder[] }> => f("/v1/folders", opts()).then(j),
-  createFolder: (name: string): Promise<Folder> => f("/v1/folders", opts({ name })).then(j),
+  // Folders organize a collection's artifacts (grant no access). Management is gated on
+  // the collection's editor role server-side — the UI hides it for non-editors.
+  collectionFolders: (
+    collectionId: string,
+  ): Promise<{ folders: Folder[]; assignments: Record<string, string> }> =>
+    f(`/v1/collections/${collectionId}/folders`, opts()).then(j),
+  createFolder: (collectionId: string, name: string): Promise<Folder> =>
+    f(`/v1/collections/${collectionId}/folders`, opts({ name })).then(j),
   renameFolder: (id: string, name: string): Promise<Folder> =>
     f(`/v1/folders/${id}`, { ...opts({ name }), method: "PATCH" }).then(j),
   deleteFolder: (id: string): Promise<void> =>
     f(`/v1/folders/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
-  // File a collection under a folder (or null to ungroup).
-  setCollectionFolder: (collectionId: string, folderId: string | null): Promise<void> =>
-    f(`/v1/collections/${collectionId}/folder`, { ...opts({ folderId }), method: "PUT" }).then(
-      () => undefined,
-    ),
+  // File an artifact (within a collection) under a folder, or null to unfile.
+  setItemFolder: (collectionId: string, shortId: string, folderId: string | null): Promise<void> =>
+    f(`/v1/collections/${collectionId}/items/${shortId}/folder`, {
+      ...opts({ folderId }),
+      method: "PUT",
+    }).then(() => undefined),
   removeFromCollection: (collectionId: string, shortId: string): Promise<void> =>
     f(`/v1/collections/${collectionId}/items/${shortId}`, {
       method: "DELETE",

@@ -420,6 +420,11 @@ export const collection = sqliteTable("collection", {
 export const folder = sqliteTable("folder", {
   id: text("id").primaryKey(),
   org_id: text("org_id").notNull().default("local"),
+  // The collection this folder organizes (a folder lives INSIDE a collection and groups
+  // its artifacts). App-required; nullable at the DB only so the ADD COLUMN migration
+  // stays additive. FK-free — folders grant no access; the API enforces that a filed
+  // item's folder belongs to the item's collection.
+  collection_id: text("collection_id"),
   name: text("name").notNull(),
   created_by: text("created_by").notNull(),
   created_at: text("created_at").notNull().default(now),
@@ -435,6 +440,10 @@ export const collectionItem = sqliteTable(
     artifact_id: text("artifact_id")
       .notNull()
       .references(() => artifact.id),
+    // Which folder (within THIS collection) the artifact is filed under; null = unfiled.
+    // Folder membership refines collection membership, so it rides the membership row.
+    // FK-free (see folder.collection_id).
+    folder_id: text("folder_id"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [uniqueIndex("collection_item_uniq").on(t.collection_id, t.artifact_id)],

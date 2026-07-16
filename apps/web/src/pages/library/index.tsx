@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useSearch } from "@tanstack/react-router"
-import { FolderTree, List } from "lucide-react"
+import { FolderTree, LayoutGrid, List } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
@@ -18,6 +18,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
 import {
   artifactQuery,
+  collectionFoldersQuery,
   collectionsQuery,
   needsFeedbackArtifactsQuery,
   summaryQuery,
@@ -34,6 +35,7 @@ import { ArtifactGrid } from "./artifact-grid"
 import { ArtifactRow, byRecency } from "./artifact-row"
 import { BrandprintNudge } from "./brandprint-nudge"
 import { CollectionBar } from "./collection-bar"
+import { CollectionFolders, NewFolderControl } from "./collection-folders"
 import { FolderGroups } from "./folder-groups"
 import { FollowingStrip } from "./following-strip"
 import { HowItWorks } from "./how-it-works"
@@ -166,11 +168,19 @@ function LibraryBody({ view }: { view: LibraryView }) {
   const activeCollection =
     filter.kind === "collection" ? collections.find((c) => c.id === filter.id) : undefined
   const isSyncedCollection = activeCollection?.kind === "repo" || activeCollection?.kind === "pr"
-  // Pull the whole collection so the sort + grouping see every doc (collections are finite
-  // and scoping keeps them small).
-  useEffect(() => {
-    if (isSyncedCollection && hasNextPage && !isFetchingNextPage) fetchNextPage()
-  }, [isSyncedCollection, hasNextPage, isFetchingNextPage, fetchNextPage])
+  // In-collection folders (manual collections only; repos use the path-based FolderGroups).
+  // Fetch the folder list + artifact→folder assignment map so the view can group.
+  const isManualCollection = filter.kind === "collection" && !isSyncedCollection
+  const { data: colFolders } = useQuery({
+    ...collectionFoldersQuery(filter.kind === "collection" ? filter.id : ""),
+    enabled: !!me && isManualCollection,
+  })
+  const folders = colFolders?.folders ?? []
+  const folderAssignments = colFolders?.assignments ?? {}
+  // Managing a collection's folders needs the collection's editor role.
+  const canManageFolders =
+    isManualCollection &&
+    (activeCollection?.my_role === "editor" || activeCollection?.my_role === "owner")
   const recencyItems = isSyncedCollection ? [...items].sort(byRecency) : items
 
   // Folder-vs-flat is remembered PER COLLECTION (a JSON map under the one storage key),
@@ -189,6 +199,11 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // feeds pass nothing — a direct/feed open has no single collection to page within.
   const openContext = filter.kind === "collection" ? { collection: filter.id } : {}
   const showFolders = filter.kind === "collection" ? !!folderPrefs[filter.id] : false
+  // A manual collection that HAS folders defaults to the grouped folder view; the
+  // List/Folders toggle (same per-collection pref as the synced one) flips it back to the
+  // card grid so thumbnails are never lost for good. Default true only when folders exist.
+  const showManualFolders = filter.kind === "collection" ? (folderPrefs[filter.id] ?? true) : true
+  const foldersView = isManualCollection && folders.length > 0 && showManualFolders
   const setShowFolders = (on: boolean) => {
     if (filter.kind !== "collection") return
     setFolderPrefs((prev) => {
@@ -201,6 +216,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
       return next
     })
   }
+  // Pull the WHOLE collection when the sort + grouping need every doc: always for a synced
+  // repo/PR, and for a manual collection while its folder view is active (so buckets +
+  // counts reflect every item, not just the first page). Collections are finite and
+  // scoping keeps them small.
+  useEffect(() => {
+    if ((isSyncedCollection || foldersView) && hasNextPage && !isFetchingNextPage) fetchNextPage()
+  }, [isSyncedCollection, foldersView, hasNextPage, isFetchingNextPage, fetchNextPage])
 
   const renameCol = useApiMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) => api.renameCollection(id, title),
@@ -551,8 +573,88 @@ function LibraryBody({ view }: { view: LibraryView }) {
           onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
           selection={selection}
         />
+      ) : isManualCollection && folders.length > 0 ? (
+        // An organized manual collection. A Cards/Folders toggle (default Folders) rides
+        // above so thumbnails are one click away — the folder grouping never traps you in
+        // rows. Both views share the same items + multi-select.
+        <div className="flex flex-col gap-3">
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            aria-label="View"
+            className="self-end"
+            value={foldersView ? "folders" : "list"}
+            onValueChange={(v) => v && setShowFolders(v === "folders")}
+          >
+            <ToggleGroupItem value="list" aria-label="Cards" data-testid="library-view-list">
+              <LayoutGrid aria-hidden />
+              Cards
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="folders"
+              aria-label="Folders"
+              data-testid="library-view-folders"
+            >
+              <FolderTree aria-hidden />
+              Folders
+            </ToggleGroupItem>
+          </ToggleGroup>
+          {foldersView ? (
+            <CollectionFolders
+              collectionId={filter.id}
+              items={items}
+              folders={folders}
+              assignments={folderAssignments}
+              canManage={!!canManageFolders}
+              hasNextPage={!!hasNextPage}
+              isFetchingNextPage={isFetchingNextPage}
+              onOpen={(a) =>
+                nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
+              }
+              onToggleFavorite={toggleFavorite}
+              onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+              onPickAuthor={pickAuthor}
+              onEditTags={setPendingTags}
+              onAddToCollection={setPendingCollections}
+              onDelete={setPendingDelete}
+              onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+              selection={selection}
+            />
+          ) : (
+            <>
+              <ArtifactGrid
+                items={items}
+                scrollRef={scrollRef}
+                hasNextPage={!!hasNextPage}
+                isFetchingNextPage={isFetchingNextPage}
+                onLoadMore={() => fetchNextPage()}
+                onOpen={(a) =>
+                  nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
+                }
+                onToggleFavorite={toggleFavorite}
+                onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+                onEditTags={setPendingTags}
+                onAddToCollection={setPendingCollections}
+                onDelete={setPendingDelete}
+                onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+                selection={selection}
+              />
+              {isFetchingNextPage && (
+                <div className="flex justify-center py-2" data-testid="library-loading-more">
+                  <Spinner />
+                </div>
+              )}
+            </>
+          )}
+        </div>
       ) : (
         <>
+          {/* No folders yet on a manual collection → keep the card grid; an editor gets a
+              "New folder" to start organizing (the view flips to folders once one exists). */}
+          {filter.kind === "collection" && canManageFolders && (
+            <NewFolderControl collectionId={filter.id} className="mb-3" />
+          )}
           <ArtifactGrid
             items={items}
             scrollRef={scrollRef}
@@ -586,6 +688,11 @@ function LibraryBody({ view }: { view: LibraryView }) {
           items={selection.selectedItems}
           listKey={listQuery.queryKey}
           onClear={selection.clear}
+          folderContext={
+            filter.kind === "collection" && canManageFolders
+              ? { collectionId: filter.id, folders }
+              : undefined
+          }
         />
       )}
 

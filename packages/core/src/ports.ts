@@ -632,17 +632,21 @@ export interface CollectionStore {
    *  artifact — folded into their effective artifact role (collection sharing). */
   collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]>
 
-  // ---- Folders (owner-editable org grouping for collections; grant no access) ---
+  // ---- Folders (organize a collection's artifacts; inherit its access, grant nothing) --
   createFolder(f: NewFolder): Promise<FolderRecord>
-  /** All folders in a workspace (scoped when orgId given). Name order is a view concern. */
-  listFolders(orgId?: string): Promise<FolderRecord[]>
+  /** The folders belonging to a collection. Name order is a view concern. */
+  listFolders(collectionId: string): Promise<FolderRecord[]>
   getFolder(id: string): Promise<FolderRecord | null>
   updateFolder(id: string, fields: { name?: string }): Promise<FolderRecord | null>
-  /** Delete a folder and un-file its collections (set their folder_id to null) — the
-   *  collections themselves are untouched. */
+  /** Delete a folder and un-file its items within the collection (collection_item.folder_id
+   *  → null) — the artifacts stay in the collection. */
   deleteFolder(id: string): Promise<void>
-  /** File a collection under a folder (or null to ungroup). */
-  setCollectionFolder(collectionId: string, folderId: string | null): Promise<void>
+  /** File an artifact (within a collection) under a folder, or null to unfile. Scoped to
+   *  the membership row, so the same artifact can sit in different folders per collection. */
+  setItemFolder(collectionId: string, artifactId: string, folderId: string | null): Promise<void>
+  /** Map of artifact SHORT-ID → folder_id for a collection's FILED items (unfiled ones
+   *  absent). Keyed by short_id so the web (which works in short_ids) can group directly. */
+  collectionItemFolders(collectionId: string): Promise<Record<string, string>>
 }
 
 export interface IntegrationStore {
@@ -1640,12 +1644,14 @@ export interface NewCollection {
   workspace_access?: WorkspaceAccess
 }
 
-/** A workspace-shared organizing folder for collections (owner-editable). Grouping
- *  only — it grants no access and never appears in any auth path; a collection points
- *  at one via CollectionRecord.folder_id. */
+/** A folder that organizes ONE collection's artifacts (Collection → Folder → artifacts).
+ *  It inherits the collection's access and grants nothing of its own — never in any auth
+ *  path. Items are filed via collection_item.folder_id. `collection_id` is app-required
+ *  (nullable at the DB only for an additive migration). */
 export interface FolderRecord {
   id: string
   org_id: string
+  collection_id: string | null
   name: string
   created_by: string
   created_at: string
@@ -1653,6 +1659,7 @@ export interface FolderRecord {
 export interface NewFolder {
   id: string
   org_id: string
+  collection_id: string
   name: string
   created_by: string
 }
