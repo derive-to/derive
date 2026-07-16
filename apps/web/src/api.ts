@@ -456,7 +456,8 @@ export const api = {
     scope?: "shared" | "following" | "needs_feedback" | "mine"
     cursor?: string
     limit?: number
-    /** Grid order; absent = the API default (see @derive/core's sort.ts). */
+    /** Grid order. Omit to get the route's default, created-desc (the library always sends
+     *  this explicitly); the library's own default is `updated`. */
     sort?: SortMode
   }): Promise<{
     artifacts: Artifact[]
