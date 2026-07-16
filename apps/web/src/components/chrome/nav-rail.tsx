@@ -9,6 +9,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -722,12 +723,6 @@ export function NavRail() {
   // owner (their management surface).
   const renderFolder = (f: Folder) => {
     const kids = byFolder.get(f.id) ?? []
-    // Icon rail: folders are an expanded-rail concept. Show every collection as a flat,
-    // reachable tile — no header, no per-folder collapse — so a collapsed folder can't
-    // hide its collections behind an unlabeled icon.
-    if (state === "collapsed")
-      return <Fragment key={f.id}>{kids.map((col) => renderCollection(col))}</Fragment>
-
     const folderCollapsed = collapsedFolders.has(f.id)
     if (renamingFolder === f.id)
       return (
@@ -803,6 +798,56 @@ export function NavRail() {
         </SidebarMenuItem>
         {!folderCollapsed && kids.map((col) => renderCollection(col, true))}
       </Fragment>
+    )
+  }
+
+  // Collapsed icon rail: collections don't shrink to single letters (a letter alone is
+  // a cheap object glyph). Instead one "Collections" icon opens a flyout listing them by
+  // real name, grouped by folder — full access without the letter tiles. Expanded rail
+  // keeps the folder sections + monograms.
+  const renderCollapsedCollections = () => {
+    const foldersWithKids = visibleFolders.filter((f) => (byFolder.get(f.id)?.length ?? 0) > 0)
+    const empty = foldersWithKids.length === 0 && ungrouped.length === 0
+    const flyoutRow = (col: Collection) => (
+      <DropdownMenuItem
+        key={col.id}
+        data-testid={`flyout-collection-${col.id}`}
+        onSelect={() => {
+          closeMobile()
+          nav({ to: "/", search: { collection: col.id } })
+        }}
+        className="gap-2"
+      >
+        <CollectionGlyph col={col} />
+        <span className="min-w-0 flex-1 truncate">{col.title}</span>
+      </DropdownMenuItem>
+    )
+    return (
+      <SidebarMenuItem>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuButton
+              tooltip="Collections"
+              data-testid="sidebar-collections-flyout"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <Icon name="collections" />
+              <span>Collections</span>
+            </SidebarMenuButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="right" align="start" className="max-h-96 w-56 overflow-auto">
+            {empty && <DropdownMenuItem disabled>No collections yet</DropdownMenuItem>}
+            {foldersWithKids.map((f) => (
+              <Fragment key={f.id}>
+                <DropdownMenuLabel className="text-muted-foreground">{f.name}</DropdownMenuLabel>
+                {(byFolder.get(f.id) ?? []).map(flyoutRow)}
+              </Fragment>
+            ))}
+            {foldersWithKids.length > 0 && ungrouped.length > 0 && <DropdownMenuSeparator />}
+            {ungrouped.map(flyoutRow)}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </SidebarMenuItem>
     )
   }
 
@@ -921,49 +966,57 @@ export function NavRail() {
                 />
               )}
               <SidebarMenu>
-                {/* First load only — a refetch keeps the current list (no data → no
-                  isPending), so switching views never flashes the collections. */}
-                {collectionsPending &&
-                  RAIL_SKELETON_COLLECTIONS.map((r) => (
-                    <SidebarMenuSkeleton key={r.id} showIcon width={r.w} />
-                  ))}
-                {/* Owner-only: create a folder to group collections. Folders are shared
-                  workspace structure, so only owners see this (and the manage menus). */}
-                {isOwner &&
-                  (creatingFolder ? (
-                    <SidebarMenuItem>
-                      <Input
-                        autoFocus
-                        value={newFolderName}
-                        placeholder="Folder name…"
-                        aria-label="Folder name"
-                        data-testid="sidebar-new-folder-input"
-                        onChange={(e) => setNewFolderName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") submitFolder()
-                          if (e.key === "Escape") {
-                            setCreatingFolder(false)
-                            setNewFolderName("")
-                          }
-                        }}
-                        onBlur={submitFolder}
-                        className="mb-1 group-data-[collapsible=icon]:hidden"
-                      />
-                    </SidebarMenuItem>
-                  ) : (
-                    <SidebarMenuItem className="group-data-[collapsible=icon]:hidden">
-                      <SidebarMenuButton
-                        onClick={() => setCreatingFolder(true)}
-                        data-testid="sidebar-new-folder"
-                        className="text-muted-foreground hover:text-foreground"
-                      >
-                        <Icon name="plus" />
-                        <span>New folder</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                {visibleFolders.map((f) => renderFolder(f))}
-                {ungrouped.map((col) => renderCollection(col))}
+                {/* Collapsed icon rail: a single Collections flyout (no letter tiles).
+                    Expanded: the full folder sections + monograms. */}
+                {state === "collapsed" ? (
+                  renderCollapsedCollections()
+                ) : (
+                  <>
+                    {/* First load only — a refetch keeps the current list (no data → no
+                      isPending), so switching views never flashes the collections. */}
+                    {collectionsPending &&
+                      RAIL_SKELETON_COLLECTIONS.map((r) => (
+                        <SidebarMenuSkeleton key={r.id} showIcon width={r.w} />
+                      ))}
+                    {/* Owner-only: create a folder to group collections. Folders are shared
+                      workspace structure, so only owners see this (and the manage menus). */}
+                    {isOwner &&
+                      (creatingFolder ? (
+                        <SidebarMenuItem>
+                          <Input
+                            autoFocus
+                            value={newFolderName}
+                            placeholder="Folder name…"
+                            aria-label="Folder name"
+                            data-testid="sidebar-new-folder-input"
+                            onChange={(e) => setNewFolderName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") submitFolder()
+                              if (e.key === "Escape") {
+                                setCreatingFolder(false)
+                                setNewFolderName("")
+                              }
+                            }}
+                            onBlur={submitFolder}
+                            className="mb-1"
+                          />
+                        </SidebarMenuItem>
+                      ) : (
+                        <SidebarMenuItem>
+                          <SidebarMenuButton
+                            onClick={() => setCreatingFolder(true)}
+                            data-testid="sidebar-new-folder"
+                            className="text-muted-foreground hover:text-foreground"
+                          >
+                            <Icon name="plus" />
+                            <span>New folder</span>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                      ))}
+                    {visibleFolders.map((f) => renderFolder(f))}
+                    {ungrouped.map((col) => renderCollection(col))}
+                  </>
+                )}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
