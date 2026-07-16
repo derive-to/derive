@@ -16,6 +16,7 @@ import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
 import { assetRoutes } from "./routes/assets"
+import { betaRoutes } from "./routes/beta"
 import { blobRoutes } from "./routes/blob"
 import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
@@ -26,6 +27,7 @@ import { favoriteRoutes } from "./routes/favorites"
 import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
 import { githubAppRoutes } from "./routes/github-app"
+import { marketingRoutes } from "./routes/marketing"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
 import { oauthRoutes } from "./routes/oauth"
@@ -252,6 +254,9 @@ export function createApp(deps: AppDeps): Hono {
       "/api/auth/request-password-reset",
       "/api/auth/send-verification-email",
       "/api/auth/change-email",
+      // The beta-signup form emails an arbitrary address too (routes/beta.ts), so it
+      // rides the same tight mail-triggering cap.
+      "/v1/beta/signup",
     ])
       app.use(p, authEmailLimiter)
     // Anonymous OAuth client registration (open DCR) gets a tighter per-IP cap on
@@ -341,6 +346,7 @@ export function createApp(deps: AppDeps): Hono {
     /^\/v1\/artifacts\/[^/]+\/view$/, // de-duped, anonymous-safe view counter
     /^\/v1\/artifacts\/[^/]+\/unlock$/, // password unlock — the password is the gate
     /^\/v1\/vitals$/, // anonymous Core Web Vitals beacon (telemetry, no state)
+    /^\/v1\/beta\/signup$/, // marketing-site beta signup — anonymous is the point; IP-capped
     /^\/v1\/sync\/github\/webhook$/, // GitHub App webhook — HMAC signature is the gate
     /^\/v1\/slack\/events$/, // Slack Events API — signing-secret signature is the gate
     /^\/v1\/slack\/interactivity$/, // Slack Block Kit actions — signing-secret signature is the gate
@@ -391,6 +397,8 @@ export function createApp(deps: AppDeps): Hono {
     oauthRoutes,
     githubAppRoutes,
     systemRoutes,
+    betaRoutes,
+    marketingRoutes,
   ])
     app.route("/", routes(ctx))
 

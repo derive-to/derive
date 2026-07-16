@@ -1,0 +1,1334 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Derive — Make things worth keeping.</title>
+<meta name="description" content="You've never made more, and never kept less. Derive is where your team and its agents publish, review, and revise work. Open source and self-hostable.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Derive — Make things worth keeping.">
+<meta property="og:description" content="You've never made more, and never kept less. Derive is where your team and its agents publish, review, and revise work.">
+<meta property="og:url" content="https://derive.to/">
+<meta property="og:image" content="https://derive.to/site/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://derive.to/">
+<link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/brand/favicon.png" type="image/png">
+<style>
+/* ── Geist, shipped with the site (zero third-party requests) ── */
+@font-face{
+  font-family:"Geist";
+  src:url("/site/geist.woff2") format("woff2");
+  font-weight:100 900;font-style:normal;font-display:swap;
+}
+@font-face{
+  font-family:"Geist Mono";
+  src:url("/site/geist-mono.woff2") format("woff2");
+  font-weight:100 900;font-style:normal;font-display:swap;
+}
+
+:root{
+  --bg:#0a0b0d; --fg:#f3f4f6; --card:#101216; --secondary:#16181d;
+  --muted:#969aa2; --faint:#5c616b; --accent:#1b1d23; --border:#23252b; --border-soft:#191b1f;
+  --primary:#f3f4f6; --primary-fg:#0a0b0d;
+  --success:#74b085; --warning:#fb923c;
+  --gold:#c2a15e; --share:#8781b0;
+  --scrim:#030712; --scrim-fg:#f4f5f8;
+  --sans:"Geist",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"Geist Mono",ui-monospace,Menlo,Consolas,monospace;
+  --maxw:1260px;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font-family:var(--sans);font-size:16px;line-height:1.6;letter-spacing:-0.011em;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+  overflow-x:hidden;
+}
+::selection{background:rgba(243,244,246,.18)}
+a{color:inherit;text-decoration:none;cursor:default}
+button{cursor:default;font:inherit;background:none;border:0;color:inherit;padding:0}
+
+/* film grain — heavier here than the app: this page is a poster */
+body::after{
+  content:"";position:fixed;inset:0;z-index:300;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode:screen;opacity:.07;
+}
+
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px}
+.eyebrow{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+h1,h2,h3{font-weight:500;letter-spacing:-0.025em;margin:0}
+p{margin:0;text-wrap:pretty}
+
+/* reveal-on-scroll — quick and quiet: you should never wait to read */
+.reveal{opacity:0;transform:translateY(8px);transition:opacity .38s ease-out,transform .38s ease-out}
+.reveal.in{opacity:1;transform:none}
+
+/* ── buttons ── */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;height:44px;padding:0 22px;
+  border-radius:8px;font-size:15px;font-weight:500;border:1px solid transparent;white-space:nowrap;
+}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--primary);color:var(--primary-fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.2)}
+.btn-primary:hover{background:#fff}
+.btn-ghost{border-color:var(--border);color:var(--fg)}
+.btn-ghost:hover{background:var(--secondary)}
+
+/* ── nav: nearly nothing ── */
+nav{position:fixed;inset:0 0 auto;z-index:100;border-bottom:1px solid transparent;
+  background:color-mix(in srgb,var(--bg) 78%,transparent);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+nav.scrolled{border-bottom-color:var(--border-soft)}
+.nav-inner{max-width:var(--maxw);margin:0 auto;padding:0 28px;height:64px;display:flex;align-items:center;gap:26px}
+.wordmark{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:500;letter-spacing:-0.02em}
+.nav-right{margin-left:auto;display:flex;align-items:center;gap:24px;font-size:14px}
+.nav-right a{color:var(--muted)}
+.nav-right a:hover{color:var(--fg)}
+.nav-right .btn{height:34px;padding:0 16px;font-size:13px;border-radius:6px;color:var(--primary-fg)}
+@media(max-width:480px){.nav-right a:not(.btn){display:none}}
+
+/* ══════════ HERO — the tagline, then the artifact ══════════ */
+.hero{position:relative;padding:150px 0 0}
+.hero .stage{
+  max-width:var(--maxw);margin:0 auto;padding:0 28px;width:100%;
+  display:flex;flex-direction:column;align-items:center;text-align:center;
+}
+.state-line{
+  font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:var(--muted);
+  min-height:20px;display:flex;align-items:center;justify-content:center;gap:10px;
+}
+.state-line .vdot{width:6px;height:6px;border-radius:50%;background:var(--muted);transition:background .3s}
+.state-line.approved .vdot{background:var(--success)}
+.state-line .note{transition:opacity .3s}
+
+.derivation{
+  margin-top:26px;
+  font-size:clamp(40px,6.6vw,90px);
+  line-height:1.04;letter-spacing:-0.035em;font-weight:500;
+}
+.derivation .row{display:block}
+.word{
+  display:inline-block;position:relative;white-space:nowrap;
+  opacity:0;transform:translateY(.18em);
+  transition:opacity .32s cubic-bezier(.16,1,.3,1),transform .32s cubic-bezier(.16,1,.3,1),color .35s;
+  margin-right:.22em;
+}
+.word.on{opacity:1;transform:none}
+/* the pen strike: a slightly tilted ink line drawn left→right */
+.word .strike{
+  position:absolute;left:-2%;right:auto;top:52%;height:.055em;width:0;
+  background:var(--fg);border-radius:.03em;transform:rotate(-2deg);
+  transition:width .28s cubic-bezier(.7,0,.3,1);pointer-events:none;
+}
+.word.struck{color:var(--faint)}
+.word.struck .strike{width:104%}
+.word.struck.settle{opacity:.34}
+.word.final-word.on{color:var(--fg)}
+/* the approval underline on the surviving word */
+.word .under{
+  position:absolute;left:0;bottom:-.06em;height:.045em;width:0;background:var(--fg);
+  transition:width .4s cubic-bezier(.16,1,.3,1) .05s;border-radius:.03em;
+}
+.word.approved .under{width:100%}
+
+.hero .sub{
+  margin-top:36px;max-width:52ch;font-size:clamp(16px,1.6vw,19px);color:var(--muted);line-height:1.65;
+}
+.hero .sub strong{color:var(--fg);font-weight:500}
+.hero .cta-row{
+  margin-top:30px;display:flex;flex-direction:column;align-items:center;gap:0;
+}
+
+/* ── the form's provenance: one line that reads like a resolved comment ── */
+.wl-theatre{position:relative;display:flex;flex-direction:column;align-items:center}
+.wl-story{
+  margin-top:14px;display:flex;align-items:center;justify-content:center;gap:9px;flex-wrap:wrap;
+  font-size:12.5px;color:var(--muted);max-width:60ch;
+}
+.wl-story .chip{
+  flex:none;width:17px;height:17px;border-radius:50%;
+  background:color-mix(in srgb,var(--gold) 16%,transparent);
+  border:1px solid color-mix(in srgb,var(--gold) 35%,transparent);
+  display:inline-flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:8.5px;color:var(--gold);
+}
+.wl-story .q{font-style:italic}
+.wl-story .res{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;color:var(--success);
+  display:inline-flex;align-items:center;gap:6px;white-space:nowrap;
+}
+.wl-story .res .vdot2{width:5px;height:5px;border-radius:50%;background:var(--success)}
+.wl-story .res.bump .vdot2{animation:vbump .5s ease-out}
+@keyframes vbump{0%{transform:scale(1)}45%{transform:scale(2.1)}100%{transform:scale(1)}}
+.wl-meta{
+  margin-top:8px;font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;color:var(--faint);
+}
+.wl-meta:empty{display:none}
+.hero-eyebrow{margin-bottom:28px;color:var(--muted)}
+/* the tagline in gradient ink: lit at the cap line, settling toward the baseline */
+.grad-ink{
+  background-image:linear-gradient(178deg,#ffffff 6%,var(--fg) 44%,rgba(243,244,246,.60) 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+/* presence — you show up, like opening any Derive artifact */
+.wl-presence{
+  margin-top:10px;display:inline-flex;align-items:center;gap:8px;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;color:var(--faint);
+  opacity:0;transform:translateY(3px);transition:opacity .35s ease,transform .35s ease;
+}
+.wl-presence.show{opacity:1;transform:none}
+.wl-presence .pd{width:6px;height:6px;border-radius:50%}
+.wl-presence .pd.you{background:var(--fg)}
+.wl-presence .pd.rob{background:var(--gold)}
+.wl-note-slot{min-height:0;transition:min-height .3s ease}
+.replay{
+  font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--faint);
+  display:inline-flex;align-items:center;gap:7px;margin-top:0;
+}
+.replay:hover{color:var(--muted)}
+.hero .foot-hint{
+  margin-top:22px;text-align:center;
+  font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);
+  opacity:.8;
+}
+
+/* ══ the hero artifact: a document you can scrub through time ══ */
+.demo{max-width:var(--maxw);margin:84px auto 0;padding:0 28px}
+.fig{
+  display:flex;align-items:center;gap:10px;margin-bottom:12px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+}
+.fig::after{content:"";flex:1;border-top:1px dashed var(--border)}
+.demo-stage{position:relative}
+.demo-stage .tick{position:absolute;width:13px;height:13px;color:var(--muted);opacity:.6}
+.demo-stage .tick::before,.demo-stage .tick::after{content:"";position:absolute;background:currentColor}
+.demo-stage .tick::before{left:6px;top:0;width:1px;height:13px}
+.demo-stage .tick::after{left:0;top:6px;width:13px;height:1px}
+.demo-stage .tick.tl{left:-6px;top:-6px}
+.demo-stage .tick.tr{right:-6px;top:-6px}
+.demo-stage .tick.bl{left:-6px;bottom:-6px}
+.demo-stage .tick.br{right:-6px;bottom:-6px}
+.demo-frame{border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden;transition:opacity .4s ease}
+.demo-frame.resetting{opacity:.35}
+.demo-titlebar{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--border-soft)}
+.demo-titlebar .doc-title{font-size:14px;font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.demo-titlebar .doc-meta{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.02em}
+.demo-titlebar .spacer{flex:1}
+.abadge{
+  display:none;align-items:center;gap:6px;border-radius:6px;padding:3px 9px;
+  font-family:var(--mono);font-size:11px;letter-spacing:.03em;
+  background:color-mix(in srgb,var(--success) 12%,transparent);color:var(--success);
+}
+.abadge.show{display:inline-flex}
+.demo-body{display:grid;grid-template-columns:1fr 320px;min-height:372px;position:relative}
+.demo-body ::selection{background:color-mix(in srgb,var(--success) 32%,transparent)}
+@media(max-width:840px){.demo-body{grid-template-columns:1fr}.demo-comments{border-left:0;border-top:1px solid var(--border-soft)}}
+.doc{padding:36px 44px 40px;text-align:left;display:flex;flex-direction:column}
+.doc .kicker{
+  font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);
+  padding-bottom:14px;border-bottom:1px solid var(--border-soft);margin-bottom:20px;
+  display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
+}
+.doc h3{font-size:30px;letter-spacing:-0.025em;line-height:1.15;margin:0;font-weight:500}
+.doc .doc-sub{margin-top:8px;font-family:var(--mono);font-size:11.5px;color:var(--muted);letter-spacing:.04em;min-height:16px}
+.doc .sec{
+  margin-top:24px;display:flex;align-items:center;gap:12px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);
+}
+.doc .sec::after{content:"";flex:1;border-top:1px solid var(--border-soft)}
+.doc p.line{margin:20px 0 0;font-size:17px;line-height:1.65;color:var(--muted)}
+.doc p.line strong{color:var(--fg);font-weight:500}
+.doc p.line.gate{font-size:15px;margin-top:14px}
+.doc p.line.gate .tbd{color:var(--faint);font-style:italic}
+.doc .viz{display:flex;gap:56px;align-items:flex-start;flex-wrap:wrap;margin-top:auto;padding-top:34px}
+.doc .viz > .vchart{flex:1 1 46%;min-width:280px}
+.doc .viz > .vcol{flex:1 1 40%;min-width:250px;display:flex;flex-direction:column;gap:20px}
+.doc .chart{display:flex;align-items:flex-end;gap:18px;height:172px;margin-top:26px}
+.doc p.line:empty{display:none}
+.doc .miles{font-family:var(--mono);font-size:12.5px;letter-spacing:.01em;display:flex;flex-direction:column}
+.doc .miles .trow span:first-child{color:var(--muted)}
+.doc .miles .trow span:last-child{color:var(--fg)}
+.doc .miles .trow .tbd{color:var(--faint);font-style:italic}
+.doc .teams{
+  font-family:var(--mono);font-size:12.5px;letter-spacing:.01em;
+  display:none;flex-direction:column;
+}
+.doc .teams.show{display:flex;animation:replyIn .4s ease-out}
+.doc .trow{
+  display:flex;justify-content:space-between;gap:18px;padding:9px 2px;
+  border-top:1px solid var(--border-soft);color:var(--muted);
+}
+.doc .trow span:first-child{color:var(--fg)}
+.doc .trow.th{border-top:0;text-transform:uppercase;font-size:10px;letter-spacing:.06em;color:var(--faint)}
+.doc .trow.th span:first-child{color:var(--faint)}
+.doc .trow.more span{color:var(--faint)}
+.doc .chart-cap{
+  margin-top:12px;font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--faint);
+}
+.doc .bar{flex:1;border-radius:3px 3px 0 0;background:var(--secondary);border:1px solid var(--border);border-bottom:0;position:relative;transition:height .5s cubic-bezier(.2,.7,.2,1)}
+.doc .bar.ink{background:color-mix(in srgb,var(--fg) 18%,var(--secondary))}
+.doc .bar .cap{position:absolute;top:-24px;left:0;right:0;text-align:center;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.doc .axis{display:flex;gap:18px;border-top:1px solid var(--border);padding-top:8px}
+.doc .axis span{flex:1;text-align:center;font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.04em}
+.flash{animation:flash 1.1s ease-out}
+@keyframes flash{0%{background:color-mix(in srgb,var(--fg) 9%,transparent)}100%{background:transparent}}
+.demo-comments{border-left:1px solid var(--border-soft);padding:20px 18px;display:flex;flex-direction:column;gap:11px;text-align:left}
+.demo-comments .pane-label{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.dcomment{
+  border:1px solid var(--border-soft);border-radius:8px;padding:11px 13px;
+  opacity:0;transform:translateY(4px);transition:opacity .3s ease,transform .3s ease;
+}
+.dcomment.show{opacity:1;transform:none}
+.dcomment .who{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:500}
+.dcomment .who .chip{width:18px;height:18px;border-radius:50%;background:var(--secondary);border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:9px;color:var(--muted)}
+.dcomment .quote{margin-top:8px;padding-left:10px;border-left:2px solid var(--border);font-size:12px;color:var(--muted);font-style:italic}
+.dcomment .text{margin-top:8px;font-size:13px;color:var(--fg)}
+.dcomment .state{margin-top:10px;font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:var(--muted)}
+.dcomment.resolved .state{color:var(--success)}
+.dcomment.resolved{opacity:.62}
+.comments-empty{font-size:13px;color:var(--muted);margin:auto 0;text-align:center;opacity:.7}
+.timeline{margin-top:26px}
+.scrub{position:relative;height:44px;display:flex;align-items:center}
+.scrub-track{position:absolute;left:0;right:0;height:2px;background:var(--border);border-radius:1px}
+.scrub-fill{position:absolute;left:0;height:2px;background:var(--fg);border-radius:1px;transition:width .25s ease}
+.scrub input{position:absolute;inset:0;width:100%;opacity:0;margin:0;cursor:default}
+.scrub .stops{position:absolute;left:0;right:0;display:flex;justify-content:space-between;pointer-events:none}
+.scrub .stop{width:10px;height:10px;border-radius:50%;background:var(--bg);border:1px solid var(--border);transition:border-color .2s,background .2s}
+.scrub .stop.passed{border-color:var(--fg);background:var(--fg)}
+.scrub-labels{display:flex;justify-content:space-between;margin-top:2px}
+.scrub-labels span{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.03em}
+.scrub-labels span.on{color:var(--fg)}
+.version-line{
+  margin-top:16px;display:flex;align-items:baseline;gap:12px;min-height:22px;
+  font-family:var(--mono);font-size:12px;letter-spacing:.01em;text-align:left;
+}
+.version-line .vn{color:var(--fg);font-weight:500}
+.version-line .vauthor{color:var(--muted)}
+.version-line .vmsg{color:var(--muted)}
+.version-line .tdot{
+  display:none;width:6px;height:6px;border-radius:50%;background:var(--muted);
+  align-self:center;animation:tpulse 1s ease-in-out infinite;
+}
+.version-line.typing .tdot{display:inline-block}
+.version-line.typing .vn{display:none}
+@keyframes tpulse{0%,100%{opacity:.35}50%{opacity:1}}
+
+/* ── live-collab theatre: cursors, highlights, threads ── */
+.pcursor{
+  position:absolute;left:0;top:0;z-index:6;opacity:0;pointer-events:none;will-change:transform;
+  transition:transform 950ms cubic-bezier(.25,.6,.25,1),opacity .35s ease;
+}
+.pcursor svg{display:block;filter:drop-shadow(0 1px 2px rgba(3,7,18,.55))}
+.pcursor .flag{
+  position:absolute;left:14px;top:16px;font-size:11px;font-weight:500;line-height:1;
+  padding:4px 9px;border-radius:999px;color:var(--scrim);white-space:nowrap;
+}
+.pcursor.rob svg .arrow{fill:var(--gold)}
+.pcursor.rob .flag{background:var(--gold)}
+.pcursor.ada svg .arrow{fill:var(--share)}
+.pcursor.ada .flag{background:var(--share)}
+/* YOUR cursor goes multiplayer-green inside the artifact */
+.pcursor.you{transition:opacity .2s ease;z-index:9}
+.pcursor.you svg .arrow{fill:var(--success)}
+.pcursor.you .flag{background:var(--success)}
+.demo-body.livecursor{cursor:none}
+.demo-body.livecursor *{cursor:none}
+/* presence facepile in the titlebar */
+.face{display:flex;align-items:center;margin-left:4px}
+.face .fc{
+  width:20px;height:20px;border-radius:50%;border:1.5px solid var(--card);
+  display:inline-flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:9px;margin-left:-6px;
+}
+.face .fc:first-child{margin-left:0}
+.face .fc.g{background:color-mix(in srgb,var(--gold) 22%,var(--secondary));color:var(--gold)}
+.face .fc.v{background:color-mix(in srgb,var(--share) 22%,var(--secondary));color:var(--share)}
+.face .fc.n{background:var(--secondary);color:var(--muted)}
+.face .fc.y{background:color-mix(in srgb,var(--success) 22%,var(--secondary));color:var(--success);opacity:0;transform:scale(.5);transition:opacity .25s ease,transform .25s cubic-bezier(.2,.9,.3,1.4)}
+.face .fc.y.in{opacity:1;transform:none}
+.face-label{font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:var(--faint);margin-left:9px}
+.dcomment .who .ext{font-family:var(--mono);font-size:9px;letter-spacing:.05em;color:var(--faint);border:1px solid var(--border);border-radius:4px;padding:1px 5px;margin-left:4px}
+.tb-lock{display:inline-flex;align-items:center;gap:6px;border-radius:6px;padding:3px 9px;font-family:var(--mono);font-size:11px;background:var(--secondary);color:var(--muted);border:1px solid var(--border)}
+.hlspan{
+  background-image:linear-gradient(var(--hlc,transparent),var(--hlc,transparent));
+  background-repeat:no-repeat;background-size:0% 100%;border-radius:2px;
+  transition:background-size .5s cubic-bezier(.3,.7,.3,1);
+  box-decoration-break:clone;-webkit-box-decoration-break:clone;
+}
+.hlspan.lit{background-size:100% 100%}
+.dcomment .reply{display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-soft)}
+.dcomment .reply.show{display:block;animation:replyIn .35s ease-out}
+@keyframes replyIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.dcomment .who .chip.rob{background:color-mix(in srgb,var(--gold) 16%,transparent);border-color:color-mix(in srgb,var(--gold) 35%,transparent);color:var(--gold)}
+.dcomment .who .chip.ada{background:color-mix(in srgb,var(--share) 16%,transparent);border-color:color-mix(in srgb,var(--share) 35%,transparent);color:var(--share)}
+
+/* waitlist form */
+.waitlist{display:flex}
+.waitlist form{
+  display:flex;gap:8px;padding:6px;border-radius:12px;
+  background:var(--card);border:1px solid var(--border);width:min(430px,100%);
+}
+.waitlist input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--fg);font:inherit;font-size:14px;padding:0 12px}
+.waitlist input::placeholder{color:var(--faint)}
+.waitlist form:focus-within{border-color:var(--fg)}
+.waitlist .btn{height:38px;font-size:14px;padding:0 18px}
+.waitlist-done{display:none;align-items:center;gap:10px;height:52px;padding:0 18px;border-radius:12px;border:1px solid var(--border);background:var(--card);font-size:14px}
+.waitlist-done .tick{color:var(--success)}
+
+/* ══════════ MANIFESTO ══════════ */
+.manifesto{padding:190px 0 0}
+.manifesto .m-line{
+  font-size:clamp(26px,3.8vw,44px);line-height:1.22;letter-spacing:-0.025em;font-weight:500;
+  max-width:24ch;
+}
+.manifesto .m-line + .m-line{margin-top:64px}
+.manifesto .m-line .q{color:var(--muted)}
+.manifesto .m-kicker{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:34px;display:flex;align-items:center;gap:12px}
+.manifesto .m-kicker::after{content:"";flex:1;max-width:120px;border-top:1px dashed var(--border)}
+.m-answer{margin-top:72px;max-width:62ch;font-size:18px;color:var(--muted);line-height:1.7}
+.m-answer strong{color:var(--fg);font-weight:500}
+
+/* ══════════ THE OCEAN — chats scroll away, artifacts stay ══════════ */
+.ocean{margin-top:190px;position:relative;height:560px;overflow:hidden;border-top:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft)}
+.ghosts{
+  position:absolute;inset:-40px 0;display:flex;justify-content:space-around;gap:40px;
+  -webkit-mask-image:linear-gradient(to bottom,transparent,#000 18%,#000 82%,transparent);
+  mask-image:linear-gradient(to bottom,transparent,#000 18%,#000 82%,transparent);
+}
+.gcol{display:flex;flex-direction:column;gap:34px;animation:drift 36s linear infinite;filter:blur(.6px)}
+.gcol.g2{animation-duration:52s;animation-delay:-18s}
+.gcol.g3{animation-duration:44s;animation-delay:-9s}
+@keyframes drift{from{transform:translateY(0)}to{transform:translateY(-50%)}}
+.ghost{
+  font-family:var(--mono);font-size:12px;color:var(--fg);opacity:.16;white-space:nowrap;
+  border:1px solid var(--border-soft);border-radius:8px;padding:9px 13px;background:var(--card);
+}
+.ghost.plain{border:0;background:none;opacity:.11}
+.kept{
+  position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;
+}
+.kept-card{
+  background:var(--card);border:1px solid var(--border);border-radius:12px;padding:22px 26px;
+  box-shadow:0 0 0 1px rgba(243,244,246,.04),0 0 80px 30px rgba(3,7,18,.9);
+  display:flex;flex-direction:column;gap:12px;min-width:min(430px,88vw);
+}
+.kept-card .kc-top{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12.5px;color:var(--fg)}
+.kept-card .kc-top .lock{color:var(--success);display:inline-flex}
+.kept-card .kc-meta{display:flex;align-items:center;gap:14px;font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.03em}
+.kept-card .kc-meta .ok{color:var(--success)}
+.kept-line{
+  font-size:clamp(22px,3vw,32px);font-weight:500;letter-spacing:-0.02em;text-align:center;
+  text-shadow:0 0 24px rgba(10,11,13,.9);
+}
+.kept-line em{font-style:normal;color:var(--muted)}
+
+/* ══════════ CHAPTERS ══════════ */
+.chapter{padding:210px 0 0}
+.chapter .ch-head{display:flex;align-items:baseline;gap:22px}
+.chapter .ch-num{font-family:var(--mono);font-size:13px;color:var(--faint);letter-spacing:.1em}
+.chapter h2{font-size:clamp(44px,7vw,92px);line-height:1;letter-spacing:-0.035em}
+.chapter .ch-body{margin-top:30px;display:grid;grid-template-columns:minmax(0,60ch) 1fr;gap:64px;align-items:start}
+@media(max-width:880px){.chapter .ch-body{grid-template-columns:1fr}}
+.chapter .ch-lede{font-size:clamp(18px,2vw,22px);color:var(--fg);line-height:1.5;font-weight:400}
+.chapter .ch-text{margin-top:18px;font-size:16px;color:var(--muted);line-height:1.7}
+.chapter .ch-text strong{color:var(--fg);font-weight:500}
+.chapter .ch-spec{justify-self:end;width:100%;max-width:520px}
+@media(max-width:880px){.chapter .ch-spec{justify-self:start}}
+
+.spec-card{border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden}
+.spec-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border-soft);font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.05em}
+.spec-body{padding:16px 18px;font-family:var(--mono);font-size:12.5px;line-height:1.9;color:var(--muted)}
+.spec-body .c{color:var(--fg)}
+.spec-body .ok{color:var(--success)}
+.spec-body .dim{opacity:.6}
+
+/* share-dialog specimen */
+.share-dlg{padding:16px 18px;display:flex;flex-direction:column;gap:0;font-size:13px}
+.share-row{display:flex;align-items:center;gap:12px;padding:11px 2px;border-top:1px solid var(--border-soft)}
+.share-row:first-child{border-top:0}
+.share-row .sr-label{color:var(--fg);font-weight:500;flex:1}
+.share-row .sr-sub{display:block;font-weight:400;font-size:11.5px;color:var(--faint);margin-top:2px}
+.share-row .sr-val{font-family:var(--mono);font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:8px}
+.share-link{
+  display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;
+  background:var(--bg);padding:9px 12px;font-family:var(--mono);font-size:12px;color:var(--fg);
+  margin-bottom:6px;
+}
+.share-link .copy{margin-left:auto;font-size:10px;letter-spacing:.05em;color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:2px 8px}
+.share-link .lock{color:var(--success);display:inline-flex}
+.sw{position:relative;width:30px;height:17px;border-radius:999px;background:var(--fg);flex:none}
+.sw::after{content:"";position:absolute;top:2px;right:2px;width:13px;height:13px;border-radius:50%;background:var(--bg)}
+.sw.off{background:var(--secondary);border:1px solid var(--border)}
+.sw.off::after{right:auto;left:2px;top:1px;background:var(--muted)}
+.pwdots{letter-spacing:2px;color:var(--fg)}
+
+.thread{padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.thread .t-item{font-size:13px;line-height:1.55}
+.thread .t-who{font-weight:500;font-size:12.5px;display:flex;gap:8px;align-items:center}
+.thread .t-who .chip{width:18px;height:18px;border-radius:50%;background:var(--secondary);border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:9px;color:var(--muted)}
+.thread .t-quote{margin-top:7px;padding-left:10px;border-left:2px solid var(--border);color:var(--muted);font-style:italic;font-size:12px}
+.thread .t-text{margin-top:7px;color:var(--fg)}
+.thread .t-state{font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:var(--success)}
+
+/* ══════════ LOOP / TERMINAL ══════════ */
+.loop{padding:210px 0 0}
+.loop .section-head{max-width:620px}
+.loop h2{font-size:clamp(32px,4.6vw,52px);line-height:1.1;margin-top:16px}
+.loop .l-sub{margin-top:20px;font-size:17px;color:var(--muted);max-width:54ch;line-height:1.7}
+.loop .l-sub strong{color:var(--fg);font-weight:500}
+.bigterm{
+  margin-top:56px;border:1px solid var(--border);border-radius:14px;background:var(--card);overflow:hidden;
+}
+.bigterm .tb{display:flex;align-items:center;gap:8px;padding:13px 18px;border-bottom:1px solid var(--border-soft)}
+.bigterm .dot{width:10px;height:10px;border-radius:50%;background:var(--secondary);border:1px solid var(--border)}
+.bigterm .tl{margin-left:8px;font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.05em}
+.bigterm .tbody{
+  padding:26px 30px;font-family:var(--mono);font-size:clamp(12px,1.35vw,14.5px);line-height:2.1;color:var(--muted);
+  min-height:340px;
+}
+.bigterm .ln{display:block;white-space:pre-wrap}
+.bigterm .ln .p{color:var(--fg)}
+.bigterm .ln .ok{color:var(--success)}
+.bigterm .ln .dim{opacity:.6}
+.bigterm .cursor{display:inline-block;width:.55em;height:1.1em;background:var(--fg);vertical-align:text-bottom;animation:blink 1.1s steps(1) infinite;margin-left:2px}
+@keyframes blink{50%{opacity:0}}
+.loop .cast{
+  margin-top:22px;display:flex;gap:10px 26px;flex-wrap:wrap;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.03em;color:var(--faint);
+}
+.loop .cast span b{color:var(--muted);font-weight:500}
+
+/* ══════════ PRICING STATEMENT ══════════ */
+.price{padding:210px 0 0}
+.price h2{font-size:clamp(34px,5vw,58px);line-height:1.08;max-width:16ch}
+.price .p-sub{margin-top:22px;font-size:17px;color:var(--muted);max-width:54ch;line-height:1.7}
+.price .p-sub strong{color:var(--fg);font-weight:500}
+.tier-line{
+  margin-top:48px;border-top:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft);
+  display:grid;grid-template-columns:repeat(4,1fr);
+}
+@media(max-width:760px){.tier-line{grid-template-columns:repeat(2,1fr)}}
+.tl-cell{padding:26px 22px 28px;border-left:1px solid var(--border-soft)}
+.tl-cell:first-child{border-left:0}
+@media(max-width:760px){.tl-cell:nth-child(3){border-left:0}.tl-cell:nth-child(n+3){border-top:1px solid var(--border-soft)}}
+.tl-cell .tn{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.tl-cell .tp{margin-top:10px;font-size:26px;font-weight:500;letter-spacing:-0.02em}
+.tl-cell .tp small{font-size:12px;color:var(--muted);font-weight:400;letter-spacing:0}
+.tl-cell .td{margin-top:6px;font-size:12.5px;color:var(--faint);line-height:1.55}
+.price .p-links{margin-top:30px;display:flex;gap:26px;align-items:center;font-size:14px}
+.price .p-links a{color:var(--fg);border-bottom:1px solid var(--border);padding-bottom:2px}
+.price .p-links a:hover{border-bottom-color:var(--fg)}
+.price .p-vow{margin-top:56px;font-size:15px;color:var(--muted);max-width:60ch;line-height:1.75}
+.price .p-vow strong{color:var(--fg);font-weight:500}
+
+/* ══════════ FINALE ══════════ */
+.finale{padding:230px 0 0;position:relative;text-align:center}
+.finale .state-line{margin-bottom:24px}
+.finale .derivation{font-size:clamp(32px,5vw,72px);margin:0 auto;max-width:22ch}
+.finale .derivation .word{margin-right:.18em}
+.finale .f-sub{margin:24px auto 0;max-width:46ch;font-size:17px;color:var(--muted);line-height:1.7}
+.finale .waitlist{margin:40px auto 0;justify-content:center}
+.finale .f-alt{margin-top:18px;font-family:var(--mono);font-size:12px;color:var(--faint)}
+.finale .f-alt a{color:var(--muted);border-bottom:1px solid var(--border)}
+.finale .f-alt a:hover{color:var(--fg)}
+
+/* giant watermark footer */
+footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid var(--border-soft)}
+.watermark{
+  position:absolute;left:50%;bottom:-.34em;transform:translateX(-50%);
+  font-size:clamp(120px,24vw,340px);font-weight:500;letter-spacing:-0.04em;line-height:1;
+  color:rgba(243,244,246,.02);-webkit-text-stroke:1px rgba(243,244,246,.11);
+  pointer-events:none;user-select:none;white-space:nowrap;
+}
+.foot-inner{
+  position:relative;max-width:var(--maxw);margin:0 auto;padding:46px 28px 150px;
+  display:flex;align-items:center;gap:16px 30px;flex-wrap:wrap;
+}
+.foot-inner .fm{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500}
+.foot-links{display:flex;gap:22px;font-size:13px;color:var(--muted)}
+.foot-links a:hover{color:var(--fg)}
+.foot-inner .license{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.02em}
+@media(max-width:720px){.foot-inner .license{margin-left:0;width:100%}}
+
+@media (prefers-reduced-motion: reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .reveal{opacity:1;transform:none}
+}
+</style>
+</head>
+<body>
+
+<nav id="nav">
+  <div class="nav-inner">
+    <a class="wordmark" href="#">
+      <svg width="19" height="19" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+        <path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      Derive
+    </a>
+    <div class="nav-right">
+      <a href="/pricing">Pricing</a>
+      <a href="https://github.com/derive-to/derive">GitHub</a>
+      <a class="btn btn-primary" href="#join">Get beta access</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ══════════ HERO ══════════ -->
+<header class="hero" id="hero">
+  <div class="stage">
+    <div class="eyebrow hero-eyebrow">Open source · Self-hostable · Model-agnostic</div>
+    <h1 class="derivation grad-ink">Make things<br>worth keeping.</h1>
+    <p class="sub"><strong>You've never made more, and never kept less.</strong> Derive is your team's library for the work you and your agents make: publish it, share it anywhere with a link, and revise it together until it's right. One URL, every version, yours.</p>
+    <div class="cta-row">
+      <div class="wl-theatre" id="wlTheatre">
+        <div class="waitlist" id="join">
+          <form data-waitlist action="/v1/beta/signup" method="post" novalidate>
+            <input type="email" name="email" placeholder="you@company.com" required autocomplete="email" aria-label="Work email">
+            <button class="btn btn-primary" type="submit">Get beta access</button>
+          </form>
+          <div class="waitlist-done" role="status">
+            <span class="tick">✓</span><span>Check your email. Your access link is on the way.</span>
+          </div>
+        </div>
+        <div class="wl-presence" id="wlPresence" aria-hidden="true">
+          <span class="pd you"></span>you
+          <span class="pd rob"></span>Rob
+          <span>· here now</span>
+        </div>
+        <div class="wl-story">
+          <span class="chip" aria-hidden="true">R</span>
+          <span class="q">"Add a beta signup right here?"</span>
+          <span class="res" id="wlRes"><span class="vdot2" aria-hidden="true"></span><span id="wlResText">RESOLVED IN V12</span></span>
+        </div>
+        <div class="wl-meta" id="wlMeta"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- the hero artifact: the loop, running live -->
+  <div class="demo">
+    <div class="fig">FIG. 01 — a live artifact · the loop, running</div>
+    <div class="demo-stage">
+      <span class="tick tl" aria-hidden="true"></span><span class="tick tr" aria-hidden="true"></span>
+      <span class="tick bl" aria-hidden="true"></span><span class="tick br" aria-hidden="true"></span>
+      <div class="demo-frame">
+        <div class="demo-titlebar">
+          <span class="doc-title">derive.to/artifacts/redesign-proposal</span>
+          <span class="doc-meta" id="docMeta">HTML · v1</span>
+          <span class="tb-lock" aria-label="Password protected">
+            <svg width="10" height="10" viewBox="0 0 11 11" fill="none" aria-hidden="true"><rect x="1.5" y="4.5" width="8" height="5.5" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M3.5 4.5V3a2 2 0 1 1 4 0v1.5" stroke="currentColor" stroke-width="1.2"/></svg>
+            password
+          </span>
+          <span class="spacer"></span>
+          <span class="face" aria-label="Who's here">
+            <span class="fc g">R</span><span class="fc v">P</span><span class="fc n">C</span><span class="fc y" id="youChip">Y</span>
+          </span>
+          <span class="face-label" id="faceLabel">3 here</span>
+          <span class="abadge" id="approvedBadge">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M1.5 5.5 4 8l4.5-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Approved
+          </span>
+        </div>
+        <div class="demo-body" id="demoBody">
+          <div class="doc">
+            <div class="kicker"><span>Proposal · prepared for Northwind Co</span><span>July 2026</span></div>
+            <h3 id="docH">Homepage redesign</h3>
+            <div class="doc-sub" id="docS">DRAFT · SCOPE OPEN</div>
+            <div class="sec">Recommendation</div>
+            <p class="line" id="docP"></p>
+            <div class="sec">Investment</div>
+            <p class="line gate" id="docP2"></p>
+            <div class="viz">
+              <div class="vchart">
+                <div class="chart" aria-hidden="true">
+                  <div class="bar" id="b1"><span class="cap" id="c1"></span></div>
+                  <div class="bar" id="b2"><span class="cap" id="c2"></span></div>
+                  <div class="bar ink" id="b3"><span class="cap" id="c3"></span></div>
+                </div>
+                <div class="axis"><span>Option 1</span><span>Option 2</span><span>Option 3</span></div>
+                <div class="chart-cap">Projected checkout lift · per direction</div>
+              </div>
+              <div class="vcol">
+              <div>
+                <div class="sec" style="margin-top:0">Timeline</div>
+                <div class="miles" id="docMiles" style="margin-top:8px"></div>
+              </div>
+              <div class="teams" id="docTable">
+                <div class="trow th"><span>Deliverable · week 1</span><span>Owner</span></div>
+                <div class="trow"><span>Checkout audit</span><span>Rob</span></div>
+                <div class="trow"><span>Funnel readout</span><span>claude-code</span></div>
+                <div class="trow"><span>Review with Priya</span><span>Fri</span></div>
+              </div>
+              </div>
+            </div>
+          </div>
+          <aside class="demo-comments" aria-label="Review comments">
+            <div class="pane-label">Comments</div>
+            <div class="comments-empty" id="cEmpty">No comments yet.</div>
+            <div class="dcomment" id="cm1">
+              <div class="who"><span class="chip rob">R</span>Rob</div>
+              <div class="quote">"Option 2"</div>
+              <div class="text">Why 2 over 3? One line of evidence, or the client will ask on the call.</div>
+              <div class="state" id="cm1s">OPEN</div>
+            </div>
+            <div class="dcomment" id="cm2">
+              <div class="who"><span class="chip rob">R</span>Rob</div>
+              <div class="quote">"Price: TBD"</div>
+              <div class="text">The call is Friday. We can't walk in without the number.</div>
+              <div class="state" id="cm2s">OPEN</div>
+            </div>
+            <div class="dcomment" id="cm3">
+              <div class="who"><span class="chip ada">P</span>Priya<span class="ext">CLIENT</span></div>
+              <div class="quote">"the checkout flow"</div>
+              <div class="text">Exactly our worry. Can week 1 start here instead of wireframes?</div>
+              <div class="reply" id="cm3r">
+                <div class="who"><span class="chip">C</span>agent · claude-code</div>
+                <div class="text">Reordered: the checkout audit is now milestone 1, in v3.</div>
+              </div>
+              <div class="state" id="cm3s">OPEN</div>
+            </div>
+          </aside>
+          <!-- live cursors -->
+          <div class="pcursor rob" id="curRob" aria-hidden="true">
+            <svg width="17" height="19" viewBox="0 0 17 19" fill="none">
+              <path class="arrow" d="M1 1l5.2 15.6 2.6-6.2 6.6-1.8L1 1Z" stroke="rgba(3,7,18,.5)" stroke-width="1"/>
+            </svg>
+            <span class="flag">Rob</span>
+          </div>
+          <div class="pcursor ada" id="curAda" aria-hidden="true">
+            <svg width="17" height="19" viewBox="0 0 17 19" fill="none">
+              <path class="arrow" d="M1 1l5.2 15.6 2.6-6.2 6.6-1.8L1 1Z" stroke="rgba(3,7,18,.5)" stroke-width="1"/>
+            </svg>
+            <span class="flag">Priya</span>
+          </div>
+          <div class="pcursor you" id="curYou" aria-hidden="true">
+            <svg width="17" height="19" viewBox="0 0 17 19" fill="none">
+              <path class="arrow" d="M1 1l5.2 15.6 2.6-6.2 6.6-1.8L1 1Z" stroke="rgba(3,7,18,.5)" stroke-width="1"/>
+            </svg>
+            <span class="flag">you</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="timeline">
+      <div class="scrub">
+        <div class="scrub-track"></div>
+        <div class="scrub-fill" id="fill"></div>
+        <div class="stops" id="stops">
+          <span class="stop"></span><span class="stop"></span><span class="stop"></span>
+        </div>
+      </div>
+      <div class="scrub-labels" id="labels">
+        <span>v1</span><span>v2</span><span>v3</span>
+      </div>
+      <div class="version-line" id="vline">
+        <span class="tdot" aria-hidden="true"></span>
+        <span class="vn" id="vn">v1</span>
+        <span class="vauthor" id="va">agent · claude-code</span>
+        <span class="vmsg" id="vm">first draft · three directions, one straw-man rec</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ══════════ MANIFESTO ══════════ -->
+<section class="manifesto wrap">
+  <div class="m-kicker reveal">A question for you</div>
+  <p class="m-line reveal">Your agents shipped forty things last week.</p>
+  <p class="m-line reveal"><span class="q">Can you find them?</span></p>
+  <p class="m-answer reveal">Most of it is gone, pasted into a Slack thread or stranded in a chat that scrolled away. Making another draft was never the hard part. The hard part is finding the one from Tuesday, trusting it's the latest, and getting a second pair of eyes on it before it goes out. <strong>Derive gives every artifact a permanent link, keeps every version, and puts the review right on it, so "where's the latest?" always has one answer.</strong></p>
+</section>
+
+<!-- ══════════ THE OCEAN ══════════ -->
+<div class="ocean" role="img" aria-label="Ephemeral chat fragments drift past a single kept artifact.">
+  <div class="ghosts" aria-hidden="true">
+    <div class="gcol g1">
+      <span class="ghost">sure! here's a revised draft —</span>
+      <span class="ghost plain">can you resend the latest version?</span>
+      <span class="ghost">wait, that was the old one</span>
+      <span class="ghost plain">[conversation expired]</span>
+      <span class="ghost">which doc is current??</span>
+      <span class="ghost plain">pasted in slack, somewhere</span>
+      <span class="ghost">sure! here's a revised draft —</span>
+      <span class="ghost plain">can you resend the latest version?</span>
+      <span class="ghost">wait, that was the old one</span>
+      <span class="ghost plain">[conversation expired]</span>
+      <span class="ghost">which doc is current??</span>
+      <span class="ghost plain">pasted in slack, somewhere</span>
+    </div>
+    <div class="gcol g2">
+      <span class="ghost plain">context window exceeded</span>
+      <span class="ghost">final_v3_ACTUAL.html</span>
+      <span class="ghost plain">who approved this?</span>
+      <span class="ghost">link's dead, sorry</span>
+      <span class="ghost plain">it was in the thread… some thread</span>
+      <span class="ghost">regenerating from scratch</span>
+      <span class="ghost plain">context window exceeded</span>
+      <span class="ghost">final_v3_ACTUAL.html</span>
+      <span class="ghost plain">who approved this?</span>
+      <span class="ghost">link's dead, sorry</span>
+      <span class="ghost plain">it was in the thread… some thread</span>
+      <span class="ghost">regenerating from scratch</span>
+    </div>
+    <div class="gcol g3">
+      <span class="ghost">history unavailable</span>
+      <span class="ghost plain">didn't we fix this already?</span>
+      <span class="ghost">screenshot of a screenshot</span>
+      <span class="ghost plain">new chat, same question</span>
+      <span class="ghost">v2? v4? nobody knows</span>
+      <span class="ghost plain">export before it's gone</span>
+      <span class="ghost">history unavailable</span>
+      <span class="ghost plain">didn't we fix this already?</span>
+      <span class="ghost">screenshot of a screenshot</span>
+      <span class="ghost plain">new chat, same question</span>
+      <span class="ghost">v2? v4? nobody knows</span>
+      <span class="ghost plain">export before it's gone</span>
+    </div>
+  </div>
+  <div class="kept">
+    <p class="kept-line">Chats scroll away. <em>Artifacts stay.</em></p>
+    <div class="kept-card">
+      <div class="kc-top">
+        <span class="lock" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 11 11" fill="none"><rect x="1.5" y="4.5" width="8" height="5.5" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M3.5 4.5V3a2 2 0 1 1 4 0v1.5" stroke="currentColor" stroke-width="1.2"/></svg>
+        </span>
+        derive.to/artifacts/q3-launch-plan
+      </div>
+      <div class="kc-meta"><span>HTML · v7</span><span>every version kept</span><span class="ok">approved</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ CHAPTERS ══════════ -->
+<section class="chapter wrap">
+  <div class="ch-head reveal"><span class="ch-num">01</span><h2>Publish</h2></div>
+  <div class="ch-body">
+    <div>
+      <p class="ch-lede reveal">Off the clipboard and onto the record.</p>
+      <p class="ch-text reveal">One command takes a document, a designed page, or a whole built site to a permanent URL. Fully-styled HTML renders exactly as authored, fonts and scripts and images included, in a sandboxed viewer. Every revision is a new version at the same link, so <strong>the link you shared last week still resolves, and still shows its history.</strong> You can put it on your own domain.</p>
+      <p class="ch-text reveal">If an agent can make it, Derive can hold it: Markdown, a single HTML file, or a two-hundred-file build. Publishing is instant, and <strong>you never have to decide which drafts are worth keeping</strong>, because keeping all of them is the default.</p>
+    </div>
+    <div class="ch-spec reveal">
+      <div class="spec-card">
+        <div class="spec-bar">derive publish</div>
+        <div class="spec-body">
+          <span class="c">$</span> derive publish launch/<br>
+          <span class="dim">→ 14 files · 1.2 MB · sandboxed</span><br>
+          <span class="ok">✓ live at derive.to/artifacts/q3-launch-plan</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="chapter wrap">
+  <div class="ch-head reveal"><span class="ch-num">02</span><h2>Share</h2></div>
+  <div class="ch-body">
+    <div>
+      <p class="ch-lede reveal">Your team's library, anyone's link.</p>
+      <p class="ch-text reveal">Everything your team publishes lands in one library, so "where's that thing?" always has the same answer. When work needs to leave the building, you send a link: <strong>put a password on it for a client, open it to anyone who has it, or keep it inside the team.</strong> Whoever opens it sees the real, rendered page in their browser, not a zip or a PDF export.</p>
+      <p class="ch-text reveal">Every link carries a role you chose: viewer, commenter, or editor. <strong>People outside your team never need an account</strong>, their feedback lands in the same place yours does, and you can revoke a link the moment you change your mind.</p>
+    </div>
+    <div class="ch-spec reveal">
+      <div class="spec-card">
+        <div class="spec-bar">Share · redesign-proposal</div>
+        <div class="share-dlg">
+          <div class="share-link">
+            <span class="lock" aria-hidden="true">
+              <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><rect x="1.5" y="4.5" width="8" height="5.5" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M3.5 4.5V3a2 2 0 1 1 4 0v1.5" stroke="currentColor" stroke-width="1.2"/></svg>
+            </span>
+            derive.to/artifacts/redesign-proposal
+            <span class="copy">COPY</span>
+          </div>
+          <div class="share-row">
+            <span class="sr-label">Workspace<span class="sr-sub">everyone on your team</span></span>
+            <span class="sr-val">editor</span>
+          </div>
+          <div class="share-row">
+            <span class="sr-label">Anyone with the link<span class="sr-sub">no account needed</span></span>
+            <span class="sr-val">viewer</span>
+          </div>
+          <div class="share-row">
+            <span class="sr-label">Password<span class="sr-sub">for the outside world</span></span>
+            <span class="sr-val"><span class="pwdots">••••••••</span><span class="sw" aria-hidden="true"></span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="chapter wrap">
+  <div class="ch-head reveal"><span class="ch-num">03</span><h2>Collaborate</h2></div>
+  <div class="ch-body">
+    <div>
+      <p class="ch-lede reveal">Multiplayer for made things.</p>
+      <p class="ch-text reveal">Share the link and your team is in, with comments pinned to the exact line, @mentions for people and agents, live presence, and approvals. <strong>A draft stays clearly a draft until a named person approves a version</strong>, so nobody has to wonder whether what they're reading is final. When it's just you, Derive is a private library of everything you've made, running the same loop with a population of one.</p>
+      <p class="ch-text reveal">Presence shows who's looking right now, and threads stay attached to the version they were about, so a decision keeps its context long after the conversation would have scrolled away. <strong>An approval means something because it's on the record.</strong></p>
+    </div>
+    <div class="ch-spec reveal">
+      <div class="spec-card">
+        <div class="spec-bar">Comments · q3-launch-plan</div>
+        <div class="thread">
+          <div class="t-item">
+            <div class="t-who"><span class="chip">A</span>Ada</div>
+            <div class="t-quote">"pilot cohort first"</div>
+            <div class="t-text">Which nine teams? Name them or nobody plans around it.</div>
+          </div>
+          <div class="t-item">
+            <div class="t-who"><span class="chip">R</span>Rob</div>
+            <div class="t-text">Seconding. Owners too, @claude-code.</div>
+          </div>
+          <div class="t-item">
+            <div class="t-who"><span class="chip">C</span>agent · claude-code</div>
+            <div class="t-text">All nine listed, with owners, in v3.</div>
+            <div class="t-state" style="margin-top:7px">RESOLVED IN V3</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="chapter wrap">
+  <div class="ch-head reveal"><span class="ch-num">04</span><h2>Own</h2></div>
+  <div class="ch-body">
+    <div>
+      <p class="ch-lede reveal">Yours, not the model's, not ours.</p>
+      <p class="ch-text reveal">Claude's artifacts live in Claude. ChatGPT's canvases live in ChatGPT. If half your team runs one and half runs the other, the work ends up split across two walled gardens. <strong>Derive doesn't care which model made what</strong>: context lives with the artifact, so a page Claude drafts on Monday gets revised by Codex on Tuesday, and your team reads both in one library.</p>
+      <p class="ch-text reveal">The same openness goes all the way down. The product is <strong>open source and runs as a single container on your own infrastructure</strong> if you want it to, and everything exports in open formats: artifacts, versions, and comments. If you ever leave, the record leaves with you.</p>
+    </div>
+    <div class="ch-spec reveal">
+      <div class="spec-card">
+        <div class="spec-bar">self-host</div>
+        <div class="spec-body">
+          <span class="c">$</span> docker compose -f deploy/compose.yml up -d<br>
+          <span class="dim">→ http://localhost:8080 · sqlite · local disk</span><br>
+          <span class="dim">FSL-1.1-ALv2 → Apache-2.0 after two years</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ THE LOOP ══════════ -->
+<section class="loop wrap">
+  <div class="section-head">
+    <div class="eyebrow reveal">Agent-native</div>
+    <h2 class="reveal">Where agents put their work.</h2>
+    <p class="l-sub reveal">Every agent speaks MCP, and Derive has an MCP server built in: one command connects Claude Code, Codex, Cursor, or whatever your team runs. From then on the agent stops pasting walls of HTML into chat and starts publishing <strong>real pages at real URLs, with visibility you control</strong>, while you read and review them in an interface built for people. Leave a comment and the agent answers with a revision.</p>
+  </div>
+  <div class="bigterm reveal">
+    <div class="tb">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="tl">derive · agent session</span>
+    </div>
+    <div class="tbody" id="termBody"><span class="cursor" id="termCursor"></span></div>
+  </div>
+  <p class="cast reveal"><span><b>publish</b> save a revision</span><span><b>catch_up</b> what changed + open feedback</span><span><b>comment</b> reply or resolve</span><span><b>read</b> any artifact, any version</span></p>
+</section>
+
+<!-- ══════════ PRICING ══════════ -->
+<section class="price wrap" id="pricing">
+  <div class="eyebrow reveal">Pricing</div>
+  <h2 class="reveal" style="margin-top:16px">Free while it's in beta.</h2>
+  <p class="p-sub reveal">Every feature, no card required. When billing arrives someday, publishing and reading stay free, and <strong>nothing you've shipped goes dark.</strong></p>
+  <div class="p-links reveal">
+    <a href="pricing.html">The pricing we intend, published early →</a>
+  </div>
+</section>
+
+<!-- ══════════ FINALE ══════════ -->
+<section class="finale wrap" id="finale">
+  <div class="state-line" id="stateLine">
+    <span class="vdot" aria-hidden="true"></span>
+    <span class="note" id="stateNote">v1 · drafted by an agent, 09:41:07</span>
+  </div>
+  <h2 class="derivation" aria-label="Good work is derived.">
+    <span class="row">Good work is</span>
+    <span class="row">
+      <span class="word" id="w1">generated.<span class="strike" aria-hidden="true"></span></span>
+      <span class="word" id="w2">prompted.<span class="strike" aria-hidden="true"></span></span>
+      <span class="word final-word" id="w3">derived.<span class="under" aria-hidden="true"></span></span>
+    </span>
+  </h2>
+  <p class="f-sub">Nothing you're proud of ships in one pass. It's free while we're in beta, so sign up and we'll email your access link, or clone the repo and run the whole thing tonight.</p>
+  <div class="waitlist">
+    <form data-waitlist action="/v1/beta/signup" method="post" novalidate>
+      <input type="email" name="email" placeholder="you@company.com" required autocomplete="email" aria-label="Work email">
+      <button class="btn btn-primary" type="submit">Get beta access</button>
+    </form>
+    <div class="waitlist-done" role="status">
+      <span class="tick">✓</span><span>Check your email. Your access link is on the way.</span>
+    </div>
+  </div>
+  <p class="f-alt">
+    <button class="replay" id="replay" type="button" aria-label="Replay the edit">
+      <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6a4 4 0 1 1 1.2 2.85M2 6V3.2M2 6h2.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      REPLAY THE EDIT
+    </button>
+    &nbsp;·&nbsp; $ docker compose up -d &nbsp;·&nbsp; <a href="https://github.com/derive-to/derive">derive-to/derive on GitHub</a>
+  </p>
+</section>
+
+<footer>
+  <div class="watermark" aria-hidden="true">Derive</div>
+  <div class="foot-inner">
+    <span class="fm">
+      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+        <path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      Derive
+    </span>
+    <div class="foot-links">
+      <a href="/pricing">Pricing</a>
+      <a href="https://github.com/derive-to/derive">GitHub</a>
+      <a href="/login">Log in</a>
+    </div>
+    <span class="license">Fair source · FSL-1.1-ALv2 → Apache-2.0 · Prices in USD</span>
+  </div>
+</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* nav hairline */
+const nav = $('nav');
+addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), {passive:true});
+
+/* beta signup: the API records the email and sends the access link */
+document.querySelectorAll('[data-waitlist]').forEach(form => {
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const email = form.email.value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { form.email.focus(); return; }
+    const btn = form.querySelector('button');
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Sending…';
+    let ok = false;
+    try {
+      const res = await fetch(form.action, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email})});
+      ok = res.ok;
+    } catch {}
+    if (!ok) {
+      btn.disabled = false; btn.textContent = 'Try again';
+      setTimeout(() => { btn.textContent = label; }, 2400);
+      return;
+    }
+    form.style.display = 'none';
+    form.parentElement.querySelector('.waitlist-done').style.display = 'inline-flex';
+    /* in the hero, your signup lands like any other edit: a new version */
+    const theatre = form.closest('#wlTheatre');
+    if (theatre) {
+      const res = document.getElementById('wlRes');
+      document.getElementById('wlResText').textContent = 'RESOLVED IN V12';
+      document.getElementById('wlMeta').textContent = 'v13 · you joined · kept, like everything here.';
+      res.classList.remove('bump'); void res.offsetWidth; res.classList.add('bump');
+    }
+  });
+});
+/* focus the hero form and you're present, like opening any artifact */
+(() => {
+  const heroInput = document.querySelector('#wlTheatre input[name=email]');
+  const presence = document.getElementById('wlPresence');
+  if (!heroInput || !presence) return;
+  heroInput.addEventListener('focus', () => presence.classList.add('show'), {once:true});
+})();
+
+/* reveal on scroll */
+const io = new IntersectionObserver(es => es.forEach(en => {
+  if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); }
+}), {threshold:.05});
+document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+/* ══ the hero: a sentence deriving itself ══ */
+const note = $('stateNote'), stateLine = $('stateLine');
+const w1 = $('w1'), w2 = $('w2'), w3 = $('w3');
+let editTimers = [];
+
+function editReset(){
+  editTimers.forEach(clearTimeout); editTimers = [];
+  stateLine.classList.remove('approved');
+  [w1,w2,w3].forEach(w => w.classList.remove('on','struck','settle','approved'));
+  note.textContent = 'v1 · drafted by an agent, 09:41:07';
+}
+function at(ms, fn){ editTimers.push(setTimeout(fn, ms)); }
+
+function editPlay(){
+  editReset();
+  if (reduced) { editFinal(); return; }
+  at(150,  () => w1.classList.add('on'));
+  at(900,  () => {
+    w1.classList.add('struck');
+    note.textContent = 'v2 · "good takes more than one pass." — Rob';
+  });
+  at(1080, () => w2.classList.add('on'));
+  at(1650, () => {
+    w1.classList.add('settle');
+    w2.classList.add('struck');
+    note.textContent = 'v3 · "a prompt isn\'t craft." — Rob';
+  });
+  at(1830, () => w3.classList.add('on'));
+  at(2350, () => {
+    w2.classList.add('settle');
+    w3.classList.add('approved');
+    stateLine.classList.add('approved');
+    note.textContent = 'v4 · approved · this is the one.';
+  });
+}
+function editFinal(){
+  [w1,w2].forEach(w => w.classList.add('on','struck','settle'));
+  w3.classList.add('on','approved');
+  stateLine.classList.add('approved');
+  note.textContent = 'v4 · approved · this is the one.';
+}
+$('replay').addEventListener('click', editPlay);
+/* the edit plays once, when the finale arrives */
+if (reduced) { editFinal(); }
+else {
+  editFinal(); /* sensible resting state for anyone who lands mid-page */
+  const fio = new IntersectionObserver(es => es.forEach(en => {
+    if (en.isIntersecting) { editPlay(); fio.disconnect(); }
+  }), {threshold:.5});
+  fio.observe($('finale'));
+}
+
+/* ══ the hero artifact: the loop, played live ══ */
+const GOLD = 'color-mix(in srgb, var(--gold) 26%, transparent)';
+const VIOLET = 'color-mix(in srgb, var(--share) 26%, transparent)';
+const DOC = {
+  1: { meta:'HTML · v1', sub:'DRAFT · SCOPE OPEN',
+       p:`Northwind's homepage converts at 1.9%, and 68% of carts die in checkout. Of the three directions we explored, we recommend <span class="hlspan" id="t1" style="--hlc:${GOLD}"><strong>Option 2</strong></span>: rebuild the hero and pricing pages around the checkout flow. Options 1 and 3 restyle the surface without touching the leak.`,
+       p2:`Four weeks. <span class="hlspan" id="t2" style="--hlc:${GOLD}">Price: <span class="tbd">TBD</span></span>. Payment terms: <span class="tbd">TBD.</span>`,
+       miles:[['Week 1','<span class="tbd">TBD</span>'],['Weeks 2–3','<span class="tbd">TBD</span>'],['Week 4','Launch']],
+       bars:[[30,'+8%'],[78,'+31%'],[44,'+14%']], table:false,
+       line:['v1','agent · claude-code','first draft · three directions, one straw-man rec'] },
+  2: { meta:'HTML · v2', sub:'4 WEEKS · $48K FIXED',
+       p:`Northwind's homepage converts at 1.9%, and 68% of carts die in checkout. We recommend <strong>Option 2</strong> because <span class="hlspan" id="t3" style="--hlc:${VIOLET}"><strong>the checkout flow</strong></span> is where the money leaks: it rebuilds that path end to end, while Options 1 and 3 restyle the surface.`,
+       p2:`Four weeks with two revision rounds, <strong>$48k fixed</strong>. Kill fee: 20%, payable at the wireframe gate.`,
+       miles:[['Week 1','Wireframes → your review'],['Weeks 2–3','Design + build'],['Week 4','Launch']],
+       bars:[[30,'+8%'],[78,'+31%'],[44,'+14%']], table:false,
+       line:['v2','agent · claude-code','revision · the why, priced and scheduled'] },
+  3: { meta:'HTML · v3', sub:'4 WEEKS · $48K FIXED · AUDIT FIRST',
+       p:`Northwind's homepage converts at 1.9%, and 68% of carts die in checkout. We recommend <strong>Option 2</strong> because <strong>the checkout flow</strong> is where the money leaks: it rebuilds that path end to end, while Options 1 and 3 restyle the surface.`,
+       p2:`Four weeks with two revision rounds, <strong>$48k fixed</strong>. Kill fee: 20%, payable at the wireframe gate.`,
+       miles:[['Week 1','Checkout audit → your review'],['Weeks 2–3','Design + build'],['Week 4','Launch']],
+       bars:[[30,'+8%'],[78,'+31%'],[44,'+14%']], table:true,
+       line:['v3','agent · claude-code','checkout audit moved to week 1'] },
+};
+const demoBody = $('demoBody'), demoFrame = document.querySelector('.demo-frame');
+const fill = $('fill'), stops = [...$('stops').children], labels = [...$('labels').children];
+const vline = $('vline');
+
+function setLine(n, author, msg){
+  vline.classList.remove('typing');
+  $('vn').textContent = n; $('va').textContent = author; $('vm').textContent = msg;
+}
+function setTyping(){
+  vline.classList.add('typing');
+  $('va').textContent = 'claude-code'; $('vm').textContent = 'is revising…';
+}
+function setDoc(n, flash){
+  const d = DOC[n];
+  $('docMeta').textContent = d.meta;
+  $('docS').textContent = d.sub;
+  $('docP').innerHTML = d.p;
+  $('docP2').innerHTML = d.p2;
+  $('docMiles').innerHTML = d.miles.map(m =>
+    `<div class="trow"><span>${m[0]}</span><span>${m[1]}</span></div>`).join('');
+  $('docTable').classList.toggle('show', !!d.table);
+  if (flash) { $('docP').classList.remove('flash'); void $('docP').offsetWidth; $('docP').classList.add('flash'); }
+  d.bars.forEach((b,k) => { $('b'+(k+1)).style.height = b[0]+'%'; $('c'+(k+1)).textContent = b[1]; });
+  fill.style.width = ((n-1)/(labels.length-1)*100) + '%';
+  stops.forEach((s,k)=>s.classList.toggle('passed', k < n));
+  labels.forEach((l,k)=>l.classList.toggle('on', k === n-1));
+  setLine(...d.line);
+}
+function cursorTo(cur, targetId, dx=10, dy=6){
+  const t = $(targetId); if (!t) return;
+  const tb = t.getBoundingClientRect(), bb = demoBody.getBoundingClientRect();
+  const x = tb.left - bb.left + tb.width*0.72 + dx;
+  const y = tb.top - bb.top + tb.height*0.85 + dy;
+  cur.style.transform = `translate(${x}px, ${y}px)`;
+}
+function cursorShow(cur, on){ cur.style.opacity = on ? '1' : '0'; }
+function lit(id, on=true){ const el = $(id); if (el) el.classList.toggle('lit', on); }
+function thread(id, on){ $(id).classList.toggle('show', on); }
+function resolved(id, sid, label){ $(id).classList.add('resolved'); $(sid).textContent = label; }
+function openState(id, sid){ $(id).classList.remove('resolved'); $(sid).textContent = 'OPEN'; }
+
+const curRob = $('curRob'), curAda = $('curAda');
+let sceneTimers = [];
+function s(ms, fn){ sceneTimers.push(setTimeout(fn, ms)); }
+function clearScene(){ sceneTimers.forEach(clearTimeout); sceneTimers = []; }
+
+let sceneDone = false;
+function sceneReset(){
+  demoFrame.classList.remove('resetting');
+  sceneDone = false;
+  setDoc(1, false);
+  $('cEmpty').style.display = 'block';
+  ['cm1','cm2','cm3'].forEach(id => { $(id).classList.remove('show','resolved'); });
+  $('cm3r').classList.remove('show');
+  $('cm1s').textContent = $('cm2s').textContent = $('cm3s').textContent = 'OPEN';
+  $('approvedBadge').classList.remove('show');
+  cursorShow(curRob, false); cursorShow(curAda, false);
+  /* park cursors off to the right so entrances glide in */
+  curRob.style.transform = 'translate(' + (demoBody.clientWidth*0.55) + 'px, ' + (demoBody.clientHeight*0.9) + 'px)';
+  curAda.style.transform = 'translate(' + (demoBody.clientWidth*0.6) + 'px, 20px)';
+}
+function sceneFinal(){
+  setDoc(3, false);
+  $('cEmpty').style.display = 'none';
+  ['cm1','cm2','cm3'].forEach(id => $(id).classList.add('show'));
+  $('cm3r').classList.add('show');
+  resolved('cm1','cm1s','RESOLVED IN V2'); resolved('cm2','cm2s','RESOLVED IN V2');
+  resolved('cm3','cm3s','RESOLVED IN V3');
+  $('approvedBadge').classList.add('show');
+  setLine('v3','Priya · approval','approved · kick off Monday');
+  sceneDone = true;
+}
+
+function scenePlay(){
+  clearScene();
+  sceneReset();
+  /* Rob arrives, highlights, comments twice */
+  s(700,  () => { cursorShow(curRob, true); cursorTo(curRob, 't1'); });
+  s(1700, () => { lit('t1'); });
+  s(2250, () => { $('cEmpty').style.display='none'; thread('cm1', true); });
+  s(3000, () => { cursorTo(curRob, 't2'); });
+  s(3800, () => { lit('t2'); });
+  s(4300, () => { thread('cm2', true); });
+  /* the agent picks it up */
+  s(5000, () => { cursorShow(curRob, false); setTyping(); });
+  s(6100, () => {
+    setDoc(2, true);
+    lit('t1', false); lit('t2', false);
+    resolved('cm1','cm1s','RESOLVED IN V2'); resolved('cm2','cm2s','RESOLVED IN V2');
+  });
+  /* Ada arrives with a fresh eye */
+  s(7300, () => { cursorShow(curAda, true); cursorTo(curAda, 't3', 8, 4); });
+  s(8300, () => { lit('t3'); });
+  s(8850, () => { thread('cm3', true); });
+  /* the agent answers in-thread, then publishes */
+  s(9800, () => { $('cm3r').classList.add('show'); setTyping(); });
+  s(10900,() => {
+    setDoc(3, true);
+    resolved('cm3','cm3s','RESOLVED IN V3');
+  });
+  /* approval */
+  s(11900,() => {
+    $('approvedBadge').classList.add('show');
+    setLine('v3','Priya · approval','approved · kick off Monday');
+    cursorShow(curAda, false);
+    sceneDone = true;
+  });
+  /* hold, then loop */
+  s(15200,() => { demoFrame.classList.add('resetting'); });
+  s(15650,() => { sceneReset(); demoFrame.classList.remove('resetting'); });
+  s(16400,() => { scenePlay(); });
+}
+
+if (reduced) { sceneFinal(); }
+else {
+  sceneReset();
+  let playing = false;
+  const dio = new IntersectionObserver(es => es.forEach(en => {
+    if (en.isIntersecting && !playing) { playing = true; scenePlay(); }
+    else if (!en.isIntersecting && playing) { playing = false; clearScene(); sceneReset(); }
+  }), {threshold:.35});
+  dio.observe(document.querySelector('.demo'));
+}
+
+/* quiet presence: hover the artifact and you're in it — green cursor, facepile chip */
+const youChip = $('youChip'), faceLabel = $('faceLabel'), curYou = $('curYou');
+if (matchMedia('(hover:hover)').matches) {
+  const fine = matchMedia('(pointer:fine)').matches && !reduced;
+  if (fine) {
+    demoBody.classList.add('livecursor');
+    let raf = null, px = 0, py = 0;
+    demoBody.addEventListener('pointermove', e => {
+      const b = demoBody.getBoundingClientRect();
+      px = e.clientX - b.left; py = e.clientY - b.top;
+      if (!raf) raf = requestAnimationFrame(() => {
+        curYou.style.transform = `translate(${px}px, ${py}px)`;
+        raf = null;
+      });
+    });
+  }
+  demoBody.addEventListener('pointerenter', () => {
+    if (fine) curYou.style.opacity = '1';
+    youChip.classList.add('in');
+    faceLabel.textContent = '4 here · you';
+  });
+  demoBody.addEventListener('pointerleave', () => {
+    if (fine) curYou.style.opacity = '0';
+    youChip.classList.remove('in');
+    faceLabel.textContent = '3 here';
+  });
+}
+
+/* ══ the terminal: one full round of the loop, typed ══ */
+const LINES = [
+  ['p','$ claude mcp add derive https://derive.to/mcp'],
+  ['ok','✓ connected as @claude-code · role: editor'],
+  ['p','› publish "August growth report"'],
+  ['dim','→ derive.to/artifacts/august-growth-report · v1 live'],
+  ['p','› catch_up'],
+  ['dim','← 1 comment · Rob on "+18% MoM": "the pricing change'],
+  ['dim','  spiked signups for a week. Annotate it or the number lies."'],
+  ['p','› publish --addresses c_41x'],
+  ['ok','✓ v2 live · spike annotated · thread resolved'],
+  ['ok','✓ v3 approved by Rob · shipped'],
+];
+const termBody = $('termBody'), cursor = $('termCursor');
+let termStarted = false;
+
+function typeTerm(){
+  if (termStarted) return; termStarted = true;
+  cursor.remove();
+  if (reduced) {
+    termBody.innerHTML = LINES.map(([k,t]) => `<span class="ln"><span class="${k}">${t}</span></span>`).join('');
+    return;
+  }
+  let li = 0, ci = 0;
+  function newLine(){
+    const ln = document.createElement('span'); ln.className = 'ln';
+    const tx = document.createElement('span');
+    ln.appendChild(tx); ln.appendChild(cursor);
+    termBody.appendChild(ln);
+    return tx;
+  }
+  let tx = newLine();
+  function step(){
+    if (li >= LINES.length) { cursor.remove(); return; }
+    const [k, text] = LINES[li];
+    tx.className = k;
+    if (ci < text.length) {
+      tx.textContent = text.slice(0, ++ci);
+      setTimeout(step, text[ci-1] === ' ' ? 5 : 9);
+    } else {
+      li++; ci = 0;
+      if (li < LINES.length) tx = newLine(); else cursor.remove();
+      setTimeout(step, li === 9 ? 450 : 180);
+    }
+  }
+  step();
+}
+const tio = new IntersectionObserver(es => es.forEach(en => { if (en.isIntersecting) { typeTerm(); tio.disconnect(); } }), {threshold:.35});
+tio.observe(document.querySelector('.bigterm'));
+</script>
+</body>
+</html>

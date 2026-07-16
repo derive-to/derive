@@ -267,6 +267,23 @@ const blobs: BlobStore = cfg.objectStoreUrl
 // meta) and to mountWeb (the client-router fallback). Only when serving the web.
 const shellHtml = cfg.serveWeb ? readFileSync(cfg.webShell, "utf8") : undefined
 
+// The marketing pages (DERIVE_MARKETING), read once from the web build's site/
+// directory like the shell above. A missing page resolves null and the routes fall
+// back to the shell, so a stale build can't 404 the front door.
+const readSitePage = (name: string): string | null => {
+  try {
+    return readFileSync(join(cfg.webDir, "site", name), "utf8")
+  } catch {
+    return null
+  }
+}
+const marketingHome = cfg.marketing && cfg.serveWeb ? readSitePage("index.html") : null
+const marketingPricing = cfg.marketing && cfg.serveWeb ? readSitePage("pricing.html") : null
+const marketing =
+  cfg.marketing && cfg.serveWeb
+    ? { home: async () => marketingHome, pricing: async () => marketingPricing }
+    : undefined
+
 // The webhook outbox drainer: an interval delivers queued events with retries +
 // backoff, and `poke` (wired into the app below) drains on demand so a fresh event
 // goes out immediately. `nodeDnsGuard` re-resolves each target at delivery time and
@@ -328,6 +345,9 @@ const app = createApp({
   search,
   baseUrl: cfg.baseUrl,
   shell: shellHtml,
+  // The marketing front door (`/` for signed-out visitors + `/pricing`); unset
+  // (the self-host default) leaves the SPA owning both paths.
+  marketing,
   token: cfg.token,
   // Encrypt stored third-party secrets (GitHub PATs) at rest with the auth secret.
   encryptionKey: authSecret,

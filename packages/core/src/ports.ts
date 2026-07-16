@@ -975,6 +975,12 @@ export interface AgentStore {
   deleteArtifactInvite(id: string, artifactId: string): Promise<void>
   /** Stamp accepted_at so the invite can't be redeemed twice. */
   markArtifactInviteAccepted(id: string): Promise<void>
+  // ---- Beta signups (the marketing site's request-access form) ------------
+  /** Record a beta signup (idempotent per email). Returns true when the email is
+   *  new, false when it was already on the list — the caller resends the access
+   *  email either way, so "sign up again" doubles as "resend my link". */
+  recordBetaSignup(id: string, email: string): Promise<boolean>
+
   /** Queue a mention into an agent's pull inbox. */
   createAgentMention(m: NewAgentMention): Promise<void>
   /** Pending (unhandled) mentions for an agent, oldest first. */
@@ -1284,6 +1290,18 @@ export interface NewInvitation {
   token: string
   invited_by?: string | null
   expires_at: string
+}
+
+/**
+ * A beta signup from the marketing site's request-access form. One row per email
+ * (idempotent — signing up again resends the access email, never duplicates). The
+ * list is the launch audience: who asked for access, and in what order.
+ */
+export interface BetaSignupRecord {
+  id: string
+  /** Normalized (lowercased) signup email. */
+  email: string
+  created_at: string
 }
 
 /**

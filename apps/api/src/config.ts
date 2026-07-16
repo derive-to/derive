@@ -66,6 +66,10 @@ export interface Config {
   webDir: string
   webShell: string
   serveWeb: boolean
+  /** Serve the marketing site (the web build's site/ pages) at `/` for signed-out
+   *  visitors and at `/pricing`. The hosted-tier front door; self-host default is
+   *  off, so the app keeps owning `/`. */
+  marketing: boolean
   /** Opt-in Node/Playwright preview rendering. When true, startPreviewWorker is
    *  started in node.ts and render jobs are enqueued on publish. Requires a
    *  locally-installed Playwright Chromium (bundled in the Docker image; bare Node
@@ -195,6 +199,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webDir,
     webShell,
     serveWeb: existsSync(webShell),
+    marketing: env.DERIVE_MARKETING === "true",
   }
 }
 

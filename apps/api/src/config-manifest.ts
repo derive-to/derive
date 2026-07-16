@@ -222,6 +222,12 @@ const CONFIG_VARS: ConfigVar[] = [
     doc: "The CNAME target customers point their custom domain at.",
     example: "derive-saas.example.com",
   },
+  {
+    name: "DERIVE_MARKETING",
+    group: "hosting",
+    doc: "Serve the marketing site (the web build's site/ pages) at `/` for signed-out visitors\nand at `/pricing` — the hosted front door (derive.to). Unset/false (the self-host\ndefault), the app owns `/` and both paths fall back to the SPA as before.",
+    example: "true",
+  },
 
   // -- email --
   {

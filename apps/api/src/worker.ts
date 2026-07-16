@@ -110,6 +110,9 @@ export interface Env {
   // meta into /artifacts/:ref (the share URL). Declared in wrangler.toml `[assets] binding`.
   ASSETS: Fetcher
   BASE_URL?: string
+  // "true" ⇒ serve the marketing site: `/` for signed-out visitors + `/pricing`,
+  // read from the web build's site/ pages via ASSETS (see routes/marketing.ts).
+  DERIVE_MARKETING?: string
   DERIVE_AUTH_SECRET?: string
   DERIVE_TOKEN?: string
   DERIVE_SANDBOX_URL?: string
@@ -129,6 +132,25 @@ export interface Env {
   SLACK_CLIENT_ID?: string
   SLACK_CLIENT_SECRET?: string
   SLACK_SIGNING_SECRET?: string
+}
+
+/** A cached one-shot fetch of a static asset's text (a marketing page) from the
+ *  ASSETS binding, by its canonical URL. Null on any miss — the marketing routes
+ *  then fall back to the SPA shell, so a stale build can't 404 the front door. */
+function siteFetch(env: Env, baseUrl: string, path: string): () => Promise<string | null> {
+  return async () => {
+    const hit = siteCache.get(path)
+    if (hit !== undefined) return hit
+    let text: string | null = null
+    try {
+      const res = await env.ASSETS.fetch(new URL(path, baseUrl).toString())
+      text = res.ok ? await res.text() : null
+    } catch {
+      text = null
+    }
+    siteCache.set(path, text)
+    return text
+  }
 }
 
 /** Poke the singleton outbox DO so it drains now (a fresh event) or self-heals (cron). */
@@ -157,6 +179,9 @@ let app: ReturnType<typeof createApp> | null = null
 // The SPA shell, fetched from ASSETS once per isolate and reused (it's immutable for
 // a deployment). Injected with per-artifact unfurl meta on each /artifacts/:ref request.
 let shellCache: string | null = null
+// The marketing pages, same lifecycle as the shell: fetched from ASSETS once per
+// isolate (immutable for a deployment), keyed by their canonical asset URL.
+const siteCache = new Map<string, string | null>()
 
 // The request handler behind both tiers. Split from `fetch` so the pg tier can
 // wrap it in a request-scoped pool without indenting the whole body.
@@ -283,6 +308,18 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           }
           return shellCache
         },
+        // The marketing front door (DERIVE_MARKETING): `/` for signed-out visitors +
+        // `/pricing`, from the web build's site/ pages. Fetched at the CANONICAL asset
+        // URLs — html_handling serves site/index.html at /site/ and site/pricing.html
+        // at /site/pricing, and redirects the literal filenames, which ASSETS.fetch
+        // would surface as a non-2xx.
+        marketing:
+          env.DERIVE_MARKETING === "true"
+            ? {
+                home: siteFetch(env, baseUrl, "/site/"),
+                pricing: siteFetch(env, baseUrl, "/site/pricing"),
+              }
+            : undefined,
       })
     }
     // Run within the per-request context so the DO backplane's publish can waitUntil.
