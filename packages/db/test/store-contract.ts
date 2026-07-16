@@ -235,9 +235,8 @@ export function runStoreContract(
       // updated: banana(2030) > apple(2029) > cherry(2028) > nullish(its created_at, ~now < 2028).
       expect(await ids("updated")).toEqual([banana.id, apple.id, cherry.id, nullish.id])
       expect(await ids("updated-asc")).toEqual([nullish.id, cherry.id, apple.id, banana.id])
-      // created ignores versions: newest-created first (nullish created last).
+      // created (the store-side default) ignores versions: newest-created first.
       expect(await ids("created")).toEqual([nullish.id, cherry.id, apple.id, banana.id])
-      expect(await ids("created-asc")).toEqual([banana.id, apple.id, cherry.id, nullish.id])
       // az: lower(coalesce(title,'')) → "" (nullish), "apple", "banana", "cherry". A case-sensitive
       // sort would rank "Banana"(66) before "apple"(97); this order proves it does not.
       expect(await ids("az")).toEqual([nullish.id, apple.id, banana.id, cherry.id])
@@ -288,6 +287,48 @@ export function runStoreContract(
       const created = (await store.listArtifacts({ orgId: org, sort: "created" })).map((a) => a.id)
       expect(updated).toEqual([older.id, newer.id]) // version bump wins
       expect(created).toEqual([newer.id, older.id]) // created ignores the bump
+    })
+
+    it("revised: re-versioned docs sort as one block above never-revised uploads", async () => {
+      const org = `org_revised_${uuid()}`
+      // Two genuinely revised docs (current_version >= 2), with controlled revise times.
+      const reviseOld = await store.createArtifact(
+        newArtifact({ org_id: org, title: "revise-old" }),
+      )
+      await store.addVersion(reviseOld.id, newVersion())
+      await store.addVersion(reviseOld.id, newVersion())
+      const reviseNew = await store.createArtifact(
+        newArtifact({ org_id: org, title: "revise-new" }),
+      )
+      await store.addVersion(reviseNew.id, newVersion())
+      await store.addVersion(reviseNew.id, newVersion())
+      await store.setArtifactUpdatedAt(reviseOld.id, "2028-01-01T00:00:00.000Z")
+      await store.setArtifactUpdatedAt(reviseNew.id, "2029-01-01T00:00:00.000Z")
+      // A never-revised v1 upload with a DECEPTIVELY-new updated_at, and a versionless stub.
+      const freshUpload = await store.createArtifact(newArtifact({ org_id: org, title: "fresh" }))
+      await store.addVersion(freshUpload.id, newVersion()) // current_version = 1 (not revised)
+      await store.setArtifactUpdatedAt(freshUpload.id, "2030-01-01T00:00:00.000Z")
+      const stub = await store.createArtifact(newArtifact({ org_id: org, title: "stub" })) // v0
+
+      const revisedIds = (await store.listArtifacts({ orgId: org, sort: "revised" })).map(
+        (a) => a.id,
+      )
+      // Revised block first (newest revision first), then the never-revised uploads by activity.
+      // freshUpload's 2030 stamp does NOT float it above the revised docs — it was never revised.
+      expect(revisedIds).toEqual([reviseNew.id, reviseOld.id, freshUpload.id, stub.id])
+
+      // Keyset pagination under `revised` reassembles that order one row at a time, no drop/dup.
+      const walked: string[] = []
+      let cursor: { key: string; id: string } | undefined
+      for (let guard = 0; guard < 8; guard++) {
+        const page = await store.listArtifacts({ orgId: org, sort: "revised", limit: 1, cursor })
+        if (page.length === 0) break
+        walked.push(...page.map((a) => a.id))
+        const last = page[page.length - 1]
+        const flag = last.current_version >= 2 ? "1:" : "0:"
+        cursor = { key: `${flag}${last.updated_at ?? last.created_at}`, id: last.id }
+      }
+      expect(walked).toEqual(revisedIds)
     })
   })
 

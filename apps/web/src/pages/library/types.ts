@@ -54,6 +54,6 @@ export type LibrarySearch = {
   // query param, not a route — a view of your own work is a filter on the home
   // library, not a separate feed (docs/decisions/0002).
   tab?: "mine"
-  // How the grid is ordered; absent = the default (Recently updated). See ./sort.
+  // How the grid is ordered; absent = the default ("Newest"). See ./sort.
   sort?: SortMode
 }

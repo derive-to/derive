@@ -12,7 +12,7 @@ describe("parseSortMode", () => {
   it("accepts every known mode and falls back to the default otherwise", () => {
     expect(parseSortMode("updated")).toBe("updated")
     expect(parseSortMode("az")).toBe("az")
-    expect(parseSortMode("created-asc")).toBe("created-asc")
+    expect(parseSortMode("revised")).toBe("revised")
     expect(parseSortMode("bogus")).toBe(DEFAULT_SORT)
     expect(parseSortMode(undefined)).toBe(DEFAULT_SORT)
     expect(parseSortMode(null)).toBe(DEFAULT_SORT)
@@ -25,7 +25,8 @@ describe("sortFields", () => {
     expect(sortFields("updated")).toEqual({ field: "updated", dir: "desc" })
     expect(sortFields("updated-asc")).toEqual({ field: "updated", dir: "asc" })
     expect(sortFields("created")).toEqual({ field: "created", dir: "desc" })
-    expect(sortFields("created-asc")).toEqual({ field: "created", dir: "asc" })
+    expect(sortFields("revised")).toEqual({ field: "revised", dir: "desc" })
+    expect(sortFields("revised-asc")).toEqual({ field: "revised", dir: "asc" })
     expect(sortFields("az")).toEqual({ field: "title", dir: "asc" })
     expect(sortFields("za")).toEqual({ field: "title", dir: "desc" })
   })
@@ -36,6 +37,7 @@ describe("sortKeyOf", () => {
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-02-02T00:00:00.000Z",
     title: "Beta|Gamma",
+    current_version: 3,
   }
   it("uses coalesced updated_at, raw created_at, and the raw title per mode", () => {
     expect(sortKeyOf(row, "updated")).toBe("2026-02-02T00:00:00.000Z")
@@ -43,6 +45,16 @@ describe("sortKeyOf", () => {
     expect(sortKeyOf(row, "created")).toBe("2026-01-01T00:00:00.000Z")
     expect(sortKeyOf(row, "az")).toBe("Beta|Gamma")
     expect(sortKeyOf({ ...row, title: null }, "az")).toBe("")
+  })
+  it("prefixes the revised key with a group flag: 1: for a re-versioned doc, 0: otherwise", () => {
+    // v3 doc (genuinely revised) → "1:" + its last-version time.
+    expect(sortKeyOf(row, "revised")).toBe("1:2026-02-02T00:00:00.000Z")
+    // v1 doc (uploaded, never re-versioned) → "0:" group, below all revised docs.
+    expect(sortKeyOf({ ...row, current_version: 1 }, "revised")).toBe("0:2026-02-02T00:00:00.000Z")
+    // versionless stub → coalesces to created_at.
+    expect(sortKeyOf({ ...row, current_version: 0, updated_at: null }, "revised")).toBe(
+      "0:2026-01-01T00:00:00.000Z",
+    )
   })
 })
 

@@ -166,6 +166,7 @@ export function artifactListConditions(
     title: Column
     created_at: Column
     updated_at: Column
+    current_version: Column
     id: Column
     org_id: Column
     listed: Column
@@ -211,20 +212,31 @@ export function artifactListConditions(
   return conds
 }
 
-/** The keyset/ordering column for a sort field, as SQL valid on both SQLite and Postgres. */
+/** The keyset/ordering column for a sort field, as SQL valid on both SQLite and Postgres.
+ *  `revised` prefixes the coalesced activity time with a group flag so docs with a genuine new
+ *  version (current_version >= 2) sort as one block above the never-revised ones; the JS twin
+ *  is sortKeyOf. `||` and `case` are standard on both dialects. */
 export function artifactSortExpr(
-  art: { created_at: Column; updated_at: Column; title: Column },
-  field: "updated" | "created" | "title",
+  art: { created_at: Column; updated_at: Column; title: Column; current_version: Column },
+  field: "updated" | "created" | "revised" | "title",
 ): SQL {
   if (field === "updated") return sql`coalesce(${art.updated_at}, ${art.created_at})`
   if (field === "title") return sql`lower(coalesce(${art.title}, ''))`
+  if (field === "revised")
+    return sql`(case when ${art.current_version} >= 2 then '1:' else '0:' end) || coalesce(${art.updated_at}, ${art.created_at})`
   return sql`${art.created_at}`
 }
 
 /** The `ORDER BY` for a sort mode: the mode's column then the `id` tiebreak, same direction —
  *  the tuple the keyset cursor comparison mirrors. Shared by both drivers so they can't drift. */
 export function artifactListOrder(
-  art: { created_at: Column; updated_at: Column; title: Column; id: Column },
+  art: {
+    created_at: Column
+    updated_at: Column
+    title: Column
+    current_version: Column
+    id: Column
+  },
   mode: SortMode,
 ): SQL[] {
   const { field, dir } = sortFields(mode)

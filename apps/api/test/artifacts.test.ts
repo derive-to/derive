@@ -369,26 +369,29 @@ describe("server-side search + cursor pagination", () => {
     await upload("s3.md", "three")
 
     const desc = (
-      await (await app.request("/v1/artifacts?sort=created&limit=200")).json()
+      await (await app.request("/v1/artifacts?sort=updated&limit=200")).json()
     ).artifacts.map((a: { short_id: string }) => a.short_id)
     const asc = (
-      await (await app.request("/v1/artifacts?sort=created-asc&limit=200")).json()
+      await (await app.request("/v1/artifacts?sort=updated-asc&limit=200")).json()
     ).artifacts.map((a: { short_id: string }) => a.short_id)
     // asc is the exact reverse of desc — proves ?sort= is read and flips the ordering.
     expect(asc).toEqual([...desc].reverse())
 
     // No ?sort= must preserve the historical created-desc default (non-library callers).
+    const createdDesc = (
+      await (await app.request("/v1/artifacts?sort=created&limit=200")).json()
+    ).artifacts.map((a: { short_id: string }) => a.short_id)
     const noSort = (await (await app.request("/v1/artifacts?limit=200")).json()).artifacts.map(
       (a: { short_id: string }) => a.short_id,
     )
-    expect(noSort).toEqual(desc)
+    expect(noSort).toEqual(createdDesc)
 
     // Keyset cursor round-trip under asc: page 1 + page 2 is a contiguous, dup-free prefix.
-    const p1 = await (await app.request("/v1/artifacts?sort=created-asc&limit=2")).json()
+    const p1 = await (await app.request("/v1/artifacts?sort=updated-asc&limit=2")).json()
     expect(p1.next_cursor).toContain("|")
     const p2 = await (
       await app.request(
-        `/v1/artifacts?sort=created-asc&cursor=${encodeURIComponent(p1.next_cursor)}`,
+        `/v1/artifacts?sort=updated-asc&cursor=${encodeURIComponent(p1.next_cursor)}`,
       )
     ).json()
     const combined = [...p1.artifacts, ...p2.artifacts].map((a: { short_id: string }) => a.short_id)
