@@ -35,6 +35,7 @@ export const Route = createFileRoute("/")({
   validateSearch: (s: Record<string, unknown>): LibrarySearch => ({
     tag: typeof s.tag === "string" ? s.tag : undefined,
     collection: typeof s.collection === "string" ? s.collection : undefined,
+    folder: typeof s.folder === "string" ? s.folder : undefined,
     query: typeof s.query === "string" ? s.query : undefined,
     author: typeof s.author === "string" ? s.author : undefined,
     // "drafts" is the tab's retired name — old bookmarks and agent-emitted

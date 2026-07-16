@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useSearch } from "@tanstack/react-router"
-import { FolderTree, LayoutGrid, List } from "lucide-react"
+import { FolderTree, List } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
@@ -36,6 +36,7 @@ import { ArtifactRow, byRecency } from "./artifact-row"
 import { BrandprintNudge } from "./brandprint-nudge"
 import { CollectionBar } from "./collection-bar"
 import { CollectionFolders, NewFolderControl } from "./collection-folders"
+import { DisplayMenu } from "./display-menu"
 import { FolderGroups } from "./folder-groups"
 import { FollowingStrip } from "./following-strip"
 import { HowItWorks } from "./how-it-works"
@@ -46,7 +47,6 @@ import { RepoPullRequests } from "./repo-pull-requests"
 import { SelectionBar } from "./selection-bar"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import { DEFAULT_SORT } from "./sort"
-import { SortMenu } from "./sort-menu"
 import { TriageBar } from "./triage-bar"
 import type { Filter, LibrarySearch, LibraryView } from "./types"
 import { useLibraryFeed } from "./use-library-feed"
@@ -200,10 +200,22 @@ function LibraryBody({ view }: { view: LibraryView }) {
   const openContext = filter.kind === "collection" ? { collection: filter.id } : {}
   const showFolders = filter.kind === "collection" ? !!folderPrefs[filter.id] : false
   // A manual collection that HAS folders defaults to the grouped folder view; the
-  // List/Folders toggle (same per-collection pref as the synced one) flips it back to the
-  // card grid so thumbnails are never lost for good. Default true only when folders exist.
+  // "Group by folder" (per-collection pref, same storage as the synced view's toggle);
+  // default on when folders exist.
   const showManualFolders = filter.kind === "collection" ? (folderPrefs[filter.id] ?? true) : true
-  const foldersView = isManualCollection && folders.length > 0 && showManualFolders
+  // A `?folder=` anchor (from the artifact breadcrumb's folder segment) is a ONE-SHOT: read
+  // it into transient state and strip it from the URL on mount, so it forces grouping for
+  // THIS visit and scrolls the folder into view WITHOUT rewriting the saved pref or pinning
+  // the view (a stale id can't get stuck, and the toggle always wins).
+  const [folderAnchor, setFolderAnchor] = useState<string | undefined>(search.folder)
+  const anchorStripped = useRef(false)
+  useEffect(() => {
+    if (anchorStripped.current) return
+    anchorStripped.current = true
+    if (search.folder) nav({ to: ".", search: (p) => ({ ...p, folder: undefined }), replace: true })
+  }, [search.folder, nav])
+  const foldersView =
+    isManualCollection && folders.length > 0 && (showManualFolders || !!folderAnchor)
   const setShowFolders = (on: boolean) => {
     if (filter.kind !== "collection") return
     setFolderPrefs((prev) => {
@@ -215,6 +227,12 @@ function LibraryBody({ view }: { view: LibraryView }) {
       }
       return next
     })
+  }
+  // Toggle grouping from the Display menu. Persist the pref; when turning OFF, also drop any
+  // transient folder anchor so the toggle wins over an anchored landing.
+  const setGrouped = (on: boolean) => {
+    setShowFolders(on)
+    if (!on) setFolderAnchor(undefined)
   }
   // Pull the WHOLE collection when the sort + grouping need every doc: always for a synced
   // repo/PR, and for a manual collection while its folder view is active (so buckets +
@@ -469,14 +487,20 @@ function LibraryBody({ view }: { view: LibraryView }) {
             </Button>
           </>
         )}
-        <SortMenu
-          value={search.sort ?? DEFAULT_SORT}
-          onChange={(mode) =>
+        <DisplayMenu
+          sort={search.sort ?? DEFAULT_SORT}
+          onSort={(mode) =>
             nav({
               to: ".",
               search: (prev) => ({ ...prev, sort: mode === DEFAULT_SORT ? undefined : mode }),
               replace: true,
             })
+          }
+          // The grouping knob lives here too, but only where grouping is possible.
+          group={
+            isManualCollection && folders.length > 0
+              ? { on: foldersView, onChange: setGrouped }
+              : undefined
           }
         />
       </div>
@@ -574,32 +598,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
           selection={selection}
         />
       ) : isManualCollection && folders.length > 0 ? (
-        // An organized manual collection. A Cards/Folders toggle (default Folders) rides
-        // above so thumbnails are one click away — the folder grouping never traps you in
-        // rows. Both views share the same items + multi-select.
-        <div className="flex flex-col gap-3">
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            aria-label="View"
-            className="self-end"
-            value={foldersView ? "folders" : "list"}
-            onValueChange={(v) => v && setShowFolders(v === "folders")}
-          >
-            <ToggleGroupItem value="list" aria-label="Cards" data-testid="library-view-list">
-              <LayoutGrid aria-hidden />
-              Cards
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="folders"
-              aria-label="Folders"
-              data-testid="library-view-folders"
-            >
-              <FolderTree aria-hidden />
-              Folders
-            </ToggleGroupItem>
-          </ToggleGroup>
+        // An organized manual collection. Grouping is DECOUPLED from presentation: the
+        // Display menu's "Group by folder" flips grouping on/off, and BOTH states are the
+        // card grid — grouping never costs you the thumbnails. Default grouped.
+        <>
           {foldersView ? (
             <CollectionFolders
               collectionId={filter.id}
@@ -609,12 +611,12 @@ function LibraryBody({ view }: { view: LibraryView }) {
               canManage={!!canManageFolders}
               hasNextPage={!!hasNextPage}
               isFetchingNextPage={isFetchingNextPage}
+              scrollToFolderId={folderAnchor}
               onOpen={(a) =>
                 nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
               }
               onToggleFavorite={toggleFavorite}
               onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-              onPickAuthor={pickAuthor}
               onEditTags={setPendingTags}
               onAddToCollection={setPendingCollections}
               onDelete={setPendingDelete}
@@ -647,7 +649,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
               )}
             </>
           )}
-        </div>
+        </>
       ) : (
         <>
           {/* No folders yet on a manual collection → keep the card grid; an editor gets a

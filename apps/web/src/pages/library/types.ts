@@ -46,6 +46,9 @@ export type LibraryView = "all" | "favorites" | "following" | "shared" | "feedba
 export type LibrarySearch = {
   tag?: string
   collection?: string
+  // Anchor a collection view to one of its folders — scroll that section into view on
+  // open. Set by the artifact breadcrumb's folder segment; ignored outside a collection.
+  folder?: string
   // Free-text title search; composes with any view.
   query?: string
   // Narrow to artifacts last changed by this GitHub login (synced collections).
