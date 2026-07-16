@@ -185,8 +185,11 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Opaque compound cursor "<key>|<id>" — the id tiebreak keeps paging
       // correct when many artifacts share a key.
       const cursor = decodeCursor(c.req.query("cursor"))
-      // Unknown/absent ?sort= falls back to the default — never errors.
-      const sort = parseSortMode(c.req.query("sort"))
+      // Unknown/absent ?sort= falls back to the default — never errors. The ROUTE default
+      // is "created" (not parseSortMode's feature default "updated"): the library always
+      // sends an explicit ?sort=, so every OTHER caller (command palette, home strips) must
+      // keep the historical created-desc ordering when no ?sort= is given.
+      const sort = parseSortMode(c.req.query("sort") ?? "created")
       // Cap the search term: it goes into a SQL LIKE, and an oversized value tripped
       // an unhandled DB error (a long-q 500). No real title search needs > 200 chars.
       const q = c.req.query("query")?.trim().slice(0, 200) || undefined

@@ -52,15 +52,18 @@ export const sortFields = (
 
 /** The value the keyset cursor carries for a row under `mode` — the JS twin of the store's
  *  ordering expression, for building the next-page cursor. `updated` coalesces to created_at
- *  (a row is versionless until its first publish); `title` lowercases + coalesces to '' to
- *  match the store's `lower(coalesce(title,''))`. */
+ *  (a row is versionless until its first publish); `title` is the RAW title (coalesced to '').
+ *  The store lowers BOTH the column and the cursor key in SQL (`lower(coalesce(title,''))`),
+ *  so the SAME engine owns case-folding for the comparison — JS `toLowerCase()` (full Unicode)
+ *  and SQLite's `lower()` (ASCII-only on D1/SQLite) disagree on non-ASCII letters, which would
+ *  corrupt a title-sort page boundary if JS lowered the key instead. */
 export const sortKeyOf = (
   row: { created_at: string; updated_at: string | null; title: string | null },
   mode: SortMode,
 ): string => {
   const { field } = sortFields(mode)
   if (field === "updated") return row.updated_at ?? row.created_at
-  if (field === "title") return (row.title ?? "").toLowerCase()
+  if (field === "title") return row.title ?? ""
   return row.created_at
 }
 

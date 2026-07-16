@@ -250,9 +250,30 @@ export function runStoreContract(
         orgId: org,
         sort: "az",
         limit: 2,
-        cursor: { key: (lastOfP1.title ?? "").toLowerCase(), id: lastOfP1.id },
+        cursor: { key: lastOfP1.title ?? "", id: lastOfP1.id },
       })
       expect([...p1, ...p2].map((a) => a.id)).toEqual([nullish.id, apple.id, banana.id, cherry.id])
+    })
+
+    it("paginates title sort with no drop/dup, including a non-ASCII-uppercase title", async () => {
+      const org = `org_sort_i18n_${uuid()}`
+      // SQLite's lower() is ASCII-only (leaves Ü); the cursor key must be lowered by the same
+      // engine as the ORDER BY or this row is dropped/duplicated at a page boundary.
+      for (const t of ["Banana", "apple", "Über", "cherry", null]) {
+        await store.createArtifact(newArtifact({ org_id: org, title: t }))
+        await tick()
+      }
+      const full = (await store.listArtifacts({ orgId: org, sort: "az" })).map((a) => a.id)
+      const walked: string[] = []
+      let cursor: { key: string; id: string } | undefined
+      for (let guard = 0; guard < 12; guard++) {
+        const page = await store.listArtifacts({ orgId: org, sort: "az", limit: 1, cursor })
+        if (page.length === 0) break
+        walked.push(...page.map((a) => a.id))
+        const last = page[page.length - 1]
+        cursor = { key: last.title ?? "", id: last.id }
+      }
+      expect(walked).toEqual(full)
     })
 
     it("names the version bump as the newest work (the default's whole point)", async () => {

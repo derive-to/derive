@@ -377,6 +377,12 @@ describe("server-side search + cursor pagination", () => {
     // asc is the exact reverse of desc — proves ?sort= is read and flips the ordering.
     expect(asc).toEqual([...desc].reverse())
 
+    // No ?sort= must preserve the historical created-desc default (non-library callers).
+    const noSort = (await (await app.request("/v1/artifacts?limit=200")).json()).artifacts.map(
+      (a: { short_id: string }) => a.short_id,
+    )
+    expect(noSort).toEqual(desc)
+
     // Keyset cursor round-trip under asc: page 1 + page 2 is a contiguous, dup-free prefix.
     const p1 = await (await app.request("/v1/artifacts?sort=created-asc&limit=2")).json()
     expect(p1.next_cursor).toContain("|")

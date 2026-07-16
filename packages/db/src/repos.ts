@@ -195,11 +195,12 @@ export function artifactListConditions(
   if (opts?.cursor) {
     const { field, dir } = sortFields(opts.sort ?? "created")
     const col = artifactSortExpr(art, field)
+    // The title sort key is the raw title (see sortKeyOf); lower it HERE so the same engine
+    // case-folds both sides — JS toLowerCase and SQLite's ASCII-only lower() disagree, which
+    // would drop/dup a title-sort page boundary on D1.
+    const key = field === "title" ? sql`lower(${opts.cursor.key})` : opts.cursor.key
     const cmp = dir === "asc" ? gt : lt
-    const cursor = or(
-      cmp(col, opts.cursor.key),
-      and(eq(col, opts.cursor.key), cmp(art.id, opts.cursor.id)),
-    )
+    const cursor = or(cmp(col, key), and(eq(col, key), cmp(art.id, opts.cursor.id)))
     if (cursor) conds.push(cursor)
   }
   if (opts?.ids) conds.push(inArray(art.id, opts.ids))

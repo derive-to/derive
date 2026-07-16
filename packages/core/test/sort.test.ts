@@ -37,11 +37,11 @@ describe("sortKeyOf", () => {
     updated_at: "2026-02-02T00:00:00.000Z",
     title: "Beta|Gamma",
   }
-  it("uses coalesced updated_at, raw created_at, and lowered title per mode", () => {
+  it("uses coalesced updated_at, raw created_at, and the raw title per mode", () => {
     expect(sortKeyOf(row, "updated")).toBe("2026-02-02T00:00:00.000Z")
     expect(sortKeyOf({ ...row, updated_at: null }, "updated")).toBe("2026-01-01T00:00:00.000Z")
     expect(sortKeyOf(row, "created")).toBe("2026-01-01T00:00:00.000Z")
-    expect(sortKeyOf(row, "az")).toBe("beta|gamma")
+    expect(sortKeyOf(row, "az")).toBe("Beta|Gamma")
     expect(sortKeyOf({ ...row, title: null }, "az")).toBe("")
   })
 })
