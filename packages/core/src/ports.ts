@@ -624,6 +624,18 @@ export interface CollectionStore {
   /** This user's collection-member roles over collections containing the
    *  artifact — folded into their effective artifact role (collection sharing). */
   collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]>
+
+  // ---- Folders (owner-editable org grouping for collections; grant no access) ---
+  createFolder(f: NewFolder): Promise<FolderRecord>
+  /** All folders in a workspace (scoped when orgId given). Name order is a view concern. */
+  listFolders(orgId?: string): Promise<FolderRecord[]>
+  getFolder(id: string): Promise<FolderRecord | null>
+  updateFolder(id: string, fields: { name?: string }): Promise<FolderRecord | null>
+  /** Delete a folder and un-file its collections (set their folder_id to null) — the
+   *  collections themselves are untouched. */
+  deleteFolder(id: string): Promise<void>
+  /** File a collection under a folder (or null to ungroup). */
+  setCollectionFolder(collectionId: string, folderId: string | null): Promise<void>
 }
 
 export interface IntegrationStore {
@@ -1607,6 +1619,9 @@ export interface CollectionRecord {
    *  link-servable content). `member` = every workspace member reaches it at
    *  their seat role; `none` = invite-only (collectionMember rows only). */
   workspace_access: WorkspaceAccess
+  /** The org-shared folder this collection is filed under (null = ungrouped). Pure
+   *  organization — never consulted by any auth path. See FolderRecord. */
+  folder_id: string | null
 }
 export interface NewCollection {
   id: string
@@ -1616,6 +1631,23 @@ export interface NewCollection {
   /** Omitted falls to the store's column default (`member`, unlike an artifact's
    *  fail-closed `none` — see CollectionRecord.workspace_access). */
   workspace_access?: WorkspaceAccess
+}
+
+/** A workspace-shared organizing folder for collections (owner-editable). Grouping
+ *  only — it grants no access and never appears in any auth path; a collection points
+ *  at one via CollectionRecord.folder_id. */
+export interface FolderRecord {
+  id: string
+  org_id: string
+  name: string
+  created_by: string
+  created_at: string
+}
+export interface NewFolder {
+  id: string
+  org_id: string
+  name: string
+  created_by: string
 }
 export interface DomainRecord {
   host: string

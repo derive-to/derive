@@ -23,6 +23,7 @@ import { contextRoutes } from "./routes/contexts"
 import { domainRoutes } from "./routes/domains"
 import { embedRoutes } from "./routes/embeds"
 import { favoriteRoutes } from "./routes/favorites"
+import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
 import { githubAppRoutes } from "./routes/github-app"
 import { moderationRoutes } from "./routes/moderation"
@@ -369,6 +370,7 @@ export function createApp(deps: AppDeps): Hono {
     favoriteRoutes,
     followRoutes,
     collectionRoutes,
+    folderRoutes,
     syncRoutes,
     slackRoutes,
     vitalsRoutes,

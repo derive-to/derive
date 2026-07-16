@@ -34,6 +34,14 @@ export const collectionsQuery = () =>
     queryFn: () => api.listCollections().then((r) => r.collections),
   })
 
+// The workspace's org-shared folders (name order), for the rail's folder grouping and
+// the "Move to folder" picker. Small and warm like collectionsQuery.
+export const foldersQuery = () =>
+  queryOptions({
+    queryKey: ["folders"] as const,
+    queryFn: () => api.listFolders().then((r) => r.folders),
+  })
+
 // Workspaces only change via create/switch/delete — all of which hard-reload — so
 // this is effectively fetch-once per session.
 export const workspacesQuery = () =>

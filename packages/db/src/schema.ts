@@ -406,6 +406,23 @@ export const collection = sqliteTable("collection", {
   // already folds in the caller's seat unconditionally, so an ADD COLUMN migration
   // defaulting every existing row to `member` changes nothing for anyone.
   workspace_access: text("workspace_access").$type<WorkspaceAccess>().notNull().default("member"),
+  // The org-shared folder this collection is filed under (null = ungrouped). A plain
+  // pointer, NOT a FK — folders are pure organization and grant no access, and a
+  // constraint-free nullable column keeps the ADD COLUMN migration trivially additive
+  // across both dialects. Integrity (a real folder in the same workspace) is enforced
+  // by the owner-only assign endpoint; deleting a folder nulls this on its members.
+  folder_id: text("folder_id"),
+})
+
+// A workspace-shared organizing folder for collections — owner-editable, grouping only.
+// It grants NO access of its own (a collection keeps its own auth); it never appears in
+// any auth path. A collection points at one via collection.folder_id.
+export const folder = sqliteTable("folder", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull().default("local"),
+  name: text("name").notNull(),
+  created_by: text("created_by").notNull(),
+  created_at: text("created_at").notNull().default(now),
 })
 
 export const collectionItem = sqliteTable(
@@ -808,6 +825,7 @@ const TABLES = [
   collection,
   collectionItem,
   collectionMember,
+  folder,
   repoSource,
   orgSettings,
   slackInstall,

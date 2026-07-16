@@ -18,6 +18,7 @@ import type {
   DeliveryStatus,
   DomainRecord,
   DomainStatus,
+  FolderRecord,
   FollowKind,
   FollowRecord,
   GitHubAppRecord,
@@ -44,6 +45,7 @@ import type {
   NewContextAsker,
   NewDelivery,
   NewDomain,
+  NewFolder,
   NewFollow,
   NewInvitation,
   NewMembership,
@@ -127,6 +129,7 @@ import {
   contextAsker,
   contextSession,
   domain,
+  folder,
   follow,
   githubApp,
   githubInstallation,
@@ -194,6 +197,7 @@ export const schema = {
   collection,
   collectionItem,
   collectionMember,
+  folder,
   repoSource,
   githubApp,
   githubInstallation,
@@ -231,6 +235,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   sessionMessage: true,
   collection: true,
   collectionMember: true,
+  folder: true,
   repoSource: true,
   githubApp: true,
   githubInstallation: true,
@@ -1391,6 +1396,41 @@ export class PgMetaStore implements MetaStore {
     const cmap = new Map(counts.map((r) => [r.id, Number(r.c)]))
     return rows.map((r) => ({ ...r, count: cmap.get(r.id) ?? 0 }))
   }
+  // ---- Folders (org grouping for collections) ----------------------------
+  async createFolder(f: NewFolder): Promise<FolderRecord> {
+    const rows = await this.db.insert(folder).values(f).returning()
+    return one(rows)
+  }
+  async listFolders(orgId?: string): Promise<FolderRecord[]> {
+    const base = this.db.select().from(folder)
+    return orgId ? base.where(eq(folder.org_id, orgId)) : base
+  }
+  async getFolder(id: string): Promise<FolderRecord | null> {
+    const rows = await this.db.select().from(folder).where(eq(folder.id, id))
+    return rows[0] ?? null
+  }
+  async updateFolder(id: string, fields: { name?: string }): Promise<FolderRecord | null> {
+    if (fields.name === undefined) return this.getFolder(id)
+    const rows = await this.db
+      .update(folder)
+      .set({ name: fields.name })
+      .where(eq(folder.id, id))
+      .returning()
+    return rows[0] ?? null
+  }
+  async deleteFolder(id: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.update(collection).set({ folder_id: null }).where(eq(collection.folder_id, id))
+      await tx.delete(folder).where(eq(folder.id, id))
+    })
+  }
+  async setCollectionFolder(collectionId: string, folderId: string | null): Promise<void> {
+    await this.db
+      .update(collection)
+      .set({ folder_id: folderId })
+      .where(eq(collection.id, collectionId))
+  }
+
   async collectionArtifactIds(collectionId: string): Promise<string[]> {
     const rows = await this.db
       .select({ id: collectionItem.artifact_id })

@@ -1,9 +1,20 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useLocation, useNavigate } from "@tanstack/react-router"
-import { useState } from "react"
-import { api, type Collection } from "@/api"
+import { Fragment, type ReactNode, useState } from "react"
+import { api, type Collection, type Folder } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Logo } from "@/components/shared/logo"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
 import {
@@ -32,7 +43,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useAuth } from "@/ctx"
 import { getMonogram } from "@/lib/initials"
 import { prTitle } from "@/lib/pr"
-import { collectionsQuery, summaryQuery, workspacesQuery } from "@/lib/queries"
+import { collectionsQuery, foldersQuery, summaryQuery, workspacesQuery } from "@/lib/queries"
 import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
 import { cn } from "@/lib/utils"
 import type { LibrarySearch } from "@/pages/library/types"
@@ -172,20 +183,106 @@ function CollectionGlyph({ col }: { col: Collection }) {
 // bespoke branch inline in NavRail). Mirrors FilterItem, but the glyph is kind-aware
 // (CollectionGlyph) rather than a fixed IconName, and it carries a tooltip so the
 // collapsed icon rail still names it.
-function CollectionRow({ col, active }: { col: Collection; active: boolean }) {
+function CollectionRow({
+  col,
+  active,
+  menuAction,
+  indented,
+}: {
+  col: Collection
+  active: boolean
+  // An owner-only ⋯ action (the move-to-folder menu) rendered as a sibling of the row;
+  // when present the count badge shifts left to clear it (mirrors the repo row).
+  menuAction?: ReactNode
+  // Filed under a folder → a left border + inset, reusing the rail's PR-nesting grammar
+  // so a folder's contents read as nested (and the ungrouped block below reads as
+  // separate). Only in the expanded rail — the icon rail shows every collection flat.
+  indented?: boolean
+}) {
   const linkProps = useRowLinkProps(col.title, active, `sidebar-collection-${col.id}`, col.count)
   return (
-    <SidebarMenuItem>
+    <SidebarMenuItem className={cn(indented && "ml-3.5 border-sidebar-border border-l")}>
       <SidebarMenuButton asChild isActive={active} tooltip={col.title}>
-        <Link to="/" search={{ collection: col.id }} {...linkProps}>
+        <Link
+          to="/"
+          search={{ collection: col.id }}
+          {...linkProps}
+          className={cn(ROW_ICON, col.count > 0 && (menuAction ? "pr-12" : "pr-7"))}
+        >
           <CollectionGlyph col={col} />
           <span>{col.title}</span>
           {col.count > 0 && (
-            <SidebarMenuBadge className={COUNT_BADGE}>{col.count}</SidebarMenuBadge>
+            <SidebarMenuBadge className={cn(COUNT_BADGE, menuAction && "right-7")}>
+              {col.count}
+            </SidebarMenuBadge>
           )}
         </Link>
       </SidebarMenuButton>
+      {menuAction}
     </SidebarMenuItem>
+  )
+}
+
+// The owner-only ⋯ menu on a collection row: file it into a folder, move between
+// folders, or remove it from its folder. Rendered as a SidebarMenuAction so it sits in
+// the row's action slot (hidden in the collapsed icon rail by the primitive).
+function CollectionMoveMenu({
+  col,
+  folders,
+  onMove,
+}: {
+  col: Collection
+  folders: Folder[]
+  onMove: (collectionId: string, folderId: string | null) => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <SidebarMenuAction
+          aria-label={`Organize ${col.title}`}
+          data-testid={`sidebar-collection-${col.id}-menu`}
+          showOnHover
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <Icon name="more" />
+        </SidebarMenuAction>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="right" align="start" className="w-52">
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Icon name="collections" className="mr-2 size-4 text-muted-foreground" />
+            Move to folder
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="max-h-72 w-52 overflow-auto">
+            {folders.length === 0 && <DropdownMenuItem disabled>No folders yet</DropdownMenuItem>}
+            {folders.map((f) => (
+              <DropdownMenuItem
+                key={f.id}
+                data-testid={`move-to-folder-${f.id}`}
+                disabled={col.folderId === f.id}
+                onSelect={() => onMove(col.id, f.id)}
+              >
+                <span className="truncate">{f.name}</span>
+                {col.folderId === f.id && (
+                  <Icon name="check" className="ml-auto size-4 text-muted-foreground" />
+                )}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        {col.folderId && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              data-testid={`sidebar-collection-${col.id}-ungroup`}
+              onSelect={() => onMove(col.id, null)}
+            >
+              Remove from folder
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -349,11 +446,17 @@ export function NavRail() {
     enabled: !!me,
   })
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
+  // Org-shared folders (grouping only). Read for everyone; only owners see the
+  // management affordances below (the server also owner-gates every folder mutation).
+  const { data: folders = [] } = useQuery({ ...foldersQuery(), enabled: !!me })
   // The pod subtitle: "Personal" for the auto-provisioned workspace (its stored
   // name is provisioning plumbing), else the summary's workspace name.
   const activeWs = workspaces?.workspaces.find((w) => w.id === workspaces.active)
+  // Folder editing is workspace-owner-only (matches the API gate); non-owners just see
+  // the shared tree, no manage menus.
+  const isOwner = activeWs?.role === "owner"
   const workspaceLabel = activeWs?.personal ? "Personal" : (summary?.workspace ?? "")
-  const { setOpenMobile } = useSidebar()
+  const { state, setOpenMobile } = useSidebar()
   const nav = useNavigate()
   const loc = useLocation()
   const search = loc.search as LibrarySearch
@@ -420,293 +523,524 @@ export function NavRail() {
     }
   }
 
+  // ---- Folders (owner-managed org grouping) --------------------------------
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
+  const toggleFolder = (id: string) =>
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  const [creatingFolder, setCreatingFolder] = useState(false)
+  const [newFolderName, setNewFolderName] = useState("")
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null)
+  const [renameName, setRenameName] = useState("")
+  const [deletingFolder, setDeletingFolder] = useState<Folder | null>(null)
+  const refetchFolders = () => qc.invalidateQueries({ queryKey: foldersQuery().queryKey })
+  const refetchCollections = () => qc.invalidateQueries({ queryKey: collectionsQuery().queryKey })
+
+  const submitFolder = async () => {
+    const name = newFolderName.trim()
+    setNewFolderName("")
+    setCreatingFolder(false)
+    if (!name) return
+    try {
+      await api.createFolder(name)
+      refetchFolders()
+    } catch {
+      /* surfaced on next action */
+    }
+  }
+  const submitRename = async (id: string) => {
+    const name = renameName.trim()
+    setRenamingFolder(null)
+    setRenameName("")
+    if (!name) return
+    try {
+      await api.renameFolder(id, name)
+      refetchFolders()
+    } catch {
+      /* surfaced on next action */
+    }
+  }
+  const confirmDelete = async () => {
+    if (!deletingFolder) return
+    // Let errors propagate: ConfirmDialog keeps itself open on a throw (and closes on
+    // resolve, clearing deletingFolder via onOpenChange) — a destructive action must not
+    // fail silently.
+    await api.deleteFolder(deletingFolder.id)
+    refetchFolders()
+    refetchCollections() // its collections are now ungrouped
+  }
+  const moveToFolder = async (collectionId: string, folderId: string | null) => {
+    try {
+      await api.setCollectionFolder(collectionId, folderId)
+      refetchCollections()
+    } catch {
+      /* surfaced on next action */
+    }
+  }
+
+  // Group the (already accessible-only) top collections by folder. A folder shows when it
+  // holds ≥1 visible collection, OR when the viewer is an owner (owners see empty folders
+  // as a management surface). Everything else stays flat below, exactly as before. Repo
+  // collections keep their own nesting and never carry a folder in v1.
+  const byFolder = new Map<string, typeof collections>()
+  const ungrouped: typeof collections = []
+  for (const col of topCollections) {
+    const fid = col.folderId
+    if (fid && folders.some((f) => f.id === fid)) {
+      const arr = byFolder.get(fid) ?? []
+      arr.push(col)
+      byFolder.set(fid, arr)
+    } else ungrouped.push(col)
+  }
+  // folders arrive name-sorted from the server.
+  const visibleFolders = folders.filter((f) => isOwner || (byFolder.get(f.id)?.length ?? 0) > 0)
+
+  // One collection row — the ungrouped/flat case and each folder's children share it.
+  // A repo with nested PRs keeps its bespoke collapsible row; everything else is a
+  // CollectionRow, with an owner-only move-to-folder menu on manual collections.
+  const renderCollection = (col: Collection, indented?: boolean) => {
+    const childPrs = childPrsByRepo.get(col.id)
+    const colActive = onLibrary && search.collection === col.id
+    if (!childPrs || childPrs.length === 0) {
+      const menuAction =
+        isOwner && col.kind !== "repo" && col.kind !== "pr" ? (
+          <CollectionMoveMenu col={col} folders={folders} onMove={moveToFolder} />
+        ) : undefined
+      return (
+        <CollectionRow
+          key={col.id}
+          col={col}
+          active={colActive}
+          menuAction={menuAction}
+          indented={indented}
+        />
+      )
+    }
+    const repoCollapsed = collapsedRepos.has(col.id)
+    return (
+      <SidebarMenuItem key={col.id}>
+        <SidebarMenuButton asChild isActive={colActive} tooltip={col.title}>
+          <Link
+            to="/"
+            search={{ collection: col.id }}
+            aria-label={col.title}
+            data-testid={`sidebar-collection-${col.id}`}
+            aria-current={colActive ? "page" : undefined}
+            onClick={closeMobile}
+            // pr-12 clears both the count and the fold action.
+            className={cn(ROW_ICON, col.count > 0 && "pr-12")}
+          >
+            <CollectionGlyph col={col} />
+            <span>{col.title}</span>
+            {col.count > 0 && (
+              <SidebarMenuBadge className={cn(COUNT_BADGE, "right-7")}>
+                {col.count}
+              </SidebarMenuBadge>
+            )}
+          </Link>
+        </SidebarMenuButton>
+        <SidebarMenuAction
+          onClick={() => toggleRepo(col.id)}
+          aria-expanded={!repoCollapsed}
+          aria-label={
+            repoCollapsed
+              ? `Show ${childPrs.length} pull request${childPrs.length === 1 ? "" : "s"}`
+              : "Hide pull requests"
+          }
+          data-testid={`sidebar-collection-${col.id}-toggle`}
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <Icon
+            name="caret"
+            className={cn("transition-transform", repoCollapsed && "-rotate-90")}
+          />
+        </SidebarMenuAction>
+        {!repoCollapsed && (
+          <SidebarMenuSub>
+            {childPrs.slice(0, MAX_SIDEBAR_PRS).map((pr) => {
+              const prActive = onLibrary && search.collection === pr.id
+              return (
+                <SidebarMenuSubItem key={pr.id}>
+                  <SidebarMenuSubButton asChild isActive={prActive}>
+                    <Link
+                      to="/"
+                      search={{ collection: pr.id }}
+                      data-testid={`sidebar-collection-${pr.id}`}
+                      aria-current={prActive ? "page" : undefined}
+                      onClick={closeMobile}
+                      className={cn(ROW_ICON, pr.count > 0 && "pr-7")}
+                    >
+                      <Icon name="review" />
+                      <span className="min-w-0 flex-1 truncate">
+                        {pr.prNumber
+                          ? `#${pr.prNumber} ${prTitle(pr.title, pr.prNumber)}`
+                          : prTitle(pr.title)}
+                      </span>
+                      {pr.count > 0 && (
+                        <SidebarMenuBadge className={cn(COUNT_BADGE, "top-1")}>
+                          {pr.count}
+                        </SidebarMenuBadge>
+                      )}
+                    </Link>
+                  </SidebarMenuSubButton>
+                </SidebarMenuSubItem>
+              )
+            })}
+            {childPrs.length > MAX_SIDEBAR_PRS && (
+              <SidebarMenuSubItem>
+                <SidebarMenuSubButton
+                  asChild
+                  size="sm"
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <Link
+                    to="/"
+                    search={{ collection: col.id }}
+                    data-testid={`sidebar-collection-${col.id}-more-prs`}
+                    onClick={closeMobile}
+                  >
+                    <span>
+                      +{childPrs.length - MAX_SIDEBAR_PRS} more pull request
+                      {childPrs.length - MAX_SIDEBAR_PRS === 1 ? "" : "s"}
+                    </span>
+                  </Link>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
+            )}
+          </SidebarMenuSub>
+        )}
+      </SidebarMenuItem>
+    )
+  }
+
+  // A folder header (owner-only manage menu / inline rename) followed by its collections,
+  // which render flat beneath it — the header delineates the group, like the section
+  // eyebrows. Collapsing the folder hides its rows. Empty folders only reach here for an
+  // owner (their management surface).
+  const renderFolder = (f: Folder) => {
+    const kids = byFolder.get(f.id) ?? []
+    // Icon rail: folders are an expanded-rail concept. Show every collection as a flat,
+    // reachable tile — no header, no per-folder collapse — so a collapsed folder can't
+    // hide its collections behind an unlabeled icon.
+    if (state === "collapsed")
+      return <Fragment key={f.id}>{kids.map((col) => renderCollection(col))}</Fragment>
+
+    const folderCollapsed = collapsedFolders.has(f.id)
+    if (renamingFolder === f.id)
+      return (
+        <SidebarMenuItem key={f.id}>
+          <Input
+            autoFocus
+            value={renameName}
+            aria-label="Folder name"
+            data-testid={`sidebar-folder-${f.id}-rename-input`}
+            onChange={(e) => setRenameName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitRename(f.id)
+              if (e.key === "Escape") {
+                setRenamingFolder(null)
+                setRenameName("")
+              }
+            }}
+            onBlur={() => submitRename(f.id)}
+            className="mb-1"
+          />
+        </SidebarMenuItem>
+      )
+    return (
+      <Fragment key={f.id}>
+        <SidebarMenuItem>
+          {/* A folder header: click toggles its section; its children render indented
+              below so the group's extent is legible (the ungrouped block reads separate).
+              The manage ⋯ (owner-only) auto-pads the row via the primitive's menu-action
+              rule — no explicit pr needed. */}
+          <SidebarMenuButton
+            onClick={() => toggleFolder(f.id)}
+            aria-expanded={!folderCollapsed}
+            tooltip={f.name}
+            data-testid={`sidebar-folder-${f.id}`}
+            className="text-sidebar-foreground/80"
+          >
+            <Icon name="collections" className="text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate">{f.name}</span>
+          </SidebarMenuButton>
+          {isOwner && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <SidebarMenuAction
+                  aria-label={`Manage folder ${f.name}`}
+                  data-testid={`sidebar-folder-${f.id}-menu`}
+                  showOnHover
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <Icon name="more" />
+                </SidebarMenuAction>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="right" align="start" className="w-44">
+                <DropdownMenuItem
+                  data-testid={`sidebar-folder-${f.id}-rename`}
+                  onSelect={() => {
+                    setRenameName(f.name)
+                    setRenamingFolder(f.id)
+                  }}
+                >
+                  <Icon name="pencil" className="mr-2 size-4 text-muted-foreground" />
+                  Rename
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  data-testid={`sidebar-folder-${f.id}-delete`}
+                  onSelect={() => setDeletingFolder(f)}
+                >
+                  <Icon name="delete" className="mr-2 size-4 text-muted-foreground" />
+                  Delete folder
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </SidebarMenuItem>
+        {!folderCollapsed && kids.map((col) => renderCollection(col, true))}
+      </Fragment>
+    )
+  }
+
   // Session still resolving → the neutral rail silhouette, so we never flash the
   // anon rail before an authed user's data lands (in-app navs have `me` cached).
   if (loading) return <RailSkeleton />
 
   return (
-    <Sidebar collapsible="icon" variant="inset">
-      <RailHeader showSearch />
-      <SidebarContent>
-        {/* TIER 1 — primary navigation: the whole library at a glance, plus the
+    <>
+      <Sidebar collapsible="icon" variant="inset">
+        <RailHeader showSearch />
+        <SidebarContent>
+          {/* TIER 1 — primary navigation: the whole library at a glance, plus the
             people directory. The rail's home base; it carries no section label
             because it IS the top of the rail. */}
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <FilterItem
-                icon="all"
-                label="All artifacts"
-                count={summary?.total}
-                search={{}}
-                active={isAll}
-                testId="sidebar-all"
-              />
-              <NavItem
-                icon="favorites"
-                label="Favorites"
-                count={summary?.favorites}
-                to="/favorites"
-                active={isFav}
-                testId="sidebar-favorites"
-              />
-              {/* Shared with you — a durable named feed (things others gave you access to),
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <FilterItem
+                  icon="all"
+                  label="All artifacts"
+                  count={summary?.total}
+                  search={{}}
+                  active={isAll}
+                  testId="sidebar-all"
+                />
+                <NavItem
+                  icon="favorites"
+                  label="Favorites"
+                  count={summary?.favorites}
+                  to="/favorites"
+                  active={isFav}
+                  testId="sidebar-favorites"
+                />
+                {/* Shared with you — a durable named feed (things others gave you access to),
                   a peer of the feeds above; not a home strip (that's the whole IA move). */}
-              <NavItem
-                icon="share"
-                label="Shared with you"
-                to="/shared"
-                active={onShared}
-                testId="nav-shared"
-              />
-              {/* People — who you follow, plus a way to find the people you work with.
+                <NavItem
+                  icon="share"
+                  label="Shared with you"
+                  to="/shared"
+                  active={onShared}
+                  testId="nav-shared"
+                />
+                {/* People — who you follow, plus a way to find the people you work with.
                   Folds the old /following feed in as this tab's default (people you
                   follow); the artifact activity feed lives on at /following, unlinked. */}
-              <NavItem
-                icon="user"
-                label="People"
-                to="/people"
-                active={onPeople}
-                testId="nav-people"
-              />
-              <NavItem
-                icon="context"
-                label="Contexts"
-                to="/contexts"
-                active={onContexts}
-                testId="nav-contexts"
-              />
-              <NavItem
-                icon="brandprint"
-                label="Brandprint"
-                to="/brandprint"
-                active={onBrandprint}
-                testId="nav-brandprint"
-              />
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+                <NavItem
+                  icon="user"
+                  label="People"
+                  to="/people"
+                  active={onPeople}
+                  testId="nav-people"
+                />
+                <NavItem
+                  icon="context"
+                  label="Contexts"
+                  to="/contexts"
+                  active={onContexts}
+                  testId="nav-contexts"
+                />
+                <NavItem
+                  icon="brandprint"
+                  label="Brandprint"
+                  to="/brandprint"
+                  active={onBrandprint}
+                  testId="nav-brandprint"
+                />
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
 
-        {/* TIER 2 — your library: the things you've organized. Each list carries a
+          {/* TIER 2 — your library: the things you've organized. Each list carries a
             mono eyebrow, so the section labels do the tier-separating work (no
             divider needed between the eyebrowed groups). Collections stay in the
             collapsed icon rail (each row keeps its kind glyph + a tooltip), so you can
             still reach a collection with the rail collapsed — the primitive auto-hides
             the label, the + action, the counts, and any nested PR list in icon mode. */}
-        <SidebarGroup>
-          <SidebarGroupLabel>Collections</SidebarGroupLabel>
-          {/* The + stays neutral, not the accent: create-in-rail isn't a sanctioned
+          <SidebarGroup>
+            <SidebarGroupLabel>Collections</SidebarGroupLabel>
+            {/* The + stays neutral, not the accent: create-in-rail isn't a sanctioned
               ink moment. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <SidebarGroupAction
-                aria-label="New collection"
-                data-testid="sidebar-new-collection"
-                onClick={() => setCreating((v) => !v)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <Icon name="plus" />
-              </SidebarGroupAction>
-            </TooltipTrigger>
-            <TooltipContent side="right">New collection</TooltipContent>
-          </Tooltip>
-          <SidebarGroupContent>
-            {creating && (
-              <Input
-                autoFocus
-                value={newName}
-                placeholder="Collection name…"
-                aria-label="Collection name"
-                data-testid="sidebar-new-collection-input"
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submitCollection()
-                  if (e.key === "Escape") {
-                    setCreating(false)
-                    setNewName("")
-                  }
-                }}
-                onBlur={submitCollection}
-                // No text-size override: Input's base keeps 16px on touch (iOS
-                // no-zoom) and steps to 14px from sm up. Hidden in the collapsed icon
-                // rail (the + that opens it is hidden there too — no way to reach it).
-                className="mb-1 group-data-[collapsible=icon]:hidden"
-              />
-            )}
-            <SidebarMenu>
-              {/* First load only — a refetch keeps the current list (no data → no
-                  isPending), so switching views never flashes the collections. */}
-              {collectionsPending &&
-                RAIL_SKELETON_COLLECTIONS.map((r) => (
-                  <SidebarMenuSkeleton key={r.id} showIcon width={r.w} />
-                ))}
-              {topCollections.map((col) => {
-                const childPrs = childPrsByRepo.get(col.id)
-                const colActive = onLibrary && search.collection === col.id
-                if (!childPrs || childPrs.length === 0)
-                  return <CollectionRow key={col.id} col={col} active={colActive} />
-                const repoCollapsed = collapsedRepos.has(col.id)
-                return (
-                  <SidebarMenuItem key={col.id}>
-                    <SidebarMenuButton asChild isActive={colActive} tooltip={col.title}>
-                      <Link
-                        to="/"
-                        search={{ collection: col.id }}
-                        aria-label={col.title}
-                        data-testid={`sidebar-collection-${col.id}`}
-                        aria-current={colActive ? "page" : undefined}
-                        onClick={closeMobile}
-                        // pr-12 clears both the count and the fold action.
-                        className={cn(ROW_ICON, col.count > 0 && "pr-12")}
-                      >
-                        <CollectionGlyph col={col} />
-                        <span>{col.title}</span>
-                        {col.count > 0 && (
-                          <SidebarMenuBadge className={cn(COUNT_BADGE, "right-7")}>
-                            {col.count}
-                          </SidebarMenuBadge>
-                        )}
-                      </Link>
-                    </SidebarMenuButton>
-                    <SidebarMenuAction
-                      onClick={() => toggleRepo(col.id)}
-                      aria-expanded={!repoCollapsed}
-                      aria-label={
-                        repoCollapsed
-                          ? `Show ${childPrs.length} pull request${childPrs.length === 1 ? "" : "s"}`
-                          : "Hide pull requests"
-                      }
-                      data-testid={`sidebar-collection-${col.id}-toggle`}
-                      className="text-muted-foreground hover:text-foreground"
-                    >
-                      <Icon
-                        name="caret"
-                        className={cn("transition-transform", repoCollapsed && "-rotate-90")}
-                      />
-                    </SidebarMenuAction>
-                    {!repoCollapsed && (
-                      <SidebarMenuSub>
-                        {childPrs.slice(0, MAX_SIDEBAR_PRS).map((pr) => {
-                          const prActive = onLibrary && search.collection === pr.id
-                          return (
-                            <SidebarMenuSubItem key={pr.id}>
-                              <SidebarMenuSubButton asChild isActive={prActive}>
-                                <Link
-                                  to="/"
-                                  search={{ collection: pr.id }}
-                                  data-testid={`sidebar-collection-${pr.id}`}
-                                  aria-current={prActive ? "page" : undefined}
-                                  onClick={closeMobile}
-                                  className={cn(ROW_ICON, pr.count > 0 && "pr-7")}
-                                >
-                                  <Icon name="review" />
-                                  <span className="min-w-0 flex-1 truncate">
-                                    {pr.prNumber
-                                      ? `#${pr.prNumber} ${prTitle(pr.title, pr.prNumber)}`
-                                      : prTitle(pr.title)}
-                                  </span>
-                                  {pr.count > 0 && (
-                                    <SidebarMenuBadge className={cn(COUNT_BADGE, "top-1")}>
-                                      {pr.count}
-                                    </SidebarMenuBadge>
-                                  )}
-                                </Link>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          )
-                        })}
-                        {childPrs.length > MAX_SIDEBAR_PRS && (
-                          <SidebarMenuSubItem>
-                            {/* A de-emphasized meta row, not a full nav item. */}
-                            <SidebarMenuSubButton
-                              asChild
-                              size="sm"
-                              className="text-muted-foreground hover:text-foreground"
-                            >
-                              <Link
-                                to="/"
-                                search={{ collection: col.id }}
-                                data-testid={`sidebar-collection-${col.id}-more-prs`}
-                                onClick={closeMobile}
-                              >
-                                <span>
-                                  +{childPrs.length - MAX_SIDEBAR_PRS} more pull request
-                                  {childPrs.length - MAX_SIDEBAR_PRS === 1 ? "" : "s"}
-                                </span>
-                              </Link>
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
-                        )}
-                      </SidebarMenuSub>
-                    )}
-                  </SidebarMenuItem>
-                )
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        {tags.length > 0 && (
-          <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-            <SidebarGroupLabel>Tags</SidebarGroupLabel>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SidebarGroupAction
+                  aria-label="New collection"
+                  data-testid="sidebar-new-collection"
+                  onClick={() => setCreating((v) => !v)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <Icon name="plus" />
+                </SidebarGroupAction>
+              </TooltipTrigger>
+              <TooltipContent side="right">New collection</TooltipContent>
+            </Tooltip>
             <SidebarGroupContent>
+              {creating && (
+                <Input
+                  autoFocus
+                  value={newName}
+                  placeholder="Collection name…"
+                  aria-label="Collection name"
+                  data-testid="sidebar-new-collection-input"
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submitCollection()
+                    if (e.key === "Escape") {
+                      setCreating(false)
+                      setNewName("")
+                    }
+                  }}
+                  onBlur={submitCollection}
+                  // No text-size override: Input's base keeps 16px on touch (iOS
+                  // no-zoom) and steps to 14px from sm up. Hidden in the collapsed icon
+                  // rail (the + that opens it is hidden there too — no way to reach it).
+                  className="mb-1 group-data-[collapsible=icon]:hidden"
+                />
+              )}
               <SidebarMenu>
-                {tags.map(({ tag, count }) => (
-                  <FilterItem
-                    key={tag}
-                    icon="tag"
-                    label={tag}
-                    count={count}
-                    search={{ tag }}
-                    active={onLibrary && search.tag === tag}
-                    testId={`sidebar-tag-${tag}`}
-                  />
-                ))}
+                {/* First load only — a refetch keeps the current list (no data → no
+                  isPending), so switching views never flashes the collections. */}
+                {collectionsPending &&
+                  RAIL_SKELETON_COLLECTIONS.map((r) => (
+                    <SidebarMenuSkeleton key={r.id} showIcon width={r.w} />
+                  ))}
+                {/* Owner-only: create a folder to group collections. Folders are shared
+                  workspace structure, so only owners see this (and the manage menus). */}
+                {isOwner &&
+                  (creatingFolder ? (
+                    <SidebarMenuItem>
+                      <Input
+                        autoFocus
+                        value={newFolderName}
+                        placeholder="Folder name…"
+                        aria-label="Folder name"
+                        data-testid="sidebar-new-folder-input"
+                        onChange={(e) => setNewFolderName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") submitFolder()
+                          if (e.key === "Escape") {
+                            setCreatingFolder(false)
+                            setNewFolderName("")
+                          }
+                        }}
+                        onBlur={submitFolder}
+                        className="mb-1 group-data-[collapsible=icon]:hidden"
+                      />
+                    </SidebarMenuItem>
+                  ) : (
+                    <SidebarMenuItem className="group-data-[collapsible=icon]:hidden">
+                      <SidebarMenuButton
+                        onClick={() => setCreatingFolder(true)}
+                        data-testid="sidebar-new-folder"
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <Icon name="plus" />
+                        <span>New folder</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                {visibleFolders.map((f) => renderFolder(f))}
+                {ungrouped.map((col) => renderCollection(col))}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-        )}
 
-        {/* Tools — a running sync, notifications, Settings. Pinned to the foot of
+          {tags.length > 0 && (
+            <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+              <SidebarGroupLabel>Tags</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {tags.map(({ tag, count }) => (
+                    <FilterItem
+                      key={tag}
+                      icon="tag"
+                      label={tag}
+                      count={count}
+                      search={{ tag }}
+                      active={onLibrary && search.tag === tag}
+                      testId={`sidebar-tag-${tag}`}
+                    />
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          )}
+
+          {/* Tools — a running sync, notifications, Settings. Pinned to the foot of
             the scroll (mt-auto); the whitespace above sets them apart, no divider. */}
-        <SidebarGroup className="mt-auto">
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SyncChip />
-              <NotificationBell />
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={onSettings} tooltip="Settings">
-                  <Link
-                    to="/settings"
-                    data-testid="menu-settings"
-                    aria-current={onSettings ? "page" : undefined}
-                    onClick={closeMobile}
-                    className={ROW_ICON}
-                  >
-                    <Icon name="settings" />
-                    <span>Settings</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
+          <SidebarGroup className="mt-auto">
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SyncChip />
+                <NotificationBell />
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={onSettings} tooltip="Settings">
+                    <Link
+                      to="/settings"
+                      data-testid="menu-settings"
+                      aria-current={onSettings ? "page" : undefined}
+                      onClick={closeMobile}
+                      className={ROW_ICON}
+                    >
+                      <Icon name="settings" />
+                      <span>Settings</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
 
-      {/* TIER 4 — account: the identity row, pinned below the scroll. It needs no
+        {/* TIER 4 — account: the identity row, pinned below the scroll. It needs no
           divider of its own — the avatar + taller row already set it apart from the
           tools directly above it. */}
-      <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <UserPod
-              workspaceLabel={workspaceLabel}
-              workspaces={workspaces ?? null}
-              onSwitchWorkspace={switchWorkspace}
-            />
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
-    </Sidebar>
+        <SidebarFooter>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <UserPod
+                workspaceLabel={workspaceLabel}
+                workspaces={workspaces ?? null}
+                onSwitchWorkspace={switchWorkspace}
+              />
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+      </Sidebar>
+      {/* Deleting a folder only un-files its collections (they survive) — the confirm
+          says so, so an owner isn't scared it'll take the collections with it. */}
+      <ConfirmDialog
+        open={!!deletingFolder}
+        onOpenChange={(o) => !o && setDeletingFolder(null)}
+        title={`Delete folder “${deletingFolder?.name ?? ""}”?`}
+        description="The folder is removed and its collections become ungrouped. The collections and their artifacts are not deleted."
+        confirmLabel="Delete folder"
+        confirmTestId="folder-delete-confirm"
+        onConfirm={confirmDelete}
+      />
+    </>
   )
 }

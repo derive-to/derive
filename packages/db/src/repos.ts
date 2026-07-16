@@ -18,6 +18,7 @@ import type {
   DeliveryStatus,
   DomainRecord,
   DomainStatus,
+  FolderRecord,
   FollowKind,
   FollowRecord,
   GitHubAppRecord,
@@ -42,6 +43,7 @@ import type {
   NewContextAsker,
   NewDelivery,
   NewDomain,
+  NewFolder,
   NewFollow,
   NewInvitation,
   NewMembership,
@@ -125,6 +127,7 @@ import {
   contextAsker,
   contextSession,
   domain,
+  folder,
   follow,
   githubApp,
   githubInstallation,
@@ -230,6 +233,7 @@ export const schema = {
   collection,
   collectionItem,
   collectionMember,
+  folder,
   repoSource,
   githubApp,
   githubInstallation,
@@ -267,6 +271,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   sessionMessage: true,
   collection: true,
   collectionMember: true,
+  folder: true,
   repoSource: true,
   githubApp: true,
   githubInstallation: true,
@@ -1539,6 +1544,46 @@ export function makeRepos(db: SqliteDb) {
     const cmap = new Map(counts.map((r) => [r.id, Number(r.c)]))
     return rows.map((r) => ({ ...r, count: cmap.get(r.id) ?? 0 }))
   }
+  // ---- Folders (org grouping for collections) ----------------------------
+  const createFolder = async (f: NewFolder): Promise<FolderRecord> =>
+    (await db.insert(folder).values(f).returning().get()) as FolderRecord
+  const listFolders = async (orgId?: string): Promise<FolderRecord[]> => {
+    const base = db.select().from(folder)
+    return (orgId ? base.where(eq(folder.org_id, orgId)) : base).all()
+  }
+  const getFolder = async (id: string): Promise<FolderRecord | null> =>
+    (await db.select().from(folder).where(eq(folder.id, id)).get()) ?? null
+  const updateFolder = async (
+    id: string,
+    fields: { name?: string },
+  ): Promise<FolderRecord | null> => {
+    if (fields.name === undefined) return getFolder(id)
+    return (
+      (await db
+        .update(folder)
+        .set({ name: fields.name })
+        .where(eq(folder.id, id))
+        .returning()
+        .get()) ?? null
+    )
+  }
+  // Un-file the folder's collections (they survive), then drop the folder. Sequential
+  // (D1-safe), like deleteCollection.
+  const deleteFolder = async (id: string): Promise<void> => {
+    await db.update(collection).set({ folder_id: null }).where(eq(collection.folder_id, id)).run()
+    await db.delete(folder).where(eq(folder.id, id)).run()
+  }
+  const setCollectionFolder = async (
+    collectionId: string,
+    folderId: string | null,
+  ): Promise<void> => {
+    await db
+      .update(collection)
+      .set({ folder_id: folderId })
+      .where(eq(collection.id, collectionId))
+      .run()
+  }
+
   const collectionArtifactIds = async (collectionId: string): Promise<string[]> =>
     (
       await db
@@ -2767,6 +2812,12 @@ export function makeRepos(db: SqliteDb) {
     setCollectionAccess,
     deleteCollection,
     listCollections,
+    createFolder,
+    listFolders,
+    getFolder,
+    updateFolder,
+    deleteFolder,
+    setCollectionFolder,
     collectionArtifactIds,
     collectionIdsForArtifact,
     addCollectionItem,
