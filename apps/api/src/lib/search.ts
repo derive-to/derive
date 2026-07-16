@@ -430,9 +430,10 @@ export const reindexSearchBatch = async (
       log.error("search reindex: dense batch failed", { err: String(err) })
     }
   }
-  // A full page implies there may be more; the last row is the keyset for the next call
-  // (listArtifacts is newest-first, keyset on created_at+id — the same cursor the list
-  // route uses). A short page means we've reached the end.
+  // A full page implies there may be more; the last row is the keyset for the next call.
+  // The sweep takes the store's default order (created-desc), so the cursor key is
+  // created_at; listArtifacts otherwise keys the cursor on the active ?sort=. A short page
+  // means we've reached the end.
   const last = arts[arts.length - 1]
   const nextCursor =
     arts.length >= opts.limit && last ? { key: last.created_at, id: last.id } : null

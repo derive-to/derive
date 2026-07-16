@@ -7,8 +7,8 @@ import type { LibrarySearch } from "../pages/library/types"
 
 // The Following feed: /following — recent work from the authors and folders you
 // follow (the activity feed the follow graph powers; see lib/use-follows). Like
-// /favorites, a fixed named feed earns its own path; only ?query= search composes on
-// top. Path = the feed you're viewing, query = how it's filtered (docs/decisions/0002).
+// /favorites, a fixed named feed earns its own path; ?query= search and the sort order
+// compose on top. Path = the feed you're viewing, query = how it's filtered (docs/decisions/0002).
 export const Route = createFileRoute("/following")({
   beforeLoad: requireOnboarded,
   pendingComponent: LibraryPending,
