@@ -10,9 +10,15 @@ export const Route = createFileRoute("/artifacts/$ref")({
   // human at a pending proposal (the Brandprint profile panel's "Review & comment") use
   // it — landing on the live version would show them the wrong thing, and with several
   // proposals open the overlay must not have to guess which one they meant.
-  validateSearch: (s: Record<string, unknown>): { comment?: string; review?: string } => ({
+  // `collection` carries the list context you opened FROM, so the header breadcrumb can
+  // page between siblings in that collection (dropped otherwise — a direct link has no
+  // context and falls back to the artifact's sole collection, if any).
+  validateSearch: (
+    s: Record<string, unknown>,
+  ): { comment?: string; review?: string; collection?: string } => ({
     ...(typeof s.comment === "string" && s.comment ? { comment: s.comment } : {}),
     ...(typeof s.review === "string" && s.review ? { review: s.review } : {}),
+    ...(typeof s.collection === "string" && s.collection ? { collection: s.collection } : {}),
   }),
   // Warm the artifact + its comments (and the rendered HTML the iframe loads) so
   // an intent-preloaded link opens instantly. Best-effort: the page owns the

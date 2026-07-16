@@ -181,6 +181,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
       return {}
     }
   })
+  // Opening an artifact from a collection carries that collection as list context, so
+  // the artifact header can page between its siblings (the sibling switcher). Other
+  // feeds pass nothing — a direct/feed open has no single collection to page within.
+  const openContext = filter.kind === "collection" ? { collection: filter.id } : {}
   const showFolders = filter.kind === "collection" ? !!folderPrefs[filter.id] : false
   const setShowFolders = (on: boolean) => {
     if (filter.kind !== "collection") return
@@ -522,7 +526,9 @@ function LibraryBody({ view }: { view: LibraryView }) {
           hasNextPage={!!hasNextPage}
           isFetchingNextPage={isFetchingNextPage}
           onLoadMore={() => fetchNextPage()}
-          onOpen={(a) => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })}
+          onOpen={(a) =>
+            nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
+          }
           onToggleFavorite={toggleFavorite}
           onPickTag={(tag) => nav({ to: "/", search: { tag } })}
           onPickAuthor={pickAuthor}
@@ -540,7 +546,9 @@ function LibraryBody({ view }: { view: LibraryView }) {
             hasNextPage={!!hasNextPage}
             isFetchingNextPage={isFetchingNextPage}
             onLoadMore={() => fetchNextPage()}
-            onOpen={(a) => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })}
+            onOpen={(a) =>
+              nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
+            }
             onToggleFavorite={toggleFavorite}
             onPickTag={(tag) => nav({ to: "/", search: { tag } })}
             onEditTags={setPendingTags}

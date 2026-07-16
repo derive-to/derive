@@ -37,6 +37,7 @@ const QUERY_ALLOW = new Set([
   "components/chrome/app-shell.tsx", // workspace switcher, ambient
   "components/chrome/command-palette.tsx", // renders whatever's cached
   "components/chrome/sync-chip.tsx", // ambient status indicator
+  "pages/artifact/artifact-breadcrumb.tsx", // collections/siblings reads degrade to the title (no switcher)
   "pages/artifact/share-dialog.tsx", // reads the warm artifact cache (enabled:false)
   "pages/artifact/header-actions.tsx", // move-menu dropdown, warm read
   "pages/library/quick-organize.tsx", // reads the cached artifact row
