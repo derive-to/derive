@@ -13,12 +13,15 @@
 // shaped to the agent's workflow (not the API surface), high-signal responses with
 // truncate-and-steer, semantic ids (short_id / vN / page path — never UUIDs),
 // actionable errors, and identity carried in the server `instructions` rather than a
-// tool slot. Eight tools, one per intent — WORKSPACES (list_workspaces), FIND
+// tool slot. Nine tools, one per intent — WORKSPACES (list_workspaces), FIND
 // (list_artifacts), READ content (read), GREP (search), CATCH UP on state/feedback/
-// history (catch_up), COMMENT (comment), WRITE (publish), and the WORK QUEUE
+// history (catch_up), COMMENT (comment), WRITE (publish), the WORK QUEUE
 // (check_requests: what teammates asked THIS agent to do — the one intent that is
 // about the agent rather than a document, which is why it earns a slot instead of a
-// parameter on catch_up). Variation lives in parameters, never a new tool: `since_version`/`to_version` turn catch_up into a
+// parameter on catch_up), and SET UP the Brandprint (setup_brandprint: scaffold the
+// workspace's brand-profile slot so it can be authored over MCP — workspace
+// configuration, not a document write, so like check_requests it's a distinct intent
+// that doesn't reduce to a parameter on another tool). Variation lives in parameters, never a new tool: `since_version`/`to_version` turn catch_up into a
 // diff, `reply_to`/`set_state` fold reply+resolve into comment, `for_review`/role
 // turn publish into a human-reviewed proposal, and omitting `short_id` turns
 // `search` from grep-one-artifact into grep-the-workspace. A new capability is a
@@ -62,7 +65,11 @@ import { StreamableHTTPTransport } from "@hono/mcp"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { Hono } from "hono"
 import { z } from "zod"
-import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "./brandprint-reference"
+import {
+  BRANDPRINT_REFERENCE,
+  BRANDPRINT_TEMPLATE,
+  PROFILE_PLACEHOLDER_HTML,
+} from "./brandprint-reference"
 import type { AppContext } from "./context"
 import { markAddressed } from "./lib/addressed"
 import { afterPublish } from "./lib/after-publish"
@@ -433,38 +440,43 @@ async function buildServer(
       },
     )
   }
-  // The generation reference: the build guide + the neutral benchmark page, served
-  // whenever a Brandprint exists. Derive runs no inference, so these two static files
-  // are its entire side of profile generation; the user's agent does the assembling.
-  if (resolved.collectionIds.length > 0) {
-    server.registerResource(
-      "brandprint:reference",
-      "derive://brandprint/reference",
-      {
-        title: "How to build this workspace's brand profile",
-        description: "The build guide: required sections, extraction rules, output contract.",
-        mimeType: "text/markdown",
-        annotations: { audience: ["assistant"], priority: 0.8 },
-      },
-      async (uri) => ({
-        contents: [{ uri: uri.href, mimeType: "text/markdown", text: BRANDPRINT_REFERENCE }],
-      }),
-    )
-    server.registerResource(
-      "brandprint:template",
-      "derive://brandprint/template",
-      {
-        title: "Brand profile template (neutral benchmark)",
-        description:
-          "A complete brand-neutral profile page — the structural and quality benchmark; restyle everything.",
-        mimeType: "text/html",
-        annotations: { audience: ["assistant"], priority: 0.8 },
-      },
-      async (uri) => ({
-        contents: [{ uri: uri.href, mimeType: "text/html", text: BRANDPRINT_TEMPLATE }],
-      }),
-    )
-  }
+  // The generation reference: the build guide + the neutral benchmark page. Registered
+  // UNCONDITIONALLY (not gated on an existing Brandprint) for two reasons: (1) they're
+  // the static guide an agent needs precisely BEFORE a Brandprint exists, to build one;
+  // (2) registering at least one resource is what makes the SDK advertise the `resources`
+  // capability at `initialize` — gating them meant a session that connected to a
+  // Brandprint-less workspace cached "no resources" for its whole life (capability is
+  // negotiated once), so a later `set up my Brandprint` couldn't read them. They're also
+  // reachable through the `read` tool (read("derive://brandprint/reference")), which every
+  // client supports even when MCP resources aren't. Derive runs no inference; these two
+  // static files are its entire side of profile generation, the user's agent assembles it.
+  server.registerResource(
+    "brandprint:reference",
+    "derive://brandprint/reference",
+    {
+      title: "How to build this workspace's brand profile",
+      description: "The build guide: required sections, extraction rules, output contract.",
+      mimeType: "text/markdown",
+      annotations: { audience: ["assistant"], priority: 0.8 },
+    },
+    async (uri) => ({
+      contents: [{ uri: uri.href, mimeType: "text/markdown", text: BRANDPRINT_REFERENCE }],
+    }),
+  )
+  server.registerResource(
+    "brandprint:template",
+    "derive://brandprint/template",
+    {
+      title: "Brand profile template (neutral benchmark)",
+      description:
+        "A complete brand-neutral profile page — the structural and quality benchmark; restyle everything.",
+      mimeType: "text/html",
+      annotations: { audience: ["assistant"], priority: 0.8 },
+    },
+    async (uri) => ({
+      contents: [{ uri: uri.href, mimeType: "text/html", text: BRANDPRINT_TEMPLATE }],
+    }),
+  )
   // The live brand profile is the headline read — one page that carries the whole
   // brand, humans and machines alike (tokens ride in it as CSS variables + JSON island).
   // The server is per-request, so the record fetched above is fresh enough to reuse.
@@ -718,7 +730,11 @@ async function buildServer(
       description:
         "Read an artifact's CONTENT by short id, as Markdown by default (HTML is converted to its readable text — note a styled page renders fully to VIEWERS; only this reading view flattens it). Small docs return whole; a LARGE doc returns its heading OUTLINE first — call again with a `section` slug for just that part. Multi-page bundle: omit `section` for the page outline, then pass a page path (optionally `page.html#slug`). Pass format:'html' for the exact source (required before publish `edits`), or a past `version` for history. (For what CHANGED, or the comment threads, use catch_up.)",
       inputSchema: {
-        short_id: z.string().describe("The artifact's short id, e.g. nk0dsral."),
+        short_id: z
+          .string()
+          .describe(
+            "The artifact's short id, e.g. nk0dsral. Also accepts a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — so the strings the instructions name are readable here even where MCP resources aren't.",
+          ),
         section: z
           .string()
           .optional()
@@ -749,9 +765,40 @@ async function buildServer(
     },
     async ({ short_id, section, format, version, lines, render, workspace }) => {
       const fmt: ReadFormat = format ?? "markdown"
-      const r = await reach(short_id, workspace)
+      // `derive://brandprint/*` URIs are readable through `read`, not only as MCP
+      // resources — the exact strings the server instructions name, reachable by every
+      // client even where resource support is weak or was never negotiated (the failure
+      // this fixes: a session that connected before the Brandprint existed caches "no
+      // resources" for its whole life). `reference`/`template` are the static build guide;
+      // `profile` is the live brand profile; any other segment is a source-doc short_id
+      // that falls through to the normal read path (so `section`/`lines`/`version` work).
+      const BP = "derive://brandprint/"
+      let docId = short_id
+      if (short_id.startsWith(BP)) {
+        const seg = short_id.slice(BP.length)
+        if (seg === "reference")
+          return json({ uri: short_id, mimeType: "text/markdown", content: BRANDPRINT_REFERENCE })
+        if (seg === "template")
+          return json({ uri: short_id, mimeType: "text/html", content: BRANDPRINT_TEMPLATE })
+        if (seg === "profile") {
+          if (!(bpProfile?.state === "live" && profileArt))
+            return err(
+              "This workspace has no live brand profile yet. Read derive://brandprint/reference and derive://brandprint/template, then run setup_brandprint and publish the profile with for_review:true.",
+            )
+          const pv = await ctx.meta.getVersion(profileArt.id, profileArt.current_version)
+          const body = pv ? await ctx.sourceText(pv) : null
+          return json({
+            uri: short_id,
+            mimeType: "text/html",
+            version: profileArt.current_version,
+            content: body ?? "",
+          })
+        }
+        docId = seg
+      }
+      const r = await reach(docId, workspace)
       if (r && "error" in r) return err(r.error)
-      if (!r) return notFound(short_id)
+      if (!r) return notFound(docId)
       const a = r.a
       const n = version ?? a.current_version
       if (n < 1 || n > a.current_version)
@@ -2199,6 +2246,130 @@ async function buildServer(
       } catch (e) {
         const msg = e instanceof PublishError ? e.message : "could not publish"
         return text(`Publish failed: ${msg}`)
+      }
+    },
+  )
+
+  // SET UP THE BRANDPRINT ------------------------------------------------------
+  // The agent-native counterpart to the web create dialog: scaffold (or return) the
+  // workspace's Brandprint so "set up our Brandprint" typed into a connected agent works
+  // end to end, no context-switch to the app. Idempotent — it ensures the conventions
+  // collection + the "Brand profile" placeholder exist and the org pointer names them,
+  // then hands back the placeholder's short_id. The agent then reads
+  // derive://brandprint/reference + /template, builds the profile, and publishes it
+  // for_review against that short_id (the placeholder is the recognition contract — a
+  // human still approves the reveal, which flips it live at derive://brandprint/profile).
+  // It never generates or approves the profile itself. Owner/Admin only, like the web
+  // PATCH /v1/workspace/settings it mirrors.
+  server.registerTool(
+    "setup_brandprint",
+    {
+      description:
+        "Set up (or return) this workspace's Brandprint so its brand profile can be authored over MCP — the agent-native version of the web create dialog. Idempotent: it ensures a conventions collection and a 'Brand profile' placeholder artifact exist and points the workspace's settings at them, then returns the placeholder's short_id. NEXT: read derive://brandprint/reference and derive://brandprint/template, build ONE self-contained HTML brand profile, and publish it with for_review:true to that short_id — it lands as a proposal a human approves (never publish the profile live). This tool does NOT generate or approve the profile. Owner/Admin only. Call it when the user asks to set up, build, or finish their Brandprint.",
+      inputSchema: { workspace: wsArg },
+    },
+    async ({ workspace }) => {
+      const t = await resolveWs(workspace)
+      if ("error" in t) return err(t.error)
+      if (!roleAllows(t.role, "manage"))
+        return err("Setting up a Brandprint needs an Admin/Owner role in this workspace.")
+      // Collection ownership + the placeholder's author must be a real user; an OAuth
+      // grant carries the granting human (actingFor/ownerId), a static agent token may not.
+      const uid = actingFor?.id ?? ownerId
+      if (!uid)
+        return err(
+          "setup_brandprint needs a signed-in user to attribute the setup to. Connect with an OAuth agent grant rather than a static agent token.",
+        )
+      const targetOrg = t.org
+      try {
+        const settings = await ctx.meta.getOrgSettings(targetOrg)
+        const bp = settings.brandprint
+
+        // Reuse an in-tenant collection pointer; otherwise create the conventions
+        // collection (workspace-open so teammates read the docs + the reveal).
+        let collectionId = bp?.collectionId
+        let createdCollection = false
+        if (collectionId) {
+          const col = await ctx.meta.getCollection(collectionId)
+          if (!col || col.org_id !== targetOrg) collectionId = undefined
+        }
+        if (!collectionId) {
+          const col = await ctx.meta.createCollection({
+            id: newId("col"),
+            org_id: targetOrg,
+            title: "Brandprint",
+            created_by: uid,
+            workspace_access: "member",
+          })
+          await ctx.meta.setCollectionMember({
+            id: newId("cm"),
+            collection_id: col.id,
+            user_id: uid,
+            role: "owner",
+          })
+          collectionId = col.id
+          createdCollection = true
+        }
+
+        // Reuse an in-tenant profile pointer; otherwise publish the placeholder (v1 stub)
+        // into the collection. profileState reads live from v2, so a reused profile may
+        // already be live — report that rather than clobbering it.
+        let profileShortId = bp?.profileId
+        let state: "pending" | "live" = "pending"
+        let createdProfile = false
+        if (profileShortId) {
+          const art = await ctx.meta.getByShortId(profileShortId)
+          if (art && art.org_id === targetOrg) state = profileState(art.current_version)
+          else profileShortId = undefined
+        }
+        if (!profileShortId) {
+          const { artifact } = await publishVersion(ctx.meta, ctx.blobs, {
+            bytes: new TextEncoder().encode(PROFILE_PLACEHOLDER_HTML),
+            filename: "Brand profile.html",
+            isBundle: false,
+            title: "Brand profile",
+            message: "Brand profile placeholder — your agent fills this in.",
+            author: agent.name,
+            authorId: uid,
+            orgId: targetOrg,
+            workspaceAccess: "member",
+            linkRole: "none",
+            listed: "none",
+          })
+          await ctx.meta.addCollectionItem(collectionId, artifact.id)
+          profileShortId = artifact.short_id
+          state = "pending"
+          createdProfile = true
+        }
+
+        // Persist the pointer only when something actually changed (a fully-set-up
+        // Brandprint is a no-op read).
+        const pointerChanged =
+          createdCollection ||
+          createdProfile ||
+          bp?.collectionId !== collectionId ||
+          bp?.profileId !== profileShortId
+        if (pointerChanged)
+          await ctx.meta.setOrgSettings(targetOrg, {
+            ...settings,
+            brandprint: { collectionId, profileId: profileShortId },
+          })
+
+        const already = !createdCollection && !createdProfile
+        return json({
+          workspace: targetOrg,
+          collection_id: collectionId,
+          profile_short_id: profileShortId,
+          state,
+          created: !already,
+          message:
+            state === "live"
+              ? `This workspace already has a live brand profile (${profileShortId}). To revise it, build a new version and publish it with for_review:true to that short_id.`
+              : `Brandprint ${already ? "is ready" : "scaffolded"}. NEXT: read derive://brandprint/reference and derive://brandprint/template, build ONE self-contained HTML brand profile from the source docs, then publish it with for_review:true to ${profileShortId}. A human approves it to go live.`,
+        })
+      } catch (e) {
+        const msg = e instanceof PublishError ? e.message : String(e)
+        return text(`Couldn't set up the Brandprint: ${msg}`)
       }
     },
   )

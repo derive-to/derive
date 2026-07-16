@@ -174,6 +174,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       "publish",
       "read",
       "search",
+      "setup_brandprint",
       "stage_asset",
       "stage_publish",
     ])
@@ -514,6 +515,94 @@ describe("remote MCP endpoint (/mcp)", () => {
     const text = (read.parsed?.result as { contents?: { text: string }[] } | undefined)
       ?.contents?.[0]?.text
     expect(text).toContain("Acme brand profile")
+  })
+
+  it("advertises resources + serves the build guide via `read` even with no Brandprint", async () => {
+    // The bug this covers: reference/template were gated on an existing Brandprint, so a
+    // session that connected first cached "no resources" for life. They now register
+    // unconditionally, and `read` resolves the derive:// URIs directly (every client can).
+    const { app, token } = appWithGrant("bp-static", "openid derive:read")
+
+    const init = await rpc(app, token, initBody)
+    const caps = (init.parsed?.result as { capabilities?: { resources?: unknown } }).capabilities
+    expect(caps?.resources).toBeDefined()
+
+    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
+    const uris = (
+      (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
+    ).map((r) => r.uri)
+    expect(uris).toContain("derive://brandprint/reference")
+    expect(uris).toContain("derive://brandprint/template")
+
+    // The same strings the instructions name are readable through the `read` tool.
+    const ref = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: "derive://brandprint/reference" })),
+    )
+    expect(ref.content).toContain("for_review")
+    expect(ref.content).toContain("brandprint-tokens")
+    const tpl = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: "derive://brandprint/template" })),
+    )
+    expect(tpl.content).toContain("brandprint-tokens")
+    // No live profile yet ⇒ the profile URI is an actionable error, not an empty read.
+    expect(
+      toolText(await call(app, token, "read", { short_id: "derive://brandprint/profile" })),
+    ).toContain("no live brand profile")
+  })
+
+  it("setup_brandprint scaffolds the profile slot, is idempotent, and the loop goes live", async () => {
+    const { app, token, meta } = appWithGrant(
+      "bp-setup",
+      "openid derive:read derive:publish derive:manage",
+    )
+    // No web dialog: the agent scaffolds the whole Brandprint over MCP.
+    const out = JSON.parse(toolText(await call(app, token, "setup_brandprint")))
+    expect(out.created).toBe(true)
+    expect(out.state).toBe("pending")
+    expect(out.collection_id).toBeTruthy()
+    expect(out.profile_short_id).toBeTruthy()
+    const profId = out.profile_short_id as string
+
+    // The pointer is persisted and the placeholder sits in the collection.
+    const prof = await meta.getByShortId(profId)
+    if (!prof) throw new Error("no profile artifact")
+    const settings = await meta.getOrgSettings(prof.org_id)
+    expect(settings.brandprint?.profileId).toBe(profId)
+    expect(settings.brandprint?.collectionId).toBe(out.collection_id)
+    expect(await meta.collectionArtifactIds(out.collection_id)).toContain(prof.id)
+
+    // Idempotent: a second call returns the same slot, nothing re-created.
+    const again = JSON.parse(toolText(await call(app, token, "setup_brandprint")))
+    expect(again.created).toBe(false)
+    expect(again.profile_short_id).toBe(profId)
+    expect(again.collection_id).toBe(out.collection_id)
+
+    // The agent builds the profile: a v2 against the placeholder flips it live.
+    const form = new FormData()
+    form.append(
+      "file",
+      new Blob([new TextEncoder().encode("<h1>Derive brand profile</h1>")]),
+      "index.html",
+    )
+    const rep = await app.request(`/v1/artifacts/${profId}/versions`, {
+      method: "POST",
+      body: form,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(rep.status).toBe(201)
+
+    // read derive://brandprint/profile now returns the live content; setup reports live.
+    const live = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: "derive://brandprint/profile" })),
+    )
+    expect(live.content).toContain("Derive brand profile")
+    const post = JSON.parse(toolText(await call(app, token, "setup_brandprint")))
+    expect(post.state).toBe("live")
+  })
+
+  it("setup_brandprint requires an Admin/Owner role", async () => {
+    const { app, token } = appWithGrant("bp-setup-denied", "openid derive:read")
+    expect(toolText(await call(app, token, "setup_brandprint"))).toContain("Admin/Owner role")
   })
 
   it("list_artifacts + read see the agent's own published artifact", async () => {
