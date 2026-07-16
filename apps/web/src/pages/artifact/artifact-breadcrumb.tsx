@@ -12,9 +12,9 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { collectionSiblingsQuery, collectionsQuery } from "@/lib/queries"
+import { collectionFoldersQuery, collectionSiblingsQuery, collectionsQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
-import { resolveContextCollection, siblingNav } from "./lib/siblings"
+import { folderScopedSiblingIds, resolveContextCollection, siblingNav } from "./lib/siblings"
 import { refFor } from "./parse-ref"
 
 // Shared title styling so the plain-title and switcher-trigger forms are pixel-identical
@@ -37,12 +37,28 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
     ...collectionSiblingsQuery(contextId ?? ""),
     enabled: !!contextId,
   })
+  const { data: folderData, isPending: folderPending } = useQuery({
+    ...collectionFoldersQuery(contextId ?? ""),
+    enabled: !!contextId,
+  })
   const collectionTitle = contextId ? collections.find((c) => c.id === contextId)?.title : undefined
 
-  const { index, total, prev, next } = siblingNav(
+  // Folder context: which folder (if any) this artifact sits in FOR the context
+  // collection, so the breadcrumb reads `Collection / Folder / Title` and the switcher
+  // pages within that folder — the set the breadcrumb says you're in.
+  const assignments = folderData?.assignments ?? {}
+  const currentFolderId = assignments[art.short_id]
+  const folderName = currentFolderId
+    ? folderData?.folders.find((f) => f.id === currentFolderId)?.name
+    : undefined
+  const scopedIds = folderScopedSiblingIds(
     siblings.map((s) => s.short_id),
+    assignments,
     art.short_id,
   )
+  const scopedSiblings = siblings.filter((s) => scopedIds.includes(s.short_id))
+
+  const { index, total, prev, next } = siblingNav(scopedIds, art.short_id)
 
   const goto = useCallback(
     (target: string | null) => {
@@ -88,7 +104,13 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
     )
   }
 
-  const hasSwitcher = index >= 0 && total > 1
+  // Hold the switcher until the folders query has SETTLED (loaded or errored): siblings and
+  // folders load independently, and showing a collection-wide switcher (e.g. "5 / 30") that
+  // then snaps to folder scope ("2 / 4") — or vanishes when the folder holds one doc — is a
+  // visible morph, so the title renders plain until then. Gating on "settled" (not "data
+  // present") means a folders-endpoint error resolves to a collection-wide switcher rather
+  // than none — core navigation never depends on that secondary query succeeding.
+  const hasSwitcher = index >= 0 && total > 1 && !folderPending
 
   return (
     <div className="flex min-w-0 items-center gap-1.5">
@@ -96,7 +118,7 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
         to="/"
         search={{ collection: contextId }}
         data-testid="breadcrumb-collection"
-        className="max-w-[11rem] shrink-0 truncate text-sm text-muted-foreground hover:text-foreground"
+        className="min-w-0 max-w-[11rem] shrink truncate text-sm text-muted-foreground hover:text-foreground"
         title={`Open ${collectionTitle}`}
       >
         {collectionTitle}
@@ -104,9 +126,30 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
       <span aria-hidden="true" className="shrink-0 text-muted-foreground/50">
         /
       </span>
+      {folderName && currentFolderId && (
+        // The folder segment — present only when the artifact is filed. Links back to the
+        // collection home scrolled to that folder (the `?folder=` anchor).
+        <>
+          <Link
+            to="/"
+            search={{ collection: contextId, folder: currentFolderId }}
+            data-testid="breadcrumb-folder"
+            // The MIDDLE crumb yields first under width pressure (shrinks faster, smaller
+            // cap) so the document title — the leaf, the <h1> — keeps priority.
+            className="min-w-0 max-w-[8rem] shrink-[3] truncate text-sm text-muted-foreground hover:text-foreground"
+            title={`Open folder ${folderName}`}
+          >
+            {folderName}
+          </Link>
+          <span aria-hidden="true" className="shrink-0 text-muted-foreground/50">
+            /
+          </span>
+        </>
+      )}
       {hasSwitcher ? (
-        // The title stays the page's <h1>; the switcher control lives inside it.
-        <h1 className="flex min-w-0">
+        // The title stays the page's <h1>; the switcher control lives inside it. `flex-1`
+        // gives the title the remaining space (crumbs shrink around it).
+        <h1 className="flex min-w-0 flex-1">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
@@ -123,7 +166,7 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="max-h-80 w-72 overflow-auto">
-              {siblings.map((s) => (
+              {scopedSiblings.map((s) => (
                 <DropdownMenuItem
                   key={s.short_id}
                   data-testid={`sibling-option-${s.short_id}`}
@@ -147,7 +190,7 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
           </DropdownMenu>
         </h1>
       ) : (
-        <h1 className={TITLE_CLASS} title={art.title ?? art.short_id}>
+        <h1 className={cn(TITLE_CLASS, "min-w-0 flex-1")} title={art.title ?? art.short_id}>
           {art.title ?? art.short_id}
         </h1>
       )}
@@ -170,7 +213,17 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
               Previous <Kbd>[</Kbd>
             </TooltipContent>
           </Tooltip>
-          <span className="px-0.5 font-mono text-2xs tabular-nums text-muted-foreground">
+          <span
+            // The scope is otherwise invisible: the denominator is the FOLDER count when
+            // filed, the whole-collection count when not. The tooltip names it so the
+            // number never looks like it jumped for no reason.
+            title={
+              folderName
+                ? `${index + 1} of ${total} in ${folderName}`
+                : `${index + 1} of ${total} in the collection`
+            }
+            className="px-0.5 font-mono text-2xs tabular-nums text-muted-foreground"
+          >
             {index + 1} / {total}
           </span>
           <Tooltip>

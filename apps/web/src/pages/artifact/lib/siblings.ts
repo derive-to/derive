@@ -17,6 +17,22 @@ export function resolveContextCollection(
   return null
 }
 
+/** Scope the switcher to the FOLDER the current artifact sits in, so prev/next (and the
+ *  switcher list) page the exact set the breadcrumb shows you're in. When the artifact is
+ *  filed (it has an assignment), the siblings narrow to that folder; when it's unfiled (no
+ *  assignment) paging stays collection-wide — there's no "Unfiled" breadcrumb segment, so
+ *  a collection-level breadcrumb keeps collection-level paging. Order is preserved, and an
+ *  empty assignment map (a collection with no folders) is a no-op. */
+export function folderScopedSiblingIds(
+  siblingIds: string[],
+  assignments: Record<string, string>,
+  currentId: string,
+): string[] {
+  const folderId = assignments[currentId]
+  if (!folderId) return siblingIds
+  return siblingIds.filter((id) => assignments[id] === folderId)
+}
+
 /** The current artifact's position among its ordered siblings, plus the clamped
  *  prev/next targets — null at the ends, so the switcher disables rather than wraps.
  *  `index` is -1 when the current id isn't in the list (siblings still loading, or the

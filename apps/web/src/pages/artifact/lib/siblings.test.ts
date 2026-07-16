@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { resolveContextCollection, siblingNav } from "./siblings"
+import { folderScopedSiblingIds, resolveContextCollection, siblingNav } from "./siblings"
 
 describe("resolveContextCollection", () => {
   it("uses the ?collection param when the artifact is actually in it", () => {
@@ -33,5 +33,23 @@ describe("siblingNav", () => {
   })
   it("handles a single-item list", () => {
     expect(siblingNav(["solo"], "solo")).toEqual({ index: 0, total: 1, prev: null, next: null })
+  })
+})
+
+describe("folderScopedSiblingIds", () => {
+  const ids = ["a", "b", "c", "d"]
+  // a,c in folder f1; b in f2; d unfiled.
+  const assignments = { a: "f1", b: "f2", c: "f1" }
+
+  it("narrows to the current artifact's folder-mates, preserving order", () => {
+    expect(folderScopedSiblingIds(ids, assignments, "a")).toEqual(["a", "c"])
+    expect(folderScopedSiblingIds(ids, assignments, "c")).toEqual(["a", "c"])
+    expect(folderScopedSiblingIds(ids, assignments, "b")).toEqual(["b"])
+  })
+  it("keeps the whole collection in scope for an unfiled artifact", () => {
+    expect(folderScopedSiblingIds(ids, assignments, "d")).toEqual(ids)
+  })
+  it("is a no-op when the collection has no folders (empty assignments)", () => {
+    expect(folderScopedSiblingIds(ids, {}, "a")).toEqual(ids)
   })
 })

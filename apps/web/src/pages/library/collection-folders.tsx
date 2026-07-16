@@ -1,7 +1,8 @@
 import { ChevronRight } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { type Artifact, api, type Folder } from "@/api"
 import { Icon } from "@/components/icons"
+import { CardGrid } from "@/components/shared/card-grid"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Count } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
@@ -16,14 +17,13 @@ import { Input } from "@/components/ui/input"
 import { collectionFoldersQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
-import { ArtifactRow } from "./artifact-row"
+import { ArtifactCard } from "./artifact-card"
 import type { LibrarySelection } from "./use-library-selection"
 
-interface RowHandlers {
+interface CardHandlers {
   onOpen: (a: Artifact) => void
   onToggleFavorite: (a: Artifact) => void
   onPickTag: (tag: string) => void
-  onPickAuthor: (login: string) => void
   onEditTags: (a: Artifact) => void
   onAddToCollection: (a: Artifact) => void
   onDelete: (a: Artifact) => void
@@ -88,11 +88,13 @@ export function NewFolderControl({
 }
 
 /**
- * A manual collection's artifacts, grouped into its user folders (Collection → Folder →
- * artifacts). Folders come first (name order), then an "Unfiled" bucket; each section is
- * collapsible. Collection editors get a "New folder" affordance and a per-folder rename /
- * delete menu; filing artifacts is done from the multi-select bar's "Move to folder".
- * Sibling of `folder-groups.tsx` (the repo path-folder view), one level, alphabetical.
+ * A manual collection's artifacts grouped into its user folders (Collection → Folder →
+ * artifacts). Folders are collapsible SECTION HEADERS over the ordinary card grid — the
+ * thumbnails never go away; the folder is only a divider. Folders come first (name
+ * order), then an "Unfiled" bucket. Collection editors get a "New folder" affordance and
+ * a per-folder rename / delete menu; filing is done from the multi-select "Move to
+ * folder". Grouping is decoupled from presentation — the collection view's "Group by
+ * folder" toggle flips between this and the flat card grid, both cards. One level.
  */
 export function CollectionFolders({
   collectionId,
@@ -102,6 +104,7 @@ export function CollectionFolders({
   canManage,
   hasNextPage,
   isFetchingNextPage,
+  scrollToFolderId,
   ...handlers
 }: {
   collectionId: string
@@ -115,7 +118,10 @@ export function CollectionFolders({
   // while those pages arrive.
   hasNextPage: boolean
   isFetchingNextPage: boolean
-} & RowHandlers) {
+  // A folder to scroll into view on open (the breadcrumb's `?folder=` anchor, already
+  // consumed into transient state by the parent). The matching section scrolls once.
+  scrollToFolderId?: string
+} & CardHandlers) {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameName, setRenameName] = useState("")
   const [deleting, setDeleting] = useState<Folder | null>(null)
@@ -148,7 +154,10 @@ export function CollectionFolders({
   const unfiled = byFolder.get(UNFILED) ?? []
 
   return (
-    <div className="flex flex-col gap-3">
+    // Between-folder space (gap-8, 32px) is the LARGEST interval in the layout — larger
+    // than the 24px row gap inside a folder's card grid — so the eye reads "new group"
+    // from the whitespace, not the reverse.
+    <div className="flex flex-col gap-8">
       {canManage && <NewFolderControl collectionId={collectionId} />}
 
       {sortedFolders.map((f) => (
@@ -157,6 +166,12 @@ export function CollectionFolders({
           title={f.name}
           testId={`collection-folder-${f.id}`}
           items={byFolder.get(f.id) ?? []}
+          canManage={canManage}
+          scrollTo={scrollToFolderId === f.id}
+          // Only scroll once EVERY page is in: the anchor fires against a settled layout,
+          // not the thin page-1 grid that would put the target folder somewhere it won't
+          // stay once later pages fill the earlier folders.
+          loaded={!hasNextPage && !isFetchingNextPage}
           menu={
             canManage ? (
               <DropdownMenu>
@@ -261,6 +276,9 @@ function Section({
   menu,
   renameInput,
   muted,
+  canManage,
+  scrollTo,
+  loaded,
   ...handlers
 }: {
   title: string
@@ -269,18 +287,36 @@ function Section({
   menu?: React.ReactNode
   renameInput?: React.ReactNode
   muted?: boolean
-} & RowHandlers) {
+  canManage?: boolean
+  scrollTo?: boolean
+  // Every page of the collection is in — gates the anchor scroll so it lands on a settled
+  // layout, not the thin first page.
+  loaded?: boolean
+} & CardHandlers) {
   const [open, setOpen] = useState(true)
+  const ref = useRef<HTMLDivElement>(null)
+  // Land on this folder when it's the breadcrumb's `?folder=` anchor — but only once the
+  // whole collection has loaded (else earlier folders fill in and shove this one down).
+  // Instant (not smooth) so it can't fight a reduced-motion preference; latched so it fires
+  // exactly once per mount (a fresh navigation remounts the section and resets the latch).
+  const anchored = useRef(false)
+  useEffect(() => {
+    if (!scrollTo || !loaded || anchored.current) return
+    anchored.current = true
+    ref.current?.scrollIntoView({ block: "start" })
+  }, [scrollTo, loaded])
   if (renameInput) return <div>{renameInput}</div>
   return (
-    <div className="group/folder">
-      <div className="flex items-center gap-2">
+    <div ref={ref} className="group/folder scroll-mt-4">
+      {/* A hairline under the header makes the group boundary read at a glance without
+          shouting — the sanctioned section register, not file-manager chrome. */}
+      <div className="flex items-center gap-2 border-b border-border-soft pb-1.5">
         <button
           type="button"
           data-testid={`${testId}-toggle`}
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 text-left outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
           <ChevronRight
             className={cn(
@@ -289,14 +325,14 @@ function Section({
             )}
             aria-hidden
           />
-          {/* A folder — the single-folder glyph — for both a named folder and the Unfiled
-              bucket; `muted` carries the Unfiled distinction through color, not a different
-              icon (the plural stack reads as "many collections", wrong for one folder). */}
-          <Icon name="collection" className="text-muted-foreground" />
+          {/* A named folder gets the folder glyph; the "Unfiled" leftover bucket gets NO
+              icon and a lighter, non-medium label so it never reads as a folder someone
+              literally named "Unfiled". */}
+          {!muted && <Icon name="collection" className="text-muted-foreground" />}
           <span
             className={cn(
-              "truncate text-sm font-medium",
-              muted ? "text-muted-foreground" : "text-foreground",
+              "truncate text-sm",
+              muted ? "font-normal text-muted-foreground" : "font-medium text-foreground",
             )}
           >
             {title}
@@ -305,29 +341,35 @@ function Section({
         </button>
         {menu}
       </div>
-      {open && (
-        <div className="mt-1.5 flex flex-col gap-2 pl-6">
-          {items.map((a) => (
-            <ArtifactRow
-              key={a.short_id}
-              artifact={a}
-              onOpen={() => handlers.onOpen(a)}
-              onToggleFavorite={() => handlers.onToggleFavorite(a)}
-              onPickTag={handlers.onPickTag}
-              onPickAuthor={handlers.onPickAuthor}
-              onEditTags={() => handlers.onEditTags(a)}
-              onAddToCollection={() => handlers.onAddToCollection(a)}
-              onDelete={() => handlers.onDelete(a)}
-              onPrefetch={() => handlers.onPrefetch(a)}
-              selected={handlers.selection?.selected.has(a.short_id)}
-              selectionActive={handlers.selection?.active}
-              onSelect={
-                handlers.selection
-                  ? (shift) => handlers.selection?.toggle(a.short_id, shift)
-                  : undefined
-              }
-            />
-          ))}
+      {open && items.length === 0 && (
+        <p className="mt-3 text-sm text-muted-foreground">
+          No artifacts yet{canManage ? " — use “Move to folder” to file some here." : "."}
+        </p>
+      )}
+      {open && items.length > 0 && (
+        <div className="mt-3">
+          <CardGrid>
+            {items.map((a) => (
+              <ArtifactCard
+                key={a.short_id}
+                artifact={a}
+                onOpen={() => handlers.onOpen(a)}
+                onToggleFavorite={() => handlers.onToggleFavorite(a)}
+                onPickTag={handlers.onPickTag}
+                onEditTags={() => handlers.onEditTags(a)}
+                onAddToCollection={() => handlers.onAddToCollection(a)}
+                onDelete={() => handlers.onDelete(a)}
+                onPrefetch={() => handlers.onPrefetch(a)}
+                selected={handlers.selection?.selected.has(a.short_id)}
+                selectionActive={handlers.selection?.active}
+                onSelect={
+                  handlers.selection
+                    ? (shift) => handlers.selection?.toggle(a.short_id, shift)
+                    : undefined
+                }
+              />
+            ))}
+          </CardGrid>
         </div>
       )}
     </div>
