@@ -77,7 +77,9 @@ nav.scrolled{border-bottom-color:var(--border-soft)}
 .nav-links{display:flex;gap:22px;font-size:14px;color:var(--muted-fg);margin-left:8px}
 .nav-links a:hover{color:var(--fg)}
 .nav-links a.on{color:var(--fg)}
-.nav-cta{margin-left:auto}
+.nav-cta{margin-left:auto;display:flex;align-items:center;gap:22px}
+.nav-cta .nav-login{font-size:14px;color:var(--muted-fg)}
+.nav-cta .nav-login:hover{color:var(--fg)}
 .nav-cta .btn{height:32px;padding:0 14px;border-radius:6px;font-size:13px}
 @media(max-width:720px){.nav-links{display:none}}
 
@@ -170,6 +172,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
       <a href="https://github.com/derive-to/derive">GitHub</a>
     </div>
     <div class="nav-cta">
+      <a class="nav-login" href="/login">Log in</a>
       <a class="btn btn-primary" href="#join">Get beta access</a>
     </div>
   </div>

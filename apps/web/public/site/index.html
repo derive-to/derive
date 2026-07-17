@@ -581,6 +581,7 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
     <div class="nav-right">
       <a href="/pricing">Pricing</a>
       <a href="https://github.com/derive-to/derive">GitHub</a>
+      <a href="/login">Log in</a>
       <a class="btn btn-primary" href="#join">Get beta access</a>
     </div>
   </div>
@@ -605,11 +606,11 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
         </div>
         <div class="wl-presence" id="wlPresence" aria-hidden="true">
           <span class="pd you"></span>you
-          <span class="pd rob"></span>Rob
+          <span class="pd rob"></span>Maeva
           <span>· here now</span>
         </div>
         <div class="wl-story">
-          <span class="chip" aria-hidden="true">R</span>
+          <span class="chip" aria-hidden="true">M</span>
           <span class="q">"Add a beta signup right here?"</span>
           <span class="res" id="wlRes"><span class="vdot2" aria-hidden="true"></span><span id="wlResText">RESOLVED IN V12</span></span>
         </div>
@@ -634,7 +635,7 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
           </span>
           <span class="spacer"></span>
           <span class="face" aria-label="Who's here">
-            <span class="fc g">R</span><span class="fc v">P</span><span class="fc n">C</span><span class="fc y" id="youChip">Y</span>
+            <span class="fc g">M</span><span class="fc v">A</span><span class="fc n">C</span><span class="fc y" id="youChip">Y</span>
           </span>
           <span class="face-label" id="faceLabel">3 here</span>
           <span class="abadge" id="approvedBadge">
@@ -699,22 +700,22 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
             <div class="pane-label">Comments</div>
             <div class="comments-empty" id="cEmpty">No comments yet.</div>
             <div class="dcomment" id="cm1">
-              <div class="mini" aria-hidden="true"><span class="tk">✓</span>Rob · <span class="mq">"PRODUCT IMAGE"</span> · v2</div>
-              <div class="who"><span class="chip rob">R</span>Rob</div>
+              <div class="mini" aria-hidden="true"><span class="tk">✓</span>Maeva · <span class="mq">"PRODUCT IMAGE"</span> · v2</div>
+              <div class="who"><span class="chip rob">M</span>Maeva</div>
               <div class="quote">"PRODUCT IMAGE"</div>
               <div class="text">No glamour shot exists yet, so draw it: a patent filing, dimension lines, real materials.</div>
               <div class="state" id="cm1s">OPEN</div>
             </div>
             <div class="dcomment" id="cm2">
-              <div class="mini" aria-hidden="true"><span class="tk">✓</span>Rob · <span class="mq">"OSC-8 Synthesizer"</span> · v2</div>
-              <div class="who"><span class="chip rob">R</span>Rob</div>
+              <div class="mini" aria-hidden="true"><span class="tk">✓</span>Maeva · <span class="mq">"OSC-8 Synthesizer"</span> · v2</div>
+              <div class="who"><span class="chip rob">M</span>Maeva</div>
               <div class="quote">"OSC-8 Synthesizer"</div>
               <div class="text">This headline could sell any store template. It's a synth. Make the type the loudest thing on the page.</div>
               <div class="state" id="cm2s">OPEN</div>
             </div>
             <div class="dcomment" id="cm3">
-              <div class="mini" aria-hidden="true"><span class="tk">✓</span>Priya · <span class="mq">"€249"</span> · v3 · 1 reply</div>
-              <div class="who"><span class="chip ada">P</span>Priya<span class="ext">CLIENT</span></div>
+              <div class="mini" aria-hidden="true"><span class="tk">✓</span>Anya · <span class="mq">"€249"</span> · v3 · 1 reply</div>
+              <div class="who"><span class="chip ada">A</span>Anya<span class="ext">CLIENT</span></div>
               <div class="quote">"€249"</div>
               <div class="text">€249 with no context reads expensive. Anchor it with facts, not adjectives.</div>
               <div class="reply" id="cm3r">
@@ -729,13 +730,13 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
             <svg width="17" height="19" viewBox="0 0 17 19" fill="none">
               <path class="arrow" d="M1 1l5.2 15.6 2.6-6.2 6.6-1.8L1 1Z" stroke="rgba(3,7,18,.5)" stroke-width="1"/>
             </svg>
-            <span class="flag">Rob</span>
+            <span class="flag">Maeva</span>
           </div>
           <div class="pcursor ada" id="curAda" aria-hidden="true">
             <svg width="17" height="19" viewBox="0 0 17 19" fill="none">
               <path class="arrow" d="M1 1l5.2 15.6 2.6-6.2 6.6-1.8L1 1Z" stroke="rgba(3,7,18,.5)" stroke-width="1"/>
             </svg>
-            <span class="flag">Priya</span>
+            <span class="flag">Anya</span>
           </div>
           <div class="pcursor you" id="curYou" aria-hidden="true">
             <svg width="17" height="19" viewBox="0 0 17 19" fill="none">
@@ -912,7 +913,7 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
             <div class="t-text">Which nine teams? Name them or nobody plans around it.</div>
           </div>
           <div class="t-item">
-            <div class="t-who"><span class="chip">R</span>Rob</div>
+            <div class="t-who"><span class="chip">M</span>Maeva</div>
             <div class="t-text">Seconding. Owners too, @claude-code.</div>
           </div>
           <div class="t-item">
@@ -1098,13 +1099,13 @@ function editPlay(){
   at(150,  () => w1.classList.add('on'));
   at(900,  () => {
     w1.classList.add('struck');
-    note.textContent = 'v2 · "good takes more than one pass." — Rob';
+    note.textContent = 'v2 · "good takes more than one pass." — Maeva';
   });
   at(1080, () => w2.classList.add('on'));
   at(1650, () => {
     w1.classList.add('settle');
     w2.classList.add('struck');
-    note.textContent = 'v3 · "a prompt isn\'t craft." — Rob';
+    note.textContent = 'v3 · "a prompt isn\'t craft." — Maeva';
   });
   at(1830, () => w3.classList.add('on'));
   at(2350, () => {
@@ -1428,14 +1429,14 @@ function sceneFinal(){
   resolved('cm3','cm3s','RESOLVED IN V3');
   $('cm1').classList.add('collapsed'); $('cm2').classList.add('collapsed');
   $('approvedBadge').classList.add('show');
-  setLine('v3','Priya · approval','approved · preorders open Monday');
+  setLine('v3','Anya · approval','approved · preorders open Monday');
   sceneDone = true;
 }
 
 function scenePlay(){
   clearScene();
   sceneReset();
-  /* Rob arrives, highlights, comments twice */
+  /* Maeva arrives, highlights, comments twice */
   s(700,  () => { cursorShow(curRob, true); cursorTo(curRob, 't1'); });
   s(1700, () => { lit('t1'); });
   s(2250, () => { $('cEmpty').style.display='none'; thread('cm1', true); });
@@ -1465,7 +1466,7 @@ function scenePlay(){
   /* approval */
   s(11900,() => {
     $('approvedBadge').classList.add('show');
-    setLine('v3','Priya · approval','approved · preorders open Monday');
+    setLine('v3','Anya · approval','approved · preorders open Monday');
     cursorShow(curAda, false);
     glSnap();
     sceneDone = true;
@@ -1523,11 +1524,11 @@ const LINES = [
   ['p','› publish "August growth report"'],
   ['dim','→ derive.to/artifacts/august-growth-report · v1 live'],
   ['p','› catch_up'],
-  ['dim','← 1 comment · Rob on "+18% MoM": "the pricing change'],
+  ['dim','← 1 comment · Maeva on "+18% MoM": "the pricing change'],
   ['dim','  spiked signups for a week. Annotate it or the number lies."'],
   ['p','› publish --addresses c_41x'],
   ['ok','✓ v2 live · spike annotated · thread resolved'],
-  ['ok','✓ v3 approved by Rob · shipped'],
+  ['ok','✓ v3 approved by Maeva · shipped'],
 ];
 const termBody = $('termBody'), cursor = $('termCursor');
 let termStarted = false;
