@@ -48,6 +48,14 @@ const SERVER_PAGE_PREFIXES = [
   "/settings/slack",
 ] as const
 
+// Marketing pages (the hosted front door, routes/marketing.ts). The Worker must run
+// first on these EXACT paths so a signed-out visitor gets the marketing page instead
+// of the SPA shell ("/" branches on the session cookie; "/pricing" is always
+// marketing). Deliberately NOT in `isApiPath` or the dev proxy: with marketing off
+// (self-host, dev, tests) both paths fall back to the SPA shell exactly as before,
+// and an unmatched one must serve the shell, never a JSON 404.
+const MARKETING_EXACT = ["/", "/pricing"] as const
+
 /** Server-owned path tokens in declaration order (as the dev proxy lists them). */
 export const API_PATHS: readonly string[] = [...API_PREFIXES, ...API_EXACT]
 
@@ -61,6 +69,7 @@ export const workerFirstGlobs = (): string[] => [
   ...API_PREFIXES.map((p) => `${p}/*`),
   ...SERVER_PAGE_PREFIXES.map((p) => `${p}/*`),
   ...API_EXACT,
+  ...MARKETING_EXACT,
 ]
 
 // Content-hashed assets never change behind a URL — cache them for a year. A new

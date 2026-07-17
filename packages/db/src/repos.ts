@@ -121,6 +121,7 @@ import {
   artifactTag,
   asset,
   auditLog,
+  betaSignup,
   collection,
   collectionItem,
   collectionMember,
@@ -265,6 +266,7 @@ export const schema = {
   agentMention,
   artifactInvite,
   invitation,
+  betaSignup,
   oauthClientWorkspace,
   context,
   contextAsker,
@@ -305,6 +307,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentMention: true,
   invitation: true,
   artifactInvite: true,
+  betaSignup: true,
   context: true,
   contextAsker: true,
   contextSession: true,
@@ -2516,6 +2519,19 @@ export function makeRepos(db: SqliteDb) {
       .run()
   }
 
+  // ---- Beta signups --------------------------------------------------------
+  const recordBetaSignup = async (id: string, email: string): Promise<boolean> => {
+    // The unique email index makes a concurrent duplicate a no-op; an empty
+    // RETURNING means the email was already on the list.
+    const row = await db
+      .insert(betaSignup)
+      .values({ id, email })
+      .onConflictDoNothing()
+      .returning()
+      .get()
+    return row !== undefined
+  }
+
   // ---- Artifact invitations ------------------------------------------------
   const createArtifactInvite = async (i: NewArtifactInvite): Promise<ArtifactInviteRecord> =>
     (await db.insert(artifactInvite).values(i).returning().get()) as ArtifactInviteRecord
@@ -2979,6 +2995,7 @@ export function makeRepos(db: SqliteDb) {
     deletePendingInvitationsFor,
     deleteInvitation,
     markInvitationAccepted,
+    recordBetaSignup,
     createArtifactInvite,
     getArtifactInviteByToken,
     listPendingArtifactInvites,

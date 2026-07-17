@@ -311,6 +311,19 @@ export const artifactInvite = sqliteTable(
   ],
 )
 
+// A beta signup from the marketing site's request-access form: just the email and
+// when it arrived. The access email (with the create-account link) is sent on
+// signup; this row is the audience list — who asked, and in what order.
+export const betaSignup = sqliteTable(
+  "beta_signup",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("beta_signup_email").on(t.email)],
+)
+
 // An agent's pull inbox: one row per mention directed at the agent.
 export const agentMention = sqliteTable("agent_mention", {
   id: text("id").primaryKey(),
@@ -827,6 +840,7 @@ const TABLES = [
   agentMention,
   invitation,
   artifactInvite,
+  betaSignup,
   oauthClientWorkspace,
   artifactFavorite,
   follow,

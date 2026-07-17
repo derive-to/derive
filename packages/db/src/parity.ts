@@ -20,6 +20,7 @@ import type {
   ArtifactRecord,
   AssetRecord,
   AuditLogRecord,
+  BetaSignupRecord,
   CollectionMemberRecord,
   CollectionRecord,
   CommentRecord,
@@ -68,6 +69,7 @@ export interface TypedTables {
   agentMention: AgentMentionRecord
   artifactInvite: ArtifactInviteRecord
   invitation: InvitationRecord
+  betaSignup: BetaSignupRecord
   context: ContextRecord
   contextAsker: ContextAskerRecord
   contextSession: SessionRecord

@@ -208,6 +208,13 @@ CREATE TABLE IF NOT EXISTS artifact_invite (
 
 CREATE INDEX IF NOT EXISTS artifact_invite_artifact_email ON artifact_invite (artifact_id, email);
 
+CREATE TABLE IF NOT EXISTS beta_signup (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (email)
+);
+
 CREATE TABLE IF NOT EXISTS oauth_client_workspace (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

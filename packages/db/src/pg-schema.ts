@@ -271,6 +271,17 @@ export const artifactInvite = pgTable(
   ],
 )
 
+// A beta signup from the marketing site (see schema.ts for the full note).
+export const betaSignup = pgTable(
+  "beta_signup",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("beta_signup_email").on(t.email)],
+)
+
 export const agentMention = pgTable("agent_mention", {
   id: text("id").primaryKey(),
   agent_id: text("agent_id").notNull(),
@@ -687,6 +698,7 @@ const TABLES = [
   agentMention,
   invitation,
   artifactInvite,
+  betaSignup,
   oauthClientWorkspace,
   artifactFavorite,
   follow,

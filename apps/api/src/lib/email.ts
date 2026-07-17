@@ -139,6 +139,31 @@ export const buildInviteEmail = (input: {
   return { to: input.to, subject: `Join ${input.workspace} on Derive`, html, text }
 }
 
+/** Render the beta access email — the reply to the marketing site's signup form. The
+ *  link lands on the create-account page; signing up again just resends this. */
+export const buildBetaEmail = (input: { to: string; url: string }): EmailMsg => {
+  const href = escapeHtml(input.url)
+  const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.5">
+  <p style="font-size:16px;font-weight:600;margin:0 0 8px">You're in.</p>
+  <p>Derive is in beta, and your access is ready. It's where your team's documents live at permanent links, with versions and review built in. Create your account below, publish something, and tell us what breaks. That's what a beta is for.</p>
+  <p><a href="${href}" style="display:inline-block;background:#111;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Create your account</a></p>
+  <p style="color:#666;font-size:13px">Or paste this link into your browser:<br/><a href="${href}" style="color:#666">${href}</a></p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
+  <p style="color:#999;font-size:12px">Prefer to run it yourself? Derive is open source: <a href="https://github.com/derive-to/derive" style="color:#999">github.com/derive-to/derive</a><br/>If you didn't request access, you can ignore this email.</p>
+  </body></html>`
+  const text = [
+    "You're in.",
+    "",
+    "Derive is in beta, and your access is ready. It's where your team's documents live at permanent links, with versions and review built in. Create your account, publish something, and tell us what breaks. That's what a beta is for.",
+    "",
+    `Create your account: ${input.url}`,
+    "",
+    "Prefer to run it yourself? Derive is open source: https://github.com/derive-to/derive",
+    "If you didn't request access, you can ignore this email.",
+  ].join("\n")
+  return { to: input.to, subject: "Your Derive beta access", html, text }
+}
+
 /** Render a per-artifact invitation email: who invited you, to which document, and a
  *  link to accept. The recipient has likely never seen Derive, so the copy explains it
  *  in a line. The link lands on the accept page (signed-in gate; signup included). */
