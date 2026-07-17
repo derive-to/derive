@@ -2054,6 +2054,7 @@ async function buildServer(
             // Attributed to the human the agent acts for — their profile, their
             // followers' feed (same as the HTTP publish route).
             authorId: actingFor?.id ?? null,
+            source: "mcp",
             // New artifacts land in the TARGETED workspace (the default unless a
             // `workspace` was named), never wider than asked (the workspace's
             // default access when unspecified).
@@ -2331,6 +2332,9 @@ async function buildServer(
             message: "Brand profile placeholder — your agent fills this in.",
             author: agent.name,
             authorId: uid,
+            // Deliberately UNstamped: this auto-scaffolded placeholder is not the
+            // user's "first agent publish" — stamping 'mcp' here would flip the
+            // onboarding signal (and the welcome celebration) on an empty stub.
             orgId: targetOrg,
             workspaceAccess: "member",
             linkRole: "none",

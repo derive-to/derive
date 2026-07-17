@@ -12,6 +12,7 @@ import {
   type ProposalRecord,
   SKILL_CONTENT_TYPE,
   type VersionRecord,
+  type VersionSource,
 } from "./ports"
 import { isSkillBundle, parseFrontmatter } from "./skill"
 
@@ -48,6 +49,9 @@ export interface PublishInput {
    *  people-follow surface their hand-published work. Omitted/null for sync and bare
    *  static-token publishes. */
   authorId?: string | null
+  /** Which surface created this version ('web' | 'mcp' | 'api' | 'sync'); stored on the
+   *  version row. Omitted for paths that don't stamp. */
+  source?: VersionSource | null
   /** The workspace the new artifact belongs to (multi-workspace). */
   orgId?: string
   /** Salted unlock-password hash, set by the route when the world link is locked. */
@@ -259,6 +263,7 @@ export async function publish(
       author_avatar: input.authorAvatar ?? null,
       author_gh_id: input.authorGhId ?? null,
       author_id: input.authorId ?? null,
+      source: input.source ?? null,
       message: input.message ?? null,
       name: input.name ?? null,
     })
@@ -297,6 +302,7 @@ export async function publish(
     author_avatar: input.authorAvatar ?? null,
     author_gh_id: input.authorGhId ?? null,
     author_id: input.authorId ?? null,
+    source: input.source ?? null,
     message: input.message ?? "first publish",
     name: input.name ?? null,
   })

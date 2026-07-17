@@ -42,6 +42,7 @@ import { collectionsQuery, summaryQuery, workspacesQuery } from "@/lib/queries"
 import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
 import { cn } from "@/lib/utils"
 import type { LibrarySearch } from "@/pages/library/types"
+import { GettingStarted } from "./getting-started"
 import { NotificationBell } from "./notification-bell"
 import { useShell } from "./shell-context"
 import { SyncChip } from "./sync-chip"
@@ -754,6 +755,9 @@ export function NavRail() {
           tools directly above it. */}
       <SidebarFooter>
         <SidebarMenu>
+          {/* Onboarding as a state, not a memory: the pill rides above the account
+              pod until the user has activated, then retires itself (getting-started). */}
+          <GettingStarted />
           <SidebarMenuItem>
             <UserPod
               workspaceLabel={workspaceLabel}

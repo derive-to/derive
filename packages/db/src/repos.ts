@@ -2458,6 +2458,48 @@ export function makeRepos(db: SqliteDb) {
       return []
     }
   }
+  // The first artifact an agent produced FOR this user — the onboarding "published
+  // via agent" signal. Two paths count: a direct MCP publish (version.source='mcp',
+  // attributed to the human the agent acted for) and the propose → approve loop
+  // (an agent proposal on_behalf_of this user that a human approved — the
+  // recommended flow for propose-scoped grants, which never creates an
+  // 'mcp'-stamped version itself). Earliest of the two wins.
+  const firstAgentPublish = async (
+    userId: string,
+  ): Promise<{ short_id: string; title: string | null } | null> => {
+    const direct = await db
+      .select({ short_id: artifact.short_id, title: artifact.title, at: version.created_at })
+      .from(version)
+      .innerJoin(artifact, eq(artifact.id, version.artifact_id))
+      .where(
+        and(eq(version.author_id, userId), eq(version.source, "mcp"), isNull(artifact.removed_at)),
+      )
+      .orderBy(asc(version.created_at), asc(version.id))
+      .limit(1)
+      .get()
+    const approved = await db
+      .select({ short_id: artifact.short_id, title: artifact.title, at: proposal.decided_at })
+      .from(proposal)
+      .innerJoin(artifact, eq(artifact.id, proposal.artifact_id))
+      .where(
+        and(
+          eq(proposal.on_behalf_of, userId),
+          eq(proposal.state, "approved"),
+          isNull(artifact.removed_at),
+        ),
+      )
+      .orderBy(asc(proposal.decided_at), asc(proposal.id))
+      .limit(1)
+      .get()
+    // A null decided_at (defensive; decide always stamps it) sorts LAST, never first.
+    const winner =
+      direct && approved
+        ? approved.at && approved.at < direct.at
+          ? approved
+          : direct
+        : (direct ?? approved)
+    return winner ? { short_id: winner.short_id, title: winner.title } : null
+  }
   // Revoke a user's grant to a client: drop the consent + every live token so access ends
   // now and a fresh consent is required. Best-effort per table (a table may not exist).
   const revokeUserGrant = async (userId: string, clientId: string): Promise<void> => {
@@ -2981,6 +3023,7 @@ export function makeRepos(db: SqliteDb) {
     getOAuthClientName,
     oauthClientExists,
     listUserGrants,
+    firstAgentPublish,
     revokeUserGrant,
     setOAuthClientWorkspaces,
     getOAuthClientWorkspaces,

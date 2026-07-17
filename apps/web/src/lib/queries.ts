@@ -152,6 +152,16 @@ export const connectedAgentsQuery = () =>
     queryFn: () => api.connectedAgents().then((r) => r.agents),
   })
 
+// The activation signals for first-run onboarding + the getting-started checklist:
+// whether an agent is connected and what it first published for you. The welcome
+// screen polls this (refetchInterval at the call site) so connect + first-publish
+// check themselves off live; the rail checklist reads it at normal staleness.
+export const onboardingQuery = () =>
+  queryOptions({
+    queryKey: ["onboarding"] as const,
+    queryFn: () => api.onboarding(),
+  })
+
 // The caller's follows (GitHub authors + repo path prefixes) for the active
 // workspace. Drives the Following-feed empty state, the manage strip, and the
 // isFollowing* sets that toggle the Follow buttons. One source of truth: every

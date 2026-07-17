@@ -41,6 +41,7 @@ import { Switch } from "@/components/ui/switch"
 import { useAuth } from "@/ctx"
 import { getInitials } from "@/lib/initials"
 import { artifactQuery, workspaceQuery } from "@/lib/queries"
+import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { ShareCollectionDialog } from "@/pages/library/share-collection-dialog"
 
@@ -322,6 +323,13 @@ export function ShareButton({
       setCopiedLink(true)
       toast.success("Link copied")
       window.setTimeout(() => setCopiedLink(false), 1500)
+      // The getting-started checklist's "share a link" step completes here — the
+      // one gesture that means "I sent this to someone" (see chrome/getting-started).
+      try {
+        localStorage.setItem(STORAGE_KEYS.sharedLink, "1")
+      } catch {
+        /* private mode — the checklist row just stays open */
+      }
     } catch {
       toast.error("Couldn't copy to clipboard")
     }

@@ -132,6 +132,8 @@ export function makePrPreview({ meta, blobs, bus, baseUrl, launch }: PrPreviewDe
         author_login: v.author_login,
         author_avatar: v.author_avatar,
         author_gh_id: v.author_gh_id,
+        // Folding copies the version faithfully — keep its surface stamp too.
+        source: v.source,
         message: v.message ? `${prefix}: ${v.message}` : prefix,
         name: v.name,
       })

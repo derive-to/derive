@@ -262,6 +262,19 @@ describe("remote MCP endpoint (/mcp)", () => {
     const rec = await meta.getByShortId(art.short_id)
     if (!rec) throw new Error("expected the published artifact")
     expect(await meta.getArtifactMember(rec.id, "u_o")).toBeTruthy()
+    // The staged leg is the MCP flow's upload — it carries the 'mcp' surface stamp
+    // (the onboarding "published via agent" signal).
+    expect((await meta.getVersion(rec.id, 1))?.source).toBe("mcp")
+  })
+
+  it("stamps version.source='mcp' on tool publishes (the onboarding signal)", async () => {
+    const { app, token, meta } = appWithGrant("srcstamp", "openid derive:read derive:publish")
+    const created = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Stamped", content: "<h1>s</h1>" })),
+    )
+    const rec = await meta.getByShortId(created.short_id)
+    if (!rec) throw new Error("expected the published artifact")
+    expect((await meta.getVersion(rec.id, 1))?.source).toBe("mcp")
   })
 
   it("stage_publish fails actionably when no signing secret is configured", async () => {

@@ -284,6 +284,62 @@ export const sessionRoutes = (ctx: AppContext) => {
     },
   )
 
+  // The activation signals first-run onboarding reads: has this user ever authorized
+  // an agent (an oauthConsent row exists), and has an agent published for them over
+  // MCP yet (version.source='mcp' attributed to them). The welcome screen polls this
+  // while visible so connect + first-publish check themselves off live; the
+  // getting-started checklist reads it lazily.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/me/onboarding",
+      tags: ["Session"],
+      summary: "The signed-in user's activation signals (agent connected, first agent publish).",
+      responses: {
+        200: {
+          description: "Whether an agent is connected and what it first published.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                agent_connected: z
+                  .boolean()
+                  .describe("Whether an OAuth agent grant currently exists (revoking clears it)."),
+                agent_name: z
+                  .string()
+                  .nullable()
+                  .describe("Display name of the most recently authorized agent; null if none."),
+                published_via_agent: z
+                  .boolean()
+                  .describe("Whether an agent has published an artifact for this user over MCP."),
+                first_artifact: z
+                  .object({
+                    short_id: z.string(),
+                    title: z.string().nullable(),
+                  })
+                  .nullable()
+                  .describe(
+                    "The first artifact an agent published for this user; null until then.",
+                  ),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const u = await requireUser(c)
+      if (u instanceof Response) return bail(u)
+      const grants = await meta.listUserGrants(u.id)
+      const first = await meta.firstAgentPublish(u.id)
+      return c.json({
+        agent_connected: grants.length > 0,
+        agent_name: grants[0]?.clientName ?? null,
+        published_via_agent: first !== null,
+        first_artifact: first,
+      })
+    },
+  )
+
   // People search: find OPTED-IN accounts by handle or name. Registered before
   // /v1/users/:handle so "search" isn't read as a handle.
   app.openapi(

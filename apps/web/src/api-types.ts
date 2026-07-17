@@ -221,6 +221,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/onboarding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The signed-in user's activation signals (agent connected, first agent publish). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Whether an agent is connected and what it first published. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description Whether an OAuth agent grant currently exists (revoking clears it). */
+                            agent_connected: boolean;
+                            /** @description Display name of the most recently authorized agent; null if none. */
+                            agent_name: string | null;
+                            /** @description Whether an agent has published an artifact for this user over MCP. */
+                            published_via_agent: boolean;
+                            /** @description The first artifact an agent published for this user; null until then. */
+                            first_artifact: {
+                                short_id: string;
+                                title: string | null;
+                            } | null;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/users/search": {
         parameters: {
             query?: never;

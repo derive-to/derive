@@ -1,429 +1,302 @@
 import { useQuery } from "@tanstack/react-query"
-import { useNavigate } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
-import { ApiError, api } from "@/api"
+import { api } from "@/api"
 import { Icon } from "@/components/icons"
-import { AvatarPicker } from "@/components/shared/avatar-picker"
 import { ConnectAgent } from "@/components/shared/connect-agent"
-import { fieldError } from "@/components/shared/field-error"
-import { FormField } from "@/components/shared/form-field"
-import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-  InputGroupText,
-} from "@/components/ui/input-group"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
-import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
-import { authClient } from "@/lib/auth-client"
-import { getInitials } from "@/lib/initials"
-import { OTHER, PROFESSIONS, presetFor } from "@/lib/professions"
-import { workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
+import { connectedAgentsQuery, onboardingQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
-import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
-import { normalizeUsername, usernameError } from "@/lib/username"
-import { notesAsDoc, useBrandprintImport } from "@/pages/brandprint/use-brandprint-import"
 
-// A present account — the stateful onboarding body only mounts once `me` resolves
-// (see Welcome's guard), so the profile fields can safely initialize from it.
-type Account = NonNullable<ReturnType<typeof useAuth>["me"]>
-
-// Set once the user finishes (or skips) onboarding, so the post-signup redirect
-// (app-shell.tsx) doesn't bounce them back here on every visit.
-export const markOnboarded = () => {
-  // Persist server-side (authoritative + cross-device) and cache locally for an instant
-  // guard on the very next nav. Fire-and-forget: the localStorage cache covers the gap
-  // while the request is in flight, and the flag is one-way, so a dropped write just
-  // re-shows /welcome once rather than corrupting anything.
+// Persist "onboarding finished" server-side (authoritative + cross-device) and cache
+// locally for an instant guard on the very next nav. Fire-and-forget: the flag is
+// one-way, so a dropped write just re-shows /welcome once. The in-memory `me` update
+// happens at the call site (setMe) — that's what keeps the redirect guard from
+// bouncing even when localStorage is unavailable (private mode).
+const persistOnboarded = () => {
   api.setOnboarded().catch(() => {})
   try {
     localStorage.setItem(STORAGE_KEYS.onboarded, "1")
   } catch {
-    /* private mode — the in-session redirect guard still won't loop */
+    /* private mode — setMe carries the in-session guard */
   }
 }
 
-// Distinguishes a failed Brandprint seed from a failed profile save in the one
-// Continue action, so the inline error says which half to retry.
-const BRANDPRINT_FAILED = "brandprint-seed-failed"
+// How fast the screen notices the user acting in their OTHER window (the agent
+// completing OAuth, the first artifact landing). 2s matches the sync-chip poll —
+// both are single indexed reads a user is actively watching.
+const WATCH_INTERVAL_MS = 2000
 
-// Gate on the session BEFORE the stateful body so the profile fields initialize from
-// a resolved account (a direct visit to /welcome renders once with me=null first).
+// The example first asks — the walkthrough IS these prompts: each teaches what
+// Derive is for in the user's own tool. Copy-to-clipboard chips, not buttons.
+const EXAMPLE_ASKS = [
+  "Publish a one-page summary of what I'm working on to Derive.",
+  "Turn the README into a shareable page on Derive.",
+  "Draft our launch plan as a Derive doc I can get feedback on.",
+]
+
+/**
+ * First-run onboarding, slimmed to the one activation moment: connect the agent
+ * you already use, watch it publish. Three live states — the page polls the
+ * consent + first-publish signals and advances itself, no "next" button:
+ *   1. waiting to connect (the per-agent tabs)
+ *   2. connected → suggest first asks
+ *   3. first artifact live → open it / continue
+ * Profile, passkey, and Brandprint setup live in Settings and the home nudges now;
+ * activation pays for everything else. Reachable any time at /welcome — it stays
+ * the app's connect-an-agent surface after onboarding (⌘K → "Connect an agent"),
+ * so the connected state keeps the tabs one click away for adding a second agent.
+ */
 export function Welcome() {
   useDocumentTitle("Welcome")
-  const { me } = useAuth()
-  if (!me) return null
-  return <Onboarding me={me} />
-}
-
-function Onboarding({ me }: { me: Account }) {
-  const { setMe } = useAuth()
+  const { me, setMe } = useAuth()
   const nav = useNavigate()
+  // The connected state collapses the tabs; this reopens them (add a second agent).
+  const [showConnect, setShowConnect] = useState(false)
 
-  // Profile state lives on the page (not a child) so the single primary action —
-  // "Continue to Derive" — persists it and advances in one step. The old flow had a
-  // separate "Save profile" button, so filled fields were silently lost if you hit
-  // Continue without saving first.
-  const [handle, setHandle] = useState(me.username ?? "")
-  const [preset, setPreset] = useState(presetFor(me.profession ?? null))
-  const [custom, setCustom] = useState(
-    me.profession && presetFor(me.profession) === OTHER ? me.profession : "",
-  )
-  const [about, setAbout] = useState(me.about ?? "")
-  const [brandNotes, setBrandNotes] = useState("")
+  // Live signal 1: has an agent been authorized? Poll until one appears; stop on
+  // error too (the StatusPanel's Try again restarts the loop) so a down API isn't
+  // hammered every 2s behind a manual-retry affordance.
+  const agentsQ = useQuery({
+    ...connectedAgentsQuery(),
+    enabled: !!me,
+    refetchInterval: (q) =>
+      q.state.status === "error" || (q.state.data?.length ?? 0) > 0 ? false : WATCH_INTERVAL_MS,
+  })
+  const agent = agentsQ.data?.[0] ?? null
 
-  // Step 3 shows only to the person who'd be setting up this workspace's Brandprint
-  // for the first time: an owner of a workspace that has none (the spec's "first on
-  // the team" rule — everyone else inherits it over MCP with nothing to set up).
-  // Degrade-by-design: the step is optional, so a failed read hides it rather than
-  // blocking onboarding behind a retry.
-  const { data: ws, isError: wsError } = useQuery(workspaceQuery())
-  const { data: wsSettings, isError: settingsError } = useQuery(workspaceSettingsQuery())
-  const showBrandprint =
-    !wsError &&
-    !settingsError &&
-    ws?.role === "owner" &&
-    !!wsSettings &&
-    !wsSettings.brandprint?.collectionId
-  const seedBrandprint = useBrandprintImport("workspace", "")
+  // Live signal 2: has it published yet? Only asked once an agent is connected,
+  // and stops polling the moment the first artifact lands (or on error).
+  const obQ = useQuery({
+    ...onboardingQuery(),
+    enabled: !!me && !!agent,
+    refetchInterval: (q) =>
+      q.state.status === "error" || q.state.data?.published_via_agent ? false : WATCH_INTERVAL_MS,
+  })
+  const first = obQ.data?.first_artifact ?? null
+  // The polls are the page's live half; the instructions above them keep working
+  // regardless, so an error surfaces inline without replacing the surface.
+  const watchFailed = agentsQ.isError || obQ.isError
+  const retryWatch = () => {
+    if (agentsQ.isError) void agentsQ.refetch()
+    if (obQ.isError) void obQ.refetch()
+  }
 
+  // Activation IS onboarding: the moment the first artifact exists, the gate is
+  // done — even if the user closes the tab from here without clicking an exit.
+  const activated = !!first
+  useEffect(() => {
+    if (activated) persistOnboarded()
+  }, [activated])
+
+  if (!me) return null
   const firstName = (me.name ?? me.username ?? me.email).split(/[@\s]/)[0]
-  const initials = getInitials(me.name ?? me.email)
-  const normalized = normalizeUsername(handle)
-  const handleErr = normalized ? usernameError(normalized) : null
-  const usernameField = fieldError("welcome-username-error", handleErr)
-  const profession = preset === OTHER ? custom.trim() : preset
 
-  // Non-blocking (onboarding proceeds regardless) but NOT silent: a failed upload toasts, so
-  // the user isn't left believing a photo saved when it didn't.
-  const upload = useApiMutation({
-    mutationFn: (f: File) => api.uploadAvatar(f),
-    onSuccess: ({ image }) => setMe({ ...me, image }),
-  })
-  const pickPhoto = (f: File | null) => {
-    if (f) upload.mutate(f)
-  }
-
-  // Skip = leave now, persist nothing. Continue = save the profile (handle + role +
-  // bio) and THEN enter — the one action that finishes onboarding without dropping
-  // input. Both set the onboarded flag so the app-shell gate won't bounce back here.
-  const skip = () => {
-    markOnboarded()
-    nav({ to: "/" })
-  }
-
-  const save = useApiMutation({
-    mutationFn: async () => {
-      // The Brandprint seeds FIRST: a failure keeps the user here with their notes
-      // intact (nothing else has saved yet). On retry the settings cache already
-      // shows the pointer, so a seeded Brandprint is never doubled.
-      if (showBrandprint && brandNotes.trim()) {
-        try {
-          await seedBrandprint.mutateAsync([notesAsDoc(brandNotes)])
-        } catch {
-          throw new Error(BRANDPRINT_FAILED)
-        }
-      }
-      let username = me.username
-      // Only claim when it actually changed (claiming your own handle is a no-op, but
-      // skipping avoids a needless round-trip).
-      if (normalized && normalized !== me.username) {
-        const r = await api.setUsername(normalized)
-        username = r.username
-      }
-      const res = await api.setProfile({ profession, about: about.trim() })
-      return { username, profession: res.profession, about: res.about }
-    },
-    errorToast: false,
-    onSuccess: ({ username, profession: prof, about: bio }) => {
-      setMe({ ...me, username, profession: prof, about: bio, onboarded: true })
-      markOnboarded()
+  // Every exit marks onboarding done — server, storage, AND the in-memory session
+  // (setMe), so the guard can't bounce back here even when storage writes fail.
+  const leave = (to: "/" | "artifact") => {
+    persistOnboarded()
+    setMe({ ...me, onboarded: true })
+    if (to === "artifact" && first) {
+      nav({ to: "/artifacts/$ref", params: { ref: first.short_id } })
+    } else {
       nav({ to: "/" })
-    },
-  })
-  // Preserve the original message logic: the server's message for a known ApiError, a
-  // friendly fallback for anything else.
-  const saveErr = save.error
-    ? save.error.message === BRANDPRINT_FAILED
-      ? "Couldn't save your Brandprint. Try again, or clear the box to skip it for now."
-      : save.error instanceof ApiError
-        ? save.error.message
-        : "Could not save your profile."
-    : ""
-  const continueToApp = () => {
-    if (!handleErr) save.mutate()
+    }
   }
 
   return (
     <div className="min-h-dvh bg-background">
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-5 py-10 sm:px-8 sm:py-14">
         <div className="flex flex-col gap-1.5">
-          {/* First-run greeting — a voice moment, so it renders in Geist display. */}
+          {/* First-run greeting — a voice moment, so it renders in the serif display. */}
           <h1 className="font-serif text-2xl font-medium tracking-tight text-balance text-foreground sm:text-3xl">
             Welcome to Derive, {firstName}.
           </h1>
           <p className="text-sm text-pretty text-muted-foreground">
-            A minute of setup — tell us who you are, then connect an agent to publish your first
-            artifact. You can change any of this later in Settings.
+            Connect the agent you already work with. It publishes; you share the link. Two minutes,
+            start to first artifact.
           </p>
         </div>
 
-        {/* Step 1 — Your profile. No per-section save: Continue persists it. */}
-        <section className="flex flex-col gap-4">
-          <SectionEyebrow as="h2">Step 1 · Your profile</SectionEyebrow>
-          <div className="flex flex-wrap items-start gap-4">
-            {/* Your own initials take the soft brand tint (the user-pod idiom). */}
-            <AvatarPicker
-              image={me.image}
-              initials={me.name ? initials : null}
-              uploading={upload.isPending}
-              onPick={pickPhoto}
-              ariaLabel="Add a profile photo"
-              testId="welcome-avatar"
-              fallbackClassName={me.name ? "bg-primary/10 text-primary" : undefined}
-            />
-
-            <div className="flex min-w-65 flex-1 flex-col gap-3">
-              <div className="flex flex-wrap gap-2">
-                <FormField
-                  label="Username"
-                  htmlFor="welcome-username"
-                  className="min-w-37.5 flex-1"
-                >
-                  <InputGroup>
-                    <InputGroupAddon>
-                      <InputGroupText>@</InputGroupText>
-                    </InputGroupAddon>
-                    <InputGroupInput
-                      id="welcome-username"
-                      data-testid="welcome-username"
-                      {...usernameField.aria}
-                      name="username"
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      value={handle}
-                      onChange={(e) => {
-                        setHandle(e.target.value)
-                        save.reset()
-                      }}
-                      placeholder="yourname"
-                    />
-                  </InputGroup>
-                </FormField>
-                <FormField label="Role" className="w-37.5">
-                  <Select value={preset || undefined} onValueChange={setPreset}>
-                    <SelectTrigger
-                      data-testid="welcome-role"
-                      aria-label="Your role"
-                      className="w-full"
-                    >
-                      <SelectValue placeholder="Who are you?" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PROFESSIONS.map((p) => (
-                        <SelectItem key={p.value} value={p.value}>
-                          {p.value}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FormField>
-              </div>
-              {usernameField.node ?? (
-                <p className="text-sm text-muted-foreground">
-                  Letters, numbers, and single - or _.
-                </p>
-              )}
-
-              {preset === OTHER && (
-                <Input
-                  data-testid="welcome-role-other"
-                  aria-label="Custom role"
-                  name="custom-role"
-                  value={custom}
-                  maxLength={40}
-                  placeholder="e.g. Data, Sales, Ops…"
-                  onChange={(e) => setCustom(e.target.value)}
-                />
-              )}
-
-              <FormField
-                label="What you do"
-                htmlFor="welcome-about"
-                count={about.length}
-                maxLength={280}
+        {/* Step 1 — connect. Collapses to a done-row once the OAuth consent lands,
+            with the tabs one click away (this page stays THE connect surface). */}
+        {agent ? (
+          <section className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <DoneRow testId="welcome-connected">{agent.clientName} connected</DoneRow>
+              <Button
+                variant="ghost"
+                size="sm"
+                data-testid="welcome-connect-another"
+                className="text-muted-foreground"
+                onClick={() => setShowConnect((v) => !v)}
               >
-                <Textarea
-                  id="welcome-about"
-                  data-testid="welcome-about"
-                  name="about"
-                  value={about}
-                  maxLength={280}
-                  rows={2}
-                  placeholder="A line about what you work on, so teammates and agents know who you are."
-                  onChange={(e) => setAbout(e.target.value)}
-                />
-              </FormField>
-
-              {saveErr && (
-                // The house form-error surface (matches Login): StatusPanel inline
-                // danger announces via role="alert"; the wrapper only carries the id.
-                <div data-testid="welcome-profile-error">
-                  <StatusPanel tone="danger" layout="inline" title={saveErr} />
-                </div>
-              )}
-
-              <p className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">{me.email}</span> stays private.
-              </p>
+                {showConnect ? "Hide setup" : "Connect another agent"}
+              </Button>
             </div>
-          </div>
-        </section>
+            {showConnect && <ConnectAgent testidPrefix="welcome" />}
+          </section>
+        ) : (
+          <section className="flex flex-col gap-4">
+            <ConnectAgent testidPrefix="welcome" />
+            <WatchRow testId="welcome-watch-connect">Waiting for your agent to connect…</WatchRow>
+          </section>
+        )}
 
-        {/* An optional, quiet passkey nudge between the two steps — set up the
-            phishing-resistant one-tap sign-in now, or skip and do it later in Settings. */}
-        <PasskeyNudge />
+        {/* Step 2 — the first publish, suggested in the user's own words. Appears the
+            moment the agent connects; collapses to the artifact card once it lands. */}
+        {agent && !first && (
+          <section className="flex flex-col gap-3">
+            <h2 className="font-serif text-xl font-medium tracking-tight text-foreground">
+              Now ask it to publish something.
+            </h2>
+            <p className="text-sm text-pretty text-muted-foreground">
+              Anything becomes a living page with a permanent link. Try one of these, or ask in your
+              own words.
+            </p>
+            <div className="flex flex-col gap-2">
+              {EXAMPLE_ASKS.map((ask, i) => (
+                <AskChip key={ask} text={ask} testId={`welcome-ask-${i}`} />
+              ))}
+            </div>
+            <WatchRow testId="welcome-watch-publish">Watching for your first artifact…</WatchRow>
+          </section>
+        )}
 
-        {/* Step 2 — Connect an agent: the activation moment. The block itself is the
-            shared ConnectAgent surface (also behind the library's connect empty state
-            and the Brandprint nudge), so every entry point renders the same thing. */}
-        <section className="flex flex-col gap-4">
-          <SectionEyebrow as="h2">Step 2 · Connect an agent</SectionEyebrow>
-          <ConnectAgent testidPrefix="welcome" />
-        </section>
+        {/* Step 3 — the aha moment, witnessed: the thing the agent made appears on the
+            page that told you to ask for it (or greets a returning visitor). */}
+        {first && (
+          <section className="flex flex-col gap-4" data-testid="welcome-first-artifact">
+            <DoneRow testId="welcome-published">First artifact published</DoneRow>
+            <Link
+              to="/artifacts/$ref"
+              params={{ ref: first.short_id }}
+              className="flex flex-col gap-1 rounded-lg border bg-card px-4 py-3 shadow-xs transition-colors hover:border-foreground/25"
+            >
+              <span className="font-serif text-lg font-medium text-foreground">
+                {first.title ?? "Untitled"}
+              </span>
+              <span className="font-mono text-xs text-muted-foreground">
+                by {agent?.clientName ?? "your agent"}, for you
+              </span>
+            </Link>
+            <p className="text-sm text-pretty text-muted-foreground">
+              It's live at a permanent link. Share it with a teammate — comments pin to the text,
+              and your agent picks them up from here.
+            </p>
+          </section>
+        )}
 
-        {showBrandprint && <BrandprintStep notes={brandNotes} onNotes={setBrandNotes} />}
+        {watchFailed && (
+          <StatusPanel
+            tone="danger"
+            layout="inline"
+            title="Can't check your setup status right now."
+            action={
+              <Button variant="outline" size="sm" data-testid="welcome-retry" onClick={retryWatch}>
+                Try again
+              </Button>
+            }
+          />
+        )}
 
-        {/* Finish — one primary action that saves the profile and enters; skip leaves
-            now without saving. */}
+        {/* Exit row: before the first artifact, a quiet skip; after it, the real doors. */}
         <div className="flex items-center justify-between gap-3">
-          <Button
-            variant="ghost"
-            data-testid="welcome-skip"
-            className="text-muted-foreground"
-            onClick={skip}
-          >
-            Skip for now
-          </Button>
-          <Button
-            variant="default"
-            data-testid="welcome-continue"
-            onClick={continueToApp}
-            loading={save.isPending}
-            disabled={!!handleErr}
-          >
-            {save.isPending ? "Finishing…" : "Continue to Derive"}
-          </Button>
+          {first ? (
+            <>
+              <Button
+                variant="ghost"
+                data-testid="welcome-skip"
+                className="text-muted-foreground"
+                onClick={() => leave("/")}
+              >
+                Continue to Derive
+              </Button>
+              <Button
+                variant="default"
+                data-testid="welcome-open"
+                onClick={() => leave("artifact")}
+              >
+                Open your artifact
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="ghost"
+              data-testid="welcome-skip"
+              className="text-muted-foreground"
+              onClick={() => leave("/")}
+            >
+              Skip for now
+            </Button>
+          )}
         </div>
 
-        {/* Deliberately a line, not a step: teams are created at first need
-            (Settings, or the share dialog's hint), never chosen at signup. */}
         <p className="text-center text-sm text-muted-foreground">
-          Working with a team? Create a workspace and invite them anytime from Settings.
+          You can reopen this any time — search "Connect an agent" in ⌘K, or visit /welcome.
         </p>
       </div>
     </div>
   )
 }
 
-// Step 3 — the workspace Brandprint, seeded from pasted notes (spec: onboarding is
-// workspace-scoped and conditional; the caller gates rendering). Deliberately one
-// textarea: files, look/read categories, and the collection picker live on the
-// /brandprint page — this step is the lightest useful capture, saved by the page's
-// single Continue action so nothing needs its own save button.
-function BrandprintStep({ notes, onNotes }: { notes: string; onNotes: (v: string) => void }) {
+// A completed step: the quiet green tick + a line. The check is the whole reward —
+// no confetti, no card.
+function DoneRow({ children, testId }: { children: React.ReactNode; testId: string }) {
   return (
-    <section className="flex flex-col gap-4">
-      <SectionEyebrow as="h2">Step 3 · Your team's Brandprint (optional)</SectionEyebrow>
-      <p className="text-sm text-pretty text-muted-foreground">
-        A Brandprint is your team's style in one place: your tone of voice, formatting rules, words
-        to use or avoid, and colors. Every agent that works in Derive reads it automatically before
-        it creates or revises anything, so the work matches your brand from the first draft, with no
-        one re-explaining it each time. Set it once here and everyone who joins your team inherits
-        it.
-      </p>
-      <Textarea
-        value={notes}
-        rows={5}
-        placeholder="Paste your brand guidelines, or a sample doc that already sounds right…"
-        aria-label="Your team's brand notes"
-        data-testid="welcome-brandprint"
-        onChange={(e) => onNotes(e.target.value)}
-      />
-      <p className="text-sm text-muted-foreground">
-        Saves when you continue, and starts guiding agents the moment one is connected. Your agent
-        then assembles your team's brand profile from it — finish on the Brandprint page.
-      </p>
-    </section>
+    <p data-testid={testId} className="flex items-center gap-2 text-sm font-medium text-foreground">
+      <Icon name="check" className="text-success" />
+      <span>{children}</span>
+    </p>
   )
 }
 
-// A quiet, skippable passkey affordance — shown only where passkeys are supported and only
-// until one is added. Runs the browser create-credential ceremony via the auth client; a
-// cancel is silent, a success swaps to a "you're set" line.
-function PasskeyNudge() {
-  const [supported, setSupported] = useState(false)
-  const [added, setAdded] = useState(false)
-  const [busy, setBusy] = useState(false)
-  useEffect(() => {
-    api
-      .capabilities()
-      .then((c) => setSupported(c.passkey))
-      .catch(() => setSupported(false))
-  }, [])
-  if (!supported || added) {
-    if (!added) return null
-    return (
-      <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-        <Icon name="check" className="text-success" /> Passkey added — you can sign in with one tap.
-      </p>
-    )
-  }
-  const add = async () => {
-    setBusy(true)
+// The honest pulse: the page really is polling the signal it names, so the moment
+// the user acts in their other window, this row is replaced by a DoneRow.
+function WatchRow({ children, testId }: { children: React.ReactNode; testId: string }) {
+  return (
+    <p
+      data-testid={testId}
+      className="flex items-center gap-2.5 border-t pt-4 text-sm text-muted-foreground"
+    >
+      <span className="relative flex size-2">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-muted-foreground opacity-50" />
+        <span className="relative inline-flex size-2 rounded-full bg-muted-foreground" />
+      </span>
+      <span>{children}</span>
+    </p>
+  )
+}
+
+// A copyable example ask — chip-shaped, mono-quoted, one tap to clipboard.
+function AskChip({ text, testId }: { text: string; testId: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
     try {
-      const res = await authClient.passkey.addPasskey()
-      if (res?.error) throw new Error(res.error.message ?? "")
-      setAdded(true)
-      toast.success("Passkey added")
-    } catch (e) {
-      const msg = (e as Error).message
-      // mutation-ignore: WebAuthn cancel/abort must stay silent; the primitive has no
-      // per-error suppression, so this passkey add is deliberately hand-rolled.
-      if (msg && !/cancel|abort|NotAllowed/i.test(msg)) toast.error(msg) // mutation-ignore
-    } finally {
-      setBusy(false)
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      toast.success("Copied — paste it into your agent")
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      toast.error("Couldn't copy; select the text and copy it manually")
     }
   }
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-3">
-      <p className="text-sm text-pretty text-muted-foreground">
-        <span className="font-medium text-foreground">Add a passkey</span> for a phishing-resistant,
-        one-tap sign-in. Optional — you can also do this later in Settings.
-      </p>
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={add}
-        loading={busy}
-        data-testid="welcome-add-passkey"
-      >
-        {busy ? "Waiting…" : "Add passkey"}
-      </Button>
-    </div>
+    <button
+      type="button"
+      data-testid={testId}
+      onClick={copy}
+      className="flex items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-2.5 text-left text-sm text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground"
+    >
+      <span className="text-pretty">"{text}"</span>
+      <Icon
+        name={copied ? "check" : "copy"}
+        className={copied ? "shrink-0 text-success" : "shrink-0"}
+      />
+    </button>
   )
 }

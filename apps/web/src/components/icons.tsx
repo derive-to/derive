@@ -19,6 +19,7 @@ import {
   ChevronRight,
   ChevronUp,
   Code,
+  Copy,
   Ellipsis,
   Eye,
   Fingerprint,
@@ -80,6 +81,7 @@ const REG = {
   user: User,
   workspace: Building2,
   check: Check,
+  copy: Copy,
   plus: Plus,
   signout: LogOut,
   // chrome

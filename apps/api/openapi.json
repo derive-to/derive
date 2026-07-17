@@ -3053,6 +3053,65 @@
         }
       }
     },
+    "/v1/me/onboarding": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "The signed-in user's activation signals (agent connected, first agent publish).",
+        "responses": {
+          "200": {
+            "description": "Whether an agent is connected and what it first published.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "agent_connected": {
+                      "type": "boolean",
+                      "description": "Whether an OAuth agent grant currently exists (revoking clears it)."
+                    },
+                    "agent_name": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Display name of the most recently authorized agent; null if none."
+                    },
+                    "published_via_agent": {
+                      "type": "boolean",
+                      "description": "Whether an agent has published an artifact for this user over MCP."
+                    },
+                    "first_artifact": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "short_id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "short_id",
+                        "title"
+                      ],
+                      "description": "The first artifact an agent published for this user; null until then."
+                    }
+                  },
+                  "required": [
+                    "agent_connected",
+                    "agent_name",
+                    "published_via_agent",
+                    "first_artifact"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/users/search": {
       "get": {
         "tags": [

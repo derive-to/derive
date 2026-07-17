@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 // The one Connect-an-agent surface: the paste-into-your-agent prompt (hosted, with a
 // self-host toggle), shared by onboarding Step 2, the library's connect empty state,
@@ -67,21 +68,110 @@ Please:
 Then you can publish, read review comments, and run the propose -> review -> revise loop over MCP.`
 
 /**
- * The paste-into-your-agent block: a one-line description, the quiet self-host
- * toggle, and the copyable prompt. `testidPrefix` keys the block's testids
- * (`<prefix>-prompt`, `<prefix>-prompt-copy`, `<prefix>-dev-toggle`) so each entry
- * point stays individually addressable in e2e.
+ * The connect surface: one tab per agent, each showing the lightest possible setup
+ * for that harness — a single command where one exists, two short steps where it
+ * doesn't. The full agent-native paste prompt (and the self-host variant) lives on
+ * the "Any agent" tab so nobody is stranded. `testidPrefix` keys the block's
+ * testids (`<prefix>-tab-<agent>`, `<prefix>-cmd-<agent>`, `<prefix>-prompt`,
+ * `<prefix>-dev-toggle`) so each entry point stays individually addressable in e2e.
  */
 export function ConnectAgent({ testidPrefix = "connect-agent" }: { testidPrefix?: string }) {
+  const url = publicUrl()
+  const mcp = `${url}/mcp`
+  // Verified per-harness setup lines. Cursor reads .cursor/mcp.json; the others
+  // register over their own CLI/UI. Kept inline (not a table) so each tab can
+  // carry its own hint copy.
+  const cursorJson = `{ "mcpServers": { "derive": { "url": "${mcp}" } } }`
+  const consentHint = (
+    <p className="text-sm text-pretty text-muted-foreground">
+      The first call opens your browser once to approve — then it can publish, review, and revise
+      for you.
+    </p>
+  )
+  // Radix unmounts inactive TabsContent, so this is layout-only.
+  const tabContent = "flex flex-col gap-2"
+  return (
+    <Tabs defaultValue="claude-code" className="gap-3">
+      <TabsList size="sm" className="max-w-full overflow-x-auto">
+        <TabsTrigger value="claude-code" data-testid={`${testidPrefix}-tab-claude-code`}>
+          Claude Code
+        </TabsTrigger>
+        <TabsTrigger value="claude" data-testid={`${testidPrefix}-tab-claude`}>
+          Claude
+        </TabsTrigger>
+        <TabsTrigger value="codex" data-testid={`${testidPrefix}-tab-codex`}>
+          Codex
+        </TabsTrigger>
+        <TabsTrigger value="cursor" data-testid={`${testidPrefix}-tab-cursor`}>
+          Cursor
+        </TabsTrigger>
+        <TabsTrigger value="any" data-testid={`${testidPrefix}-tab-any`}>
+          Any agent
+        </TabsTrigger>
+      </TabsList>
+      <TabsContent value="claude-code" className={tabContent}>
+        <p className="text-sm text-pretty text-muted-foreground">
+          One command, run anywhere — then tell it{" "}
+          <span className="font-medium text-foreground">“connect to Derive.”</span>
+        </p>
+        <PromptBlock
+          text={`claude mcp add --transport http derive ${mcp}`}
+          testid={`${testidPrefix}-cmd-claude-code`}
+          copyLabel="Copy command"
+        />
+        {consentHint}
+      </TabsContent>
+      <TabsContent value="claude" className={tabContent}>
+        <p className="text-sm text-pretty text-muted-foreground">
+          In claude.ai or Claude Desktop:{" "}
+          <span className="font-medium text-foreground">
+            Settings → Connectors → Add custom connector
+          </span>
+          , then paste this URL.
+        </p>
+        <PromptBlock text={mcp} testid={`${testidPrefix}-cmd-claude`} copyLabel="Copy URL" />
+        {consentHint}
+      </TabsContent>
+      <TabsContent value="codex" className={tabContent}>
+        <p className="text-sm text-pretty text-muted-foreground">One command connects Codex.</p>
+        <PromptBlock
+          text={`codex mcp add derive --url ${mcp}`}
+          testid={`${testidPrefix}-cmd-codex`}
+          copyLabel="Copy command"
+        />
+        {consentHint}
+      </TabsContent>
+      <TabsContent value="cursor" className={tabContent}>
+        <p className="text-sm text-pretty text-muted-foreground">
+          Add Derive to <span className="font-medium text-foreground">.cursor/mcp.json</span> (or
+          Settings → MCP → Add server).
+        </p>
+        <PromptBlock
+          text={cursorJson}
+          testid={`${testidPrefix}-cmd-cursor`}
+          copyLabel="Copy config"
+        />
+        {consentHint}
+      </TabsContent>
+      <TabsContent value="any" className={tabContent}>
+        <AnyAgentPrompt testidPrefix={testidPrefix} url={url} />
+      </TabsContent>
+    </Tabs>
+  )
+}
+
+// The pre-tabs connect block, now the "Any agent" fallback: the agent-native paste
+// prompt with the quiet self-host toggle. Testids unchanged so every existing e2e
+// entry point still resolves.
+function AnyAgentPrompt({ testidPrefix, url }: { testidPrefix: string; url: string }) {
   // Self-host mode swaps the connect snippet for run-it-yourself instructions.
   const [devMode, setDevMode] = useState(false)
-  const url = publicUrl()
   return (
-    <div className="flex flex-col gap-2">
+    <>
       <p className="text-sm text-pretty text-muted-foreground">
         {devMode
-          ? "Spin up your own Derive, then connect your agent to it. Paste this into Claude Code, Codex, or any agent."
-          : "Paste this into Claude Code, Codex, ChatGPT, or any agent — it connects Derive so the agent can publish, review, and revise for you."}
+          ? "Spin up your own Derive, then connect your agent to it. Paste this into any agent."
+          : "Paste this into any MCP-capable agent — it connects Derive so the agent can publish, review, and revise for you."}
       </p>
       {/* The self-host switch rides just above the snippet it swaps — a rarely-
           touched option, so it sits quiet and right-aligned, not in the header. */}
@@ -99,7 +189,7 @@ export function ConnectAgent({ testidPrefix = "connect-agent" }: { testidPrefix?
         text={devMode ? selfHostPrompt() : hostedPrompt(url)}
         testid={`${testidPrefix}-prompt`}
       />
-    </div>
+    </>
   )
 }
 
@@ -137,8 +227,8 @@ export function ConnectAgentDialogContent({ testidPrefix }: { testidPrefix: stri
       <DialogHeader>
         <DialogTitle>Connect an agent</DialogTitle>
         <DialogDescription>
-          One paste connects any MCP agent to Derive — it can then publish, review, and revise for
-          you.
+          Pick your agent — one command connects it to Derive, and it can then publish, review, and
+          revise for you.
         </DialogDescription>
       </DialogHeader>
       <ConnectAgent testidPrefix={testidPrefix} />
