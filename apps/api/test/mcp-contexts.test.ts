@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest"
+import { createInProcessBackplane } from "../src/bus"
 import { sha256 } from "../src/lib/crypto"
+import { inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // The MCP ask surface: list_contexts + ask act for the connection's on-behalf
@@ -282,5 +284,113 @@ describe("ask — open, check, and the grant edges", () => {
     expect(r.isError).toBe(true)
     expect(r.text).toContain("No session")
     expect(r.text).not.toContain("forbidden")
+  })
+})
+
+describe("ask({wait}) — the settle wake and the session loop", () => {
+  // The workspace-policy flip every case here needs (dev is creator; the MCP
+  // caller acts for owner, a plain member).
+  const openPolicy = async (app: App, cxId: string) =>
+    expect(
+      (
+        await app.request(
+          `/v1/contexts/${cxId}/access`,
+          jsonAs(as(dev.email), { ask_policy: "workspace" }),
+        )
+      ).status,
+    ).toBe(200)
+
+  it("blocks, then wakes the instant the runner answers — not at timeout", async () => {
+    const backplane = createInProcessBackplane()
+    const { app, cx, ownerToken, answeringToken } = await setup("mcx-wake", { backplane })
+    await openPolicy(app, cx.id)
+    const opened = await call(app, ownerToken, "ask", {
+      context: "Analytics",
+      question: "Q?",
+      wait: 0,
+    })
+    const started = Date.now()
+    const waiting = call(app, ownerToken, "ask", { session_id: opened.session_id, wait: 20 })
+    // A beat for the waiter to subscribe, then the runner settles over REST.
+    await new Promise((r) => setTimeout(r, 150))
+    expect(
+      (
+        await answerAs(app, answeringToken, opened.session_id, {
+          body_md: "Here.",
+          state: "answered",
+        })
+      ).status,
+    ).toBe(201)
+    const res = await waiting
+    // Well under the 20s wait — the wake did it, not the timeout. (If this
+    // asserts flaky in CI, the bound is the thing to loosen, never the wake.)
+    expect(Date.now() - started).toBeLessThan(10_000)
+    expect(res.state).toBe("answered")
+    expect(res.answer).toMatchObject({ body_md: "Here." })
+  })
+
+  it("a follow-up rides the same session and re-opens it; closed refuses with a pointer", async () => {
+    const { app, cx, ownerToken, answeringToken } = await setup("mcx-follow")
+    await openPolicy(app, cx.id)
+    const opened = await call(app, ownerToken, "ask", {
+      context: "Analytics",
+      question: "Q?",
+      wait: 0,
+    })
+    expect(
+      (
+        await answerAs(app, answeringToken, opened.session_id, {
+          body_md: "A.",
+          state: "answered",
+        })
+      ).status,
+    ).toBe(201)
+    const follow = await call(app, ownerToken, "ask", {
+      session_id: opened.session_id,
+      question: "And why?",
+      wait: 0,
+    })
+    expect(follow.state).toBe("open")
+    // The asker closes in the console; the agent's next follow-up is refused
+    // with the reopen pointer (same 409 semantics the REST path has).
+    expect(
+      (
+        await app.request(`/v1/sessions/${opened.session_id}`, {
+          ...jsonAs(as(owner.email), { state: "closed" }),
+          method: "PATCH",
+        })
+      ).status,
+    ).toBe(200)
+    const refused = await callRaw(app, ownerToken, "ask", {
+      session_id: opened.session_id,
+      question: "still there?",
+      wait: 0,
+    })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toContain("closed")
+  })
+
+  it("the ask cap trips a looping agent; the check mode stays uncapped", async () => {
+    const { app, cx, ownerToken } = await setup("mcx-cap", {
+      rateLimit: true,
+      rateLimiters: inMemoryRateLimiters({ askRate: 2 }),
+    })
+    await openPolicy(app, cx.id)
+    const first = await call(app, ownerToken, "ask", {
+      context: "Analytics",
+      question: "1",
+      wait: 0,
+    })
+    await call(app, ownerToken, "ask", { context: "Analytics", question: "2", wait: 0 })
+    const third = await callRaw(app, ownerToken, "ask", {
+      context: "Analytics",
+      question: "3",
+      wait: 0,
+    })
+    expect(third.isError).toBe(true)
+    expect(third.text).toContain("Rate limit")
+    // Reads don't spend the budget: checking a session still works while capped.
+    const check = await call(app, ownerToken, "ask", { session_id: first.session_id, wait: 0 })
+    expect(check.state).toBe("open")
   })
 })
