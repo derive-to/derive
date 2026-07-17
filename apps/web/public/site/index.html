@@ -231,7 +231,7 @@ nav.scrolled{border-bottom-color:var(--border-soft)}
 .abadge.show{display:inline-flex}
 .demo-body{display:grid;grid-template-columns:1fr 320px;min-height:372px;position:relative}
 .demo-body ::selection{background:color-mix(in srgb,var(--success) 32%,transparent)}
-@media(max-width:840px){.demo-body{grid-template-columns:1fr}.demo-comments{border-left:0;border-top:1px solid var(--border-soft)}}
+@media(max-width:840px){.demo-body{grid-template-columns:minmax(0,1fr)}.demo-comments{border-left:0;border-top:1px solid var(--border-soft)}}
 .doc{padding:34px 44px 36px;text-align:left;display:flex;flex-direction:column}
 /* the OSC-8 launch page inside the frame — pure ink, drawn like a filing */
 .doc .lnav{display:flex;align-items:baseline;gap:16px;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
@@ -389,7 +389,7 @@ nav.scrolled{border-bottom-color:var(--border-soft)}
 .waitlist-done .tick{color:var(--success)}
 
 /* ══════════ MANIFESTO ══════════ */
-.manifesto{padding:190px 0 0}
+.manifesto{padding-top:190px}
 .manifesto .m-line{
   font-size:clamp(26px,3.8vw,44px);line-height:1.22;letter-spacing:-0.025em;font-weight:500;
   max-width:24ch;
@@ -436,12 +436,12 @@ nav.scrolled{border-bottom-color:var(--border-soft)}
 .kept-line em{font-style:normal;color:var(--muted)}
 
 /* ══════════ CHAPTERS ══════════ */
-.chapter{padding:210px 0 0}
+.chapter{padding-top:210px}
 .chapter .ch-head{display:flex;align-items:baseline;gap:22px}
 .chapter .ch-num{font-family:var(--mono);font-size:13px;color:var(--faint);letter-spacing:.1em}
 .chapter h2{font-size:clamp(44px,7vw,92px);line-height:1;letter-spacing:-0.035em}
 .chapter .ch-body{margin-top:30px;display:grid;grid-template-columns:minmax(0,60ch) 1fr;gap:64px;align-items:start}
-@media(max-width:880px){.chapter .ch-body{grid-template-columns:1fr}}
+@media(max-width:880px){.chapter .ch-body{grid-template-columns:minmax(0,1fr)}}
 .chapter .ch-lede{font-size:clamp(18px,2vw,22px);color:var(--fg);line-height:1.5;font-weight:400}
 .chapter .ch-text{margin-top:18px;font-size:16px;color:var(--muted);line-height:1.7}
 .chapter .ch-text strong{color:var(--fg);font-weight:500}
@@ -467,6 +467,7 @@ nav.scrolled{border-bottom-color:var(--border-soft)}
   background:var(--bg);padding:9px 12px;font-family:var(--mono);font-size:12px;color:var(--fg);
   margin-bottom:6px;
 }
+.share-link .share-url{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .share-link .copy{margin-left:auto;font-size:10px;letter-spacing:.05em;color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:2px 8px}
 .share-link .lock{color:var(--success);display:inline-flex}
 .sw{position:relative;width:30px;height:17px;border-radius:999px;background:var(--fg);flex:none}
@@ -484,7 +485,7 @@ nav.scrolled{border-bottom-color:var(--border-soft)}
 .thread .t-state{font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:var(--success)}
 
 /* ══════════ LOOP / TERMINAL ══════════ */
-.loop{padding:210px 0 0}
+.loop{padding-top:210px}
 .loop .section-head{max-width:620px}
 .loop h2{font-size:clamp(32px,4.6vw,52px);line-height:1.1;margin-top:16px}
 .loop .l-sub{margin-top:20px;font-size:17px;color:var(--muted);max-width:54ch;line-height:1.7}
@@ -499,7 +500,7 @@ nav.scrolled{border-bottom-color:var(--border-soft)}
   padding:26px 30px;font-family:var(--mono);font-size:clamp(12px,1.35vw,14.5px);line-height:2.1;color:var(--muted);
   min-height:340px;
 }
-.bigterm .ln{display:block;white-space:pre-wrap}
+.bigterm .ln{display:block;white-space:pre-wrap;overflow-wrap:break-word}
 .bigterm .ln .p{color:var(--fg)}
 .bigterm .ln .ok{color:var(--success)}
 .bigterm .ln .dim{opacity:.6}
@@ -512,7 +513,7 @@ nav.scrolled{border-bottom-color:var(--border-soft)}
 .loop .cast span b{color:var(--muted);font-weight:500}
 
 /* ══════════ PRICING STATEMENT ══════════ */
-.price{padding:210px 0 0}
+.price{padding-top:210px}
 .price h2{font-size:clamp(34px,5vw,58px);line-height:1.08;max-width:16ch}
 .price .p-sub{margin-top:22px;font-size:17px;color:var(--muted);max-width:54ch;line-height:1.7}
 .price .p-sub strong{color:var(--fg);font-weight:500}
@@ -535,7 +536,7 @@ nav.scrolled{border-bottom-color:var(--border-soft)}
 .price .p-vow strong{color:var(--fg);font-weight:500}
 
 /* ══════════ FINALE ══════════ */
-.finale{padding:230px 0 0;position:relative;text-align:center}
+.finale{padding-top:230px;position:relative;text-align:center}
 .finale .state-line{margin-bottom:24px}
 .finale .derivation{font-size:clamp(32px,5vw,72px);margin:0 auto;max-width:22ch}
 .finale .derivation .word{margin-right:.18em}
@@ -562,6 +563,75 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
 .foot-links a:hover{color:var(--fg)}
 .foot-inner .license{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.02em}
 @media(max-width:720px){.foot-inner .license{margin-left:0;width:100%}}
+
+/* ══════════ MOBILE — the poster, folded to phone width ══════════ */
+@media(max-width:640px){
+  .wrap{padding:0 20px}
+  .nav-inner{padding:0 18px;height:58px;gap:16px}
+
+  .hero{padding-top:112px}
+  .hero .stage{padding:0 20px}
+  .hero-eyebrow{margin-bottom:20px}
+  .derivation{margin-top:20px}
+  .hero .sub{margin-top:26px}
+  .hero .cta-row{margin-top:26px;align-self:stretch}
+  .wl-theatre{align-self:stretch}
+  .waitlist{width:100%;justify-content:center}
+  .waitlist input{font-size:16px} /* <16px makes iOS zoom the page on focus */
+  .waitlist-done{height:auto;min-height:52px;padding:12px 16px}
+
+  .demo{margin-top:52px;padding:0 20px}
+  .demo-titlebar{padding:10px 14px;gap:9px}
+  .demo-titlebar .doc-meta,.demo-titlebar .tb-lock,.face-label{display:none}
+  .demo-body{min-height:0}
+  .doc{padding:22px 18px 26px}
+  .doc .lhero{margin-top:20px;gap:22px}
+  .doc h3.lphead{font-size:26px}
+  .doc .lph,.doc .draw3d,.doc .lpsvg{height:200px}
+  .doc .lspecs .sp{flex:1 1 calc(50% - 14px);min-width:0}
+  .doc .lspecs .sp:nth-child(2n){border-right:0;margin-right:0}
+  .demo-comments{padding:16px 14px}
+  .timeline{margin-top:20px}
+  .version-line{display:block}
+
+  .manifesto{padding-top:120px}
+  .manifesto .m-kicker{margin-bottom:24px}
+  .manifesto .m-line + .m-line{margin-top:40px}
+  .m-answer{margin-top:44px;font-size:16px}
+
+  .ocean{margin-top:120px;height:440px}
+  .gcol{gap:26px}
+  .ghost{font-size:11px;padding:8px 11px}
+  .kept-card{min-width:0;width:min(430px,88vw);padding:18px 20px}
+
+  .chapter{padding-top:128px}
+  .chapter .ch-body{margin-top:24px;gap:40px}
+  .spec-body{padding:14px}
+  .share-dlg{padding:12px 14px}
+  .thread{padding:14px}
+
+  .loop{padding-top:128px}
+  .loop .l-sub{margin-top:16px;font-size:16px}
+  .bigterm{margin-top:36px}
+  .bigterm .tbody{padding:18px 16px;min-height:280px;line-height:1.95}
+
+  .price{padding-top:128px}
+  .price .p-sub{margin-top:18px;font-size:16px}
+
+  .finale{padding-top:150px}
+  .finale .f-sub{margin-top:20px;font-size:16px}
+  .finale .waitlist{margin-top:32px}
+  .finale .f-alt{line-height:2.2}
+
+  footer{margin-top:104px}
+  .watermark{font-size:29vw}
+  .foot-inner{padding:36px 20px 100px;gap:14px 22px}
+}
+@media(max-width:360px){
+  .waitlist form{flex-direction:column;padding:8px}
+  .waitlist input{padding:10px 8px}
+  .waitlist .btn{width:100%}
+}
 
 @media (prefers-reduced-motion: reduce){
   html{scroll-behavior:auto}
@@ -872,7 +942,7 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
             <span class="lock" aria-hidden="true">
               <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><rect x="1.5" y="4.5" width="8" height="5.5" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M3.5 4.5V3a2 2 0 1 1 4 0v1.5" stroke="currentColor" stroke-width="1.2"/></svg>
             </span>
-            derive.to/artifacts/redesign-proposal
+            <span class="share-url">derive.to/artifacts/redesign-proposal</span>
             <span class="copy">COPY</span>
           </div>
           <div class="share-row">
@@ -969,7 +1039,7 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
   <h2 class="reveal" style="margin-top:16px">Free while it's in beta.</h2>
   <p class="p-sub reveal">Every feature, no card required. When billing arrives someday, publishing and reading stay free, and <strong>nothing you've shipped goes dark.</strong></p>
   <div class="p-links reveal">
-    <a href="pricing.html">The pricing we intend, published early →</a>
+    <a href="/pricing">The pricing we intend, published early →</a>
   </div>
 </section>
 
