@@ -12,8 +12,8 @@ import type { AppContext } from "../context"
  *                  so the app keeps owning `/` for its users.
  *   GET /pricing   the pricing page, for everyone.
  *
- * Mounted only when deps.marketing is configured (DERIVE_MARKETING): self-host and
- * dev keep today's behavior, where the SPA fallback owns both paths. The session
+ * Always on when the web build ships the pages (deps.marketing); a build without
+ * them keeps today's behavior, where the SPA fallback owns both paths. The session
  * check is presence-only — no DB hit on a landing view; a stale cookie serves the
  * shell and the SPA's own guard bounces to /login, exactly as it does today.
  */

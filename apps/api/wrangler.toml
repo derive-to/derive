@@ -221,8 +221,3 @@ custom_domain = true
 # extracts the bare address; the display-name form is kept for parity with the Resend (Node)
 # transport, which reads the same EMAIL_FROM. Pairs with the [[send_email]] binding above.
 EMAIL_FROM = "Derive <notifications@send.derive.to>"
-# The marketing front door: `/` serves the marketing page to signed-out visitors
-# (signed-in ones keep the SPA; app.derive.to always does) and `/pricing` serves
-# pricing. The pages ship inside the web build at site/ (apps/web/public/site).
-# Requires "/" + "/pricing" in run_worker_first above (serve-web.test asserts it).
-DERIVE_MARKETING = "true"
