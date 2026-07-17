@@ -36,11 +36,13 @@ Scope is deliberately the asking side only:
 
 ## Tool surface
 
-Both tools are registered in `buildServer` (`apps/api/src/mcp.ts`) only when the
-connection has an acting human (`actingFor`, resolved in `mountMcp` from the
-OAuth grantor or the dk_agt_ token's creator). An ownerless legacy token never
-sees them: the "askers are people" invariant stays structural, not an error
-message. The server instructions gain one static sentence pointing at the tools.
+Both tools are registered in `buildServer` (`apps/api/src/mcp.ts`) on every
+connection, matching the house rule `check_requests` established: the tool
+surface never differs by auth kind. A connection with no acting human
+(`actingFor`, resolved in `mountMcp` from the OAuth grantor or the dk_agt_
+token's creator; null only for an ownerless legacy token) gets an actionable
+refusal at call time instead. The server instructions gain one static sentence
+pointing at the tools.
 
 ### `list_contexts`
 
@@ -59,7 +61,8 @@ Returns, for the resolved workspace, the contexts the acting human may ask:
 ### `ask`
 
 Input: `context` (id or name; names are unique per workspace), `question`,
-`session_id`, `wait` (seconds, 1..50, default 25), `workspace`.
+`session_id`, `wait` (seconds, 0..50, default 25; 0 returns without waiting),
+`workspace`.
 
 Three modes by argument shape:
 
