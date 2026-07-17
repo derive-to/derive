@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS version (
   author_avatar TEXT,
   author_gh_id TEXT,
   author_id TEXT,
+  source TEXT,
   message TEXT,
   name TEXT,
   preview_key TEXT,

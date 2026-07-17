@@ -460,6 +460,7 @@ export async function runSync(
         authorAvatar: gh?.avatar ?? null,
         authorGhId: gh?.ghId ?? null,
         message: `sync ${source.ref}@${sha.slice(0, 7)}`,
+        source: "sync" as const,
         orgId: source.org_id,
         // A mirrored repo is a workspace resource, not someone's draft: explicitly
         // listed in the workspace library (the publish default is unlisted, which

@@ -60,11 +60,15 @@ test("capture the remaining surfaces", async ({ page: p }) => {
   await p.getByTestId("login-submit").click()
   await expect(p).not.toHaveURL(/\/login/, { timeout: 15_000 })
   await expect(p.getByTestId("welcome-skip")).toBeVisible()
-  // Wait for real content (the pasteable prompt block), not just the route skeleton,
-  // so the capture isn't a blank shimmer.
-  await expect(p.getByTestId("welcome-prompt")).toBeVisible()
+  // Wait for real content (the default tab's command block), not just the route
+  // skeleton, so the capture isn't a blank shimmer.
+  await expect(p.getByTestId("welcome-cmd-claude-code")).toBeVisible()
   await settle(p)
   await shot("welcome-dark-desktop")
+  // The full paste prompt lives on the "Any agent" tab now — flip to it so the
+  // fallback path stays covered.
+  await p.getByTestId("welcome-tab-any").click()
+  await expect(p.getByTestId("welcome-prompt")).toBeVisible()
   await p.getByTestId("welcome-skip").click()
   await expect(p.getByTestId("library-menu")).toBeVisible()
 

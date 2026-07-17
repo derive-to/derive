@@ -685,6 +685,10 @@ export const artifactRoutes = (ctx: AppContext) => {
             ? (tokenAuth.user.name ?? undefined)
             : (human?.name ?? actor?.name ?? str(body["author"])),
           authorId: onBehalf,
+          // The surface stamp: a stage_publish token IS the MCP flow's upload leg, an
+          // agent principal (OAuth bearer / dk_agt_ token, incl. the CLI) is the API,
+          // and a plain session publish is the web app.
+          source: tokenAuth ? "mcp" : agentPrincipal ? "api" : "web",
           name: str(body["name"]),
           orgId: org,
           workspaceAccess: resolvedWorkspaceAccess,
@@ -1552,6 +1556,8 @@ export const artifactRoutes = (ctx: AppContext) => {
         size_bytes: src.size_bytes,
         author: me ? (me.name ?? me.username ?? me.email) : "anonymous",
         author_id: me?.id ?? null,
+        // A restore is a web-surface action, whatever surface made the original.
+        source: "web",
         message: `Restored v${src.n}`,
         name: null,
       })

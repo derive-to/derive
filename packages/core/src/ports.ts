@@ -226,6 +226,9 @@ export interface VersionRecord {
   author_gh_id: string | null
   /** The Derive user who published this version by hand; null for sync/anon/legacy. */
   author_id: string | null
+  /** Which surface created this version — the onboarding/analytics stamp. Null for
+   *  versions predating the column and for paths that don't stamp (restore, PR preview). */
+  source: VersionSource | null
   message: string | null
   /** A named checkpoint (Docs-style). Null = an ordinary auto-saved revision. */
   name: string | null
@@ -272,6 +275,10 @@ export interface NewArtifact {
   spa: 0 | 1
 }
 
+/** Which surface created a version: the web app, the MCP publish tool, the HTTP API
+ *  (agent tokens / OAuth bearers, incl. the CLI), or a GitHub sync. */
+export type VersionSource = "web" | "mcp" | "api" | "sync"
+
 export interface NewVersion {
   id: string
   blob_key: string
@@ -284,6 +291,8 @@ export interface NewVersion {
   author_gh_id?: string | null
   /** The Derive user who published this version by hand; null/omitted for sync/anon. */
   author_id?: string | null
+  /** Which surface created this version; omitted for paths that don't stamp. */
+  source?: VersionSource | null
   message: string | null
   name?: string | null
 }
@@ -933,6 +942,10 @@ export interface AgentStore {
    *  review + revoke what may act on their behalf. Reads Better Auth's oauth-provider tables;
    *  empty when they aren't present. */
   listUserGrants(userId: string): Promise<OAuthGrantSummary[]>
+  /** The first artifact an agent produced for this user — a direct MCP publish
+   *  (version.source='mcp', attributed to them) or an approved agent proposal on their
+   *  behalf (proposal.on_behalf_of). The onboarding "published via agent" signal. */
+  firstAgentPublish(userId: string): Promise<{ short_id: string; title: string | null } | null>
   /** Revoke a user's grant to one OAuth client: drop the consent + every live access/refresh
    *  token, so the agent loses access immediately and must re-consent. */
   revokeUserGrant(userId: string, clientId: string): Promise<void>

@@ -174,6 +174,10 @@ export function CommandPalette() {
   const showAll = "all artifacts".includes(q) || "library".includes(q)
   const showFav = "favorites".includes(q)
   const showFollowing = "following".includes(q)
+  // The way back to the connect instructions after onboarding — /welcome stays the
+  // app's connect-an-agent surface (see pages/welcome).
+  const showConnect =
+    "connect an agent".includes(q) || "getting started".includes(q) || "mcp setup".includes(q)
 
   return (
     <CommandDialog
@@ -194,7 +198,7 @@ export function CommandPalette() {
             {loading || contentLoading || peopleLoading ? "Searching…" : "No results."}
           </CommandEmpty>
 
-          {(showAll || showFav || showFollowing) && (
+          {(showAll || showFav || showFollowing || showConnect) && (
             <CommandGroup heading="Jump to">
               {showAll && (
                 <CommandItem
@@ -218,6 +222,15 @@ export function CommandPalette() {
                   onSelect={() => go(() => nav({ to: "/following" }))}
                 >
                   <Icon name="following" size={16} /> Following
+                </CommandItem>
+              )}
+              {showConnect && (
+                <CommandItem
+                  value="connect-an-agent"
+                  data-testid="palette-connect-agent"
+                  onSelect={() => go(() => nav({ to: "/welcome" }))}
+                >
+                  <Icon name="context" size={16} /> Connect an agent
                 </CommandItem>
               )}
             </CommandGroup>

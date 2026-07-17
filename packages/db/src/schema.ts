@@ -19,6 +19,7 @@ import type {
   Role,
   SessionMessageAuthor,
   SessionState,
+  VersionSource,
   WebhookKind,
   WorkspaceAccess,
 } from "@derive/core"
@@ -110,6 +111,9 @@ export const version = sqliteTable(
     author_gh_id: text("author_gh_id"),
     // The Derive user who published this version by hand; null for sync/anon/legacy.
     author_id: text("author_id"),
+    // Which surface created this version ('web' | 'mcp' | 'api' | 'sync') — the
+    // onboarding/analytics stamp. Null for pre-column versions and non-stamping paths.
+    source: text("source").$type<VersionSource>(),
     message: text("message"),
     name: text("name"),
     preview_key: text("preview_key"),

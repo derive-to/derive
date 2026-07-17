@@ -2398,6 +2398,50 @@ export class PgMetaStore implements MetaStore {
       return 0
     }
   }
+  async firstAgentPublish(
+    userId: string,
+  ): Promise<{ short_id: string; title: string | null } | null> {
+    // The first artifact an agent produced FOR this user: a direct MCP publish, or an
+    // approved agent proposal on their behalf. Earliest wins. Mirrors repos.ts.
+    const direct = (
+      await this.db
+        .select({ short_id: artifact.short_id, title: artifact.title, at: version.created_at })
+        .from(version)
+        .innerJoin(artifact, eq(artifact.id, version.artifact_id))
+        .where(
+          and(
+            eq(version.author_id, userId),
+            eq(version.source, "mcp"),
+            isNull(artifact.removed_at),
+          ),
+        )
+        .orderBy(asc(version.created_at), asc(version.id))
+        .limit(1)
+    )[0]
+    const approved = (
+      await this.db
+        .select({ short_id: artifact.short_id, title: artifact.title, at: proposal.decided_at })
+        .from(proposal)
+        .innerJoin(artifact, eq(artifact.id, proposal.artifact_id))
+        .where(
+          and(
+            eq(proposal.on_behalf_of, userId),
+            eq(proposal.state, "approved"),
+            isNull(artifact.removed_at),
+          ),
+        )
+        .orderBy(asc(proposal.decided_at), asc(proposal.id))
+        .limit(1)
+    )[0]
+    // A null decided_at (defensive; decide always stamps it) sorts LAST, never first.
+    const winner =
+      direct && approved
+        ? approved.at && approved.at < direct.at
+          ? approved
+          : direct
+        : (direct ?? approved)
+    return winner ? { short_id: winner.short_id, title: winner.title } : null
+  }
   async listUserGrants(userId: string): Promise<OAuthGrantSummary[]> {
     try {
       const { rows } = await this.pool.query(

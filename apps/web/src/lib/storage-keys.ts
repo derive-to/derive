@@ -29,4 +29,10 @@ export const STORAGE_KEYS = {
   // Dismissal of the home's one-time "set up your team's Brandprint" nudge (owners
   // of a Brandprint-less workspace; see pages/library/brandprint-nudge).
   brandprintNudge: "derive:brandprint-nudge",
+  // Dismissal of the rail's getting-started checklist — one click, permanent,
+  // per-browser (see chrome/getting-started).
+  gettingStartedDismissed: "derive.getting-started.dismissed",
+  // The checklist's "shared a link" step: set by the share dialog's copy-link
+  // action (per-browser; the server signals cover connect + first publish).
+  sharedLink: "derive.shared-link",
 } as const

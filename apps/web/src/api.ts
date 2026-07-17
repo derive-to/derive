@@ -1,5 +1,5 @@
 import type { LinkRole, Listed, Role, SortMode, WorkspaceAccess } from "@derive/core"
-import type { components } from "./api-types"
+import type { components, paths } from "./api-types"
 import { guestQuery } from "./lib/guest-id"
 
 /** The role vocabulary and the v2 access model's three single-purpose fields are
@@ -60,6 +60,10 @@ export type AuthCapabilities = components["schemas"]["AuthCapabilities"]
 /** An OAuth agent the user authorized to act on their behalf (the "Connected agents"
  *  list). Generated from the OpenAPI spec. */
 export type ConnectedAgent = components["schemas"]["ConnectedAgent"]
+/** The activation signals for first-run onboarding: whether an agent is connected and
+ *  what it first published for this user. Generated from the OpenAPI spec. */
+export type OnboardingStatus =
+  paths["/v1/me/onboarding"]["get"]["responses"][200]["content"]["application/json"]
 /** A public profile, by handle. Email is private and never returned here.
  *  Generated from the OpenAPI spec. */
 export type PublicProfile = components["schemas"]["PublicProfile"]
@@ -355,6 +359,9 @@ export const api = {
   // your behalf, and one-tap revocation — delegation made legible + reversible.
   connectedAgents: (): Promise<{ agents: ConnectedAgent[] }> =>
     f("/v1/me/connected-agents", opts()).then(j),
+  // The activation signals first-run onboarding reads: agent connected + what it first
+  // published for you. Polled by /welcome; read lazily by the getting-started checklist.
+  onboarding: (): Promise<OnboardingStatus> => f("/v1/me/onboarding", opts()).then(j),
   revokeConnectedAgent: (clientId: string): Promise<void> =>
     f(`/v1/me/connected-agents/${encodeURIComponent(clientId)}`, {
       method: "DELETE",
