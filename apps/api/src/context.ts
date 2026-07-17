@@ -911,13 +911,18 @@ export function buildContext(deps: AppDeps) {
   // never ask. Within the workspace, `workspace` policy admits every member;
   // `invited` admits the creator and the asker roster. Askers are people (a
   // session is on-behalf-of a human), so a bare agent/static token can't ask.
+  // The id-keyed core of the rule, shared with the MCP ask tools — which act for
+  // the connection's on-behalf human rather than a signed-in user, but must hold
+  // exactly the same grant.
+  const canUserAskContext = async (userId: string, x: ContextRecord): Promise<boolean> => {
+    if (!(await meta.getMembership(x.org_id, userId))) return false
+    if (x.created_by === userId) return true
+    if (x.ask_policy === "workspace") return true
+    return !!(await meta.getContextAsker(x.id, userId))
+  }
   const canAskContext = async (c: Context, x: ContextRecord): Promise<boolean> => {
     const me = await currentUser(c)
-    if (!me) return false
-    if (!(await meta.getMembership(x.org_id, me.id))) return false
-    if (x.created_by === me.id) return true
-    if (x.ask_policy === "workspace") return true
-    return !!(await meta.getContextAsker(x.id, me.id))
+    return !!me && (await canUserAskContext(me.id, x))
   }
 
   return {
@@ -971,5 +976,6 @@ export function buildContext(deps: AppDeps) {
     isToken,
     isMember,
     canAskContext,
+    canUserAskContext,
   }
 }
