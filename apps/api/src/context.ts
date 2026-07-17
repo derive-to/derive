@@ -209,12 +209,12 @@ export interface AppDeps {
   /** Wake the preview worker after enqueuing (Workers: poke the PreviewRenderer DO). */
   pokePreviews?: () => void
   /**
-   * The marketing site (the hosted front door, DERIVE_MARKETING). When set, `/`
-   * serves the marketing page to signed-out visitors (signed-in ones keep the SPA)
-   * and `/pricing` serves the pricing page. Each provider returns the page HTML —
-   * read from the web build's `site/` directory on Node, fetched from the ASSETS
-   * binding on the edge — or null when the page is missing (falls back to the
-   * shell). Unset (the default; self-host, tests) ⇒ the SPA owns `/` as before.
+   * The marketing site (the front door). When set, `/` serves the marketing page
+   * to signed-out visitors (signed-in ones keep the SPA) and `/pricing` serves the
+   * pricing page. Each provider returns the page HTML — read from the web build's
+   * `site/` directory on Node, fetched from the ASSETS binding on the edge — or
+   * null when the page is missing (falls back to the shell). Set whenever the web
+   * build ships the pages; unset (a page-less build, tests) ⇒ the SPA owns `/`.
    */
   marketing?: {
     home: () => Promise<string | null>

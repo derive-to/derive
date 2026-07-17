@@ -110,9 +110,6 @@ export interface Env {
   // meta into /artifacts/:ref (the share URL). Declared in wrangler.toml `[assets] binding`.
   ASSETS: Fetcher
   BASE_URL?: string
-  // "true" ⇒ serve the marketing site: `/` for signed-out visitors + `/pricing`,
-  // read from the web build's site/ pages via ASSETS (see routes/marketing.ts).
-  DERIVE_MARKETING?: string
   DERIVE_AUTH_SECRET?: string
   DERIVE_TOKEN?: string
   DERIVE_SANDBOX_URL?: string
@@ -308,18 +305,16 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           }
           return shellCache
         },
-        // The marketing front door (DERIVE_MARKETING): `/` for signed-out visitors +
+        // The marketing front door, always on: `/` for signed-out visitors +
         // `/pricing`, from the web build's site/ pages. Fetched at the CANONICAL asset
         // URLs — html_handling serves site/index.html at /site/ and site/pricing.html
         // at /site/pricing, and redirects the literal filenames, which ASSETS.fetch
-        // would surface as a non-2xx.
-        marketing:
-          env.DERIVE_MARKETING === "true"
-            ? {
-                home: siteFetch(env, baseUrl, "/site/"),
-                pricing: siteFetch(env, baseUrl, "/site/pricing"),
-              }
-            : undefined,
+        // would surface as a non-2xx. A build without the pages resolves null and
+        // the routes fall back to the SPA shell.
+        marketing: {
+          home: siteFetch(env, baseUrl, "/site/"),
+          pricing: siteFetch(env, baseUrl, "/site/pricing"),
+        },
       })
     }
     // Run within the per-request context so the DO backplane's publish can waitUntil.

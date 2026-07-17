@@ -267,9 +267,10 @@ const blobs: BlobStore = cfg.objectStoreUrl
 // meta) and to mountWeb (the client-router fallback). Only when serving the web.
 const shellHtml = cfg.serveWeb ? readFileSync(cfg.webShell, "utf8") : undefined
 
-// The marketing pages (DERIVE_MARKETING), read once from the web build's site/
-// directory like the shell above. A missing page resolves null and the routes fall
-// back to the shell, so a stale build can't 404 the front door.
+// The marketing pages, read once from the web build's site/ directory like the
+// shell above. Always on when the web build ships the pages — a build without
+// them (or a missing page) resolves null and the routes fall back to the shell,
+// so the front door can never 404.
 const readSitePage = (name: string): string | null => {
   try {
     return readFileSync(join(cfg.webDir, "site", name), "utf8")
@@ -277,10 +278,10 @@ const readSitePage = (name: string): string | null => {
     return null
   }
 }
-const marketingHome = cfg.marketing && cfg.serveWeb ? readSitePage("index.html") : null
-const marketingPricing = cfg.marketing && cfg.serveWeb ? readSitePage("pricing.html") : null
+const marketingHome = cfg.serveWeb ? readSitePage("index.html") : null
+const marketingPricing = cfg.serveWeb ? readSitePage("pricing.html") : null
 const marketing =
-  cfg.marketing && cfg.serveWeb
+  marketingHome || marketingPricing
     ? { home: async () => marketingHome, pricing: async () => marketingPricing }
     : undefined
 
@@ -346,7 +347,7 @@ const app = createApp({
   baseUrl: cfg.baseUrl,
   shell: shellHtml,
   // The marketing front door (`/` for signed-out visitors + `/pricing`); unset
-  // (the self-host default) leaves the SPA owning both paths.
+  // only when the web build ships no site/ pages, leaving the SPA both paths.
   marketing,
   token: cfg.token,
   // Encrypt stored third-party secrets (GitHub PATs) at rest with the auth secret.
