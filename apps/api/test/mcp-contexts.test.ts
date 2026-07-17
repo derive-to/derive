@@ -242,6 +242,43 @@ describe("ask — open, check, and the grant edges", () => {
     ])
   })
 
+  it("clips an oversized answer and transcript entries, steering to the console", async () => {
+    const { app, cx, ownerToken, answeringToken } = await setup("mcx-ask-clip")
+    expect(
+      (
+        await app.request(
+          `/v1/contexts/${cx.id}/access`,
+          jsonAs(as(dev.email), { ask_policy: "workspace" }),
+        )
+      ).status,
+    ).toBe(200)
+    // A 5k question and a 50k answer — both over their caps (1.5k/entry, 40k answer).
+    const opened = await call(app, ownerToken, "ask", {
+      context: cx.id,
+      question: "q".repeat(5_000),
+      wait: 0,
+    })
+    expect(
+      (
+        await answerAs(app, answeringToken, opened.session_id, {
+          body_md: "a".repeat(50_000),
+          state: "answered",
+        })
+      ).status,
+    ).toBe(201)
+    const res = await call(app, ownerToken, "ask", { session_id: opened.session_id, wait: 0 })
+    // The answer keeps a generous prefix; the steer names the console.
+    expect(res.answer.body_md.length).toBeLessThan(45_000)
+    expect(res.answer.body_md).toContain("truncated")
+    expect(res.answer.body_md).toContain(`/contexts/${cx.id}`)
+    // Transcript entries are tight — the question comes back clipped too.
+    const asker = res.transcript.find((m: { author: string }) => m.author === "asker")
+    expect(asker.body_md.length).toBeLessThan(2_000)
+    expect(asker.body_md).toContain(`/contexts/${cx.id}`)
+    // Clipping truncates — the kept prefix is verbatim, not reflowed.
+    expect(res.transcript.at(-1).body_md.startsWith("a".repeat(1_500))).toBe(true)
+  })
+
   it("names the askable contexts when the ref misses — and stays silent when none are", async () => {
     const { app, cx, ownerToken } = await setup("mcx-ask-miss")
     // No grant at all: the miss must not enumerate what exists.

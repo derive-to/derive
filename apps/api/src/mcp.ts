@@ -2479,6 +2479,19 @@ async function buildServer(
   const runnerOnline = (x: ContextRecord) =>
     !!x.runner_seen_at && Date.now() - new Date(x.runner_seen_at).getTime() < RUNNER_ONLINE_MS
 
+  // Session messages are uncapped short of the write path's 100k/message, so a
+  // maximal check-mode reply is megabytes through the calling agent's context.
+  // Bound it like every read here (truncate-and-steer): a generous cap on the
+  // answer, a tight one per transcript entry — together they stay under clip()'s
+  // MAX_CHARS ceiling — and the steer names the console, which always holds the
+  // full transcript.
+  const ANSWER_MAX = 40_000
+  const ENTRY_MAX = 1_500
+  const clipSessionText = (s: string, max: number, consoleUrl: string): string =>
+    s.length > max
+      ? `${s.slice(0, max)}\n\n…[truncated ${s.length - max} of ${s.length} chars — full transcript in the console: ${consoleUrl}]`
+      : s
+
   server.registerTool(
     "list_contexts",
     {
@@ -2638,6 +2651,7 @@ async function buildServer(
                 : s.state === "closed"
                   ? "This session was closed."
                   : undefined
+        const consoleUrl = `${ctx.deps.baseUrl.replace(/\/$/, "")}/contexts/${x.id}`
         return json({
           session_id: s.id,
           context: x.name,
@@ -2645,7 +2659,7 @@ async function buildServer(
           ...(answerRow
             ? {
                 answer: {
-                  body_md: answerRow.body_md,
+                  body_md: clipSessionText(answerRow.body_md, ANSWER_MAX, consoleUrl),
                   meta: answerMeta,
                   created_at: answerRow.created_at,
                 },
@@ -2655,7 +2669,7 @@ async function buildServer(
             ? {
                 transcript: transcript.slice(-20).map((m) => ({
                   author: m.author_kind,
-                  body_md: m.body_md,
+                  body_md: clipSessionText(m.body_md, ENTRY_MAX, consoleUrl),
                   created_at: m.created_at,
                 })),
               }
