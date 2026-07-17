@@ -2275,8 +2275,8 @@ async function buildServer(
   // poll (stamped at most once a minute) is within this.
   const RUNNER_ONLINE_MS = 90_000
   const NO_HUMAN =
-    "This connection has no acting human, and askers are people — a session is opened on your " +
-    "user's behalf. Reconnect with an OAuth login (or a token registered by a user) to ask."
+    "Asking opens a session on a human's behalf, and this connection has no acting human. " +
+    "Reconnect with an OAuth login (or a token registered by a user) to ask."
 
   // The contexts `userId` may ask in `org`, each with its manifest (identity +
   // the current version a new session pins). One listContexts + one batched
