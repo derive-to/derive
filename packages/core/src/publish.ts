@@ -67,6 +67,10 @@ export interface PublishInput {
   listed?: Listed
   /** Names this publish a pinned checkpoint (Docs-style). */
   name?: string
+  /** Pre-minted short_id for a NEW artifact (create only, ignored on republish) —
+   *  lets a caller embed the artifact's own id in its first version's content
+   *  (the lineage resume block). 409 if already taken. */
+  mintShortId?: string
 }
 
 export interface PublishResult {
@@ -276,9 +280,11 @@ export async function publish(
 
   const title =
     input.title ?? suggestedTitle ?? input.filename.replace(/\.(html?|md|markdown|zip)$/i, "")
+  if (input.mintShortId && (await meta.getByShortId(input.mintShortId)))
+    throw new PublishError(409, `short_id ${input.mintShortId} is already taken`)
   const artifact = await meta.createArtifact({
     id: newId("a"),
-    short_id: newShortId(),
+    short_id: input.mintShortId ?? newShortId(),
     org_id: input.orgId ?? "local",
     slug: input.slug ? slugify(input.slug) : slugify(title) || null,
     title,
