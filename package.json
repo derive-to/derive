@@ -21,6 +21,7 @@
       "better-sqlite3"
     ],
     "overrides": {
+      "adm-zip": ">=0.6.0",
       "esbuild": ">=0.25.0",
       "drizzle-orm": "0.45.2",
       "undici": "^7.28.0",
