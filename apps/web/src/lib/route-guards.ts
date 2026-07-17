@@ -24,16 +24,23 @@ export const requireAuth = async ({ context, location }: GuardArgs) => {
 
 // The ONE first-run predicate — the single source of truth for "does this signed-in
 // user still need /welcome". The server-authoritative flag (syncs across devices,
-// survives a cleared cache) wins; otherwise fall back to the legacy signals so accounts
-// from before the flag are never bounced back to /welcome — a claimed profession, or the
-// per-browser localStorage cache. Both the route gate and the post-login redirect route
-// off THIS, so they can't drift (a simpler onboarded-only check would send returning
-// pre-flag users to /welcome after sign-in).
-export const needsOnboarding = (me: { onboarded?: boolean; profession?: string | null }) => {
+// survives a cleared cache) wins; a claimed profession vouches for pre-flag accounts;
+// and the localStorage fast-path cache counts ONLY when it was written by THIS account
+// (it stores the user id). The cache is per-browser, so an account-agnostic value would
+// silently skip the gate for every account after the first one created in a browser —
+// the exact prod bug this scoping fixed. Legacy "1" values are deliberately no longer
+// honored: any account they'd exempt is un-onboarded and un-activated, which is exactly
+// who /welcome is for (and Skip re-writes the properly-scoped flag in one click).
+// Both the route gate and the post-login redirect route off THIS, so they can't drift.
+export const needsOnboarding = (me: {
+  id?: string
+  onboarded?: boolean
+  profession?: string | null
+}) => {
   if (me.onboarded) return false
   let cached = false
   try {
-    cached = localStorage.getItem(STORAGE_KEYS.onboarded) === "1"
+    cached = !!me.id && localStorage.getItem(STORAGE_KEYS.onboarded) === me.id
   } catch {
     /* private mode — the profession check still gates it */
   }

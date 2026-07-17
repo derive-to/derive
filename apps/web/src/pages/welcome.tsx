@@ -4,23 +4,25 @@ import { useEffect, useState } from "react"
 import { api } from "@/api"
 import { Icon } from "@/components/icons"
 import { ConnectAgent } from "@/components/shared/connect-agent"
+import { AskChip, EXAMPLE_ASKS } from "@/components/shared/example-asks"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
-import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { connectedAgentsQuery, onboardingQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useDocumentTitle } from "@/lib/use-document-title"
 
 // Persist "onboarding finished" server-side (authoritative + cross-device) and cache
-// locally for an instant guard on the very next nav. Fire-and-forget: the flag is
-// one-way, so a dropped write just re-shows /welcome once. The in-memory `me` update
-// happens at the call site (setMe) — that's what keeps the redirect guard from
-// bouncing even when localStorage is unavailable (private mode).
-const persistOnboarded = () => {
+// locally for an instant guard on the very next nav. The cache stores the USER ID —
+// needsOnboarding only honors it for the account that wrote it, so a second account
+// created in this browser is still gated. Fire-and-forget: the flag is one-way, so a
+// dropped write just re-shows /welcome once. The in-memory `me` update happens at the
+// call site (setMe) — that's what keeps the redirect guard from bouncing even when
+// localStorage is unavailable (private mode).
+const persistOnboarded = (userId: string) => {
   api.setOnboarded().catch(() => {})
   try {
-    localStorage.setItem(STORAGE_KEYS.onboarded, "1")
+    localStorage.setItem(STORAGE_KEYS.onboarded, userId)
   } catch {
     /* private mode — setMe carries the in-session guard */
   }
@@ -30,14 +32,6 @@ const persistOnboarded = () => {
 // completing OAuth, the first artifact landing). 2s matches the sync-chip poll —
 // both are single indexed reads a user is actively watching.
 const WATCH_INTERVAL_MS = 2000
-
-// The example first asks — the walkthrough IS these prompts: each teaches what
-// Derive is for in the user's own tool. Copy-to-clipboard chips, not buttons.
-const EXAMPLE_ASKS = [
-  "Publish a one-page summary of what I'm working on to Derive.",
-  "Turn the README into a shareable page on Derive.",
-  "Draft our launch plan as a Derive doc I can get feedback on.",
-]
 
 /**
  * First-run onboarding, slimmed to the one activation moment: connect the agent
@@ -89,9 +83,10 @@ export function Welcome() {
   // Activation IS onboarding: the moment the first artifact exists, the gate is
   // done — even if the user closes the tab from here without clicking an exit.
   const activated = !!first
+  const meId = me?.id
   useEffect(() => {
-    if (activated) persistOnboarded()
-  }, [activated])
+    if (activated && meId) persistOnboarded(meId)
+  }, [activated, meId])
 
   if (!me) return null
   const firstName = (me.name ?? me.username ?? me.email).split(/[@\s]/)[0]
@@ -99,7 +94,7 @@ export function Welcome() {
   // Every exit marks onboarding done — server, storage, AND the in-memory session
   // (setMe), so the guard can't bounce back here even when storage writes fail.
   const leave = (to: "/" | "artifact") => {
-    persistOnboarded()
+    persistOnboarded(me.id)
     setMe({ ...me, onboarded: true })
     if (to === "artifact" && first) {
       nav({ to: "/artifacts/$ref", params: { ref: first.short_id } })
@@ -269,34 +264,5 @@ function WatchRow({ children, testId }: { children: React.ReactNode; testId: str
       </span>
       <span>{children}</span>
     </p>
-  )
-}
-
-// A copyable example ask — chip-shaped, mono-quoted, one tap to clipboard.
-function AskChip({ text, testId }: { text: string; testId: string }) {
-  const [copied, setCopied] = useState(false)
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      toast.success("Copied — paste it into your agent")
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      toast.error("Couldn't copy; select the text and copy it manually")
-    }
-  }
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      onClick={copy}
-      className="flex items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-2.5 text-left text-sm text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground"
-    >
-      <span className="text-pretty">"{text}"</span>
-      <Icon
-        name={copied ? "check" : "copy"}
-        className={copied ? "shrink-0 text-success" : "shrink-0"}
-      />
-    </button>
   )
 }
