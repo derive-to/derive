@@ -258,6 +258,7 @@ export function buildContext(deps: AppDeps) {
   const commentLimiter = deps.rateLimit ? limiters.comment : null
   const unlockLimiter = deps.rateLimit ? limiters.unlock : null
   const inviteLimiter = deps.rateLimit ? limiters.invite : null
+  const askLimiter = deps.rateLimit ? limiters.ask : null
 
   // Fan an event to subscribed webhooks (enqueues to the outbox; the drainer
   // delivers). Awaited so the row is durable before we respond, but never fatal.
@@ -904,20 +905,24 @@ export function buildContext(deps: AppDeps) {
     return !!me && !!(await meta.getMembership(orgId, me.id))
   }
 
-  // May THIS caller ask this context? A context is a workspace-scoped data-access
+  // May this user ask this context? A context is a workspace-scoped data-access
   // grant, NOT a document — so this deliberately does not consult the manifest's
   // artifact access (which can carry a world link or public listing). The hard
   // floor is workspace membership: a non-member — however they hold a link — can
   // never ask. Within the workspace, `workspace` policy admits every member;
   // `invited` admits the creator and the asker roster. Askers are people (a
-  // session is on-behalf-of a human), so a bare agent/static token can't ask.
+  // session is on-behalf-of a human): the request-keyed wrapper below requires a
+  // signed-in user, and the MCP ask tools pass their connection's on-behalf
+  // human — a bare agent/static token never asks as itself.
+  const canUserAskContext = async (userId: string, x: ContextRecord): Promise<boolean> => {
+    if (!(await meta.getMembership(x.org_id, userId))) return false
+    if (x.created_by === userId) return true
+    if (x.ask_policy === "workspace") return true
+    return !!(await meta.getContextAsker(x.id, userId))
+  }
   const canAskContext = async (c: Context, x: ContextRecord): Promise<boolean> => {
     const me = await currentUser(c)
-    if (!me) return false
-    if (!(await meta.getMembership(x.org_id, me.id))) return false
-    if (x.created_by === me.id) return true
-    if (x.ask_policy === "workspace") return true
-    return !!(await meta.getContextAsker(x.id, me.id))
+    return !!me && (await canUserAskContext(me.id, x))
   }
 
   return {
@@ -936,6 +941,7 @@ export function buildContext(deps: AppDeps) {
     commentLimiter,
     unlockLimiter,
     inviteLimiter,
+    askLimiter,
     notify,
     notifyRender,
     background,
@@ -971,5 +977,6 @@ export function buildContext(deps: AppDeps) {
     isToken,
     isMember,
     canAskContext,
+    canUserAskContext,
   }
 }

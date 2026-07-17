@@ -1,5 +1,6 @@
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
+import { createInProcessBackplane, type DeriveEvent } from "../src/bus"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // Contexts + sessions: the ask → answer → follow-up loop, its permission edges,
@@ -610,5 +611,81 @@ describe("contexts: the config fetch carries the resolved Brandprint", () => {
     ).json()
     expect(human.brandprint).toBeUndefined()
     expect(human.manifest_md).toBeUndefined()
+  })
+})
+
+// The terminal-turn wake: every settle write (the runner's answer, a crash-fail,
+// an asker/owner close) publishes `session.settled` on the ASKER's `u:<id>`
+// channel, so an MCP ask({wait}) long-poll wakes at once. A wake signal only —
+// waiters re-read the session — so an asker follow-up (state back to `open`)
+// must NOT publish it.
+describe("session.settled — the terminal-turn wake event", () => {
+  const owner: TestUser = { id: "u_sw_own", email: "swown@derive.test", name: "Owner" }
+
+  const setup = async (name: string) => {
+    const backplane = createInProcessBackplane()
+    const { app } = makeAuthedApp(name, [owner], "commenter", { deps: { backplane } })
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const ag = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Analyst" }))
+    ).json()
+    const manifest = await (await publishAs(app, "# manifest", {}, as(owner.email))).json()
+    const cx = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "Analytics",
+          agent_id: ag.id,
+          manifest_short_id: manifest.short_id,
+        }),
+      )
+    ).json()
+    const opened = await (
+      await app.request(
+        `/v1/contexts/${cx.id}/sessions`,
+        jsonAs(as(owner.email), { body_md: "what changed?" }),
+      )
+    ).json()
+    const events: DeriveEvent[] = []
+    backplane.subscribe(`u:${owner.id}`, (e) => events.push(e))
+    const settled = () => events.filter((e) => e.type === "session.settled")
+    return { app, agentToken: ag.token as string, session: opened.session, settled }
+  }
+
+  it("the runner's answer publishes it on the asker's channel", async () => {
+    const { app, agentToken, session, settled } = await setup("session-wake-answer")
+    const res = await app.request(`/v1/sessions/${session.id}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${agentToken}` },
+      body: JSON.stringify({ body_md: "All quiet.", state: "answered" }),
+    })
+    expect(res.status).toBe(201)
+    expect(settled()).toMatchObject([{ session_id: session.id, state: "answered" }])
+  })
+
+  it("an asker follow-up does not publish; a close does", async () => {
+    const { app, session, settled } = await setup("session-wake-close")
+    const follow = await app.request(
+      `/v1/sessions/${session.id}/messages`,
+      jsonAs(as(owner.email), { body_md: "also, why?" }),
+    )
+    expect(follow.status).toBe(201)
+    const close = await app.request(`/v1/sessions/${session.id}`, {
+      ...jsonAs(as(owner.email), { state: "closed" }),
+      method: "PATCH",
+    })
+    expect(close.status).toBe(200)
+    expect(settled()).toMatchObject([{ session_id: session.id, state: "closed" }])
+  })
+
+  it("the runner's crash-fail publishes it", async () => {
+    const { app, agentToken, session, settled } = await setup("session-wake-fail")
+    const res = await app.request(`/v1/sessions/${session.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", authorization: `Bearer ${agentToken}` },
+      body: JSON.stringify({ state: "failed" }),
+    })
+    expect(res.status).toBe(200)
+    expect(settled()).toMatchObject([{ session_id: session.id, state: "failed" }])
   })
 })

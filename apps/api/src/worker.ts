@@ -276,6 +276,9 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           unlock: nativeLimiter(env.RL_STRICT, 60, "unlock"),
           oauthRegister: nativeLimiter(env.RL_STRICT, 60, "oauth-register"),
           invite: nativeLimiter(env.RL_INVITE, 60),
+          // Rides the comment binding, namespaced — same order of magnitude of
+          // legitimate use, but its count must not share the comment budget.
+          ask: nativeLimiter(env.RL_COMMENT, 60, "ask"),
         },
         // Deliver freshly enqueued events now: poke the outbox DO so its alarm fires,
         // riding waitUntil so the subrequest isn't cancelled when the response is sent.

@@ -166,11 +166,13 @@ describe("remote MCP endpoint (/mcp)", () => {
     const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
     const names = toolNames(list)
     expect(names.sort()).toEqual([
+      "ask",
       "catch_up",
       "check_requests",
       "checkpoint",
       "comment",
       "list_artifacts",
+      "list_contexts",
       "list_workspaces",
       "publish",
       "read",
