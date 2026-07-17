@@ -279,10 +279,16 @@ nav.scrolled{border-bottom-color:var(--border-soft)}
 .demo-comments{border-left:1px solid var(--border-soft);padding:20px 18px;display:flex;flex-direction:column;gap:11px;text-align:left}
 .demo-comments .pane-label{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .dcomment{
-  border:1px solid var(--border-soft);border-radius:8px;padding:11px 13px;
-  opacity:0;transform:translateY(4px);transition:opacity .3s ease,transform .3s ease;
+  display:none;border:1px solid var(--border-soft);border-radius:8px;padding:11px 13px;
 }
-.dcomment.show{opacity:1;transform:none}
+.dcomment.show{display:block;animation:replyIn .35s ease-out}
+/* a resolved thread folds to one line after a beat, freeing room for open ones */
+.dcomment .mini{display:none;align-items:center;gap:8px;font-family:var(--mono);font-size:10.5px;letter-spacing:.02em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dcomment .mini .tk{color:var(--success);flex:none}
+.dcomment .mini .mq{color:var(--faint);font-style:italic;overflow:hidden;text-overflow:ellipsis}
+.dcomment.collapsed{padding:9px 13px;animation:replyIn .3s ease-out}
+.dcomment.collapsed .who,.dcomment.collapsed .quote,.dcomment.collapsed .text,.dcomment.collapsed .state,.dcomment.collapsed .reply{display:none}
+.dcomment.collapsed .mini{display:flex}
 .dcomment .who{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:500}
 .dcomment .who .chip{width:18px;height:18px;border-radius:50%;background:var(--secondary);border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:9px;color:var(--muted)}
 .dcomment .quote{margin-top:8px;padding-left:10px;border-left:2px solid var(--border);font-size:12px;color:var(--muted);font-style:italic}
@@ -693,18 +699,21 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
             <div class="pane-label">Comments</div>
             <div class="comments-empty" id="cEmpty">No comments yet.</div>
             <div class="dcomment" id="cm1">
+              <div class="mini" aria-hidden="true"><span class="tk">✓</span>Rob · <span class="mq">"PRODUCT IMAGE"</span> · v2</div>
               <div class="who"><span class="chip rob">R</span>Rob</div>
               <div class="quote">"PRODUCT IMAGE"</div>
               <div class="text">No glamour shot exists yet, so draw it: a patent filing, dimension lines, real materials.</div>
               <div class="state" id="cm1s">OPEN</div>
             </div>
             <div class="dcomment" id="cm2">
+              <div class="mini" aria-hidden="true"><span class="tk">✓</span>Rob · <span class="mq">"OSC-8 Synthesizer"</span> · v2</div>
               <div class="who"><span class="chip rob">R</span>Rob</div>
               <div class="quote">"OSC-8 Synthesizer"</div>
               <div class="text">This headline could sell any store template. It's a synth. Make the type the loudest thing on the page.</div>
               <div class="state" id="cm2s">OPEN</div>
             </div>
             <div class="dcomment" id="cm3">
+              <div class="mini" aria-hidden="true"><span class="tk">✓</span>Priya · <span class="mq">"€249"</span> · v3 · 1 reply</div>
               <div class="who"><span class="chip ada">P</span>Priya<span class="ext">CLIENT</span></div>
               <div class="quote">"€249"</div>
               <div class="text">€249 with no context reads expensive. Anchor it with facts, not adjectives.</div>
@@ -1401,7 +1410,7 @@ function sceneReset(){
   sceneDone = false;
   setDoc(1, false);
   $('cEmpty').style.display = 'block';
-  ['cm1','cm2','cm3'].forEach(id => { $(id).classList.remove('show','resolved'); });
+  ['cm1','cm2','cm3'].forEach(id => { $(id).classList.remove('show','resolved','collapsed'); });
   $('cm3r').classList.remove('show');
   $('cm1s').textContent = $('cm2s').textContent = $('cm3s').textContent = 'OPEN';
   $('approvedBadge').classList.remove('show');
@@ -1417,6 +1426,7 @@ function sceneFinal(){
   $('cm3r').classList.add('show');
   resolved('cm1','cm1s','RESOLVED IN V2'); resolved('cm2','cm2s','RESOLVED IN V2');
   resolved('cm3','cm3s','RESOLVED IN V3');
+  $('cm1').classList.add('collapsed'); $('cm2').classList.add('collapsed');
   $('approvedBadge').classList.add('show');
   setLine('v3','Priya · approval','approved · preorders open Monday');
   sceneDone = true;
@@ -1439,6 +1449,9 @@ function scenePlay(){
     lit('t1', false); lit('t2', false);
     resolved('cm1','cm1s','RESOLVED IN V2'); resolved('cm2','cm2s','RESOLVED IN V2');
   });
+  /* the settled threads fold away, making room for the next reviewer */
+  s(7500, () => { $('cm1').classList.add('collapsed'); });
+  s(7750, () => { $('cm2').classList.add('collapsed'); });
   /* Ada arrives with a fresh eye */
   s(7300, () => { cursorShow(curAda, true); cursorTo(curAda, 't3', 8, 4); });
   s(8300, () => { lit('t3'); });
@@ -1457,6 +1470,7 @@ function scenePlay(){
     glSnap();
     sceneDone = true;
   });
+  s(13400,() => { $('cm3').classList.add('collapsed'); });
   /* hold, then loop */
   s(15200,() => { demoFrame.classList.add('resetting'); });
   s(15650,() => { sceneReset(); demoFrame.classList.remove('resetting'); });
