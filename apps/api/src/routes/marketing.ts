@@ -20,13 +20,24 @@ import type { AppContext } from "../context"
 export const marketingRoutes = (ctx: AppContext) => {
   const app = new Hono()
   const m = ctx.deps.marketing
-  if (!m) return app
 
   const getShell = async (): Promise<string | null> =>
     ctx.deps.shell ?? (ctx.deps.shellFetch ? await ctx.deps.shellFetch() : null)
   const shellOr404 = async (c: Context) => {
     const shell = await getShell()
     return shell ? c.html(shell) : c.notFound()
+  }
+
+  if (!m) {
+    // Marketing off, but wrangler.toml's run_worker_first is static config: on the
+    // edge these paths still reach the Worker, and nothing else serves them (there is
+    // no catch-all asset fallback). Hand back the SPA shell so `/` never 404s. On the
+    // Node tier (serveWeb) the in-process static middleware owns them — mount nothing.
+    if (!ctx.deps.serveWeb && (ctx.deps.shell || ctx.deps.shellFetch)) {
+      app.get("/", shellOr404)
+      app.get("/pricing", shellOr404)
+    }
+    return app
   }
   // Better Auth's session cookie, both spellings (useSecureCookies adds the
   // __Secure- prefix on https origins). Presence only — never validated here.

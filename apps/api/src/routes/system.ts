@@ -102,9 +102,11 @@ export const systemRoutes = (ctx: AppContext) => {
     return c.json(result)
   })
 
-  // A minimal API-origin landing. Skipped when the SPA is bundled in-process
-  // (serveWeb) so the app's own home page owns `/`.
-  if (!deps.serveWeb)
+  // A minimal API-origin landing, ONLY for deployments with no SPA at all. Skipped
+  // when the SPA is bundled in-process (serveWeb, the Node tier) AND when a shell
+  // provider exists (the edge Worker, where `/` is routed worker-first and
+  // routes/marketing.ts owns it — this placeholder would shadow the real home page).
+  if (!deps.serveWeb && !deps.shell && !deps.shellFetch)
     app.get("/", (c) =>
       c.html(
         `<!doctype html><meta charset="utf-8"><title>Derive</title>
