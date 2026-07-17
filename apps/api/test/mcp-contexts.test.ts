@@ -173,3 +173,114 @@ describe("list_contexts — ask-scoped discovery", () => {
     expect(r.text).toContain("no acting human")
   })
 })
+
+// A REST answer from the context's agent — the runner's settle write.
+const answerAs = (app: App, token: string, sessionId: string, body: Record<string, unknown>) =>
+  app.request(`/v1/sessions/${sessionId}/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  })
+
+describe("ask — open, check, and the grant edges", () => {
+  it("opens a session as the acting human; the console sees it as theirs", async () => {
+    const { app, cx, ownerToken } = await setup("mcx-ask-open")
+    expect(
+      (
+        await app.request(
+          `/v1/contexts/${cx.id}/access`,
+          jsonAs(as(dev.email), { ask_policy: "workspace" }),
+        )
+      ).status,
+    ).toBe(200)
+    const res = await call(app, ownerToken, "ask", {
+      context: "Analytics",
+      question: "What changed this week?",
+      wait: 0,
+    })
+    expect(res.state).toBe("open")
+    expect(res.context).toBe("Analytics")
+    // The runner has never polled — the caller is told it looks offline.
+    expect(res.note).toContain("OFFLINE")
+    // The session is the HUMAN's: the console lists it exactly like a web ask.
+    const sessions = await (
+      await app.request(`/v1/contexts/${cx.id}/sessions`, { headers: as(owner.email) })
+    ).json()
+    expect(sessions.sessions).toMatchObject([
+      { id: res.session_id, asker_id: owner.id, state: "open" },
+    ])
+  })
+
+  it("returns the answer inline once the runner settled; check mode carries the transcript", async () => {
+    const { app, cx, ownerToken, answeringToken } = await setup("mcx-ask-answered")
+    expect(
+      (
+        await app.request(
+          `/v1/contexts/${cx.id}/access`,
+          jsonAs(as(dev.email), { ask_policy: "workspace" }),
+        )
+      ).status,
+    ).toBe(200)
+    const opened = await call(app, ownerToken, "ask", { context: cx.id, question: "Q?", wait: 0 })
+    expect(
+      (
+        await answerAs(app, answeringToken, opened.session_id, {
+          body_md: "42.",
+          state: "answered",
+          meta: { confidence: 0.9, artifacts: [{ short_id: "abc12345", title: "Q2 report" }] },
+        })
+      ).status,
+    ).toBe(201)
+    const res = await call(app, ownerToken, "ask", { session_id: opened.session_id, wait: 0 })
+    expect(res.state).toBe("answered")
+    expect(res.answer).toMatchObject({ body_md: "42.", meta: { confidence: 0.9 } })
+    // Check-only mode re-grounds a resumed caller: asker turn + agent turn.
+    expect(res.transcript).toMatchObject([
+      { author: "asker", body_md: "Q?" },
+      { author: "agent", body_md: "42." },
+    ])
+  })
+
+  it("names the askable contexts when the ref misses — and stays silent when none are", async () => {
+    const { app, cx, ownerToken } = await setup("mcx-ask-miss")
+    // No grant at all: the miss must not enumerate what exists.
+    const dark = await callRaw(app, ownerToken, "ask", {
+      context: "Analytics",
+      question: "Q?",
+      wait: 0,
+    })
+    expect(dark.isError).toBe(true)
+    expect(dark.text).not.toContain("Analytics")
+    // Granted, a typo'd ref names what CAN be asked (askable by definition).
+    expect(
+      (
+        await app.request(
+          `/v1/contexts/${cx.id}/access`,
+          jsonAs(as(dev.email), { ask_policy: "workspace" }),
+        )
+      ).status,
+    ).toBe(200)
+    const miss = await callRaw(app, ownerToken, "ask", {
+      context: "Analytcs",
+      question: "Q?",
+      wait: 0,
+    })
+    expect(miss.isError).toBe(true)
+    expect(miss.text).toContain("Analytics")
+  })
+
+  it("a stranger's session_id reads as missing, never forbidden", async () => {
+    const { app, cx, ownerToken } = await setup("mcx-ask-leak")
+    // dev (the creator) opens a session in the console; owner's agent probes it.
+    const opened = await (
+      await app.request(
+        `/v1/contexts/${cx.id}/sessions`,
+        jsonAs(as(dev.email), { body_md: "mine" }),
+      )
+    ).json()
+    const r = await callRaw(app, ownerToken, "ask", { session_id: opened.session.id })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain("No session")
+    expect(r.text).not.toContain("forbidden")
+  })
+})
