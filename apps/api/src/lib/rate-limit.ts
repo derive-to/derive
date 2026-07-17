@@ -59,6 +59,9 @@ export interface RateLimiters {
    *  possibly unwilling address with caller-influenced content (the artifact
    *  title rides the subject) — cap it well below the general write rate. */
   invite: Limiter
+  /** MCP `ask` — each ask triggers a model run on a context owner's runner, so a
+   *  looping agent is the realistic flood. Keyed by the acting human's id. */
+  ask: Limiter
 }
 
 /**
@@ -68,7 +71,7 @@ export interface RateLimiters {
  * rates.
  */
 export function inMemoryRateLimiters(
-  opts: { publishRate?: number; commentRate?: number } = {},
+  opts: { publishRate?: number; commentRate?: number; askRate?: number } = {},
 ): RateLimiters {
   return {
     auth: inMemoryLimiter(60_000, 20),
@@ -83,6 +86,9 @@ export function inMemoryRateLimiters(
     // 10 invite emails per minute per actor: a whole team invited in one sitting
     // clears it; a spam cannon doesn't.
     invite: inMemoryLimiter(60_000, 10),
+    // 10 asks per minute per acting human: a human-paced agent never sees it; a
+    // runaway ask loop does — each ask is a model run on someone's runner.
+    ask: inMemoryLimiter(60_000, opts.askRate ?? 10),
   }
 }
 
