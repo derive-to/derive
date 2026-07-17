@@ -1,6 +1,6 @@
 # MCP Contexts: the ask surface
 
-**Status:** design approved 2026-07-17 (Connor, via brainstorming session). Not yet implemented.
+**Status:** implemented on `feat/mcp-contexts-ask` (design approved 2026-07-17).
 
 ## What and why
 
