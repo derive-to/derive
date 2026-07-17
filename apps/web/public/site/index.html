@@ -86,12 +86,15 @@ nav{position:fixed;inset:0 0 auto;z-index:100;border-bottom:1px solid transparen
   -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
 nav.scrolled{border-bottom-color:var(--border-soft)}
 .nav-inner{max-width:var(--maxw);margin:0 auto;padding:0 28px;height:64px;display:flex;align-items:center;gap:26px}
-.wordmark{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:500;letter-spacing:-0.02em}
+.wordmark{display:flex;align-items:center}
+.wordmark img{height:26px;width:auto;display:block}
 .nav-right{margin-left:auto;display:flex;align-items:center;gap:24px;font-size:14px}
 .nav-right a{color:var(--muted)}
 .nav-right a:hover{color:var(--fg)}
-.nav-right .btn{height:34px;padding:0 16px;font-size:13px;border-radius:6px;color:var(--primary-fg)}
-@media(max-width:480px){.nav-right a:not(.btn){display:none}}
+.nav-right .nav-signin{color:var(--fg)}
+.nav-right .nav-signin .arr{display:inline-block;transition:transform .18s ease}
+.nav-right .nav-signin:hover .arr{transform:translateX(3px)}
+@media(max-width:480px){.nav-right a:not(.nav-signin){display:none}}
 
 /* ══════════ HERO — the tagline, then the artifact ══════════ */
 .hero{position:relative;padding:150px 0 0}
@@ -572,17 +575,12 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
 <nav id="nav">
   <div class="nav-inner">
     <a class="wordmark" href="#">
-      <svg width="19" height="19" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-        <path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/>
-        <path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-      </svg>
-      Derive
+      <img src="/brand/wordmark-light.svg" alt="Derive">
     </a>
     <div class="nav-right">
       <a href="/pricing">Pricing</a>
       <a href="https://github.com/derive-to/derive">GitHub</a>
-      <a href="/login">Log in</a>
-      <a class="btn btn-primary" href="#join">Get beta access</a>
+      <a class="nav-signin" href="/login">Sign in to Beta <span class="arr">→</span></a>
     </div>
   </div>
 </nav>
