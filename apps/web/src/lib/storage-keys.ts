@@ -23,7 +23,9 @@ export const STORAGE_KEYS = {
   // racing a server cookie into several phantom viewers (see lib/guest-id).
   guestId: "derive.guest",
   // Legacy literals (the colon convention predates the dot switch) — kept as-is so a
-  // saved onboarding flag / folder pref survives the rename.
+  // saved folder pref survives the rename. The onboarded value is the USER ID that
+  // finished onboarding (needsOnboarding only honors a match), so a second account in
+  // the same browser is still gated; old "1" values are deliberately not honored.
   onboarded: "derive:onboarded",
   libraryFolders: "derive:show-folders",
   // Dismissal of the home's one-time "set up your team's Brandprint" nudge (owners
@@ -35,4 +37,7 @@ export const STORAGE_KEYS = {
   // The checklist's "shared a link" step: set by the share dialog's copy-link
   // action (per-browser; the server signals cover connect + first publish).
   sharedLink: "derive.shared-link",
+  // Dismissal of the home library's connect-your-agent card (see
+  // pages/library/connect-nudge) — per-browser, one click, permanent.
+  connectNudge: "derive.connect-nudge",
 } as const

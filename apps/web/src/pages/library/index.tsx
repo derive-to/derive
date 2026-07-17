@@ -36,6 +36,7 @@ import { ArtifactRow, byRecency } from "./artifact-row"
 import { BrandprintNudge } from "./brandprint-nudge"
 import { CollectionBar } from "./collection-bar"
 import { CollectionFolders, NewFolderControl } from "./collection-folders"
+import { ConnectNudge, useConnectNudge } from "./connect-nudge"
 import { DisplayMenu } from "./display-menu"
 import { FolderGroups } from "./folder-groups"
 import { FollowingStrip } from "./following-strip"
@@ -386,6 +387,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // keeps its own empty state (the workspace may hold plenty you didn't create).
   const emptyHome = homeView && filter.kind === "all" && items.length === 0
 
+  // The activation card's state — read here so the Brandprint nudge can yield to it
+  // (one onboarding surface per screen; connecting an agent comes first).
+  const connectNudge = useConnectNudge()
+
   return (
     <PageShell scrollRef={scrollRef} width="wide">
       {/* The full "Activity" feed, reached from the People tab's Recent-activity peek
@@ -510,6 +515,11 @@ function LibraryBody({ view }: { view: LibraryView }) {
         <FollowingStrip follows={follows} onUnfollow={(kind, target) => unfollow(kind, target)} />
       )}
 
+      {/* The core loop's front door: connect your agent (or make the first ask),
+          live on the page people actually land on. Above the publish card — the
+          agent path leads; hand-publishing stays one row below. */}
+      {homeView && <ConnectNudge nudge={connectNudge} />}
+
       {showPublish && <PublishCard />}
 
       {/* The quiet triage line — one entry point to the /feedback feed, home only. */}
@@ -521,7 +531,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
       {/* One-time, dismissible: the owner of a Brandprint-less workspace gets the
           "first on the team" setup nudge here (spec: Onboarding / Timing). */}
-      {homeView && <BrandprintNudge />}
+      {homeView && connectNudge.stage === null && <BrandprintNudge />}
 
       {filter.kind === "collection" ? (
         <>
