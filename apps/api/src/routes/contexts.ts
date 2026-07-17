@@ -34,6 +34,7 @@ export const contextRoutes = (ctx: AppContext) => {
     activeWorkspace,
     agentFor,
     authorize,
+    bus,
     canAskContext,
     currentUser,
     managementPrincipal,
@@ -770,6 +771,11 @@ export const contextRoutes = (ctx: AppContext) => {
           },
           state,
         )
+        // Wake any ask({wait}) long-poll the instant the turn settles. The stale-
+        // answer race above keeps state `open` — correctly no wake: the runner
+        // still owes a reply.
+        if (state !== "open")
+          bus.publish(`u:${s.asker_id}`, { type: "session.settled", session_id: s.id, state })
         return c.json({ message: messageJson(m) }, 201)
       }
 
@@ -829,6 +835,11 @@ export const contextRoutes = (ctx: AppContext) => {
         if (b instanceof Response) return bail(b)
         const updated = await meta.setSessionState(s.id, b.state)
         if (!updated) return bail(fail(c, 404, "not found"))
+        bus.publish(`u:${s.asker_id}`, {
+          type: "session.settled",
+          session_id: s.id,
+          state: b.state,
+        })
         return c.json({ session: sessionJson(updated) })
       }
 
@@ -845,6 +856,11 @@ export const contextRoutes = (ctx: AppContext) => {
       if (b instanceof Response) return bail(b)
       const updated = await meta.setSessionState(s.id, b.state)
       if (!updated) return bail(fail(c, 404, "not found"))
+      bus.publish(`u:${s.asker_id}`, {
+        type: "session.settled",
+        session_id: s.id,
+        state: b.state,
+      })
       return c.json({ session: sessionJson(updated) })
     },
   )
