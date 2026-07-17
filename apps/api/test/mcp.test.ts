@@ -170,6 +170,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       "check_requests",
       "comment",
       "list_artifacts",
+      "list_contexts",
       "list_workspaces",
       "publish",
       "read",

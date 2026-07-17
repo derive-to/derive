@@ -18,10 +18,13 @@
 // history (catch_up), COMMENT (comment), WRITE (publish), the WORK QUEUE
 // (check_requests: what teammates asked THIS agent to do — the one intent that is
 // about the agent rather than a document, which is why it earns a slot instead of a
-// parameter on catch_up), and SET UP the Brandprint (setup_brandprint: scaffold the
+// parameter on catch_up), SET UP the Brandprint (setup_brandprint: scaffold the
 // workspace's brand-profile slot so it can be authored over MCP — workspace
 // configuration, not a document write, so like check_requests it's a distinct intent
-// that doesn't reduce to a parameter on another tool). Variation lives in parameters, never a new tool: `since_version`/`to_version` turn catch_up into a
+// that doesn't reduce to a parameter on another tool), and ASK a workspace context
+// (list_contexts + ask: query the live data agents a workspace hosts, acting for the
+// connection's human — the one intent where Derive routes a question to a runner).
+// Variation lives in parameters, never a new tool: `since_version`/`to_version` turn catch_up into a
 // diff, `reply_to`/`set_state` fold reply+resolve into comment, `for_review`/role
 // turn publish into a human-reviewed proposal, and omitting `short_id` turns
 // `search` from grep-one-artifact into grep-the-workspace. A new capability is a
@@ -36,6 +39,7 @@ import {
   type BundleManifest,
   brandprintInstructions,
   bundleDoc,
+  type ContextRecord,
   capRole,
   diffLines,
   EditError,
@@ -368,6 +372,10 @@ async function buildServer(
         `then pass a workspace id or name as the "workspace" argument to act in another one (read, ` +
         `catch_up, comment, publish, list_artifacts). read/catch_up/comment also find a short_id in ` +
         `any of them automatically, so you never need to switch just to open a doc.` +
+        ` Workspaces can also host contexts — askable live data agents. list_contexts shows the ` +
+        `ones your user may ask (and whether each runner is online); ask opens a question session ` +
+        `on your user's behalf and returns the answer, or a session id to resume when the runner ` +
+        `needs longer.` +
         brandprintInstructions(bpSources.length, bpProfile) +
         pendingRequestsPointer(pendingRequests.length),
     },
@@ -2248,6 +2256,84 @@ async function buildServer(
         const msg = e instanceof PublishError ? e.message : "could not publish"
         return text(`Publish failed: ${msg}`)
       }
+    },
+  )
+
+  // ASK A CONTEXT — query a workspace's live data agents ------------------------
+  // Contexts are askable agent setups (a registered agent wired to a manifest,
+  // answering through an owner-run runner). These two tools are the agent-side
+  // ask surface, acting FOR the connection's on-behalf human: the human's own
+  // ask-grant (membership + ask_policy/roster, re-checked per call via
+  // canUserAskContext) is the ONLY gate, so an agent can ask exactly what its
+  // human can ask, and nothing more. Registered on every connection like
+  // check_requests (the tool surface never differs by auth kind); a connection
+  // with no known human is refused at call time instead. Management (create/
+  // rewire/delete) deliberately has no MCP path.
+
+  // The console's liveness window: a runner is "online" while its last queue
+  // poll (stamped at most once a minute) is within this.
+  const RUNNER_ONLINE_MS = 90_000
+  const NO_HUMAN =
+    "This connection has no acting human, and askers are people — a session is opened on your " +
+    "user's behalf. Reconnect with an OAuth login (or a token registered by a user) to ask."
+
+  // The contexts `userId` may ask in `org`, each with its manifest (identity +
+  // the current version a new session pins). One listContexts + one batched
+  // artifact read; the per-context grant checks are membership/roster lookups.
+  const askableContexts = async (org: string, userId: string) => {
+    const rows = await ctx.meta.listContexts(org)
+    const mine: ContextRecord[] = []
+    for (const x of rows) if (await ctx.canUserAskContext(userId, x)) mine.push(x)
+    const manifests = await ctx.meta.getArtifactsByIds(mine.map((x) => x.manifest_artifact_id))
+    const byId = new Map(manifests.map((a) => [a.id, a]))
+    return mine.map((x) => ({ x, manifest: byId.get(x.manifest_artifact_id) ?? null }))
+  }
+  const runnerOnline = (x: ContextRecord) =>
+    !!x.runner_seen_at && Date.now() - new Date(x.runner_seen_at).getTime() < RUNNER_ONLINE_MS
+
+  server.registerTool(
+    "list_contexts",
+    {
+      description:
+        "List the CONTEXTS you may ask in a workspace — live data agents a workspace owner wired " +
+        "up, each answering questions against its own data and tools. Returns id, name, whether " +
+        "the runner is online, the manifest doc that defines it, and your own still-open sessions " +
+        "so you can resume one with ask. Asking happens on your user's behalf and is granted per " +
+        "context, so this list is exactly what your user may ask. Defaults to your current " +
+        "workspace; pass `workspace` to look in another. Then call ask with a context's id or name.",
+      inputSchema: { workspace: wsArg },
+    },
+    async ({ workspace }) => {
+      if (!actingFor) return err(NO_HUMAN)
+      const t = await resolveWs(workspace)
+      if ("error" in t) return err(t.error)
+      const rows = await askableContexts(t.org, actingFor.id)
+      // The caller's resumable seats. A couple of small reads — a workspace holds
+      // a handful of contexts — not worth a batch port. Newest 10 per context,
+      // closed ones dropped (nothing to resume there).
+      const sessions: { id: string; context: string; state: string; updated_at: string }[] = []
+      for (const { x } of rows) {
+        for (const s of await ctx.meta.listSessions(x.id, { askerId: actingFor.id, limit: 10 })) {
+          if (s.state === "closed") continue
+          sessions.push({
+            id: s.id,
+            context: x.name,
+            state: s.state,
+            updated_at: s.updated_at ?? s.created_at,
+          })
+        }
+      }
+      return json({
+        workspace: t.org,
+        count: rows.length,
+        contexts: rows.map(({ x, manifest }) => ({
+          id: x.id,
+          name: x.name,
+          online: runnerOnline(x),
+          manifest: manifest ? { short_id: manifest.short_id, title: manifest.title } : null,
+        })),
+        your_open_sessions: sessions.slice(0, 10),
+      })
     },
   )
 
