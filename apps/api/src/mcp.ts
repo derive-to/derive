@@ -13,7 +13,7 @@
 // shaped to the agent's workflow (not the API surface), high-signal responses with
 // truncate-and-steer, semantic ids (short_id / vN / page path — never UUIDs),
 // actionable errors, and identity carried in the server `instructions` rather than a
-// tool slot. Nine tools, one per intent — WORKSPACES (list_workspaces), FIND
+// tool slot. One tool per intent — WORKSPACES (list_workspaces), FIND
 // (list_artifacts), READ content (read), GREP (search), CATCH UP on state/feedback/
 // history (catch_up), COMMENT (comment), WRITE (publish), the WORK QUEUE
 // (check_requests: what teammates asked THIS agent to do — the one intent that is
@@ -2309,9 +2309,9 @@ async function buildServer(
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
       const rows = await askableContexts(t.org, actingFor.id)
-      // The caller's resumable seats. A couple of small reads — a workspace holds
-      // a handful of contexts — not worth a batch port. Newest 10 per context,
-      // closed ones dropped (nothing to resume there).
+      // The caller's own open sessions — the resume points ask can pick up. One
+      // small read per context (a workspace holds a handful), not worth a batch
+      // port; closed sessions dropped (nothing to resume), newest 10 overall.
       const sessions: { id: string; context: string; state: string; updated_at: string }[] = []
       for (const { x } of rows) {
         for (const s of await ctx.meta.listSessions(x.id, { askerId: actingFor.id, limit: 10 })) {
@@ -2324,6 +2324,7 @@ async function buildServer(
           })
         }
       }
+      sessions.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
       return json({
         workspace: t.org,
         count: rows.length,
@@ -2394,8 +2395,89 @@ async function buildServer(
         return r.ok ? null : err(`Rate limit exceeded — retry in ${r.retryAfter}s.`)
       }
 
-      let s: SessionRecord | null = null
-      let x: ContextRecord | null = null
+      // Every mode ends here: wait out the runner while the session is open,
+      // then shape the reply from a FRESH read — the event is only a wake
+      // (check_requests' pattern), so a missed/raced wake is never a wrong
+      // answer. The channel wakes for ANY of this human's sessions settling;
+      // the loop re-checks ours and waits out the remainder.
+      const reply = async (start: SessionRecord, x: ContextRecord, checkOnly: boolean) => {
+        let s = start
+        const deadline = Date.now() + Math.min(Math.max(wait ?? 25, 0), 50) * 1000
+        while (s.state === "open" && ctx.bus.waitFor) {
+          const left = deadline - Date.now()
+          if (left <= 0) break
+          const release = new AbortController()
+          const woke = ctx.bus
+            .waitFor(`u:${actingFor.id}`, ["session.settled"], left, release.signal)
+            .catch(() => null)
+          // Close the check-then-wait gap: the settle may have landed since the
+          // last read, before our subscription existed.
+          const fresh = await ctx.meta.getSession(s.id)
+          if (fresh && fresh.state !== "open") {
+            release.abort()
+            await woke
+            s = fresh
+            break
+          }
+          const e = await woke
+          s = (await ctx.meta.getSession(s.id)) ?? s
+          if (!e) break // timed out — s holds one last fresh read
+        }
+
+        const transcript = await ctx.meta.listSessionMessages(s.id)
+        const answerRow =
+          s.state !== "open"
+            ? transcript.filter((m) => m.author_kind === "agent").at(-1)
+            : undefined
+        // Stored as TEXT (see ports); a hand-edited row must not 500 the tool —
+        // unparseable meta reads as absent, the same tolerance the route shows.
+        let answerMeta: unknown = null
+        if (answerRow?.meta) {
+          try {
+            answerMeta = JSON.parse(answerRow.meta)
+          } catch {
+            answerMeta = null
+          }
+        }
+        const note =
+          s.state === "open"
+            ? runnerOnline(x)
+              ? "Still thinking — real runs take minutes. Re-call ask with this session_id (+ wait) to collect the answer."
+              : "Queued, but the context's runner looks OFFLINE — it answers when it comes back. Re-call ask with this session_id later."
+            : s.state === "escalated"
+              ? "The runner escalated this to a human — a draft went to review. Check back later."
+              : s.state === "failed"
+                ? "The run crashed; the context's owner sees the failure. You can ask again."
+                : s.state === "closed"
+                  ? "This session was closed."
+                  : undefined
+        return json({
+          session_id: s.id,
+          context: x.name,
+          state: s.state,
+          ...(answerRow
+            ? {
+                answer: {
+                  body_md: answerRow.body_md,
+                  meta: answerMeta,
+                  created_at: answerRow.created_at,
+                },
+              }
+            : {}),
+          ...(checkOnly
+            ? {
+                transcript: transcript.slice(-20).map((m) => ({
+                  author: m.author_kind,
+                  body_md: m.body_md,
+                  created_at: m.created_at,
+                })),
+              }
+            : {}),
+          ...(note ? { note } : {}),
+        })
+      }
+
+      // CHECK or FOLLOW UP an existing session.
       if (session_id) {
         if (context)
           return err(
@@ -2417,147 +2499,68 @@ async function buildServer(
           return err(
             `No session "${session_id}" you can reach. list_contexts shows your open sessions.`,
           )
-        s = found
-        x = linked
-        if (question) {
-          if (s.state === "closed")
-            return err("That session is closed — open a new one by passing `context` + `question`.")
-          const capped = await overAskCap()
-          if (capped) return capped
-          await ctx.meta.addSessionMessage(
-            {
-              id: newId("sm"),
-              session_id: s.id,
-              author_kind: "asker",
-              author_id: actingFor.id,
-              body_md: question,
-            },
-            "open",
-          )
-          s = (await ctx.meta.getSession(s.id)) ?? s
-        }
-      } else {
-        if (!context)
-          return err(
-            "Pass `context` (+ `question`) to ask, or `session_id` to check/resume. list_contexts shows both.",
-          )
-        if (!question) return err("Opening a session needs a `question`.")
-        const t = await resolveWs(workspace)
-        if ("error" in t) return err(t.error)
-        const rows = await askableContexts(t.org, actingFor.id)
-        const ref = context.trim().toLowerCase()
-        const hit =
-          rows.find((r) => r.x.id === context) ?? rows.find((r) => r.x.name.toLowerCase() === ref)
-        // Naming the askable set leaks nothing (each entry is askable by this
-        // human, by definition) — and an empty set must stay a flat miss.
-        if (!hit)
-          return err(
-            rows.length
-              ? `No context "${context}" you can ask here. You can ask: ${rows.map((r) => r.x.name).join(", ")}.`
-              : "No contexts you can ask in this workspace.",
-          )
-        if (!hit.manifest)
-          return err(`Context "${hit.x.name}" has lost its manifest and can't be asked.`)
+        if (!question) return reply(found, linked, true)
+        if (found.state === "closed")
+          return err("That session is closed — open a new one by passing `context` + `question`.")
         const capped = await overAskCap()
         if (capped) return capped
-        x = hit.x
-        const opened = await ctx.meta.createSession({
-          id: newId("ses"),
-          context_id: x.id,
-          org_id: x.org_id,
-          asker_id: actingFor.id,
-          context_version: hit.manifest.current_version,
-        })
         await ctx.meta.addSessionMessage(
           {
             id: newId("sm"),
-            session_id: opened.id,
+            session_id: found.id,
             author_kind: "asker",
             author_id: actingFor.id,
             body_md: question,
           },
           "open",
         )
-        s = (await ctx.meta.getSession(opened.id)) ?? opened
-      }
-      if (!s || !x) return err("Pass `context` (+ `question`) or `session_id`.")
-
-      // Wait for the runner, then answer from a FRESH read — the event is only a
-      // wake (check_requests' pattern), so a missed/raced wake is never a wrong
-      // answer. The channel wakes for ANY of this human's sessions settling; the
-      // loop re-checks ours and waits out the remainder.
-      const deadline = Date.now() + Math.min(Math.max(wait ?? 25, 0), 50) * 1000
-      while (s.state === "open" && ctx.bus.waitFor) {
-        const left = deadline - Date.now()
-        if (left <= 0) break
-        const release = new AbortController()
-        const woke = ctx.bus
-          .waitFor(`u:${actingFor.id}`, ["session.settled"], left, release.signal)
-          .catch(() => null)
-        // Close the check-then-wait gap: the settle may have landed since the
-        // last read, before our subscription existed.
-        const fresh = await ctx.meta.getSession(s.id)
-        if (fresh && fresh.state !== "open") {
-          release.abort()
-          await woke
-          s = fresh
-          break
-        }
-        const e = await woke
-        s = (await ctx.meta.getSession(s.id)) ?? s
-        if (!e) break // timed out
+        // Re-read: the follow-up just flipped the session back to open.
+        return reply((await ctx.meta.getSession(found.id)) ?? found, linked, false)
       }
 
-      const transcript = await ctx.meta.listSessionMessages(s.id)
-      const answerRow =
-        s.state !== "open" ? transcript.filter((m) => m.author_kind === "agent").at(-1) : undefined
-      // Stored as TEXT (see ports); a hand-edited row must not 500 the tool —
-      // unparseable meta reads as absent, the same tolerance the route shows.
-      let answerMeta: unknown = null
-      if (answerRow?.meta) {
-        try {
-          answerMeta = JSON.parse(answerRow.meta)
-        } catch {
-          answerMeta = null
-        }
-      }
-      const checkOnly = !!session_id && !question
-      const note =
-        s.state === "open"
-          ? runnerOnline(x)
-            ? "Still thinking — real runs take minutes. Re-call ask with this session_id (+ wait) to collect the answer."
-            : "Queued, but the context's runner looks OFFLINE — it answers when it comes back. Re-call ask with this session_id later."
-          : s.state === "escalated"
-            ? "The runner escalated this to a human — a draft went to review. Check back later."
-            : s.state === "failed"
-              ? "The run crashed; the context's owner sees the failure. You can ask again."
-              : s.state === "closed"
-                ? "This session was closed."
-                : undefined
-      return json({
-        session_id: s.id,
-        context: x.name,
-        state: s.state,
-        ...(answerRow
-          ? {
-              answer: {
-                body_md: answerRow.body_md,
-                meta: answerMeta,
-                created_at: answerRow.created_at,
-              },
-            }
-          : {}),
-        ...(checkOnly
-          ? {
-              transcript: transcript.slice(-20).map((m) => ({
-                author: m.author_kind,
-                body_md: m.body_md,
-                created_at: m.created_at,
-              })),
-            }
-          : {}),
-        ...(note ? { note } : {}),
+      // OPEN a new session.
+      if (!context)
+        return err(
+          "Pass `context` (+ `question`) to ask, or `session_id` to check/resume. list_contexts shows both.",
+        )
+      if (!question) return err("Opening a session needs a `question`.")
+      const t = await resolveWs(workspace)
+      if ("error" in t) return err(t.error)
+      const rows = await askableContexts(t.org, actingFor.id)
+      const ref = context.trim()
+      const hit =
+        rows.find((r) => r.x.id === ref) ??
+        rows.find((r) => r.x.name.toLowerCase() === ref.toLowerCase())
+      // Naming the askable set leaks nothing (each entry is askable by this
+      // human, by definition); with nothing askable there is nothing to name.
+      if (!hit)
+        return err(
+          rows.length
+            ? `No context "${context}" you can ask here. You can ask: ${rows.map((r) => r.x.name).join(", ")}.`
+            : "No contexts you can ask in this workspace.",
+        )
+      if (!hit.manifest)
+        return err(`Context "${hit.x.name}" has lost its manifest and can't be asked.`)
+      const capped = await overAskCap()
+      if (capped) return capped
+      const opened = await ctx.meta.createSession({
+        id: newId("ses"),
+        context_id: hit.x.id,
+        org_id: hit.x.org_id,
+        asker_id: actingFor.id,
+        context_version: hit.manifest.current_version,
       })
+      await ctx.meta.addSessionMessage(
+        {
+          id: newId("sm"),
+          session_id: opened.id,
+          author_kind: "asker",
+          author_id: actingFor.id,
+          body_md: question,
+        },
+        "open",
+      )
+      return reply(opened, hit.x, false)
     },
   )
 

@@ -208,6 +208,12 @@ export const contextRoutes = (ctx: AppContext) => {
     updated_at: s.updated_at ?? s.created_at,
   })
 
+  // Any terminal turn — the runner's answer, a crash-fail, a close — pings the
+  // asker's channel so an MCP ask({wait}) long-poll re-reads now instead of at
+  // its timeout. A wake signal only; waiters always re-read the session.
+  const settleWake = (s: SessionRecord, state: SessionState) =>
+    bus.publish(`u:${s.asker_id}`, { type: "session.settled", session_id: s.id, state })
+
   /** A session's context + manifest, or null when either half is gone. */
   const contextOf = async (s: SessionRecord) => {
     const x = await meta.getContext(s.context_id)
@@ -771,11 +777,9 @@ export const contextRoutes = (ctx: AppContext) => {
           },
           state,
         )
-        // Wake any ask({wait}) long-poll the instant the turn settles. The stale-
-        // answer race above keeps state `open` — correctly no wake: the runner
-        // still owes a reply.
-        if (state !== "open")
-          bus.publish(`u:${s.asker_id}`, { type: "session.settled", session_id: s.id, state })
+        // The stale-answer race above keeps state `open` — correctly no wake:
+        // the runner still owes a reply.
+        if (state !== "open") settleWake(s, state)
         return c.json({ message: messageJson(m) }, 201)
       }
 
@@ -835,11 +839,7 @@ export const contextRoutes = (ctx: AppContext) => {
         if (b instanceof Response) return bail(b)
         const updated = await meta.setSessionState(s.id, b.state)
         if (!updated) return bail(fail(c, 404, "not found"))
-        bus.publish(`u:${s.asker_id}`, {
-          type: "session.settled",
-          session_id: s.id,
-          state: b.state,
-        })
+        settleWake(s, b.state)
         return c.json({ session: sessionJson(updated) })
       }
 
@@ -856,11 +856,7 @@ export const contextRoutes = (ctx: AppContext) => {
       if (b instanceof Response) return bail(b)
       const updated = await meta.setSessionState(s.id, b.state)
       if (!updated) return bail(fail(c, 404, "not found"))
-      bus.publish(`u:${s.asker_id}`, {
-        type: "session.settled",
-        session_id: s.id,
-        state: b.state,
-      })
+      settleWake(s, b.state)
       return c.json({ session: sessionJson(updated) })
     },
   )

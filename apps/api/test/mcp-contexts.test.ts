@@ -18,8 +18,7 @@ import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 const owner: TestUser = { id: "u_mcx_own", email: "mcxown@derive.test", name: "Owner" }
 const dev: TestUser = { id: "u_mcx_dev", email: "mcxdev@derive.test", name: "Dev" }
 
-type Made = ReturnType<typeof makeAuthedApp>
-type App = Made["app"]
+type App = ReturnType<typeof makeAuthedApp>["app"]
 
 // A direct tools/call over the stateless /mcp endpoint (mcp-inbox-wait's shape).
 // callRaw keeps the text + isError for error assertions; call JSON-parses a
