@@ -98,6 +98,11 @@ export const mountWeb = (app: Hono, { webRoot, shellHtml }: ServeWebOpts): void 
   )
   // Root-level static files Vite emits (favicon, manifest, …).
   app.get("/:file{[^/]+\\.[^/]+}", serveStatic({ root: webRoot }))
+  // Nested public/ directories the marketing pages reference (/site fonts + og
+  // image, /brand wordmark). Without these the shell fallback swallows them —
+  // the Worker's Static Assets serve them natively, so only Node needs the routes.
+  app.get("/site/*", serveStatic({ root: webRoot }))
+  app.get("/brand/*", serveStatic({ root: webRoot }))
   app.notFound((c) =>
     isApiPath(c.req.path) ? c.json({ error: "not found" }, 404) : c.html(shellHtml),
   )
