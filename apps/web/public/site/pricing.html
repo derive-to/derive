@@ -73,13 +73,15 @@ nav{
 }
 nav.scrolled{border-bottom-color:var(--border-soft)}
 .nav-inner{max-width:var(--maxw);margin:0 auto;padding:0 24px;height:60px;display:flex;align-items:center;gap:28px}
-.wordmark{display:flex;align-items:center;gap:9px;font-size:17px;font-weight:500;letter-spacing:-0.02em}
+.wordmark{display:flex;align-items:center}
+.wordmark img{height:24px;width:auto;display:block}
 .nav-links{display:flex;gap:22px;font-size:14px;color:var(--muted-fg);margin-left:8px}
 .nav-links a:hover{color:var(--fg)}
 .nav-links a.on{color:var(--fg)}
-.nav-cta{margin-left:auto;display:flex;align-items:center;gap:22px}
-.nav-cta .nav-login{font-size:14px;color:var(--muted-fg)}
-.nav-cta .nav-login:hover{color:var(--fg)}
+.nav-cta{margin-left:auto;display:flex;align-items:center}
+.nav-cta .nav-signin{font-size:14px;color:var(--fg)}
+.nav-cta .nav-signin .arr{display:inline-block;transition:transform .18s ease}
+.nav-cta .nav-signin:hover .arr{transform:translateX(3px)}
 .nav-cta .btn{height:32px;padding:0 14px;border-radius:6px;font-size:13px}
 @media(max-width:720px){.nav-links{display:none}}
 
@@ -161,19 +163,14 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 <nav id="nav">
   <div class="nav-inner">
     <a class="wordmark" href="/">
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-        <path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/>
-        <path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-      </svg>
-      Derive
+      <img src="/brand/wordmark-light.svg" alt="Derive">
     </a>
     <div class="nav-links">
       <a class="on" href="/pricing">Pricing</a>
       <a href="https://github.com/derive-to/derive">GitHub</a>
     </div>
     <div class="nav-cta">
-      <a class="nav-login" href="/login">Log in</a>
-      <a class="btn btn-primary" href="#join">Get beta access</a>
+      <a class="nav-signin" href="/login">Sign in to Beta <span class="arr">→</span></a>
     </div>
   </div>
 </nav>
