@@ -15,7 +15,6 @@ import {
   profileSummary,
   refFor,
   type UnfurlInfo,
-  unfurlDescription,
   unfurlMetaTags,
 } from "@derive/core"
 import { type Context, Hono } from "hono"
@@ -188,9 +187,11 @@ export const embedRoutes = (ctx: AppContext) => {
     })
   })
 
-  // The embeddable view: a small framed card (title + "View on Derive" + the live
-  // artifact in a sandboxed iframe + counts). Frameable by design — no
-  // X-Frame-Options — so external sites can drop it in.
+  // The embeddable view: the live artifact full-bleed in a sandboxed iframe, with one
+  // small "Derive" badge overlaid in the corner linking back to the artifact page.
+  // Frameable by design — no X-Frame-Options — so external sites can drop it in.
+  // `?chrome=none` drops the badge and border too and serves just the sandboxed
+  // iframe, for host pages that draw their own frame and attribution.
   app.get("/v1/embed/:ref", async (c) => {
     const ref = c.req.param("ref")
     const artifact = await readable(c, ref)
@@ -203,7 +204,9 @@ export const embedRoutes = (ctx: AppContext) => {
     if (!artifact) return c.body(embedShell(null), 200, headers)
     const info = await infoFor(artifact)
     const src = `${rawBase}/raw/${artifact.short_id}/v/${artifact.current_version}/`
-    return c.body(embedShell({ info, src }), 200, headers)
+    const shell =
+      c.req.query("chrome") === "none" ? bareShell({ info, src }) : embedShell({ info, src })
+    return c.body(shell, 200, headers)
   })
 
   // Server-rendered share URL: the SPA shell with per-artifact unfurl meta injected
@@ -262,23 +265,45 @@ export const embedRoutes = (ctx: AppContext) => {
   return app
 }
 
-/** The embeddable card document. `null` = a private/unavailable placeholder. */
+/**
+ * The embeddable document: the artifact full-bleed in a sandboxed iframe, one small
+ * translucent "Derive" badge overlaid bottom-right linking back to the artifact page
+ * (its tooltip carries "View on Derive"). `null` = a private/unavailable placeholder.
+ */
 const embedShell = (data: { info: UnfurlInfo; src: string } | null): string => {
   const css =
-    "*{box-sizing:border-box}body{margin:0;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f6f0e3;color:#2a2540}" +
-    ".c{display:flex;flex-direction:column;height:100vh;border:1px solid #e4dcc9;border-radius:12px;overflow:hidden;background:#fdf8ec}" +
-    ".h{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #eee7d6;font-size:14px}" +
-    ".h .t{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}" +
-    ".h a{margin-left:auto;color:#4f447e;text-decoration:none;font-size:12.5px;font-weight:600;white-space:nowrap}" +
-    ".h a:hover{text-decoration:underline}" +
-    ".m{width:18px;height:18px;flex:0 0 auto}" +
-    "iframe{flex:1;width:100%;border:0;background:#fff}" +
-    ".f{padding:7px 14px;border-top:1px solid #eee7d6;font:12px ui-monospace,Menlo,monospace;color:#6b6680}" +
-    ".empty{display:flex;align-items:center;justify-content:center;height:100vh;color:#6b6680;font-size:14px;text-align:center;padding:24px}"
+    "*{box-sizing:border-box}html,body{height:100%}" +
+    "body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0b0d;color:#f3f4f6}" +
+    ".c{position:relative;height:100%;border:1px solid #23252b;border-radius:8px;overflow:hidden;background:#0a0b0d}" +
+    "iframe{width:100%;height:100%;border:0;display:block;background:#0a0b0d}" +
+    ".b{position:absolute;right:10px;bottom:10px;display:flex;align-items:center;gap:7px;" +
+    "padding:5px 10px 5px 7px;border:1px solid #23252b;border-radius:6px;" +
+    "background:rgba(12,14,17,.86);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);" +
+    "box-shadow:inset 0 1px 0 rgba(255,255,255,.045);" +
+    "color:#969aa2;text-decoration:none;font-size:11px;font-weight:600;letter-spacing:.02em;line-height:1;" +
+    "transition:color .15s ease-out,border-color .15s ease-out;" +
+    "animation:bfade .4s ease-out .6s both}" +
+    "@keyframes bfade{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}" +
+    "@media (prefers-reduced-motion:reduce){.b{animation:none}}" +
+    ".b:hover{color:#f3f4f6;border-color:#31343c}" +
+    ".b:focus-visible{outline:1px solid #f3f4f6;outline-offset:2px}" +
+    ".m{width:14px;height:14px;flex:0 0 auto}" +
+    ".empty{display:flex;align-items:center;justify-content:center;height:100%;color:#969aa2;font-size:13.5px;text-align:center;padding:24px}"
   const mark =
-    '<svg class="m" viewBox="0 0 32 32" fill="none"><rect x="1" y="1" width="30" height="30" rx="8" fill="#2a2540"/><path d="M16 7l7 7v11h-4.6v-6.2h-4.8V25H9V14l7-7z" fill="none" stroke="#8a7dc0" stroke-width="1.7" stroke-linejoin="round"/></svg>'
+    '<svg class="m" viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="7" fill="#16181d" stroke="#23252b"/><path d="M16 7l7 7v11h-4.6v-6.2h-4.8V25H9V14l7-7z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>'
   const body = data
-    ? `<div class="c"><div class="h">${mark}<span class="t">${escapeHtml(data.info.title)}</span><a href="${escapeHtml(data.info.pageUrl)}" target="_blank" rel="noopener">View on Derive ↗</a></div><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe><div class="f">${escapeHtml(unfurlDescription(data.info))}</div></div>`
+    ? `<div class="c"><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe><a class="b" href="${escapeHtml(data.info.pageUrl)}" target="_blank" rel="noopener" title="View on Derive">${mark}Derive</a></div>`
     : `<div class="empty">This artifact is private or no longer available.<br>Open it on Derive to request access.</div>`
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${data ? escapeHtml(data.info.title) : "Derive"}</title><style>${css}</style></head><body>${body}</body></html>`
+}
+
+/**
+ * `?chrome=none`: no badge, no border — just the sandboxed iframe, full-bleed, for
+ * host pages that draw their own frame and attribution.
+ */
+const bareShell = (data: { info: UnfurlInfo; src: string }): string => {
+  const css =
+    "html,body{height:100%}body{margin:0;background:#0a0b0d}" +
+    "iframe{width:100%;height:100%;border:0;display:block;background:#0a0b0d}"
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${escapeHtml(data.info.title)}</title><style>${css}</style></head><body><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe></body></html>`
 }
