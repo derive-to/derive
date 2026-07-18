@@ -62,6 +62,7 @@ export const artifact = sqliteTable("artifact", {
   // deploy/drop-v1-access.sql — new ones never create them.)
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
+  reflow: integer("reflow").$type<0 | 1>().notNull().default(0),
   // When locked, direct publishes are rejected — changes must go through the
   // proposal → approval flow (any editor can toggle it).
   locked: integer("locked").$type<0 | 1>().notNull().default(0),

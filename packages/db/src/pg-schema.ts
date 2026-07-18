@@ -46,6 +46,7 @@ export const artifact = pgTable("artifact", {
   password_hash: text("password_hash"),
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
+  reflow: integer("reflow").$type<0 | 1>().notNull().default(0),
   locked: integer("locked").$type<0 | 1>().notNull().default(0),
   current_version: integer("current_version").notNull().default(0),
   current_content_type: text("current_content_type"),

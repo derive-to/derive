@@ -198,6 +198,10 @@ export function createApp(deps: AppDeps): Hono {
         prefix,
         rawPath,
         cacheControlFor(a.link_role, !!a.password_hash),
+        undefined,
+        undefined,
+        // Mobile auto-reflow is opt-in per artifact ([Q2]) — byte-faithful by default.
+        !!a.reflow,
       )
     }
     app.use("*", async (c, next) => {
