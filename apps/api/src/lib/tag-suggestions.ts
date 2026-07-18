@@ -1,7 +1,7 @@
 import type { ArtifactRecord, MetaStore, SearchIndex, VersionRecord } from "@derive/core"
 
 // Tag suggestions for an artifact — the discover half of "auto-tag", shared by the HTTP
-// route (GET /v1/artifacts/{shortId}/tag-suggestions) and the MCP `suggest_tags` tool so
+// route (GET /v1/artifacts/{shortId}/tag-suggestions) and the MCP `organize` tool so
 // the two never drift. It answers "what should this be tagged?" the way a librarian would:
 // look at what similar things are already tagged, and reuse that vocabulary.
 

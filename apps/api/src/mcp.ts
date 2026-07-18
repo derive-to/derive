@@ -712,7 +712,7 @@ async function buildServer(
     "list_artifacts",
     {
       description:
-        "List the artifacts (docs, plans, sites, skills) in a workspace — short id, title, kind, is_skill, current version, access, and its browse `tags`. Defaults to your current workspace; pass `workspace` (id or name from list_workspaces) to list another one. Pass `tag` to list only artifacts carrying that tag (findability — list_tags shows the vocabulary). Pass skills:true to list only skills (reusable agent procedure). Includes your own unlisted publishes — out of the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
+        "List the artifacts (docs, plans, sites, skills) in a workspace — short id, title, kind, is_skill, current version, access, and its browse `tags`. Defaults to your current workspace; pass `workspace` (id or name from list_workspaces) to list another one. Pass `tag` to list only artifacts carrying that tag (findability — organize shows the vocabulary). Pass skills:true to list only skills (reusable agent procedure). Includes your own unlisted publishes — out of the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
       inputSchema: {
         query: z.string().optional().describe("Optional title search filter."),
         tag: z
@@ -2003,7 +2003,7 @@ async function buildServer(
           .array(z.string())
           .optional()
           .describe(
-            "Browse tags to set on the artifact — workspace-wide labels that make it findable (list_tags shows the vocabulary; suggest_tags proposes from similar docs). Reuse an existing tag over a near-duplicate. Given ⇒ REPLACES the set (normalized: trimmed, lowercased, deduped, capped 20); [] clears; omitted leaves existing tags untouched on a republish.",
+            "Browse tags to set on the artifact — workspace-wide labels that make it findable (organize shows the vocabulary and proposes tags from similar docs). Reuse an existing tag over a near-duplicate. Given ⇒ REPLACES the set (normalized: trimmed, lowercased, deduped, capped 20); [] clears; omitted leaves existing tags untouched on a republish.",
           ),
         filename: z
           .string()

@@ -208,7 +208,7 @@ export const favoriteRoutes = (ctx: AppContext) => {
       const artifact = await requireArtifact(c, "read")
       if (artifact instanceof Response) return bail(artifact)
       const me = await currentUser(c)
-      // Shared with the MCP `suggest_tags` tool — one implementation of "what should this
+      // Shared with the MCP `organize` tool — one implementation of "what should this
       // be tagged?" so the route and the agent tool never disagree.
       const suggestions = await computeTagSuggestions(
         { meta, search, sourceText },

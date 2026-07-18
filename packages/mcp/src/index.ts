@@ -188,7 +188,7 @@ server.registerTool(
   "list_artifacts",
   {
     description:
-      "List the artifacts in your workspace — short id, title, kind, current version, access, and browse `tags`. Defaults to this session's workspace; pass `workspace` (id or name from list_workspaces) to list another. Pass `tag` to list only artifacts carrying that tag (list_tags shows the vocabulary). Start here to find what to work on, then catch_up or read it.",
+      "List the artifacts in your workspace — short id, title, kind, current version, access, and browse `tags`. Defaults to this session's workspace; pass `workspace` (id or name from list_workspaces) to list another. Pass `tag` to list only artifacts carrying that tag (organize shows the vocabulary). Start here to find what to work on, then catch_up or read it.",
     inputSchema: {
       query: z.string().optional().describe("Optional title search filter."),
       tag: z
@@ -742,7 +742,7 @@ server.registerTool(
         .array(z.string())
         .optional()
         .describe(
-          "Browse tags to set on the artifact — labels that make it findable (list_tags shows the vocabulary; suggest_tags proposes from similar docs). Reuse an existing tag over a near-duplicate. Given ⇒ replaces the set; omitted ⇒ leaves existing tags untouched on a republish.",
+          "Browse tags to set on the artifact — labels that make it findable (organize shows the vocabulary and proposes tags from similar docs). Reuse an existing tag over a near-duplicate. Given ⇒ replaces the set; omitted ⇒ leaves existing tags untouched on a republish.",
         ),
       // The v2 access triple for a NEW artifact (see access-model.md); omit any to
       // take the workspace default (the team draft — the human you act for owns it
