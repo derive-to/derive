@@ -187,10 +187,10 @@ export const embedRoutes = (ctx: AppContext) => {
     })
   })
 
-  // The embeddable view: the live artifact full-bleed in a sandboxed iframe, with one
-  // small "Derive" badge overlaid in the corner linking back to the artifact page.
-  // Frameable by design — no X-Frame-Options — so external sites can drop it in.
-  // `?chrome=none` drops the badge and border too and serves just the sandboxed
+  // The embeddable view: the live artifact full-bleed in a sandboxed iframe, with a
+  // small "Derive" plaque set into the frame's corner linking back to the artifact
+  // page. Frameable by design — no X-Frame-Options — so external sites can drop it
+  // in. `?chrome=none` drops the plaque and border too and serves just the sandboxed
   // iframe, for host pages that draw their own frame and attribution.
   app.get("/v1/embed/:ref", async (c) => {
     const ref = c.req.param("ref")
@@ -266,31 +266,33 @@ export const embedRoutes = (ctx: AppContext) => {
 }
 
 /**
- * The embeddable document: the artifact full-bleed in a sandboxed iframe, one small
- * translucent "Derive" badge overlaid bottom-right linking back to the artifact page
- * (its tooltip carries "View on Derive"). `null` = a private/unavailable placeholder.
+ * The embeddable document: the artifact full-bleed in a sandboxed iframe, with a small
+ * "Derive" plaque set into the frame's bottom-right corner linking back to the artifact
+ * page (its tooltip carries "View on Derive"). The shell follows the viewer's
+ * light/dark scheme with the app's own tokens; the plaque is a solid surface so it
+ * holds over any artifact content. `null` = a private/unavailable placeholder.
  */
 const embedShell = (data: { info: UnfurlInfo; src: string } | null): string => {
   const css =
+    ":root{color-scheme:light dark;--canvas:#0a0b0d;--frame:#23252b;--chip:#101216;--tx:#969aa2;--ink:#f3f4f6}" +
+    "@media (prefers-color-scheme: light){:root{--canvas:#f7f8fa;--frame:#e5e7eb;--chip:#ffffff;--tx:#5c616b;--ink:#14161a}}" +
     "*{box-sizing:border-box}html,body{height:100%}" +
-    "body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0b0d;color:#f3f4f6}" +
-    ".c{position:relative;height:100%;border:1px solid #23252b;border-radius:8px;overflow:hidden;background:#0a0b0d}" +
-    "iframe{width:100%;height:100%;border:0;display:block;background:#0a0b0d}" +
-    ".b{position:absolute;right:10px;bottom:10px;display:flex;align-items:center;gap:7px;" +
-    "padding:5px 10px 5px 7px;border:1px solid #23252b;border-radius:6px;" +
-    "background:rgba(12,14,17,.86);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);" +
-    "box-shadow:inset 0 1px 0 rgba(255,255,255,.045);" +
-    "color:#969aa2;text-decoration:none;font-size:11px;font-weight:600;letter-spacing:.02em;line-height:1;" +
-    "transition:color .15s ease-out,border-color .15s ease-out;" +
-    "animation:bfade .4s ease-out .6s both}" +
-    "@keyframes bfade{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}" +
+    "body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--canvas);color:var(--ink)}" +
+    ".c{position:relative;height:100%;border:1px solid var(--frame);border-radius:8px;overflow:hidden;background:var(--canvas)}" +
+    "iframe{width:100%;height:100%;border:0;display:block;background:var(--canvas)}" +
+    ".b{position:absolute;right:0;bottom:0;display:flex;align-items:center;gap:6px;" +
+    "padding:6px 12px 6px 9px;background:var(--chip);" +
+    "border-top:1px solid var(--frame);border-left:1px solid var(--frame);border-radius:6px 0 7px 0;" +
+    "color:var(--tx);text-decoration:none;font-size:11px;font-weight:600;letter-spacing:.02em;line-height:1;" +
+    "transition:color .15s ease-out;animation:bfade .4s ease-out .6s both}" +
+    "@keyframes bfade{from{opacity:0}to{opacity:1}}" +
     "@media (prefers-reduced-motion:reduce){.b{animation:none}}" +
-    ".b:hover{color:#f3f4f6;border-color:#31343c}" +
-    ".b:focus-visible{outline:1px solid #f3f4f6;outline-offset:2px}" +
-    ".m{width:14px;height:14px;flex:0 0 auto}" +
-    ".empty{display:flex;align-items:center;justify-content:center;height:100%;color:#969aa2;font-size:13.5px;text-align:center;padding:24px}"
+    ".b:hover{color:var(--ink)}" +
+    ".b:focus-visible{outline:1px solid var(--ink);outline-offset:-3px}" +
+    ".m{width:13px;height:13px;flex:0 0 auto}" +
+    ".empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--tx);font-size:13.5px;text-align:center;padding:24px}"
   const mark =
-    '<svg class="m" viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect x="1" y="1" width="30" height="30" rx="7" fill="#16181d" stroke="#23252b"/><path d="M16 7l7 7v11h-4.6v-6.2h-4.8V25H9V14l7-7z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>'
+    '<svg class="m" viewBox="6 4 20 24" fill="none" aria-hidden="true"><path d="M16 7l7 7v11h-4.6v-6.2h-4.8V25H9V14l7-7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>'
   const body = data
     ? `<div class="c"><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe><a class="b" href="${escapeHtml(data.info.pageUrl)}" target="_blank" rel="noopener" title="View on Derive">${mark}Derive</a></div>`
     : `<div class="empty">This artifact is private or no longer available.<br>Open it on Derive to request access.</div>`
@@ -298,12 +300,14 @@ const embedShell = (data: { info: UnfurlInfo; src: string } | null): string => {
 }
 
 /**
- * `?chrome=none`: no badge, no border — just the sandboxed iframe, full-bleed, for
- * host pages that draw their own frame and attribution.
+ * `?chrome=none`: no plaque, no border — just the sandboxed iframe, full-bleed, for
+ * host pages that draw their own frame and attribution. Scheme-aware canvas only.
  */
 const bareShell = (data: { info: UnfurlInfo; src: string }): string => {
   const css =
-    "html,body{height:100%}body{margin:0;background:#0a0b0d}" +
-    "iframe{width:100%;height:100%;border:0;display:block;background:#0a0b0d}"
+    ":root{color-scheme:light dark;--canvas:#0a0b0d}" +
+    "@media (prefers-color-scheme: light){:root{--canvas:#f7f8fa}}" +
+    "html,body{height:100%}body{margin:0;background:var(--canvas)}" +
+    "iframe{width:100%;height:100%;border:0;display:block;background:var(--canvas)}"
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${escapeHtml(data.info.title)}</title><style>${css}</style></head><body><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe></body></html>`
 }
