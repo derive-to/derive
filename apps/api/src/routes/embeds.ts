@@ -266,9 +266,9 @@ export const embedRoutes = (ctx: AppContext) => {
 }
 
 /**
- * The embeddable document: the artifact full-bleed in a sandboxed iframe, with a small
- * "Derive" plaque set into the frame's bottom-right corner linking back to the artifact
- * page (its tooltip carries "View on Derive"). The shell follows the viewer's
+ * The embeddable document: the artifact full-bleed in a sandboxed iframe, with a
+ * "Made on Derive" plaque set into the frame's bottom-right corner linking to the
+ * artifact page (`?ref=embed`; tooltip "View on Derive"). The shell follows the viewer's
  * light/dark scheme with the app's own tokens; the plaque is a solid surface so it
  * holds over any artifact content. `null` = a private/unavailable placeholder.
  */
@@ -280,21 +280,29 @@ const embedShell = (data: { info: UnfurlInfo; src: string } | null): string => {
     "body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--canvas);color:var(--ink)}" +
     ".c{position:relative;height:100%;border:1px solid var(--frame);border-radius:8px;overflow:hidden;background:var(--canvas)}" +
     "iframe{width:100%;height:100%;border:0;display:block;background:var(--canvas)}" +
-    ".b{position:absolute;right:0;bottom:0;display:flex;align-items:center;gap:6px;" +
-    "padding:6px 12px 6px 9px;background:var(--chip);" +
+    ".b{position:absolute;right:0;bottom:0;display:flex;align-items:center;gap:7px;" +
+    "padding:7px 13px 7px 10px;background:var(--chip);" +
     "border-top:1px solid var(--frame);border-left:1px solid var(--frame);border-radius:6px 0 7px 0;" +
-    "color:var(--tx);text-decoration:none;font-size:11px;font-weight:600;letter-spacing:.02em;line-height:1;" +
-    "transition:color .15s ease-out;animation:bfade .4s ease-out .6s both}" +
+    "color:var(--tx);text-decoration:none;font-size:11.5px;font-weight:600;letter-spacing:.02em;line-height:1;" +
+    "transition:color .18s ease-out,background .18s ease-out,border-color .18s ease-out;" +
+    "animation:bfade .4s ease-out .6s both}" +
+    // Frosted plaque: an 80% theme tint over a blur of whatever content sits beneath.
+    // Legibility comes from the tint (never from the unknown backdrop); the blur lets
+    // the chip pick up a hint of the artifact's color so it harmonizes instead of
+    // clashing. Solid --chip above is the graceful fallback.
+    "@supports ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){" +
+    ".b{background:color-mix(in srgb,var(--chip) 80%,transparent);" +
+    "-webkit-backdrop-filter:blur(22px) saturate(1.5);backdrop-filter:blur(22px) saturate(1.5)}}" +
     "@keyframes bfade{from{opacity:0}to{opacity:1}}" +
     "@media (prefers-reduced-motion:reduce){.b{animation:none}}" +
-    ".b:hover{color:var(--ink)}" +
+    ".b:hover{background:var(--ink);border-color:var(--ink);color:var(--canvas)}" +
     ".b:focus-visible{outline:1px solid var(--ink);outline-offset:-3px}" +
-    ".m{width:13px;height:13px;flex:0 0 auto}" +
+    ".m{width:14px;height:14px;flex:0 0 auto}" +
     ".empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--tx);font-size:13.5px;text-align:center;padding:24px}"
   const mark =
     '<svg class="m" viewBox="6 4 20 24" fill="none" aria-hidden="true"><path d="M16 7l7 7v11h-4.6v-6.2h-4.8V25H9V14l7-7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>'
   const body = data
-    ? `<div class="c"><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe><a class="b" href="${escapeHtml(data.info.pageUrl)}" target="_blank" rel="noopener" title="View on Derive">${mark}Derive</a></div>`
+    ? `<div class="c"><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe><a class="b" href="${escapeHtml(`${data.info.pageUrl}?ref=embed`)}" target="_blank" rel="noopener" title="View on Derive">${mark}Made on Derive</a></div>`
     : `<div class="empty">This artifact is private or no longer available.<br>Open it on Derive to request access.</div>`
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${data ? escapeHtml(data.info.title) : "Derive"}</title><style>${css}</style></head><body>${body}</body></html>`
 }
