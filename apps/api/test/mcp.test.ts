@@ -710,6 +710,36 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(inspect.artifacts[0].collections).toContain(col.id)
   })
 
+  it("organize never folds a roaming artifact into the default workspace's collection", async () => {
+    const { app, token, meta } = appWithGrant(
+      "collect-cross-workspace",
+      "openid derive:read derive:publish",
+    )
+    // Establish the OAuth grant's default before adding a second workspace.
+    await call(app, token, "list_workspaces")
+    await meta.setWorkspace("ws_other", "Other workspace")
+    await meta.setMembership({ id: "m_other", org_id: "ws_other", user_id: "u_o", role: "owner" })
+
+    // Publish outside the default workspace, then omit `workspace` on organize so reach()
+    // takes its intentional cross-workspace lookup path.
+    const other = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Elsewhere",
+          content: "# Elsewhere\n\nbody",
+          workspace: "ws_other",
+        }),
+      ),
+    ).short_id
+    const res = JSON.parse(
+      toolText(await call(app, token, "organize", { short_ids: [other], collection: "Default" })),
+    )
+    expect(res.collected).toMatchObject({ added: 0, skipped: 1 })
+    const artifact = await meta.getByShortId(other)
+    if (!artifact) throw new Error("published artifact disappeared")
+    expect(await meta.collectionIdsForArtifact(artifact.id)).toEqual([])
+  })
+
   it("list_artifacts marks skills and filters to them with skills:true", async () => {
     const { app, token } = appWithGrant("listskills", "openid derive:read derive:publish")
     const doc = (await (await publish(app, token, "A plain doc")).json()).short_id

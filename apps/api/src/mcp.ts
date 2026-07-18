@@ -1389,14 +1389,23 @@ async function buildServer(
           // Resolve the target collection: an id, else a name (matched team-visible, else
           // created). Then the caller must be able to MANAGE it (mirrors the HTTP route).
           const ref = collection.trim()
+          if (!ref) return err("Pass a non-empty collection name or id.")
           let col = await ctx.meta.getCollection(ref)
           if (col && col.org_id !== t.org) return err("That collection is in another workspace.")
           if (!col) {
-            const existing = (await ctx.meta.listCollections(t.org)).find(
-              (x) =>
-                x.title.toLowerCase() === ref.toLowerCase() &&
-                (x.workspace_access === "member" || x.created_by === actorId),
-            )
+            const existing = (
+              await Promise.all(
+                (
+                  await ctx.meta.listCollections(t.org)
+                ).map(async (x) => ({
+                  x,
+                  visible:
+                    x.workspace_access === "member" ||
+                    x.created_by === actorId ||
+                    !!(await ctx.meta.getCollectionMember(x.id, actorId)),
+                })),
+              )
+            ).find(({ x, visible }) => x.title.toLowerCase() === ref.toLowerCase() && visible)?.x
             if (existing) col = existing
             else {
               col = await ctx.meta.createCollection({
@@ -1427,7 +1436,16 @@ async function buildServer(
           for (const shortId of [...new Set(short_ids)]) {
             const reached = await reach(shortId, workspace)
             // Adding to a shared collection re-shares the artifact → needs share standing.
-            if (!reached || "error" in reached || !roleAllows(reached.role, "share")) {
+            // `reach` may roam across the grant when `workspace` is omitted, but a collection
+            // can contain only artifacts from its own workspace (the HTTP bulk route has the
+            // same guard). Without this check, a default-workspace collection could reference
+            // an artifact from another workspace the grant can reach.
+            if (
+              !reached ||
+              "error" in reached ||
+              reached.org !== t.org ||
+              !roleAllows(reached.role, "share")
+            ) {
               skipped++
               continue
             }
@@ -1488,12 +1506,21 @@ async function buildServer(
         ctx.meta.tagCounts(t.org),
         ctx.meta.listCollections(t.org),
       ])
+      const visibleCols = await Promise.all(
+        cols.map(async (col) => ({
+          col,
+          visible:
+            col.workspace_access === "member" ||
+            col.created_by === actorId ||
+            !!(await ctx.meta.getCollectionMember(col.id, actorId)),
+        })),
+      )
       return json({
         workspace: t.org,
         vocabulary: sortVocab(tags),
-        collections: cols
-          .filter((col) => col.workspace_access === "member" || col.created_by === actorId)
-          .map((col) => ({ id: col.id, title: col.title, count: col.count })),
+        collections: visibleCols
+          .filter(({ visible }) => visible)
+          .map(({ col }) => ({ id: col.id, title: col.title, count: col.count })),
       })
     },
   )
