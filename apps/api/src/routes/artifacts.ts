@@ -75,6 +75,7 @@ import {
   workspaceSearchReport,
 } from "../lib/search"
 import { enqueueSlackReviewRequestedDm } from "../lib/slack-dm"
+import { normalizeTags, parseTagsField } from "../lib/tags"
 import { log } from "../log"
 import { Artifact } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
@@ -738,6 +739,13 @@ export const artifactRoutes = (ctx: AppContext) => {
           resolves: toResolve,
         },
       )
+      // Tag at publish time — the one-step "auto-tag on create/version" hook. `tags` is a
+      // JSON array or a comma/space list on the multipart body; an editor can set it (the
+      // publisher already holds publish standing on this artifact by having written the
+      // version). An empty string clears; an absent field leaves tags untouched, so a
+      // republish that doesn't mention tags keeps them.
+      const parsedTags = parseTagsField(body["tags"])
+      if (parsedTags !== null) await meta.setArtifactTags(artifact.id, normalizeTags(parsedTags))
       // Open a review round if the publisher asked for one (the /derive loop). The
       // reviewer is the human behind the publish (onBehalf covers both a session
       // user and an agent's registrant); falls back to the workspace's first owner

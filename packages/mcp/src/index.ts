@@ -188,14 +188,18 @@ server.registerTool(
   "list_artifacts",
   {
     description:
-      "List the artifacts in your workspace — short id, title, kind, current version, access. Defaults to this session's workspace; pass `workspace` (id or name from list_workspaces) to list another. Start here to find what to work on, then catch_up or read it.",
+      "List the artifacts in your workspace — short id, title, kind, current version, access, and browse `tags`. Defaults to this session's workspace; pass `workspace` (id or name from list_workspaces) to list another. Pass `tag` to list only artifacts carrying that tag (organize shows the vocabulary). Start here to find what to work on, then catch_up or read it.",
     inputSchema: {
       query: z.string().optional().describe("Optional title search filter."),
+      tag: z
+        .string()
+        .optional()
+        .describe("Only artifacts carrying this browse tag (case-insensitive)."),
       workspace: wsArg,
     },
   },
-  async ({ query, workspace: ws }) => {
-    const arts = await clientFor(ws).list(query)
+  async ({ query, tag, workspace: ws }) => {
+    const arts = await clientFor(ws).list(query, tag)
     return json({ count: arts.length, artifacts: arts })
   },
 )
@@ -613,6 +617,76 @@ server.registerTool(
   },
 )
 
+// ORGANIZE — ONE tool for the library's findability metadata: tags + collections,
+// read + write. Replaces the old list_tags/suggest_tags/tag/list_collections/collect.
+server.registerTool(
+  "organize",
+  {
+    description:
+      "Tags and collections in one tool — the library's findability layer.\n" +
+      "• READ (no `short_ids`): the workspace's tag vocabulary (tag → count) and its collections. Call this before tagging to reuse an existing tag over a near-duplicate.\n" +
+      "• READ (with `short_ids`): those artifacts' current tags + collections, plus `suggested` tags drawn from the most semantically-similar docs (when one id is given).\n" +
+      "• WRITE: pass `add`/`remove`/`set` to change tags (add never drops existing; set replaces the whole set), and/or `collection` (an id, or a name — created if new) to fold the artifacts into a collection. Each artifact is authorized on its own; ones you can't touch are skipped.\n" +
+      "Tag freely and reuse the vocabulary — a well-tagged library is findable. Collections are heavier: a tag for plain findability, a collection when a set is a real unit.",
+    inputSchema: {
+      short_ids: z
+        .array(z.string())
+        .optional()
+        .describe("Artifacts to inspect or organize. Omit for the workspace overview."),
+      add: z.array(z.string()).optional().describe("Tags to add (union; never drops existing)."),
+      remove: z.array(z.string()).optional().describe("Tags to remove."),
+      set: z
+        .array(z.string())
+        .optional()
+        .describe("Replace the whole tag set (overrides add/remove)."),
+      collection: z
+        .string()
+        .optional()
+        .describe("Fold `short_ids` into this collection — an id, or a name (created if new)."),
+      workspace: wsArg,
+    },
+  },
+  async ({ short_ids, add, remove, set, collection, workspace: ws }) => {
+    const client = clientFor(ws)
+    try {
+      // WRITE
+      if (add || remove || set || collection) {
+        if (!short_ids?.length)
+          return text("Pass `short_ids` to organize (with add/remove/set and/or collection).")
+        const out: Record<string, unknown> = {}
+        if (add || remove || set) out.tagged = await client.tag(short_ids, { add, remove, set })
+        if (collection) out.collected = await client.collect(short_ids, collection)
+        return json(out)
+      }
+      // READ: inspect specific artifacts
+      if (short_ids?.length) {
+        const artifacts = await Promise.all(
+          short_ids.map(async (id) => {
+            const a = await client.get(id)
+            return { short_id: id, tags: a.tags ?? [], collections: a.collections ?? [] }
+          }),
+        )
+        // Suggestions only for a single artifact (aggregating across many is ambiguous).
+        const only = short_ids.length === 1 ? short_ids[0] : undefined
+        const suggested = only ? (await client.suggestTags(only)).suggested : undefined
+        return json({
+          artifacts,
+          ...(suggested ? { suggested } : {}),
+          vocabulary: (await client.listTags()).slice(0, 50),
+        })
+      }
+      // READ: workspace overview
+      const [vocabulary, collections] = await Promise.all([
+        client.listTags(),
+        client.listCollections(),
+      ])
+      return json({ vocabulary, collections })
+    } catch (e) {
+      return err(e instanceof Error ? e.message : "organize failed")
+    }
+  },
+)
+
 // WRITE — publish live, or file a proposal for review -------------------------
 server.registerTool(
   "publish",
@@ -664,6 +738,12 @@ server.registerTool(
         .optional()
         .describe("Omit to create a new artifact; pass it to add a version."),
       title: z.string().optional(),
+      tags: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Browse tags to set on the artifact — labels that make it findable (organize shows the vocabulary and proposes tags from similar docs). Reuse an existing tag over a near-duplicate. Given ⇒ replaces the set; omitted ⇒ leaves existing tags untouched on a republish.",
+        ),
       // The v2 access triple for a NEW artifact (see access-model.md); omit any to
       // take the workspace default (the team draft — the human you act for owns it
       // and promotes it when ready). Ignored on a republish.
@@ -696,6 +776,7 @@ server.registerTool(
     filename,
     short_id,
     title,
+    tags,
     workspace_access,
     link_role,
     listed,
@@ -767,6 +848,7 @@ server.registerTool(
               ? undefined
               : fallbackFilename(content)),
         title,
+        tags,
         workspaceAccess: workspace_access,
         linkRole: link_role,
         listed,

@@ -174,6 +174,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       "list_artifacts",
       "list_contexts",
       "list_workspaces",
+      "organize",
       "publish",
       "read",
       "search",
@@ -181,7 +182,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       "stage_asset",
       "stage_publish",
     ])
-    // Consolidated away — folded into catch_up / comment / publish.
+    // Consolidated away — folded into catch_up / comment / publish / organize.
     for (const gone of [
       "whoami",
       "catch_me_up",
@@ -191,6 +192,12 @@ describe("remote MCP endpoint (/mcp)", () => {
       "propose",
       "read_artifact",
       "read_section",
+      // Tags/collections now live under the one `organize` tool.
+      "list_tags",
+      "suggest_tags",
+      "tag",
+      "list_collections",
+      "collect",
     ])
       expect(names).not.toContain(gone)
   })
@@ -636,6 +643,101 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(read).toContain("title: My Plan")
     expect(read).toContain("# My Plan")
     expect(read).not.toContain("\\n")
+  })
+
+  it("organize: publish tags, overview vocabulary, apply, list_artifacts filter, inspect+suggest", async () => {
+    const { app, token } = appWithGrant("organize", "openid derive:read derive:publish")
+    // Auto-tag on publish.
+    const a = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Roadmap",
+          content: "# Roadmap\n\nbody",
+          tags: ["planning", "q3"],
+        }),
+      ),
+    ).short_id
+    const b = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Notes", content: "# Notes\n\nbody" })),
+    ).short_id
+
+    // organize() with no args → the workspace overview: vocabulary + collections.
+    const overview = JSON.parse(toolText(await call(app, token, "organize")))
+    expect(overview.vocabulary.find((t: { tag: string }) => t.tag === "planning")?.count).toBe(1)
+    expect(Array.isArray(overview.collections)).toBe(true)
+
+    // list_artifacts carries tags, and tag: filters to the tagged doc.
+    const filtered = JSON.parse(toolText(await call(app, token, "list_artifacts", { tag: "q3" })))
+    expect(filtered.artifacts.map((x: { short_id: string }) => x.short_id)).toEqual([a])
+    expect(filtered.artifacts[0].tags.sort()).toEqual(["planning", "q3"])
+
+    // organize({short_ids, add}) applies (union) and reports it tagged.
+    const tagged = JSON.parse(
+      toolText(await call(app, token, "organize", { short_ids: [b], add: ["planning", "notes"] })),
+    )
+    expect(tagged.tagged.updated).toBe(1)
+    expect(tagged.tagged.results[0].tags.sort()).toEqual(["notes", "planning"])
+
+    // organize({short_ids:[a]}) inspects: current tags + collections + vocabulary (+ suggestions).
+    const inspect = JSON.parse(toolText(await call(app, token, "organize", { short_ids: [a] })))
+    expect(inspect.artifacts[0].tags.sort()).toEqual(["planning", "q3"])
+    expect(inspect.artifacts[0].collections).toEqual([])
+    expect(inspect.vocabulary.map((t: { tag: string }) => t.tag)).toContain("notes")
+  })
+
+  it("organize: folds artifacts into a collection by name, then lists membership", async () => {
+    const { app, token } = appWithGrant("collect", "openid derive:read derive:publish")
+    const a = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "One", content: "# One\n\nbody" })),
+    ).short_id
+    const b = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Two", content: "# Two\n\nbody" })),
+    ).short_id
+
+    const res = JSON.parse(
+      toolText(await call(app, token, "organize", { short_ids: [a, b], collection: "Q3 Work" })),
+    )
+    expect(res.collected.added).toBe(2)
+    expect(res.collected.collection.title).toBe("Q3 Work")
+
+    // The overview lists the collection with its count; inspecting an artifact shows membership.
+    const overview = JSON.parse(toolText(await call(app, token, "organize")))
+    const col = overview.collections.find(
+      (c: { title: string; count: number }) => c.title === "Q3 Work",
+    )
+    expect(col?.count).toBe(2)
+    const inspect = JSON.parse(toolText(await call(app, token, "organize", { short_ids: [a] })))
+    expect(inspect.artifacts[0].collections).toContain(col.id)
+  })
+
+  it("organize never folds a roaming artifact into the default workspace's collection", async () => {
+    const { app, token, meta } = appWithGrant(
+      "collect-cross-workspace",
+      "openid derive:read derive:publish",
+    )
+    // Establish the OAuth grant's default before adding a second workspace.
+    await call(app, token, "list_workspaces")
+    await meta.setWorkspace("ws_other", "Other workspace")
+    await meta.setMembership({ id: "m_other", org_id: "ws_other", user_id: "u_o", role: "owner" })
+
+    // Publish outside the default workspace, then omit `workspace` on organize so reach()
+    // takes its intentional cross-workspace lookup path.
+    const other = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Elsewhere",
+          content: "# Elsewhere\n\nbody",
+          workspace: "ws_other",
+        }),
+      ),
+    ).short_id
+    const res = JSON.parse(
+      toolText(await call(app, token, "organize", { short_ids: [other], collection: "Default" })),
+    )
+    expect(res.collected).toMatchObject({ added: 0, skipped: 1 })
+    const artifact = await meta.getByShortId(other)
+    if (!artifact) throw new Error("published artifact disappeared")
+    expect(await meta.collectionIdsForArtifact(artifact.id)).toEqual([])
   })
 
   it("list_artifacts marks skills and filters to them with skills:true", async () => {

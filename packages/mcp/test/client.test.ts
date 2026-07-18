@@ -385,3 +385,64 @@ describe("createClient — workspace targeting", () => {
     expect(headers["X-Derive-Workspace"]).toBeUndefined()
   })
 })
+
+// The tag/collection client methods that back the local MCP `organize` tool, exercised
+// over the same real in-process HTTP server. (The dense-arm suggestion path has no embedder
+// here, so suggestTags returns the vocabulary-only fallback — the semantic aggregation is
+// covered by a computeTagSuggestions unit test in apps/api.)
+describe("organize backend: tags + collections client methods over real HTTP", () => {
+  it("publish sets tags; list(tag) filters; get + list carry them", async () => {
+    const a = await client.publish({
+      content: "# A",
+      title: "Alpha",
+      tags: ["Q3 Plan", "planning"],
+    })
+    await client.publish({ content: "# B", title: "Beta", tags: ["planning"] })
+    // Normalized (lowercase, whitespace-collapsed, sorted) on the detail read.
+    expect((await client.get(a.short_id)).tags).toEqual(["planning", "q3 plan"])
+    // Tag filter narrows the listing; each row carries its tags.
+    const listed = await client.list(undefined, "q3 plan")
+    expect(listed.map((x) => x.short_id)).toEqual([a.short_id])
+    expect(listed[0]?.tags).toEqual(["planning", "q3 plan"])
+  })
+
+  it("listTags returns the vocabulary with counts, most-used first", async () => {
+    const vocab = await client.listTags()
+    expect(vocab.find((t) => t.tag === "planning")?.count).toBe(2)
+    // Sorted by count desc — the most-used tag leads.
+    expect(vocab[0]?.count).toBeGreaterThanOrEqual(vocab[vocab.length - 1]?.count ?? 0)
+  })
+
+  it("tag add unions, remove drops, set replaces", async () => {
+    const { short_id } = await client.publish({ content: "# T", title: "Tagme", tags: ["keep"] })
+    const added = await client.tag([short_id], { add: ["extra"] })
+    expect(added.updated).toBe(1)
+    expect((await client.get(short_id)).tags).toEqual(["extra", "keep"])
+    await client.tag([short_id], { remove: ["keep"] })
+    expect((await client.get(short_id)).tags).toEqual(["extra"])
+    await client.tag([short_id], { set: ["only"] })
+    expect((await client.get(short_id)).tags).toEqual(["only"])
+  })
+
+  it("suggestTags returns current tags + vocabulary (no dense arm ⇒ empty suggestions)", async () => {
+    const { short_id } = await client.publish({ content: "# S", title: "Subj", tags: ["draft"] })
+    const s = await client.suggestTags(short_id)
+    expect(s.current).toEqual(["draft"])
+    expect(s.suggested).toEqual([])
+    expect(s.vocabulary.map((t) => t.tag)).toContain("planning")
+  })
+
+  it("collect creates a collection by name and folds artifacts in; get shows membership", async () => {
+    const a = await client.publish({ content: "# 1", title: "One" })
+    const b = await client.publish({ content: "# 2", title: "Two" })
+    const res = await client.collect([a.short_id, b.short_id], "Q3 Work")
+    expect(res.added).toBe(2)
+    expect(res.collection.title).toBe("Q3 Work")
+    expect((await client.get(a.short_id)).collections).toContain(res.collection.id)
+    // Same name again resolves to the SAME collection (matched, not duplicated).
+    const c = await client.publish({ content: "# 3", title: "Three" })
+    const again = await client.collect([c.short_id], "Q3 Work")
+    expect(again.collection.id).toBe(res.collection.id)
+    expect((await client.listCollections()).find((x) => x.id === res.collection.id)?.count).toBe(3)
+  })
+})

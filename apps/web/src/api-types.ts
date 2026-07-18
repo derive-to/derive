@@ -2117,6 +2117,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/tag-suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Suggest browse tags from similar artifacts + the workspace vocabulary. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Current tags, suggestions from similar artifacts, and the vocabulary. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TagSuggestions"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/follows": {
         parameters: {
             query?: never;
@@ -5750,6 +5788,20 @@ export interface components {
             email: string;
             /** @description The inviter's display name; null if unknown. */
             inviter: string | null;
+        };
+        TagSuggestions: {
+            /** @description Tags already on the artifact. */
+            current: string[];
+            /** @description Tags from similar artifacts, most-shared first; excludes current tags. */
+            suggested: {
+                tag: string;
+                count: number;
+            }[];
+            /** @description Every tag in the workspace with its usage count, most-used first. */
+            vocabulary: {
+                tag: string;
+                count: number;
+            }[];
         };
         Follow: {
             id: string;

@@ -3,11 +3,28 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
 import { bail, fail, readJson } from "../lib/http"
+import { computeTagSuggestions } from "../lib/tag-suggestions"
+import { normalizeTags } from "../lib/tags"
 
-/** Favorites (personal stars) + tags (workspace browse metadata). */
+/** Favorites (personal stars) + tags (workspace browse metadata + suggestions). */
 export const favoriteRoutes = (ctx: AppContext) => {
-  const { meta, requireUser, requireArtifact, authorize } = ctx
+  const { meta, search, sourceText, currentUser, requireUser, requireArtifact, authorize } = ctx
   const app = new OpenAPIHono<BlankEnv>()
+
+  // What comes back from tag-suggestions: the artifact's current tags, tags to consider
+  // (aggregated from semantically-similar artifacts), and the workspace vocabulary so a
+  // caller reuses an existing tag instead of minting a near-duplicate.
+  const TagSuggestionsSchema = z
+    .object({
+      current: z.array(z.string()).describe("Tags already on the artifact."),
+      suggested: z
+        .array(z.object({ tag: z.string(), count: z.number() }))
+        .describe("Tags from similar artifacts, most-shared first; excludes current tags."),
+      vocabulary: z
+        .array(z.object({ tag: z.string(), count: z.number() }))
+        .describe("Every tag in the workspace with its usage count, most-used first."),
+    })
+    .openapi("TagSuggestions")
 
   // Favorites are personal: any user who can read the artifact can star it.
   app.openapi(
@@ -57,24 +74,9 @@ export const favoriteRoutes = (ctx: AppContext) => {
     },
   )
 
-  // Tags are workspace metadata: editors set them. Normalized (trimmed,
-  // lowercased, deduped, capped) so browse stays tidy.
-  const normalizeTags = (raw: unknown): string[] => {
-    if (!Array.isArray(raw)) return []
-    const seen = new Set<string>()
-    const out: string[] = []
-    for (const t of raw) {
-      if (typeof t !== "string") continue
-      const v = t.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 40)
-      if (!v || seen.has(v)) continue
-      seen.add(v)
-      out.push(v)
-      if (out.length >= 20) break
-    }
-    // Sorted so the PUT response matches the list/detail order (tagsForArtifacts
-    // also sorts), and browse chips read alphabetically everywhere.
-    return out.sort()
-  }
+  // Tags are workspace metadata: editors set them. normalizeTags (shared with the bulk
+  // route + publish + the MCP tools) trims, lowercases, dedupes, and caps, so the stored
+  // vocabulary never fragments on casing or whitespace.
   app.openapi(
     createRoute({
       method: "put",
@@ -104,7 +106,11 @@ export const favoriteRoutes = (ctx: AppContext) => {
   // Bulk tags — the library multi-select bar. ADDS a set of tags to many artifacts at
   // once; it never replaces, so tagging a selection can't wipe the tags its other members
   // already carry. The union is computed per artifact server-side (the client sends only
-  // the tags to add), and each artifact is authorized on its own like the single route.
+  // the tags to add), and each artifact is authorized on its own — the SAME per-artifact
+  // `authorize(publish)` the single PUT /tags route uses, no `requireUser`: tags aren't
+  // user-scoped, so a static-token principal (a CI/agent integration, and the local MCP
+  // server) must be able to tag just like the single route lets it. The hard anonymous
+  // lockdown (app.ts) already refuses tokenless callers at the door.
   app.openapi(
     createRoute({
       method: "post",
@@ -119,8 +125,6 @@ export const favoriteRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const me = await requireUser(c)
-      if (me instanceof Response) return bail(me)
       const body = await readJson(
         c,
         z.object({
@@ -177,6 +181,41 @@ export const favoriteRoutes = (ctx: AppContext) => {
         (a) => (body.favorite ? meta.setFavorite(a.id, me.id) : meta.removeFavorite(a.id, me.id)),
       )
       return c.json(summary)
+    },
+  )
+
+  // Tag suggestions — the discover half of "auto-tag". For an artifact it returns the tags
+  // that its most semantically-similar neighbors carry (so an agent reuses the vocabulary
+  // instead of inventing near-duplicates), plus the full workspace vocabulary and the
+  // artifact's own current tags. Read-gated: suggesting reads, applying (the tag routes)
+  // still needs publish. Falls back to vocabulary-only where the dense arm is absent
+  // (SQLite / no embedder), so it always answers.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/artifacts/{shortId}/tag-suggestions",
+      tags: ["Favorites"],
+      summary: "Suggest browse tags from similar artifacts + the workspace vocabulary.",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        200: {
+          description: "Current tags, suggestions from similar artifacts, and the vocabulary.",
+          content: { "application/json": { schema: TagSuggestionsSchema } },
+        },
+      },
+    }),
+    async (c) => {
+      const artifact = await requireArtifact(c, "read")
+      if (artifact instanceof Response) return bail(artifact)
+      const me = await currentUser(c)
+      // Shared with the MCP `organize` tool — one implementation of "what should this
+      // be tagged?" so the route and the agent tool never disagree.
+      const suggestions = await computeTagSuggestions(
+        { meta, search, sourceText },
+        artifact,
+        me?.id,
+      )
+      return c.json(suggestions)
     },
   )
 

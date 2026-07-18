@@ -14,7 +14,10 @@
 //                                           set/show/clear what a workspace is FOR
 //   derive account use <ref>               set the default account
 //   derive logout [--account a] [--all]    sign out
-//   derive publish [file|dir] [--id --title --slug --spa --message --name --workspace-access --link-role --listed --password --server --token --workspace --account]  (--visibility is a deprecated shorthand)
+//   derive publish [file|dir] [--id --title --slug --spa --message --tags a,b --name --workspace-access --link-role --listed --password --server --token --workspace --account]  (--visibility is a deprecated shorthand)
+//   derive tag                             the workspace tag vocabulary (tag → count)
+//   derive tag --suggest [--id]            suggest tags for the artifact (from similar docs)
+//   derive tag <tag…> [--rm a,b] [--set a,b] [--id]  add/remove/replace an artifact's tags
 //   derive comments [--id]                 list the artifact's comment threads
 //   derive pull [short_id] [--v N] [--out f]  print an artifact's source (bundles: entry file)
 //   derive open [short_id] [--id]          open the artifact in a browser
@@ -83,6 +86,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--clear") flags.clear = "true"
   else if (a === "--mock") flags.mock = "true"
   else if (a === "--manage") flags.manage = "true"
+  else if (a === "--suggest") flags.suggest = "true"
   // Repeatable: `--env-file a --env-file b` stacks (equivalent to --env-file a,b).
   else if (a === "--env-file")
     flags["env-file"] = flags["env-file"] ? `${flags["env-file"]},${args[++i]}` : args[++i]
@@ -929,6 +933,8 @@ const LOOP = [
   "status",
   "send-back",
   "approve",
+  // Findability: one `tag` verb — vocabulary (no args), suggest (--suggest), or apply.
+  "tag",
 ]
 if (LOOP.includes(cmd)) {
   let cfg = null
@@ -946,7 +952,15 @@ if (LOOP.includes(cmd)) {
   // runs when a publish reports opened_in_tab:false. (reply/resolve keep their
   // positional for the thread/comment id.)
   if (positional[0] && ["open", "status", "comments", "pull"].includes(cmd)) r.id = positional[0]
-  if (!r.id) {
+  // `derive tag` with NO tags + NO --suggest is the workspace vocabulary — needs no artifact
+  // id; every other loop verb (and the apply/suggest forms of `tag`) does.
+  const tagVocab =
+    cmd === "tag" &&
+    positional.length === 0 &&
+    !flags.rm &&
+    flags.set === undefined &&
+    !flags.suggest
+  if (!r.id && !tagVocab) {
     console.error(`error: no artifact id. Set "id" in ${CONFIG_FILE} (publish once), or pass --id.`)
     process.exit(1)
   }
@@ -959,6 +973,89 @@ if (LOOP.includes(cmd)) {
     const j = await res.json().catch(() => ({}))
     console.error(`error (${res.status}): ${j.error ?? res.statusText}`)
     process.exit(1)
+  }
+
+  // ---- Findability: one `derive tag` verb, mirroring the MCP `organize` tool -----
+  //   derive tag                       → the workspace tag vocabulary
+  //   derive tag --suggest [--id]      → tag suggestions for the artifact
+  //   derive tag <tag…> [--rm a,b] [--set a,b] [--id]  → add / remove / replace
+  if (cmd === "tag") {
+    const splitTags = (v) =>
+      String(v ?? "")
+        .split(/[,\s]+/)
+        .map((t) => t.trim())
+        .filter(Boolean)
+
+    // No tags + no --suggest → the workspace vocabulary (no artifact id needed).
+    if (tagVocab) {
+      const res = await fetch(`${r.server}/v1/tags`, { headers: auth })
+      if (!res.ok) await die(res)
+      const tags = ((await res.json()).tags ?? []).sort(
+        (a, b) => b.count - a.count || a.tag.localeCompare(b.tag),
+      )
+      if (flags.json) console.log(JSON.stringify(tags))
+      else if (tags.length === 0) console.log("(no tags yet)")
+      else {
+        const w = Math.max(...tags.map((t) => t.tag.length))
+        for (const t of tags) console.log(`  ${t.tag.padEnd(w)}  ${t.count}`)
+      }
+      process.exit(0)
+    }
+
+    if (flags.suggest) {
+      const res = await fetch(`${base}/tag-suggestions`, { headers: auth })
+      if (!res.ok) await die(res)
+      const s = await res.json()
+      if (flags.json) {
+        console.log(JSON.stringify(s))
+      } else {
+        console.log(`current:    ${s.current.length ? s.current.join(", ") : "(none)"}`)
+        console.log(
+          `suggested:  ${s.suggested.length ? s.suggested.map((x) => x.tag).join(", ") : "(none — no similar docs)"}`,
+        )
+        console.log(
+          `vocabulary: ${
+            s.vocabulary.length
+              ? s.vocabulary
+                  .slice(0, 20)
+                  .map((x) => x.tag)
+                  .join(", ")
+              : "(empty)"
+          }`,
+        )
+        if (s.suggested.length)
+          console.error(`\n  apply:  derive tag ${s.suggested.map((x) => x.tag).join(" ")}`)
+      }
+      process.exit(0)
+    }
+
+    // Apply: positional tokens add; `--rm` removes; `--set` replaces the whole set.
+    const add = positional
+    const remove = splitTags(flags.rm)
+    const set = flags.set !== undefined ? splitTags(flags.set) : null
+    const put = async (tags) => {
+      const res = await fetch(`${base}/tags`, {
+        method: "PUT",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify({ tags }),
+      })
+      if (!res.ok) await die(res)
+      return (await res.json()).tags
+    }
+    let tags
+    if (set !== null) {
+      tags = await put(set)
+    } else {
+      // Read-modify-write the single artifact: union in `add`, drop `remove`.
+      const cur = await fetch(base, { headers: auth })
+      if (!cur.ok) await die(cur)
+      const existing = (await cur.json()).tags ?? []
+      const removeSet = new Set(remove.map((t) => t.toLowerCase()))
+      tags = await put([...existing, ...add].filter((t) => !removeSet.has(t.toLowerCase())))
+    }
+    if (flags.json) console.log(JSON.stringify({ id: r.id, tags }))
+    else console.log(`✓ ${r.id} tags: ${tags.length ? tags.join(", ") : "(none)"}`)
+    process.exit(0)
   }
 
   if (cmd === "open") {
@@ -1256,12 +1353,21 @@ try {
   console.error(`error: ${e.message}`)
   process.exit(1)
 }
-const { res, json } = await uploadArtifact(
-  p,
-  up.bytes,
-  up.filename,
-  flags.review ? { request_review: "true" } : {},
-)
+const { res, json } = await uploadArtifact(p, up.bytes, up.filename, {
+  ...(flags.review ? { request_review: "true" } : {}),
+  // --tags a,b sets the artifact's browse tags at publish time (JSON array; the server
+  // normalizes). Passed through the form escape hatch so no new UploadTarget field is needed.
+  ...(flags.tags
+    ? {
+        tags: JSON.stringify(
+          String(flags.tags)
+            .split(/[,\s]+/)
+            .map((t) => t.trim())
+            .filter(Boolean),
+        ),
+      }
+    : {}),
+})
 if (!res.ok) {
   console.error(`error (${res.status}): ${json.error ?? res.statusText}`)
   process.exit(1)

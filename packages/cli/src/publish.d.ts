@@ -17,6 +17,8 @@ export interface PublishFormFields {
   slug?: string
   spa?: boolean
   message?: string
+  /** Browse tags to set at publish time (JSON-encoded; server normalizes). */
+  tags?: string[]
   name?: string
   workspaceAccess?: "none" | "member"
   linkRole?: "none" | "viewer" | "commenter" | "editor"

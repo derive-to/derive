@@ -21,12 +21,13 @@ Your identity (agent name, workspace, role) is in the server instructions — th
 
 | Tool | Use |
 |---|---|
-| `list_artifacts` | Find: the artifacts in your workspace (short id, title, kind, version, visibility). Optional `query` filters by title. |
+| `list_artifacts` | Find: the artifacts in your workspace (short id, title, kind, version, visibility, and their browse `tags`). Optional `query` filters by title; `tag` filters to one browse tag. |
+| `organize` | Tags + collections in one tool. **No `short_ids`** → the workspace's tag vocabulary + collections (read this before tagging to reuse a tag). **With `short_ids`** → those artifacts' tags + collections + `suggested` tags from similar docs. **`add`/`remove`/`set`** change tags; **`collection`** (id or name, created if new) folds them into a collection. Ones you can't touch are skipped. |
 | `search` | Grep. Pass `short_id` to find text WITHIN one artifact — matching lines with line numbers (and optional `context`), ripgrep-style, so you can `read` a narrow `lines` range or `edit` that spot next. Omit `short_id` to grep instead ACROSS the workspace's most recently created artifacts, grouped by artifact — find WHICH doc has something before opening it. `in:'text'` searches the visible text instead of raw source; the query is matched literally (no regex metacharacters). |
 | `read` | Read an artifact's content by short id, as **Markdown by default** (HTML is converted — headings, lists, tables, code fences; a styled page still renders fully to viewers, only this reading view flattens it). Omit `section` and a small doc/bundle returns whole; a **large one returns its outline first** (heading slugs for a single-file doc, page paths for a bundle) — call again with a `section` (a slug, a bundle page, `page.html#slug`, or `"*"` for the full clipped document). Pass `format:'html'` for the exact stored source (needed before publish `edits`) or `format:'text'` for flat visible text (what comment `quote`s anchor against). Pass `version` to read history. An image page in a bundle comes back as a real image, not garbage text. |
 | `catch_up` | Start here on an artifact: its state in one call — what changed since `since_version`, the open/outdated comment threads, the `review` round state, and version history. Pass `comments` (open/addressed/resolved/outdated) for that filtered feedback queue, or `response_format='detailed'` (with optional `since_version`/`to_version`) to fold in a line diff — of the **readable Markdown form**, not raw HTML, so it shows what changed instead of tag noise. Waiting on a review? Pass `wait` (seconds, max 50) to long-poll: the call blocks until the human sends back / approves / comments — chain these instead of sleeping. |
 | `comment` | Leave feedback, reply (`reply_to` a thread id), anchor to a `quote`, react (`react: "👍"` with `reply_to` — the loop's lightweight ack, landing on the thread's latest human comment), and/or resolve/reopen (`set_state`). |
-| `publish` | Save a revision. `content` for a single file, `files` (path→content map) for a multi-page bundle, or **`edits`** (`[{old_str, new_str}]`) to revise part of a single-file artifact without resending it. Omit `short_id` to create new (title required); pass it to add a version. `addresses` lists thread ids this revision resolves; `request_review:true` opens a review round for your human. New artifacts land **private** by default (the human you act for owns the draft) — they promote via the share dialog, so don't pass a wider `visibility` unasked. The result's `opened_in_tab` says whether an open Derive tab caught the push; when false, open the `url` for the user if they should see it now. Fully-styled HTML renders as-authored in the sandboxed viewer: declare your own `<meta name="viewport">` (skips the mobile-reflow injection; `data-reflow-exempt` exempts a single element), upload images/woff2 fonts to `POST /v1/assets` instead of inlining base64, and check the echoed `content_sha256` against your local bytes. |
+| `publish` | Save a revision. `content` for a single file, `files` (path→content map) for a multi-page bundle, or **`edits`** (`[{old_str, new_str}]`) to revise part of a single-file artifact without resending it. Omit `short_id` to create new (title required); pass it to add a version. Pass **`tags`** to tag it at publish time — the one-step auto-tag. `addresses` lists thread ids this revision resolves; `request_review:true` opens a review round for your human. New artifacts land **private** by default (the human you act for owns the draft) — they promote via the share dialog, so don't pass a wider `visibility` unasked. The result's `opened_in_tab` says whether an open Derive tab caught the push; when false, open the `url` for the user if they should see it now. Fully-styled HTML renders as-authored in the sandboxed viewer: declare your own `<meta name="viewport">` (skips the mobile-reflow injection; `data-reflow-exempt` exempts a single element), upload images/woff2 fonts to `POST /v1/assets` instead of inlining base64, and check the echoed `content_sha256` against your local bytes. |
 
 ## Role decides: live publish vs proposal
 
@@ -54,6 +55,22 @@ human approves rather than live content.
    (`comment(reply_to, react:"👍")` at minimum), then revise and publish with
    `addresses` + `request_review:true` for the next round. The human never
    resolves threads — you settle thread state.
+
+## Keep the library findable — tag as you go
+
+Browse tags are how work is discovered later, so tag whenever you publish. The cheap,
+high-reuse loop, all through the one `organize` tool:
+
+1. `organize()` (no args) or `organize({short_ids: ["x"]})` → see the vocabulary and what
+   similar docs are tagged, so you reuse an existing tag instead of minting `plan` next to
+   `planning`.
+2. Set `tags` right on `publish` (auto-tag), or apply after with
+   `organize({short_ids, add: […]})`.
+3. Find later with `list_artifacts(tag: …)`.
+
+Be generous — tagging is cheap and low-risk, and a well-tagged library is the difference
+between findable and lost. Collections are heavier: `organize({short_ids, collection})`
+when a set of artifacts is a real unit (a project, a release), a tag for plain findability.
 
 ## Reading big documents
 
