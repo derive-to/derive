@@ -148,6 +148,24 @@ describe("comment channel fan-out", () => {
     const kinds = (await claim(meta)).map((d) => d.kind)
     expect(kinds).not.toContain("slack_app")
   })
+
+  it("does not mirror a comment on a PRIVATE artifact (no leak)", async () => {
+    const { app, meta } = makeAuthedApp("fanout-slack-private", [owner], "editor")
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: "xoxb-stored",
+      bot_user_id: "UBOT",
+      default_channel: "C1",
+      created_at: new Date().toISOString(),
+    })
+    const r = await pub(app, "# Secret", { visibility: "private" }, undefined, as(owner.email))
+    const shortId = (await r.json()).short_id as string
+    await comment(app, shortId, owner.email)
+    // Private draft (listed "none") → its title + comment body never reach the org-wide channel.
+    expect((await claim(meta)).map((d) => d.kind)).not.toContain("slack_app")
+  })
 })
 
 describe("connected-channel event cards (publishes / proposals)", () => {
@@ -275,6 +293,50 @@ describe("connected-channel event cards (publishes / proposals)", () => {
     const s = JSON.stringify(sent.blocks)
     expect(s).toContain("derive_proposal_approve")
     expect(s).toContain("derive_proposal_request_changes")
+  })
+
+  it("escapes untrusted title/author/body in the comment card (no mrkdwn injection)", async () => {
+    const { meta } = authed("chan-comment-escape")
+    await connect(meta)
+    const d: DeliveryRecord = {
+      id: "wd-cmt",
+      webhook_id: "internal",
+      url: "",
+      secret: "",
+      kind: "slack_app",
+      event_type: "comment.created",
+      payload: JSON.stringify({
+        orgId: "default",
+        artifactId: "a1",
+        threadId: "th1",
+        text: "ping <!channel>",
+        link: "https://derive.test/artifacts/a1",
+        title: "<fake|link> & more",
+        author: "<@U999>",
+      }),
+      status: "pending",
+      attempts: 0,
+      last_error: null,
+      next_attempt_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    }
+    let sent: { blocks?: unknown; text?: string } = {}
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { body?: string }) => {
+        sent = JSON.parse(init?.body ?? "{}")
+        return new Response(JSON.stringify({ ok: true, ts: "1.1", channel: "C1" }))
+      }),
+    )
+    await makeSlackSender(meta, "k")(d)
+    const s = JSON.stringify(sent.blocks)
+    // Untrusted control chars are escaped in both the block text and the plain-text fallback; the
+    // only raw `<`/`>` left are the `<url|title>` link delimiters the card itself builds.
+    expect(s).not.toContain("<@U999>")
+    expect(s).not.toContain("<!channel>")
+    expect(s).toContain("&lt;@U999&gt;")
+    expect(sent.text).not.toContain("<@U999>")
+    expect(sent.text).toContain("&lt;@U999&gt;")
   })
 })
 

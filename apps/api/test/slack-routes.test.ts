@@ -771,6 +771,30 @@ describe("slack interactivity endpoint (resolve/reopen from a button)", () => {
     expect(JSON.stringify(sent.blocks)).toContain(SLACK_THREAD_ACTION.reopen)
   })
 
+  it("escapes the acting Slack username in the replaced card (no mrkdwn injection)", async () => {
+    const { app, meta } = make("slack-int-escape-who")
+    const artifact = await seedResolvable(meta, {
+      artifact: "a-int-w",
+      short: "intwho01",
+      thread: "c-int-w",
+    })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 })),
+    )
+    // A crafted Slack display name lands in the card footer's mrkdwn context block.
+    const payload = {
+      ...threadAction(artifact.id, "c-int-w", SLACK_THREAD_ACTION.resolve),
+      user: { username: "<!channel>" },
+    }
+    const r = await postInteract(app, payload)
+    expect(r.status).toBe(200)
+    const call = vi.mocked(fetch).mock.calls.find(([u]) => String(u).includes("hooks.slack.test"))
+    const sent = JSON.stringify(JSON.parse(String(call?.[1]?.body)).blocks)
+    expect(sent).not.toContain("<!channel>")
+    expect(sent).toContain("&lt;!channel&gt;")
+  })
+
   it("a Reopen click reopens a resolved thread", async () => {
     const { app, meta } = make("slack-int-reopen")
     const artifact = await seedResolvable(meta, {

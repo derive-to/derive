@@ -110,6 +110,47 @@ describe("enqueueSlackMentionDms (gate)", () => {
     expect(dms).toHaveLength(1)
     expect(JSON.parse(dms[0]?.payload ?? "{}").userId).toBe(linked.id)
   })
+
+  it("escapes mrkdwn control chars in the card + fallback (no <!channel> injection)", async () => {
+    const meta = make("slack-dm-escape")
+    await connect(meta)
+    const artifact = (await meta.createArtifact({
+      id: newId("a"),
+      short_id: newId("s").slice(0, 8),
+      org_id: "default",
+      slug: null,
+      title: "<!channel> & <fake|link>",
+      link_role: "viewer",
+      kind: "file",
+      spa: 0,
+    })) as ArtifactRecord
+    const comment = (await meta.createComment({
+      id: newId("c"),
+      artifact_id: artifact.id,
+      thread_id: newId("th"),
+      base_version: 0,
+      path: null,
+      anchor: null,
+      body_md: "look <!here>",
+      author: "<@U999>",
+      author_id: "u-x",
+    })) as CommentRecord
+    await enqueueSlackMentionDms({ meta, baseUrl }, artifact, comment, [
+      { id: linked.id, name: "L" },
+    ])
+    const payload = JSON.parse(
+      (await claim(meta)).find((d) => d.kind === "slack_dm")?.payload ?? "{}",
+    )
+    const serialized = JSON.stringify(payload)
+    // The literal control chars from untrusted author/title/body must be escaped everywhere they
+    // land — both the block text and the plain-text fallback. `link` URLs are ours, so the only
+    // raw `<`/`>` allowed are the `<url|...>` link delimiters we build.
+    expect(payload.text).not.toContain("<!channel>")
+    expect(payload.text).toContain("&lt;!channel&gt;")
+    expect(serialized).not.toContain("<@U999>")
+    expect(serialized).not.toContain("<!here>")
+    expect(serialized).toContain("&lt;@U999&gt;")
+  })
 })
 
 describe("enqueueSlackReviewRequestedDm (gate)", () => {
