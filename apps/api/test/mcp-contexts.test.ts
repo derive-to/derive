@@ -4,11 +4,14 @@ import { sha256 } from "../src/lib/crypto"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
-// The MCP ask surface: list_contexts + ask act for the connection's on-behalf
-// human (the token's registrant / the OAuth grantor), gated per call by that
-// human's OWN ask-grant — canUserAskContext, the same rule the console enforces.
-// The tools are registered on every connection (the surface never differs by
-// auth kind); a connection with no known human is refused at call time.
+// The MCP ask surface after the 15→10 consolidation: `find` surfaces the askable
+// contexts as typed {type:"context"} rows (the former list_contexts), and `use`
+// acts on them (the former ask). Both act for the connection's on-behalf human
+// (the token's registrant / the OAuth grantor), gated per call by that human's OWN
+// ask-grant — canUserAskContext, the same rule the console enforces. `use` is
+// registered on every connection and refuses a no-human connection at call time;
+// `find` does NOT refuse it — it returns artifact rows plus a `contexts_note`
+// explaining the contexts are hidden without a signed-in user.
 //
 // Cast: owner (Admin) registers the agents — the answering one and "OwnerBot",
 // the MCP connection under test, whose acting human is therefore OWNER. dev
@@ -63,6 +66,14 @@ const call = async (
   // biome-ignore lint/suspicious/noExplicitAny: test convenience over a JSON payload
 ): Promise<any> => JSON.parse((await callRaw(app, token, name, args)).text)
 
+// find's browse/search rows are typed; the askable contexts come back as
+// {type:"context"} rows — the former list_contexts payload, one per context, each
+// carrying its own your_open_sessions. Pull just those out of a find result.
+const contextsOf = (
+  r: { results?: { type?: string }[] },
+  // biome-ignore lint/suspicious/noExplicitAny: test convenience over a JSON payload
+): any[] => (r.results ?? []).filter((x) => x.type === "context")
+
 const setup = async (name: string, deps?: Record<string, unknown>) => {
   const made = makeAuthedApp(name, [owner, dev], "editor", deps ? { deps } : undefined)
   const { app, meta } = made
@@ -100,15 +111,15 @@ const setup = async (name: string, deps?: Record<string, unknown>) => {
   }
 }
 
-describe("list_contexts — ask-scoped discovery", () => {
+describe("find — ask-scoped context discovery", () => {
   it("shows only what the acting human may ask; invited admits via the roster", async () => {
     const { app, cx, manifestShortId, ownerToken } = await setup("mcx-list")
     // Default ask_policy is `invited` (creator + roster): owner is a plain
-    // member, so OwnerBot sees nothing — and learns nothing exists.
-    const before = await call(app, ownerToken, "list_contexts", {})
-    expect(before.count).toBe(0)
-    // The creator invites owner; the same call now shows the context, offline
-    // (its runner has never polled), with the manifest identity attached.
+    // member, so OwnerBot sees no context rows — and learns nothing exists.
+    const before = await call(app, ownerToken, "find", {})
+    expect(contextsOf(before)).toHaveLength(0)
+    // The creator invites owner; the same call now surfaces the context row,
+    // offline (its runner has never polled), with the manifest identity attached.
     expect(
       (
         await app.request(
@@ -117,17 +128,18 @@ describe("list_contexts — ask-scoped discovery", () => {
         )
       ).status,
     ).toBe(201)
-    const after = await call(app, ownerToken, "list_contexts", {})
-    expect(after.count).toBe(1)
-    expect(after.contexts).toMatchObject([
+    const after = await call(app, ownerToken, "find", {})
+    const ctxs = contextsOf(after)
+    expect(ctxs).toMatchObject([
       {
+        type: "context",
         id: cx.id,
         name: "Analytics",
         online: false,
         manifest: { short_id: manifestShortId, title: "Analytics manifest" },
       },
     ])
-    expect(after.your_open_sessions).toEqual([])
+    expect(ctxs[0].your_open_sessions).toEqual([])
   })
 
   it("workspace policy admits every member; a web-opened session shows as resumable", async () => {
@@ -141,21 +153,21 @@ describe("list_contexts — ask-scoped discovery", () => {
       ).status,
     ).toBe(200)
     // A session the human opened in the CONSOLE is the same session the agent
-    // may resume — the MCP surface is the human's own seat.
+    // may resume — the MCP surface is the human's own seat. On a find context
+    // row, that open session rides in the row's own your_open_sessions.
     const opened = await (
       await app.request(
         `/v1/contexts/${cx.id}/sessions`,
         jsonAs(as(owner.email), { body_md: "Q?" }),
       )
     ).json()
-    const res = await call(app, ownerToken, "list_contexts", {})
-    expect(res.count).toBe(1)
-    expect(res.your_open_sessions).toMatchObject([
-      { id: opened.session.id, context: "Analytics", state: "open" },
-    ])
+    const res = await call(app, ownerToken, "find", {})
+    const ctxs = contextsOf(res)
+    expect(ctxs).toHaveLength(1)
+    expect(ctxs[0].your_open_sessions).toMatchObject([{ id: opened.session.id, state: "open" }])
   })
 
-  it("a connection with no acting human is refused at call time, not hidden", async () => {
+  it("a connection with no acting human returns a note, not context rows (find never refuses)", async () => {
     const { app, meta } = await setup("mcx-list-nohuman")
     // A pre-column legacy token: a registered agent with no created_by. Only
     // reachable by seeding the store directly — the API always stamps a creator.
@@ -169,9 +181,13 @@ describe("list_contexts — ask-scoped discovery", () => {
       role: "editor",
       created_by: null,
     })
-    const r = await callRaw(app, raw, "list_contexts", {})
-    expect(r.isError).toBe(true)
-    expect(r.text).toContain("no acting human")
+    // INTENTIONAL behavior change from the retired list_contexts (which errored):
+    // find does NOT refuse a no-human connection. It returns artifact rows and
+    // adds a contexts_note saying the askable contexts are hidden without a
+    // signed-in user — so no context row appears, but the browse itself succeeds.
+    const r = await call(app, raw, "find", {})
+    expect(r.contexts_note).toContain("no signed-in user")
+    expect(contextsOf(r)).toHaveLength(0)
   })
 })
 
@@ -183,7 +199,7 @@ const answerAs = (app: App, token: string, sessionId: string, body: Record<strin
     body: JSON.stringify(body),
   })
 
-describe("ask — open, check, and the grant edges", () => {
+describe("use — open, check, and the grant edges", () => {
   it("opens a session as the acting human; the console sees it as theirs", async () => {
     const { app, cx, ownerToken } = await setup("mcx-ask-open")
     expect(
@@ -194,7 +210,7 @@ describe("ask — open, check, and the grant edges", () => {
         )
       ).status,
     ).toBe(200)
-    const res = await call(app, ownerToken, "ask", {
+    const res = await call(app, ownerToken, "use", {
       context: "Analytics",
       question: "What changed this week?",
       wait: 0,
@@ -222,7 +238,7 @@ describe("ask — open, check, and the grant edges", () => {
         )
       ).status,
     ).toBe(200)
-    const opened = await call(app, ownerToken, "ask", { context: cx.id, question: "Q?", wait: 0 })
+    const opened = await call(app, ownerToken, "use", { context: cx.id, question: "Q?", wait: 0 })
     expect(
       (
         await answerAs(app, answeringToken, opened.session_id, {
@@ -232,7 +248,7 @@ describe("ask — open, check, and the grant edges", () => {
         })
       ).status,
     ).toBe(201)
-    const res = await call(app, ownerToken, "ask", { session_id: opened.session_id, wait: 0 })
+    const res = await call(app, ownerToken, "use", { session_id: opened.session_id, wait: 0 })
     expect(res.state).toBe("answered")
     expect(res.answer).toMatchObject({ body_md: "42.", meta: { confidence: 0.9 } })
     // Check-only mode re-grounds a resumed caller: asker turn + agent turn.
@@ -253,7 +269,7 @@ describe("ask — open, check, and the grant edges", () => {
       ).status,
     ).toBe(200)
     // A 5k question and a 50k answer — both over their caps (1.5k/entry, 40k answer).
-    const opened = await call(app, ownerToken, "ask", {
+    const opened = await call(app, ownerToken, "use", {
       context: cx.id,
       question: "q".repeat(5_000),
       wait: 0,
@@ -266,7 +282,7 @@ describe("ask — open, check, and the grant edges", () => {
         })
       ).status,
     ).toBe(201)
-    const res = await call(app, ownerToken, "ask", { session_id: opened.session_id, wait: 0 })
+    const res = await call(app, ownerToken, "use", { session_id: opened.session_id, wait: 0 })
     // The answer keeps a generous prefix; the steer names the console.
     expect(res.answer.body_md.length).toBeLessThan(45_000)
     expect(res.answer.body_md).toContain("truncated")
@@ -282,7 +298,7 @@ describe("ask — open, check, and the grant edges", () => {
   it("names the askable contexts when the ref misses — and stays silent when none are", async () => {
     const { app, cx, ownerToken } = await setup("mcx-ask-miss")
     // No grant at all: the miss must not enumerate what exists.
-    const dark = await callRaw(app, ownerToken, "ask", {
+    const dark = await callRaw(app, ownerToken, "use", {
       context: "Analytics",
       question: "Q?",
       wait: 0,
@@ -298,7 +314,7 @@ describe("ask — open, check, and the grant edges", () => {
         )
       ).status,
     ).toBe(200)
-    const miss = await callRaw(app, ownerToken, "ask", {
+    const miss = await callRaw(app, ownerToken, "use", {
       context: "Analytcs",
       question: "Q?",
       wait: 0,
@@ -316,14 +332,14 @@ describe("ask — open, check, and the grant edges", () => {
         jsonAs(as(dev.email), { body_md: "mine" }),
       )
     ).json()
-    const r = await callRaw(app, ownerToken, "ask", { session_id: opened.session.id })
+    const r = await callRaw(app, ownerToken, "use", { session_id: opened.session.id })
     expect(r.isError).toBe(true)
     expect(r.text).toContain("No session")
     expect(r.text).not.toContain("forbidden")
   })
 })
 
-describe("ask({wait}) — the settle wake and the session loop", () => {
+describe("use({wait}) — the settle wake and the session loop", () => {
   // The workspace-policy flip every case here needs (dev is creator; the MCP
   // caller acts for owner, a plain member).
   const openPolicy = async (app: App, cxId: string) =>
@@ -340,13 +356,13 @@ describe("ask({wait}) — the settle wake and the session loop", () => {
     const backplane = createInProcessBackplane()
     const { app, cx, ownerToken, answeringToken } = await setup("mcx-wake", { backplane })
     await openPolicy(app, cx.id)
-    const opened = await call(app, ownerToken, "ask", {
+    const opened = await call(app, ownerToken, "use", {
       context: "Analytics",
       question: "Q?",
       wait: 0,
     })
     const started = Date.now()
-    const waiting = call(app, ownerToken, "ask", { session_id: opened.session_id, wait: 20 })
+    const waiting = call(app, ownerToken, "use", { session_id: opened.session_id, wait: 20 })
     // A beat for the waiter to subscribe, then the runner settles over REST.
     await new Promise((r) => setTimeout(r, 150))
     expect(
@@ -368,7 +384,7 @@ describe("ask({wait}) — the settle wake and the session loop", () => {
   it("a follow-up rides the same session and re-opens it; closed refuses with a pointer", async () => {
     const { app, cx, ownerToken, answeringToken } = await setup("mcx-follow")
     await openPolicy(app, cx.id)
-    const opened = await call(app, ownerToken, "ask", {
+    const opened = await call(app, ownerToken, "use", {
       context: "Analytics",
       question: "Q?",
       wait: 0,
@@ -381,7 +397,7 @@ describe("ask({wait}) — the settle wake and the session loop", () => {
         })
       ).status,
     ).toBe(201)
-    const follow = await call(app, ownerToken, "ask", {
+    const follow = await call(app, ownerToken, "use", {
       session_id: opened.session_id,
       question: "And why?",
       wait: 0,
@@ -397,7 +413,7 @@ describe("ask({wait}) — the settle wake and the session loop", () => {
         })
       ).status,
     ).toBe(200)
-    const refused = await callRaw(app, ownerToken, "ask", {
+    const refused = await callRaw(app, ownerToken, "use", {
       session_id: opened.session_id,
       question: "still there?",
       wait: 0,
@@ -412,13 +428,13 @@ describe("ask({wait}) — the settle wake and the session loop", () => {
       rateLimiters: inMemoryRateLimiters({ askRate: 2 }),
     })
     await openPolicy(app, cx.id)
-    const first = await call(app, ownerToken, "ask", {
+    const first = await call(app, ownerToken, "use", {
       context: "Analytics",
       question: "1",
       wait: 0,
     })
-    await call(app, ownerToken, "ask", { context: "Analytics", question: "2", wait: 0 })
-    const third = await callRaw(app, ownerToken, "ask", {
+    await call(app, ownerToken, "use", { context: "Analytics", question: "2", wait: 0 })
+    const third = await callRaw(app, ownerToken, "use", {
       context: "Analytics",
       question: "3",
       wait: 0,
@@ -426,7 +442,7 @@ describe("ask({wait}) — the settle wake and the session loop", () => {
     expect(third.isError).toBe(true)
     expect(third.text).toContain("Rate limit")
     // Reads don't spend the budget: checking a session still works while capped.
-    const check = await call(app, ownerToken, "ask", { session_id: first.session_id, wait: 0 })
+    const check = await call(app, ownerToken, "use", { session_id: first.session_id, wait: 0 })
     expect(check.state).toBe("open")
   })
 })
