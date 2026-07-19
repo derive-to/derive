@@ -104,7 +104,26 @@ const GUIDE = (() => {
   }
 })()
 
-const server = new McpServer({ name: "derive", version: "1.0.0" })
+const GUIDE_REFERENCES = Object.fromEntries(
+  ["connect", "compatibility"].map((name) => {
+    try {
+      return [
+        name,
+        readFileSync(fileURLToPath(new URL(`../references/${name}.md`, import.meta.url)), "utf8"),
+      ]
+    } catch {
+      return [name, ""]
+    }
+  }),
+)
+
+const server = new McpServer(
+  { name: "derive", version: "1.0.0" },
+  {
+    instructions:
+      "Use Derive to publish living artifacts, exchange text-anchored feedback, and run the publish → review → revise loop. This local compatibility server exposes list_workspaces, list_artifacts, search, read, catch_up, comment, organize, and publish. Read derive://guide before the first write; clients without MCP resource support can call read with that URI as short_id. Prefer the remote OAuth server at https://derive.to/mcp when staging, contexts, or checkpoints are needed.",
+  },
+)
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
 const json = (v: unknown) => text(JSON.stringify(v, null, 2))
@@ -272,7 +291,7 @@ server.registerTool(
   "read",
   {
     description:
-      "Read an artifact's CONTENT by short id, as Markdown by default (HTML is converted). Omit `section` to see the outline first (heading slugs for a single-file doc, page paths for a bundle) — call again with a `section` (or \"*\" for the full document) once you know what you want. Pass `format:'html'` for the exact source (needed before publish `edits`), or a past `version` for history. For what CHANGED or the comment threads, use catch_up instead. (Older self-hosted servers that predate these params return the whole artifact regardless of section/format — noted in the response when that happens.)",
+      "Read an artifact's CONTENT by short id, as Markdown by default (HTML is converted). Omit `section` to see the outline first (heading slugs for a single-file doc, page paths for a bundle) — call again with a `section` (or \"*\" for the full document) once you know what you want. Pass `format:'html'` for the exact source (needed before publish `edits`), or a past `version` for history. Also accepts derive://guide, /connect, or /compatibility so the onboarding strings in server instructions work even when MCP resources do not. For what CHANGED or the comment threads, use catch_up instead.",
     inputSchema: {
       short_id: z.string(),
       section: z
@@ -292,6 +311,14 @@ server.registerTool(
     },
   },
   async ({ short_id, section, format, version, workspace: ws }) => {
+    if (short_id === "derive://guide") return text(GUIDE)
+    if (short_id.startsWith("derive://guide/")) {
+      const name = short_id.slice("derive://guide/".length)
+      const reference = GUIDE_REFERENCES[name]
+      return reference
+        ? text(reference)
+        : err('No guide reference by that name. Available: "connect", "compatibility".')
+    }
     const client = clientFor(ws)
     const a = await client.get(short_id)
     const v = version ?? a.current_version
@@ -909,6 +936,22 @@ server.registerResource(
   },
   async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: GUIDE }] }),
 )
+
+for (const [name, body] of Object.entries(GUIDE_REFERENCES)) {
+  server.registerResource(
+    `derive-guide-${name}`,
+    `derive://guide/${name}`,
+    {
+      title: `Derive guide — ${name}`,
+      description:
+        name === "connect"
+          ? "Connect Codex or Claude to the Derive remote MCP."
+          : "Remote and stdio Derive MCP capability map.",
+      mimeType: "text/markdown",
+    },
+    async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: body }] }),
+  )
+}
 
 // Every account/workspace signed in on THIS machine, with the local `description`
 // each was given via `derive workspace describe` — the context a bare name can't

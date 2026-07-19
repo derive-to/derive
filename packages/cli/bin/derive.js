@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // derive — scaffold, publish, and run the review loop against a Derive server.
 //   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
+//   derive agent setup [dir]              install Codex/Claude skills + MCP config
 //   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
 //                                          OAuth sign-in; discovers every workspace
 //                                          you belong to. Already signed in? Shows
@@ -55,6 +56,7 @@ import {
   saveAccount,
   saveClientId,
   scaffold,
+  scaffoldAgent,
   setDefaultAccount,
   setDefaultWorkspace,
   setWorkspaces,
@@ -159,6 +161,26 @@ if (cmd === "init") {
     created.length
       ? `\nReady (${template}). Edit ${entry}, then run \`${next}\`.`
       : `\nNothing to do — ${CONFIG_FILE} already here.`,
+  )
+  process.exit(0)
+}
+
+if (cmd === "agent" && positional[0] === "setup") {
+  const dir = positional[1] ?? "."
+  const { created, skipped } = scaffoldAgent(dir)
+  for (const f of created) console.log(`  + ${f}`)
+  for (const f of skipped) console.log(`  · ${f} (exists, kept)`)
+  const keptConfigs = skipped.filter(
+    (file) => file === ".mcp.json" || file === ".codex/config.toml",
+  )
+  if (keptConfigs.length)
+    console.log(
+      `\nExisting ${keptConfigs.join(" and ")} kept. Ensure each one has a "derive" server pointing to https://derive.to/mcp.`,
+    )
+  console.log(
+    created.length
+      ? "\nAgent on-ramp installed. Restart your agent, trust the project MCP config, and complete OAuth when prompted."
+      : "\nNothing to do — the agent on-ramp is already present.",
   )
   process.exit(0)
 }
@@ -1294,6 +1316,7 @@ if (cmd === "brandprint") {
 if (cmd !== "publish") {
   console.error(`usage:
   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
+  derive agent setup [dir]                install Codex/Claude skills + remote MCP config
   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
                                             OAuth sign-in (defaults to https://derive.to);
                                             discovers every workspace you belong to;

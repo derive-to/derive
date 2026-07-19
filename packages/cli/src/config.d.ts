@@ -191,6 +191,7 @@ export declare function resolvePublish(
 ): ResolvedPublish
 
 export declare function writeId(dir: string, id: string): DeriveConfig
+export declare function agentScaffoldFiles(): Record<string, string>
 export declare function scaffoldFiles(title?: string, template?: string): Record<string, string>
 export declare const DERIVE_SCHEMA: Record<string, unknown>
 
@@ -208,3 +209,4 @@ export declare function scaffold(
   title?: string,
   template?: string,
 ): { created: string[]; skipped: string[] }
+export declare function scaffoldAgent(dir?: string): { created: string[]; skipped: string[] }

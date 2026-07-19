@@ -62,7 +62,7 @@ Then set `BASE_URL=https://derive.example.com` and redeploy.
 2. Settings > Agents > New Agent
 3. Name it, copy the `dk_agt_...` token (shown once)
 
-See `using/derive-connect.md` to wire it into Claude Code or Claude Desktop.
+See `../derive/references/connect.md` to wire it into Codex or Claude Code.
 
 ---
 

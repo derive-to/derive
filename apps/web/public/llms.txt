@@ -33,19 +33,28 @@ Visibility options: public, link, org, password.
 
 ## MCP server
 
-Connect any MCP client with `npx -y @derive/mcp` + env vars `DERIVE_SERVER` and `DERIVE_TOKEN`.
+Prefer the remote OAuth server at `https://derive.to/mcp` (or `<instance>/mcp`).
+The local compatibility server is `npx -y @derive-to/mcp` and shares `derive login`.
 
-Tools (five): list_artifacts, read, catch_up, comment, publish
+Remote tools (ten): find, read, catch_up, comment, stage, publish, organize,
+checkpoint, use, list_workspaces.
 
-- list_artifacts: find the artifacts in your workspace (optional query title filter)
+- find: browse or search artifacts and discover askable workspace contexts
 - read: read an artifact's content by short id; bundles take a section (page path), any read takes a version for history
-- catch_up: an artifact's state in one call (what changed since since_version, the open/outdated comment threads, version history); pass comments for a filtered feedback queue or response_format='detailed' for the line diff
+- catch_up: an artifact's review/change state, or the registered agent's queued work when called without a short id
 - comment: leave feedback, reply (reply_to), anchor to a quote, resolve/reopen (set_state)
-- publish: save a revision (content for one file, files for a bundle); omit short_id to create new, pass it to add a version; addresses resolves threads; goes live or files a proposal based on role, or with for_review:true
+- stage: upload large documents, bundles, images, and fonts out of band
+- publish: create or revise with edits/content/files; addresses resolves threads; request_review opens a review round
+- organize: manage tags and collections
+- checkpoint: save compact, resumable working state
+- use: ask a workspace context or resume its session
+- list_workspaces: inspect and route across granted workspaces
 
-Both the stdio @derive/mcp server and the remote /mcp server expose the same 5 tools.
+The stdio compatibility server exposes eight tools: list_workspaces, list_artifacts,
+search, read, catch_up, comment, organize, publish.
 
-Resource: derive://guide (agent workflow and tool reference)
+Resources: derive://skills/publishing, /loop, /contexts, /checkpoint, /organize.
+The stdio server also exposes derive://guide.
 
 ## The agent loop
 

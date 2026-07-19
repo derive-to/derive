@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
+  agentScaffoldFiles,
   CONFIG_FILE,
   defaultConfig,
   describeWorkspace,
@@ -24,6 +25,7 @@ import {
   saveAccount,
   saveClientId,
   scaffold,
+  scaffoldAgent,
   scaffoldFiles,
   setDefaultAccount,
   setDefaultWorkspace,
@@ -45,17 +47,22 @@ afterEach(() => {
 })
 
 describe("scaffold", () => {
-  it("md template writes derive.json + index.md + AGENTS.md + the agent on-ramp", () => {
+  it("md template writes derive.json + index.md + the Codex/Claude agent on-ramp", () => {
     const d = tmp()
     const { created } = scaffold(d, "Report", "md")
-    expect(created.sort()).toEqual([
-      ".claude/skills/derive/SKILL.md",
-      ".mcp.json",
-      "AGENTS.md",
-      "derive.json",
-      "derive.schema.json",
-      "index.md",
-    ])
+    expect(created).toEqual(
+      expect.arrayContaining([
+        ".agents/skills/derive/SKILL.md",
+        ".agents/skills/derive/agents/openai.yaml",
+        ".claude/skills/derive/SKILL.md",
+        ".codex/config.toml",
+        ".mcp.json",
+        "AGENTS.md",
+        "derive.json",
+        "derive.schema.json",
+        "index.md",
+      ]),
+    )
     const cfg = JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8"))
     expect(cfg).toMatchObject({
       title: "Report",
@@ -65,13 +72,33 @@ describe("scaffold", () => {
     // No `visibility` — a scaffold inherits the workspace's team-draft default
     // (workspace access, unlisted), not invite-only.
     expect(cfg.visibility).toBeUndefined()
-    // The MCP config + skill are present and reference the published server.
-    expect(JSON.parse(readFileSync(join(d, ".mcp.json"), "utf8")).mcpServers.derive.args).toContain(
-      "@derive-to/mcp",
+    // Both harnesses get their native skill location and the OAuth remote MCP.
+    expect(JSON.parse(readFileSync(join(d, ".mcp.json"), "utf8")).mcpServers.derive).toEqual({
+      type: "http",
+      url: ["$", "{DERIVE_MCP_URL:-https://derive.to/mcp}"].join(""),
+    })
+    expect(readFileSync(join(d, ".codex/config.toml"), "utf8")).toContain(
+      'url = "https://derive.to/mcp"',
     )
-    expect(readFileSync(join(d, ".claude/skills/derive/SKILL.md"), "utf8")).toContain(
-      "name: derive-publish",
+    const codexSkill = readFileSync(join(d, ".agents/skills/derive/SKILL.md"), "utf8")
+    const claudeSkill = readFileSync(join(d, ".claude/skills/derive/SKILL.md"), "utf8")
+    expect(codexSkill).toBe(claudeSkill)
+    expect(codexSkill).toContain("name: derive")
+    expect(readFileSync(join(d, ".agents/skills/derive/agents/openai.yaml"), "utf8")).toContain(
+      'url: "https://derive.to/mcp"',
     )
+  })
+
+  it("installs the agent on-ramp alone and never clobbers an existing config", () => {
+    const d = tmp()
+    writeFileSync(join(d, ".mcp.json"), '{"mine":true}\n')
+    const { created, skipped } = scaffoldAgent(d)
+    expect(created).toContain(".agents/skills/derive/SKILL.md")
+    expect(created).toContain(".claude/skills/derive/SKILL.md")
+    expect(created).toContain(".codex/config.toml")
+    expect(skipped).toContain(".mcp.json")
+    expect(readFileSync(join(d, ".mcp.json"), "utf8")).toBe('{"mine":true}\n')
+    expect(Object.keys(agentScaffoldFiles())).toHaveLength(10)
   })
 
   it("html template uses index.html as the entry", () => {

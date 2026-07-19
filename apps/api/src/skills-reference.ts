@@ -85,12 +85,12 @@ file's RAW bytes to the returned URL from your shell (\`curl -sS --data-binary @
 \`files\` map. The URL is reusable until it expires (~15 min), so stage a whole batch with
 one mint.
 
-An image PASTED into your conversation is usually ALREADY a file on disk (Claude Code
-caches pastes and shows the path alongside the image) — upload those bytes; NEVER transcribe
-an image to base64 through your context (~1 token/byte — one modest screenshot can cost
-100k+ tokens — and content carried through your context can be silently mistranscribed;
-binaries should travel as bytes). No shell? Fall back to a base64 \`data:\` URI entry in a
-bundle publish's \`files\` map — small images only.
+An image PASTED into your conversation is usually ALREADY a file on disk (agent harnesses
+typically cache pastes and expose the path) — upload those bytes; NEVER transcribe an image
+to base64 through your context (~1 token/byte — one modest screenshot can cost 100k+ tokens
+— and content carried through your context can be silently mistranscribed; binaries should
+travel as bytes). If no byte-capable upload path is available, stop and ask for one rather
+than routing binary data through model context.
 
 Inside a bundle's \`files\` map, each value is one of: a text page (plain string); a base64
 \`data:\` URI for a small inline binary (\`"shot.png":"data:image/png;base64,iVBORw0K…"\`); or —
