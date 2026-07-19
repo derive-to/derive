@@ -267,9 +267,10 @@ export const embedRoutes = (ctx: AppContext) => {
 
 /**
  * The embeddable document: the artifact full-bleed in a sandboxed iframe, with a
- * "Made on Derive" plaque set into the frame's bottom-right corner linking to the
- * artifact page (`?ref=embed`; tooltip "View on Derive"). The shell follows the viewer's
- * light/dark scheme with the app's own tokens; the plaque is a solid surface so it
+ * plaque set into the frame's bottom-right corner — a "Made on Derive" link (to the
+ * artifact page, `?ref=embed`; tooltip "View on Derive") beside an info button whose
+ * hover/focus reveals a one-line "what is Derive" tooltip. The shell follows the
+ * viewer's light/dark scheme with the app's own tokens; the plaque is frosted so it
  * holds over any artifact content. `null` = a private/unavailable placeholder.
  */
 const embedShell = (data: { info: UnfurlInfo; src: string } | null): string => {
@@ -280,29 +281,54 @@ const embedShell = (data: { info: UnfurlInfo; src: string } | null): string => {
     "body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--canvas);color:var(--ink)}" +
     ".c{position:relative;height:100%;border:1px solid var(--frame);border-radius:8px;overflow:hidden;background:var(--canvas)}" +
     "iframe{width:100%;height:100%;border:0;display:block;background:var(--canvas)}" +
-    ".b{position:absolute;right:0;bottom:0;display:flex;align-items:center;gap:7px;" +
-    "padding:7px 13px 7px 10px;background:var(--chip);" +
+    // The plaque: a link half ("Made on Derive") + an info button, fused into the
+    // frame's bottom-right corner as one unit.
+    ".p{position:absolute;right:0;bottom:0;display:flex;align-items:stretch;background:var(--chip);" +
     "border-top:1px solid var(--frame);border-left:1px solid var(--frame);border-radius:6px 0 7px 0;" +
-    "color:var(--tx);text-decoration:none;font-size:11.5px;font-weight:600;letter-spacing:.02em;line-height:1;" +
-    "transition:color .18s ease-out,background .18s ease-out,border-color .18s ease-out;" +
     "animation:bfade .4s ease-out .6s both}" +
     // Frosted plaque: an 80% theme tint over a blur of whatever content sits beneath.
     // Legibility comes from the tint (never from the unknown backdrop); the blur lets
     // the chip pick up a hint of the artifact's color so it harmonizes instead of
     // clashing. Solid --chip above is the graceful fallback.
     "@supports ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){" +
-    ".b{background:color-mix(in srgb,var(--chip) 80%,transparent);" +
+    ".p{background:color-mix(in srgb,var(--chip) 80%,transparent);" +
     "-webkit-backdrop-filter:blur(22px) saturate(1.5);backdrop-filter:blur(22px) saturate(1.5)}}" +
     "@keyframes bfade{from{opacity:0}to{opacity:1}}" +
-    "@media (prefers-reduced-motion:reduce){.b{animation:none}}" +
-    ".b:hover{background:var(--ink);border-color:var(--ink);color:var(--canvas)}" +
+    "@media (prefers-reduced-motion:reduce){.p{animation:none}.tip{transition:none}}" +
+    ".b{display:flex;align-items:center;gap:7px;padding:7px 11px 7px 10px;border-radius:6px 0 0 0;" +
+    "color:var(--tx);text-decoration:none;font-size:11.5px;font-weight:600;letter-spacing:.02em;line-height:1;" +
+    "transition:color .18s ease-out,background .18s ease-out}" +
+    ".b:hover{background:var(--ink);color:var(--canvas)}" +
     ".b:focus-visible{outline:1px solid var(--ink);outline-offset:-3px}" +
-    ".m{width:14px;height:14px;flex:0 0 auto}" +
+    ".m{height:14px;width:auto;flex:0 0 auto}" +
+    // Info button: a sibling of the link, not nested, so the two are distinct targets —
+    // the link navigates, the button only reveals the tooltip (hover, keyboard focus,
+    // and touch tap all trigger it, no JS).
+    ".i{display:flex;align-items:center;justify-content:center;padding:0 9px;background:transparent;" +
+    "border:0;border-left:1px solid var(--frame);border-radius:0 0 7px 0;color:var(--tx);cursor:pointer;" +
+    "-webkit-appearance:none;appearance:none;transition:color .18s ease-out,background .18s ease-out}" +
+    ".i:hover{background:var(--ink);color:var(--canvas)}" +
+    ".i:focus-visible{outline:1px solid var(--ink);outline-offset:-3px}" +
+    ".i svg{width:14px;height:14px;display:block}" +
+    ".tip{position:absolute;right:0;bottom:calc(100% + 8px);width:min(272px,72vw);" +
+    "padding:11px 13px;background:var(--chip);border:1px solid var(--frame);border-radius:8px;" +
+    "box-shadow:0 8px 24px -8px rgba(0,0,0,.5);color:var(--tx);" +
+    "font-size:11.5px;font-weight:450;letter-spacing:0;line-height:1.55;text-align:left;" +
+    "opacity:0;transform:translateY(4px);pointer-events:none;" +
+    "transition:opacity .16s ease-out,transform .16s ease-out}" +
+    ".tip b{color:var(--ink);font-weight:650}" +
+    ".i:hover ~ .tip,.i:focus ~ .tip{opacity:1;transform:none}" +
     ".empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--tx);font-size:13.5px;text-align:center;padding:24px}"
+  // The Derive mark (packages/web Logo), monochrome via currentColor so it shifts with
+  // the plaque text on hover. viewBox is the tall brand ratio; height-locked, width auto.
   const mark =
-    '<svg class="m" viewBox="6 4 20 24" fill="none" aria-hidden="true"><path d="M16 7l7 7v11h-4.6v-6.2h-4.8V25H9V14l7-7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>'
+    '<svg class="m" viewBox="0 0 620 824" fill="none" aria-hidden="true"><path d="M404.01 217.285L271.071 140.531L404.01 63.7773L536.95 140.531L404.01 217.285ZM343.201 686.623L343.063 686.703C298.797 712.261 243.462 680.313 243.462 629.197C243.462 605.464 256.131 583.533 276.691 571.677L348.791 530.099V466.183L215.853 542.936L83.0526 466.183L243.462 373.692V188.295L376.401 265.049V629.119C376.401 652.841 363.746 674.761 343.201 686.623ZM188.243 744.209L55.4433 667.455V514.085L188.243 590.839V744.209ZM404.01 0L188.243 124.517V341.803L0.224609 450.308V699.344L215.853 824L431.619 699.344V303.385C431.619 279.663 444.275 257.743 464.819 245.88L464.957 245.801C509.225 220.243 564.559 252.189 564.559 303.305V303.444C564.559 327.179 551.89 349.108 531.329 360.965L459.229 402.544V466.321L619.777 373.692V124.517L404.01 0Z" fill="currentColor"/></svg>'
+  const infoIcon =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v5"/><path d="M12 7.7h.01"/></svg>'
+  const tip =
+    "<b>Derive</b> is the home for AI artifacts: publish from any agent, review together, and own the result at a permanent versioned URL."
   const body = data
-    ? `<div class="c"><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe><a class="b" href="${escapeHtml(`${data.info.pageUrl}?ref=embed`)}" target="_blank" rel="noopener" title="View on Derive">${mark}Made on Derive</a></div>`
+    ? `<div class="c"><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe><div class="p"><a class="b" href="${escapeHtml(`${data.info.pageUrl}?ref=embed`)}" target="_blank" rel="noopener" title="View on Derive">${mark}Made on Derive</a><button type="button" class="i" aria-label="What is Derive?" aria-describedby="dtip">${infoIcon}</button><span class="tip" id="dtip" role="tooltip">${tip}</span></div></div>`
     : `<div class="empty">This artifact is private or no longer available.<br>Open it on Derive to request access.</div>`
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${data ? escapeHtml(data.info.title) : "Derive"}</title><style>${css}</style></head><body>${body}</body></html>`
 }
