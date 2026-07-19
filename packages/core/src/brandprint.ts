@@ -121,6 +121,6 @@ export const pendingRequestsPointer = (count: number): string =>
   count === 0
     ? ""
     : ` You have ${count} pending request${count === 1 ? "" : "s"}: teammates @mentioned you` +
-      ` with work to do. Call check_requests FIRST — read each request, do what it asks on the` +
-      ` named artifact, then pass the handled ids back via check_requests({ack:[…]}) so they` +
-      ` leave the queue.`
+      ` with work to do. Call catch_up with NO short_id FIRST — that returns your work queue;` +
+      ` read each request, do what it asks on the named artifact, then pass the handled ids back` +
+      ` via catch_up({ack:[…]}) so they leave the queue.`

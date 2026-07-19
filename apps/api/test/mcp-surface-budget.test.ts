@@ -19,12 +19,14 @@ import { CORE_SKILLS } from "../src/skills-reference"
 // bit above the measured slimmed result, so blowing one means new prose crept back
 // into a description or the instructions — move it into a skill body instead, or raise
 // the budget here deliberately, in the same change that explains why.
-// Measured after the thin-tools reorg (all 15 tools slimmed, 5 core skills): summed tool
-// descriptions ~9063 chars, representative instructions ~1917 chars. The description cap
-// sits ~12% above the measured slim result; the instructions cap is deliberately generous
-// (the high-level block is finalized by hand in review) yet still below the old fat prose
-// so a regression to it fails here.
-const TOOL_DESCRIPTIONS_BUDGET = 10200
+// Measured after the 15→10 tool consolidation (find merges search/list_artifacts/
+// list_contexts; stage merges the two stage_* tools; catch_up absorbs check_requests as
+// its no-short_id queue; ask→use; setup_brandprint folded into publish; 5 core skills):
+// summed tool descriptions ~7077 chars, representative instructions ~1851 chars. The
+// description cap sits ~13% above the measured result; the instructions cap is deliberately
+// generous (the high-level block is finalized by hand in review) yet still below the old fat
+// prose so a regression to it fails here.
+const TOOL_DESCRIPTIONS_BUDGET = 8000
 const INSTRUCTIONS_BUDGET = 2400
 
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))

@@ -25,23 +25,25 @@
 // instructions carry only a one-line index of them. The mcp-surface-budget test guards
 // the thinness.
 //
-// One tool per intent — WORKSPACES (list_workspaces), FIND
-// (list_artifacts), READ content (read), GREP (search), CATCH UP on state/feedback/
-// history (catch_up), COMMENT (comment), WRITE (publish), the WORK QUEUE
-// (check_requests: what teammates asked THIS agent to do — the one intent that is
-// about the agent rather than a document, which is why it earns a slot instead of a
-// parameter on catch_up), SET UP the Brandprint (setup_brandprint: scaffold the
-// workspace's brand-profile slot so it can be authored over MCP — workspace
-// configuration, not a document write, so like check_requests it's a distinct intent
-// that doesn't reduce to a parameter on another tool), and ASK a workspace context
-// (list_contexts + ask: query the live data agents a workspace hosts, acting for the
-// connection's human — the one intent where Derive routes a question to a runner).
-// Variation lives in parameters, never a new tool: `since_version`/`to_version` turn catch_up into a
-// diff, `reply_to`/`set_state` fold reply+resolve into comment, `for_review`/role
-// turn publish into a human-reviewed proposal, and omitting `short_id` turns
-// `search` from grep-one-artifact into grep-the-workspace. A new capability is a
-// parameter on an existing tool, not a new tool — every extra tool costs the agent
-// a slot to understand and choose between.
+// TEN tools, one per intent — WORKSPACES (list_workspaces), FIND (find: BROWSE the
+// library, GREP one artifact, or SEARCH the workspace — plus the askable contexts,
+// all discriminated by argument), READ content (read), CATCH UP on state/feedback/
+// history AND pull the WORK QUEUE (catch_up: with a short_id it's one artifact's
+// delta; with none it's the @mention inbox teammates handed this agent — the ask-agent
+// and Rework buttons — so the queue is a mode of catch_up, not its own slot), COMMENT
+// (comment), WRITE (publish: also the home for the Brandprint profile — publishing to
+// derive://brandprint/profile scaffolds the slot on first write, so brand setup is a
+// publish target, not a separate tool), STAGE out-of-band uploads (stage: target:'doc'
+// for a whole big document/bundle, target:'asset' for an image/font — one tool, two
+// upload URLs), SAVE working state (checkpoint), and USE a workspace context (use:
+// query the live data agents a workspace hosts, acting for the connection's human — the
+// one intent where Derive routes a question to a runner).
+// Variation lives in parameters, never a new tool: `since_version`/`to_version` turn
+// catch_up into a diff and omitting `short_id` turns it into the work queue,
+// `reply_to`/`set_state` fold reply+resolve into comment, `for_review`/role turn publish
+// into a human-reviewed proposal, and `find` collapses browse/grep/search/contexts onto
+// `query`/`short_id`/`tag`. A new capability is a parameter on an existing tool, not a
+// new tool — every extra tool costs the agent a slot to understand and choose between.
 
 import {
   AGENT_INBOX_PAGE,
@@ -115,7 +117,7 @@ import {
   searchMatcher,
   searchReport,
   searchWorkspace,
-  workspaceSearchReport,
+  toSearchHits,
 } from "./lib/search"
 import { enqueueSlackReviewRequestedDm } from "./lib/slack-dm"
 import { computeTagSuggestions } from "./lib/tag-suggestions"
@@ -129,6 +131,7 @@ const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
 // publish: past `ms`, resolve with the fallback and move on.
 const withTimeout = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
   Promise.race([p, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))])
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 const json = (v: unknown) => text(JSON.stringify(v, null, 2))
 // An actionable error the model can recover from (per the MCP spec, isError text is
 // fed back to the agent so it self-corrects), rather than an opaque failure.
@@ -141,6 +144,24 @@ const err = (s: string) => ({
 // a blind dump: ~9k tokens leaves room to read on, small enough that most docs still
 // arrive whole. Measured on the formatted body, not the raw source.
 const FULL_DOC_MAX = 30_000
+
+// publish guardrails — reject inline payloads that belong out-of-band, BEFORE writing,
+// with an error naming the `stage` mode to use. A single base64 data: URI past this is a
+// binary pasted through the tool call — it should be an asset (stage target:'asset').
+const MAX_INLINE_DATA_URI_BYTES = 32 * 1024
+// Total inline `content` (or summed `files`) past this is a whole big document that
+// should be curled out-of-band (stage target:'doc') instead of chunked through context.
+const MAX_INLINE_CONTENT_BYTES = 64 * 1024
+// The decoded byte size of the LARGEST single base64 data: URI in a string (0 if none) —
+// base64 encodes 3 bytes per 4 chars, so decoded ≈ payload_chars * 3/4.
+const largestInlineDataUriBytes = (s: string): number => {
+  let max = 0
+  for (const m of s.matchAll(/data:[\w/+.-]+;base64,([A-Za-z0-9+/=]+)/g)) {
+    const bytes = Math.floor(((m[1] ?? "").length * 3) / 4)
+    if (bytes > max) max = bytes
+  }
+  return max
+}
 
 // Cap on landmark regions in a headless-page map: a card grid can have thousands of
 // top-level sections/articles, and the map (built to AVOID a wall of text) must not
@@ -204,7 +225,14 @@ const toBase64 = (bytes: Uint8Array): string => {
 // out-of-range start (a `from` past the end has no valid window — the caller errors
 // with the real line count rather than returning an empty "999-5" window).
 const parseLineRange = (spec: string, total: number): { from: number; to: number } | null => {
-  const m = spec.trim().match(/^(\d+)(?:-(\d*))?$/)
+  // Forgiving: agents sometimes wrap the range in stray quotes (lines:'"40-120"') or
+  // whitespace — strip surrounding quotes/space before matching, so "40-120" and
+  // '"40-120"' parse identically.
+  const cleaned = spec
+    .trim()
+    .replace(/^['"]+|['"]+$/g, "")
+    .trim()
+  const m = cleaned.match(/^(\d+)(?:-(\d*))?$/)
   if (!m) return null
   const from = Number(m[1])
   if (from < 1 || from > total) return null
@@ -375,11 +403,11 @@ async function buildServer(
         `act — comment to give or resolve feedback, publish a revision, respond to review. This one ` +
         `login reaches every workspace in your grant: call list_workspaces to see them, then pass a ` +
         `workspace id or name as the "workspace" argument to act in another (read, catch_up, comment, ` +
-        `publish, list_artifacts); read/catch_up/comment also find a short_id in any of them ` +
+        `publish, find); read/catch_up/comment also find a short_id in any of them ` +
         `automatically.\n\n` +
         `CORE SKILLS carry the working procedure for each intent — read the matching one (a resource, ` +
         `or read("derive://skills/<name>")) before you act:\n${skillsIndex}\n\n` +
-        `Workspace skills (team procedures) exist too: list_artifacts skills:true, then read.` +
+        `Workspace skills (team procedures) exist too: find skills:true, then read.` +
         brandprintInstructions(bpSources.length, bpProfile) +
         pendingRequestsPointer(pendingRequests.length),
     },
@@ -609,9 +637,9 @@ async function buildServer(
         (await ctx.meta.getArtifactMember(a.id, agent.id))
       if (!ok) return null
     }
-    // A taken-down artifact serves NO content, mirroring the web /raw 410: read, search,
+    // A taken-down artifact serves NO content, mirroring the web /raw 410: read, find,
     // comment, and publish all resolve through here, so gating it once covers every
-    // one-artifact tool. It stays visible as a tombstone in list_artifacts (metadata
+    // one-artifact tool. It stays visible as a tombstone in find's browse rows (metadata
     // only). Checked AFTER the reach/membership gates so it never confirms a removed
     // short_id to someone who couldn't have reached it anyway (they still get notFound).
     if (a.removed_at) return { error: `"${shortId}" was taken down and is no longer available.` }
@@ -619,7 +647,7 @@ async function buildServer(
   }
   const notFound = (shortId: string) =>
     err(
-      `No artifact "${shortId}" you can reach in any of your workspaces. Call list_artifacts (optionally with a workspace) to see what's there.`,
+      `No artifact "${shortId}" you can reach in any of your workspaces. Call find (optionally with a workspace) to see what's there.`,
     )
 
   // The `workspace` argument shared by every workspace-scoped tool.
@@ -630,88 +658,68 @@ async function buildServer(
       "Workspace to act in — its id or name from list_workspaces. Omit for your default workspace; read/catch_up/comment also find a short_id in ANY of your workspaces automatically.",
     )
 
-  // WORK QUEUE — what teammates asked this agent to do -------------------------
+  // WORK QUEUE — what teammates asked this agent to do (a MODE of catch_up: no short_id).
   // The pull inbox behind the ask-agent and Rework buttons: a teammate @mentions this
   // agent in a comment and the request waits here until some session of the agent reads
-  // and acks it. Registered on every connection — a human grant simply has an empty
-  // queue — so the tool surface never differs by auth kind.
-  server.registerTool(
-    "check_requests",
-    {
-      description:
-        "Your work queue: pending requests teammates handed you by @mentioning you in a comment (the ask-agent and Rework buttons land here) — each names the artifact, the comment thread, and what to do. Handle a request on its artifact, then call this again with ack:[id,…] to clear what you finished; an unknown or already-acked id is skipped, never an error, and unacked requests stay queued for your next session. Pass `wait` (seconds, max 50) to long-poll for new work when the queue is empty, chaining calls to react in seconds instead of polling on a cadence. For how to work and ack a request, read derive://skills/loop.",
-      inputSchema: {
-        ack: z
-          .array(z.string())
-          .optional()
-          .describe(
-            "Request ids you have HANDLED — acknowledges them off the queue. Ack after the work lands (a publish or a reply), not on read; an unknown or already-acked id is skipped, never an error.",
-          ),
-        wait: z
-          .number()
-          .int()
-          .min(1)
-          .max(50)
-          .optional()
-          .describe(
-            "Long-poll: when nothing is queued, block up to this many seconds for a new request to land before returning. Returns immediately when work is already waiting.",
-          ),
-      },
-    },
-    async ({ ack, wait }) => {
-      // The queue this request already read at connect (a fresh server per request, so
-      // it is this call's snapshot — and empty without a re-read for a grant that has
-      // no inbox at all).
-      const queue = pendingRequests
-      // `acked` counts what actually LEFT the queue, so acking is idempotent: the store
-      // matches a row whether or not it was already acknowledged, so an unknown or
-      // repeated id would otherwise inflate the count. Ack against the snapshot, and
-      // answer from it.
-      const handled = new Set((ack ?? []).filter((id) => queue.some((m) => m.id === id)))
-      let acked = 0
-      for (const id of handled) if (await ctx.meta.ackAgentMention(agent.id, id)) acked++
-      let pending = queue.filter((m) => !handled.has(m.id))
-
-      // Long-poll: only a registered agent has an inbox to wait on. When nothing is
-      // pending, subscribe to this agent's channel, then RE-READ fresh (a request may
-      // have landed since connect, or during the wait) — the same check-then-wait gap
-      // close catch_up uses. The event is only a wake signal; we always answer from a
-      // fresh store read, so a missed or raced wake is never a wrong answer.
-      if (registered && wait && pending.length === 0 && ctx.bus.waitFor) {
-        const release = new AbortController()
-        const woke = ctx.bus
-          .waitFor(`u:${agent.id}`, ["request.created"], wait * 1000, release.signal)
-          .catch(() => null)
-        const fresh = await ctx.meta.listPendingAgentMentions(agent.id, AGENT_INBOX_PAGE)
-        if (fresh.length) {
-          release.abort()
-          await woke
-        } else {
-          await woke
-        }
-        pending = fresh.length
-          ? fresh
-          : await ctx.meta.listPendingAgentMentions(agent.id, AGENT_INBOX_PAGE)
-      }
+  // and acks it. catch_up with no short_id returns it; only a REGISTERED workspace agent
+  // has an inbox (an OAuth grant's id is oauth:<client>, which no @mention can name), so a
+  // connection without one gets an explicit note instead of a bare empty list.
+  const workQueue = async (ack?: string[], wait?: number) => {
+    // No inbox at all: say so, rather than returning [] the agent might read as "no work".
+    if (!registered)
       return json({
-        acked,
-        pending: pending.map((m) => ({
-          id: m.id,
-          artifact: m.artifact_short_id,
-          thread: m.thread_id,
-          author: m.author,
-          request: m.body,
-          created_at: m.created_at,
-        })),
+        acked: 0,
+        pending: [],
+        note: "This connection has no inbox — @mentions can't name an OAuth grant, so there's no work queue here (a registered workspace agent has one). Pass a short_id to catch up on an artifact instead.",
       })
-    },
-  )
+    // The queue this request already read at connect (a fresh server per request, so it
+    // is this call's snapshot). `acked` counts what actually LEFT the queue, so acking is
+    // idempotent: the store matches a row whether or not it was already acknowledged, so
+    // an unknown or repeated id would otherwise inflate the count.
+    const queue = pendingRequests
+    const handled = new Set((ack ?? []).filter((id) => queue.some((m) => m.id === id)))
+    let acked = 0
+    for (const id of handled) if (await ctx.meta.ackAgentMention(agent.id, id)) acked++
+    let pending = queue.filter((m) => !handled.has(m.id))
+
+    // Long-poll: when nothing is pending, subscribe to this agent's channel, then RE-READ
+    // fresh (a request may have landed since connect, or during the wait) — the same
+    // check-then-wait gap close catch_up uses. The event is only a wake signal; we always
+    // answer from a fresh store read, so a missed or raced wake is never a wrong answer.
+    if (wait && pending.length === 0 && ctx.bus.waitFor) {
+      const release = new AbortController()
+      const woke = ctx.bus
+        .waitFor(`u:${agent.id}`, ["request.created"], wait * 1000, release.signal)
+        .catch(() => null)
+      const fresh = await ctx.meta.listPendingAgentMentions(agent.id, AGENT_INBOX_PAGE)
+      if (fresh.length) {
+        release.abort()
+        await woke
+      } else {
+        await woke
+      }
+      pending = fresh.length
+        ? fresh
+        : await ctx.meta.listPendingAgentMentions(agent.id, AGENT_INBOX_PAGE)
+    }
+    return json({
+      acked,
+      pending: pending.map((m) => ({
+        id: m.id,
+        artifact: m.artifact_short_id,
+        thread: m.thread_id,
+        author: m.author,
+        request: m.body,
+        created_at: m.created_at,
+      })),
+    })
+  }
 
   server.registerTool(
     "list_workspaces",
     {
       description:
-        "List every workspace THIS grant can act in — id, name, your role there, and which is your default (the set you chose when you connected: all your workspaces, or a subset). Pass a workspace's id or name as the `workspace` argument to list_artifacts / read / catch_up / comment / publish to act there. No reconnect — read/catch_up/comment even find a short_id across these workspaces automatically.",
+        "List every workspace THIS grant can act in — id, name, your role there, and which is your default (the set you chose when you connected: all your workspaces, or a subset). Pass a workspace's id or name as the `workspace` argument to find / read / catch_up / comment / publish to act there. No reconnect — read/catch_up/comment even find a short_id across these workspaces automatically.",
       inputSchema: {},
     },
     async () => {
@@ -723,49 +731,190 @@ async function buildServer(
     },
   )
 
-  // FIND ----------------------------------------------------------------------
+  // FIND — one tool over BROWSE (list_artifacts) + GREP/SEARCH (search) + the askable
+  // CONTEXTS (list_contexts), discriminated by argument. The mode is decided by what's
+  // passed: `short_id` ⇒ grep within it; `query` alone ⇒ search the workspace; neither ⇒
+  // browse. Result rows are typed (artifact | match | context) so a mixed listing is
+  // unambiguous. -----------------------------------------------------------------------
+  const CONTEXTS_NEED_HUMAN =
+    "Contexts (askable live data agents) are hidden here: this connection has no signed-in user. Reconnect with an OAuth login to see and use them."
+  // Askable contexts as typed `find` rows — INVARIANT (A): sourced ONLY from
+  // askableContexts (the per-human canUserAskContext gate), so a roster-gated context this
+  // user may not ask never appears; (B): with no acting human this returns [] and the
+  // caller adds an explicit note rather than erroring. Each row carries its own open
+  // sessions and the steer to reach it with `use`. (askableContexts/runnerOnline are
+  // defined further down; referenced here from a handler that runs at call-time.)
+  const contextFindRows = async (org: string, matches?: (name: string) => boolean) => {
+    if (!actingFor) return []
+    const human = actingFor
+    const rows = await askableContexts(org, human.id)
+    const picked = matches ? rows.filter(({ x }) => matches(x.name)) : rows
+    return Promise.all(
+      picked.map(async ({ x, manifest }) => {
+        const open = (await ctx.meta.listSessions(x.id, { askerId: human.id, limit: 10 }))
+          .filter((s) => s.state !== "closed")
+          .map((s) => ({ id: s.id, state: s.state, updated_at: s.updated_at ?? s.created_at }))
+        return {
+          type: "context" as const,
+          id: x.id,
+          name: x.name,
+          online: runnerOnline(x),
+          manifest: manifest ? { short_id: manifest.short_id, title: manifest.title } : null,
+          your_open_sessions: open,
+          note: "Ask it on your user's behalf with `use` (a question or a commission).",
+        }
+      }),
+    )
+  }
   server.registerTool(
-    "list_artifacts",
+    "find",
     {
       description:
-        "List the artifacts (docs, plans, sites, skills) in a workspace — short id, title, kind, is_skill, current version, access (workspace_access/link_role/listed). Defaults to your current workspace; pass `workspace` (id or name from list_workspaces) to list another one. Pass skills:true to list only skills (reusable agent procedure). Pass `tag` to filter to one browse tag. Includes your own unlisted publishes — out of the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
+        "Find things in Derive — the MODE is decided by what you pass. Pass `short_id` + `query` to GREP within one artifact: matching lines with line numbers (in:'source'|'text', context lines, a past `version`), so you can then read a `lines` range or edit that spot. Pass `query` ALONE to SEARCH the whole workspace — artifacts ranked by relevance with a snippet each, so you find WHICH doc has something before opening it; this ALSO surfaces any askable context whose name matches. Pass NEITHER to BROWSE the library: every artifact (short id, title, kind, is_skill, version, access, tags — skills:true or a `tag` narrows it) PLUS the askable contexts. Rows are typed (artifact | match | context); a context row is reached with `use`, never read/opened. Includes your own unlisted work. For the browse→work rhythm, read derive://skills/loop.",
       inputSchema: {
-        query: z.string().optional().describe("Optional title search filter."),
+        query: z
+          .string()
+          .optional()
+          .describe(
+            "With `short_id`: the literal text to grep within it (metacharacters are not special). Alone (no short_id): the workspace content search. Omit both to browse.",
+          ),
+        short_id: z
+          .string()
+          .optional()
+          .describe("Grep WITHIN this one artifact (needs `query`). Omit to browse or search."),
         tag: z
           .string()
           .optional()
-          .describe("Only artifacts carrying this browse tag (case-insensitive)."),
+          .describe("Browse only: artifacts carrying this browse tag (case-insensitive)."),
         skills: z
           .boolean()
           .optional()
-          .describe("Only list skills (bundles with a SKILL.md — reusable agent procedure)."),
+          .describe(
+            "Browse only: list only skills (bundles with a SKILL.md — reusable agent procedure).",
+          ),
+        case_sensitive: z.boolean().optional().describe("Grep/search: default false."),
+        in: z
+          .enum(["source", "text"])
+          .optional()
+          .describe(
+            "Grep/search: source (default) the exact stored bytes (the positions you'd edit); text the visible text a reader sees (HTML tags stripped).",
+          ),
+        context: z
+          .number()
+          .optional()
+          .describe(
+            "Grep/search: lines of surrounding context around each match (default 0, max 5).",
+          ),
+        max_matches: z
+          .number()
+          .optional()
+          .describe("Grep/search: cap on matches per artifact (default 40, max 200)."),
+        version: z
+          .number()
+          .optional()
+          .describe("Grep within a past version (short_id mode). Defaults to the current one."),
         workspace: wsArg,
       },
     },
-    async ({ query, tag, skills, workspace }) => {
+    async ({
+      query,
+      short_id,
+      tag,
+      skills,
+      case_sensitive,
+      in: scope,
+      context,
+      max_matches,
+      version,
+      workspace,
+    }) => {
+      // MODE 1 — GREP WITHIN ONE ARTIFACT. Byte-for-byte the former search(short_id):
+      // matching lines, line numbers, in:'source'|'text', context lines, a chosen version.
+      if (short_id) {
+        if (!query) return err("`query` is required to grep within an artifact (short_id).")
+        const re = searchMatcher(query, case_sensitive ?? false)
+        const ctxLines = Math.min(Math.max(context ?? 0, 0), 5)
+        const cap = Math.min(Math.max(max_matches ?? 40, 1), 200)
+        const where = scope ?? "source"
+        const r = await reach(short_id, workspace)
+        if (r && "error" in r) return err(r.error)
+        if (!r) return notFound(short_id)
+        const a = r.a
+        const n = version ?? a.current_version
+        if (n < 1 || n > a.current_version)
+          return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
+        const v = await ctx.meta.getVersion(a.id, n)
+        if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
+        const { groups, total, note } = await searchArtifactVersion(
+          ctx,
+          v,
+          re,
+          where,
+          ctxLines,
+          cap,
+        )
+        return text(searchReport(short_id, query, where, total, cap, groups, note))
+      }
+
+      // MODE 2 — SEARCH THE WORKSPACE (ranked artifacts + a snippet each), plus any askable
+      // context whose NAME matches the query. Typed rows: {type:"match"} + {type:"context"}.
+      if (query) {
+        const t = await resolveWs(workspace)
+        if ("error" in t) return err(t.error)
+        const re = searchMatcher(query, case_sensitive ?? false)
+        const ctxLines = Math.min(Math.max(context ?? 0, 0), 5)
+        const cap = Math.min(Math.max(max_matches ?? 40, 1), 200)
+        const where = scope ?? "source"
+        const { results, note } = await searchWorkspace(ctx, {
+          orgId: t.org,
+          viewerId: actingFor?.id ?? agent.id,
+          query,
+          re,
+          where,
+          ctxLines,
+          cap,
+        })
+        const matchRows = toSearchHits(results, query).map((h) => ({
+          type: "match" as const,
+          ...h,
+        }))
+        const q = query.toLowerCase()
+        const contextRows = await contextFindRows(t.org, (name) => name.toLowerCase().includes(q))
+        return json({
+          workspace: t.org,
+          query,
+          where,
+          count: matchRows.length + contextRows.length,
+          results: [...matchRows, ...contextRows],
+          ...(note ? { note } : {}),
+          ...(actingFor ? {} : { contexts_note: CONTEXTS_NEED_HUMAN }),
+        })
+      }
+
+      // MODE 3 — BROWSE the library: list_artifacts rows (skills:/tag facets), plus every
+      // askable context. A tag filter resolves to an id set first (mirrors the HTTP ?tag=
+      // path); viewerId keeps private rows scoped to the agent's human (mirrors `reach`).
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
-      // A tag filter resolves to an id set first (mirrors the HTTP ?tag= path), which
-      // listArtifacts then scopes to the workspace + re-applies visibility over.
       const ids = tag ? await ctx.meta.artifactIdsByTag(tag.trim().toLowerCase()) : undefined
-      if (ids && ids.length === 0) return json({ workspace: t.org, count: 0, artifacts: [] })
-      // viewerId keeps private rows scoped to the agent's human (mirrors `reach`) —
-      // the owner row written at publish is what lets the agent always find its
-      // own drafts while a teammate's private work stays invisible.
-      const arts = await ctx.meta.listArtifacts({
-        orgId: t.org,
-        q: query,
-        ids,
-        viewerId: actingFor?.id ?? agent.id,
-      })
-      // Skill-ness isn't a store-level filter (it's the denormalized content type), so
-      // narrow here — a title `query` still composes with it.
+      const arts =
+        ids && ids.length === 0
+          ? []
+          : await ctx.meta.listArtifacts({ orgId: t.org, ids, viewerId: actingFor?.id ?? agent.id })
+      // Skill-ness isn't a store-level filter (it's the denormalized content type).
       const rows = skills ? arts.filter((a) => a.current_content_type === SKILL_CONTENT_TYPE) : arts
       const tagMap = await ctx.meta.tagsForArtifacts(rows.map((a) => a.id))
+      const artifactRows = rows.map((a) => ({
+        type: "artifact" as const,
+        ...summarizeArtifact(a),
+        tags: tagMap[a.id] ?? [],
+      }))
+      const contextRows = await contextFindRows(t.org)
       return json({
         workspace: t.org,
-        count: rows.length,
-        artifacts: rows.map((a) => ({ ...summarizeArtifact(a), tags: tagMap[a.id] ?? [] })),
+        count: artifactRows.length + contextRows.length,
+        results: [...artifactRows, ...contextRows],
+        ...(actingFor ? {} : { contexts_note: CONTEXTS_NEED_HUMAN }),
       })
     },
   )
@@ -806,11 +955,20 @@ async function buildServer(
           .describe(
             'SEE the published page instead of reading its text — what a viewer actually sees, catching visual breakage (a failed font, a broken layout) no text read can. "top": the 1200x630 crop (fastest, what an og:image unfurl shows). "full": the whole page, fullPage screenshot — catches below-the-fold breakage "top" misses. "marked": "full" again with the region map\'s @N refs drawn on it — pairs with a no-heading page\'s region map so what you SEE lines up with what you READ. All three computed a few seconds after each publish; pass alone (optionally with `version`).',
           ),
+        wait: z
+          .number()
+          .int()
+          .min(1)
+          .max(30)
+          .optional()
+          .describe(
+            "With `render`: when the screenshot isn't computed yet (a publish is seconds old), block up to this many seconds (max 30) for it to land instead of returning the not-ready message. Returns at once when it's already ready or has failed.",
+          ),
         version: z.number().optional().describe("Defaults to the current version."),
         workspace: wsArg,
       },
     },
-    async ({ short_id, section, format, version, lines, render, workspace }) => {
+    async ({ short_id, section, format, version, lines, render, wait, workspace }) => {
       const fmt: ReadFormat = format ?? "markdown"
       // `derive://brandprint/*` URIs are readable through `read`, not only as MCP
       // resources — the exact strings the server instructions name, reachable by every
@@ -843,7 +1001,7 @@ async function buildServer(
         if (seg === "profile") {
           if (!(bpProfile?.state === "live" && profileArt))
             return err(
-              "This workspace has no live brand profile yet. Read derive://brandprint/reference and derive://brandprint/template, then run setup_brandprint and publish the profile with for_review:true.",
+              "This workspace has no live brand profile yet. Read derive://brandprint/reference and derive://brandprint/template, build the profile, then publish it to derive://brandprint/profile (an Admin's first publish there scaffolds the slot; it lands as a proposal a human approves).",
             )
           const pv = await ctx.meta.getVersion(profileArt.id, profileArt.current_version)
           const body = pv ? await ctx.sourceText(pv) : null
@@ -877,19 +1035,19 @@ async function buildServer(
           return err(
             "`render` is a view of the whole version — pass it alone (with `version` for history).",
           )
-        const variant =
+        const pick = (ver: VersionRecord) =>
           render === "top"
-            ? { key: v.preview_key, status: v.preview_status, error: v.preview_error }
+            ? { key: ver.preview_key, status: ver.preview_status, error: ver.preview_error }
             : render === "full"
               ? {
-                  key: v.preview_full_key,
-                  status: v.preview_full_status,
-                  error: v.preview_full_error,
+                  key: ver.preview_full_key,
+                  status: ver.preview_full_status,
+                  error: ver.preview_full_error,
                 }
               : {
-                  key: v.preview_marked_key,
-                  status: v.preview_marked_status,
-                  error: v.preview_marked_error,
+                  key: ver.preview_marked_key,
+                  status: ver.preview_marked_status,
+                  error: ver.preview_marked_error,
                 }
         const label =
           render === "top"
@@ -897,6 +1055,23 @@ async function buildServer(
             : render === "full"
               ? "the whole page"
               : "the whole page, with the region map's @N refs drawn on it"
+        let variant = pick(v)
+        // Long-poll: the screenshot lands a few seconds after a publish. When it's neither
+        // ready nor failed and the caller passed `wait`, block up to that many seconds
+        // (max 30), re-reading the version, before returning the not-ready message — a
+        // bounded retry loop so the agent gets the render in one call after a fresh push.
+        if (wait && !(variant.status === "ready" && variant.key) && variant.status !== "failed") {
+          const deadline = Date.now() + Math.min(Math.max(wait, 0), 30) * 1000
+          while (
+            Date.now() < deadline &&
+            !(variant.status === "ready" && variant.key) &&
+            variant.status !== "failed"
+          ) {
+            await sleep(Math.min(1500, Math.max(0, deadline - Date.now())))
+            const refreshed = await ctx.meta.getVersion(a.id, n)
+            if (refreshed) variant = pick(refreshed)
+          }
+        }
         if (variant.status === "ready" && variant.key) {
           const png = await ctx.blobs.get(variant.key)
           if (png) {
@@ -924,7 +1099,7 @@ async function buildServer(
             `The render:${render} of "${short_id}" v${n} failed${variant.error ? ` (${variant.error})` : ""} — the page may still be fine; open ${url} to check, or republish to retry.`,
           )
         return err(
-          `The render:${render} of "${short_id}" v${n} isn't ready yet — screenshots are computed a few seconds after publish. Try again shortly.`,
+          `The render:${render} of "${short_id}" v${n} isn't ready yet — screenshots are computed a few seconds after publish. Try again shortly, or pass \`wait\` (seconds, max 30) to block for it.`,
         )
       }
       const manifest = await manifestOf(ctx, v)
@@ -1263,88 +1438,7 @@ async function buildServer(
     },
   )
 
-  // SEARCH — grep within one artifact, so an agent finds a spot without a full read
-  server.registerTool(
-    "search",
-    {
-      description:
-        "Find text within ONE artifact (pass short_id) or across a WORKSPACE (omit short_id) — ripgrep-style matching lines with line numbers, so you can then `read` a narrow `lines` range (in the format the result names) or `edit` that spot. A bundle is searched across all its text pages, grouped by page; a workspace search returns the artifacts you can see, ranked by relevance and grouped by artifact, so you find WHICH doc has something before opening it. Searches the exact source by default (in:'text' searches the visible text instead). The query is matched literally (metacharacters are not special).",
-      inputSchema: {
-        short_id: z
-          .string()
-          .optional()
-          .describe(
-            "The artifact's short id, e.g. nk0dsral. Omit to search across the workspace instead of one artifact.",
-          ),
-        query: z.string().describe("The literal text to find (metacharacters are not special)."),
-        case_sensitive: z.boolean().optional().describe("Default false."),
-        in: z
-          .enum(["source", "text"])
-          .optional()
-          .describe(
-            "source (default): the exact stored bytes — the positions you'd `edit`. text: the visible text a reader sees (HTML tags stripped).",
-          ),
-        context: z
-          .number()
-          .optional()
-          .describe("Lines of surrounding context to show around each match (default 0, max 5)."),
-        max_matches: z
-          .number()
-          .optional()
-          .describe(
-            "Cap on matches returned per artifact (default 40, max 200). Applies to each artifact scanned in workspace mode too.",
-          ),
-        version: z
-          .number()
-          .optional()
-          .describe("Defaults to the current version. Ignored in workspace mode (always current)."),
-        workspace: wsArg,
-      },
-    },
-    async ({
-      short_id,
-      query,
-      case_sensitive,
-      in: scope,
-      context,
-      max_matches,
-      version,
-      workspace,
-    }) => {
-      if (!query) return err("`query` is required.")
-      const re = searchMatcher(query, case_sensitive ?? false)
-      const ctxLines = Math.min(Math.max(context ?? 0, 0), 5)
-      const cap = Math.min(Math.max(max_matches ?? 40, 1), 200)
-      const where = scope ?? "source"
-
-      if (!short_id) {
-        const t = await resolveWs(workspace)
-        if ("error" in t) return err(t.error)
-        const { results, note } = await searchWorkspace(ctx, {
-          orgId: t.org,
-          viewerId: actingFor?.id ?? agent.id,
-          query,
-          re,
-          where,
-          ctxLines,
-          cap,
-        })
-        return text(workspaceSearchReport(query, where, results, note))
-      }
-
-      const r = await reach(short_id, workspace)
-      if (r && "error" in r) return err(r.error)
-      if (!r) return notFound(short_id)
-      const a = r.a
-      const n = version ?? a.current_version
-      if (n < 1 || n > a.current_version)
-        return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
-      const v = await ctx.meta.getVersion(a.id, n)
-      if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
-      const { groups, total, note } = await searchArtifactVersion(ctx, v, re, where, ctxLines, cap)
-      return text(searchReport(short_id, query, where, total, cap, groups, note))
-    },
-  )
+  // (GREP + workspace SEARCH now live in `find` — same engine, discriminated by short_id.)
 
   // ORGANIZE — ONE tool for the library's findability metadata: tags + collections,
   // read + write. No short_ids ⇒ the workspace overview (vocabulary + collections).
@@ -1555,9 +1649,18 @@ async function buildServer(
     "catch_up",
     {
       description:
-        "START HERE on an artifact: its state in one call — a one-line summary, the versions that landed since `since_version`, which pages changed, the open (and outdated) comment threads, the review round you're waiting on, and the full version history. Pass `comments` (open/addressed/resolved/outdated) for that filtered thread list instead — your feedback to-do queue. Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) for a line-by-line diff of the two versions' readable Markdown form. WAITING ON SOMETHING? Pass `wait` (seconds, max 50) to block until the human sends back / approves / comments / publishes a new version, then return the fresh state — chain waits instead of sleeping between polls. For the diff, review states, and the wait loop, read derive://skills/loop.",
+        "With a `short_id`: START HERE on an artifact — its state in one call: a one-line summary, the versions that landed since `since_version`, which pages changed, the open (and outdated) comment threads, the review round you're waiting on, and the full version history. Pass `comments` (open/addressed/resolved/outdated) for that filtered thread list instead — your feedback to-do queue. Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) for a line-by-line diff of the two versions' readable Markdown form. WITHOUT a short_id: your WORK QUEUE — pending requests teammates handed you by @mentioning you in a comment (the ask-agent and Rework buttons); pass `ack:[id,…]` to clear the ones you finished. WAITING ON SOMETHING? Pass `wait` (seconds, max 50) to block until the human acts (or, in queue mode, until new work lands), then return the fresh state — chain waits instead of sleeping between polls. For the diff, review states, working a request, and the wait loop, read derive://skills/loop.",
       inputSchema: {
-        short_id: z.string(),
+        short_id: z
+          .string()
+          .optional()
+          .describe("The artifact to catch up on. Omit it to pull your work queue instead."),
+        ack: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Work-queue mode (no short_id): request ids you have HANDLED — acknowledges them off the queue. Ack after the work lands (a publish or a reply), not on read; an unknown or already-acked id is skipped, never an error.",
+          ),
         since_version: z
           .number()
           .optional()
@@ -1590,7 +1693,19 @@ async function buildServer(
         workspace: wsArg,
       },
     },
-    async ({ short_id, since_version, to_version, comments, response_format, wait, workspace }) => {
+    async ({
+      short_id,
+      ack,
+      since_version,
+      to_version,
+      comments,
+      response_format,
+      wait,
+      workspace,
+    }) => {
+      // No short_id ⇒ the WORK QUEUE mode (absorbs the former check_requests): the
+      // @mention inbox, its ack, and its own request.created long-poll.
+      if (!short_id) return workQueue(ack, wait)
       const r = await reach(short_id, workspace)
       if (r && "error" in r) return err(r.error)
       if (!r) return notFound(short_id)
@@ -1873,97 +1988,99 @@ async function buildServer(
     },
   )
 
-  // STAGE ASSETS — a tokenless upload URL for binaries -------------------------
-  // The blessed images path is POST /v1/assets with raw bytes, but a hosted-OAuth
-  // connection's credential lives inside this transport — the agent's shell has no
-  // bearer to curl with, so that path 403s on exactly the agents told to use it.
-  // This tool moves the capability out to the shell: mint a short-lived signed
-  // upload URL over MCP, spend it with curl. The bytes never enter the context.
-  server.registerTool(
-    "stage_asset",
-    {
-      description:
-        "Upload an image or font to embed in a document — do this BEFORE publish whenever a doc references a binary. Mint a SHORT-LIVED, no-bearer upload URL for raster images (PNG/JPEG/GIF/WebP) and web fonts (WOFF/WOFF2, max 25MB), curl the file's RAW bytes to it from your shell (`curl -sS --data-binary @shot.png <upload_url>`), and reference the returned permanent `url` (in an <img src>, CSS url(), or markdown) — or its `asset:<hash>` `ref` in a publish `files` map. The URL is reusable ~15 min, so stage a batch with one mint. NEVER base64 an image through a tool call — a pasted image is already a file on disk, so upload that. For the whole document (not a binary it embeds), use publish or stage_publish. Read derive://skills/publishing.",
-      inputSchema: { workspace: wsArg },
-    },
-    async ({ workspace }) => {
-      const t = await resolveWs(workspace)
-      if ("error" in t) return err(t.error)
-      // Same bar as POST /v1/assets itself: staging is a publish-side capability.
-      if (!roleAllows(t.role, "publish"))
-        return err("Your role in this workspace can't stage assets (publishing required).")
-      const secret = ctx.deps.encryptionKey
-      if (!secret)
-        return err(
-          "This server has no signing secret configured, so it can't mint upload URLs. POST the bytes to /v1/assets with a bearer token instead (DERIVE_TOKEN, or `derive login`).",
-        )
-      // Bind the token to the granting user so the spend side can re-check live
-      // membership — revoking or demoting them kills outstanding URLs mid-TTL.
-      // An ownerless legacy agent has no user to bind; it mints an unbound token.
-      const expiresAt = Date.now() + UPLOAD_TOKEN_TTL_MS
-      const tok = await signUploadToken(secret, t.org, ownerId ?? "", expiresAt)
-      const uploadUrl = `${ctx.deps.baseUrl.replace(/\/$/, "")}/v1/assets/t/${tok}`
-      return json({
-        upload_url: uploadUrl,
-        workspace: t.org,
-        expires_in_minutes: Math.round(UPLOAD_TOKEN_TTL_MS / 60_000),
-        max_bytes: MAX_ASSET_BYTES,
-        accepts: ["image/png", "image/jpeg", "image/gif", "image/webp", "font/woff", "font/woff2"],
-        how: `curl -sS -X POST --data-binary @<file> "${uploadUrl}" → {url, ref, ...}. Paste \`url\` into content, or use \`ref\` ("asset:<hash>") as a bundle files value. Repeat for each file until expiry.`,
-      })
-    },
-  )
-
-  // STAGE PUBLISH — a tokenless publish URL for large content ------------------
-  // The publish tool carries content INLINE (`content`/`files`), which is model
-  // output — capped by the per-response token ceiling and forced into slow,
-  // expensive multi-turn chunking once a file is bigger than a page or two. This
-  // mints a short-lived signed URL the shell curls the file's bytes to, so a big
-  // designed HTML page or a whole bundle publishes in one shot, zero bytes
-  // through the model's context. Same shell-out shape as stage_asset; scoped
+  // STAGE — one tool, two out-of-band upload URLs, each spent with curl so bytes never
+  // enter the model's context. target:'asset' = the former stage_asset (a binary a doc
+  // embeds); target:'doc' = the former stage_publish (a whole big document/bundle). The
+  // blessed paths are POST /v1/assets and POST /v1/artifacts, but a hosted-OAuth
+  // connection's credential lives inside this transport — the shell has no bearer to curl
+  // with — so these mint short-lived signed URLs that need none. The doc path is scoped
   // tighter because publishing writes artifacts (see lib/publish-token.ts).
   server.registerTool(
-    "stage_publish",
+    "stage",
     {
       description:
-        "Upload a whole document that is too big to inline — use this INSTEAD of publish when a designed HTML page or bundle is more than ~a page (inlining it through publish is slow, costly, and can fail). Mint a SHORT-LIVED, no-bearer upload URL, then curl the file (or a zipped dir, which publishes as a bundle) to it from your shell — zero tokens through context. Omit short_id to CREATE, pass short_id to REVISE that exact target. For a small doc or a partial change use publish (with `edits`) instead; for an image or font the doc embeds, use stage_asset. Read derive://skills/publishing for the curl recipes.",
+        "Upload out-of-band — mint a SHORT-LIVED, no-bearer upload URL, then curl the file's bytes to it from your shell (zero tokens through context). target:'doc' for a whole big document or bundle more than ~a page (returns a publish URL — curl the file, or a zipped dir which becomes a bundle; omit short_id to CREATE, pass it to REVISE that exact target). target:'asset' for an image or font a document EMBEDS (returns a permanent url + an asset:<hash> ref for an <img src>/CSS url()/markdown or a publish `files` map; raster images and WOFF/WOFF2 only, max 25MB). Use publish for inline content and surgical edits. NEVER base64 a binary through a tool call — a pasted image is already a file on disk. Read derive://skills/publishing.",
       inputSchema: {
-        workspace: wsArg,
+        target: z
+          .enum(["doc", "asset"])
+          .describe(
+            "doc: a whole document/bundle too big to inline (returns a publish URL). asset: an image or font a doc embeds (returns a permanent asset url + ref).",
+          ),
         short_id: z
           .string()
           .optional()
-          .describe("Revise THIS artifact; omit to create a new one. The token is scoped to it."),
+          .describe(
+            "target:'doc' ONLY — revise THIS artifact; omit to create a new one (the token is scoped to it). Rejected with target:'asset' (an asset isn't versioned).",
+          ),
+        workspace: wsArg,
       },
     },
-    async ({ workspace, short_id }) => {
+    async ({ target, short_id, workspace }) => {
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
-      // A publish is attributed to a person and its URL is re-checked against
-      // their live rights — so it needs a known granting user. A static agent
-      // token (dk_agt_/DERIVE_TOKEN) has none, but it also isn't trapped in this
-      // transport: it can POST to /v1/artifacts with that bearer directly.
+
+      if (target === "asset") {
+        // A binary an embedding doc references — the former stage_asset path, verbatim.
+        if (short_id)
+          return err("`short_id` applies only to target:'doc'. An asset isn't versioned — omit it.")
+        // Same bar as POST /v1/assets itself: staging is a publish-side capability.
+        if (!roleAllows(t.role, "publish"))
+          return err("Your role in this workspace can't stage assets (publishing required).")
+        const secret = ctx.deps.encryptionKey
+        if (!secret)
+          return err(
+            "This server has no signing secret configured, so it can't mint upload URLs. POST the bytes to /v1/assets with a bearer token instead (DERIVE_TOKEN, or `derive login`).",
+          )
+        // Bind the token to the granting user so the spend side can re-check live
+        // membership — revoking or demoting them kills outstanding URLs mid-TTL.
+        // An ownerless legacy agent has no user to bind; it mints an unbound token.
+        const expiresAt = Date.now() + UPLOAD_TOKEN_TTL_MS
+        const tok = await signUploadToken(secret, t.org, ownerId ?? "", expiresAt)
+        const uploadUrl = `${ctx.deps.baseUrl.replace(/\/$/, "")}/v1/assets/t/${tok}`
+        return json({
+          target: "asset",
+          upload_url: uploadUrl,
+          workspace: t.org,
+          expires_in_minutes: Math.round(UPLOAD_TOKEN_TTL_MS / 60_000),
+          max_bytes: MAX_ASSET_BYTES,
+          accepts: [
+            "image/png",
+            "image/jpeg",
+            "image/gif",
+            "image/webp",
+            "font/woff",
+            "font/woff2",
+          ],
+          how: `curl -sS -X POST --data-binary @<file> "${uploadUrl}" → {url, ref, ...}. Paste \`url\` into content, or use \`ref\` ("asset:<hash>") as a bundle files value. Repeat for each file until expiry.`,
+        })
+      }
+
+      // target === "doc" — a whole document/bundle, the former stage_publish path, verbatim.
+      // A publish is attributed to a person and its URL is re-checked against their live
+      // rights — so it needs a known granting user. A static agent token (dk_agt_/
+      // DERIVE_TOKEN) has none, but it also isn't trapped in this transport: it can POST
+      // to /v1/artifacts with that bearer directly.
       if (!ownerId)
         return err(
-          "stage_publish needs a signed-in user to attribute the publish to. With a static agent token, POST to /v1/artifacts with that token in the Authorization header instead.",
+          "stage target:'doc' needs a signed-in user to attribute the publish to. With a static agent token, POST to /v1/artifacts with that token in the Authorization header instead.",
         )
       const secret = ctx.deps.encryptionKey
       if (!secret)
         return err(
           "This server has no signing secret configured, so it can't mint publish URLs. POST to /v1/artifacts with a bearer token instead (DERIVE_TOKEN, or `derive login`).",
         )
-      // The workspace the token is minted for. For a REVISE it must be the
-      // artifact's ACTUAL workspace — reach() may auto-roam a bare short_id to
-      // another workspace in the grant, and the spend-side org guard would 403 a
-      // token minted against the default one.
+      // The workspace the token is minted for. For a REVISE it must be the artifact's
+      // ACTUAL workspace — reach() may auto-roam a bare short_id to another workspace in
+      // the grant, and the spend-side org guard would 403 a token minted against default.
       let org = t.org
       if (short_id) {
         const reached = await reach(short_id, workspace)
         if (reached && "error" in reached) return err(reached.error)
         if (!reached) return notFound(short_id)
         org = reached.org
-        // Revising needs artifact-level publish STANDING (share + seat), the same
-        // right the spend-side re-checks — not the workspace seat role, which on a
-        // private artifact grants nothing. Fail at mint for a clear message.
+        // Revising needs artifact-level publish STANDING (share + seat), the same right
+        // the spend-side re-checks — not the workspace seat role, which on a private
+        // artifact grants nothing. Fail at mint for a clear message.
         if (!(await ctx.authorizeUserStanding(ownerId, "publish", reached.a)))
           return err("You don't have permission to publish a new version of that artifact.")
       } else if (!roleAllows(t.role, "publish")) {
@@ -1971,13 +2088,14 @@ async function buildServer(
         return err("Your role in this workspace can't publish (publishing required).")
       }
       const expiresAt = Date.now() + PUBLISH_TOKEN_TTL_MS
-      const target = short_id ?? PUBLISH_TARGET_CREATE
-      const tok = await signPublishToken(secret, org, ownerId, target, expiresAt)
+      const targetName = short_id ?? PUBLISH_TARGET_CREATE
+      const tok = await signPublishToken(secret, org, ownerId, targetName, expiresAt)
       const base = ctx.deps.baseUrl.replace(/\/$/, "")
       const uploadUrl = short_id
         ? `${base}/v1/artifacts/${short_id}/versions/t/${tok}`
         : `${base}/v1/artifacts/t/${tok}`
       return json({
+        target: "doc",
         upload_url: uploadUrl,
         workspace: org,
         mode: short_id ? `revise ${short_id}` : "create",
@@ -1988,24 +2106,101 @@ async function buildServer(
     },
   )
 
+  // Resolve derive://brandprint/profile to the workspace's brand-profile artifact,
+  // scaffolding it (conventions collection + "Brand profile" placeholder + settings
+  // pointer) on first use. This is the former setup_brandprint, folded in so the brand
+  // profile is a publish TARGET rather than a separate tool. INVARIANT (critical safety):
+  // the scaffold's WRITES fire ONLY when the caller holds `manage` (Owner/Admin); a
+  // non-manage caller for whom nothing is set up yet gets an actionable error naming an
+  // Admin, and NO write happens. Reusing an already-set-up profile needs no manage (a
+  // normal for_review revision). Body copied verbatim from setup_brandprint.
+  const resolveBrandprintProfileTarget = async (
+    targetOrg: string,
+    role: Role,
+    uid: string,
+  ): Promise<{ profileShortId: string } | { error: string }> => {
+    const settings = await ctx.meta.getOrgSettings(targetOrg)
+    const bp = settings.brandprint
+    // Reuse an in-tenant profile pointer if one exists — no scaffold, so no manage gate.
+    let profileShortId = bp?.profileId
+    if (profileShortId) {
+      const art = await ctx.meta.getByShortId(profileShortId)
+      if (!(art && art.org_id === targetOrg)) profileShortId = undefined
+    }
+    if (profileShortId) return { profileShortId }
+
+    // Nothing set up yet ⇒ SCAFFOLD, which writes. Owner/Admin only — the gate is BEFORE
+    // any create/publish, so a non-manage caller leaves the workspace untouched.
+    if (!roleAllows(role, "manage"))
+      return {
+        error:
+          "This workspace has no Brandprint profile yet, and only an Admin/Owner can set one up. Ask an Admin to publish to derive://brandprint/profile once (that scaffolds it); after that anyone with publish rights can propose revisions.",
+      }
+    // Reuse an in-tenant collection pointer; otherwise create the conventions collection
+    // (workspace-open so teammates read the docs + the reveal).
+    let collectionId = bp?.collectionId
+    if (collectionId) {
+      const col = await ctx.meta.getCollection(collectionId)
+      if (!col || col.org_id !== targetOrg) collectionId = undefined
+    }
+    if (!collectionId) {
+      const col = await ctx.meta.createCollection({
+        id: newId("col"),
+        org_id: targetOrg,
+        title: "Brandprint",
+        created_by: uid,
+        workspace_access: "member",
+      })
+      await ctx.meta.setCollectionMember({
+        id: newId("cm"),
+        collection_id: col.id,
+        user_id: uid,
+        role: "owner",
+      })
+      collectionId = col.id
+    }
+    // Publish the placeholder (v1 stub) into the collection. Deliberately UNstamped: this
+    // auto-scaffolded placeholder is not the user's "first agent publish" — stamping 'mcp'
+    // here would flip the onboarding signal (and welcome celebration) on an empty stub.
+    const { artifact } = await publishVersion(ctx.meta, ctx.blobs, {
+      bytes: new TextEncoder().encode(PROFILE_PLACEHOLDER_HTML),
+      filename: "Brand profile.html",
+      isBundle: false,
+      title: "Brand profile",
+      message: "Brand profile placeholder — your agent fills this in.",
+      author: agent.name,
+      authorId: uid,
+      orgId: targetOrg,
+      workspaceAccess: "member",
+      linkRole: "none",
+      listed: "none",
+    })
+    await ctx.meta.addCollectionItem(collectionId, artifact.id)
+    await ctx.meta.setOrgSettings(targetOrg, {
+      ...settings,
+      brandprint: { collectionId, profileId: artifact.short_id },
+    })
+    return { profileShortId: artifact.short_id }
+  }
+
   // WRITE — publish live, or file a proposal for review -----------------------
   server.registerTool(
     "publish",
     {
       description:
-        "Publish a document: pass `short_id` to UPDATE an existing one, omit it to CREATE a new one (`title` required). Choose ONE payload by what you're changing. DEFAULT to `edits` for any change to an existing doc — it is the safe, precise option: exact find/replace against the stored source, so read format:'html' FIRST or it won't match, and it fails unless each search string hits exactly once (add surrounding text to make it unique). Use `content` to write or fully replace a single file, or `files` for a multi-page bundle. Do NOT inline anything past ~a page or any image/font — use stage_publish (a whole big doc/bundle) or stage_asset (an image/font) instead. Publishes go LIVE at your role; pass for_review:true to file a PROPOSAL a human approves instead (nothing changes until they do). Pass `addresses` (thread ids from catch_up) to resolve the feedback this revision answers. Read derive://skills/publishing before bundles, edits, or assets.",
+        "Publish a document: pass `short_id` to UPDATE an existing one, omit it to CREATE a new one (`title` required). Choose ONE payload by what you're changing. DEFAULT to `edits` for any change to an existing doc — it is the safe, precise option: exact find/replace against the stored source, so read format:'html' FIRST or it won't match, and it fails unless each search string hits exactly once (add surrounding text to make it unique). Use `content` to write or fully replace a single file, or `files` for a multi-page bundle. Do NOT inline anything past ~a page or any image/font — use stage (target:'doc' for a whole big doc/bundle, target:'asset' for an image/font) instead; oversized inline payloads are rejected. Publishes go LIVE at your role; pass for_review:true to file a PROPOSAL a human approves instead (nothing changes until they do). Pass `addresses` (thread ids from catch_up) to resolve the feedback this revision answers. As a short_id you may pass derive://brandprint/profile to file this workspace's brand profile (an Admin's first publish there scaffolds the slot). Read derive://skills/publishing before bundles, edits, or assets.",
       inputSchema: {
         content: z
           .string()
           .optional()
           .describe(
-            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. Embed images and fonts via a stage_asset upload URL (never a base64 data: URI here), and push a large document via stage_publish rather than inlining it — see derive://skills/publishing.",
+            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. Embed images and fonts via a stage target:'asset' upload URL (never a base64 data: URI here), and push a large document via stage target:'doc' rather than inlining it — see derive://skills/publishing.",
           ),
         files: z
           .record(z.string(), z.string())
           .optional()
           .describe(
-            'A MULTI-PAGE bundle as a map of path → content — the whole site. Each value is a text page (plain string), a base64 data: URI for a small inline binary, or — PREFERRED for real images — an "asset:<hash>" handle from stage_asset. The root index.html (else the shallowest .html) becomes the entry page; a plain republish REPLACES the bundle, so include every page and asset (or use `merge`). See derive://skills/publishing.',
+            "A MULTI-PAGE bundle as a map of path → content — the whole site. Each value is a text page (plain string), a base64 data: URI for a small inline binary, or — PREFERRED for real images — an \"asset:<hash>\" handle from stage target:'asset'. The root index.html (else the shallowest .html) becomes the entry page; a plain republish REPLACES the bundle, so include every page and asset (or use `merge`). See derive://skills/publishing.",
           ),
         title: z
           .string()
@@ -2129,6 +2324,71 @@ async function buildServer(
       base_version,
     }) => {
       let content = contentIn
+      const BP = "derive://brandprint/"
+      // The brand profile is never published LIVE — its reveal/revision is always a
+      // human-approved proposal. Also its exemption from the total-inline cap below (it has
+      // no out-of-band path to its URI). Computed from the RAW target, before resolution.
+      const isProfileTarget = short_id === `${BP}profile`
+
+      // GUARDRAILS — reject inline payloads that belong out-of-band, BEFORE any write or
+      // scaffold, naming the `stage` mode to use. (a) A single base64 data: URI past ~32KB
+      // is a binary pasted through the call — stage it as an asset. (b) Total inline
+      // content/files past ~64KB is a whole big document — curl it via stage target:'doc'.
+      // `edits` publishes carry neither content nor files, so they never trip these; the
+      // brand profile is exempt from the total-size cap but still may not smuggle an
+      // oversized binary inline.
+      const inlineStrings: string[] = []
+      if (typeof contentIn === "string") inlineStrings.push(contentIn)
+      if (files) inlineStrings.push(...Object.values(files))
+      if (inlineStrings.length) {
+        const biggestDataUri = Math.max(0, ...inlineStrings.map(largestInlineDataUriBytes))
+        if (biggestDataUri > MAX_INLINE_DATA_URI_BYTES)
+          return err(
+            `An inline base64 data: URI is ~${Math.round(biggestDataUri / 1024)}KB — too big to carry through a tool call. Upload the binary with stage target:'asset' and reference the returned url/ref instead (a pasted image is already a file on disk).`,
+          )
+        const totalBytes = inlineStrings.reduce((n, s) => n + new TextEncoder().encode(s).length, 0)
+        if (!isProfileTarget && totalBytes > MAX_INLINE_CONTENT_BYTES)
+          return err(
+            `This inline payload is ~${Math.round(totalBytes / 1024)}KB — past the ~${Math.round(
+              MAX_INLINE_CONTENT_BYTES / 1024,
+            )}KB inline ceiling. Push the whole document/bundle with stage target:'doc' (curl the file, or a zipped dir for a bundle) instead of inlining it.`,
+          )
+      }
+
+      // Resolve a derive:// target — publish accepts the same URI strings `read` does. The
+      // only WRITEABLE one is the brand profile; the static build guide and core skills are
+      // read-only, and any other derive:// string is rejected rather than silently treated
+      // as a short_id. The profile's reveal is always a proposal (profileForReview).
+      let profileForReview = false
+      if (short_id?.startsWith("derive://")) {
+        if (isProfileTarget) {
+          const t = await resolveWs(workspace)
+          if ("error" in t) return text(t.error)
+          const uid = actingFor?.id ?? ownerId
+          if (!uid)
+            return err(
+              "Publishing the brand profile needs a signed-in user to attribute it to. Connect with an OAuth agent grant rather than a static agent token.",
+            )
+          const resolved = await resolveBrandprintProfileTarget(t.org, t.role, uid)
+          if ("error" in resolved) return err(resolved.error)
+          short_id = resolved.profileShortId
+          profileForReview = true
+        } else if (short_id.startsWith(BP)) {
+          const seg = short_id.slice(BP.length)
+          if (seg === "reference" || seg === "template")
+            return err(
+              `${short_id} is a read-only build guide — you can't publish to it. Build the profile and publish it to derive://brandprint/profile instead.`,
+            )
+          // derive://brandprint/<short_id> — a source doc; strip to the bare short_id.
+          short_id = seg
+        } else if (short_id.startsWith("derive://skills/")) {
+          return err("Core skills are read-only — you can't publish to a derive://skills/ URI.")
+        } else {
+          return err(
+            `Can't publish to "${short_id}" — the only writeable derive:// target is derive://brandprint/profile.`,
+          )
+        }
+      }
       // Revise an existing artifact wherever it lives (reach roams to its
       // workspace, within the grant); create a new one in the targeted (or
       // default) workspace. The acting role is re-capped to that workspace, so
@@ -2197,9 +2457,10 @@ async function buildServer(
       }
 
       // Direct publish is gated on the agent's role (Creator/Admin). A commenter-level
-      // grant — or anyone asking for_review — is routed to a human-reviewed proposal,
-      // so a low-privilege agent still can't push live content.
-      const review = for_review === true || !roleAllows(actRole, "publish")
+      // grant — or anyone asking for_review, or a publish to the brand profile (whose
+      // reveal is always human-approved) — is routed to a human-reviewed proposal, so a
+      // low-privilege agent still can't push live content.
+      const review = for_review === true || profileForReview || !roleAllows(actRole, "publish")
       if (review) {
         if (!roleAllows(actRole, "propose"))
           return text(
@@ -2709,23 +2970,22 @@ async function buildServer(
     },
   )
 
-  // ASK A CONTEXT — query a workspace's live data agents ------------------------
-  // Contexts are askable agent setups (a registered agent wired to a manifest,
-  // answering through an owner-run runner). These two tools are the agent-side
-  // ask surface, acting FOR the connection's on-behalf human: the human's own
-  // ask-grant (membership + ask_policy/roster, re-checked per call via
-  // canUserAskContext) is the ONLY gate, so an agent can ask exactly what its
-  // human can ask, and nothing more. Registered on every connection like
-  // check_requests (the tool surface never differs by auth kind); a connection
-  // with no known human is refused at call time instead. Management (create/
-  // rewire/delete) deliberately has no MCP path.
+  // USE A CONTEXT — query a workspace's live data agents ------------------------
+  // Contexts are askable agent setups (a registered agent wired to a manifest, answering
+  // through an owner-run runner). `use` is the agent-side surface, acting FOR the
+  // connection's on-behalf human: the human's own ask-grant (membership + ask_policy/
+  // roster, re-checked per call via canUserAskContext) is the ONLY gate, so an agent can
+  // reach exactly what its human can, and nothing more. Discovery is `find` (contexts ride
+  // the browse/search results); a connection with no known human is refused at call time.
+  // Management (create/rewire/delete) deliberately has no MCP path. (askableContexts /
+  // runnerOnline defined here are ALSO used by find's context rows above.)
 
   // The console's liveness window: a runner is "online" while its last queue
   // poll (stamped at most once a minute) is within this.
   const RUNNER_ONLINE_MS = 90_000
   const NO_HUMAN =
-    "Asking opens a session on a human's behalf, and this connection has no acting human. " +
-    "Reconnect with an OAuth login (or a token registered by a user) to ask."
+    "Using a context opens a session on a human's behalf, and this connection has no acting human. " +
+    "Reconnect with an OAuth login (or a token registered by a user) to use one."
 
   // The contexts `userId` may ask in `org`, each with its manifest (identity +
   // the current version a new session pins). One listContexts + one batched
@@ -2754,68 +3014,24 @@ async function buildServer(
       ? `${s.slice(0, max)}\n\n…[truncated ${s.length - max} of ${s.length} chars — full transcript in the console: ${consoleUrl}]`
       : s
 
-  server.registerTool(
-    "list_contexts",
-    {
-      description:
-        "List the CONTEXTS you may ask in a workspace — live data agents a workspace owner wired " +
-        "up, each answering against its own data and tools. Returns id, name, whether the runner " +
-        "is online, its manifest doc, and your own still-open sessions to resume with ask. Asking " +
-        "happens on your user's behalf and is granted per context, so this is exactly what your " +
-        "user may ask. Then call ask with a context's id or name; see derive://skills/contexts.",
-      inputSchema: { workspace: wsArg },
-    },
-    async ({ workspace }) => {
-      if (!actingFor) return err(NO_HUMAN)
-      const t = await resolveWs(workspace)
-      if ("error" in t) return err(t.error)
-      const rows = await askableContexts(t.org, actingFor.id)
-      // The caller's own open sessions — the resume points ask can pick up. One
-      // small read per context (a workspace holds a handful), not worth a batch
-      // port; closed sessions dropped (nothing to resume), newest 10 overall.
-      const sessions: { id: string; context: string; state: string; updated_at: string }[] = []
-      for (const { x } of rows) {
-        for (const s of await ctx.meta.listSessions(x.id, { askerId: actingFor.id, limit: 10 })) {
-          if (s.state === "closed") continue
-          sessions.push({
-            id: s.id,
-            context: x.name,
-            state: s.state,
-            updated_at: s.updated_at ?? s.created_at,
-          })
-        }
-      }
-      sessions.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
-      return json({
-        workspace: t.org,
-        count: rows.length,
-        contexts: rows.map(({ x, manifest }) => ({
-          id: x.id,
-          name: x.name,
-          online: runnerOnline(x),
-          manifest: manifest ? { short_id: manifest.short_id, title: manifest.title } : null,
-        })),
-        your_open_sessions: sessions.slice(0, 10),
-      })
-    },
-  )
+  // (Listing the askable contexts now lives in `find` — they ride the browse/search rows.)
 
   server.registerTool(
-    "ask",
+    "use",
     {
       description:
-        "Ask a context (a live data agent from list_contexts) a question ON YOUR USER'S BEHALF " +
-        "(rate-limited), or resume/follow up an existing session. OPEN: `context` (id or name) + " +
-        "`question`. FOLLOW UP: `session_id` + `question`. CHECK/RESUME: `session_id` alone. The " +
-        "call waits up to `wait` seconds (default 25) for the answer; real runs often take " +
-        "minutes, so a still-open response is NORMAL, not an error — re-call with the returned " +
+        "Use a context (a live data agent — discover them with find) ON YOUR USER'S BEHALF " +
+        "(rate-limited): ask it a question or hand it a commission — one session. OPEN: `context` " +
+        "(id or name) + `question`. FOLLOW UP: `session_id` + `question`. CHECK/RESUME: `session_id` " +
+        "alone. The call waits up to `wait` seconds (default 25) for the answer; real runs often " +
+        "take minutes, so a still-open response is NORMAL, not an error — re-call with the returned " +
         "session_id until it settles. For the modes and wait semantics, read derive://skills/contexts.",
       inputSchema: {
         context: z
           .string()
           .optional()
           .describe(
-            "The context to ask — its id or name from list_contexts. Opens a NEW session; omit when passing session_id.",
+            "The context to use — its id or name from a find context row. Opens a NEW session; omit when passing session_id.",
           ),
         question: z
           .string()
@@ -2830,7 +3046,7 @@ async function buildServer(
           .string()
           .optional()
           .describe(
-            "An existing session of yours (from an earlier ask, or list_contexts) to follow up on or check.",
+            "An existing session of yours (from an earlier use, or a find context row) to follow up on or check.",
           ),
         wait: z
           .number()
@@ -2902,8 +3118,8 @@ async function buildServer(
         const note =
           s.state === "open"
             ? runnerOnline(x)
-              ? "Still thinking — real runs take minutes. Re-call ask with this session_id (+ wait) to collect the answer."
-              : "Queued, but the context's runner looks OFFLINE — it answers when it comes back. Re-call ask with this session_id later."
+              ? "Still thinking — real runs take minutes. Re-call use with this session_id (+ wait) to collect the answer."
+              : "Queued, but the context's runner looks OFFLINE — it answers when it comes back. Re-call use with this session_id later."
             : s.state === "escalated"
               ? "The runner escalated this to a human — a draft went to review. Check back later."
               : s.state === "failed"
@@ -2958,7 +3174,7 @@ async function buildServer(
           (await ctx.canUserAskContext(actingFor.id, linked))
         if (!found || !linked || !allowed)
           return err(
-            `No session "${session_id}" you can reach. list_contexts shows your open sessions.`,
+            `No session "${session_id}" you can reach. find (a context row) shows your open sessions.`,
           )
         if (!question) return reply(found, linked, true)
         if (found.state === "closed")
@@ -2982,7 +3198,7 @@ async function buildServer(
       // OPEN a new session.
       if (!context)
         return err(
-          "Pass `context` (+ `question`) to ask, or `session_id` to check/resume. list_contexts shows both.",
+          "Pass `context` (+ `question`) to open a session, or `session_id` to check/resume. find surfaces the contexts you can use and your open sessions.",
         )
       if (!question) return err("Opening a session needs a `question`.")
       const t = await resolveWs(workspace)
@@ -3025,132 +3241,9 @@ async function buildServer(
     },
   )
 
-  // SET UP THE BRANDPRINT ------------------------------------------------------
-  // The agent-native counterpart to the web create dialog: scaffold (or return) the
-  // workspace's Brandprint so "set up our Brandprint" typed into a connected agent works
-  // end to end, no context-switch to the app. Idempotent — it ensures the conventions
-  // collection + the "Brand profile" placeholder exist and the org pointer names them,
-  // then hands back the placeholder's short_id. The agent then reads
-  // derive://brandprint/reference + /template, builds the profile, and publishes it
-  // for_review against that short_id (the placeholder is the recognition contract — a
-  // human still approves the reveal, which flips it live at derive://brandprint/profile).
-  // It never generates or approves the profile itself. Owner/Admin only, like the web
-  // PATCH /v1/workspace/settings it mirrors.
-  server.registerTool(
-    "setup_brandprint",
-    {
-      description:
-        "Set up (or return) this workspace's Brandprint so its brand profile can be authored over MCP. Idempotent: it ensures a conventions collection and a 'Brand profile' placeholder artifact exist, points the workspace's settings at them, and returns the placeholder's short_id. NEXT: read derive://brandprint/reference and derive://brandprint/template, build ONE self-contained HTML brand profile, and publish it with for_review:true to that short_id — it lands as a proposal a human approves (never publish the profile live). This tool does NOT generate or approve the profile. Owner/Admin only.",
-      inputSchema: { workspace: wsArg },
-    },
-    async ({ workspace }) => {
-      const t = await resolveWs(workspace)
-      if ("error" in t) return err(t.error)
-      if (!roleAllows(t.role, "manage"))
-        return err("Setting up a Brandprint needs an Admin/Owner role in this workspace.")
-      // Collection ownership + the placeholder's author must be a real user; an OAuth
-      // grant carries the granting human (actingFor/ownerId), a static agent token may not.
-      const uid = actingFor?.id ?? ownerId
-      if (!uid)
-        return err(
-          "setup_brandprint needs a signed-in user to attribute the setup to. Connect with an OAuth agent grant rather than a static agent token.",
-        )
-      const targetOrg = t.org
-      try {
-        const settings = await ctx.meta.getOrgSettings(targetOrg)
-        const bp = settings.brandprint
-
-        // Reuse an in-tenant collection pointer; otherwise create the conventions
-        // collection (workspace-open so teammates read the docs + the reveal).
-        let collectionId = bp?.collectionId
-        let createdCollection = false
-        if (collectionId) {
-          const col = await ctx.meta.getCollection(collectionId)
-          if (!col || col.org_id !== targetOrg) collectionId = undefined
-        }
-        if (!collectionId) {
-          const col = await ctx.meta.createCollection({
-            id: newId("col"),
-            org_id: targetOrg,
-            title: "Brandprint",
-            created_by: uid,
-            workspace_access: "member",
-          })
-          await ctx.meta.setCollectionMember({
-            id: newId("cm"),
-            collection_id: col.id,
-            user_id: uid,
-            role: "owner",
-          })
-          collectionId = col.id
-          createdCollection = true
-        }
-
-        // Reuse an in-tenant profile pointer; otherwise publish the placeholder (v1 stub)
-        // into the collection. profileState reads live from v2, so a reused profile may
-        // already be live — report that rather than clobbering it.
-        let profileShortId = bp?.profileId
-        let state: "pending" | "live" = "pending"
-        let createdProfile = false
-        if (profileShortId) {
-          const art = await ctx.meta.getByShortId(profileShortId)
-          if (art && art.org_id === targetOrg) state = profileState(art.current_version)
-          else profileShortId = undefined
-        }
-        if (!profileShortId) {
-          const { artifact } = await publishVersion(ctx.meta, ctx.blobs, {
-            bytes: new TextEncoder().encode(PROFILE_PLACEHOLDER_HTML),
-            filename: "Brand profile.html",
-            isBundle: false,
-            title: "Brand profile",
-            message: "Brand profile placeholder — your agent fills this in.",
-            author: agent.name,
-            authorId: uid,
-            // Deliberately UNstamped: this auto-scaffolded placeholder is not the
-            // user's "first agent publish" — stamping 'mcp' here would flip the
-            // onboarding signal (and the welcome celebration) on an empty stub.
-            orgId: targetOrg,
-            workspaceAccess: "member",
-            linkRole: "none",
-            listed: "none",
-          })
-          await ctx.meta.addCollectionItem(collectionId, artifact.id)
-          profileShortId = artifact.short_id
-          state = "pending"
-          createdProfile = true
-        }
-
-        // Persist the pointer only when something actually changed (a fully-set-up
-        // Brandprint is a no-op read).
-        const pointerChanged =
-          createdCollection ||
-          createdProfile ||
-          bp?.collectionId !== collectionId ||
-          bp?.profileId !== profileShortId
-        if (pointerChanged)
-          await ctx.meta.setOrgSettings(targetOrg, {
-            ...settings,
-            brandprint: { collectionId, profileId: profileShortId },
-          })
-
-        const already = !createdCollection && !createdProfile
-        return json({
-          workspace: targetOrg,
-          collection_id: collectionId,
-          profile_short_id: profileShortId,
-          state,
-          created: !already,
-          message:
-            state === "live"
-              ? `This workspace already has a live brand profile (${profileShortId}). To revise it, build a new version and publish it with for_review:true to that short_id.`
-              : `Brandprint ${already ? "is ready" : "scaffolded"}. NEXT: read derive://brandprint/reference and derive://brandprint/template, build ONE self-contained HTML brand profile from the source docs, then publish it with for_review:true to ${profileShortId}. A human approves it to go live.`,
-        })
-      } catch (e) {
-        const msg = e instanceof PublishError ? e.message : String(e)
-        return text(`Couldn't set up the Brandprint: ${msg}`)
-      }
-    },
-  )
+  // (SET UP THE BRANDPRINT is dissolved into `publish`: publishing to
+  // derive://brandprint/profile scaffolds the slot on first write — see
+  // resolveBrandprintProfileTarget above.)
 
   return server
 }

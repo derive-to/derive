@@ -43,7 +43,7 @@ Please:
      claude mcp add --transport http derive ${url}/mcp
    In another harness, add an HTTP/streamable MCP server named "derive" at ${url}/mcp.
    The first call opens a browser consent (OAuth); the scope I grant maps to my Derive role.
-2. Confirm it's connected by calling the "whoami" MCP tool, then "list_artifacts".
+2. Confirm it's connected by calling the "find" MCP tool to list what's there (your identity, workspace, and role are already in the server instructions).
 
 Once connected you can publish a page, read its review comments, and run the propose -> review -> revise loop — all over MCP.`
 
@@ -63,7 +63,7 @@ Please:
 2. Connect over MCP, using that same BASE_URL:
      claude mcp add --transport http derive <BASE_URL>/mcp
    The first call opens a browser consent (OAuth).
-3. Confirm by calling the "whoami" MCP tool, then "list_artifacts".
+3. Confirm by calling the "find" MCP tool to list what's there.
 
 Then you can publish, read review comments, and run the propose -> review -> revise loop over MCP.`
 

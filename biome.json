@@ -12,6 +12,7 @@
       "!**/routeTree.gen.ts",
       "!**/*.gen.ts",
       "!**/openapi.json",
+      "!apps/api/test/e2e/**",
       "!**/api-types.ts",
       "!**/dist",
       "!**/.output",

@@ -7,7 +7,7 @@
  *
  * - `publishing` — create + revise artifacts, stage assets and large content, propose for review.
  * - `loop` — catch up on an artifact, respond to feedback, and pull queued work.
- * - `contexts` — ask a workspace's live data agents.
+ * - `contexts` — use a workspace's live data agents.
  * - `checkpoint` — save working state to a resumable lineage so a later session continues cold.
  * - `organize` — tag + collect artifacts for library findability.
  */
@@ -15,16 +15,16 @@
 const PUBLISHING = `# Publishing to Derive
 
 How to WRITE to Derive: create and revise artifacts with \`publish\`, and stage large
-content or binary assets with \`stage_publish\` and \`stage_asset\`. Derive hosts living
-documents and plans with versioned history; a fully-styled HTML page is a first-class
-artifact that renders as-authored in a sandboxed viewer, so publish real designed pages,
-not just prose.
+content or binary assets with \`stage\` (target:'doc' for a whole big document/bundle,
+target:'asset' for an image/font). Derive hosts living documents and plans with versioned
+history; a fully-styled HTML page is a first-class artifact that renders as-authored in a
+sandboxed viewer, so publish real designed pages, not just prose.
 
 ## Key rules (read these first)
 
-- NEVER base64 a binary through a tool call. Every image/font: stage_asset -> curl the raw bytes -> paste the returned url (or its asset:<hash> ref). A pasted image is already a file on disk; upload that file, don't transcribe it.
+- NEVER base64 a binary through a tool call. Every image/font: stage target:'asset' -> curl the raw bytes -> paste the returned url (or its asset:<hash> ref). A pasted image is already a file on disk; upload that file, don't transcribe it. publish REJECTS a single inline data: URI past ~32KB (stage the asset) and any inline content/files summing past ~64KB (stage target:'doc').
 - Assets are raster images and web fonts ONLY: PNG/JPEG/GIF/WebP/WOFF/WOFF2, <=25MB each. Inline SVG, CSS, and JS in the page itself (SVG is rejected as an asset).
-- Anything bigger than ~a page: stage_publish (curl the file/zip), never inline content/files.
+- Anything bigger than ~a page: stage target:'doc' (curl the file/zip), never inline content/files.
 - On a styled HTML page, declare your own <meta name="viewport">, or it gets a mobile-reflow injection that can fight your layout (data-reflow-exempt is the per-element escape hatch).
 - After publishing a styled page, read with render:"top" (or "full") to SEE it before you trust it; a text read can't catch a failed font or a broken layout.
 - To change part of a doc, read format:'html' FIRST, then edits with base_version. A bad match applies NOTHING and tells you why; fix and retry.
@@ -73,13 +73,13 @@ not just prose.
 
 ## Staging assets — never base64 binaries
 
-For images and web fonts, call \`stage_asset\` for a short-lived upload URL, curl the file's
-raw bytes to it from your shell, and reference the returned permanent url — NEVER base64
-binaries through a tool call.
+For images and web fonts, call \`stage\` with target:'asset' for a short-lived upload URL,
+curl the file's raw bytes to it from your shell, and reference the returned permanent url —
+NEVER base64 binaries through a tool call.
 
-\`stage_asset\` mints a SHORT-LIVED upload URL for raster images (PNG/JPEG/GIF/WebP) and web
-fonts (WOFF/WOFF2), max 25MB, into this workspace, no bearer token needed. POST a file's
-RAW bytes to the returned URL from your shell (\`curl -sS --data-binary @shot.png
+\`stage target:'asset'\` mints a SHORT-LIVED upload URL for raster images (PNG/JPEG/GIF/WebP)
+and web fonts (WOFF/WOFF2), max 25MB, into this workspace, no bearer token needed. POST a
+file's RAW bytes to the returned URL from your shell (\`curl -sS --data-binary @shot.png
 <upload_url>\`); the response carries a permanent public \`url\` to paste into any artifact's
 \`<img src>\`/CSS \`url()\`/markdown \`![]()\`, and the \`asset:<hash>\` \`ref\` for a publish
 \`files\` map. The URL is reusable until it expires (~15 min), so stage a whole batch with
@@ -94,8 +94,8 @@ bundle publish's \`files\` map — small images only.
 
 Inside a bundle's \`files\` map, each value is one of: a text page (plain string); a base64
 \`data:\` URI for a small inline binary (\`"shot.png":"data:image/png;base64,iVBORw0K…"\`); or —
-PREFERRED for real images — an \`asset:<hash>\` handle: call stage_asset for an upload URL,
-curl the raw bytes to it, and use the returned \`ref\` here
+PREFERRED for real images — an \`asset:<hash>\` handle: call stage target:'asset' for an
+upload URL, curl the raw bytes to it, and use the returned \`ref\` here
 (\`"shot.png":"asset:9f86d0818…"\`). Keep each call to a few MB; for many/large images, stage
 them as assets and reference the handles (or publish pages first, then \`merge\` asset
 batches).
@@ -109,28 +109,29 @@ reading view is not what a viewer sees). Two rules:
 - Declare your own \`<meta name="viewport">\`. Pages without one get a mobile-reflow
   injection whose media caps can fight intentional layouts; \`data-reflow-exempt\` on an
   element is the per-component escape hatch.
-- Self-host binaries via a stage_asset upload URL (images AND woff2 fonts) instead of
-  base64.
+- Self-host binaries via a stage target:'asset' upload URL (images AND woff2 fonts) instead
+  of base64.
 
 After publishing a styled page, call \`read\` with \`render:"top"\` (or \`"full"\`/\`"marked"\`)
 to SEE what shipped — a screenshot of the served page catches visual breakage (a failed
 font, a broken layout) that no text read can. The screenshots are computed a few seconds
 after each publish.
 
-## stage_publish for large docs and bundles
+## stage target:'doc' for large docs and bundles
 
 Inline \`content\`/\`files\` is model output — capped by the per-response token ceiling and
-forced into slow, costly multi-turn chunking once a file is bigger than a page or two. For
-a document too large to inline (a big designed HTML page or a multi-file bundle), call
-\`stage_publish\` and curl the file/zip to the returned URL instead of chunking it through
-content/files — zero bytes through the model's context.
+forced into slow, costly multi-turn chunking once a file is bigger than a page or two (and
+publish REJECTS an inline payload past ~64KB). For a document too large to inline (a big
+designed HTML page or a multi-file bundle), call \`stage\` with target:'doc' and curl the
+file/zip to the returned URL instead of chunking it through content/files — zero bytes
+through the model's context.
 
 Omit \`short_id\` to CREATE a new artifact; pass a \`short_id\` to REVISE that one (the token is
 scoped to exactly that target). Then from your shell: a single file → \`curl -sS -F
 file=@page.html -F title='My Page' <upload_url>\`; a bundle → zip the dir first (\`cd site &&
 zip -r /tmp/site.zip .\`) then \`curl -sS -F file=@/tmp/site.zip <upload_url>\` (a .zip
 publishes as a multi-page bundle). The URL is reusable until it expires (~15 min). Prefer
-the plain publish tool for small docs and for surgical \`edits\`; reach for stage_publish
+the plain publish tool for small docs and for surgical \`edits\`; reach for stage target:'doc'
 only when inlining would chunk.
 
 ## content_sha256 verification
@@ -164,11 +165,11 @@ those params' own descriptions for the exact meanings.
 const LOOP = `# The Derive working loop
 
 Start a session with \`catch_up\`, respond to feedback with \`comment\`, and pull queued work
-with \`check_requests\`. This is the read → respond → revise (revise via publish) rhythm around a Derive artifact.
+with \`catch_up\` (no short_id). This is the read → respond → revise (revise via publish) rhythm around a Derive artifact.
 
 ## catch_up: state, feedback, history, diffs
 
-START HERE on an artifact. Its state in one call: a one-line summary, the versions that
+START HERE on an artifact (pass its \`short_id\`). Its state in one call: a one-line summary, the versions that
 landed since \`since_version\`, which pages changed, the open (and outdated) comment threads,
 the review round you're waiting on, and the full version history.
 
@@ -204,16 +205,17 @@ Leave feedback on an artifact, reply in a thread, react, and/or resolve or reope
 - **Resolve / reopen.** Pass \`set_state\` (\`resolved\` or \`open\`) along with the thread's id
   in \`reply_to\`.
 
-## check_requests: your work queue
+## catch_up (no short_id): your work queue
 
-Pending requests teammates handed you by @mentioning you in a comment (the ask-agent and
-Rework buttons land here). Each entry names the artifact, the comment thread, and what to
-do.
+Call \`catch_up\` with NO short_id for your work queue: pending requests teammates handed you
+by @mentioning you in a comment (the ask-agent and Rework buttons land here). Each entry
+names the artifact, the comment thread, and what to do. (A connection with no @mentionable
+inbox — an OAuth grant — gets an explicit note instead of a queue.)
 
 - **Handle then ack.** Work a request on its artifact — usually read it, do the asked
-  revision, and publish with the thread id in \`addresses\` — then call check_requests again
-  with \`ack:[id,…]\` to clear what you finished. Ack AFTER the work lands (a publish or a
-  reply), not on read; an unknown or already-acked id is skipped, never an error. Unacked
+  revision, and publish with the thread id in \`addresses\` — then call catch_up (no short_id)
+  again with \`ack:[id,…]\` to clear what you finished. Ack AFTER the work lands (a publish or
+  a reply), not on read; an unknown or already-acked id is skipped, never an error. Unacked
   requests stay queued for your next session.
 - **Wait (long-poll).** WAITING FOR WORK? Pass \`wait\` (seconds, max 50): when the queue is
   empty the call blocks until a new request lands (or the time runs out), then returns it —
@@ -229,24 +231,25 @@ publish that resolves them, so they resolve (on a live publish) or flip to \`add
 proposal) rather than being closed in a separate step.
 `
 
-const CONTEXTS = `# Asking workspace contexts
+const CONTEXTS = `# Using workspace contexts
 
 Workspaces can host CONTEXTS — askable live data agents a workspace owner wired up, each
-answering questions against its own data and tools. \`list_contexts\` shows the ones your
-user may ask; \`ask\` opens a question session on your user's behalf and returns the answer.
+answering questions against its own data and tools. \`find\` surfaces the ones your user may
+use (as typed context rows in browse/search); \`use\` opens a session on your user's behalf —
+a question or a commission — and returns the answer.
 
-## list_contexts
+## Discovering contexts with find
 
-List the contexts you may ask in a workspace — id, name, whether the runner is online (its
-last queue poll is recent), the manifest doc that defines it, and your own still-open
-sessions so you can resume one with \`ask\`. Asking happens on your user's behalf and is
-granted per context, so this list is EXACTLY what your user may ask, nothing more. Defaults
-to your current workspace; pass \`workspace\` to look in another. Then call \`ask\` with a
-context's id or name.
+\`find\` (browse, or a query whose text matches a context name) lists the contexts you may
+use in a workspace — id, name, whether the runner is online (its last queue poll is recent),
+the manifest doc that defines it, and your own still-open sessions so you can resume one with
+\`use\`. Using happens on your user's behalf and is granted per context, so what \`find\`
+surfaces is EXACTLY what your user may use, nothing more. Then call \`use\` with a context's id
+or name.
 
-## ask: open, follow up, or check
+## use: open, follow up, or check
 
-Ask a context a question on your user's behalf, or resume/follow up an existing session:
+Use a context on your user's behalf, or resume/follow up an existing session:
 
 - **OPEN** a new session: pass \`context\` (id or name) + \`question\`.
 - **FOLLOW UP** an existing session: pass \`session_id\` + \`question\` (it already knows its
@@ -256,13 +259,13 @@ Ask a context a question on your user's behalf, or resume/follow up an existing 
 
 The call waits up to \`wait\` seconds (default 25, max 50; 0 = return at once) for the runner's
 answer and returns it inline when it lands. Real runs often take MINUTES, so a still-open
-response is NORMAL, not an error: an expired wait leaves the session open — re-call \`ask\`
+response is NORMAL, not an error: an expired wait leaves the session open — re-call \`use\`
 with the returned \`session_id\` (+ \`wait\`) until it settles. Sessions resume across calls
-and across your own sessions; \`list_contexts\` surfaces your still-open ones. If the runner
-looks offline, the session is queued and answers when it comes back. Answers cite artifact
-short_ids you can then \`read\`.
+and across your own sessions; a context row in \`find\` surfaces your still-open ones. If the
+runner looks offline, the session is queued and answers when it comes back. Answers cite
+artifact short_ids you can then \`read\`.
 
-A settled session is normally \`answered\`; it can instead come back \`escalated\` (the runner handed a draft to a human reviewer, check back later) or \`failed\` (the run crashed, just ask again). Re-calling \`ask\` always returns the current \`state\` and a one-line \`note\`.
+A settled session is normally \`answered\`; it can instead come back \`escalated\` (the runner handed a draft to a human reviewer, check back later) or \`failed\` (the run crashed, just ask again). Re-calling \`use\` always returns the current \`state\` and a one-line \`note\`.
 `
 
 const CHECKPOINT = `# Checkpointing working state
@@ -309,18 +312,18 @@ export const CORE_SKILLS: readonly { name: string; summary: string; body: string
   {
     name: "loop",
     summary:
-      "catch up on an artifact, work a review round, respond to feedback, and pull queued work (catch_up, comment, check_requests)",
+      "catch up on an artifact, work a review round, respond to feedback, and pull queued work (catch_up, comment)",
     body: LOOP,
   },
   {
     name: "publishing",
     summary:
-      "create and revise artifacts (incl. fully-styled HTML pages), stage assets and large content, and file proposals for review (publish, stage_asset, stage_publish)",
+      "create and revise artifacts (incl. fully-styled HTML pages), stage assets and large content, and file proposals for review (publish, stage)",
     body: PUBLISHING,
   },
   {
     name: "contexts",
-    summary: "ask a workspace's live data agents (list_contexts, ask)",
+    summary: "use a workspace's live data agents (find, use)",
     body: CONTEXTS,
   },
   {
