@@ -775,7 +775,7 @@ async function buildServer(
     "read",
     {
       description:
-        "Read an artifact's CONTENT by short id, as Markdown by default (HTML is converted to its readable text — note a styled page renders fully to VIEWERS; only this reading view flattens it). Small docs return whole; a LARGE doc returns its heading OUTLINE first — call again with a `section` slug for just that part. Multi-page bundle: omit `section` for the page outline, then pass a page path (optionally `page.html#slug`). Pass format:'html' for the exact source (required before publish `edits`), or a past `version` for history. (For what CHANGED, or the comment threads, use catch_up.)",
+        "Read an artifact's CONTENT by short_id. A small doc returns whole; a LARGE doc returns its heading OUTLINE first — call again with a `section` slug (or a `lines` range) for just that part. Markdown by default; a styled HTML page is FLATTENED to text here, so pass render:'top' or 'full' to SEE it as a viewer does (do this after publishing a designed page to catch visual breakage). Bundle: omit `section` for the page list, then pass a page path (optionally `page.html#slug`). Pass format:'html' for the exact source (required BEFORE publish `edits`), or a past `version` for history. For what CHANGED or the comment threads, use catch_up instead.",
       inputSchema: {
         short_id: z
           .string()
@@ -1883,7 +1883,7 @@ async function buildServer(
     "stage_asset",
     {
       description:
-        "Mint a SHORT-LIVED, no-bearer upload URL for staging binary assets — raster images (PNG/JPEG/GIF/WebP) and web fonts (WOFF/WOFF2), max 25MB — into this workspace. POST a file's RAW bytes to the returned URL from your shell (`curl -sS --data-binary @shot.png <upload_url>`); the response gives a permanent public `url` (paste into an <img src>, a CSS url(), or markdown) and an `asset:<hash>` `ref` for a publish `files` map. The URL is reusable until it expires (~15 min), so stage a whole batch with one mint. NEVER transcribe an image to base64 through your context — a pasted image is usually already a file on disk, so upload those bytes. Before embedding images or fonts, read derive://skills/publishing.",
+        "Upload an image or font to embed in a document — do this BEFORE publish whenever a doc references a binary. Mint a SHORT-LIVED, no-bearer upload URL for raster images (PNG/JPEG/GIF/WebP) and web fonts (WOFF/WOFF2, max 25MB), curl the file's RAW bytes to it from your shell (`curl -sS --data-binary @shot.png <upload_url>`), and reference the returned permanent `url` (in an <img src>, CSS url(), or markdown) — or its `asset:<hash>` `ref` in a publish `files` map. The URL is reusable ~15 min, so stage a batch with one mint. NEVER base64 an image through a tool call — a pasted image is already a file on disk, so upload that. For the whole document (not a binary it embeds), use publish or stage_publish. Read derive://skills/publishing.",
       inputSchema: { workspace: wsArg },
     },
     async ({ workspace }) => {
@@ -1926,7 +1926,7 @@ async function buildServer(
     "stage_publish",
     {
       description:
-        "Mint a SHORT-LIVED, NO-bearer upload URL for pushing a file (or a whole bundle) too large to inline through publish — a big designed HTML page, a multi-file prototype. Inline `content`/`files` is model output, so a file past ~a page forces slow, costly multi-turn chunking; this uploads the raw bytes from your shell instead, zero tokens through context. Omit short_id to CREATE a new artifact; pass a short_id to REVISE that one (the token is scoped to exactly that target). Prefer the plain publish tool for small docs and for surgical `edits`; reach for this only when inlining would chunk. For the curl recipes (a single file, or a zipped dir that publishes as a bundle), read derive://skills/publishing.",
+        "Upload a whole document that is too big to inline — use this INSTEAD of publish when a designed HTML page or bundle is more than ~a page (inlining it through publish is slow, costly, and can fail). Mint a SHORT-LIVED, no-bearer upload URL, then curl the file (or a zipped dir, which publishes as a bundle) to it from your shell — zero tokens through context. Omit short_id to CREATE, pass short_id to REVISE that exact target. For a small doc or a partial change use publish (with `edits`) instead; for an image or font the doc embeds, use stage_asset. Read derive://skills/publishing for the curl recipes.",
       inputSchema: {
         workspace: wsArg,
         short_id: z
@@ -1993,7 +1993,7 @@ async function buildServer(
     "publish",
     {
       description:
-        "Save a revision of an artifact. It goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or whenever you pass for_review:true — it is filed as a PROPOSAL a human approves before it goes live. OMIT short_id to create a NEW artifact (`title` required); PASS short_id to add a version to one you own, matching its kind. Provide `content` (a single file), `files` (a multi-page bundle), or `edits` (surgical search/replace against the stored source — read format:'html' first); pass `addresses` with the thread ids (from catch_up) this revision resolves. Before bundles, surgical edits, embedding assets, or shipping fully-styled HTML, read derive://skills/publishing. The response echoes content_sha256 of the stored bytes; verify it when the content passed through your context.",
+        "Publish a document: pass `short_id` to UPDATE an existing one, omit it to CREATE a new one (`title` required). Choose ONE payload by what you're changing. DEFAULT to `edits` for any change to an existing doc — it is the safe, precise option: exact find/replace against the stored source, so read format:'html' FIRST or it won't match, and it fails unless each search string hits exactly once (add surrounding text to make it unique). Use `content` to write or fully replace a single file, or `files` for a multi-page bundle. Do NOT inline anything past ~a page or any image/font — use stage_publish (a whole big doc/bundle) or stage_asset (an image/font) instead. Publishes go LIVE at your role; pass for_review:true to file a PROPOSAL a human approves instead (nothing changes until they do). Pass `addresses` (thread ids from catch_up) to resolve the feedback this revision answers. Read derive://skills/publishing before bundles, edits, or assets.",
       inputSchema: {
         content: z
           .string()
