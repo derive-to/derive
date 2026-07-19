@@ -19,7 +19,7 @@
 // — every tool description plus the server `instructions` — is context every connected
 // agent pays for before it does anything, so it stays THIN: each description states
 // intent, keeps its safety/consequence lines, and steers to a skill at the decision
-// point. The actual working procedure lives in three lazily-read CORE SKILLS
+// point. The actual working procedure lives in five lazily-read CORE SKILLS
 // (src/skills-reference.ts), served as derive://skills/<name> resources AND readable via
 // read("derive://skills/<name>") — exactly how derive://brandprint/* works. The
 // instructions carry only a one-line index of them. The mcp-surface-budget test guards
@@ -780,7 +780,7 @@ async function buildServer(
         short_id: z
           .string()
           .describe(
-            "The artifact's short id, e.g. nk0dsral. Also accepts a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — or a CORE SKILL URI (derive://skills/loop, /publishing, /contexts), so the strings the instructions name are readable here even where MCP resources aren't.",
+            "The artifact's short id, e.g. nk0dsral. Also accepts a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — or a CORE SKILL URI (derive://skills/loop, /publishing, /contexts, /checkpoint, /organize), so the strings the instructions name are readable here even where MCP resources aren't.",
           ),
         section: z
           .string()
