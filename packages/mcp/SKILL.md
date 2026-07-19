@@ -1,6 +1,6 @@
 ---
 name: derive
-description: Use Derive to publish or revise artifacts, request and act on inline review, comment, find workspace docs, organize work, checkpoint state, or query workspace contexts. Trigger when the user says Derive or /derive; asks to publish, share, review, or ship a plan, page, doc, site, or deck; or asks to check and address Derive feedback. Requires the Derive MCP; skip for ordinary local-only edits unless the user wants the result in Derive.
+description: Use Derive to publish or revise artifacts, stage and embed image or font assets, request and act on inline review, comment, find workspace docs, organize work, checkpoint state, or query workspace contexts. Trigger when the user says Derive or /derive; asks to publish, share, review, or ship a plan, page, doc, site, deck, screenshot, image, or other asset; or asks to check and address Derive feedback. Requires the Derive MCP; skip for ordinary local-only edits unless the user wants the result in Derive.
 ---
 
 # Work with Derive
@@ -23,7 +23,8 @@ current tool surface.
 
 | Intent | Read first | Main tools |
 |---|---|---|
-| Create, revise, upload, or propose | `derive://skills/publishing` | `publish`, `stage`, `read` |
+| Create, revise, upload a large doc, or propose | `derive://skills/publishing` | `publish`, `stage`, `read` |
+| Upload or embed an image/font asset | `derive://skills/assets` | `stage`, `publish`, `read` |
 | Review, feedback, requests, or waiting | `derive://skills/loop` | `catch_up`, `read`, `comment`, `publish` |
 | Query a live workspace data agent | `derive://skills/contexts` | `find`, `use` |
 | Save resumable working state | `derive://skills/checkpoint` | `checkpoint` |
@@ -55,8 +56,10 @@ short account of what changed.
 ## Non-negotiable rules
 
 - Do not widen access or listing without the user's explicit request.
-- Never put image or font bytes through model context. Use
-  `stage({target:"asset"})`, upload raw bytes, and reference the returned URL or asset ref.
+- Never put image or font bytes through model context. Read `derive://skills/assets`,
+  call `stage({target:"asset"})`, POST the local file's raw bytes to `upload_url`, then
+  use the upload response's permanent `url` in single-file content or its `ref` as a
+  bundle `files` value. Staging alone does not publish an artifact.
 - Use `stage({target:"doc"})` for a large document or zip bundle instead of chunking it
   through tool arguments.
 - A bundle replacement must contain every file; use `merge` when adding only part.

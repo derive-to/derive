@@ -140,4 +140,17 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
       expect(payload.content).toBe(skill.body)
     }
   })
+
+  it("keeps asset staging discoverable as a complete byte-safe workflow", () => {
+    const assets = CORE_SKILLS.find((skill) => skill.name === "assets")
+    expect(assets).toBeTruthy()
+    expect(assets?.summary).toContain("stage image/font bytes")
+    expect(assets?.body).toContain('stage({ target: "asset"')
+    expect(assets?.body).toContain("Staging alone does not")
+    expect(assets?.body).toContain("POST the file's raw")
+    expect(assets?.body).toContain("permanent `url`")
+    expect(assets?.body).toContain("`ref`")
+    expect(assets?.body).toContain("public capability URL")
+    expect(assets?.body).toContain('render: "top"')
+  })
 })

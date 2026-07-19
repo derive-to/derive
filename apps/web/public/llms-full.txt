@@ -182,7 +182,7 @@ The remote `/mcp` server has the complete ten-tool surface.
 | `read` | Read an artifact's content by short id; bundles take a `section` (page path), any read takes a `version` for history |
 | `catch_up` | Read an artifact's review/change state, or the registered agent's queued work when called without a short id |
 | `comment` | Leave feedback, reply (`reply_to` a thread id), anchor to a `quote`, and/or resolve/reopen (`set_state`) |
-| `stage` | Upload large documents, bundles, images, and fonts out of band |
+| `stage` | Upload large documents or bundles out of band; for an image/font, mint an asset upload URL, POST raw bytes, then use the returned permanent URL or bundle ref in `publish` |
 | `publish` | Create or revise with `edits`, `content`, or `files`; `addresses` resolves threads and `request_review` opens a round |
 | `organize` | Manage tags and collections |
 | `checkpoint` | Save compact, resumable working state |
@@ -195,7 +195,7 @@ query contexts, or checkpoint state.
 
 ### Resource
 
-Remote: `derive://skills/publishing`, `/loop`, `/contexts`, `/checkpoint`, and `/organize`.
+Remote: `derive://skills/publishing`, `/assets`, `/loop`, `/contexts`, `/checkpoint`, and `/organize`.
 Stdio: `derive://guide`, `/guide/connect`, and `/guide/compatibility`.
 
 ### Claude Code project config

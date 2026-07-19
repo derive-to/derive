@@ -929,7 +929,7 @@ async function buildServer(
         short_id: z
           .string()
           .describe(
-            "The artifact's short id, e.g. nk0dsral. Also accepts a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — or a CORE SKILL URI (derive://skills/loop, /publishing, /contexts, /checkpoint, /organize), so the strings the instructions name are readable here even where MCP resources aren't.",
+            "The artifact's short id, e.g. nk0dsral. Also accepts a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — or a CORE SKILL URI (derive://skills/loop, /publishing, /assets, /contexts, /checkpoint, /organize), so the strings the instructions name are readable here even where MCP resources aren't.",
           ),
         section: z
           .string()
@@ -1999,7 +1999,7 @@ async function buildServer(
     "stage",
     {
       description:
-        "Upload out-of-band — mint a SHORT-LIVED, no-bearer upload URL, then curl the file's bytes to it from your shell (zero tokens through context). target:'doc' for a whole big document or bundle more than ~a page (returns a publish URL — curl the file, or a zipped dir which becomes a bundle; omit short_id to CREATE, pass it to REVISE that exact target). target:'asset' for an image or font a document EMBEDS (returns a permanent url + an asset:<hash> ref for an <img src>/CSS url()/markdown or a publish `files` map; raster images and WOFF/WOFF2 only, max 25MB). Use publish for inline content and surgical edits. NEVER base64 a binary through a tool call — a pasted image is already a file on disk. Read derive://skills/publishing.",
+        "Upload out-of-band — mint a SHORT-LIVED, no-bearer upload URL, then curl the file's bytes to it from your shell (zero tokens through context). target:'doc' for a whole big document or bundle more than ~a page (returns a publish URL — curl the file, or a zipped dir which becomes a bundle; omit short_id to CREATE, pass it to REVISE that exact target; read derive://skills/publishing). target:'asset' for an image or font a document EMBEDS (returns a permanent url for single-file content + an asset:<hash> ref for a bundle `files` map; raster images and WOFF/WOFF2 only, max 25MB; read derive://skills/assets). Staging alone does not publish an artifact. NEVER base64 a binary through a tool call — a pasted image is already a file on disk.",
       inputSchema: {
         target: z
           .enum(["doc", "asset"])
@@ -2188,19 +2188,19 @@ async function buildServer(
     "publish",
     {
       description:
-        "Publish a document: pass `short_id` to UPDATE an existing one, omit it to CREATE a new one (`title` required). Choose ONE payload by what you're changing. DEFAULT to `edits` for any change to an existing doc — it is the safe, precise option: exact find/replace against the stored source, so read format:'html' FIRST or it won't match, and it fails unless each search string hits exactly once (add surrounding text to make it unique). Use `content` to write or fully replace a single file, or `files` for a multi-page bundle. Do NOT inline anything past ~a page or any image/font — use stage (target:'doc' for a whole big doc/bundle, target:'asset' for an image/font) instead; oversized inline payloads are rejected. Publishes go LIVE at your role; pass for_review:true to file a PROPOSAL a human approves instead (nothing changes until they do). Pass `addresses` (thread ids from catch_up) to resolve the feedback this revision answers. As a short_id you may pass derive://brandprint/profile to file this workspace's brand profile (an Admin's first publish there scaffolds the slot). Read derive://skills/publishing before bundles, edits, or assets.",
+        "Publish a document: pass `short_id` to UPDATE an existing one, omit it to CREATE a new one (`title` required). Choose ONE payload by what you're changing. DEFAULT to `edits` for any change to an existing doc — it is the safe, precise option: exact find/replace against the stored source, so read format:'html' FIRST or it won't match, and it fails unless each search string hits exactly once (add surrounding text to make it unique). Use `content` to write or fully replace a single file, or `files` for a multi-page bundle. Do NOT inline anything past ~a page or any image/font — use stage (target:'doc' for a whole big doc/bundle, target:'asset' for an image/font) instead; oversized inline payloads are rejected. Publishes go LIVE at your role; pass for_review:true to file a PROPOSAL a human approves instead (nothing changes until they do). Pass `addresses` (thread ids from catch_up) to resolve the feedback this revision answers. As a short_id you may pass derive://brandprint/profile to file this workspace's brand profile (an Admin's first publish there scaffolds the slot). Read derive://skills/publishing before bundles or edits, and derive://skills/assets before embedding images or fonts.",
       inputSchema: {
         content: z
           .string()
           .optional()
           .describe(
-            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. Embed images and fonts via a stage target:'asset' upload URL (never a base64 data: URI here), and push a large document via stage target:'doc' rather than inlining it — see derive://skills/publishing.",
+            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. Stage images and fonts, then embed the upload response's permanent url (never upload_url or a base64 data: URI here) — see derive://skills/assets. Push a large document via stage target:'doc' rather than inlining it — see derive://skills/publishing.",
           ),
         files: z
           .record(z.string(), z.string())
           .optional()
           .describe(
-            "A MULTI-PAGE bundle as a map of path → content — the whole site. Each value is a text page (plain string), a base64 data: URI for a small inline binary, or — PREFERRED for real images — an \"asset:<hash>\" handle from stage target:'asset'. The root index.html (else the shallowest .html) becomes the entry page; a plain republish REPLACES the bundle, so include every page and asset (or use `merge`). See derive://skills/publishing.",
+            "A MULTI-PAGE bundle as a map of path → content — the whole site. Each value is a text page (plain string), a base64 data: URI for a small inline binary, or — PREFERRED for real images/fonts — the exact \"asset:<hash>\" ref returned after uploading through stage target:'asset'. The root index.html (else the shallowest .html) becomes the entry page; a plain republish REPLACES the bundle, so include every page and asset (or use `merge`). See derive://skills/assets for staged refs and derive://skills/publishing for bundle semantics.",
           ),
         title: z
           .string()
