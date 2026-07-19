@@ -105,10 +105,10 @@ describe("buildProfileInstruction", () => {
 })
 
 describe("pendingRequestsPointer", () => {
-  it("is empty with nothing queued, and steers to check_requests when work waits", () => {
+  it("is empty with nothing queued, and steers to catch_up when work waits", () => {
     expect(pendingRequestsPointer(0)).toBe("")
     expect(pendingRequestsPointer(1)).toContain("1 pending request:")
     expect(pendingRequestsPointer(2)).toContain("2 pending requests:")
-    expect(pendingRequestsPointer(1)).toContain("check_requests")
+    expect(pendingRequestsPointer(1)).toContain("catch_up")
   })
 })

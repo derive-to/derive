@@ -250,10 +250,10 @@ describe("the team-draft default", () => {
     expect(a?.workspace_access).toBe("member")
     expect(a?.link_role).toBe("none")
 
-    // The agent's list_artifacts finds it through the acting user's owner row —
+    // The agent's find (browse) surfaces it through the acting user's owner row —
     // it can always find its own work; a teammate's invite-only draft stays invisible.
-    const list = await call(app, token, "list_artifacts", {})
-    const shortIds = (list.artifacts as { short_id: string }[]).map((x) => x.short_id)
+    const list = await call(app, token, "find", {})
+    const shortIds = (list.results as { short_id?: string }[]).map((x) => x.short_id)
     expect(shortIds).toContain(created.short_id)
 
     // An explicit listing still wins over the workspace default.

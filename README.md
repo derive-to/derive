@@ -156,7 +156,7 @@ The agent acts at the role you grant: publish access publishes directly; a lower
 
 Derive is built for the loop where an agent publishes and a human (or another agent) reviews. `derive init` scaffolds the on-ramp straight into your project: a Claude Code skill (`.claude/skills/derive`) plus a project MCP config (`.mcp.json`), so an agent can publish, read comments, revise, and resolve with no extra wiring.
 
-The five MCP tools: `list_artifacts` (find), `read` (content), `catch_up` (what changed, plus open feedback and version history), `comment` (leave, reply, resolve), and `publish` (save a revision). `publish` goes live if your role can publish; otherwise, or with `for_review: true`, it files a proposal a human approves.
+The core MCP tools: `find` (search + browse artifacts and contexts), `read` (content), `catch_up` (what changed, open feedback, version history, and — with no id — your work queue), `comment` (leave, reply, resolve), `publish` (save a revision), and `stage` (upload a big document or an image/font out-of-band). `publish` goes live if your role can publish; otherwise, or with `for_review: true`, it files a proposal a human approves.
 
 ## How it works
 

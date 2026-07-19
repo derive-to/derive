@@ -150,22 +150,22 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("remote MCP workspace switc
     )
   })
 
-  it("list_artifacts scopes to the targeted workspace", async () => {
+  it("find (browse) scopes to the targeted workspace", async () => {
     const { app } = twoWorkspaceApp("switch-listarts")
     const created = await callJson(app, "publish", {
       title: "Only In Two",
       content: "<h1>x</h1>",
       workspace: "ws_two",
     })
-    const inTwo = (id: string) => (a: { short_id: string }) => a.short_id === id
+    const inTwo = (id: string) => (a: { short_id?: string }) => a.short_id === id
 
     // Default workspace (ws_one) doesn't see the ws_two artifact...
-    const def = await callJson(app, "list_artifacts")
-    expect(def.artifacts.some(inTwo(created.short_id))).toBe(false)
-    // ...but targeting ws_two (by name) does.
-    const two = await callJson(app, "list_artifacts", { workspace: "Derive" })
+    const def = await callJson(app, "find")
+    expect(def.results.some(inTwo(created.short_id))).toBe(false)
+    // ...but targeting ws_two (by name) does. find browse returns typed `results`.
+    const two = await callJson(app, "find", { workspace: "Derive" })
     expect(two.workspace).toBe("ws_two")
-    expect(two.artifacts.some(inTwo(created.short_id))).toBe(true)
+    expect(two.results.some(inTwo(created.short_id))).toBe(true)
   })
 
   it("fails closed on a workspace the owner can't reach", async () => {
@@ -175,9 +175,7 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("remote MCP workspace switc
       content: "<h1>x</h1>",
       workspace: "ws_two",
     })
-    expect(toolText(await call(app, "list_artifacts", { workspace: "ws_nope" }))).toContain(
-      "No workspace",
-    )
+    expect(toolText(await call(app, "find", { workspace: "ws_nope" }))).toContain("No workspace")
     expect(
       toolText(await call(app, "read", { short_id: created.short_id, workspace: "ws_nope" })),
     ).toContain("No workspace")
@@ -202,9 +200,7 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("remote MCP workspace switc
 
     // Targeting ws_one — a real workspace the owner belongs to, but OUTSIDE the
     // grant — is refused, not silently honored.
-    expect(toolText(await call(app, "list_artifacts", { workspace: "ws_one" }))).toContain(
-      "in this grant",
-    )
+    expect(toolText(await call(app, "find", { workspace: "ws_one" }))).toContain("in this grant")
     expect(
       toolText(await call(app, "read", { short_id: doc.short_id, workspace: "ws_one" })),
     ).toContain("in this grant")
@@ -231,8 +227,6 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("remote MCP workspace switc
     expect(ws.count).toBe(2)
     expect(ws.workspaces.map((w: { id: string }) => w.id).sort()).toEqual(["ws_one", "ws_three"])
     // ws_two is a real workspace of the owner's but outside the grant → unreachable.
-    expect(toolText(await call(app, "list_artifacts", { workspace: "Derive" }))).toContain(
-      "in this grant",
-    )
+    expect(toolText(await call(app, "find", { workspace: "Derive" }))).toContain("in this grant")
   })
 })

@@ -4,9 +4,10 @@ import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // Phase 2 slice 1 — the cross-doc wake. An @mention lands a row in the agent's
 // pull inbox AND publishes `request.created` on the agent's `u:<id>` channel, so a
-// session long-polling `check_requests({wait})` wakes in ~a beat instead of only
-// on its next reconnect. Mirrors catch_up's `wait`: the event is a wake signal
-// only, so the handler always answers from a fresh store read.
+// session long-polling `catch_up({wait})` (no short_id = the work queue, formerly
+// check_requests) wakes in ~a beat instead of only on its next reconnect. Mirrors
+// catch_up's artifact `wait`: the event is a wake signal only, so the handler
+// always answers from a fresh store read.
 
 const owner: TestUser = { id: "u_iw_own", email: "iwown@derive.test", name: "Owner" }
 
@@ -60,7 +61,7 @@ const mention = (app: App, shortId: string, agentId: string, body: string) =>
     jsonAs(as(owner.email), { body_md: body, mentions: [{ id: agentId, name: "Claude" }] }),
   )
 
-describe("check_requests({wait}) — the cross-doc wake", () => {
+describe("catch_up({wait}) work queue — the cross-doc wake", () => {
   it("blocks, then wakes the instant an @mention lands, and answers from a fresh read", async () => {
     const backplane = createInProcessBackplane()
     const { app } = makeAuthedApp("inbox-wait", [owner], "commenter", { deps: { backplane } })
@@ -75,7 +76,7 @@ describe("check_requests({wait}) — the cross-doc wake", () => {
 
     // Start the long-poll BEFORE the mention exists — its connect snapshot is empty,
     // so it must block on the wake rather than return immediately.
-    const waiting = call(app, agentToken, "check_requests", { wait: 10 })
+    const waiting = call(app, agentToken, "catch_up", { wait: 10 })
     const cm = await mention(app, shortId, agentId, "@Claude tighten the headline")
     expect(cm.status).toBe(201)
 
@@ -97,7 +98,7 @@ describe("check_requests({wait}) — the cross-doc wake", () => {
     // A generous wait that must NOT be spent: the request is already pending, so the
     // call returns at once. (If it blocked the full 30s the test would time out.)
     const started = Date.now()
-    const res = await call(app, agentToken, "check_requests", { wait: 30 })
+    const res = await call(app, agentToken, "catch_up", { wait: 30 })
     expect(Date.now() - started).toBeLessThan(5_000)
     expect(res.pending).toHaveLength(1)
   })
