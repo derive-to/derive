@@ -2216,6 +2216,68 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(asc(contextSession.created_at))
       .limit(limit)
       .all()
+  const claimPendingSessions = async (
+    contextId: string,
+    limit: number,
+    leaseUntil: string,
+  ): Promise<SessionRecord[]> => {
+    // sqlite/d1 are single-writer, so the UPDATE…WHERE id IN (SELECT…) claim is
+    // atomic without row locks (the claimDueDeliveries / claimDueRenderJobs pattern).
+    // Runnable = `open`, or `working` with a lapsed lease (crash recovery); the
+    // `working` flip + lease hide the rows from overlapping claims until it lapses.
+    const now = new Date().toISOString()
+    const runnable = db
+      .select({ id: contextSession.id })
+      .from(contextSession)
+      .where(
+        and(
+          eq(contextSession.context_id, contextId),
+          or(
+            eq(contextSession.state, "open"),
+            and(eq(contextSession.state, "working"), lte(contextSession.lease_until, now)),
+          ),
+        ),
+      )
+      .orderBy(asc(contextSession.created_at))
+      .limit(limit)
+    return (await db
+      .update(contextSession)
+      .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
+      .where(inArray(contextSession.id, runnable))
+      .returning()) as SessionRecord[]
+  }
+  const countWorkingSessions = async (contextId: string): Promise<number> =>
+    (
+      await db
+        .select({ n: count() })
+        .from(contextSession)
+        .where(and(eq(contextSession.context_id, contextId), eq(contextSession.state, "working")))
+        .get()
+    )?.n ?? 0
+  const findInflightSession = async (
+    contextId: string,
+    dedupeKey: string,
+  ): Promise<SessionRecord | null> =>
+    (await db
+      .select()
+      .from(contextSession)
+      .where(
+        and(
+          eq(contextSession.context_id, contextId),
+          eq(contextSession.dedupe_key, dedupeKey),
+          inArray(contextSession.state, ["open", "working"]),
+        ),
+      )
+      .orderBy(desc(contextSession.created_at))
+      .limit(1)
+      .get()) ?? null
+  const setResultArtifact = async (sessionId: string, artifactShortId: string): Promise<void> => {
+    await db
+      .update(contextSession)
+      .set({ result_artifact_id: artifactShortId, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, sessionId))
+      .run()
+  }
   const setSessionState = async (id: string, state: SessionState): Promise<SessionRecord | null> =>
     (await db
       .update(contextSession)
@@ -3004,6 +3066,10 @@ export function makeRepos(db: SqliteDb) {
     getSession,
     listSessions,
     pendingSessions,
+    claimPendingSessions,
+    countWorkingSessions,
+    findInflightSession,
+    setResultArtifact,
     setSessionState,
     addSessionMessage,
     listSessionMessages,

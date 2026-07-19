@@ -714,6 +714,16 @@ export const context = sqliteTable(
     // `invited` (least privilege): a data grant opens to nobody until the owner
     // widens it — the migration keeps existing contexts closed, not opened.
     ask_policy: text("ask_policy").$type<"workspace" | "invited">().notNull().default("invited"),
+    // Per-run wall-clock budget (ms). Nullable = the server's default run budget
+    // (clean ALTER ADD COLUMN onto existing rows). The runner reads it; the store
+    // just carries it.
+    max_run_ms: integer("max_run_ms"),
+    // How many sessions the runner may work in parallel on this context. Constant
+    // default 1 (serial), so it migrates onto populated rows without a backfill.
+    max_concurrency: integer("max_concurrency").notNull().default(1),
+    // Opaque JSON sidecar, parsed only at the route layer (like session_message.meta)
+    // — never by the store. Nullable (clean ADD COLUMN; unset until the owner sets one).
+    config: text("config"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
 )
@@ -754,6 +764,15 @@ export const contextSession = sqliteTable(
     state: text("state").$type<SessionState>().notNull().default("open"),
     created_at: text("created_at").notNull().default(now),
     updated_at: text("updated_at"),
+    // Lease bookkeeping for the concurrency-safe claim (mirrors webhook_delivery /
+    // render_job). All nullable: a session is unclaimed until a runner claims it,
+    // and these ALTER onto existing rows cleanly.
+    started_at: text("started_at"),
+    lease_until: text("lease_until"),
+    result_artifact_id: text("result_artifact_id"),
+    // Ask idempotency key. The partial-unique index below keeps at most one live
+    // (open|working) session per (context, dedupe_key). Nullable = not deduped.
+    dedupe_key: text("dedupe_key"),
   },
   (t) => [
     index("context_session_queue").on(t.context_id, t.state, t.created_at),
@@ -900,11 +919,21 @@ const ARTIFACT_SEARCH_FTS5 =
   `CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(` +
   `text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61 remove_diacritics 0')`
 
+// Ask-idempotency guard: at most one LIVE (open|working) session per
+// (context, dedupe_key). Partial + expression-scoped, so drizzle's uniqueIndex
+// can't express it — raw DDL like the FTS table. SQLite and Postgres both honor
+// `CREATE UNIQUE INDEX … WHERE …`. On a fresh DB the CREATE TABLE above already
+// carries dedupe_key, so this is safe in the initial schema pass.
+const CONTEXT_SESSION_DEDUPE_UNIQUE =
+  `CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session ` +
+  `(context_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working')`
+
 export const SCHEMA_STATEMENTS: string[] = [
   ...ddl.creates,
   ...placeholderTables(SQLITE_TIMESTAMP_DEFAULT),
   ...PERF_INDEXES,
   ARTIFACT_SEARCH_FTS5,
+  CONTEXT_SESSION_DEDUPE_UNIQUE,
 ]
 
 /**

@@ -582,6 +582,12 @@ export const context = pgTable(
     // Who may ASK — workspace-scoped only, never the manifest's artifact access.
     // See schema.ts for the design notes (a context can't leak outside its org).
     ask_policy: text("ask_policy").$type<"workspace" | "invited">().notNull().default("invited"),
+    // Run budget / concurrency / opaque config — mirror of the sqlite def; see
+    // schema.ts for the contract (nullable budget, constant-default concurrency,
+    // route-parsed config sidecar).
+    max_run_ms: integer("max_run_ms"),
+    max_concurrency: integer("max_concurrency").notNull().default(1),
+    config: text("config"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
 )
@@ -614,6 +620,12 @@ export const contextSession = pgTable(
     state: text("state").$type<SessionState>().notNull().default("open"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
     updated_at: text("updated_at"),
+    // Lease bookkeeping + ask-idempotency key — mirror of the sqlite def (see
+    // schema.ts). All nullable; the partial-unique index is raw DDL below.
+    started_at: text("started_at"),
+    lease_until: text("lease_until"),
+    result_artifact_id: text("result_artifact_id"),
+    dedupe_key: text("dedupe_key"),
   },
   (t) => [
     index("context_session_queue").on(t.context_id, t.state, t.created_at),
@@ -746,6 +758,16 @@ const ARTIFACT_SEARCH_PG = [
   `CREATE INDEX IF NOT EXISTS artifact_search_org ON artifact_search (org_id)`,
 ]
 
+// Ask-idempotency guard — the Postgres twin of context_session_dedupe in schema.ts:
+// at most one live (open|working) session per (context, dedupe_key). Partial +
+// expression-scoped, so it's raw DDL, not a drizzle uniqueIndex. It references
+// dedupe_key, which the `alters` add on an existing DB, so it MUST run AFTER them
+// (the PG boot has no per-statement try/catch — see pg.ts) — hence its position at
+// the tail of the statement list below, not inline here.
+const CONTEXT_SESSION_DEDUPE_UNIQUE_PG =
+  `CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session ` +
+  `(context_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working')`
+
 export const buildPgSchemaStatements = (): string[] => {
   const { creates, alters } = generateDdl(TABLES, getTableConfig, {
     ifNotExists: true,
@@ -757,6 +779,9 @@ export const buildPgSchemaStatements = (): string[] => {
     ...PERF_INDEXES,
     ...ARTIFACT_SEARCH_PG,
     ...alters,
+    // After the alters: the partial index depends on dedupe_key, which the alters
+    // add on a populated DB.
+    CONTEXT_SESSION_DEDUPE_UNIQUE_PG,
   ]
 }
 

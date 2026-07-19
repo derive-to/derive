@@ -154,9 +154,9 @@ export const contextRoutes = (ctx: AppContext) => {
       asker_id: z.string(),
       context_version: z.number().describe("The manifest version this session was opened against."),
       state: z
-        .enum(["open", "answered", "escalated", "failed", "closed"])
+        .enum(["open", "working", "answered", "escalated", "failed", "closed"])
         .describe(
-          "open = awaiting the agent; answered; escalated = draft went to review; failed = run crashed; closed = ended by asker/owner.",
+          "open = awaiting the agent; working = a runner claimed it and is answering; answered; escalated = draft went to review; failed = run crashed; closed = ended by asker/owner.",
         ),
       created_at: z.string(),
       updated_at: z
@@ -213,6 +213,26 @@ export const contextRoutes = (ctx: AppContext) => {
   // its timeout. A wake signal only; waiters always re-read the session.
   const settleWake = (s: SessionRecord, state: SessionState) =>
     bus.publish(`u:${s.asker_id}`, { type: "session.settled", session_id: s.id, state })
+
+  // A NON-settling progress tick from a long-running (Maker) runner: the session
+  // stays `working`, but the asker's use({wait}) long-poll should return the tick
+  // now instead of blocking to timeout. A wake only; the waiter re-reads the
+  // transcript. Distinct from settleWake so an open loop keeps waiting after a
+  // progress tick but returns on the terminal settle.
+  const progressWake = (s: SessionRecord) =>
+    bus.publish(`u:${s.asker_id}`, { type: "session.progress", session_id: s.id })
+
+  // A runnable session's lease: how long a claim holds it `working` before it is
+  // re-served (the runner crashed / the box rebooted). Derived from the context's
+  // max_run_ms (a Maker job gets hours; the default matches the runner's own
+  // ~10-min budget), clamped so a bad value can't wedge or thrash the queue.
+  const DEFAULT_RUN_MS = 600_000
+  const MIN_LEASE_MS = 30_000
+  const MAX_LEASE_MS = 6 * 60 * 60_000
+  const leaseFor = (x: ContextRecord): string => {
+    const ms = Math.min(Math.max(x.max_run_ms ?? DEFAULT_RUN_MS, MIN_LEASE_MS), MAX_LEASE_MS)
+    return new Date(Date.now() + ms).toISOString()
+  }
 
   /** A session's context + manifest, or null when either half is gone. */
   const contextOf = async (s: SessionRecord) => {
@@ -606,15 +626,49 @@ export const contextRoutes = (ctx: AppContext) => {
       if (!x || !(await canAskContext(c, x))) return bail(fail(c, 404, "not found"))
       const manifest = await meta.getArtifactById(x.manifest_artifact_id)
       if (!manifest) return bail(fail(c, 404, "not found"))
-      const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
+      const b = await readJson(
+        c,
+        z.object({
+          body_md: z.string().trim().min(1).max(20_000),
+          // Idempotency: a second ask with the same key while one is still in flight
+          // (open/working) JOINS the existing session instead of opening a new one —
+          // so a double "run for brand X" never runs twice. The partial unique index
+          // on (context_id, dedupe_key) is the race backstop; this is the fast join.
+          dedupe_key: z.string().trim().min(1).max(200).optional(),
+        }),
+      )
       if (b instanceof Response) return bail(b)
-      const session = await meta.createSession({
-        id: newId("ses"),
-        context_id: x.id,
-        org_id: x.org_id,
-        asker_id: me.id,
-        context_version: manifest.current_version,
-      })
+      // Return an in-flight session's current state as this ask's result (the join) —
+      // same shape/status as a fresh open, so a caller need not special-case it.
+      const joined = async (sess: SessionRecord) =>
+        c.json(
+          {
+            session: sessionJson(sess),
+            messages: (await meta.listSessionMessages(sess.id)).map(messageJson),
+          },
+          201,
+        )
+      if (b.dedupe_key) {
+        const inflight = await meta.findInflightSession(x.id, b.dedupe_key)
+        if (inflight) return joined(inflight)
+      }
+      let session: SessionRecord
+      try {
+        session = await meta.createSession({
+          id: newId("ses"),
+          context_id: x.id,
+          org_id: x.org_id,
+          asker_id: me.id,
+          context_version: manifest.current_version,
+          dedupe_key: b.dedupe_key,
+        })
+      } catch (e) {
+        // Lost the create race to a concurrent same-key ask — the unique index
+        // rejected us. Return the session that won; rethrow anything else.
+        const winner = b.dedupe_key ? await meta.findInflightSession(x.id, b.dedupe_key) : null
+        if (winner) return joined(winner)
+        throw e
+      }
       const first = await meta.addSessionMessage(
         {
           id: newId("sm"),
@@ -747,18 +801,30 @@ export const contextRoutes = (ctx: AppContext) => {
             // The asker message this answer addresses (from the runner's queue
             // snapshot) — the guard against the lost-turn race below.
             answers: z.string().optional(),
+            // A NON-settling progress tick from a long-running (Maker) runner: keep
+            // the session `working` (still claimed) and wake use({wait}) with the
+            // tick instead of settling. Ignored when a terminal `state` is also given.
+            progress: z.boolean().optional(),
+            // Bind the session's living RESULT artifact — a Maker publishes a
+            // "building…" placeholder early and updates it as stages land, so the
+            // asker gets a stable link from the first tick.
+            result_artifact_id: z.string().optional(),
           }),
         )
         if (b instanceof Response) return bail(b)
+        if (b.result_artifact_id) await meta.setResultArtifact(s.id, b.result_artifact_id)
         // A model run takes minutes; the asker may follow up mid-run. An answer
         // generated before that follow-up must not settle the session — it would
         // take the follow-up off the queue unanswered, permanently. When the
         // runner says which message it answered and a newer asker message exists,
         // keep the session open (the re-serve sees the full transcript) and stamp
         // the answer stale so the runner's duplicate guard knows to re-serve.
-        let state: SessionState = b.state ?? "answered"
-        let payloadMeta = b.meta
-        if (b.answers !== undefined && state !== "failed") {
+        const isProgress = b.progress === true && !b.state
+        let state: SessionState = isProgress ? "working" : (b.state ?? "answered")
+        let payloadMeta = isProgress
+          ? { ...(typeof b.meta === "object" && b.meta ? b.meta : {}), progress: true }
+          : b.meta
+        if (!isProgress && b.answers !== undefined && state !== "failed") {
           const transcript = await meta.listSessionMessages(s.id)
           const lastAsker = transcript.filter((t) => t.author_kind === "asker").at(-1)
           if (lastAsker && lastAsker.id !== b.answers) {
@@ -777,9 +843,12 @@ export const contextRoutes = (ctx: AppContext) => {
           },
           state,
         )
-        // The stale-answer race above keeps state `open` — correctly no wake:
-        // the runner still owes a reply.
-        if (state !== "open") settleWake(s, state)
+        // Progress keeps the session `working` (still the runner's turn) — wake the
+        // asker's use({wait}) with the tick. A terminal state settles it. The stale-
+        // answer race keeps state `open` and wakes neither: the runner still owes a
+        // reply and the next claim re-serves it.
+        if (isProgress) progressWake(s)
+        else if (state !== "open") settleWake(s, state)
         return c.json({ message: messageJson(m) }, 201)
       }
 
@@ -903,8 +972,18 @@ export const contextRoutes = (ctx: AppContext) => {
           })
         }
       }
+      // CLAIM the queue (open -> working) rather than a plain read: overlapping
+      // polls — or a second runner — can never double-serve the same session, and a
+      // crashed runner's claim self-heals once its lease lapses (claimPendingSessions
+      // re-serves a `working` row past lease_until). Cap what's in-flight to the
+      // context's max_concurrency so heavy Maker jobs don't pile onto one box; a
+      // sequential runner claims exactly what it will work on now (default 1), so a
+      // crash strands one session, not a batch.
       const limit = Math.min(20, Math.max(1, Number(c.req.query("limit")) || 10))
-      const sessions = await meta.pendingSessions(x.id, limit)
+      const working = await meta.countWorkingSessions(x.id)
+      const room = Math.max(0, (x.max_concurrency ?? 1) - working)
+      const sessions =
+        room === 0 ? [] : await meta.claimPendingSessions(x.id, Math.min(limit, room), leaseFor(x))
       // One query for every pending session's transcript, then group by session_id —
       // not a listSessionMessages per session.
       const bySession = new Map<string, ReturnType<typeof messageJson>[]>()

@@ -54,16 +54,21 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
   // and busy self-host instances). NORMAL sync is the standard, safe WAL pairing.
   raw.pragma("busy_timeout = 5000")
   raw.pragma("synchronous = NORMAL")
-  for (const stmt of SCHEMA_STATEMENTS) raw.exec(stmt)
-  // Forward-only column adds (SQLite lacks ADD COLUMN IF NOT EXISTS); a
-  // "duplicate column" throw means the migration is already applied.
+  // Forward-only column adds run BEFORE the schema statements so a raw partial
+  // index in SCHEMA_STATEMENTS that references a migrated column (e.g. the
+  // dedupe uniqueness on context_session.dedupe_key) resolves on a pre-existing
+  // DB. On a FRESH DB these ALTERs harmlessly fail — the table isn't created yet,
+  // swallowed below — and the SCHEMA_STATEMENTS pass then creates the full tables
+  // WITH those columns. SQLite lacks ADD COLUMN IF NOT EXISTS; a "duplicate
+  // column" throw just means the migration is already applied.
   for (const stmt of MIGRATION_STATEMENTS) {
     try {
       raw.exec(stmt)
     } catch {
-      /* already applied */
+      /* already applied, or the table isn't created yet on a fresh DB */
     }
   }
+  for (const stmt of SCHEMA_STATEMENTS) raw.exec(stmt)
   const db = drizzle(raw, { schema })
   const repos = makeRepos(db)
 

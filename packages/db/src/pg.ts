@@ -2023,6 +2023,64 @@ export class PgMetaStore implements MetaStore {
       .orderBy(asc(contextSession.created_at))
       .limit(limit)
   }
+  claimPendingSessions(
+    contextId: string,
+    limit: number,
+    leaseUntil: string,
+  ): Promise<SessionRecord[]> {
+    // FOR UPDATE SKIP LOCKED so concurrent runners each grab a disjoint set; the
+    // UPDATE then flips them to `working` + leases them (the claimDueRenderJobs
+    // pattern). Runnable = `open`, or `working` with a lapsed lease (crash recovery).
+    const now = new Date().toISOString()
+    const runnable = this.db
+      .select({ id: contextSession.id })
+      .from(contextSession)
+      .where(
+        and(
+          eq(contextSession.context_id, contextId),
+          or(
+            eq(contextSession.state, "open"),
+            and(eq(contextSession.state, "working"), lte(contextSession.lease_until, now)),
+          ),
+        ),
+      )
+      .orderBy(asc(contextSession.created_at))
+      .limit(limit)
+      .for("update", { skipLocked: true })
+    return this.db
+      .update(contextSession)
+      .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
+      .where(inArray(contextSession.id, runnable))
+      .returning()
+  }
+  async countWorkingSessions(contextId: string): Promise<number> {
+    const rows = await this.db
+      .select({ n: count() })
+      .from(contextSession)
+      .where(and(eq(contextSession.context_id, contextId), eq(contextSession.state, "working")))
+    return rows[0]?.n ?? 0
+  }
+  async findInflightSession(contextId: string, dedupeKey: string): Promise<SessionRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(contextSession)
+      .where(
+        and(
+          eq(contextSession.context_id, contextId),
+          eq(contextSession.dedupe_key, dedupeKey),
+          inArray(contextSession.state, ["open", "working"]),
+        ),
+      )
+      .orderBy(desc(contextSession.created_at))
+      .limit(1)
+    return rows[0] ?? null
+  }
+  async setResultArtifact(sessionId: string, artifactShortId: string): Promise<void> {
+    await this.db
+      .update(contextSession)
+      .set({ result_artifact_id: artifactShortId, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, sessionId))
+  }
   async setSessionState(id: string, state: SessionState): Promise<SessionRecord | null> {
     const rows = await this.db
       .update(contextSession)

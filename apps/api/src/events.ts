@@ -35,9 +35,14 @@ const DOMAIN_EVENTS = [
   "request.created",
   // A session reached a terminal turn — the runner answered (answered/escalated),
   // the run crashed (failed), or the asker/owner ended it (closed). Emitted on
-  // the ASKER's `u:<id>` channel so an MCP ask({wait}) long-poll wakes at once.
+  // the ASKER's `u:<id>` channel so an MCP use({wait}) long-poll wakes at once.
   // A wake signal only (waiters re-read the session); not webhook-eligible.
   "session.settled",
+  // A long-running (Maker) session posted PROGRESS without settling — the runner
+  // is still working. Emitted on the ASKER's `u:<id>` channel so use({wait})
+  // returns the tick instead of blocking to timeout. A wake only (the waiter
+  // re-reads the transcript); the session stays `working`; not webhook-eligible.
+  "session.progress",
 ] as const
 export type DomainEvent = (typeof DOMAIN_EVENTS)[number]
 
