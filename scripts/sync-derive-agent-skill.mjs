@@ -30,7 +30,8 @@ if (!/^description: .*(Derive|\/derive)/m.test(frontmatter?.[1] ?? ""))
   errors.push("skill description must carry Derive trigger words")
 
 for (const target of targets) {
-  if (!check) rmSync(target, { recursive: true, force: true })
+  // Sync only the canonical files. Preserve any extra project-local files in the
+  // skill directory so check and write mode have the same ownership boundary.
   for (const [path, contents] of Object.entries(source)) {
     const destination = join(target, path)
     if (check) {

@@ -800,16 +800,27 @@ const anchorQuote = (anchor) => {
 }
 
 /**
- * Write the scaffold into `dir`. Never clobbers existing files. Returns
- * { created: [...], skipped: [...] }.
+ * Write the scaffold into `dir`. Existing files are preserved unless the
+ * caller explicitly owns and updates that path.
  */
-const writeMissingFiles = (dir, files) => {
+const writeMissingFiles = (dir, files, { update = () => false } = {}) => {
   mkdirSync(dir, { recursive: true })
   const created = []
+  const updated = []
+  const outdated = []
   const skipped = []
   for (const [name, contents] of Object.entries(files)) {
     const path = join(dir, name)
     if (existsSync(path)) {
+      if (update(name) && readFileSync(path, "utf8") !== contents) {
+        writeFileSync(path, contents)
+        updated.push(name)
+        continue
+      }
+      if (isAgentSkillFile(name) && readFileSync(path, "utf8") !== contents) {
+        outdated.push(name)
+        continue
+      }
       skipped.push(name)
       continue
     }
@@ -817,17 +828,23 @@ const writeMissingFiles = (dir, files) => {
     writeFileSync(path, contents)
     created.push(name)
   }
-  return { created, skipped }
+  return { created, updated, outdated, skipped }
 }
 
 export function scaffold(dir = ".", title = "My artifact", template = "md") {
   return writeMissingFiles(dir, scaffoldFiles(title, template))
 }
 
+const AGENT_SKILL_PREFIXES = [".agents/skills/derive/", ".claude/skills/derive/"]
+const isAgentSkillFile = (name) => AGENT_SKILL_PREFIXES.some((prefix) => name.startsWith(prefix))
+
 /** Install only the native skill and MCP configs into an existing project.
- *  Existing files are preserved and reported as skipped. */
-export function scaffoldAgent(dir = ".") {
-  return writeMissingFiles(dir, agentScaffoldFiles())
+ *  Existing files are preserved by default. With update:true, overwrite only
+ *  the packaged Derive skill files; MCP configs always remain user-owned. */
+export function scaffoldAgent(dir = ".", { update = false } = {}) {
+  return writeMissingFiles(dir, agentScaffoldFiles(), {
+    update: (name) => update && isAgentSkillFile(name),
+  })
 }
 
 // A skill's `name` must be a kebab-case slug (it's how the skill is invoked); the

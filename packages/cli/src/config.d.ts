@@ -208,5 +208,8 @@ export declare function scaffold(
   dir?: string,
   title?: string,
   template?: string,
-): { created: string[]; skipped: string[] }
-export declare function scaffoldAgent(dir?: string): { created: string[]; skipped: string[] }
+): { created: string[]; updated: string[]; outdated: string[]; skipped: string[] }
+export declare function scaffoldAgent(
+  dir?: string,
+  options?: { update?: boolean },
+): { created: string[]; updated: string[]; outdated: string[]; skipped: string[] }

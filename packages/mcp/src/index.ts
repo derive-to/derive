@@ -314,8 +314,10 @@ server.registerTool(
     if (short_id === "derive://guide") return text(GUIDE)
     if (short_id.startsWith("derive://guide/")) {
       const name = short_id.slice("derive://guide/".length)
+      if (!Object.hasOwn(GUIDE_REFERENCES, name))
+        return err('No guide reference by that name. Available: "connect", "compatibility".')
       const reference = GUIDE_REFERENCES[name]
-      return reference
+      return typeof reference === "string" && reference.length
         ? text(reference)
         : err('No guide reference by that name. Available: "connect", "compatibility".')
     }

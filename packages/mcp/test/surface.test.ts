@@ -56,6 +56,15 @@ describe("stdio MCP onboarding surface", () => {
         arguments: { short_id: "derive://guide" },
       })
       expect(JSON.stringify(guide)).toContain("name: derive")
+
+      for (const short_id of ["derive://guide/missing", "derive://guide/constructor"]) {
+        const missing = await client.callTool({
+          name: "read",
+          arguments: { short_id },
+        })
+        expect(missing.isError).toBe(true)
+        expect(JSON.stringify(missing)).toContain("No guide reference")
+      }
     } finally {
       await client.close()
     }

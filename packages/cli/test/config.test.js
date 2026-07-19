@@ -99,6 +99,21 @@ describe("scaffold", () => {
     expect(skipped).toContain(".mcp.json")
     expect(readFileSync(join(d, ".mcp.json"), "utf8")).toBe('{"mine":true}\n')
     expect(Object.keys(agentScaffoldFiles())).toHaveLength(10)
+
+    const skillPath = join(d, ".agents/skills/derive/SKILL.md")
+    writeFileSync(skillPath, "locally changed\n")
+    const stale = scaffoldAgent(d)
+    expect(stale.outdated).toContain(".agents/skills/derive/SKILL.md")
+    expect(readFileSync(skillPath, "utf8")).toBe("locally changed\n")
+
+    const refreshed = scaffoldAgent(d, { update: true })
+    expect(refreshed.updated).toContain(".agents/skills/derive/SKILL.md")
+    expect(readFileSync(skillPath, "utf8")).toBe(
+      agentScaffoldFiles()[".agents/skills/derive/SKILL.md"],
+    )
+    // Even explicit skill updates never replace project-owned MCP configuration.
+    expect(refreshed.skipped).toContain(".mcp.json")
+    expect(readFileSync(join(d, ".mcp.json"), "utf8")).toBe('{"mine":true}\n')
   })
 
   it("html template uses index.html as the entry", () => {
