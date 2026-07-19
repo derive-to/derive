@@ -21,6 +21,7 @@ import { sha256 } from "../../src/lib/crypto"
 const PORT = 8199
 const BASE = `http://localhost:${PORT}`
 const BEARER = "tok_e2e"
+const BEARER_PUB = "tok_pub" // a publish-but-not-manage grant, for the Brandprint manage-gate proof
 
 let pass = 0
 const fails: string[] = []
@@ -56,6 +57,16 @@ seed
     JSON.stringify(["openid", "derive:read", "derive:publish", "derive:manage"]),
     new Date(Date.now() + 3_600_000).toISOString(),
   )
+seed.prepare(`INSERT OR IGNORE INTO "user"(id,email,name,username) VALUES('u_pub','pub@x.test','Publish Only','pub')`).run()
+seed
+  .prepare(`INSERT INTO "oauthAccessToken"(token,clientId,userId,scopes,expiresAt) VALUES(?,?,?,?,?)`)
+  .run(
+    sha256(BEARER_PUB),
+    "cli",
+    "u_pub",
+    JSON.stringify(["openid", "derive:read", "derive:publish"]),
+    new Date(Date.now() + 3_600_000).toISOString(),
+  )
 seed.close()
 
 const meta = new SqliteMetaStore(dbPath)
@@ -71,13 +82,13 @@ const app = createApp({
 const server = serve({ fetch: app.fetch, port: PORT })
 
 let id = 0
-const rpc = async (method: string, params: Record<string, unknown> = {}) => {
+const rpc = async (method: string, params: Record<string, unknown> = {}, bearer = BEARER) => {
   const res = await fetch(`${BASE}/mcp`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
-      authorization: `Bearer ${BEARER}`,
+      authorization: `Bearer ${bearer}`,
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
   })
@@ -89,8 +100,8 @@ const rpc = async (method: string, params: Record<string, unknown> = {}) => {
   return { status: res.status, body }
 }
 // A tools/call, returning the parsed text content (tools return a JSON text block).
-const call = async (name: string, args: Record<string, unknown> = {}) => {
-  const { body } = await rpc("tools/call", { name, arguments: args })
+const call = async (name: string, args: Record<string, unknown> = {}, bearer = BEARER) => {
+  const { body } = await rpc("tools/call", { name, arguments: args }, bearer)
   const text: string | undefined = body?.result?.content?.[0]?.text
   const isError = !!body?.result?.isError
   let json: unknown = null
@@ -129,6 +140,7 @@ const main = async () => {
   ok(!p1.isError, "publish create did not error")
   const shortId = (p1.json?.short_id as string) || (p1.json?.artifact as { short_id?: string })?.short_id
   ok(!!shortId, `publish create returned a short_id (${shortId})`)
+  if (!shortId) throw new Error("create returned no short_id — cannot continue")
 
   // 4. read it back.
   console.log("\n[read] verify content landed")
@@ -192,8 +204,88 @@ const main = async () => {
   ok(!q.isError, "catch_up with no short_id does not error")
   ok(/inbox|queue|mention|no .*request/i.test(q.text ?? ""), "queue mode returns an explicit note (not a bare empty list)")
 
-  // 11. use / list_workspaces sanity.
-  console.log("\n[use + list_workspaces]")
+  // 11. comment: anchor to a quote, see it in catch_up, resolve it.
+  console.log("\n[comment] anchor + catch_up + resolve")
+  const c1 = await call("comment", { short_id: shortId, quote: "Edited version.", body: "E2E note." })
+  ok(!c1.isError, "comment (new, anchored) did not error")
+  const threadId =
+    (c1.json?.thread as string) ??
+    (c1.json?.thread_id as string) ??
+    (c1.json?.comment as { thread?: string; thread_id?: string })?.thread ??
+    (c1.json?.comment as { thread_id?: string })?.thread_id
+  const cu = await call("catch_up", { short_id: shortId, comments: "open" })
+  ok(!cu.isError && /E2E note/.test(cu.text ?? ""), "catch_up surfaces the open comment thread")
+  if (typeof threadId === "string") {
+    const c2 = await call("comment", { short_id: shortId, reply_to: threadId, set_state: "resolved" })
+    ok(!c2.isError, "comment resolve did not error")
+  }
+
+  // 12. organize: tag the doc, find it by tag.
+  console.log("\n[organize] tag + find by tag")
+  const o1 = await call("organize", { short_ids: [shortId], add: ["e2e-tag"] })
+  ok(!o1.isError, "organize add-tag did not error")
+  const ft = await call("find", { tag: "e2e-tag" })
+  ok(!ft.isError && (ft.text ?? "").includes(shortId), "find({tag}) surfaces the tagged doc")
+
+  // 13. checkpoint: create a lineage, then replace it on the same short_id.
+  console.log("\n[checkpoint] create + replace")
+  const k1 = await call("checkpoint", { work: "e2e-run", state: "testing the surface", next: ["verify the surface"] })
+  ok(!k1.isError, "checkpoint create did not error")
+  const kId = k1.json?.short_id as string
+  ok(!!kId, `checkpoint returned a lineage short_id (${kId})`)
+  if (kId) {
+    const k2 = await call("checkpoint", { short_id: kId, state: "verified" })
+    ok(!k2.isError, "checkpoint replace (same lineage) did not error")
+  }
+
+  // 14. stage target:asset -> curl a real PNG -> reference the returned url in a published doc.
+  console.log("\n[stage] asset upload + embed")
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+    "base64",
+  )
+  const saM = await call("stage", { target: "asset" })
+  const assetUrl = saM.json?.upload_url as string | undefined
+  if (assetUrl) {
+    const upA = await fetch(assetUrl, { method: "POST", body: png, headers: { "content-type": "image/png" } })
+    const upAB = (await upA.json().catch(() => ({}))) as { url?: string }
+    ok(upA.ok && !!upAB.url, `asset bytes uploaded, got a permanent url (HTTP ${upA.status})`)
+    if (upAB.url) {
+      const pe = await call("publish", { title: "Has Image", content: `<img src="${upAB.url}">` })
+      ok(!pe.isError, "publish a doc referencing the staged asset url did not error")
+    }
+  }
+
+  // 15. Brandprint dissolve: a MANAGE grant scaffolds the profile + files a proposal on the URI.
+  console.log("\n[brandprint] manage grant scaffolds + proposes")
+  const bp = await call("publish", { short_id: "derive://brandprint/profile", content: "<h1>Brand</h1>" })
+  ok(!bp.isError, "publish to derive://brandprint/profile (manage grant) did not error")
+
+  // 16. CRITICAL SAFETY: a publish-only (non-manage) grant is REFUSED on the same URI in its OWN
+  //     fresh workspace (no profile yet) — the manage-gate must hold, with no writes.
+  console.log("\n[brandprint] non-manage grant is refused (manage-gate)")
+  const bpN = await call(
+    "publish",
+    { short_id: "derive://brandprint/profile", content: "<h1>Nope</h1>" },
+    BEARER_PUB,
+  )
+  ok(
+    bpN.isError && /admin|owner|manage/i.test(bpN.text ?? ""),
+    "non-manage caller refused with an Admin/Owner error (manage-gate holds)",
+  )
+
+  // 17. use: an unknown context fails with an actionable error, not a crash.
+  console.log("\n[use] graceful with no wired context")
+  const u = await call("use", { context: "nonexistent-ctx", question: "hi" })
+  ok(u.isError && /context|no /i.test(u.text ?? ""), "use with an unknown context returns an actionable error")
+
+  // 18. read render:wait — no renderer configured here, so it must RETURN gracefully, never hang.
+  console.log("\n[read] render:wait returns gracefully")
+  const rr = await call("read", { short_id: shortId, render: "top", wait: 3 })
+  ok(!!rr.text || rr.isError, "read render:wait returned a response (did not hang)")
+
+  // 19. list_workspaces sanity.
+  console.log("\n[list_workspaces]")
   const lw = await call("list_workspaces")
   ok(!lw.isError && Array.isArray(lw.json?.workspaces), "list_workspaces returns the grant's workspaces")
 }
