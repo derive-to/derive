@@ -76,7 +76,7 @@ const app = createApp({
   blobs,
   baseUrl: BASE,
   token: "dev-operator",
-  encryptionKey: "e2e-signing-secret-passphrase-0123456789",
+  encryptionKey: "mcp-secret",
   backplane: createInProcessBackplane(),
 })
 const server = serve({ fetch: app.fetch, port: PORT })

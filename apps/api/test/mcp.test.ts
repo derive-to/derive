@@ -1281,6 +1281,26 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(hits.some((h) => h.title === "Onboarding")).toBe(true) // named by its artifact
   })
 
+  it("find (workspace mode): a title-only query survives search confirmation", async () => {
+    // The persisted index includes title + body, so the final confirmation must retain a
+    // candidate whose literal occurs only in the title. Otherwise an agent can browse a doc
+    // by title but cannot find that same doc with find({query}).
+    const { app, token } = appWithGrant("wstitle", "openid derive:read derive:publish")
+    await publishRaw(
+      app,
+      token,
+      "# Body\n\nNo distinctive title words here.",
+      "doc.md",
+      "Unique Title Needle",
+    )
+
+    const res = JSON.parse(toolText(await call(app, token, "find", { query: "Title Needle" })))
+    const hits = matchRows(res)
+    expect(hits).toHaveLength(1)
+    expect(hits[0]).toMatchObject({ title: "Unique Title Needle", snippet: "Unique Title Needle" })
+    expect(hits[0]?.semantic).toBe(false)
+  })
+
   // Seed N indexed artifacts that all match one query, so the grep-confirm cap is
   // exercised. Uses the direct meta path (fast) plus indexArtifact — the same row the
   // publish write-path would write — rather than N slow tool publishes.

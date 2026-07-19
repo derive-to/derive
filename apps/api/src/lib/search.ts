@@ -499,6 +499,8 @@ export interface WorkspaceSearchResult {
   current_version: number
   groups: { path: string | null; hunks: SearchHunk[] }[]
   total: number
+  /** The query matched the artifact title but not its current document bytes. */
+  titleMatch?: boolean
   /** Set only for a dense-nominated hit the literal grep-confirm couldn't reproduce
    *  (total === 0): the best-matching passage, shown as the match evidence. */
   semantic?: { snippet: string }
@@ -629,14 +631,24 @@ export const searchWorkspace = async (
     // (snippetAround centers on the literal when present; a semantic chunk has none, so it returns
     // the chunk head — which is exactly the evidence we want here.)
     const chunk = chunkOf.get(a.id)
-    if (total === 0 && !chunk) return null
+    // The lexical index includes the title as well as the stored bytes. Preserve a title-only hit
+    // through confirmation too: otherwise `find({query})` can browse a document by title but not
+    // search for that same title. Reset the global matcher before testing it, just as scanLines
+    // does for each source line.
+    opts.re.lastIndex = 0
+    const titleMatch = total === 0 && !!a.title && opts.re.test(a.title)
+    if (total === 0 && !chunk && !titleMatch) return null
     return {
       short_id: a.short_id,
       title: a.title ?? a.short_id,
       current_version: a.current_version,
       groups,
       total,
-      semantic: total === 0 && chunk ? { snippet: snippetAround(chunk, opts.query) } : undefined,
+      titleMatch,
+      semantic:
+        total === 0 && !titleMatch && chunk
+          ? { snippet: snippetAround(chunk, opts.query) }
+          : undefined,
     }
   }
   const results: WorkspaceSearchResult[] = []
@@ -670,7 +682,7 @@ export const workspaceSearchReport = (
   results: WorkspaceSearchResult[],
   note: string | null,
 ): string => {
-  const grandTotal = results.reduce((sum, r) => sum + r.total, 0)
+  const grandTotal = results.reduce((sum, r) => sum + r.total + (r.titleMatch ? 1 : 0), 0)
   // A result with no literal hunks (total 0) but a semantic snippet is a dense-arm match.
   const hasSemantic = results.some((r) => r.total === 0 && r.semantic)
   if (grandTotal === 0 && !hasSemantic)
@@ -692,7 +704,9 @@ export const workspaceSearchReport = (
     .map((r) =>
       r.total > 0
         ? `## ${r.short_id} — ${r.title}\n${renderGroups(r.groups)}`
-        : `## ${r.short_id} — ${r.title}  (semantic match)\n  ~ ${r.semantic?.snippet ?? ""}`,
+        : r.titleMatch
+          ? `## ${r.short_id} — ${r.title}\n  ~ title match: ${r.title}`
+          : `## ${r.short_id} — ${r.title}  (semantic match)\n  ~ ${r.semantic?.snippet ?? ""}`,
     )
     .join("\n\n")
   const fmt = where === "text" ? "text" : "html"
@@ -750,7 +764,11 @@ export const toSearchHits = (results: WorkspaceSearchResult[], query: string): S
       title: r.title,
       current_version: r.current_version,
       // A literal hit line is the best snippet; a dense-only hit falls back to its chunk snippet.
-      snippet: hit ? snippetAround(hit.text, query) : (r.semantic?.snippet ?? ""),
+      snippet: hit
+        ? snippetAround(hit.text, query)
+        : r.titleMatch
+          ? r.title
+          : (r.semantic?.snippet ?? ""),
       // Semantic-only when there's no literal hit line but a dense passage carried it here.
       semantic: !hit && !!r.semantic?.snippet,
     }
