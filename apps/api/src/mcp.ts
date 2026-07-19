@@ -13,7 +13,19 @@
 // shaped to the agent's workflow (not the API surface), high-signal responses with
 // truncate-and-steer, semantic ids (short_id / vN / page path — never UUIDs),
 // actionable errors, and identity carried in the server `instructions` rather than a
-// tool slot. One tool per intent — WORKSPACES (list_workspaces), FIND
+// tool slot.
+//
+// THIN TOOLS, THICK SKILLS (spec: the "Thin tools, thick skills" plan on Derive). The always-loaded surface
+// — every tool description plus the server `instructions` — is context every connected
+// agent pays for before it does anything, so it stays THIN: each description states
+// intent, keeps its safety/consequence lines, and steers to a skill at the decision
+// point. The actual working procedure lives in three lazily-read CORE SKILLS
+// (src/skills-reference.ts), served as derive://skills/<name> resources AND readable via
+// read("derive://skills/<name>") — exactly how derive://brandprint/* works. The
+// instructions carry only a one-line index of them. The mcp-surface-budget test guards
+// the thinness.
+//
+// One tool per intent — WORKSPACES (list_workspaces), FIND
 // (list_artifacts), READ content (read), GREP (search), CATCH UP on state/feedback/
 // history (catch_up), COMMENT (comment), WRITE (publish), the WORK QUEUE
 // (check_requests: what teammates asked THIS agent to do — the one intent that is
@@ -109,6 +121,7 @@ import { enqueueSlackReviewRequestedDm } from "./lib/slack-dm"
 import { computeTagSuggestions } from "./lib/tag-suggestions"
 import { normalizeTags } from "./lib/tags"
 import { signUploadToken, UPLOAD_TOKEN_TTL_MS } from "./lib/upload-token"
+import { CORE_SKILLS } from "./skills-reference"
 import { enqueueChannelDelivery } from "./webhooks"
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
@@ -296,13 +309,13 @@ async function buildServer(
   // exactly those: workspaces outside the grant are invisible and unreachable.
   boundWorkspaces: string[],
 ): Promise<McpServer> {
-  // Steer the write guidance by what this grant can actually do: a publish-capable
-  // grant gets the direct-publish path; a lower grant is told its writes go to review.
-  const writeGuidance = roleAllows(agent.role, "publish")
-    ? `Use publish to create a new artifact (omit short_id) or push a new version of one (pass short_id) — ` +
-      `it goes live immediately. Pass for_review:true to file it as a proposal a human approves instead. `
-    : `Use publish to submit a revision — at your role it is filed as a proposal a human approves before it ` +
-      `goes live; you cannot publish directly. `
+  // The always-loaded CORE SKILLS index: one line per skill (name — summary — read
+  // derive://skills/<name>), kept in lockstep with the skill bodies by iterating the
+  // same array the resources register from. The workflow/protocol prose lives in those
+  // lazily-read skills, not here.
+  const skillsIndex = CORE_SKILLS.map(
+    (s) => `- ${s.name} — ${s.summary} — read derive://skills/${s.name}`,
+  ).join("\n")
 
   // Resolve the Brandprint for this actor: the workspace's conventions merged with the
   // owner's personal ones (profile wins). Each convention doc becomes a readable resource;
@@ -344,47 +357,29 @@ async function buildServer(
   const server = new McpServer(
     { name: "derive", version: "1.0.0" },
     {
+      // High-level ORIENTATION, not a manual (SOTA per the MCP spec's "hint" framing and
+      // GitHub/Goose/Cline/Codex: identity first, capability pointers second, procedure
+      // deferred). Carries only what no single tool description conveys — identity, the loop
+      // at altitude, where durable context lives (Brandprint), that work is queued, and the
+      // core-skills index. The detailed workflow lives in the derive://skills/* bodies, and
+      // actionable errors steer the rest at runtime.
       instructions:
         `You are connected to Derive as "${agent.name}"${
           actingFor ? ` on behalf of ${actingFor.name ?? "your user"}` : ""
         }, acting in workspace ${agent.org_id} ` +
-        `with ${agent.role} permissions. Derive hosts living documents and plans with versioned ` +
-        `history, text-anchored review comments, and a publish → review → revise loop. Fully-styled ` +
-        `HTML pages are first-class too: a single-file artifact with its own <style>, scripts, fonts ` +
-        `and images renders as-authored in a sandboxed viewer — publish real designed pages, not just ` +
-        `prose. ` +
-        `Start a session with catch_up to re-sync on what changed and what feedback is open; use ` +
-        `read to view content — it returns Markdown by default (HTML is converted) and an outline ` +
-        `first for large documents or bundles, so pull sections by heading slug or page path once ` +
-        `you know what you want; pass format:'html' for the exact source. On a large artifact, use ` +
-        `search to grep for a spot and read's \`lines\` to window just that range, instead of ` +
-        `pulling the whole thing. Not sure WHICH artifact has something? Call search without ` +
-        `short_id to grep across the workspace instead — same tool, that one parameter omitted. ` +
-        `After publishing a styled page, call read with render:"top" (or ` +
-        `"full"/"marked") to SEE what shipped — it catches visual breakage no text ` +
-        `read can. For images and web fonts, call stage_asset for a short-lived upload ` +
-        `URL, curl the file's raw bytes to it from your shell, and reference the ` +
-        `returned permanent url — never base64 binaries through a tool call (a pasted ` +
-        `image usually already sits on disk; upload that file). For a document too large to ` +
-        `inline (a big designed HTML page or a multi-file bundle), call stage_publish and curl ` +
-        `the file/zip to the returned URL instead of chunking it through content/files. Use comment to leave or ` +
-        `resolve feedback. ${writeGuidance}To change PART of an artifact, prefer publish's edits ` +
-        `(exact-match search/replace against the stored source) over resending everything. When a ` +
-        `revision fixes specific feedback, pass those thread ids as publish's "addresses" so the ` +
-        `threads resolve (or show pending on a proposal). ` +
-        `This one login reaches the workspaces in your grant — call list_workspaces to see them, ` +
-        `then pass a workspace id or name as the "workspace" argument to act in another one (read, ` +
-        `catch_up, comment, publish, list_artifacts). read/catch_up/comment also find a short_id in ` +
-        `any of them automatically, so you never need to switch just to open a doc. ` +
-        `Workspaces can also host contexts — askable live data agents. list_contexts shows the ` +
-        `ones your user may ask (and whether each runner is online); ask opens a question session ` +
-        `on your user's behalf and returns the answer, or a session id to resume when the runner ` +
-        `needs longer. ` +
-        `Keep the library findable: browse tags are how work is discovered later, so tag as you ` +
-        `go — set \`tags\` when you publish, or use the one \`organize\` tool: call it on an ` +
-        `artifact to see its tags + suggestions, then again with \`add\` to apply (or \`collection\` ` +
-        `to group). Call organize with no arguments for the workspace's tag vocabulary — reuse an ` +
-        `existing tag over a near-duplicate; tagging is cheap, so be generous.` +
+        `with ${agent.role} permissions. Derive hosts living documents, plans, and skills with ` +
+        `versioned history, text-anchored review comments, and a publish → review → revise loop; ` +
+        `fully-styled HTML pages are first-class artifacts that render as-authored in a sandboxed ` +
+        `viewer, so publish real designed pages, not just prose. Work the loop: start with catch_up ` +
+        `to see what changed and what feedback is open, read to pull only the sections you need, then ` +
+        `act — comment to give or resolve feedback, publish a revision, respond to review. This one ` +
+        `login reaches every workspace in your grant: call list_workspaces to see them, then pass a ` +
+        `workspace id or name as the "workspace" argument to act in another (read, catch_up, comment, ` +
+        `publish, list_artifacts); read/catch_up/comment also find a short_id in any of them ` +
+        `automatically.\n\n` +
+        `CORE SKILLS carry the working procedure for each intent — read the matching one (a resource, ` +
+        `or read("derive://skills/<name>")) before you act:\n${skillsIndex}\n\n` +
+        `Workspace skills (team procedures) exist too: list_artifacts skills:true, then read.` +
         brandprintInstructions(bpSources.length, bpProfile) +
         pendingRequestsPointer(pendingRequests.length),
     },
@@ -515,6 +510,27 @@ async function buildServer(
     )
   }
 
+  // The CORE SKILLS as resources: derive://skills/<name>. Registered UNCONDITIONALLY,
+  // exactly like the Brandprint reference/template — they're the always-available
+  // protocol the instructions index points at, their bodies loading lazily on read. Each
+  // is also reachable through the `read` tool (read("derive://skills/<name>")), which
+  // every client supports even where MCP resources aren't. audience:["assistant"].
+  for (const skill of CORE_SKILLS) {
+    server.registerResource(
+      `skill:${skill.name}`,
+      `derive://skills/${skill.name}`,
+      {
+        title: `Core skill — ${skill.name}`,
+        description: skill.summary,
+        mimeType: "text/markdown",
+        annotations: { audience: ["assistant"], priority: 0.8 },
+      },
+      async (uri) => ({
+        contents: [{ uri: uri.href, mimeType: "text/markdown", text: skill.body }],
+      }),
+    )
+  }
+
   const defaultOrg = agent.org_id
   const defaultRole = agent.role
 
@@ -623,7 +639,7 @@ async function buildServer(
     "check_requests",
     {
       description:
-        "Your work queue: pending requests teammates handed you by @mentioning you in a comment (the ask-agent and Rework buttons land here). Each entry names the artifact, the comment thread, and what to do. Handle a request on its artifact — usually read it, do the asked revision, and publish with the thread id in `addresses` — then call this again with ack:[id,…] to clear what you finished. Unacked requests stay queued for your next session. WAITING FOR WORK? Pass `wait` (seconds, max 50): when the queue is empty the call blocks until a new request lands (or the time runs out), then returns it — chain `wait` calls to react in seconds instead of polling on a cadence.",
+        "Your work queue: pending requests teammates handed you by @mentioning you in a comment (the ask-agent and Rework buttons land here) — each names the artifact, the comment thread, and what to do. Handle a request on its artifact, then call this again with ack:[id,…] to clear what you finished; an unknown or already-acked id is skipped, never an error, and unacked requests stay queued for your next session. Pass `wait` (seconds, max 50) to long-poll for new work when the queue is empty, chaining calls to react in seconds instead of polling on a cadence. For how to work and ack a request, read derive://skills/loop.",
       inputSchema: {
         ack: z
           .array(z.string())
@@ -695,7 +711,7 @@ async function buildServer(
     "list_workspaces",
     {
       description:
-        "List every workspace THIS grant can act in — id, name, your role there, and which is your default. This is the set you chose when you connected (all your workspaces, or a subset). Pass a workspace's id or name as the `workspace` argument to list_artifacts / read / catch_up / comment / publish to act there. No reconnect — read/catch_up/comment even find a short_id across these workspaces automatically.",
+        "List every workspace THIS grant can act in — id, name, your role there, and which is your default (the set you chose when you connected: all your workspaces, or a subset). Pass a workspace's id or name as the `workspace` argument to list_artifacts / read / catch_up / comment / publish to act there. No reconnect — read/catch_up/comment even find a short_id across these workspaces automatically.",
       inputSchema: {},
     },
     async () => {
@@ -712,7 +728,7 @@ async function buildServer(
     "list_artifacts",
     {
       description:
-        "List the artifacts (docs, plans, sites, skills) in a workspace — short id, title, kind, is_skill, current version, access, and its browse `tags`. Defaults to your current workspace; pass `workspace` (id or name from list_workspaces) to list another one. Pass `tag` to list only artifacts carrying that tag (findability — organize shows the vocabulary). Pass skills:true to list only skills (reusable agent procedure). Includes your own unlisted publishes — out of the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
+        "List the artifacts (docs, plans, sites, skills) in a workspace — short id, title, kind, is_skill, current version, access (workspace_access/link_role/listed). Defaults to your current workspace; pass `workspace` (id or name from list_workspaces) to list another one. Pass skills:true to list only skills (reusable agent procedure). Pass `tag` to filter to one browse tag. Includes your own unlisted publishes — out of the shared library, but you always find your work. Start here to find what to work on, then catch_up or read it.",
       inputSchema: {
         query: z.string().optional().describe("Optional title search filter."),
         tag: z
@@ -764,7 +780,7 @@ async function buildServer(
         short_id: z
           .string()
           .describe(
-            "The artifact's short id, e.g. nk0dsral. Also accepts a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — so the strings the instructions name are readable here even where MCP resources aren't.",
+            "The artifact's short id, e.g. nk0dsral. Also accepts a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — or a CORE SKILL URI (derive://skills/loop, /publishing, /contexts), so the strings the instructions name are readable here even where MCP resources aren't.",
           ),
         section: z
           .string()
@@ -803,6 +819,19 @@ async function buildServer(
       // resources" for its whole life). `reference`/`template` are the static build guide;
       // `profile` is the live brand profile; any other segment is a source-doc short_id
       // that falls through to the normal read path (so `section`/`lines`/`version` work).
+      // `derive://skills/<name>` resolves the same way, so the core-skill strings the
+      // instructions index names are readable through `read` even where MCP resources
+      // aren't — same response shape as the Brandprint reference below.
+      const SK = "derive://skills/"
+      if (short_id.startsWith(SK)) {
+        const name = short_id.slice(SK.length)
+        const skill = CORE_SKILLS.find((s) => s.name === name)
+        if (!skill)
+          return err(
+            `No core skill "${name}". Available: ${CORE_SKILLS.map((s) => s.name).join(", ")}.`,
+          )
+        return json({ uri: short_id, mimeType: "text/markdown", content: skill.body })
+      }
       const BP = "derive://brandprint/"
       let docId = short_id
       if (short_id.startsWith(BP)) {
@@ -1239,7 +1268,7 @@ async function buildServer(
     "search",
     {
       description:
-        "Find text within ONE artifact, or across a WORKSPACE. Pass short_id to grep one artifact (not a full read): matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range (in the format the result names) or `edit` that spot. A bundle is searched across all its text pages, grouped by page. Omit short_id to search across the workspace — the artifacts you can see (same visibility rules as list_artifacts), ranked by relevance and grouped by artifact — so you can find WHICH doc has something before opening it; a note tells you when more matched than were shown. Searches the exact source by default (in:'text' searches the visible text instead). The query is matched literally (metacharacters are not special).",
+        "Find text within ONE artifact (pass short_id) or across a WORKSPACE (omit short_id) — ripgrep-style matching lines with line numbers, so you can then `read` a narrow `lines` range (in the format the result names) or `edit` that spot. A bundle is searched across all its text pages, grouped by page; a workspace search returns the artifacts you can see, ranked by relevance and grouped by artifact, so you find WHICH doc has something before opening it. Searches the exact source by default (in:'text' searches the visible text instead). The query is matched literally (metacharacters are not special).",
       inputSchema: {
         short_id: z
           .string()
@@ -1326,11 +1355,7 @@ async function buildServer(
     "organize",
     {
       description:
-        "Tags and collections in one tool — the library's findability layer.\n" +
-        "• READ (no `short_ids`): the workspace's tag vocabulary (tag → count) and its collections. Call this before tagging to reuse an existing tag over a near-duplicate.\n" +
-        "• READ (with `short_ids`): those artifacts' current tags + collections, plus `suggested` tags drawn from the most semantically-similar docs (when one id is given).\n" +
-        "• WRITE: pass `add`/`remove`/`set` to change tags (add never drops existing; set replaces the whole set), and/or `collection` (an id, or a name — created if new) to fold the artifacts into a collection. Each artifact is authorized on its own; ones you can't touch come back as skipped.\n" +
-        "Tag freely and reuse the vocabulary — a well-tagged library is findable. Collections are heavier: a tag for plain findability, a collection when a set is a real unit.",
+        "Tags and collections in one tool — the library's findability layer. READ (no `short_ids`) returns the workspace's tag vocabulary + collections; READ with `short_ids` returns their tags/collections plus suggested tags. WRITE (`add`/`remove`/`set` tags, and/or `collection`) changes them — each artifact is authorized on its own, so ones you can't touch come back skipped, never failing the batch. Tag freely and reuse the vocabulary; a collection is for when a set is a real unit. For the read-vs-write modes and the tags-vs-collections call, read derive://skills/organize.",
       inputSchema: {
         short_ids: z
           .array(z.string())
@@ -1530,10 +1555,7 @@ async function buildServer(
     "catch_up",
     {
       description:
-        "START HERE on an artifact. The state of it in one call: a one-line summary, the versions that landed since `since_version`, which pages changed, the open (and outdated) comment threads, and the full version history. " +
-        "Pass `comments` (open / addressed / resolved / outdated) to instead get that filtered thread list — your feedback to-do queue. " +
-        "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to include a line-by-line diff between two versions — of their READABLE Markdown form, not raw HTML, so it shows what changed rather than tag noise. " +
-        "WAITING ON SOMETHING? Pass `wait` (seconds, max 50): the call blocks until the human sends back / approves / comments / publishes a new version (or the time runs out), then returns the fresh state — including anything new since `since_version`. Works with no pending review too: co-editing live with a human, `wait` blocks until THEIR next save lands. Chain wait calls instead of sleeping between polls — feedback reaches you in seconds.",
+        "START HERE on an artifact: its state in one call — a one-line summary, the versions that landed since `since_version`, which pages changed, the open (and outdated) comment threads, the review round you're waiting on, and the full version history. Pass `comments` (open/addressed/resolved/outdated) for that filtered thread list instead — your feedback to-do queue. Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) for a line-by-line diff of the two versions' readable Markdown form. WAITING ON SOMETHING? Pass `wait` (seconds, max 50) to block until the human sends back / approves / comments / publishes a new version, then return the fresh state — chain waits instead of sleeping between polls. For the diff, review states, and the wait loop, read derive://skills/loop.",
       inputSchema: {
         short_id: z.string(),
         since_version: z
@@ -1733,7 +1755,7 @@ async function buildServer(
     "comment",
     {
       description:
-        "Leave feedback on an artifact, reply in a thread, react, and/or resolve or reopen a thread — all in one tool. Anchor a NEW comment to a quoted span of the rendered text with `quote`. Reply by passing the thread id as `reply_to`. Pass `react` (with `reply_to`) to acknowledge the latest human comment in a thread without the noise of a reply — the minimum ack the loop requires. Resolve or reopen by passing `set_state` along with the thread's id in `reply_to`. Thread ids come from catch_up.",
+        "Leave feedback on an artifact, reply in a thread, react, and/or resolve or reopen a thread — all in one tool. Anchor a NEW comment to a quoted span of the rendered text with `quote`; reply by passing the thread id as `reply_to`; `react` (with `reply_to`) is the lightweight ack. Pass `set_state` (with the thread's id in `reply_to`) to RESOLVE that thread, or reopen it. Thread ids come from catch_up. For quoting, the ack, and review-round etiquette, read derive://skills/loop.",
       inputSchema: {
         short_id: z.string(),
         body: z
@@ -1861,7 +1883,7 @@ async function buildServer(
     "stage_asset",
     {
       description:
-        "Mint a SHORT-LIVED upload URL for staging binary assets — raster images (PNG/JPEG/GIF/WebP) and web fonts (WOFF/WOFF2), max 25MB — into this workspace, no bearer token needed. POST a file's RAW bytes to the returned URL from your shell (`curl -sS --data-binary @shot.png <upload_url>`); the response carries a permanent public `url` to paste into any artifact's <img src>/CSS url()/markdown, and the `asset:<hash>` `ref` for a publish `files` map. The URL is reusable until it expires (~15 min), so stage a whole batch with one mint. An image PASTED into your conversation is usually ALREADY a file on disk (Claude Code caches pastes and shows the path alongside the image) — upload those bytes; NEVER transcribe an image to base64 through your context (~1 token/byte, and it can be silently corrupted). No shell? Fall back to a base64 data: URI entry in a bundle publish's `files` map — small images only.",
+        "Mint a SHORT-LIVED, no-bearer upload URL for staging binary assets — raster images (PNG/JPEG/GIF/WebP) and web fonts (WOFF/WOFF2), max 25MB — into this workspace. POST a file's RAW bytes to the returned URL from your shell (`curl -sS --data-binary @shot.png <upload_url>`); the response gives a permanent public `url` (paste into an <img src>, a CSS url(), or markdown) and an `asset:<hash>` `ref` for a publish `files` map. The URL is reusable until it expires (~15 min), so stage a whole batch with one mint. NEVER transcribe an image to base64 through your context — a pasted image is usually already a file on disk, so upload those bytes. Before embedding images or fonts, read derive://skills/publishing.",
       inputSchema: { workspace: wsArg },
     },
     async ({ workspace }) => {
@@ -1904,7 +1926,7 @@ async function buildServer(
     "stage_publish",
     {
       description:
-        "Mint a SHORT-LIVED publish URL for pushing a file (or a whole bundle) too large to inline through the publish tool — a big designed HTML page, a multi-file prototype — with NO bearer token. Inline `content`/`files` is model output, so a file past ~a page forces slow, costly multi-turn chunking; this uploads the raw bytes from your shell instead, zero tokens through context. Omit short_id to CREATE a new artifact; pass a short_id to REVISE that one (the token is scoped to exactly that target). Then from your shell: a single file → `curl -sS -F file=@page.html -F title='My Page' <upload_url>`; a bundle → zip the dir first (`cd site && zip -r /tmp/site.zip .`) then `curl -sS -F file=@/tmp/site.zip <upload_url>` (a .zip publishes as a multi-page bundle). The URL is reusable until it expires (~15 min). Prefer the plain publish tool for small docs and for surgical `edits`; reach for this only when inlining would chunk.",
+        "Mint a SHORT-LIVED, NO-bearer upload URL for pushing a file (or a whole bundle) too large to inline through publish — a big designed HTML page, a multi-file prototype. Inline `content`/`files` is model output, so a file past ~a page forces slow, costly multi-turn chunking; this uploads the raw bytes from your shell instead, zero tokens through context. Omit short_id to CREATE a new artifact; pass a short_id to REVISE that one (the token is scoped to exactly that target). Prefer the plain publish tool for small docs and for surgical `edits`; reach for this only when inlining would chunk. For the curl recipes (a single file, or a zipped dir that publishes as a bundle), read derive://skills/publishing.",
       inputSchema: {
         workspace: wsArg,
         short_id: z
@@ -1971,19 +1993,19 @@ async function buildServer(
     "publish",
     {
       description:
-        "Save a revision of an artifact. It goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or whenever you pass for_review:true — it is filed as a PROPOSAL a human approves before it goes live. To CHANGE PART of a single-file artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything. Otherwise provide the full `content` for a SINGLE-FILE artifact, or `files` (a map of page path → content) for a MULTI-PAGE BUNDLE (a whole site, images and any binary asset). OMIT short_id to create a NEW artifact (`title` required); PASS short_id to add a version to one you own, matching its kind. A bundle republish REPLACES the whole bundle, so include EVERY page and asset (or use `merge`). Pass `addresses` with the thread ids (from catch_up) this revision resolves. (Proposals are single-file only; bundles must be published directly.) FULLY-STYLED HTML renders as-authored (own <style>/scripts/fonts) in the sandboxed viewer — two rules: declare your own <meta name=\"viewport\"> (pages without one get a mobile-reflow injection whose media caps can fight intentional layouts; `data-reflow-exempt` on an element is the per-component escape hatch), and self-host binaries via a stage_asset upload URL (images AND woff2 fonts) instead of base64. The response echoes `content_sha256` of the stored bytes — verify it when the content passed through your context.",
+        "Save a revision of an artifact. It goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or whenever you pass for_review:true — it is filed as a PROPOSAL a human approves before it goes live. OMIT short_id to create a NEW artifact (`title` required); PASS short_id to add a version to one you own, matching its kind. Provide `content` (a single file), `files` (a multi-page bundle), or `edits` (surgical search/replace against the stored source — read format:'html' first); pass `addresses` with the thread ids (from catch_up) this revision resolves. Before bundles, surgical edits, embedding assets, or shipping fully-styled HTML, read derive://skills/publishing. The response echoes content_sha256 of the stored bytes; verify it when the content passed through your context.",
       inputSchema: {
         content: z
           .string()
           .optional()
           .describe(
-            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. To embed an image OR a web font CHEAPLY (no base64 in this call), call stage_asset for a short-lived upload URL and curl the raw bytes to it (PNG/JPEG/GIF/WebP/WOFF/WOFF2) — the response's `url` is a permanent public link; paste it into an `<img src>`, a CSS `url()`, or markdown `![]()`. Never inline a base64 data: URI here — it tokenizes at roughly 1 token/char (one modest screenshot can cost 100k+ tokens), and content carried through your context can be silently mistranscribed; binaries should travel as bytes. If the DOCUMENT ITSELF is large (a big designed HTML page), don't inline it here either — call stage_publish for an upload URL and curl the file's bytes, zero tokens through context.",
+            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. Embed images and fonts via a stage_asset upload URL (never a base64 data: URI here), and push a large document via stage_publish rather than inlining it — see derive://skills/publishing.",
           ),
         files: z
           .record(z.string(), z.string())
           .optional()
           .describe(
-            'A MULTI-PAGE bundle as a map of path → content — the whole site. Each value is one of: a text page (plain string); a base64 data: URI for a small inline binary ("shot.png":"data:image/png;base64,iVBORw0K…"); or — PREFERRED for real images — an "asset:<hash>" handle: call stage_asset for an upload URL, curl the raw bytes to it, and use the returned `ref` here ("shot.png":"asset:9f86d0818…"). The asset handle keeps the call tiny: stream each screenshot up as raw binary (no base64 transcription), then reference the handles here. Example: {"index.html":"<img src=shot.png>","styles.css":"…","shot.png":"asset:9f86d0818…","logo.png":"data:image/png;base64,iVBORw0K…"}. The root index.html (else the shallowest .html) becomes the entry page; pages reference assets by relative path. Served content-type comes from the file extension, so give binary entries a real extension (.png/.jpg/.webp/.woff2). A plain republish REPLACES the bundle (include every page and asset). Keep each call to a few MB; for many/large images, stage them as assets and reference the handles (or publish pages first, then `merge` asset batches). Each published page is also readable directly at /raw/<short_id>/v/<n>/<path> once live.',
+            'A MULTI-PAGE bundle as a map of path → content — the whole site. Each value is a text page (plain string), a base64 data: URI for a small inline binary, or — PREFERRED for real images — an "asset:<hash>" handle from stage_asset. The root index.html (else the shallowest .html) becomes the entry page; a plain republish REPLACES the bundle, so include every page and asset (or use `merge`). See derive://skills/publishing.',
           ),
         title: z
           .string()
@@ -2023,7 +2045,7 @@ async function buildServer(
           .boolean()
           .optional()
           .describe(
-            "Add/overwrite the given `files` INTO the existing bundle instead of replacing it (default false). Build a large site across several calls without re-sending it: publish the pages first, then merge in batches of assets — each call carries only the new files. Requires `short_id` of a bundle; same-path files overwrite, the rest are kept.",
+            "Add/overwrite the given `files` INTO the existing bundle instead of replacing it (default false). Requires `short_id` of a bundle; same-path files overwrite, the rest are kept. See derive://skills/publishing.",
           ),
         message: z.string().optional().describe("What changed — recorded as the version message."),
         tags: z
@@ -2076,7 +2098,7 @@ async function buildServer(
           )
           .optional()
           .describe(
-            "Surgical revision of a SINGLE-FILE artifact without resending it: exact-match search/replace against the current stored source, applied in order (each edit sees the previous one's result). Errors — applying nothing — if any old_str matches zero times, or matches more than once without `occurrence`; a miss's error explains why (whitespace difference, or the doc changed) so you can fix it in one round. Requires `short_id`; use INSTEAD of `content`. Composes with for_review, addresses, message, request_review.",
+            "Surgical revision of a SINGLE-FILE artifact without resending it: exact-match search/replace against the current stored source, applied in order (each edit sees the previous one's result). Requires `short_id`; use INSTEAD of `content`, and read format:'html' first so old_str matches the raw source. See derive://skills/publishing. A miss applies nothing and returns why.",
           ),
         base_version: z
           .number()
@@ -2531,7 +2553,7 @@ async function buildServer(
     "checkpoint",
     {
       description:
-        "Commit a compact LAYER of working state to this work's lineage — a one-page, human-readable checkpoint (state / decisions / open threads / next steps / refs) that lets ANY later session continue the work cold, on any machine. Call it at task boundaries: a task just completed, before a risky step, when wrapping up a session. FIRST call for a piece of work: pass `work` (a short name); the lineage is created and the result names its short_id — record it (e.g. in a .derive/lineage file at the repo root) and pass it as `short_id` on every checkpoint after. Each checkpoint REPLACES the page (versions keep the history; each layer is a pinned named version), so restate what still matters and drop what doesn't — the tool rejects more than a page. Prefer refs (artifact ids, PR URLs, file paths) over restated detail: the layer is an index a cold session follows, not a container.",
+        "Commit a compact LAYER of working state to this work's lineage — a one-page, human-readable checkpoint (state / decisions / open threads / next steps / refs) that lets ANY later session continue the work cold, on any machine. Call it at task boundaries: a task just completed, before a risky step, when wrapping up a session. FIRST call for a piece of work: pass `work` (a short name); the result names a short_id — record it (e.g. in a .derive/lineage file) and pass it as `short_id` on every checkpoint after. Each checkpoint REPLACES the page (versions keep the history), so restate what still matters and prefer refs over restated detail — the tool rejects more than a page. See derive://skills/checkpoint.",
       inputSchema: {
         work: z
           .string()
@@ -2737,11 +2759,10 @@ async function buildServer(
     {
       description:
         "List the CONTEXTS you may ask in a workspace — live data agents a workspace owner wired " +
-        "up, each answering questions against its own data and tools. Returns id, name, whether " +
-        "the runner is online, the manifest doc that defines it, and your own still-open sessions " +
-        "so you can resume one with ask. Asking happens on your user's behalf and is granted per " +
-        "context, so this list is exactly what your user may ask. Defaults to your current " +
-        "workspace; pass `workspace` to look in another. Then call ask with a context's id or name.",
+        "up, each answering against its own data and tools. Returns id, name, whether the runner " +
+        "is online, its manifest doc, and your own still-open sessions to resume with ask. Asking " +
+        "happens on your user's behalf and is granted per context, so this is exactly what your " +
+        "user may ask. Then call ask with a context's id or name; see derive://skills/contexts.",
       inputSchema: { workspace: wsArg },
     },
     async ({ workspace }) => {
@@ -2783,13 +2804,12 @@ async function buildServer(
     "ask",
     {
       description:
-        "Ask a context (a live data agent from list_contexts) a question on your user's behalf, " +
-        "or resume/follow up an existing session. OPEN: pass `context` (id or name) + `question`. " +
-        "FOLLOW UP: pass `session_id` + `question`. CHECK/RESUME: pass `session_id` alone. The " +
-        "call waits up to `wait` seconds (default 25) for the runner's answer and returns it " +
-        "inline when it lands — real runs often take minutes, so a still-open response is normal, " +
-        "not an error: re-call with the returned session_id (+ wait) until it settles. Answers " +
-        "cite artifact short_ids you can then read.",
+        "Ask a context (a live data agent from list_contexts) a question ON YOUR USER'S BEHALF " +
+        "(rate-limited), or resume/follow up an existing session. OPEN: `context` (id or name) + " +
+        "`question`. FOLLOW UP: `session_id` + `question`. CHECK/RESUME: `session_id` alone. The " +
+        "call waits up to `wait` seconds (default 25) for the answer; real runs often take " +
+        "minutes, so a still-open response is NORMAL, not an error — re-call with the returned " +
+        "session_id until it settles. For the modes and wait semantics, read derive://skills/contexts.",
       inputSchema: {
         context: z
           .string()
@@ -3020,7 +3040,7 @@ async function buildServer(
     "setup_brandprint",
     {
       description:
-        "Set up (or return) this workspace's Brandprint so its brand profile can be authored over MCP — the agent-native version of the web create dialog. Idempotent: it ensures a conventions collection and a 'Brand profile' placeholder artifact exist and points the workspace's settings at them, then returns the placeholder's short_id. NEXT: read derive://brandprint/reference and derive://brandprint/template, build ONE self-contained HTML brand profile, and publish it with for_review:true to that short_id — it lands as a proposal a human approves (never publish the profile live). This tool does NOT generate or approve the profile. Owner/Admin only. Call it when the user asks to set up, build, or finish their Brandprint.",
+        "Set up (or return) this workspace's Brandprint so its brand profile can be authored over MCP. Idempotent: it ensures a conventions collection and a 'Brand profile' placeholder artifact exist, points the workspace's settings at them, and returns the placeholder's short_id. NEXT: read derive://brandprint/reference and derive://brandprint/template, build ONE self-contained HTML brand profile, and publish it with for_review:true to that short_id — it lands as a proposal a human approves (never publish the profile live). This tool does NOT generate or approve the profile. Owner/Admin only.",
       inputSchema: { workspace: wsArg },
     },
     async ({ workspace }) => {
