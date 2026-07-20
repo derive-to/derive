@@ -229,9 +229,14 @@ export const contextRoutes = (ctx: AppContext) => {
   const DEFAULT_RUN_MS = 600_000
   const MIN_LEASE_MS = 30_000
   const MAX_LEASE_MS = 6 * 60 * 60_000
+  // The lease must OUTLIVE the run budget it is derived from: a run that never ticks (no
+  // progress renewal) and finishes right at its budget would otherwise land on an
+  // already-expired lease and be re-served — a double-run. The margin covers that final
+  // answer write plus clock skew between the runner and the API box.
+  const LEASE_MARGIN_MS = 60_000
   const leaseFor = (x: ContextRecord): string => {
     const ms = Math.min(Math.max(x.max_run_ms ?? DEFAULT_RUN_MS, MIN_LEASE_MS), MAX_LEASE_MS)
-    return new Date(Date.now() + ms).toISOString()
+    return new Date(Date.now() + ms + LEASE_MARGIN_MS).toISOString()
   }
 
   /** A session's context + manifest, or null when either half is gone. */
@@ -868,24 +873,20 @@ export const contextRoutes = (ctx: AppContext) => {
       if (gone) return bail(gone)
       const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
       if (b instanceof Response) return bail(b)
-      // A follow-up mid-run must NOT vacate an active claim: if a runner is working it,
-      // keep it `working` (the runner sees the new turn on re-read, and its stale-turn
-      // guard re-serves it after replying) rather than flipping to `open`, where a second
-      // runner could claim it — a double-run. Reopening a SETTLED session drops its dedupe
-      // key first, so it can't collide with a newer same-key session on the partial index.
-      const reopenState: SessionState = s.state === "working" ? "working" : "open"
-      const wasSettled = s.state === "answered" || s.state === "escalated" || s.state === "failed"
-      if (wasSettled && s.dedupe_key) await meta.clearSessionDedupe(s.id)
-      const m = await meta.addSessionMessage(
-        {
-          id: newId("sm"),
-          session_id: s.id,
-          author_kind: "asker",
-          author_id: me.id,
-          body_md: b.body_md,
-        },
-        reopenState,
-      )
+      // A follow-up mid-run must NOT vacate an active claim, and reopening must not race a
+      // concurrent settle. appendFollowupReopen does both in one atomic compare-and-set:
+      // a `working` session stays `working` (the runner sees the new turn on re-read, and its
+      // stale-turn guard re-serves it after replying); a settled/open one goes to `open`,
+      // dropping the dedupe key on the settled path so it can't collide with a newer same-key
+      // session. Reading live state inside the UPDATE closes the settle-vs-reopen window a
+      // read-then-write would leave (which could strand the session `working` with no runner).
+      const m = await meta.appendFollowupReopen({
+        id: newId("sm"),
+        session_id: s.id,
+        author_kind: "asker",
+        author_id: me.id,
+        body_md: b.body_md,
+      })
       return c.json({ message: messageJson(m) }, 201)
     },
   )

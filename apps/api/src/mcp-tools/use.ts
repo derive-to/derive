@@ -1,4 +1,4 @@
-import { type ContextRecord, newId, type SessionRecord, type SessionState } from "@derive/core"
+import { type ContextRecord, newId, type SessionRecord } from "@derive/core"
 import { z } from "zod"
 import type { ToolContext } from "../mcp-tool-context"
 import { ANSWER_MAX, clipSessionText, ENTRY_MAX, err, json, runnerOnline } from "../mcp-util"
@@ -293,24 +293,20 @@ export function registerUseTool(tc: ToolContext): void {
           )
         const capped = await overAskCap()
         if (capped) return capped
-        // A follow-up mid-run must NOT vacate an active claim: a `working` session stays
-        // working (the runner sees the turn on re-read, and its stale-turn guard re-serves
-        // it after replying), so a second runner can't claim it. Reopening a SETTLED session
-        // drops its dedupe key first, so it can't collide with a newer same-key session.
-        const reopenState: SessionState = found.state === "working" ? "working" : "open"
-        const wasSettled =
-          found.state === "answered" || found.state === "escalated" || found.state === "failed"
-        if (wasSettled && found.dedupe_key) await ctx.meta.clearSessionDedupe(found.id)
-        await ctx.meta.addSessionMessage(
-          {
-            id: newId("sm"),
-            session_id: found.id,
-            author_kind: "asker",
-            author_id: actingFor.id,
-            body_md: instruction,
-          },
-          reopenState,
-        )
+        // A follow-up mid-run must NOT vacate an active claim, and reopening must not race a
+        // concurrent settle. appendFollowupReopen does both in one atomic compare-and-set: a
+        // `working` session stays working (the runner sees the turn on re-read, and its
+        // stale-turn guard re-serves it after replying), so a second runner can't claim it;
+        // a settled/open one goes to `open`, dropping the dedupe key on the settled path so it
+        // can't collide with a newer same-key session. Reading live state inside the UPDATE
+        // closes the window a read-then-write would leave (stranding it `working`, no runner).
+        await ctx.meta.appendFollowupReopen({
+          id: newId("sm"),
+          session_id: found.id,
+          author_kind: "asker",
+          author_id: actingFor.id,
+          body_md: instruction,
+        })
         // Re-read: the follow-up flipped the session (working stays working; else open).
         return reply((await ctx.meta.getSession(found.id)) ?? found, linked, false)
       }

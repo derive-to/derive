@@ -2041,7 +2041,12 @@ export class PgMetaStore implements MetaStore {
           eq(contextSession.context_id, contextId),
           or(
             eq(contextSession.state, "open"),
-            and(eq(contextSession.state, "working"), lte(contextSession.lease_until, now)),
+            // A `working` row with a lapsed OR missing lease is reclaimable (crash recovery,
+            // and a never-leased zombie self-heals) — mirrors countWorkingSessions.
+            and(
+              eq(contextSession.state, "working"),
+              or(lte(contextSession.lease_until, now), isNull(contextSession.lease_until)),
+            ),
           ),
         ),
       )
@@ -2100,13 +2105,23 @@ export class PgMetaStore implements MetaStore {
       .set({ lease_until: leaseUntil, updated_at: new Date().toISOString() })
       .where(eq(contextSession.id, sessionId))
   }
-  // Drop a session's dedupe key — a reopened follow-up leaves the initial-ask dedupe
-  // scope, so it can't collide with a newer same-key session on the partial index.
-  async clearSessionDedupe(sessionId: string): Promise<void> {
+  // Append an asker follow-up and reopen the session in ONE atomic compare-and-set: a
+  // `working` session STAYS working (don't vacate the active claim), while a settled or open
+  // one goes to `open` (reclaimable), dropping the dedupe key on the settled path so it can't
+  // collide with a newer same-key session. The CASE reads the row's live state inside the
+  // update, so a settle racing the reopen can't strand the session `working` with no runner.
+  async appendFollowupReopen(m: NewSessionMessage): Promise<SessionMessageRecord> {
+    const rows = await this.db.insert(sessionMessage).values(m).returning()
+    const now = new Date().toISOString()
     await this.db
       .update(contextSession)
-      .set({ dedupe_key: null, updated_at: new Date().toISOString() })
-      .where(eq(contextSession.id, sessionId))
+      .set({
+        state: sql`CASE WHEN ${contextSession.state} = 'working' THEN 'working' ELSE 'open' END`,
+        dedupe_key: sql`CASE WHEN ${contextSession.state} IN ('answered', 'escalated', 'failed') THEN NULL ELSE ${contextSession.dedupe_key} END`,
+        updated_at: now,
+      })
+      .where(eq(contextSession.id, m.session_id))
+    return one(rows)
   }
   async setSessionState(id: string, state: SessionState): Promise<SessionRecord | null> {
     const rows = await this.db

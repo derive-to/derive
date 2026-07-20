@@ -38,10 +38,12 @@ export async function runnerDispatch(
     args
 
   // A claimed session's lease — how long it holds `working` before re-serve (crash /
-  // reboot). From the context's max_run_ms, clamped like the REST queue's leaseFor.
+  // reboot). From the context's max_run_ms, clamped like the REST queue's leaseFor, plus a
+  // margin so the lease OUTLIVES the run budget: a run that never ticks and finishes right at
+  // budget must not land on an already-expired lease and be re-served (a double-run).
   const leaseFor = (x: ContextRecord): string => {
     const ms = Math.min(Math.max(x.max_run_ms ?? 600_000, 30_000), 6 * 60 * 60_000)
-    return new Date(Date.now() + ms).toISOString()
+    return new Date(Date.now() + ms + 60_000).toISOString()
   }
   // A context THIS connection RUNS, by id or name — a context is owned by exactly one
   // agent, so agent_id === agent.id is the whole gate. Null when not yours to run.

@@ -2234,7 +2234,13 @@ export function makeRepos(db: SqliteDb) {
           eq(contextSession.context_id, contextId),
           or(
             eq(contextSession.state, "open"),
-            and(eq(contextSession.state, "working"), lte(contextSession.lease_until, now)),
+            // A `working` row with a lapsed OR missing lease is reclaimable (crash recovery,
+            // and a never-leased zombie self-heals) — mirrors countWorkingSessions, which
+            // only counts LIVE leases toward the cap.
+            and(
+              eq(contextSession.state, "working"),
+              or(lte(contextSession.lease_until, now), isNull(contextSession.lease_until)),
+            ),
           ),
         ),
       )
@@ -2300,14 +2306,28 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(contextSession.id, sessionId))
       .run()
   }
-  // Drop a session's dedupe key — a reopened follow-up leaves the initial-ask dedupe
-  // scope, so it can't collide with a newer same-key session on the partial index.
-  const clearSessionDedupe = async (sessionId: string): Promise<void> => {
+  // Append an asker follow-up and reopen the session in ONE atomic compare-and-set: a
+  // `working` session STAYS working (don't vacate the active claim), while a settled or open
+  // one goes to `open` (reclaimable), dropping the dedupe key on the settled path so it can't
+  // collide with a newer same-key session. The CASE reads the row's live state inside the
+  // update, so a settle racing the reopen can't strand the session `working` with no runner.
+  const appendFollowupReopen = async (m: NewSessionMessage): Promise<SessionMessageRecord> => {
+    const row = (await db
+      .insert(sessionMessage)
+      .values(m)
+      .returning()
+      .get()) as SessionMessageRecord
+    const now = new Date().toISOString()
     await db
       .update(contextSession)
-      .set({ dedupe_key: null, updated_at: new Date().toISOString() })
-      .where(eq(contextSession.id, sessionId))
+      .set({
+        state: sql`CASE WHEN ${contextSession.state} = 'working' THEN 'working' ELSE 'open' END`,
+        dedupe_key: sql`CASE WHEN ${contextSession.state} IN ('answered', 'escalated', 'failed') THEN NULL ELSE ${contextSession.dedupe_key} END`,
+        updated_at: now,
+      })
+      .where(eq(contextSession.id, m.session_id))
       .run()
+    return row
   }
   const setSessionState = async (id: string, state: SessionState): Promise<SessionRecord | null> =>
     (await db
@@ -3102,7 +3122,7 @@ export function makeRepos(db: SqliteDb) {
     findInflightSession,
     setResultArtifact,
     renewSessionLease,
-    clearSessionDedupe,
+    appendFollowupReopen,
     setSessionState,
     addSessionMessage,
     listSessionMessages,

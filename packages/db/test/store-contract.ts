@@ -1729,19 +1729,39 @@ export function runStoreContract(
       await store.setSessionState(k1.id, "answered")
       expect(await store.findInflightSession(ctx.id, "brand-x")).toBeNull()
 
-      // Two LIVE sessions can't share a dedupe key (the partial unique index). F4:
-      // clearing a settled session's key lets it reopen without colliding with a newer
-      // same-key session.
+      // Two LIVE sessions can't share a dedupe key (the partial unique index).
       const k2 = await open("c", "brand-x") // ok — k1 is settled, out of the partial index
       await expect(open("c", "brand-x")).rejects.toThrow() // k2 is live: collision
-      await store.clearSessionDedupe(k1.id)
+
+      // appendFollowupReopen on a SETTLED session (k1 is answered): it goes to `open` AND
+      // drops its dedupe key atomically, so it can reopen alongside the live same-key k2
+      // without colliding on the partial index (folds the old F4 clear).
       await expect(
-        store.addSessionMessage(
-          { id: uuid(), session_id: k1.id, author_kind: "asker", author_id: "c", body_md: "more" },
-          "open", // reopening k1 (key cleared) alongside live k2 must not collide
-        ),
+        store.appendFollowupReopen({
+          id: uuid(),
+          session_id: k1.id,
+          author_kind: "asker",
+          author_id: "c",
+          body_md: "more",
+        }),
       ).resolves.toBeTruthy()
+      const k1re = await store.getSession(k1.id)
+      expect(k1re?.state).toBe("open")
+      expect(k1re?.dedupe_key).toBeNull()
       expect(k2.state).toBe("open")
+
+      // F6: appendFollowupReopen on a WORKING session must STAY working (don't vacate the
+      // active claim) — a read-then-write reopen would race a concurrent settle and could
+      // strand it `working` with no runner. s2 is still working with a live lease.
+      expect((await store.getSession(s2.id))?.state).toBe("working")
+      await store.appendFollowupReopen({
+        id: uuid(),
+        session_id: s2.id,
+        author_kind: "asker",
+        author_id: "b",
+        body_md: "still there?",
+      })
+      expect((await store.getSession(s2.id))?.state).toBe("working")
     })
   })
 

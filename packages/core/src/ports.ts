@@ -848,9 +848,12 @@ export interface ContextStore {
   /** Extend a claimed session's lease (a streaming runner's heartbeat) — keeps a
    *  slow-but-live run from being re-served/double-run at max_concurrency > 1. */
   renewSessionLease(sessionId: string, leaseUntil: string): Promise<void>
-  /** Clear a session's dedupe key — a reopened follow-up leaves the initial-ask dedupe
-   *  scope so it can't collide with a newer same-key session on the partial index. */
-  clearSessionDedupe(sessionId: string): Promise<void>
+  /** Append an asker follow-up and reopen the session ATOMICALLY (compare-and-set): a
+   *  `working` session stays working (don't vacate the active claim); a settled/open one
+   *  goes to `open` (reclaimable), and a settled one drops its dedupe key so it can't collide
+   *  with a newer same-key session. The CAS closes the settle-vs-reopen race a read-then-write
+   *  would strand `working` with no runner. */
+  appendFollowupReopen(m: NewSessionMessage): Promise<SessionMessageRecord>
   /** Set a session's state and bump updated_at; null if the session is unknown. */
   setSessionState(id: string, state: SessionState): Promise<SessionRecord | null>
   /** Append a message and set the session's state in the same call (the turn flip:
