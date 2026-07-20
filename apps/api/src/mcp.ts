@@ -123,7 +123,7 @@ import { enqueueSlackReviewRequestedDm } from "./lib/slack-dm"
 import { computeTagSuggestions } from "./lib/tag-suggestions"
 import { normalizeTags } from "./lib/tags"
 import { signUploadToken, UPLOAD_TOKEN_TTL_MS } from "./lib/upload-token"
-import { CORE_SKILLS } from "./skills-reference"
+import { CORE_SKILLS } from "./skills-reference.gen"
 import { enqueueChannelDelivery } from "./webhooks"
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })

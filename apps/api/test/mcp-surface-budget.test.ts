@@ -7,7 +7,7 @@ import Database from "better-sqlite3"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
-import { CORE_SKILLS } from "../src/skills-reference"
+import { CORE_SKILLS } from "../src/skills-reference.gen"
 
 // The always-loaded MCP surface — every tool description plus the server
 // `instructions` — is context every connected agent pays for on every session,
