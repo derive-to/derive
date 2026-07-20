@@ -99,6 +99,7 @@ import {
   desc,
   eq,
   getTableColumns,
+  gt,
   inArray,
   isNotNull,
   isNull,
@@ -2053,11 +2054,21 @@ export class PgMetaStore implements MetaStore {
       .where(inArray(contextSession.id, runnable))
       .returning()
   }
+  // Only LIVE working sessions (lease not lapsed) fill the concurrency cap — else a
+  // crashed run wedges the queue (the lapsed-lease reclaim is in claimPendingSessions,
+  // which only runs when there is room). Mirrors the sqlite/d1 layer.
   async countWorkingSessions(contextId: string): Promise<number> {
+    const now = new Date().toISOString()
     const rows = await this.db
       .select({ n: count() })
       .from(contextSession)
-      .where(and(eq(contextSession.context_id, contextId), eq(contextSession.state, "working")))
+      .where(
+        and(
+          eq(contextSession.context_id, contextId),
+          eq(contextSession.state, "working"),
+          gt(contextSession.lease_until, now),
+        ),
+      )
     return rows[0]?.n ?? 0
   }
   async findInflightSession(contextId: string, dedupeKey: string): Promise<SessionRecord | null> {
@@ -2079,6 +2090,22 @@ export class PgMetaStore implements MetaStore {
     await this.db
       .update(contextSession)
       .set({ result_artifact_id: artifactShortId, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, sessionId))
+  }
+  // Extend a claimed session's lease — a runner streaming progress is alive, so its
+  // lease must move forward or a slow-but-live run gets re-served and double-run.
+  async renewSessionLease(sessionId: string, leaseUntil: string): Promise<void> {
+    await this.db
+      .update(contextSession)
+      .set({ lease_until: leaseUntil, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, sessionId))
+  }
+  // Drop a session's dedupe key — a reopened follow-up leaves the initial-ask dedupe
+  // scope, so it can't collide with a newer same-key session on the partial index.
+  async clearSessionDedupe(sessionId: string): Promise<void> {
+    await this.db
+      .update(contextSession)
+      .set({ dedupe_key: null, updated_at: new Date().toISOString() })
       .where(eq(contextSession.id, sessionId))
   }
   async setSessionState(id: string, state: SessionState): Promise<SessionRecord | null> {

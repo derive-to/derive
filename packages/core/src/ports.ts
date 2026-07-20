@@ -845,6 +845,12 @@ export interface ContextStore {
   findInflightSession(contextId: string, dedupeKey: string): Promise<SessionRecord | null>
   /** Record the artifact a run produced (its short_id) on a session + bump updated_at. */
   setResultArtifact(sessionId: string, artifactShortId: string): Promise<void>
+  /** Extend a claimed session's lease (a streaming runner's heartbeat) — keeps a
+   *  slow-but-live run from being re-served/double-run at max_concurrency > 1. */
+  renewSessionLease(sessionId: string, leaseUntil: string): Promise<void>
+  /** Clear a session's dedupe key — a reopened follow-up leaves the initial-ask dedupe
+   *  scope so it can't collide with a newer same-key session on the partial index. */
+  clearSessionDedupe(sessionId: string): Promise<void>
   /** Set a session's state and bump updated_at; null if the session is unknown. */
   setSessionState(id: string, state: SessionState): Promise<SessionRecord | null>
   /** Append a message and set the session's state in the same call (the turn flip:

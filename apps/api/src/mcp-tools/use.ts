@@ -152,9 +152,12 @@ export function registerUseTool(tc: ToolContext): void {
     )
     // Wake the asker's use({wait}): progress streams; a terminal state collects the
     // answer. The stale race keeps it `open` and wakes neither (the runner still owes).
-    if (isProgress)
+    if (isProgress) {
+      // A streaming runner is alive: renew its lease so a slow-but-live run isn't
+      // re-served (and double-run) at max_concurrency > 1.
+      await ctx.meta.renewSessionLease(s.id, leaseFor(x))
       ctx.bus.publish(`u:${s.asker_id}`, { type: "session.progress", session_id: s.id })
-    else if (state !== "open")
+    } else if (state !== "open")
       ctx.bus.publish(`u:${s.asker_id}`, { type: "session.settled", session_id: s.id, state })
     const base = ctx.deps.baseUrl.replace(/\/$/, "")
     return json({
@@ -452,6 +455,14 @@ export function registerUseTool(tc: ToolContext): void {
           )
         const capped = await overAskCap()
         if (capped) return capped
+        // A follow-up mid-run must NOT vacate an active claim: a `working` session stays
+        // working (the runner sees the turn on re-read, and its stale-turn guard re-serves
+        // it after replying), so a second runner can't claim it. Reopening a SETTLED session
+        // drops its dedupe key first, so it can't collide with a newer same-key session.
+        const reopenState: SessionState = found.state === "working" ? "working" : "open"
+        const wasSettled =
+          found.state === "answered" || found.state === "escalated" || found.state === "failed"
+        if (wasSettled && found.dedupe_key) await ctx.meta.clearSessionDedupe(found.id)
         await ctx.meta.addSessionMessage(
           {
             id: newId("sm"),
@@ -460,9 +471,9 @@ export function registerUseTool(tc: ToolContext): void {
             author_id: actingFor.id,
             body_md: instruction,
           },
-          "open",
+          reopenState,
         )
-        // Re-read: the follow-up just flipped the session back to open.
+        // Re-read: the follow-up flipped the session (working stays working; else open).
         return reply((await ctx.meta.getSession(found.id)) ?? found, linked, false)
       }
 

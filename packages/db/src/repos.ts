@@ -2246,14 +2246,27 @@ export function makeRepos(db: SqliteDb) {
       .where(inArray(contextSession.id, runnable))
       .returning()) as SessionRecord[]
   }
-  const countWorkingSessions = async (contextId: string): Promise<number> =>
-    (
-      await db
-        .select({ n: count() })
-        .from(contextSession)
-        .where(and(eq(contextSession.context_id, contextId), eq(contextSession.state, "working")))
-        .get()
-    )?.n ?? 0
+  // Count only LIVE working sessions (lease not lapsed): a crashed run whose lease has
+  // expired must NOT fill the concurrency cap, or the queue wedges — the lapsed-lease
+  // reclaim lives in claimPendingSessions, which only runs when there is room.
+  const countWorkingSessions = async (contextId: string): Promise<number> => {
+    const now = new Date().toISOString()
+    return (
+      (
+        await db
+          .select({ n: count() })
+          .from(contextSession)
+          .where(
+            and(
+              eq(contextSession.context_id, contextId),
+              eq(contextSession.state, "working"),
+              gt(contextSession.lease_until, now),
+            ),
+          )
+          .get()
+      )?.n ?? 0
+    )
+  }
   const findInflightSession = async (
     contextId: string,
     dedupeKey: string,
@@ -2275,6 +2288,24 @@ export function makeRepos(db: SqliteDb) {
     await db
       .update(contextSession)
       .set({ result_artifact_id: artifactShortId, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, sessionId))
+      .run()
+  }
+  // Extend a claimed session's lease — a runner streaming progress is alive, so its
+  // lease must move forward or a slow-but-live run gets re-served and double-run.
+  const renewSessionLease = async (sessionId: string, leaseUntil: string): Promise<void> => {
+    await db
+      .update(contextSession)
+      .set({ lease_until: leaseUntil, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, sessionId))
+      .run()
+  }
+  // Drop a session's dedupe key — a reopened follow-up leaves the initial-ask dedupe
+  // scope, so it can't collide with a newer same-key session on the partial index.
+  const clearSessionDedupe = async (sessionId: string): Promise<void> => {
+    await db
+      .update(contextSession)
+      .set({ dedupe_key: null, updated_at: new Date().toISOString() })
       .where(eq(contextSession.id, sessionId))
       .run()
   }
@@ -3070,6 +3101,8 @@ export function makeRepos(db: SqliteDb) {
     countWorkingSessions,
     findInflightSession,
     setResultArtifact,
+    renewSessionLease,
+    clearSessionDedupe,
     setSessionState,
     addSessionMessage,
     listSessionMessages,

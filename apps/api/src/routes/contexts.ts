@@ -847,8 +847,12 @@ export const contextRoutes = (ctx: AppContext) => {
         // asker's use({wait}) with the tick. A terminal state settles it. The stale-
         // answer race keeps state `open` and wakes neither: the runner still owes a
         // reply and the next claim re-serves it.
-        if (isProgress) progressWake(s)
-        else if (state !== "open") settleWake(s, state)
+        if (isProgress) {
+          // A streaming runner is alive: renew its lease so a slow-but-live run isn't
+          // re-served (and double-run) at max_concurrency > 1.
+          await meta.renewSessionLease(s.id, leaseFor(linked.context))
+          progressWake(s)
+        } else if (state !== "open") settleWake(s, state)
         return c.json({ message: messageJson(m) }, 201)
       }
 
@@ -864,6 +868,14 @@ export const contextRoutes = (ctx: AppContext) => {
       if (gone) return bail(gone)
       const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
       if (b instanceof Response) return bail(b)
+      // A follow-up mid-run must NOT vacate an active claim: if a runner is working it,
+      // keep it `working` (the runner sees the new turn on re-read, and its stale-turn
+      // guard re-serves it after replying) rather than flipping to `open`, where a second
+      // runner could claim it — a double-run. Reopening a SETTLED session drops its dedupe
+      // key first, so it can't collide with a newer same-key session on the partial index.
+      const reopenState: SessionState = s.state === "working" ? "working" : "open"
+      const wasSettled = s.state === "answered" || s.state === "escalated" || s.state === "failed"
+      if (wasSettled && s.dedupe_key) await meta.clearSessionDedupe(s.id)
       const m = await meta.addSessionMessage(
         {
           id: newId("sm"),
@@ -872,7 +884,7 @@ export const contextRoutes = (ctx: AppContext) => {
           author_id: me.id,
           body_md: b.body_md,
         },
-        "open",
+        reopenState,
       )
       return c.json({ message: messageJson(m) }, 201)
     },
