@@ -642,9 +642,8 @@ const STARTERS = {
 /**
  * Files a new project gets for a template. derive.json drives publishing; AGENTS.md
  * is the loop convention for agents; the starter is publishable immediately. The
- * agent on-ramp ships too: a Claude Code skill (.claude/skills/derive) and a project
- * MCP config (.mcp.json) so "let my agent ship the page and bring comments back"
- * is wired the moment the project exists.
+ * agent on-ramp ships too: one canonical skill in the native Codex and Claude
+ * locations, plus each client's project MCP config.
  */
 export function scaffoldFiles(title = "My artifact", template = "md") {
   const t = STARTERS[template] ?? STARTERS.md
@@ -656,17 +655,41 @@ export function scaffoldFiles(title = "My artifact", template = "md") {
     "derive.schema.json": `${JSON.stringify(DERIVE_SCHEMA, null, 2)}\n`,
     ...t.files(title),
     "AGENTS.md": AGENTS_MD,
-    ".claude/skills/derive/SKILL.md": SKILL_MD,
-    ".mcp.json": `${JSON.stringify(MCP_CONFIG, null, 2)}\n`,
+    ...agentScaffoldFiles(),
   }
 }
 
-/** Project-scoped MCP config (Claude Code et al. read `.mcp.json`). Reads the
- *  server (and which signed-in account/workspace to act as) from the
- *  environment so no secret is written to disk — the token itself comes from
- *  the same `derive login` store this file's credential functions read, shared
- *  with the CLI, with DERIVE_TOKEN as an escape hatch for a static bearer.
- *  `npx -y @derive-to/mcp` needs no install. */
+const DERIVE_SKILL_PATHS = [
+  "SKILL.md",
+  "agents/openai.yaml",
+  "references/connect.md",
+  "references/compatibility.md",
+]
+
+const deriveSkillFiles = Object.fromEntries(
+  DERIVE_SKILL_PATHS.map((path) => [
+    path,
+    readFileSync(new URL(`../skills/derive/${path}`, import.meta.url), "utf8"),
+  ]),
+)
+
+/** The complete agent on-ramp for a project, shared by `derive init` and
+ *  `derive agent setup`. The same canonical skill is installed in both native
+ *  discovery locations. */
+export function agentScaffoldFiles() {
+  const files = {}
+  for (const root of [".agents/skills/derive", ".claude/skills/derive"])
+    for (const [path, contents] of Object.entries(deriveSkillFiles))
+      files[`${root}/${path}`] = contents
+  return {
+    ...files,
+    ".mcp.json": `${JSON.stringify(MCP_CONFIG, null, 2)}\n`,
+    ".codex/config.toml": CODEX_MCP_CONFIG,
+  }
+}
+
+/** Project-scoped remote MCP config for Claude Code. OAuth happens in the
+ *  client, so the checked-in file contains no token. */
 // Shell-style env expansion the agent harness resolves when it reads .mcp.json:
 // `${VAR:-default}`. Assembled from parts so the source carries no literal
 // template placeholder (which a plain JS string shouldn't).
@@ -675,17 +698,16 @@ const envRef = (name, fallback = "") => ["${", name, ":-", fallback, "}"].join("
 const MCP_CONFIG = {
   mcpServers: {
     derive: {
-      command: "npx",
-      args: ["-y", "@derive-to/mcp"],
-      env: {
-        DERIVE_SERVER: envRef("DERIVE_SERVER", "http://localhost:8080"),
-        DERIVE_ACCOUNT: envRef("DERIVE_ACCOUNT"),
-        DERIVE_WORKSPACE: envRef("DERIVE_WORKSPACE"),
-        DERIVE_TOKEN: envRef("DERIVE_TOKEN"),
-      },
+      type: "http",
+      url: envRef("DERIVE_MCP_URL", "https://derive.to/mcp"),
     },
   },
 }
+
+/** Project-scoped remote MCP config for Codex. */
+const CODEX_MCP_CONFIG = `[mcp_servers.derive]
+url = "https://derive.to/mcp"
+`
 
 /** JSON Schema for derive.json — gives editors autocomplete + validation. */
 export const DERIVE_SCHEMA = {
@@ -778,17 +800,27 @@ const anchorQuote = (anchor) => {
 }
 
 /**
- * Write the scaffold into `dir`. Never clobbers existing files. Returns
- * { created: [...], skipped: [...] }.
+ * Write the scaffold into `dir`. Existing files are preserved unless the
+ * caller explicitly owns and updates that path.
  */
-export function scaffold(dir = ".", title = "My artifact", template = "md") {
+const writeMissingFiles = (dir, files, { update = () => false } = {}) => {
   mkdirSync(dir, { recursive: true })
-  const files = scaffoldFiles(title, template)
   const created = []
+  const updated = []
+  const outdated = []
   const skipped = []
   for (const [name, contents] of Object.entries(files)) {
     const path = join(dir, name)
     if (existsSync(path)) {
+      if (update(name) && readFileSync(path, "utf8") !== contents) {
+        writeFileSync(path, contents)
+        updated.push(name)
+        continue
+      }
+      if (isAgentSkillFile(name) && readFileSync(path, "utf8") !== contents) {
+        outdated.push(name)
+        continue
+      }
       skipped.push(name)
       continue
     }
@@ -796,7 +828,23 @@ export function scaffold(dir = ".", title = "My artifact", template = "md") {
     writeFileSync(path, contents)
     created.push(name)
   }
-  return { created, skipped }
+  return { created, updated, outdated, skipped }
+}
+
+export function scaffold(dir = ".", title = "My artifact", template = "md") {
+  return writeMissingFiles(dir, scaffoldFiles(title, template))
+}
+
+const AGENT_SKILL_PREFIXES = [".agents/skills/derive/", ".claude/skills/derive/"]
+const isAgentSkillFile = (name) => AGENT_SKILL_PREFIXES.some((prefix) => name.startsWith(prefix))
+
+/** Install only the native skill and MCP configs into an existing project.
+ *  Existing files are preserved by default. With update:true, overwrite only
+ *  the packaged Derive skill files; MCP configs always remain user-owned. */
+export function scaffoldAgent(dir = ".", { update = false } = {}) {
+  return writeMissingFiles(dir, agentScaffoldFiles(), {
+    update: (name) => update && isAgentSkillFile(name),
+  })
 }
 
 // A skill's `name` must be a kebab-case slug (it's how the skill is invoked); the
@@ -1118,57 +1166,9 @@ headings and distinctive phrases stable. Full guidance: STANDARD.md.
 
 ## Using an agent harness
 
-A Claude Code skill ships in \`.claude/skills/derive\`, and \`.mcp.json\` wires the
-Derive MCP server (five tools: \`list_artifacts\`, \`read\`, \`catch_up\`, \`comment\`,
-\`publish\`). Both the CLI and the MCP server share the same \`derive login\` — no
-token to set. If you're signed into more than one account or workspace, pin this
-project with \`DERIVE_ACCOUNT\`/\`DERIVE_WORKSPACE\` (or \`workspace\`/\`account\` in
-derive.json); \`DERIVE_TOKEN\` remains for a static bearer (CI, no login).
-`
-
-// A Claude Code / agent skill: discoverable, trigger-tagged instructions for the
-// publish -> review -> revise loop. Mirrors AGENTS.md in skill form so a harness
-// surfaces it automatically when the user asks to publish, share, or get feedback.
-const SKILL_MD = `---
-name: derive-publish
-description: Publish this project to Derive — a permanent versioned URL with inline comments — and run the review loop (share, read comments, revise, resolve). Use when the user asks to publish, share, or ship a page, doc, or site, or to read and act on Derive review comments.
----
-
-# Publish to Derive and close the loop
-
-This project is wired to Derive (see \`derive.json\`). Derive hosts an artifact — HTML,
-Markdown, or a static site — at a permanent, versioned URL with inline comments,
-so a human or another agent reviews on the rendered page and you revise.
-
-## Publish
-
-\`\`\`bash
-derive publish              # publishes derive.json "entry" (a file or a built folder)
-\`\`\`
-
-Each publish is a new immutable version at the same URL. Name a checkpoint with
-\`derive publish --name "Final draft"\`.
-
-## The loop: publish -> review -> revise
-
-\`\`\`bash
-derive publish                    # 1. share the URL
-derive comments                   # 2. read threads (quote · author · state)
-# 3. revise the source for the feedback, then republish:
-derive publish --name "Rev 2"     #    same URL, highlights re-anchor
-derive reply <thread_id> "Fixed." # 4a. discuss
-derive resolve <comment_id>       # 4b. close a handled thread
-\`\`\`
-
-If the Derive MCP server is connected (\`.mcp.json\`), prefer its five tools for the same
-loop without shelling out: \`catch_up\` (what changed plus open feedback) ->
-\`read\` (content) -> \`comment\` (reply/resolve) and/or \`publish\` (pass \`addresses\`
-to resolve the threads a revision fixes; \`publish\` goes live or files a proposal based
-on your role, or with \`for_review:true\`). \`list_artifacts\` finds an artifact by title.
-
-## Keep comments anchorable
-
-Anchors are text quotes with context; they survive edits when surrounding text
-stays recognizable. Prefer small, local edits; keep headings and distinctive
-phrases stable. Full guidance: STANDARD.md.
+The canonical \`derive\` skill ships in both \`.agents/skills/derive\` (Codex) and
+\`.claude/skills/derive\` (Claude). Their project configs connect the complete remote
+MCP over OAuth — no token to paste. The server instructions identify the active role
+and workspace; call \`list_workspaces\` before publishing when the destination is
+unclear. Read the matching \`derive://skills/*\` resource before a non-trivial action.
 `

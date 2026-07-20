@@ -28,7 +28,8 @@
   "files": [
     "bin",
     "src",
-    "SKILL.md"
+    "SKILL.md",
+    "references"
   ],
   "publishConfig": {
     "access": "public"

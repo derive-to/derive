@@ -94,8 +94,8 @@ curl -X POST https://derive.to/v1/artifacts/<short_id>/proposals \
 
 ## The OAuth MCP server
 
-The OAuth-based remote `/mcp` server (used when connecting via browser consent rather than a
-static token) exposes the same 5 tools, including `publish`. The OAuth scope you grant maps
+The OAuth-based remote `/mcp` server is the complete ten-tool agent surface, including
+`publish`. The OAuth scope you grant maps
 to a role: a commenter-scoped agent's `publish` calls always file a proposal a human approves
 in the UI, while a publish-scoped agent goes live (and can still pass `for_review:true` to
 file a proposal).

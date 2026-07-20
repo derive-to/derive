@@ -37,7 +37,8 @@
   },
   "files": [
     "bin",
-    "src"
+    "src",
+    "skills"
   ],
   "publishConfig": {
     "access": "public"

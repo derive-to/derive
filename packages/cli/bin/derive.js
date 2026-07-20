@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // derive — scaffold, publish, and run the review loop against a Derive server.
 //   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
+//   derive agent setup [dir] [--update]   install/update Codex/Claude skills + MCP config
 //   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
 //                                          OAuth sign-in; discovers every workspace
 //                                          you belong to. Already signed in? Shows
@@ -55,6 +56,7 @@ import {
   saveAccount,
   saveClientId,
   scaffold,
+  scaffoldAgent,
   setDefaultAccount,
   setDefaultWorkspace,
   setWorkspaces,
@@ -87,6 +89,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--mock") flags.mock = "true"
   else if (a === "--manage") flags.manage = "true"
   else if (a === "--suggest") flags.suggest = "true"
+  else if (a === "--update") flags.update = "true"
   // Repeatable: `--env-file a --env-file b` stacks (equivalent to --env-file a,b).
   else if (a === "--env-file")
     flags["env-file"] = flags["env-file"] ? `${flags["env-file"]},${args[++i]}` : args[++i]
@@ -159,6 +162,36 @@ if (cmd === "init") {
     created.length
       ? `\nReady (${template}). Edit ${entry}, then run \`${next}\`.`
       : `\nNothing to do — ${CONFIG_FILE} already here.`,
+  )
+  process.exit(0)
+}
+
+if (cmd === "agent" && positional[0] === "setup") {
+  const dir = positional[1] ?? "."
+  const { created, updated, outdated, skipped } = scaffoldAgent(dir, {
+    update: flags.update === "true",
+  })
+  for (const f of created) console.log(`  + ${f}`)
+  for (const f of updated) console.log(`  ~ ${f} (updated)`)
+  for (const f of outdated) console.log(`  ! ${f} (differs, kept)`)
+  for (const f of skipped) console.log(`  · ${f} (exists, kept)`)
+  if (outdated.length)
+    console.log(
+      "\nA newer or different packaged Derive skill is available. Run `derive agent setup --update` to replace only Derive skill files; MCP configs remain untouched.",
+    )
+  const keptConfigs = skipped.filter(
+    (file) => file === ".mcp.json" || file === ".codex/config.toml",
+  )
+  if (keptConfigs.length)
+    console.log(
+      `\nExisting ${keptConfigs.join(" and ")} kept. Ensure each one has a "derive" server pointing to https://derive.to/mcp.`,
+    )
+  console.log(
+    created.length || updated.length
+      ? "\nAgent on-ramp installed. Restart your agent, trust the project MCP config, and complete OAuth when prompted."
+      : outdated.length
+        ? "\nAgent on-ramp is present; update available."
+        : "\nNothing to do — the agent on-ramp is already current.",
   )
   process.exit(0)
 }
@@ -1294,6 +1327,7 @@ if (cmd === "brandprint") {
 if (cmd !== "publish") {
   console.error(`usage:
   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
+  derive agent setup [dir] [--update]     install skills + remote MCP config; update replaces skill files only
   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
                                             OAuth sign-in (defaults to https://derive.to);
                                             discovers every workspace you belong to;

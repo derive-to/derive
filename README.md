@@ -143,8 +143,9 @@ derive publish                         # versioned URL; the id is saved to deriv
 ### Connect an agent (MCP)
 
 ```bash
-# Derive is a remote MCP server (OAuth). One line to connect Claude Code:
-claude mcp add --transport http derive https://derive.to/mcp
+# Derive is a remote MCP server (OAuth). Connect either client:
+claude mcp add --transport http --scope project derive https://derive.to/mcp
+codex mcp add derive --url https://derive.to/mcp
 
 # or run a local stdio server (set DERIVE_SERVER; DERIVE_TOKEN for a static bearer):
 npx -y @derive-to/mcp
@@ -154,9 +155,9 @@ The agent acts at the role you grant: publish access publishes directly; a lower
 
 ## Agents: ship a page, get the review comments back
 
-Derive is built for the loop where an agent publishes and a human (or another agent) reviews. `derive init` scaffolds the on-ramp straight into your project: a Claude Code skill (`.claude/skills/derive`) plus a project MCP config (`.mcp.json`), so an agent can publish, read comments, revise, and resolve with no extra wiring.
+Derive is built for the loop where an agent publishes and a human (or another agent) reviews. `derive init` scaffolds one canonical `derive` skill into the native Codex and Claude locations (`.agents/skills/derive` and `.claude/skills/derive`) plus each client's project MCP config. For an existing repo, run `derive agent setup`; rerun with `--update` to refresh only the packaged Derive skill files while preserving MCP configs. The skill declares its MCP dependency for Codex and routes either client into the matching `derive://skills/*` workflow before it acts.
 
-The core MCP tools: `find` (search + browse artifacts and contexts), `read` (content), `catch_up` (what changed, open feedback, version history, and — with no id — your work queue), `comment` (leave, reply, resolve), `publish` (save a revision), and `stage` (upload a big document or an image/font out-of-band). `publish` goes live if your role can publish; otherwise, or with `for_review: true`, it files a proposal a human approves.
+The core MCP tools: `find` (search + browse artifacts and contexts), `read` (content), `catch_up` (what changed, open feedback, version history, and — with no id — your work queue), `comment` (leave, reply, resolve), `publish` (save a revision), and `stage` (upload out of band). For an image/font, `stage` mints a short-lived upload URL; the agent POSTs the local file's raw bytes, then uses the returned permanent URL or bundle ref in `publish`. Staging alone does not publish an artifact. `publish` goes live if your role can publish; otherwise, or with `for_review: true`, it files a proposal a human approves.
 
 ## How it works
 
@@ -169,7 +170,7 @@ packages/core     domain: ports, publish, markdown render, viewer shell
 packages/db       MetaStore: sqlite (default) · postgres · d1
 packages/storage  BlobStore: fs (default) · s3/r2
 packages/cli      derive init (md/html/slides) · derive publish <file|dir>
-packages/mcp      MCP server: the five agent tools
+packages/mcp      Local compatibility MCP: eight agent tools + derive://guide
 ```
 
 Every artifact ships OG and Twitter meta plus an oEmbed document, serves a live Server-Sent Events stream, and renders under a strict sandbox CSP on an opaque origin. See [STANDARD.md](STANDARD.md) for the authoring and embed details.

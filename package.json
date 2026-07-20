@@ -59,13 +59,16 @@
     "format": "biome format --write",
     "check": "biome check",
     "check:fix": "biome check --write",
-    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:mutations && pnpm lint:reload && pnpm lint:surfaces && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:deadcode && pnpm lint:boundaries && pnpm lint:env && pnpm lint:api-types",
-    "precommit": "biome check && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:mutations && pnpm lint:reload && pnpm lint:surfaces && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:boundaries && pnpm lint:env && pnpm lint:api-types",
+    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:mutations && pnpm lint:reload && pnpm lint:surfaces && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:deadcode && pnpm lint:boundaries && pnpm lint:env && pnpm lint:api-types && pnpm lint:agent-skill && pnpm lint:agent-package-files",
+    "precommit": "biome check && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:mutations && pnpm lint:reload && pnpm lint:surfaces && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:boundaries && pnpm lint:env && pnpm lint:api-types && pnpm lint:agent-skill",
     "prepare": "git config core.hooksPath .githooks || true",
     "lint:hyperdrive": "node scripts/check-hyperdrive-no-pool.mjs",
     "lint:boundaries": "depcruise --config .dependency-cruiser.mjs packages apps",
     "lint:env": "node scripts/check-env.mjs",
-    "lint:api-types": "node scripts/check-api-types.mjs"
+    "lint:api-types": "node scripts/check-api-types.mjs",
+    "sync:agent-skill": "node scripts/sync-derive-agent-skill.mjs",
+    "lint:agent-skill": "node scripts/sync-derive-agent-skill.mjs --check",
+    "lint:agent-package-files": "node scripts/check-agent-package-files.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",

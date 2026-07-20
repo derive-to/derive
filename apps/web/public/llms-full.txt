@@ -169,42 +169,43 @@ Immutable, cacheable, served with `Content-Security-Policy: sandbox`. These URLs
 
 ## MCP server
 
-```bash
-npx -y @derive/mcp
-```
-
-Env vars: `DERIVE_SERVER` (base URL of your Derive instance), `DERIVE_TOKEN` (agent token).
+Prefer the remote OAuth server at `https://derive.to/mcp` (or `<instance>/mcp`). The local
+compatibility server is `npx -y @derive-to/mcp` and shares the machine's `derive login`.
 
 ### Tools
 
-The same 5 tools on both the stdio `@derive/mcp` server and the remote `/mcp` server.
+The remote `/mcp` server has the complete ten-tool surface.
 
 | Tool | Description |
 |---|---|
-| `list_artifacts` | List/find the artifacts in your workspace (short id, title, kind, version, visibility); optional `query` title filter |
+| `find` | Browse or search artifacts and discover askable workspace contexts |
 | `read` | Read an artifact's content by short id; bundles take a `section` (page path), any read takes a `version` for history |
-| `catch_up` | An artifact's state in one call: what changed since `since_version`, the open/outdated comment threads, version history. `comments` (open/addressed/resolved/outdated) for a filtered feedback queue; `response_format='detailed'` for the exact line diff. |
+| `catch_up` | Read an artifact's review/change state, or the registered agent's queued work when called without a short id |
 | `comment` | Leave feedback, reply (`reply_to` a thread id), anchor to a `quote`, and/or resolve/reopen (`set_state`) |
-| `publish` | Save a revision (`content` for one file, `files` path->content map for a bundle); omit `short_id` to create new (title required), pass it to add a version. `addresses` resolves threads. Goes live or files a proposal based on role, or with `for_review:true`. |
+| `stage` | Upload large documents or bundles out of band; for an image/font, mint an asset upload URL, POST raw bytes, then use the returned permanent URL or bundle ref in `publish` |
+| `publish` | Create or revise with `edits`, `content`, or `files`; `addresses` resolves threads and `request_review` opens a round |
+| `organize` | Manage tags and collections |
+| `checkpoint` | Save compact, resumable working state |
+| `use` | Ask a workspace context or resume its session |
+| `list_workspaces` | Inspect and route across granted workspaces |
 
-(Stdio caveat: bundles are publish-via-remote/web only, and `comment` set_state takes a `comment_id`.)
+The stdio compatibility server exposes `list_workspaces`, `list_artifacts`, `search`,
+`read`, `catch_up`, `comment`, `organize`, and `publish`. It does not stage uploads,
+query contexts, or checkpoint state.
 
 ### Resource
 
-`derive://guide` — agent workflow guide (same content as packages/mcp/SKILL.md).
+Remote: `derive://skills/publishing`, `/assets`, `/loop`, `/contexts`, `/checkpoint`, and `/organize`.
+Stdio: `derive://guide`, `/guide/connect`, and `/guide/compatibility`.
 
-### Claude Desktop config
+### Claude Code project config
 
 ```json
 {
   "mcpServers": {
     "derive": {
-      "command": "npx",
-      "args": ["-y", "@derive/mcp"],
-      "env": {
-        "DERIVE_SERVER": "https://derive.to",
-        "DERIVE_TOKEN": "dk_agt_..."
-      }
+      "type": "http",
+      "url": "https://derive.to/mcp"
     }
   }
 }
@@ -295,7 +296,8 @@ GET /readyz   -> 200 { ok: true }
 
 ---
 
-## Getting a DERIVE_TOKEN
+## Getting a DERIVE_TOKEN for direct API calls
 
 Settings > Agents > New Agent. Name it, copy the `dk_agt_...` token (shown once).
-Use as `Authorization: Bearer $DERIVE_TOKEN` in API requests and MCP env config.
+Use as `Authorization: Bearer $DERIVE_TOKEN` in direct API requests. Remote MCP clients
+should use OAuth instead of a pasted static token.
