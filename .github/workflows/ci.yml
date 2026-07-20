@@ -25,7 +25,7 @@ jobs:
   # (check/pg/d1/security) always run. No branch protection on this repo,
   # so a skipped job can't wedge a required check — it just reports success.
   changes:
-    runs-on: ubuntu-24.04-arm
+    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
     # paths-filter lists a PR's changed files via the GitHub API, which needs
     # pull-requests:read (the workflow default is contents:read only).
     permissions:
@@ -58,7 +58,7 @@ jobs:
   # 2026-07-02 and every ubicloud-* job queued forever; GitHub-hosted keeps
   # deploys vendor-independent.
   check:
-    runs-on: ubuntu-24.04-arm
+    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
@@ -80,7 +80,7 @@ jobs:
   # container, via scripts/test-pg.sh) so the hosted-tier driver is covered by
   # the full behavioral suite, not just typecheck + parity guards.
   pg:
-    runs-on: ubuntu-24.04-arm
+    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
@@ -93,7 +93,7 @@ jobs:
   # host the D1 driver, so this is the only place src/d1.ts is exercised at runtime —
   # the edge tier runs on it.
   d1:
-    runs-on: ubuntu-24.04-arm
+    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
@@ -107,7 +107,7 @@ jobs:
   bundle:
     needs: changes
     if: needs.changes.outputs.web == 'true'
-    runs-on: ubuntu-24.04-arm
+    runs-on: blacksmith-4vcpu-ubuntu-2404-arm
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
@@ -124,7 +124,7 @@ jobs:
   runner-image:
     needs: changes
     if: needs.changes.outputs.docker == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Build runner image
@@ -154,7 +154,7 @@ jobs:
   deploy:
     if: github.repository == 'derive-to/derive' && github.event_name == 'push' # never PRs, never forks
     needs: [check, pg, d1, security]
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # A running deploy is never cancelled — a schema applied for a worker that
     # then didn't ship is the state to avoid. Queued runs are NOT ordered:
     # GitHub keeps only the newest pending run per group, so intermediate green
@@ -239,7 +239,7 @@ jobs:
   # Stays on x64: it curls the linux_x64 gitleaks binary, so an arm runner would
   # need a different asset for a trivial (~16s) job — not worth the arch swap.
   security:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
