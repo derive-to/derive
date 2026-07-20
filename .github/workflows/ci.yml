@@ -25,7 +25,7 @@ jobs:
   # (check/pg/d1/security) always run. No branch protection on this repo,
   # so a skipped job can't wedge a required check — it just reports success.
   changes:
-    runs-on: ubuntu-24.04-arm
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     # paths-filter lists a PR's changed files via the GitHub API, which needs
     # pull-requests:read (the workflow default is contents:read only).
     permissions:
@@ -52,13 +52,18 @@ jobs:
               - 'deploy/runner.Dockerfile.dockerignore'
               - 'deploy/runner-entrypoint.sh'
 
-  # GitHub-hosted arm64 standard runner (ubuntu-24.04-arm): ~17% cheaper/minute
-  # than x64, same 2-vCPU class, and the whole toolchain (biome, esbuild, vite,
-  # vitest, tsgo) is arm-native. The org's Ubicloud integration vanished
-  # 2026-07-02 and every ubicloud-* job queued forever; GitHub-hosted keeps
-  # deploys vendor-independent.
+  # Blacksmith 2-vCPU arm64 — same machine class as the GitHub-hosted
+  # ubuntu-24.04-arm these jobs were on, ~75% cheaper with 3,000 free min/month.
+  # GitHub's included free minutes never applied to its hosted ARM SKU (the
+  # billing API shows the free-pool discount on x64 only), so hosted ARM billed
+  # from minute one. The toolchain (biome, esbuild, vite, vitest, tsgo) is
+  # arm-native. Ubicloud lesson (integration vanished 2026-07-02, jobs queued
+  # forever): the runs-on label is the ONLY coupling — if blacksmith-* jobs ever
+  # sit queued, flip these back to ubuntu-24.04-arm and CI runs unchanged.
+  # deploy/security/runner-image stay GitHub-hosted x64: they fit in the free
+  # x64 pool, and deploy keeps prod secrets off third-party metal.
   check:
-    runs-on: ubuntu-24.04-arm
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
@@ -76,27 +81,22 @@ jobs:
       - name: Test + coverage gate
         run: pnpm test:coverage
 
-  # Runs the SAME apps/api suite against a real Postgres (ephemeral Docker
-  # container, via scripts/test-pg.sh) so the hosted-tier driver is covered by
-  # the full behavioral suite, not just typecheck + parity guards.
-  pg:
-    runs-on: ubuntu-24.04-arm
+  # Two database lanes, one job. Postgres: the SAME apps/api suite against a real
+  # Postgres (ephemeral Docker container, via scripts/test-pg.sh) so the
+  # hosted-tier driver is covered by the full behavioral suite. D1: the SAME
+  # @derive/db store contract against a real Cloudflare D1 inside workerd via
+  # Miniflare (`pnpm test:d1`) — the default (Node) lane can't host the D1
+  # driver, so this is the only place src/d1.ts runs; the edge tier runs on it.
+  # D1's ~45s rides the pg runner (combined still shorter than `check`, so the
+  # critical path doesn't move) instead of paying its own checkout + install.
+  db:
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
 
       - name: Test against Postgres
         run: pnpm test:pg
-
-  # Runs the SAME @derive/db store contract against a real Cloudflare D1, inside
-  # workerd via Miniflare (the `pnpm test:d1` lane). The default (Node) lane can't
-  # host the D1 driver, so this is the only place src/d1.ts is exercised at runtime —
-  # the edge tier runs on it.
-  d1:
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: ./.github/actions/setup
 
       - name: Test against Cloudflare D1 (workerd)
         run: pnpm --filter @derive/db test:d1
@@ -107,7 +107,7 @@ jobs:
   bundle:
     needs: changes
     if: needs.changes.outputs.web == 'true'
-    runs-on: ubuntu-24.04-arm
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
@@ -137,7 +137,7 @@ jobs:
           echo "$out" | grep -q "error: a context id and an agent token are required"
 
   # CD: ship main to the hosted tier (Workers + Hyperdrive/Neon, derive.to) once
-  # check/pg/d1 + security pass. Schemas (D1 + Postgres) land BEFORE the worker
+  # check/db + security pass. Schemas (D1 + Postgres) land BEFORE the worker
   # flips, so a new version never serves against stale DDL. Coverage now GATES:
   # it's folded into `check` (thresholds per vitest.config.ts), so a regression
   # fails check and blocks the deploy — a deliberate reversal of the old "ratchets
@@ -153,7 +153,7 @@ jobs:
   # worker's data path).
   deploy:
     if: github.repository == 'derive-to/derive' && github.event_name == 'push' # never PRs, never forks
-    needs: [check, pg, d1, security]
+    needs: [check, db, security]
     runs-on: ubuntu-latest
     # A running deploy is never cancelled — a schema applied for a worker that
     # then didn't ship is the state to avoid. Queued runs are NOT ordered:
@@ -230,9 +230,10 @@ jobs:
           echo "prod not healthy after deploy (last /v1/artifacts status: $db)" >&2
           exit 1
 
-      # e2e smoke now runs on PRs (see e2e-smoke.yml). Its post-DEPLOY auto-dispatch
-      # stays off — a post-ship prod check is separate from the PR gate; trigger it
-      # manually with `gh workflow run e2e-smoke.yml --ref main` if wanted.
+      # e2e smoke is manual-only (see e2e-smoke.yml; it ran per-PR until
+      # 2026-07-14). Its post-deploy auto-dispatch stays off — a post-ship prod
+      # check is separate from the PR gate; trigger it manually with
+      # `gh workflow run e2e-smoke.yml --ref main` if wanted.
 
   # Supply-chain: a known-vulnerable production dependency, or a committed secret,
   # fails the build. Reads the lockfile + working tree, so no install is needed.
