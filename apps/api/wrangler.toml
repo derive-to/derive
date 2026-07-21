@@ -20,26 +20,27 @@ head_sampling_rate = 1
 [[d1_databases]]
 binding = "DB"
 database_name = "derive"
-# The Derive Cloudflare account's D1. A D1 id is not a secret (it's inert without a
-# Cloudflare API token scoped to the account), so it lives here so `pnpm run
-# deploy` is one step. Self-hosting Derive? Run `wrangler d1 create derive` and put
-# your own id here. See DEPLOY.md. NOTE: with the HYPERDRIVE binding below, metadata
-# + auth live in Postgres and this database sits idle — the binding stays only
-# because the runtime requires every declared binding to resolve.
-database_id = "3c076a21-de54-4cf8-b352-7c8430a9ab79"
+# Placeholder — run `wrangler d1 create derive` and put your own id here (see
+# DEPLOY.md). The hosted deploy injects its id from a repo secret in CI
+# (.github/workflows/ci.yml, "Inject production binding ids") before this file is
+# read. NOTE: with the HYPERDRIVE binding below, metadata + auth live in Postgres
+# and this database sits idle — the binding stays only because the runtime
+# requires every declared binding to resolve.
+database_id = "00000000-0000-0000-0000-000000000000"
 
-# Hyperdrive → Neon Postgres (the hosted tier's metadata + auth store). Bound ⇒
-# the worker takes the Postgres path; remove the binding to fall back to D1. The
-# id is account-scoped and not a secret — the DATABASE_URL lives inside the
-# Hyperdrive config (`wrangler hyperdrive create`). Schema is applied at deploy
-# time by `pnpm deploy:pg-schema`.
+# Hyperdrive → Postgres (the hosted tier's metadata + auth store). Bound ⇒
+# the worker takes the Postgres path; remove the binding to fall back to D1.
+# Placeholder id — run `wrangler hyperdrive create` and put your own here (the
+# DATABASE_URL lives inside the Hyperdrive config, never in this file); the
+# hosted deploy injects its id from a repo secret in CI. Schema is applied at
+# deploy time by `pnpm deploy:pg-schema`.
 # ⚠ Query caching MUST stay disabled on this config (--caching-disabled).
 # Hyperdrive caches SELECT results ~60s by default; this app reads its own
 # writes (workspace resolution, artifact read-back), and cached-stale reads made
 # first-login provision a workspace per request until the TTL expired.
 [[hyperdrive]]
 binding = "HYPERDRIVE"
-id = "10b9d78afcdb46ad8f8db7ad449fb2b3"
+id = "00000000000000000000000000000000"
 
 [[r2_buckets]]
 binding = "BUCKET"

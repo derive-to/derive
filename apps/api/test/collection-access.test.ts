@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
-// A collection's own share experience (docs/plans/access-model.md, extended to
+// A collection's own share experience (docs/access-model.md, extended to
 // collections): workspace_access none|member, same Invited/Workspace toggle the
 // Share dialog exposes for artifacts. Companion to the seat-folding coverage in
 // collections.test.ts.

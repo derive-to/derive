@@ -187,6 +187,25 @@ jobs:
         if: steps.head.outputs.stale != 'true'
         run: pnpm --filter @derive/api build:web
 
+      # wrangler.toml ships with all-zero placeholder D1/Hyperdrive ids so the
+      # public tree carries no production identifiers (self-hosters put their own
+      # there). The hosted ids live in repo secrets and are substituted here,
+      # before any wrangler command reads the config.
+      - name: Inject production binding ids
+        if: steps.head.outputs.stale != 'true'
+        env:
+          D1_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
+          HD_ID: ${{ secrets.CLOUDFLARE_HYPERDRIVE_ID }}
+        run: |
+          : "${D1_ID:?CLOUDFLARE_D1_DATABASE_ID secret is unset — refusing to deploy against the placeholder id}"
+          : "${HD_ID:?CLOUDFLARE_HYPERDRIVE_ID secret is unset — refusing to deploy against the placeholder id}"
+          sed -i \
+            -e "s/^database_id = \"00000000-0000-0000-0000-000000000000\"$/database_id = \"$D1_ID\"/" \
+            -e "s/^id = \"00000000000000000000000000000000\"$/id = \"$HD_ID\"/" \
+            apps/api/wrangler.toml
+          grep -q "^database_id = \"$D1_ID\"$" apps/api/wrangler.toml || { echo "D1 id injection failed" >&2; exit 1; }
+          grep -q "^id = \"$HD_ID\"$" apps/api/wrangler.toml || { echo "Hyperdrive id injection failed" >&2; exit 1; }
+
       - name: Apply schemas (D1 + Postgres)
         if: steps.head.outputs.stale != 'true'
         env:

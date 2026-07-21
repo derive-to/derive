@@ -44,7 +44,7 @@ export const artifact = sqliteTable("artifact", {
   org_id: text("org_id").notNull().default("local"),
   slug: text("slug"),
   title: text("title"),
-  // The access model (docs/plans/access-model.md), three independent fields.
+  // The access model (docs/access-model.md), three independent fields.
   // workspace_access: does the artifact's workspace get access at each member's
   // SEAT role (`member`) or not (`none`). link_role: the WORLD link — what anyone
   // holding the URL gets (`none` inert / viewer / commenter / editor; anon clamped

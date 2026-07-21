@@ -26,5 +26,5 @@ Highlights:
   driver; server code logs through `log`, not `console`.
 
 When you add a capability that a future change could silently regress, prefer adding a
-guardrail (a Biome rule, a `scripts/check-*.mjs`, or a test) over a note in a doc. The
-plan behind this approach is `docs/plans/ai-guardrails.html`.
+guardrail (a Biome rule, a `scripts/check-*.mjs`, or a test) over a note in a doc: an
+agent can ignore an instruction or a review comment, but it cannot ignore a red build.

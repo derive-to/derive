@@ -1,7 +1,7 @@
 // Publish advisories: pure string checks over just-published content, returned with
 // the publish response (response text reaches agents far more reliably than tool
 // descriptions do). The REST route carries them as a field; both MCP servers fold
-// them into their notes. Plan: docs/plans/agent-artifact-learnings.md §4.
+// them into their notes.
 
 import { needsReflow } from "./reflow"
 

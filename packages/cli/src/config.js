@@ -543,7 +543,7 @@ export function resolvePublish(opts = {}, config = null) {
     // The canonical v2 access fields (flag > derive.json). Each is independent;
     // omit all to inherit the workspace default (the team draft). `visibility` is
     // the deprecated single-axis alias — the server still maps it — kept so existing
-    // derive.json files and muscle memory keep working. See docs/plans/access-model.md.
+    // derive.json files and muscle memory keep working. See docs/access-model.md.
     workspaceAccess: opts["workspace-access"] ?? c.workspace_access,
     linkRole: opts["link-role"] ?? c.link_role,
     listed: opts.listed ?? c.listed,
@@ -717,7 +717,7 @@ export const DERIVE_SCHEMA = {
   properties: {
     title: { type: "string", description: "Artifact title." },
     entry: { type: "string", description: "File or directory `derive publish` targets." },
-    // The v2 access model — three independent fields (see docs/plans/access-model.md).
+    // The v2 access model — three independent fields (see docs/access-model.md).
     // Omit all to inherit the workspace default (the team draft: workspace access at
     // seat role, no world link, unlisted).
     workspace_access: {
