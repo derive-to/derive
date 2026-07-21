@@ -795,6 +795,23 @@ describe("slack interactivity endpoint (resolve/reopen from a button)", () => {
     expect(sent).toContain("&lt;!channel&gt;")
   })
 
+  it('acks (not 500s) a button value of "null" — JSON.parse succeeds but yields null', async () => {
+    const { app } = make("slack-int-null-value")
+    // Regression: the old inline decode destructured the parse result OUTSIDE its try, so a
+    // literal "null" (valid JSON, parses to null) threw a TypeError → 500 instead of acking.
+    for (const actionId of [SLACK_THREAD_ACTION.resolve, SLACK_PROPOSAL_ACTION.approve]) {
+      const r = await postInteract(app, {
+        type: "block_actions",
+        response_url: "https://hooks.slack.test/response",
+        team: { id: "T1" },
+        user: { id: "U777", username: "dana" },
+        actions: [{ action_id: actionId, value: "null" }],
+        message: { blocks: [] },
+      })
+      expect(r.status).toBe(200)
+    }
+  })
+
   it("a Reopen click reopens a resolved thread", async () => {
     const { app, meta } = make("slack-int-reopen")
     const artifact = await seedResolvable(meta, {
