@@ -920,13 +920,15 @@ const ARTIFACT_SEARCH_FTS5 =
   `text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61 remove_diacritics 0')`
 
 // Ask-idempotency guard: at most one LIVE (open|working) session per
-// (context, dedupe_key). Partial + expression-scoped, so drizzle's uniqueIndex
-// can't express it — raw DDL like the FTS table. SQLite and Postgres both honor
-// `CREATE UNIQUE INDEX … WHERE …`. On a fresh DB the CREATE TABLE above already
-// carries dedupe_key, so this is safe in the initial schema pass.
+// (context, asker, dedupe_key). Scoped by asker so one asker's key can't collide with —
+// or, via findInflightSession, join onto — another asker's session (sessions are private
+// to asker + owner). Partial + expression-scoped, so drizzle's uniqueIndex can't express
+// it — raw DDL like the FTS table. SQLite and Postgres both honor `CREATE UNIQUE INDEX …
+// WHERE …`. On a fresh DB the CREATE TABLE above already carries dedupe_key, so this is
+// safe in the initial schema pass.
 const CONTEXT_SESSION_DEDUPE_UNIQUE =
   `CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session ` +
-  `(context_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working')`
+  `(context_id, asker_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working')`
 
 export const SCHEMA_STATEMENTS: string[] = [
   ...ddl.creates,

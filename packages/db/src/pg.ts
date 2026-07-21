@@ -2076,13 +2076,18 @@ export class PgMetaStore implements MetaStore {
       )
     return rows[0]?.n ?? 0
   }
-  async findInflightSession(contextId: string, dedupeKey: string): Promise<SessionRecord | null> {
+  async findInflightSession(
+    contextId: string,
+    askerId: string,
+    dedupeKey: string,
+  ): Promise<SessionRecord | null> {
     const rows = await this.db
       .select()
       .from(contextSession)
       .where(
         and(
           eq(contextSession.context_id, contextId),
+          eq(contextSession.asker_id, askerId),
           eq(contextSession.dedupe_key, dedupeKey),
           inArray(contextSession.state, ["open", "working"]),
         ),

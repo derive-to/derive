@@ -2275,6 +2275,7 @@ export function makeRepos(db: SqliteDb) {
   }
   const findInflightSession = async (
     contextId: string,
+    askerId: string,
     dedupeKey: string,
   ): Promise<SessionRecord | null> =>
     (await db
@@ -2283,6 +2284,7 @@ export function makeRepos(db: SqliteDb) {
       .where(
         and(
           eq(contextSession.context_id, contextId),
+          eq(contextSession.asker_id, askerId),
           eq(contextSession.dedupe_key, dedupeKey),
           inArray(contextSession.state, ["open", "working"]),
         ),

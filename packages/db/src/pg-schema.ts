@@ -759,14 +759,15 @@ const ARTIFACT_SEARCH_PG = [
 ]
 
 // Ask-idempotency guard — the Postgres twin of context_session_dedupe in schema.ts:
-// at most one live (open|working) session per (context, dedupe_key). Partial +
+// at most one live (open|working) session per (context, asker, dedupe_key). Scoped by
+// asker so one asker's key can't collide with or join onto another's session. Partial +
 // expression-scoped, so it's raw DDL, not a drizzle uniqueIndex. It references
 // dedupe_key, which the `alters` add on an existing DB, so it MUST run AFTER them
 // (the PG boot has no per-statement try/catch — see pg.ts) — hence its position at
 // the tail of the statement list below, not inline here.
 const CONTEXT_SESSION_DEDUPE_UNIQUE_PG =
   `CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session ` +
-  `(context_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working')`
+  `(context_id, asker_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working')`
 
 export const buildPgSchemaStatements = (): string[] => {
   const { creates, alters } = generateDdl(TABLES, getTableConfig, {

@@ -340,7 +340,7 @@ export function registerUseTool(tc: ToolContext): void {
       // Idempotency: a same-key ask still in flight JOINS the existing session
       // rather than opening a new one — a double "run for brand X" never runs twice.
       if (dedupe_key) {
-        const inflight = await ctx.meta.findInflightSession(hit.x.id, dedupe_key)
+        const inflight = await ctx.meta.findInflightSession(hit.x.id, actingFor.id, dedupe_key)
         if (inflight) return reply(inflight, hit.x, false)
       }
       let opened: SessionRecord
@@ -354,9 +354,11 @@ export function registerUseTool(tc: ToolContext): void {
           dedupe_key,
         })
       } catch (e) {
-        // Lost the create race to a concurrent same-key ask — the partial unique
-        // index rejected us; join the winner. Rethrow anything else.
-        const winner = dedupe_key ? await ctx.meta.findInflightSession(hit.x.id, dedupe_key) : null
+        // Lost the create race to this asker's own concurrent same-key ask — the partial
+        // unique index rejected us; join the winner. Rethrow anything else.
+        const winner = dedupe_key
+          ? await ctx.meta.findInflightSession(hit.x.id, actingFor.id, dedupe_key)
+          : null
         if (winner) return reply(winner, hit.x, false)
         throw e
       }

@@ -840,9 +840,14 @@ export interface ContextStore {
   /** How many sessions are currently `working` on a context — the per-context
    *  concurrency cap (the route claims min(limit, max_concurrency - working)). */
   countWorkingSessions(contextId: string): Promise<number>
-  /** The newest still-live session (`open` or `working`) matching a dedupe key on
-   *  a context, or null — the ask idempotency join. */
-  findInflightSession(contextId: string, dedupeKey: string): Promise<SessionRecord | null>
+  /** The newest still-live session (`open` or `working`) matching a dedupe key for a
+   *  given asker on a context, or null — the ask idempotency join. Scoped to the asker so
+   *  a shared key never joins one asker onto another's private session. */
+  findInflightSession(
+    contextId: string,
+    askerId: string,
+    dedupeKey: string,
+  ): Promise<SessionRecord | null>
   /** Record the artifact a run produced (its short_id) on a session + bump updated_at. */
   setResultArtifact(sessionId: string, artifactShortId: string): Promise<void>
   /** Extend a claimed session's lease (a streaming runner's heartbeat) — keeps a

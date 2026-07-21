@@ -226,6 +226,12 @@ export const contextRoutes = (ctx: AppContext) => {
   // re-served (the runner crashed / the box rebooted). Derived from the context's
   // max_run_ms (a Maker job gets hours; the default matches the runner's own
   // ~10-min budget), clamped so a bad value can't wedge or thrash the queue.
+  //
+  // Reclaim is at-least-once, not fenced: if a lease lapses and the session is re-served
+  // while the original runner is in fact still alive, that runner's late answer still lands
+  // (it authenticates as the same context agent). So a run can execute more than once and a
+  // later answer wins — runners must be idempotent. A generation token on the claim would
+  // make it exactly-once; deferred as the margin above makes a live run outlive its lease.
   const DEFAULT_RUN_MS = 600_000
   const MIN_LEASE_MS = 30_000
   const MAX_LEASE_MS = 6 * 60 * 60_000
@@ -654,7 +660,7 @@ export const contextRoutes = (ctx: AppContext) => {
           201,
         )
       if (b.dedupe_key) {
-        const inflight = await meta.findInflightSession(x.id, b.dedupe_key)
+        const inflight = await meta.findInflightSession(x.id, me.id, b.dedupe_key)
         if (inflight) return joined(inflight)
       }
       let session: SessionRecord
@@ -668,9 +674,11 @@ export const contextRoutes = (ctx: AppContext) => {
           dedupe_key: b.dedupe_key,
         })
       } catch (e) {
-        // Lost the create race to a concurrent same-key ask — the unique index
-        // rejected us. Return the session that won; rethrow anything else.
-        const winner = b.dedupe_key ? await meta.findInflightSession(x.id, b.dedupe_key) : null
+        // Lost the create race to this asker's own concurrent same-key ask — the unique
+        // index rejected us. Return the session that won; rethrow anything else.
+        const winner = b.dedupe_key
+          ? await meta.findInflightSession(x.id, me.id, b.dedupe_key)
+          : null
         if (winner) return joined(winner)
         throw e
       }
