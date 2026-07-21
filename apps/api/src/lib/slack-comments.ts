@@ -274,7 +274,9 @@ export const makeSlackSender =
           // The fallback text is parsed as mrkdwn too (notifications, blocks-failed render), so
           // untrusted author/title must be escaped here as well — else a name like `<!channel>`
           // could ping the channel via the fallback even though the blocks escape it.
-          text: `${escapeMrkdwn(e.author)}: ${e.event} · ${escapeMrkdwn(e.title)}`,
+          // Every interpolated field is escaped, `event` included — eventBlocks already escapes
+          // it, and a uniform rule is what keeps this correct if the event vocabulary widens.
+          text: `${escapeMrkdwn(e.author)}: ${escapeMrkdwn(e.event)} · ${escapeMrkdwn(e.title)}`,
           blocks: eventBlocks(e),
         },
         { autoJoin: true, textFallback: true },
