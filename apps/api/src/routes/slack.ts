@@ -75,7 +75,7 @@ export const slackRoutes = (ctx: AppContext) => {
   // contextless line and only exists on the Node path; catching at the call site attributes the
   // failure to the Slack deferral on both runtimes instead of leaning on the global net.
   const runAfterAck = (c: Context, work: Promise<unknown>): void => {
-    const guarded = Promise.resolve(work).catch((err) =>
+    const guarded = work.catch((err) =>
       log.warn("slack deferred work failed", { err: String(err) }),
     )
     try {
