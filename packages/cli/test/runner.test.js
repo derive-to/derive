@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process"
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import http from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -7,6 +8,7 @@ import {
   buildPrompt,
   loadRunnerConfig,
   OUTPUT_CONTRACT,
+  once,
   parseAnswer,
   parseManifest,
   renderServiceUnit,
@@ -308,5 +310,106 @@ describe("output contract + service units", () => {
     expect(mac.unit).toContain("<string>/Users/rob/R&amp;D &lt;100%&gt; dir</string>")
     const linux = renderServiceUnit(cfg, "/opt/cli/bin/derive.js", "linux")
     expect(linux.unit).toContain('"/Users/rob/R&D <100%%> dir"')
+  })
+})
+
+describe("runner once (single drain)", () => {
+  // A real HTTP stub of the four routes the drain touches, so `once` is tested
+  // over the wire it actually speaks — mock mode skips only the model.
+  const startStub = async ({ failAnswerFor = [], contextStatus = 200 } = {}) => {
+    const calls = []
+    const sessions = [
+      { id: "s1", messages: [{ id: "m1", author_kind: "asker", body_md: "hello?" }] },
+      // Settled: last turn is a non-stale agent answer — must be skipped.
+      {
+        id: "s2",
+        messages: [
+          { id: "m2", author_kind: "asker", body_md: "old" },
+          { id: "m3", author_kind: "agent", body_md: "done", meta: {} },
+        ],
+      },
+      // Stale re-serve: the server marked the answer stale mid-run — must be served.
+      {
+        id: "s3",
+        messages: [
+          { id: "m4", author_kind: "asker", body_md: "follow-up" },
+          { id: "m5", author_kind: "agent", body_md: "old answer", meta: { stale: true } },
+        ],
+      },
+    ]
+    const srv = http.createServer((req, res) => {
+      const url = new URL(req.url, "http://stub")
+      calls.push(`${req.method} ${url.pathname}`)
+      const json = (o, status = 200) => {
+        res.statusCode = status
+        res.setHeader("content-type", "application/json")
+        res.end(JSON.stringify(o))
+      }
+      if (url.pathname === "/v1/contexts/ctx1")
+        return json(
+          contextStatus === 200
+            ? { name: "T", manifest_md: "Answer briefly.", manifest_version: 3, brandprint: null }
+            : { error: "nope" },
+          contextStatus,
+        )
+      if (url.pathname === "/v1/contexts/ctx1/queue") return json({ sessions })
+      const post = url.pathname.match(/^\/v1\/sessions\/(\w+)\/messages$/)
+      if (req.method === "POST" && post)
+        return json(
+          { ok: !failAnswerFor.includes(post[1]) },
+          failAnswerFor.includes(post[1]) ? 500 : 200,
+        )
+      if (req.method === "PATCH" && url.pathname.startsWith("/v1/sessions/"))
+        return json({ ok: true })
+      json({ error: "unexpected" }, 404)
+    })
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r))
+    return { srv, calls, port: srv.address().port }
+  }
+
+  const cfgFor = (port) =>
+    loadRunnerConfig(
+      {
+        DERIVE_SERVER: `http://127.0.0.1:${port}`,
+        DERIVE_TOKEN: "t",
+        DERIVE_CONTEXT: "ctx1",
+        RUNNER_MOCK: "1",
+        RUNNER_CWD: mkdtempSync(join(tmpdir(), "runner-once-")),
+      },
+      {},
+    )
+
+  it("serves the open and stale sessions, skips the settled one, and reports counts", async () => {
+    const { srv, calls, port } = await startStub()
+    try {
+      const counts = await once(cfgFor(port))
+      expect(counts).toEqual({ considered: 2, served: 2, failed: 0 })
+      expect(calls.filter((c) => c === "POST /v1/sessions/s1/messages")).toHaveLength(1)
+      expect(calls.filter((c) => c === "POST /v1/sessions/s3/messages")).toHaveLength(1)
+      expect(calls.some((c) => c.includes("/v1/sessions/s2/"))).toBe(false)
+    } finally {
+      srv.close()
+    }
+  })
+
+  it("a failed answer post counts as failed without aborting the rest of the drain", async () => {
+    const { srv, calls, port } = await startStub({ failAnswerFor: ["s1"] })
+    try {
+      const counts = await once(cfgFor(port))
+      expect(counts).toEqual({ considered: 2, served: 1, failed: 1 })
+      // The failure did not starve s3 — the batch kept going.
+      expect(calls.filter((c) => c === "POST /v1/sessions/s3/messages")).toHaveLength(1)
+    } finally {
+      srv.close()
+    }
+  })
+
+  it("a boot failure throws (the scheduler's retry is the retry)", async () => {
+    const { srv, port } = await startStub({ contextStatus: 500 })
+    try {
+      await expect(once(cfgFor(port))).rejects.toThrow(/contexts\/ctx1/)
+    } finally {
+      srv.close()
+    }
   })
 })
