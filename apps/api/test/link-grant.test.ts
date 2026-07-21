@@ -5,7 +5,7 @@ import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 // workspace setting > factory), the two listing preconditions, set-on-create,
 // the PATCH update semantics, and legacy-vocabulary compatibility. The access
 // matrix itself is covered in @derive/core; scenario end-to-ends live in
-// visibility.test.ts + comment-access.test.ts. See docs/plans/access-model.md.
+// visibility.test.ts + comment-access.test.ts. See docs/access-model.md.
 describe("access resolution: defaults, preconditions, updates", () => {
   const ana: TestUser = { id: "u_lg_ana", email: "ana@lg.test", name: "Ana", username: "anal" }
 

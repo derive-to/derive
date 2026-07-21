@@ -1,6 +1,6 @@
 /**
  * The Brandprint build reference — the two static MCP resources behind profile
- * generation (spec: docs/plans/brandprint.md, "Reference resources"). Derive never
+ * generation. Derive never
  * runs inference; ALL generation intelligence lives here, versioned like code, and the
  * user's own agent does the assembling. A pure leaf: no imports, safe in every build
  * (worker + node).

@@ -52,8 +52,6 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
   route modules over a shared app context; the SQLite and D1 database adapters
   collapsed onto a shared repository layer (one place to add a query); typed config
   and structured logging introduced. No behavior change.
-
-### Added
 - `@derive-to/mcp` 0.5.0 — `content_path` on `publish`: pass an absolute path and the
   stdio server reads and uploads the file's raw bytes itself, so page content never
   passes through the agent's context (no token cost, no transcription risk). The

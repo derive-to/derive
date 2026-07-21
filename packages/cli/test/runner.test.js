@@ -152,7 +152,7 @@ describe("repo pointers", () => {
   it("parses repos out of frontmatter and strips it from the prompt body", () => {
     const md = `---
 repos:
-  - url: https://github.com/churnkey/churnkey-labs
+  - url: https://github.com/octo-org/octo-labs
     ref: main
     description: "the eda corpus"
   - url: git@github.com:acme/private-notes.git
@@ -166,7 +166,7 @@ other_key: ignored
     expect(brandprint).toBe("live")
     expect(repos).toEqual([
       {
-        url: "https://github.com/churnkey/churnkey-labs",
+        url: "https://github.com/octo-org/octo-labs",
         ref: "main",
         description: "the eda corpus",
       },
@@ -218,7 +218,7 @@ brandprint: off
   })
 
   it("slugs are owner-repo so same-named repos from different owners don't collide", () => {
-    expect(repoSlug("https://github.com/churnkey/eda")).toBe("churnkey-eda")
+    expect(repoSlug("https://github.com/octo-org/eda")).toBe("octo-org-eda")
     expect(repoSlug("https://github.com/acme/eda.git")).toBe("acme-eda")
     expect(repoSlug("git@github.com:acme/eda.git")).toBe("acme-eda")
   })

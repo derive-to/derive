@@ -214,6 +214,13 @@ comment.
 - Open one focused PR per change; fill in the PR template. A green gate is required.
 - Prose style: no em-dashes; use colons, periods, or parentheses.
 
+A note on CI runners: workflows in this repo run on Blacksmith runners
+(`runs-on: blacksmith-*`), which are only available in the upstream repository. A PR
+you open against this repo runs CI normally (a maintainer approves the first run for
+new contributors), but pushes to your own fork will show those jobs queued forever:
+that's expected, not a broken setup. Run the gate locally (`pnpm run ci`, `pnpm
+typecheck`, `pnpm test`) instead.
+
 ## Tests
 
 API behavior is covered by `apps/api/test/*` (vitest against `app.request()`, no

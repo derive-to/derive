@@ -14,7 +14,7 @@
  */
 export type Role = "viewer" | "commenter" | "editor" | "owner"
 
-/** The v2 access model's three single-purpose fields (docs/plans/access-model.md).
+/** The v2 access model's three single-purpose fields (docs/access-model.md).
  *  They live in this leaf alongside Role so BOTH ./ports (record shapes) and
  *  ./permissions (effectiveRole) can name them without an import cycle. */
 

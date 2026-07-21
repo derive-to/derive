@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dialog"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
-// Same share experience as an artifact (docs/plans/access-model.md), minus the
+// Same share experience as an artifact (docs/access-model.md), minus the
 // Anyone segment — a collection isn't individually link-servable content, it's a
 // grouping of other artifacts, each with its own access. So just the one
 // question: invite-only, or does the workspace reach it at each member's seat?

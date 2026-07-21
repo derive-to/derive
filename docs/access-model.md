@@ -1,13 +1,12 @@
 # The access model (v2): seat roles, the world link, and listing
 
-Supersedes the round-3/round-4 shape ([visibility-collapse.md](./visibility-collapse.md),
-[link-grant.md](./link-grant.md)). Those were right to make reach its own axis, but
+Supersedes the earlier round-3/round-4 shape. Those were right to make reach its own axis, but
 `visibility` stayed overloaded — it bundled *discovery*, *membership access*, and a
 *public-link implication* into one enum, which is what produced the 4 forbidden
 states, the coherence rule, the no-op-floor redundancy, and the surprising
 "a workspace editor can't edit an unlisted draft" behavior.
 
-v2 splits those concerns into single-purpose fields. Decided 2026-07-08 (Rob): a
+v2 splits those concerns into single-purpose fields. Decided 2026-07-08: a
 doc shared with the workspace grants each member their **seat role**, not a flat
 per-doc role.
 
@@ -48,7 +47,7 @@ effectiveRole(actor, workspaceAccess, linkRole):
 Consequences that fall out for free:
 - A workspace **editor edits an unlisted draft** (via `seat`), never floored to a
   link role — the v1 bug is gone.
-- **Anir's paste-loop is the default**: `workspace_access=member, link=none,
+- **The paste-loop is the default**: `workspace_access=member, link=none,
   listed=none` — a teammate or an on-behalf agent opens a pasted link at their
   seat role; the world 404s until you deliberately set `link_role`.
 - The **role dropdown only appears for "Anyone"** in the UI — Workspace uses seats,
