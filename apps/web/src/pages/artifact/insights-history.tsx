@@ -260,6 +260,13 @@ export function HistoryDrawer({
         name: v.name,
         created_at: v.created_at,
       }))
+  // Grouped sessions expand to their individual versions so every vN is reachable,
+  // not just each session's head. Expansion is derived-by-default — the session
+  // holding the shown version starts open so its highlight is visible — with the
+  // user's explicit toggles layered on top.
+  const [toggled, setToggled] = useState<Map<number, boolean>>(new Map())
+  const isExpanded = (s: { n: number; from_n: number }) =>
+    toggled.get(s.n) ?? (shown >= s.from_n && shown < s.n)
   // A session is the latest version in a time group; its `n` is that version, so
   // we resolve the rich author identity (avatar, login, the Derive handle for the
   // profile link) from the matching version.
@@ -321,13 +328,26 @@ export function HistoryDrawer({
                           current
                         </Badge>
                       )}
-                      {s.count > 1 && (
+                      {s.count === 1 && (
                         <span className="ml-auto font-mono text-2xs text-muted-foreground tabular-nums">
-                          {s.count} edits
+                          v{s.n}
                         </span>
                       )}
                     </div>
                   </button>
+                  {s.count > 1 && (
+                    // Sits above the stretched link (z-20) so toggling never navigates.
+                    <button
+                      type="button"
+                      data-testid={`history-expand-${s.n}`}
+                      aria-expanded={isExpanded(s)}
+                      onClick={() => setToggled((prev) => new Map(prev).set(s.n, !isExpanded(s)))}
+                      className="absolute right-2 top-2 z-20 flex items-center gap-0.5 rounded font-mono text-2xs text-muted-foreground tabular-nums hover:text-foreground"
+                    >
+                      {s.count} edits
+                      <Icon name={isExpanded(s) ? "caret" : "chevron-right"} size={12} />
+                    </button>
+                  )}
                   {(() => {
                     const v = versionByN.get(s.n)
                     return (
@@ -344,6 +364,40 @@ export function HistoryDrawer({
                     )
                   })()}
                 </div>
+                {s.count > 1 && isExpanded(s) && (
+                  <div className="mb-px flex flex-col">
+                    {[...art.versions]
+                      .filter((v) => v.n >= s.from_n && v.n <= s.n)
+                      .sort((a, b) => b.n - a.n)
+                      .map((v) => (
+                        <button
+                          key={v.n}
+                          type="button"
+                          data-testid={`history-edit-${v.n}`}
+                          onClick={() => {
+                            goTo(v.n)
+                            onOpenChange(false)
+                          }}
+                          className={cn(
+                            "flex w-full items-center gap-1.5 rounded-md py-1 pl-7 pr-2 text-left outline-none hover:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+                            v.n === shown && "bg-accent",
+                          )}
+                        >
+                          <span className="truncate text-sm text-foreground">
+                            {clock(v.created_at)}
+                          </span>
+                          {v.n === art.current_version && (
+                            <Badge shape="pill" variant="brand">
+                              current
+                            </Badge>
+                          )}
+                          <span className="ml-auto font-mono text-2xs text-muted-foreground tabular-nums">
+                            v{v.n}
+                          </span>
+                        </button>
+                      ))}
+                  </div>
+                )}
               </div>
             )
           })}

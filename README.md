@@ -35,6 +35,8 @@ Derive gives any static artifact, an HTML page, a Markdown doc, or a whole built
 
 And the context travels with the work. Every artifact carries its content, its versions, and every review comment, so the context stays alive as it moves between people and tools. That kept context is what makes Derive model-agnostic: keep collaborating by hand or with your model of choice, and hand off without losing the thread, because the source of truth lives with the document, not inside any one AI chat.
 
+Artifacts don't have to be static. A workspace can run **contexts**: agents with access to your data that answer questions and publish documents through the same review loop. Ask the analytics context a question, get a cited answer. Everything a context produces is a normal artifact — versioned, commentable, at a permanent URL.
+
 The point is ownership. Unlike hosted-only tools for sharing AI output, Derive is fair source and self-hostable: run the whole product as one container on your own infrastructure, or use the hosted app. Your artifacts, your data, your URL.
 
 ## Features
@@ -87,6 +89,8 @@ Every artifact you publish lands in one library with a live preview, sorted the 
 Also included:
 
 - ✅ **Kept context, model-agnostic.** Content, versions, and feedback travel with the artifact (not locked in one AI chat), so any teammate or model can pick the work up.
+- ✅ **Contexts.** Run an agent against your data. Teammates ask it questions; answers come back cited, under the same permissions as everything else.
+- ✅ **Checkpoints.** Save working state as a one-page artifact. Any later session — yours or a teammate's — picks the work up from it.
 - ✅ **Sandboxed viewer.** Every artifact runs on an opaque origin, isolated from cookies and other artifacts.
 - ✅ **Self-host your way.** SQLite and local disk by default, or Postgres and S3/R2 at scale.
 - ✅ **Real-time collaboration.** Comments, approvals, and who-else-is-here presence stream live over Server-Sent Events.
@@ -94,6 +98,14 @@ Also included:
 - ✅ **CLI-first.** Scaffold and publish from the terminal.
 - ✅ **Remote MCP server.** Connect any agent with one command.
 - ✅ **Visibility controls.** Private, org, or public, with an optional password to lock public links.
+
+## Roadmap
+
+Pages you ask for and never maintain.
+
+- **Living pages.** Describe a page in one sentence. A context builds it; a schedule keeps it current. Same URL, new version each run.
+- **Provenance.** Every generated artifact names the context and brief that produced it. Feedback goes on the brief; the next run picks it up.
+- **Connections.** Store a credential once, at the workspace level. Contexts reference it. It never appears in a brief, an artifact, or a repo.
 
 ## Get started
 
@@ -157,7 +169,7 @@ The agent acts at the role you grant: publish access publishes directly; a lower
 
 Derive is built for the loop where an agent publishes and a human (or another agent) reviews. `derive init` scaffolds one canonical `derive` skill into the native Codex and Claude locations (`.agents/skills/derive` and `.claude/skills/derive`) plus each client's project MCP config. For an existing repo, run `derive agent setup`; rerun with `--update` to refresh only the packaged Derive skill files while preserving MCP configs. The skill declares its MCP dependency for Codex and routes either client into the matching `derive://skills/*` workflow before it acts.
 
-The core MCP tools: `find` (search + browse artifacts and contexts), `read` (content), `catch_up` (what changed, open feedback, version history, and — with no id — your work queue), `comment` (leave, reply, resolve), `publish` (save a revision), and `stage` (upload out of band). For an image/font, `stage` mints a short-lived upload URL; the agent POSTs the local file's raw bytes, then uses the returned permanent URL or bundle ref in `publish`. Staging alone does not publish an artifact. `publish` goes live if your role can publish; otherwise, or with `for_review: true`, it files a proposal a human approves.
+The core MCP tools: `find` (search + browse artifacts and contexts), `read` (content), `catch_up` (what changed, open feedback, version history, and — with no id — your work queue), `comment` (leave, reply, resolve), `publish` (save a revision), `stage` (upload out of band), `use` (ask a workspace context), and `checkpoint` (save resumable working state). For an image/font, `stage` mints a short-lived upload URL; the agent POSTs the local file's raw bytes, then uses the returned permanent URL or bundle ref in `publish`. Staging alone does not publish an artifact. `publish` goes live if your role can publish; otherwise, or with `for_review: true`, it files a proposal a human approves.
 
 ## How it works
 
@@ -169,7 +181,7 @@ apps/web          web UI (TanStack Start, SPA mode, static bundle)
 packages/core     domain: ports, publish, markdown render, viewer shell
 packages/db       MetaStore: sqlite (default) · postgres · d1
 packages/storage  BlobStore: fs (default) · s3/r2
-packages/cli      derive init (md/html/slides) · derive publish <file|dir>
+packages/cli      derive init (md/html/slides) · derive publish <file|dir> · derive runner serve (host a context)
 packages/mcp      Local compatibility MCP: eight agent tools + derive://guide
 ```
 
