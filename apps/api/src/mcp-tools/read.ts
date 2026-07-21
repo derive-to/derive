@@ -1,0 +1,554 @@
+import {
+  artifactUrl,
+  landmarkSlice,
+  landmarksOf,
+  type OutlineSection,
+  outlineOf,
+  sectionOf,
+  toMarkdown,
+  type VersionRecord,
+} from "@derive/core"
+import { z } from "zod"
+import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "../brandprint-reference"
+import { cleanPath } from "../lib/bundle"
+import { clip, MAX_CHARS } from "../lib/clip"
+import { baseType, isTextType, present, type ReadFormat } from "../lib/search"
+import type { ToolContext } from "../mcp-tool-context"
+import {
+  clipDoc,
+  doc,
+  err,
+  FULL_DOC_MAX,
+  formatLabel,
+  IMAGE_INLINE_MAX,
+  json,
+  manifestOf,
+  PAGE_MAP_MAX,
+  parseLineRange,
+  sleep,
+  toBase64,
+} from "../mcp-util"
+import { CORE_SKILLS } from "../skills-reference.gen"
+
+export function registerReadTool(tc: ToolContext): void {
+  const { server, ctx, bpProfile, profileArt, reach, notFound, wsArg } = tc
+
+  // READ CONTENT --------------------------------------------------------------
+  server.registerTool(
+    "read",
+    {
+      description:
+        "Read an artifact's CONTENT by short_id. A small doc returns whole; a LARGE doc returns its heading OUTLINE first — call again with a `section` slug (or a `lines` range) for just that part. Markdown by default; a styled HTML page is FLATTENED to text here, so pass render:'top' or 'full' to SEE it as a viewer does (do this after publishing a designed page to catch visual breakage). Bundle: omit `section` for the page list, then pass a page path (optionally `page.html#slug`). Pass format:'html' for the exact source (required BEFORE publish `edits`), or a past `version` for history. For what CHANGED or the comment threads, use catch_up instead.",
+      inputSchema: {
+        short_id: z
+          .string()
+          .describe(
+            "The artifact's short id, e.g. nk0dsral. Also accepts a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — or a CORE SKILL URI (derive://skills/loop, /publishing, /assets, /contexts, /checkpoint, /organize), so the strings the instructions name are readable here even where MCP resources aren't.",
+          ),
+        section: z
+          .string()
+          .optional()
+          .describe(
+            'What to read. Single-file doc: a heading slug from the outline (e.g. rollout-plan), or a region ref like "@2" from a headless page\'s map. Bundle: a page path (agentic-loop.html), optionally with a slug (agentic-loop.html#risks). Pass "*" (or "page.html#*" for a bundle page) to force the full (clipped) document/page. Omit it: small docs/pages return whole, large ones return their outline or region map.',
+          ),
+        format: z
+          .enum(["markdown", "html", "text"])
+          .optional()
+          .describe(
+            "markdown (default): HTML converted to structured Markdown — headings, lists, tables, code fences; Markdown sources return as-is. html: the exact stored source — read this BEFORE publish `edits` on an HTML artifact (edits match raw source). text: flat visible text, exactly what comment `quote`s anchor against.",
+          ),
+        lines: z
+          .string()
+          .optional()
+          .describe(
+            'Windowed read: a 1-indexed inclusive line range of the body in the chosen format — "40-120", "40" (one line), or "40-" (to the end). Windows a single-file doc, or one bundle page named by a bare `section` path. Pair with format:"html" to window the exact source before an edit. Skips the outline; still capped.',
+          ),
+        render: z
+          .enum(["top", "full", "marked"])
+          .optional()
+          .describe(
+            'SEE the published page instead of reading its text — what a viewer actually sees, catching visual breakage (a failed font, a broken layout) no text read can. "top": the 1200x630 crop (fastest, what an og:image unfurl shows). "full": the whole page, fullPage screenshot — catches below-the-fold breakage "top" misses. "marked": "full" again with the region map\'s @N refs drawn on it — pairs with a no-heading page\'s region map so what you SEE lines up with what you READ. All three computed a few seconds after each publish; pass alone (optionally with `version`).',
+          ),
+        wait: z
+          .number()
+          .int()
+          .min(1)
+          .max(30)
+          .optional()
+          .describe(
+            "With `render`: when the screenshot isn't computed yet (a publish is seconds old), block up to this many seconds (max 30) for it to land instead of returning the not-ready message. Returns at once when it's already ready or has failed.",
+          ),
+        version: z.number().optional().describe("Defaults to the current version."),
+        workspace: wsArg,
+      },
+    },
+    async ({ short_id, section, format, version, lines, render, wait, workspace }) => {
+      const fmt: ReadFormat = format ?? "markdown"
+      // `derive://brandprint/*` URIs are readable through `read`, not only as MCP
+      // resources — the exact strings the server instructions name, reachable by every
+      // client even where resource support is weak or was never negotiated (the failure
+      // this fixes: a session that connected before the Brandprint existed caches "no
+      // resources" for its whole life). `reference`/`template` are the static build guide;
+      // `profile` is the live brand profile; any other segment is a source-doc short_id
+      // that falls through to the normal read path (so `section`/`lines`/`version` work).
+      // `derive://skills/<name>` resolves the same way, so the core-skill strings the
+      // instructions index names are readable through `read` even where MCP resources
+      // aren't — same response shape as the Brandprint reference below.
+      const SK = "derive://skills/"
+      if (short_id.startsWith(SK)) {
+        const name = short_id.slice(SK.length)
+        const skill = CORE_SKILLS.find((s) => s.name === name)
+        if (!skill)
+          return err(
+            `No core skill "${name}". Available: ${CORE_SKILLS.map((s) => s.name).join(", ")}.`,
+          )
+        return json({ uri: short_id, mimeType: "text/markdown", content: skill.body })
+      }
+      const BP = "derive://brandprint/"
+      let docId = short_id
+      if (short_id.startsWith(BP)) {
+        const seg = short_id.slice(BP.length)
+        if (seg === "reference")
+          return json({ uri: short_id, mimeType: "text/markdown", content: BRANDPRINT_REFERENCE })
+        if (seg === "template")
+          return json({ uri: short_id, mimeType: "text/html", content: BRANDPRINT_TEMPLATE })
+        if (seg === "profile") {
+          if (!(bpProfile?.state === "live" && profileArt))
+            return err(
+              "This workspace has no live brand profile yet. Read derive://brandprint/reference and derive://brandprint/template, build the profile, then publish it to derive://brandprint/profile (an Admin's first publish there scaffolds the slot; it lands as a proposal a human approves).",
+            )
+          const pv = await ctx.meta.getVersion(profileArt.id, profileArt.current_version)
+          const body = pv ? await ctx.sourceText(pv) : null
+          return json({
+            uri: short_id,
+            mimeType: "text/html",
+            version: profileArt.current_version,
+            content: body ?? "",
+          })
+        }
+        docId = seg
+      }
+      const r = await reach(docId, workspace)
+      if (r && "error" in r) return err(r.error)
+      if (!r) return notFound(docId)
+      const a = r.a
+      const n = version ?? a.current_version
+      if (n < 1 || n > a.current_version)
+        return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
+      const v = await ctx.meta.getVersion(a.id, n)
+      if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
+      const url = artifactUrl(ctx.deps.baseUrl, a)
+
+      // The render rung: the version's screenshot, so an agent SEES what it shipped.
+      // The preview pipeline computes all three variants per publish (previews.ts);
+      // this surfaces whichever one was asked for. Each lives on its own
+      // key/status/error triple, so "full"/"marked" failing never blocks "top" (the
+      // OG crop og:image unfurls depend on) and vice versa.
+      if (render) {
+        if (section || lines)
+          return err(
+            "`render` is a view of the whole version — pass it alone (with `version` for history).",
+          )
+        const pick = (ver: VersionRecord) =>
+          render === "top"
+            ? { key: ver.preview_key, status: ver.preview_status, error: ver.preview_error }
+            : render === "full"
+              ? {
+                  key: ver.preview_full_key,
+                  status: ver.preview_full_status,
+                  error: ver.preview_full_error,
+                }
+              : {
+                  key: ver.preview_marked_key,
+                  status: ver.preview_marked_status,
+                  error: ver.preview_marked_error,
+                }
+        const label =
+          render === "top"
+            ? "the top of the page, 1200x630"
+            : render === "full"
+              ? "the whole page"
+              : "the whole page, with the region map's @N refs drawn on it"
+        let variant = pick(v)
+        // Long-poll: the screenshot lands a few seconds after a publish. When it's neither
+        // ready nor failed and the caller passed `wait`, block up to that many seconds
+        // (max 30), re-reading the version, before returning the not-ready message — a
+        // bounded retry loop so the agent gets the render in one call after a fresh push.
+        if (wait && !(variant.status === "ready" && variant.key) && variant.status !== "failed") {
+          const deadline = Date.now() + Math.min(Math.max(wait, 0), 30) * 1000
+          while (
+            Date.now() < deadline &&
+            !(variant.status === "ready" && variant.key) &&
+            variant.status !== "failed"
+          ) {
+            await sleep(Math.min(1500, Math.max(0, deadline - Date.now())))
+            const refreshed = await ctx.meta.getVersion(a.id, n)
+            if (refreshed) variant = pick(refreshed)
+          }
+        }
+        if (variant.status === "ready" && variant.key) {
+          const png = await ctx.blobs.get(variant.key)
+          if (png) {
+            if (png.length > IMAGE_INLINE_MAX)
+              return json({
+                short_id,
+                version: n,
+                render: "ready",
+                bytes: png.length,
+                note: `Too large to inline over MCP — open ${url} to view the page.`,
+              })
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `render:${render} of "${short_id}" v${n} — ${label} (${png.length} bytes), as a viewer sees it. The source is untouched; use read/search for the text.`,
+                },
+                { type: "image" as const, data: toBase64(png), mimeType: "image/png" },
+              ],
+            }
+          }
+        }
+        if (variant.status === "failed")
+          return err(
+            `The render:${render} of "${short_id}" v${n} failed${variant.error ? ` (${variant.error})` : ""} — the page may still be fine; open ${url} to check, or republish to retry.`,
+          )
+        return err(
+          `The render:${render} of "${short_id}" v${n} isn't ready yet — screenshots are computed a few seconds after publish. Try again shortly, or pass \`wait\` (seconds, max 30) to block for it.`,
+        )
+      }
+      const manifest = await manifestOf(ctx, v)
+
+      if (!manifest) {
+        // Single-file artifact.
+        const src = (await ctx.sourceText(v)) ?? ""
+        const ct = v.content_type
+        const meta = {
+          short_id,
+          title: a.title,
+          version: `${n}${n === a.current_version ? " (current)" : ""}`,
+          kind: a.kind,
+          format: formatLabel(ct, fmt),
+          url,
+        }
+        if (lines) {
+          if (section && section !== "*")
+            return err("Pass `lines` OR `section`, not both — windowing applies to the whole doc.")
+          const body = present(src, ct, fmt)
+          const all = body.split("\n")
+          const range = parseLineRange(lines, all.length)
+          if (!range)
+            return err(
+              `Bad \`lines\` "${lines}" for "${short_id}" v${n} (1..${all.length}) — use "40-120", "40", or "40-".`,
+            )
+          const windowed = all.slice(range.from - 1, range.to).join("\n")
+          return doc(
+            {
+              ...meta,
+              lines: `${range.from}-${range.to} of ${all.length}`,
+              chars: windowed.length,
+            },
+            clip(windowed),
+          )
+        }
+        // Region read: "@N" pulls the Nth landmark region from the page map, so a
+        // headless page's map is directly readable, not just orientation.
+        const regionRef = section?.match(/^@(\d+)$/)
+        if (regionRef) {
+          const idx = Number(regionRef[1])
+          const slice = landmarkSlice(src, idx)
+          if (slice === null) {
+            const count = landmarksOf(src, ct).length
+            return err(
+              count
+                ? `No region @${idx} in "${short_id}" — it has ${count} region(s), @1..@${count}. Read with no \`section\` for the map.`
+                : `"${short_id}" has no landmark regions — read a heading \`section\`, a \`lines\` range, or the whole doc.`,
+            )
+          }
+          const body = present(slice, ct, fmt)
+          const count = landmarksOf(src, ct).length
+          return doc(
+            { ...meta, section: `@${idx} of ${count} regions`, chars: body.length },
+            clip(body),
+          )
+        }
+        if (section && section !== "*") {
+          const slice = sectionOf(src, ct, section)
+          if (slice === null) {
+            const slugs = outlineOf(src, ct).map((s) => s.slug)
+            return err(
+              slugs.length
+                ? `No section "${section}" in "${short_id}" v${n} — sections: ${slugs.join(", ")}.`
+                : `"${short_id}" has no headings to section by — read it whole (omit \`section\`).`,
+            )
+          }
+          // Also feeds clipDoc's steer below — a single section can itself be huge
+          // (e.g. the last one, which runs to </body>), so it needs the same
+          // MAX_CHARS ceiling the whole-doc path gets, not an unbounded return.
+          const outline = outlineOf(src, ct)
+          const i = outline.findIndex((s) => s.slug === section)
+          const body = present(slice, ct, fmt)
+          return doc(
+            {
+              ...meta,
+              section: `${section} (${i + 1} of ${outline.length})`,
+              chars: body.length,
+            },
+            clipDoc(body, outline),
+          )
+        }
+        const body = present(src, ct, fmt)
+        if (!section && body.length > FULL_DOC_MAX) {
+          const outline = outlineOf(src, ct)
+          if (outline.length)
+            return json({
+              short_id,
+              title: a.title,
+              kind: a.kind,
+              version: n,
+              source: ct,
+              format: fmt,
+              doc_chars: body.length,
+              url,
+              sections: outline,
+              next: 'Large document — call read again with a `section` slug for just that part, or section:"*" for the full clipped text. To revise it, publish with `edits` instead of resending content.',
+            })
+          // No headings — a designed, headless HTML page (dashboard, card grid) still
+          // has landmark structure. Return that map so the agent can search/window in
+          // rather than blindly dumping a clipped wall of text.
+          const regions = landmarksOf(src, ct)
+          if (regions.length)
+            return json({
+              short_id,
+              title: a.title,
+              kind: a.kind,
+              version: n,
+              source: ct,
+              format: fmt,
+              doc_chars: body.length,
+              url,
+              regions: regions
+                .slice(0, PAGE_MAP_MAX)
+                .map((region, i) => ({ ref: `@${i + 1}`, ...region })),
+              ...(regions.length > PAGE_MAP_MAX
+                ? { more_regions: regions.length - PAGE_MAP_MAX }
+                : {}),
+              next: 'This page has no headings — it is mapped by region above. Read a region directly with its `ref` (e.g. section:"@1"), or `search` for a term. section:"*" forces the full clipped text.',
+            })
+          // Truly unstructured — fall through to a plain (clipped) return, reusing the
+          // already-computed (empty) outline instead of asking again.
+          return doc({ ...meta, chars: body.length }, clipDoc(body, outline))
+        }
+        // Under FULL_DOC_MAX: clipDoc's MAX_CHARS ceiling is far above this body's
+        // size, so it can never truncate — skip computing an outline it won't use.
+        const outline = body.length > MAX_CHARS ? outlineOf(src, ct) : []
+        return doc({ ...meta, chars: body.length }, clipDoc(body, outline))
+      }
+
+      // Bundle.
+      const pages = Object.keys(manifest.files).map(cleanPath)
+      if (!section) {
+        // Outline: every page, plus sizes + headings for the shallowest text pages
+        // (each costs a blob read — the manifest has no sizes — so cap the sweep).
+        const textPages = pages
+          .filter((p) => isTextType(manifest.files[p]?.type ?? manifest.files[`/${p}`]?.type ?? ""))
+          .sort((x, y) => x.split("/").length - y.split("/").length || x.localeCompare(y))
+        const entry = cleanPath(manifest.entry)
+        const inspect = [entry, ...textPages.filter((p) => p !== entry)].slice(0, 25)
+        // The blob reads are independent — fetch them all at once instead of one
+        // round trip at a time (up to 25 pages, otherwise serialized latency).
+        const detailEntries = await Promise.all(
+          inspect.map(
+            async (p): Promise<[string, { chars: number; headings: OutlineSection[] }] | null> => {
+              const file = manifest.files[p] ?? manifest.files[`/${p}`]
+              if (!file) return null
+              const bytes = await ctx.blobs.get(file.key)
+              if (!bytes) return null
+              const text_ = new TextDecoder().decode(bytes)
+              return [
+                p,
+                {
+                  chars: toMarkdown(text_, file.type).length,
+                  headings: outlineOf(text_, file.type),
+                },
+              ]
+            },
+          ),
+        )
+        const detail = new Map(detailEntries.filter((e) => e !== null))
+        return json({
+          short_id,
+          title: a.title,
+          kind: "bundle",
+          version: n,
+          entry,
+          url,
+          pages: pages.map((p) => {
+            const type = manifest.files[p]?.type ?? manifest.files[`/${p}`]?.type
+            const d = detail.get(p)
+            return {
+              path: p,
+              type,
+              ...(d
+                ? {
+                    chars: d.chars,
+                    headings: d.headings.map((h) => ({
+                      slug: h.slug,
+                      level: h.level,
+                      text: h.text,
+                    })),
+                  }
+                : {}),
+            }
+          }),
+          next: "Call read again with a `section` (a page path above, optionally page.html#slug for one heading's part) for content.",
+        })
+      }
+
+      // A page (optionally page#slug — split on the LAST '#'). "#*" forces the
+      // page's full (clipped) content, the same bypass single-file section:"*" is.
+      const hash = section.lastIndexOf("#")
+      const pagePath = hash > 0 ? section.slice(0, hash) : section
+      const rawSlug = hash > 0 ? section.slice(hash + 1) : null
+      const slug = rawSlug === "*" ? null : rawSlug
+      const forceFull = rawSlug === "*"
+      const file = manifest.files[pagePath] ?? manifest.files[`/${cleanPath(pagePath)}`]
+      if (!file) return err(`No page "${pagePath}" in "${short_id}". Pages: ${pages.join(", ")}.`)
+      const bytes = await ctx.blobs.get(file.key)
+
+      // An image page is an IMAGE, not text: inline it as a real image block (small
+      // ones), or point at the served URL. Never decode PNG bytes as a string.
+      if (baseType(file.type).startsWith("image/")) {
+        const pageUrl = `${ctx.deps.baseUrl}/raw/${short_id}/v/${n}/${cleanPath(pagePath)}`
+        const size = bytes?.length ?? 0
+        if (!bytes || size > IMAGE_INLINE_MAX)
+          return json({
+            short_id,
+            section: cleanPath(pagePath),
+            type: file.type,
+            bytes: size,
+            url: pageUrl,
+            note: "Too large to inline over MCP — open the url to view it.",
+          })
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `${cleanPath(pagePath)} (${file.type}, ${size} bytes) — served at ${pageUrl}`,
+            },
+            { type: "image" as const, data: toBase64(bytes), mimeType: baseType(file.type) },
+          ],
+        }
+      }
+
+      const raw = bytes ? new TextDecoder().decode(bytes) : ""
+      const isText = isTextType(file.type)
+      const meta = {
+        short_id,
+        title: a.title,
+        version: `${n}${n === a.current_version ? " (current)" : ""}`,
+        kind: "bundle",
+        url,
+        type: file.type,
+      }
+      if (lines) {
+        if (slug)
+          return err("Pass `lines` OR a #slug, not both — windowing applies to a whole page.")
+        const pageBody = isText ? present(raw, file.type, fmt) : raw
+        const all = pageBody.split("\n")
+        const range = parseLineRange(lines, all.length)
+        if (!range)
+          return err(
+            `Bad \`lines\` "${lines}" for "${cleanPath(pagePath)}" (1..${all.length}) — use "40-120", "40", or "40-".`,
+          )
+        const windowed = all.slice(range.from - 1, range.to).join("\n")
+        return doc(
+          {
+            ...meta,
+            section: cleanPath(pagePath),
+            lines: `${range.from}-${range.to} of ${all.length}`,
+            chars: windowed.length,
+          },
+          clip(windowed),
+        )
+      }
+      if (slug) {
+        if (!isText)
+          return err(`"${pagePath}" is ${file.type} — heading sections only apply to text pages.`)
+        const slice = sectionOf(raw, file.type, slug)
+        if (slice === null) {
+          const slugs = outlineOf(raw, file.type).map((s) => s.slug)
+          return err(
+            slugs.length
+              ? `No section "${slug}" in "${pagePath}" — sections: ${slugs.join(", ")}.`
+              : `"${pagePath}" has no headings to section by — read the whole page.`,
+          )
+        }
+        const outline = outlineOf(raw, file.type)
+        const body = present(slice, file.type, fmt)
+        return doc(
+          {
+            ...meta,
+            section: `${cleanPath(pagePath)}#${slug}`,
+            format: formatLabel(file.type, fmt),
+            chars: body.length,
+          },
+          clipDoc(body, outline),
+        )
+      }
+      // css/js/json/etc always return source — conversion only applies to text pages.
+      const body = isText ? present(raw, file.type, fmt) : raw
+      // Same outline-first threshold the single-file path applies: a bundle page can
+      // be just as large as a standalone doc, so it gets the same treatment instead
+      // of only ever cutting at the much higher MAX_CHARS ceiling below.
+      if (isText && !slug && !forceFull && body.length > FULL_DOC_MAX) {
+        const outline = outlineOf(raw, file.type)
+        if (outline.length)
+          return json({
+            short_id,
+            title: a.title,
+            kind: "bundle",
+            version: n,
+            section: cleanPath(pagePath),
+            source: file.type,
+            format: fmt,
+            doc_chars: body.length,
+            url,
+            sections: outline,
+            next: `Large page — call read again with \`section\` set to "${cleanPath(pagePath)}#slug" for just that part, or "${cleanPath(pagePath)}#*" for the full clipped text.`,
+          })
+        const regions = landmarksOf(raw, file.type)
+        if (regions.length)
+          return json({
+            short_id,
+            title: a.title,
+            kind: "bundle",
+            version: n,
+            section: cleanPath(pagePath),
+            source: file.type,
+            format: fmt,
+            doc_chars: body.length,
+            url,
+            regions: regions.slice(0, PAGE_MAP_MAX),
+            ...(regions.length > PAGE_MAP_MAX
+              ? { more_regions: regions.length - PAGE_MAP_MAX }
+              : {}),
+            next: `This page has no headings — it is mapped by region above. Use \`search\` to find a term, then read with \`lines:"from-to"\` to window that part, or "${cleanPath(pagePath)}#*" for the full clipped text.`,
+          })
+        return doc(
+          { ...meta, section: cleanPath(pagePath), chars: body.length },
+          clipDoc(body, outline),
+        )
+      }
+      const outline = isText && body.length > MAX_CHARS ? outlineOf(raw, file.type) : []
+      return doc(
+        {
+          ...meta,
+          section: cleanPath(pagePath),
+          format: isText ? formatLabel(file.type, fmt) : file.type,
+          chars: body.length,
+        },
+        clipDoc(body, outline),
+      )
+    },
+  )
+}
