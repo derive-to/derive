@@ -2116,75 +2116,97 @@ export function runStoreContract(
     })
   })
 
-  describe(`${label}: agent run ledger (WP6)`, () => {
-    it("records runs and lists them newest-first, scoped to the workspace", async () => {
+  describe(`${label}: automations + runs (WP5/WP6)`, () => {
+    it("creates automations and lists them scoped to the workspace", async () => {
       const agentId = uuid()
-      await store.recordAgentRun({
+      const a1 = await store.createAutomation({
         id: uuid(),
         org_id: ORG,
         agent_id: agentId,
-        lane: "shared",
-        trigger: "draft",
-        outcome: "proposed",
-        model: "m1",
-        input_tokens: 100,
-        output_tokens: 20,
-        cost_micro_usd: 900,
+        trigger: JSON.stringify({ kind: "manual" }),
+        instruction: "keep the roadmap current",
+        route: "auto",
       })
-      await store.recordAgentRun({
-        id: uuid(),
-        org_id: ORG,
-        agent_id: agentId,
-        lane: "owner",
-        trigger: "ask",
-        outcome: "answered",
-      })
-      // A run in another workspace must not leak into this list.
-      await store.recordAgentRun({
+      expect((await store.getAutomation(a1.id))?.instruction).toBe("keep the roadmap current")
+      // An automation in another workspace must not leak into this list.
+      await store.createAutomation({
         id: uuid(),
         org_id: `org_${uuid()}`,
         agent_id: agentId,
-        lane: "owner",
-        trigger: "ask",
-        outcome: "answered",
+        trigger: JSON.stringify({ kind: "schedule", cron: "0 9 * * 1", tz: "UTC" }),
+        instruction: "elsewhere",
+        route: "proposal",
       })
-      const runs = await store.listAgentRuns(ORG, 10)
-      expect(runs).toHaveLength(2)
-      expect(runs.every((r) => r.org_id === ORG)).toBe(true)
-      expect(runs[0]?.created_at >= (runs[1]?.created_at ?? "")).toBe(true)
+      const list = await store.listAutomations(ORG)
+      expect(list.every((a) => a.org_id === ORG)).toBe(true)
+      expect(list.some((a) => a.id === a1.id)).toBe(true)
     })
-  })
 
-  describe(`${label}: living artifacts (WP5)`, () => {
-    it("set → claim under lease → settle → delete, scoped to the maintainer", async () => {
-      const artId = uuid()
+    it("queue + ledger: enqueue → claim (running) → finish; a second claim gets nothing", async () => {
       const agentId = uuid()
-      await store.setLivingArtifact({
-        artifact_id: artId,
+      // A queued run due in the past.
+      const queued = await store.createRun({
+        id: uuid(),
         org_id: ORG,
-        maintainer_agent_id: agentId,
-        cadence_seconds: 3600,
-        freshness_window_seconds: 0,
-        route: "auto",
-        next_due_at: "2000-01-01T00:00:00.000Z",
+        agent_id: agentId,
+        reason: "manual:u1",
+        scheduled_for: "2000-01-01T00:00:00.000Z",
       })
-      expect((await store.getLivingArtifact(artId))?.maintainer_agent_id).toBe(agentId)
+      expect(queued.status).toBe("queued")
+      // A future run is NOT due yet.
+      await store.createRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        reason: "schedule",
+        scheduled_for: "2999-01-01T00:00:00.000Z",
+      })
 
       const now = "2100-01-01T00:00:00.000Z"
-      const claimed = await store.claimDueLivingArtifacts(agentId, now, 60_000)
+      const claimed = await store.claimDueRuns(agentId, now)
       expect(claimed).toHaveLength(1)
-      // Leased: a second claim in the window gets nothing.
-      expect(await store.claimDueLivingArtifacts(agentId, now, 60_000)).toHaveLength(0)
-      // Wrong maintainer never gets it.
-      expect(await store.claimDueLivingArtifacts(uuid(), now, 60_000)).toHaveLength(0)
+      expect(claimed[0]?.id).toBe(queued.id)
+      expect(claimed[0]?.status).toBe("running")
+      // Claimed once: a second claim finds no queued-due run.
+      expect(await store.claimDueRuns(agentId, now)).toHaveLength(0)
+      // A different agent never claims this agent's run.
+      expect(await store.claimDueRuns(uuid(), now)).toHaveLength(0)
 
-      const nextDue = "2100-01-01T02:00:00.000Z"
-      const settled = await store.settleLivingArtifact(artId, agentId, now, nextDue)
-      expect(settled?.next_due_at).toBe(nextDue)
-      expect(settled?.leased_until).toBeNull()
+      const done = await store.finishRun(queued.id, agentId, {
+        status: "succeeded",
+        finishedAt: now,
+        costMicroUsd: 1200,
+        meta: JSON.stringify({ outcome: "published" }),
+      })
+      expect(done?.status).toBe("succeeded")
+      expect(done?.cost_micro_usd).toBe(1200)
+      // The wrong agent can't finish it.
+      const wrong = await store.finishRun(queued.id, uuid(), {
+        status: "failed",
+        finishedAt: now,
+      })
+      expect(wrong).toBeNull()
+    })
 
-      await store.deleteLivingArtifact(artId)
-      expect(await store.getLivingArtifact(artId)).toBeNull()
+    it("listRuns is the ledger: workspace-scoped", async () => {
+      const agentId = uuid()
+      await store.createRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        reason: "ask",
+        status: "succeeded",
+      })
+      await store.createRun({
+        id: uuid(),
+        org_id: `org_${uuid()}`,
+        agent_id: agentId,
+        reason: "ask",
+        status: "succeeded",
+      })
+      const runs = await store.listRuns(ORG, 50)
+      expect(runs.every((r) => r.org_id === ORG)).toBe(true)
+      expect(runs.length).toBeGreaterThan(0)
     })
   })
 

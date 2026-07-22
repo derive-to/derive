@@ -1,9 +1,8 @@
 import type {
   AgentMentionState,
-  AgentRunLane,
-  AgentRunOutcome,
   ArtifactKind,
   AuditAction,
+  AutomationRoute,
   CommentState,
   DeliveryKind,
   DeliveryStatus,
@@ -12,7 +11,6 @@ import type {
   FollowKind,
   LinkRole,
   Listed,
-  LivingRoute,
   NotificationKind,
   PreviewStatus,
   ProposalState,
@@ -20,6 +18,7 @@ import type {
   ReportState,
   ReviewRoundState,
   Role,
+  RunStatus,
   SessionMessageAuthor,
   SessionState,
   VersionSource,
@@ -172,35 +171,33 @@ export const renderJob = pgTable("render_job", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
-// The run ledger (WP6) — see schema.ts. Cost snapshotted at record (micro-USD int).
-export const agentRun = pgTable("agent_run", {
+// An automation (WP5): a standing agent job (agent + trigger + instruction + refs). The
+// definition only; every firing is a `run`. See schema.ts for the full contract.
+export const automation = pgTable("automation", {
   id: text("id").primaryKey(),
   org_id: text("org_id").notNull(),
   agent_id: text("agent_id").notNull(),
-  lane: text("lane").$type<AgentRunLane>().notNull(),
   trigger: text("trigger").notNull(),
-  model: text("model"),
-  input_tokens: integer("input_tokens"),
-  output_tokens: integer("output_tokens"),
-  cost_micro_usd: integer("cost_micro_usd"),
-  outcome: text("outcome").$type<AgentRunOutcome>().notNull(),
-  artifact_short_id: text("artifact_short_id"),
-  session_id: text("session_id"),
-  detail: text("detail"),
+  instruction: text("instruction").notNull(),
+  refs: text("refs"),
+  route: text("route").$type<AutomationRoute>().notNull(),
+  enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
-// A living declaration (WP5) — see schema.ts.
-export const livingArtifact = pgTable("living_artifact", {
-  artifact_id: text("artifact_id").primaryKey(),
+// A run (WP5/WP6): one execution — the queue and the ledger in one table. See schema.ts.
+export const run = pgTable("run", {
+  id: text("id").primaryKey(),
   org_id: text("org_id").notNull(),
-  maintainer_agent_id: text("maintainer_agent_id").notNull(),
-  cadence_seconds: integer("cadence_seconds").notNull(),
-  freshness_window_seconds: integer("freshness_window_seconds").notNull(),
-  route: text("route").$type<LivingRoute>().notNull(),
-  last_settled_at: text("last_settled_at"),
-  next_due_at: text("next_due_at").notNull(),
-  leased_until: text("leased_until"),
+  automation_id: text("automation_id"),
+  agent_id: text("agent_id").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").$type<RunStatus>().notNull(),
+  scheduled_for: text("scheduled_for"),
+  started_at: text("started_at"),
+  finished_at: text("finished_at"),
+  cost_micro_usd: integer("cost_micro_usd"),
+  meta: text("meta"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
@@ -737,8 +734,8 @@ const TABLES = [
   notification,
   agent,
   agentMention,
-  agentRun,
-  livingArtifact,
+  automation,
+  run,
   invitation,
   artifactInvite,
   betaSignup,

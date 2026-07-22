@@ -16,6 +16,7 @@ import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
 import { assetRoutes } from "./routes/assets"
+import { automationRoutes } from "./routes/automations"
 import { betaRoutes } from "./routes/beta"
 import { blobRoutes } from "./routes/blob"
 import { collectionRoutes } from "./routes/collections"
@@ -28,7 +29,6 @@ import { favoriteRoutes } from "./routes/favorites"
 import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
 import { githubAppRoutes } from "./routes/github-app"
-import { livingRoutes } from "./routes/living"
 import { marketingRoutes } from "./routes/marketing"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
@@ -385,7 +385,7 @@ export function createApp(deps: AppDeps): Hono {
     moderationRoutes,
     proposalRoutes,
     reviewRoutes,
-    livingRoutes,
+    automationRoutes,
     conciergeRoutes,
     reworkRoutes,
     commentRoutes,

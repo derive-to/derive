@@ -1,12 +1,12 @@
 import type {
   AgentMentionRecord,
   AgentRecord,
-  AgentRunRecord,
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
   AssetRecord,
   AuditLogRecord,
+  AutomationRecord,
   CollectionMemberRecord,
   CollectionRecord,
   CommentListOpts,
@@ -29,16 +29,15 @@ import type {
   LinkRole,
   ListArtifactsOpts,
   Listed,
-  LivingArtifactRecord,
   MembershipRecord,
   NewAgent,
   NewAgentMention,
-  NewAgentRun,
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
   NewAsset,
   NewAuditLog,
+  NewAutomation,
   NewCollection,
   NewCollectionMember,
   NewComment,
@@ -49,7 +48,6 @@ import type {
   NewFolder,
   NewFollow,
   NewInvitation,
-  NewLivingArtifact,
   NewMembership,
   NewNotification,
   NewProposal,
@@ -57,6 +55,7 @@ import type {
   NewReport,
   NewRepoSource,
   NewReviewRound,
+  NewRun,
   NewSession,
   NewSessionMessage,
   NewVersion,
@@ -76,6 +75,8 @@ import type {
   ReviewRoundRecord,
   ReviewRoundState,
   Role,
+  RunRecord,
+  RunStatus,
   SessionMessageRecord,
   SessionRecord,
   SessionState,
@@ -118,7 +119,6 @@ import type { Exhaustive, Shapes } from "./parity"
 import {
   agent,
   agentMention,
-  agentRun,
   artifact,
   artifactFavorite,
   artifactInvite,
@@ -126,6 +126,7 @@ import {
   artifactTag,
   asset,
   auditLog,
+  automation,
   betaSignup,
   collection,
   collectionItem,
@@ -140,7 +141,6 @@ import {
   githubApp,
   githubInstallation,
   invitation,
-  livingArtifact,
   membership,
   notification,
   oauthClientWorkspace,
@@ -150,6 +150,7 @@ import {
   report,
   repoSource,
   reviewRound,
+  run,
   sessionMessage,
   slackInstall,
   slackThreadLink,
@@ -270,8 +271,8 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
-  agentRun,
-  livingArtifact,
+  automation,
+  run,
   artifactInvite,
   invitation,
   betaSignup,
@@ -313,8 +314,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
-  agentRun: true,
-  livingArtifact: true,
+  automation: true,
+  run: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2321,83 +2322,77 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
       .returning()
       .get()) ?? null
-  const recordAgentRun = async (run: NewAgentRun): Promise<AgentRunRecord> =>
-    (await db.insert(agentRun).values(run).returning().get()) as AgentRunRecord
-  const listAgentRuns = async (orgId: string, limit = 50): Promise<AgentRunRecord[]> =>
+  const createAutomation = async (a: NewAutomation): Promise<AutomationRecord> =>
+    (await db.insert(automation).values(a).returning().get()) as AutomationRecord
+  const getAutomation = async (id: string): Promise<AutomationRecord | null> =>
+    (await db.select().from(automation).where(eq(automation.id, id)).get()) ?? null
+  const listAutomations = async (orgId: string, limit = 100): Promise<AutomationRecord[]> =>
     db
       .select()
-      .from(agentRun)
-      .where(eq(agentRun.org_id, orgId))
-      .orderBy(desc(agentRun.created_at))
+      .from(automation)
+      .where(eq(automation.org_id, orgId))
+      .orderBy(desc(automation.created_at))
       .limit(limit)
       .all()
-  const setLivingArtifact = async (l: NewLivingArtifact): Promise<LivingArtifactRecord> =>
-    (await db
-      .insert(livingArtifact)
-      .values(l)
-      .onConflictDoUpdate({
-        target: livingArtifact.artifact_id,
-        set: {
-          maintainer_agent_id: l.maintainer_agent_id,
-          cadence_seconds: l.cadence_seconds,
-          freshness_window_seconds: l.freshness_window_seconds,
-          route: l.route,
-          next_due_at: l.next_due_at,
-        },
-      })
-      .returning()
-      .get()) as LivingArtifactRecord
-  const getLivingArtifact = async (artifactId: string): Promise<LivingArtifactRecord | null> =>
-    (await db
-      .select()
-      .from(livingArtifact)
-      .where(eq(livingArtifact.artifact_id, artifactId))
-      .get()) ?? null
-  const deleteLivingArtifact = async (artifactId: string): Promise<void> => {
-    await db.delete(livingArtifact).where(eq(livingArtifact.artifact_id, artifactId)).run()
+  const deleteAutomation = async (id: string): Promise<void> => {
+    await db.delete(automation).where(eq(automation.id, id)).run()
   }
-  const claimDueLivingArtifacts = async (
-    maintainerAgentId: string,
-    now: string,
-    leaseMs: number,
-    limit = 20,
-  ): Promise<LivingArtifactRecord[]> => {
-    const leaseUntil = new Date(Date.parse(now) + leaseMs).toISOString()
+  const createRun = async (r: NewRun): Promise<RunRecord> =>
+    (await db
+      .insert(run)
+      .values({ ...r, status: r.status ?? "queued" })
+      .returning()
+      .get()) as RunRecord
+  const claimDueRuns = async (agentId: string, now: string, limit = 20): Promise<RunRecord[]> => {
+    // The oldest queued runs due now for this agent, flipped to running under a row lock so
+    // two executors never claim the same run. A null scheduled_for means "as soon as possible".
     const due = db
-      .select({ id: livingArtifact.artifact_id })
-      .from(livingArtifact)
+      .select({ id: run.id })
+      .from(run)
       .where(
         and(
-          eq(livingArtifact.maintainer_agent_id, maintainerAgentId),
-          lte(livingArtifact.next_due_at, now),
-          or(isNull(livingArtifact.leased_until), lt(livingArtifact.leased_until, now)),
+          eq(run.agent_id, agentId),
+          eq(run.status, "queued"),
+          or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
         ),
       )
-      .orderBy(asc(livingArtifact.next_due_at))
+      .orderBy(asc(run.scheduled_for))
       .limit(limit)
     return (await db
-      .update(livingArtifact)
-      .set({ leased_until: leaseUntil })
-      .where(inArray(livingArtifact.artifact_id, due))
-      .returning()) as LivingArtifactRecord[]
+      .update(run)
+      .set({ status: "running", started_at: now })
+      .where(inArray(run.id, due))
+      .returning()) as RunRecord[]
   }
-  const settleLivingArtifact = async (
-    artifactId: string,
-    maintainerAgentId: string,
-    settledAt: string,
-    nextDueAt: string,
-  ): Promise<LivingArtifactRecord | null> =>
+  const finishRun = async (
+    id: string,
+    agentId: string,
+    fields: {
+      status: RunStatus
+      finishedAt: string
+      costMicroUsd?: number | null
+      meta?: string | null
+    },
+  ): Promise<RunRecord | null> =>
     (await db
-      .update(livingArtifact)
-      .set({ last_settled_at: settledAt, next_due_at: nextDueAt, leased_until: null })
-      .where(
-        and(
-          eq(livingArtifact.artifact_id, artifactId),
-          eq(livingArtifact.maintainer_agent_id, maintainerAgentId),
-        ),
-      )
+      .update(run)
+      .set({
+        status: fields.status,
+        finished_at: fields.finishedAt,
+        cost_micro_usd: fields.costMicroUsd ?? null,
+        meta: fields.meta ?? null,
+      })
+      .where(and(eq(run.id, id), eq(run.agent_id, agentId)))
       .returning()
       .get()) ?? null
+  const listRuns = async (orgId: string, limit = 50): Promise<RunRecord[]> =>
+    db
+      .select()
+      .from(run)
+      .where(eq(run.org_id, orgId))
+      .orderBy(desc(run.created_at))
+      .limit(limit)
+      .all()
   const getAgentByToken = async (token: string): Promise<AgentRecord | null> =>
     (await db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
   // Introspect a Better Auth oidc-provider access token (its own tables, same DB).
@@ -3117,13 +3112,14 @@ export function makeRepos(db: SqliteDb) {
     createAgent,
     listAgents,
     setAgentHosted,
-    recordAgentRun,
-    listAgentRuns,
-    setLivingArtifact,
-    getLivingArtifact,
-    deleteLivingArtifact,
-    claimDueLivingArtifacts,
-    settleLivingArtifact,
+    createAutomation,
+    getAutomation,
+    listAutomations,
+    deleteAutomation,
+    createRun,
+    claimDueRuns,
+    finishRun,
+    listRuns,
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,

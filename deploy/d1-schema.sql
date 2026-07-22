@@ -180,33 +180,30 @@ CREATE TABLE IF NOT EXISTS agent_mention (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
-CREATE TABLE IF NOT EXISTS agent_run (
+CREATE TABLE IF NOT EXISTS automation (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
   agent_id TEXT NOT NULL,
-  lane TEXT NOT NULL,
   trigger TEXT NOT NULL,
-  model TEXT,
-  input_tokens INTEGER,
-  output_tokens INTEGER,
-  cost_micro_usd INTEGER,
-  outcome TEXT NOT NULL,
-  artifact_short_id TEXT,
-  session_id TEXT,
-  detail TEXT,
+  instruction TEXT NOT NULL,
+  refs TEXT,
+  route TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
-CREATE TABLE IF NOT EXISTS living_artifact (
-  artifact_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS run (
+  id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
-  maintainer_agent_id TEXT NOT NULL,
-  cadence_seconds INTEGER NOT NULL,
-  freshness_window_seconds INTEGER NOT NULL,
-  route TEXT NOT NULL,
-  last_settled_at TEXT,
-  next_due_at TEXT NOT NULL,
-  leased_until TEXT,
+  automation_id TEXT,
+  agent_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL,
+  scheduled_for TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  cost_micro_usd INTEGER,
+  meta TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 

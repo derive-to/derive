@@ -44,16 +44,13 @@ export interface HostedAgentClient {
 }
 
 export interface RunLedgerInput {
-  lane: "owner" | "shared"
-  trigger: string
-  outcome: "answered" | "published" | "proposed" | "shadow" | "escalated" | "failed"
-  model?: string | null
-  input_tokens?: number | null
-  output_tokens?: number | null
+  /** What fired the run (the automation's trigger, an ask, a mention). */
+  reason: string
+  status: "succeeded" | "failed"
+  automation_id?: string | null
   cost_micro_usd?: number | null
-  artifact_short_id?: string | null
-  session_id?: string | null
-  detail?: string | null
+  /** Everything else (lane, outcome, model, tokens, artifact) — an open blob, no columns. */
+  meta?: Record<string, unknown> | null
 }
 
 const isoTimeout = 60_000

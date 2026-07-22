@@ -15,12 +15,12 @@
 import type {
   AgentMentionRecord,
   AgentRecord,
-  AgentRunRecord,
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
   AssetRecord,
   AuditLogRecord,
+  AutomationRecord,
   BetaSignupRecord,
   CollectionMemberRecord,
   CollectionRecord,
@@ -34,7 +34,6 @@ import type {
   GitHubAppRecord,
   GitHubInstallationRecord,
   InvitationRecord,
-  LivingArtifactRecord,
   MembershipRecord,
   NotificationRecord,
   ProposalRecord,
@@ -42,6 +41,7 @@ import type {
   ReportRecord,
   RepoSourceRecord,
   ReviewRoundRecord,
+  RunRecord,
   SessionMessageRecord,
   SessionRecord,
   VersionRecord,
@@ -69,8 +69,8 @@ export interface TypedTables {
   reviewRound: ReviewRoundRecord
   agent: AgentRecord
   agentMention: AgentMentionRecord
-  agentRun: AgentRunRecord
-  livingArtifact: LivingArtifactRecord
+  automation: AutomationRecord
+  run: RunRecord
   artifactInvite: ArtifactInviteRecord
   invitation: InvitationRecord
   betaSignup: BetaSignupRecord

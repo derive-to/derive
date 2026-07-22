@@ -1,12 +1,12 @@
 import type {
   AgentMentionRecord,
   AgentRecord,
-  AgentRunRecord,
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
   AssetRecord,
   AuditLogRecord,
+  AutomationRecord,
   CollectionMemberRecord,
   CollectionRecord,
   CommentListOpts,
@@ -30,17 +30,16 @@ import type {
   LinkRole,
   ListArtifactsOpts,
   Listed,
-  LivingArtifactRecord,
   MembershipRecord,
   MetaStore,
   NewAgent,
   NewAgentMention,
-  NewAgentRun,
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
   NewAsset,
   NewAuditLog,
+  NewAutomation,
   NewCollection,
   NewCollectionMember,
   NewComment,
@@ -51,7 +50,6 @@ import type {
   NewFolder,
   NewFollow,
   NewInvitation,
-  NewLivingArtifact,
   NewMembership,
   NewNotification,
   NewProposal,
@@ -59,6 +57,7 @@ import type {
   NewReport,
   NewRepoSource,
   NewReviewRound,
+  NewRun,
   NewSession,
   NewSessionMessage,
   NewVersion,
@@ -79,6 +78,8 @@ import type {
   ReviewRoundRecord,
   ReviewRoundState,
   Role,
+  RunRecord,
+  RunStatus,
   SessionMessageRecord,
   SessionRecord,
   SessionState,
@@ -119,7 +120,6 @@ import type { Exhaustive, Shapes } from "./parity"
 import {
   agent,
   agentMention,
-  agentRun,
   artifact,
   artifactFavorite,
   artifactInvite,
@@ -127,6 +127,7 @@ import {
   artifactTag,
   asset,
   auditLog,
+  automation,
   betaSignup,
   collection,
   collectionItem,
@@ -141,7 +142,6 @@ import {
   githubApp,
   githubInstallation,
   invitation,
-  livingArtifact,
   membership,
   notification,
   oauthClientWorkspace,
@@ -152,6 +152,7 @@ import {
   report,
   repoSource,
   reviewRound,
+  run,
   sessionMessage,
   slackInstall,
   slackThreadLink,
@@ -196,8 +197,8 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
-  agentRun,
-  livingArtifact,
+  automation,
+  run,
   artifactInvite,
   invitation,
   betaSignup,
@@ -239,8 +240,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
-  agentRun: true,
-  livingArtifact: true,
+  automation: true,
+  run: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2301,88 +2302,84 @@ export class PgMetaStore implements MetaStore {
       .returning()
     return rows[0] ?? null
   }
-  async recordAgentRun(run: NewAgentRun): Promise<AgentRunRecord> {
-    const rows = await this.db.insert(agentRun).values(run).returning()
+  async createAutomation(a: NewAutomation): Promise<AutomationRecord> {
+    const rows = await this.db.insert(automation).values(a).returning()
     return one(rows)
   }
-  listAgentRuns(orgId: string, limit = 50): Promise<AgentRunRecord[]> {
+  async getAutomation(id: string): Promise<AutomationRecord | null> {
+    const rows = await this.db.select().from(automation).where(eq(automation.id, id))
+    return rows[0] ?? null
+  }
+  listAutomations(orgId: string, limit = 100): Promise<AutomationRecord[]> {
     return this.db
       .select()
-      .from(agentRun)
-      .where(eq(agentRun.org_id, orgId))
-      .orderBy(desc(agentRun.created_at))
+      .from(automation)
+      .where(eq(automation.org_id, orgId))
+      .orderBy(desc(automation.created_at))
       .limit(limit)
   }
-  async setLivingArtifact(l: NewLivingArtifact): Promise<LivingArtifactRecord> {
+  async deleteAutomation(id: string): Promise<void> {
+    await this.db.delete(automation).where(eq(automation.id, id))
+  }
+  async createRun(r: NewRun): Promise<RunRecord> {
     const rows = await this.db
-      .insert(livingArtifact)
-      .values(l)
-      .onConflictDoUpdate({
-        target: livingArtifact.artifact_id,
-        set: {
-          maintainer_agent_id: l.maintainer_agent_id,
-          cadence_seconds: l.cadence_seconds,
-          freshness_window_seconds: l.freshness_window_seconds,
-          route: l.route,
-          next_due_at: l.next_due_at,
-        },
-      })
+      .insert(run)
+      .values({ ...r, status: r.status ?? "queued" })
       .returning()
     return one(rows)
   }
-  async getLivingArtifact(artifactId: string): Promise<LivingArtifactRecord | null> {
-    const rows = await this.db
-      .select()
-      .from(livingArtifact)
-      .where(eq(livingArtifact.artifact_id, artifactId))
-    return rows[0] ?? null
-  }
-  async deleteLivingArtifact(artifactId: string): Promise<void> {
-    await this.db.delete(livingArtifact).where(eq(livingArtifact.artifact_id, artifactId))
-  }
-  claimDueLivingArtifacts(
-    maintainerAgentId: string,
-    now: string,
-    leaseMs: number,
-    limit = 20,
-  ): Promise<LivingArtifactRecord[]> {
-    const leaseUntil = new Date(Date.parse(now) + leaseMs).toISOString()
+  claimDueRuns(agentId: string, now: string, limit = 20): Promise<RunRecord[]> {
+    // The oldest queued runs due now for this agent, flipped to running under a row lock
+    // (FOR UPDATE SKIP LOCKED) so two executors never claim the same run. A null
+    // scheduled_for means "as soon as possible".
     const due = this.db
-      .select({ id: livingArtifact.artifact_id })
-      .from(livingArtifact)
+      .select({ id: run.id })
+      .from(run)
       .where(
         and(
-          eq(livingArtifact.maintainer_agent_id, maintainerAgentId),
-          lte(livingArtifact.next_due_at, now),
-          or(isNull(livingArtifact.leased_until), lt(livingArtifact.leased_until, now)),
+          eq(run.agent_id, agentId),
+          eq(run.status, "queued"),
+          or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
         ),
       )
-      .orderBy(asc(livingArtifact.next_due_at))
+      .orderBy(asc(run.scheduled_for))
       .limit(limit)
       .for("update", { skipLocked: true })
     return this.db
-      .update(livingArtifact)
-      .set({ leased_until: leaseUntil })
-      .where(inArray(livingArtifact.artifact_id, due))
+      .update(run)
+      .set({ status: "running", started_at: now })
+      .where(inArray(run.id, due))
       .returning()
   }
-  async settleLivingArtifact(
-    artifactId: string,
-    maintainerAgentId: string,
-    settledAt: string,
-    nextDueAt: string,
-  ): Promise<LivingArtifactRecord | null> {
+  async finishRun(
+    id: string,
+    agentId: string,
+    fields: {
+      status: RunStatus
+      finishedAt: string
+      costMicroUsd?: number | null
+      meta?: string | null
+    },
+  ): Promise<RunRecord | null> {
     const rows = await this.db
-      .update(livingArtifact)
-      .set({ last_settled_at: settledAt, next_due_at: nextDueAt, leased_until: null })
-      .where(
-        and(
-          eq(livingArtifact.artifact_id, artifactId),
-          eq(livingArtifact.maintainer_agent_id, maintainerAgentId),
-        ),
-      )
+      .update(run)
+      .set({
+        status: fields.status,
+        finished_at: fields.finishedAt,
+        cost_micro_usd: fields.costMicroUsd ?? null,
+        meta: fields.meta ?? null,
+      })
+      .where(and(eq(run.id, id), eq(run.agent_id, agentId)))
       .returning()
     return rows[0] ?? null
+  }
+  listRuns(orgId: string, limit = 50): Promise<RunRecord[]> {
+    return this.db
+      .select()
+      .from(run)
+      .where(eq(run.org_id, orgId))
+      .orderBy(desc(run.created_at))
+      .limit(limit)
   }
   async getAgentByToken(token: string): Promise<AgentRecord | null> {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))

@@ -1,10 +1,10 @@
 import {
-  type AgentRunOutcome,
   type AutonomyFlags,
   type AutonomyLevel,
   classifyChange,
   decideWrite,
   type GateDecision,
+  type RunOutcome,
 } from "@derive/core"
 import type { HostedAgentClient, RevisionInput } from "./client"
 
@@ -110,7 +110,7 @@ export async function submitRevision(
 }
 
 /** Map a submit decision to a ledger outcome; a run with no submit is an answer. */
-export function outcomeOf(result: SubmitResult | undefined): AgentRunOutcome {
+export function outcomeOf(result: SubmitResult | undefined): RunOutcome {
   if (!result) return "answered"
   if (result.decision === "live_publish_with_review") return "published"
   if (result.decision === "proposal") return "proposed"

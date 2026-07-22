@@ -249,46 +249,5 @@ export const agentRoutes = (ctx: AppContext) => {
     return ok ? c.json({ ok: true }) : fail(c, 404, "not found")
   })
 
-  // Record a run in the ledger (WP6). Auth = the agent's own bearer; org_id and
-  // agent_id come from the RESOLVED principal, never the body — an agent can only
-  // record its OWN runs in its OWN workspace. Both executor lanes call this: the
-  // runner (owner) after a session, the host (shared) after an invoke.
-  app.post("/v1/agent/runs", async (c) => {
-    const agent = await agentFor(c)
-    if (!agent) return fail(c, 401, "agent token required")
-    const b = await readJson(
-      c,
-      z.object({
-        lane: z.enum(["owner", "shared"]),
-        trigger: z.string().min(1).max(60),
-        outcome: z.enum(["answered", "published", "proposed", "shadow", "escalated", "failed"]),
-        model: z.string().max(120).nullish(),
-        input_tokens: z.number().int().nonnegative().nullish(),
-        output_tokens: z.number().int().nonnegative().nullish(),
-        cost_micro_usd: z.number().int().nonnegative().nullish(),
-        artifact_short_id: z.string().max(64).nullish(),
-        session_id: z.string().max(64).nullish(),
-        detail: z.string().max(500).nullish(),
-      }),
-    )
-    if (b instanceof Response) return bail(b)
-    const run = await meta.recordAgentRun({
-      id: newId("run"),
-      org_id: agent.org_id,
-      agent_id: agent.id,
-      lane: b.lane,
-      trigger: b.trigger,
-      outcome: b.outcome,
-      model: b.model ?? null,
-      input_tokens: b.input_tokens ?? null,
-      output_tokens: b.output_tokens ?? null,
-      cost_micro_usd: b.cost_micro_usd ?? null,
-      artifact_short_id: b.artifact_short_id ?? null,
-      session_id: b.session_id ?? null,
-      detail: b.detail ?? null,
-    })
-    return c.json({ id: run.id }, 201)
-  })
-
   return app
 }

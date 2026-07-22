@@ -25,6 +25,7 @@ const AUTHZ = new Set([
   "ensureMembership",
   "isMember",
   "activeWorkspace",
+  "requireWorkspace",
   "actingUser",
   "currentUser",
   "requireUser",

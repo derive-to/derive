@@ -91,9 +91,13 @@ async function recordRun(
   run: RunContext,
 ): Promise<void> {
   await client.recordRun({
-    lane: "shared",
-    trigger: req.trigger,
-    outcome: failed ? "failed" : outcomeOf(run.lastResult),
-    artifact_short_id: run.lastResult?.shortId ?? null,
+    reason: req.trigger,
+    status: failed ? "failed" : "succeeded",
+    // The semantic result and lane live in the open meta blob, not in columns.
+    meta: {
+      lane: "shared",
+      outcome: failed ? "failed" : outcomeOf(run.lastResult),
+      artifact_short_id: run.lastResult?.shortId ?? null,
+    },
   })
 }

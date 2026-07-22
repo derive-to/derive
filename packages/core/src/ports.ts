@@ -931,34 +931,36 @@ export interface AgentStore {
   /** Flip whether Derive's managed executor serves this agent. Workspace-scoped by
    *  (id, org) like deleteAgent; null when the agent isn't in this workspace. */
   setAgentHosted(id: string, orgId: string, hosted: 0 | 1): Promise<AgentRecord | null>
-  /** Append a run to the ledger (WP6). */
-  recordAgentRun(run: NewAgentRun): Promise<AgentRunRecord>
-  /** The workspace's recent runs, newest first (the activity view). Default 50. */
-  listAgentRuns(orgId: string, limit?: number): Promise<AgentRunRecord[]>
-  // ---- Living artifacts (WP5: the freshness contract) --------------------
-  /** Create or replace an artifact's living declaration. */
-  setLivingArtifact(l: NewLivingArtifact): Promise<LivingArtifactRecord>
-  /** The declaration for one artifact, or null. */
-  getLivingArtifact(artifactId: string): Promise<LivingArtifactRecord | null>
-  /** Remove a declaration (the artifact stops maintaining itself). */
-  deleteLivingArtifact(artifactId: string): Promise<void>
-  /** Atomically claim due declarations for one maintainer agent: rows past
-   *  next_due_at with a lapsed/absent lease, stamped leased_until = now+leaseMs,
-   *  so concurrent executors never double-run one. Returns the claimed rows. */
-  claimDueLivingArtifacts(
-    maintainerAgentId: string,
-    now: string,
-    leaseMs: number,
-    limit?: number,
-  ): Promise<LivingArtifactRecord[]>
-  /** Settle a maintained artifact: stamp last_settled_at, roll next_due_at forward
-   *  by the cadence, clear the lease. Scoped to (artifact, maintainer). */
-  settleLivingArtifact(
-    artifactId: string,
-    maintainerAgentId: string,
-    settledAt: string,
-    nextDueAt: string,
-  ): Promise<LivingArtifactRecord | null>
+  // ---- Automations + runs (the generic agent-work primitive) -------------
+  /** Create an automation (a standing agent job). */
+  createAutomation(a: NewAutomation): Promise<AutomationRecord>
+  /** One automation by id, or null. */
+  getAutomation(id: string): Promise<AutomationRecord | null>
+  /** A workspace's automations, newest first. Default 100. */
+  listAutomations(orgId: string, limit?: number): Promise<AutomationRecord[]>
+  /** Remove an automation (its queued runs are left to drain or be ignored). */
+  deleteAutomation(id: string): Promise<void>
+  /** Enqueue or record a run. status defaults to "queued" (pending work); pass a terminal
+   *  status to record an already-finished run straight into the ledger. */
+  createRun(r: NewRun): Promise<RunRecord>
+  /** Atomically claim due queued runs for one agent: status "queued" with scheduled_for ≤
+   *  now, flipped to "running" (started_at = now) under a row lock so concurrent executors
+   *  never double-run one. Returns the claimed rows, oldest-scheduled first. */
+  claimDueRuns(agentId: string, now: string, limit?: number): Promise<RunRecord[]>
+  /** Terminate a run: set the terminal status, finished_at, and (optional) cost + meta.
+   *  Scoped to (id, agent) so only the claiming agent settles it. */
+  finishRun(
+    id: string,
+    agentId: string,
+    fields: {
+      status: RunStatus
+      finishedAt: string
+      costMicroUsd?: number | null
+      meta?: string | null
+    },
+  ): Promise<RunRecord | null>
+  /** The workspace's recent runs, newest first (the activity view / ledger). Default 50. */
+  listRuns(orgId: string, limit?: number): Promise<RunRecord[]>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>
   /** Resolve a live OAuth access token (by its stored hash) to its grant. */
@@ -1282,91 +1284,102 @@ export interface NewAgent {
   hosted?: 0 | 1
 }
 
-/** Which executor lane produced a run: the owner-run runner, or the shared
- *  Derive-hosted agent host. */
-export type AgentRunLane = "owner" | "shared"
+// ---- Automations + runs: the generic agent-work primitive --------------
+// Two tables, industry-standard: a DEFINITION (what to run, and the rule for when) and its
+// EXECUTIONS (each firing, with state + result — the queue and the ledger in one table,
+// pg-boss's model). Living-doc refresh, a scheduled digest, an event-driven update, an
+// ad-hoc "run once" are all rows here with different triggers and instructions.
 
-/** How a run landed. Publish outcomes mirror the autonomy-gate decisions plus the
- *  ask-answer and failure terminals. */
-export type AgentRunOutcome =
-  | "answered"
-  | "published"
-  | "proposed"
-  | "shadow"
-  | "escalated"
-  | "failed"
+export type TriggerKind = "manual" | "schedule" | "event"
 
-/** One row in the run ledger (WP6): the durable record behind the activity view.
- *  Cost is snapshotted at record time (micro-USD, integer), never recomputed. */
-export interface AgentRunRecord {
+/** How an automation fires. Open-ended JSON on the row — a new kind adds no columns. */
+export interface AutomationTrigger {
+  kind: TriggerKind
+  /** schedule: a 5-field cron. */
+  cron?: string
+  /** schedule: an IANA timezone. */
+  tz?: string
+  /** event: the event name (e.g. "comment.opened", "upstream.published", "webhook"). */
+  on?: string
+}
+
+/** The maintainer's default route hint for what a run writes (the autonomy gate still has
+ *  the final say per-change). */
+export type AutomationRoute = "auto" | "proposal"
+
+/** A standing agent job: WHAT to do (instruction), WHO does it (agent), and the rule for
+ *  WHEN (trigger). The definition only — every firing is a `run`. A "living artifact" is
+ *  just an automation whose instruction is "keep this current" with a ref to the doc. */
+export interface AutomationRecord {
+  id: string
+  org_id: string
+  /** The agent that runs it — the runs act as this principal. */
+  agent_id: string
+  /** Serialized AutomationTrigger (JSON text); parse with parseTrigger. */
+  trigger: string
+  /** Free-form: what the agent should do. */
+  instruction: string
+  /** Serialized inputs/targets (artifact ids, urls, arbitrary), or null. */
+  refs: string | null
+  route: AutomationRoute
+  enabled: 0 | 1
+  created_at: string
+}
+
+export interface NewAutomation {
   id: string
   org_id: string
   agent_id: string
-  lane: AgentRunLane
-  /** What woke the run: ask, mention, freshness, draft, concierge, … (free text). */
   trigger: string
-  model: string | null
-  input_tokens: number | null
-  output_tokens: number | null
+  instruction: string
+  refs?: string | null
+  route: AutomationRoute
+  enabled?: 0 | 1
+}
+
+/** How a run's work landed — the semantic outcome, kept in the run's meta blob (not a
+ *  column). Mirrors the autonomy-gate decisions plus the ask-answer terminal. */
+export type RunOutcome = "answered" | "published" | "proposed" | "shadow" | "escalated"
+
+/** A run's execution state. queued = pending work in the queue; a terminal state = history
+ *  in the ledger. The same table serves both. */
+export type RunStatus = "queued" | "running" | "succeeded" | "failed"
+
+/** One execution of an automation (or an ad-hoc one-off). The queue and the ledger in one
+ *  table: a worker claims the oldest queued run due now, runs it, and finishes it. Cost is
+ *  snapshotted at finish (micro-USD, integer). */
+export interface RunRecord {
+  id: string
+  org_id: string
+  /** The automation that produced it, or null for an ad-hoc run. */
+  automation_id: string | null
+  agent_id: string
+  /** What fired it: "manual:<userId>", "schedule", "event:<name>" (free text). */
+  reason: string
+  status: RunStatus
+  /** When it should run (queue time); claimed once this is <= now. Null = as soon as possible. */
+  scheduled_for: string | null
+  started_at: string | null
+  finished_at: string | null
   cost_micro_usd: number | null
-  outcome: AgentRunOutcome
-  artifact_short_id: string | null
-  session_id: string | null
-  detail: string | null
+  /** Serialized meta (model, tokens, outcome, refs, anything), or null. */
+  meta: string | null
   created_at: string
 }
 
-export interface NewAgentRun {
+export interface NewRun {
   id: string
   org_id: string
+  automation_id?: string | null
   agent_id: string
-  lane: AgentRunLane
-  trigger: string
-  model?: string | null
-  input_tokens?: number | null
-  output_tokens?: number | null
+  reason: string
+  /** Defaults to "queued". */
+  status?: RunStatus
+  scheduled_for?: string | null
+  started_at?: string | null
+  finished_at?: string | null
   cost_micro_usd?: number | null
-  outcome: AgentRunOutcome
-  artifact_short_id?: string | null
-  session_id?: string | null
-  detail?: string | null
-}
-
-/** How a living artifact's cadenced refresh is written: the maintainer's default
- *  route hint (the autonomy gate still has the final say per-change). */
-export type LivingRoute = "auto" | "proposal"
-
-/** A living declaration (WP5): an artifact that keeps itself current on a cadence,
- *  maintained by one agent, through the review loop. 1:1 with an artifact (its id
- *  is the PK), kept in its own table so the central artifact row is untouched. */
-export interface LivingArtifactRecord {
-  artifact_id: string
-  org_id: string
-  /** The agent that maintains it — its runs act as this principal. */
-  maintainer_agent_id: string
-  /** How often it should refresh. */
-  cadence_seconds: number
-  /** Grace past the cadence before it counts as stale (drives the visible badge). */
-  freshness_window_seconds: number
-  route: LivingRoute
-  /** Last successful maintenance; null until the first settle. */
-  last_settled_at: string | null
-  /** When it next needs attention (cadence from the last settle, or from creation). */
-  next_due_at: string
-  /** Claim lease: an executor stamps this on claim so replicas don't double-run;
-   *  null when unclaimed or the lease has lapsed. */
-  leased_until: string | null
-  created_at: string
-}
-
-export interface NewLivingArtifact {
-  artifact_id: string
-  org_id: string
-  maintainer_agent_id: string
-  cadence_seconds: number
-  freshness_window_seconds: number
-  route: LivingRoute
-  next_due_at: string
+  meta?: string | null
 }
 
 export type AgentMentionState = "pending" | "done"
