@@ -30,6 +30,7 @@ import type {
   LinkRole,
   ListArtifactsOpts,
   Listed,
+  LivingArtifactRecord,
   MembershipRecord,
   MetaStore,
   NewAgent,
@@ -50,6 +51,7 @@ import type {
   NewFolder,
   NewFollow,
   NewInvitation,
+  NewLivingArtifact,
   NewMembership,
   NewNotification,
   NewProposal,
@@ -104,6 +106,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  lt,
   lte,
   ne,
   notExists,
@@ -138,6 +141,7 @@ import {
   githubApp,
   githubInstallation,
   invitation,
+  livingArtifact,
   membership,
   notification,
   oauthClientWorkspace,
@@ -193,6 +197,7 @@ export const schema = {
   agent,
   agentMention,
   agentRun,
+  livingArtifact,
   artifactInvite,
   invitation,
   betaSignup,
@@ -235,6 +240,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   agent: true,
   agentMention: true,
   agentRun: true,
+  livingArtifact: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2306,6 +2312,77 @@ export class PgMetaStore implements MetaStore {
       .where(eq(agentRun.org_id, orgId))
       .orderBy(desc(agentRun.created_at))
       .limit(limit)
+  }
+  async setLivingArtifact(l: NewLivingArtifact): Promise<LivingArtifactRecord> {
+    const rows = await this.db
+      .insert(livingArtifact)
+      .values(l)
+      .onConflictDoUpdate({
+        target: livingArtifact.artifact_id,
+        set: {
+          maintainer_agent_id: l.maintainer_agent_id,
+          cadence_seconds: l.cadence_seconds,
+          freshness_window_seconds: l.freshness_window_seconds,
+          route: l.route,
+          next_due_at: l.next_due_at,
+        },
+      })
+      .returning()
+    return one(rows)
+  }
+  async getLivingArtifact(artifactId: string): Promise<LivingArtifactRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(livingArtifact)
+      .where(eq(livingArtifact.artifact_id, artifactId))
+    return rows[0] ?? null
+  }
+  async deleteLivingArtifact(artifactId: string): Promise<void> {
+    await this.db.delete(livingArtifact).where(eq(livingArtifact.artifact_id, artifactId))
+  }
+  claimDueLivingArtifacts(
+    maintainerAgentId: string,
+    now: string,
+    leaseMs: number,
+    limit = 20,
+  ): Promise<LivingArtifactRecord[]> {
+    const leaseUntil = new Date(Date.parse(now) + leaseMs).toISOString()
+    const due = this.db
+      .select({ id: livingArtifact.artifact_id })
+      .from(livingArtifact)
+      .where(
+        and(
+          eq(livingArtifact.maintainer_agent_id, maintainerAgentId),
+          lte(livingArtifact.next_due_at, now),
+          or(isNull(livingArtifact.leased_until), lt(livingArtifact.leased_until, now)),
+        ),
+      )
+      .orderBy(asc(livingArtifact.next_due_at))
+      .limit(limit)
+      .for("update", { skipLocked: true })
+    return this.db
+      .update(livingArtifact)
+      .set({ leased_until: leaseUntil })
+      .where(inArray(livingArtifact.artifact_id, due))
+      .returning()
+  }
+  async settleLivingArtifact(
+    artifactId: string,
+    maintainerAgentId: string,
+    settledAt: string,
+    nextDueAt: string,
+  ): Promise<LivingArtifactRecord | null> {
+    const rows = await this.db
+      .update(livingArtifact)
+      .set({ last_settled_at: settledAt, next_due_at: nextDueAt, leased_until: null })
+      .where(
+        and(
+          eq(livingArtifact.artifact_id, artifactId),
+          eq(livingArtifact.maintainer_agent_id, maintainerAgentId),
+        ),
+      )
+      .returning()
+    return rows[0] ?? null
   }
   async getAgentByToken(token: string): Promise<AgentRecord | null> {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))

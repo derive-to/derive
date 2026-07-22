@@ -12,6 +12,7 @@ import type {
   FollowKind,
   LinkRole,
   Listed,
+  LivingRoute,
   NotificationKind,
   PreviewStatus,
   ProposalState,
@@ -216,6 +217,22 @@ export const agentRun = sqliteTable("agent_run", {
   artifact_short_id: text("artifact_short_id"),
   session_id: text("session_id"),
   detail: text("detail"),
+  created_at: text("created_at").notNull().default(now),
+})
+
+// A living declaration (WP5): 1:1 with an artifact, kept separate so the central
+// artifact row is untouched. Its own claim lease (leased_until) prevents two
+// executor replicas from maintaining the same artifact at once.
+export const livingArtifact = sqliteTable("living_artifact", {
+  artifact_id: text("artifact_id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  maintainer_agent_id: text("maintainer_agent_id").notNull(),
+  cadence_seconds: integer("cadence_seconds").notNull(),
+  freshness_window_seconds: integer("freshness_window_seconds").notNull(),
+  route: text("route").$type<LivingRoute>().notNull(),
+  last_settled_at: text("last_settled_at"),
+  next_due_at: text("next_due_at").notNull(),
+  leased_until: text("leased_until"),
   created_at: text("created_at").notNull().default(now),
 })
 
@@ -868,6 +885,7 @@ const TABLES = [
   agent,
   agentMention,
   agentRun,
+  livingArtifact,
   invitation,
   artifactInvite,
   betaSignup,

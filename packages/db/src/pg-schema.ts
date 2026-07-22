@@ -12,6 +12,7 @@ import type {
   FollowKind,
   LinkRole,
   Listed,
+  LivingRoute,
   NotificationKind,
   PreviewStatus,
   ProposalState,
@@ -186,6 +187,20 @@ export const agentRun = pgTable("agent_run", {
   artifact_short_id: text("artifact_short_id"),
   session_id: text("session_id"),
   detail: text("detail"),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+
+// A living declaration (WP5) — see schema.ts.
+export const livingArtifact = pgTable("living_artifact", {
+  artifact_id: text("artifact_id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  maintainer_agent_id: text("maintainer_agent_id").notNull(),
+  cadence_seconds: integer("cadence_seconds").notNull(),
+  freshness_window_seconds: integer("freshness_window_seconds").notNull(),
+  route: text("route").$type<LivingRoute>().notNull(),
+  last_settled_at: text("last_settled_at"),
+  next_due_at: text("next_due_at").notNull(),
+  leased_until: text("leased_until"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
@@ -723,6 +738,7 @@ const TABLES = [
   agent,
   agentMention,
   agentRun,
+  livingArtifact,
   invitation,
   artifactInvite,
   betaSignup,

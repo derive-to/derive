@@ -197,6 +197,19 @@ CREATE TABLE IF NOT EXISTS agent_run (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS living_artifact (
+  artifact_id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  maintainer_agent_id TEXT NOT NULL,
+  cadence_seconds INTEGER NOT NULL,
+  freshness_window_seconds INTEGER NOT NULL,
+  route TEXT NOT NULL,
+  last_settled_at TEXT,
+  next_due_at TEXT NOT NULL,
+  leased_until TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS invitation (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,

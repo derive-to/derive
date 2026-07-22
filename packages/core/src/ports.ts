@@ -935,6 +935,30 @@ export interface AgentStore {
   recordAgentRun(run: NewAgentRun): Promise<AgentRunRecord>
   /** The workspace's recent runs, newest first (the activity view). Default 50. */
   listAgentRuns(orgId: string, limit?: number): Promise<AgentRunRecord[]>
+  // ---- Living artifacts (WP5: the freshness contract) --------------------
+  /** Create or replace an artifact's living declaration. */
+  setLivingArtifact(l: NewLivingArtifact): Promise<LivingArtifactRecord>
+  /** The declaration for one artifact, or null. */
+  getLivingArtifact(artifactId: string): Promise<LivingArtifactRecord | null>
+  /** Remove a declaration (the artifact stops maintaining itself). */
+  deleteLivingArtifact(artifactId: string): Promise<void>
+  /** Atomically claim due declarations for one maintainer agent: rows past
+   *  next_due_at with a lapsed/absent lease, stamped leased_until = now+leaseMs,
+   *  so concurrent executors never double-run one. Returns the claimed rows. */
+  claimDueLivingArtifacts(
+    maintainerAgentId: string,
+    now: string,
+    leaseMs: number,
+    limit?: number,
+  ): Promise<LivingArtifactRecord[]>
+  /** Settle a maintained artifact: stamp last_settled_at, roll next_due_at forward
+   *  by the cadence, clear the lease. Scoped to (artifact, maintainer). */
+  settleLivingArtifact(
+    artifactId: string,
+    maintainerAgentId: string,
+    settledAt: string,
+    nextDueAt: string,
+  ): Promise<LivingArtifactRecord | null>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>
   /** Resolve a live OAuth access token (by its stored hash) to its grant. */
@@ -1306,6 +1330,43 @@ export interface NewAgentRun {
   artifact_short_id?: string | null
   session_id?: string | null
   detail?: string | null
+}
+
+/** How a living artifact's cadenced refresh is written: the maintainer's default
+ *  route hint (the autonomy gate still has the final say per-change). */
+export type LivingRoute = "auto" | "proposal"
+
+/** A living declaration (WP5): an artifact that keeps itself current on a cadence,
+ *  maintained by one agent, through the review loop. 1:1 with an artifact (its id
+ *  is the PK), kept in its own table so the central artifact row is untouched. */
+export interface LivingArtifactRecord {
+  artifact_id: string
+  org_id: string
+  /** The agent that maintains it — its runs act as this principal. */
+  maintainer_agent_id: string
+  /** How often it should refresh. */
+  cadence_seconds: number
+  /** Grace past the cadence before it counts as stale (drives the visible badge). */
+  freshness_window_seconds: number
+  route: LivingRoute
+  /** Last successful maintenance; null until the first settle. */
+  last_settled_at: string | null
+  /** When it next needs attention (cadence from the last settle, or from creation). */
+  next_due_at: string
+  /** Claim lease: an executor stamps this on claim so replicas don't double-run;
+   *  null when unclaimed or the lease has lapsed. */
+  leased_until: string | null
+  created_at: string
+}
+
+export interface NewLivingArtifact {
+  artifact_id: string
+  org_id: string
+  maintainer_agent_id: string
+  cadence_seconds: number
+  freshness_window_seconds: number
+  route: LivingRoute
+  next_due_at: string
 }
 
 export type AgentMentionState = "pending" | "done"

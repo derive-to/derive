@@ -27,6 +27,7 @@ import { favoriteRoutes } from "./routes/favorites"
 import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
 import { githubAppRoutes } from "./routes/github-app"
+import { livingRoutes } from "./routes/living"
 import { marketingRoutes } from "./routes/marketing"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
@@ -383,6 +384,7 @@ export function createApp(deps: AppDeps): Hono {
     moderationRoutes,
     proposalRoutes,
     reviewRoutes,
+    livingRoutes,
     reworkRoutes,
     commentRoutes,
     contextRoutes,

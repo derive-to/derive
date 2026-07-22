@@ -34,6 +34,7 @@ import type {
   GitHubAppRecord,
   GitHubInstallationRecord,
   InvitationRecord,
+  LivingArtifactRecord,
   MembershipRecord,
   NotificationRecord,
   ProposalRecord,
@@ -69,6 +70,7 @@ export interface TypedTables {
   agent: AgentRecord
   agentMention: AgentMentionRecord
   agentRun: AgentRunRecord
+  livingArtifact: LivingArtifactRecord
   artifactInvite: ArtifactInviteRecord
   invitation: InvitationRecord
   betaSignup: BetaSignupRecord

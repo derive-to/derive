@@ -29,6 +29,7 @@ import type {
   LinkRole,
   ListArtifactsOpts,
   Listed,
+  LivingArtifactRecord,
   MembershipRecord,
   NewAgent,
   NewAgentMention,
@@ -48,6 +49,7 @@ import type {
   NewFolder,
   NewFollow,
   NewInvitation,
+  NewLivingArtifact,
   NewMembership,
   NewNotification,
   NewProposal,
@@ -138,6 +140,7 @@ import {
   githubApp,
   githubInstallation,
   invitation,
+  livingArtifact,
   membership,
   notification,
   oauthClientWorkspace,
@@ -268,6 +271,7 @@ export const schema = {
   agent,
   agentMention,
   agentRun,
+  livingArtifact,
   artifactInvite,
   invitation,
   betaSignup,
@@ -310,6 +314,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   agent: true,
   agentMention: true,
   agentRun: true,
+  livingArtifact: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2326,6 +2331,73 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(desc(agentRun.created_at))
       .limit(limit)
       .all()
+  const setLivingArtifact = async (l: NewLivingArtifact): Promise<LivingArtifactRecord> =>
+    (await db
+      .insert(livingArtifact)
+      .values(l)
+      .onConflictDoUpdate({
+        target: livingArtifact.artifact_id,
+        set: {
+          maintainer_agent_id: l.maintainer_agent_id,
+          cadence_seconds: l.cadence_seconds,
+          freshness_window_seconds: l.freshness_window_seconds,
+          route: l.route,
+          next_due_at: l.next_due_at,
+        },
+      })
+      .returning()
+      .get()) as LivingArtifactRecord
+  const getLivingArtifact = async (artifactId: string): Promise<LivingArtifactRecord | null> =>
+    (await db
+      .select()
+      .from(livingArtifact)
+      .where(eq(livingArtifact.artifact_id, artifactId))
+      .get()) ?? null
+  const deleteLivingArtifact = async (artifactId: string): Promise<void> => {
+    await db.delete(livingArtifact).where(eq(livingArtifact.artifact_id, artifactId)).run()
+  }
+  const claimDueLivingArtifacts = async (
+    maintainerAgentId: string,
+    now: string,
+    leaseMs: number,
+    limit = 20,
+  ): Promise<LivingArtifactRecord[]> => {
+    const leaseUntil = new Date(Date.parse(now) + leaseMs).toISOString()
+    const due = db
+      .select({ id: livingArtifact.artifact_id })
+      .from(livingArtifact)
+      .where(
+        and(
+          eq(livingArtifact.maintainer_agent_id, maintainerAgentId),
+          lte(livingArtifact.next_due_at, now),
+          or(isNull(livingArtifact.leased_until), lt(livingArtifact.leased_until, now)),
+        ),
+      )
+      .orderBy(asc(livingArtifact.next_due_at))
+      .limit(limit)
+    return (await db
+      .update(livingArtifact)
+      .set({ leased_until: leaseUntil })
+      .where(inArray(livingArtifact.artifact_id, due))
+      .returning()) as LivingArtifactRecord[]
+  }
+  const settleLivingArtifact = async (
+    artifactId: string,
+    maintainerAgentId: string,
+    settledAt: string,
+    nextDueAt: string,
+  ): Promise<LivingArtifactRecord | null> =>
+    (await db
+      .update(livingArtifact)
+      .set({ last_settled_at: settledAt, next_due_at: nextDueAt, leased_until: null })
+      .where(
+        and(
+          eq(livingArtifact.artifact_id, artifactId),
+          eq(livingArtifact.maintainer_agent_id, maintainerAgentId),
+        ),
+      )
+      .returning()
+      .get()) ?? null
   const getAgentByToken = async (token: string): Promise<AgentRecord | null> =>
     (await db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
   // Introspect a Better Auth oidc-provider access token (its own tables, same DB).
@@ -3047,6 +3119,11 @@ export function makeRepos(db: SqliteDb) {
     setAgentHosted,
     recordAgentRun,
     listAgentRuns,
+    setLivingArtifact,
+    getLivingArtifact,
+    deleteLivingArtifact,
+    claimDueLivingArtifacts,
+    settleLivingArtifact,
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,
