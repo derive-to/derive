@@ -2116,6 +2116,78 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: agent run ledger (WP6)`, () => {
+    it("records runs and lists them newest-first, scoped to the workspace", async () => {
+      const agentId = uuid()
+      await store.recordAgentRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        lane: "shared",
+        trigger: "draft",
+        outcome: "proposed",
+        model: "m1",
+        input_tokens: 100,
+        output_tokens: 20,
+        cost_micro_usd: 900,
+      })
+      await store.recordAgentRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        lane: "owner",
+        trigger: "ask",
+        outcome: "answered",
+      })
+      // A run in another workspace must not leak into this list.
+      await store.recordAgentRun({
+        id: uuid(),
+        org_id: `org_${uuid()}`,
+        agent_id: agentId,
+        lane: "owner",
+        trigger: "ask",
+        outcome: "answered",
+      })
+      const runs = await store.listAgentRuns(ORG, 10)
+      expect(runs).toHaveLength(2)
+      expect(runs.every((r) => r.org_id === ORG)).toBe(true)
+      expect(runs[0]?.created_at >= (runs[1]?.created_at ?? "")).toBe(true)
+    })
+  })
+
+  describe(`${label}: living artifacts (WP5)`, () => {
+    it("set → claim under lease → settle → delete, scoped to the maintainer", async () => {
+      const artId = uuid()
+      const agentId = uuid()
+      await store.setLivingArtifact({
+        artifact_id: artId,
+        org_id: ORG,
+        maintainer_agent_id: agentId,
+        cadence_seconds: 3600,
+        freshness_window_seconds: 0,
+        route: "auto",
+        next_due_at: "2000-01-01T00:00:00.000Z",
+      })
+      expect((await store.getLivingArtifact(artId))?.maintainer_agent_id).toBe(agentId)
+
+      const now = "2100-01-01T00:00:00.000Z"
+      const claimed = await store.claimDueLivingArtifacts(agentId, now, 60_000)
+      expect(claimed).toHaveLength(1)
+      // Leased: a second claim in the window gets nothing.
+      expect(await store.claimDueLivingArtifacts(agentId, now, 60_000)).toHaveLength(0)
+      // Wrong maintainer never gets it.
+      expect(await store.claimDueLivingArtifacts(uuid(), now, 60_000)).toHaveLength(0)
+
+      const nextDue = "2100-01-01T02:00:00.000Z"
+      const settled = await store.settleLivingArtifact(artId, agentId, now, nextDue)
+      expect(settled?.next_due_at).toBe(nextDue)
+      expect(settled?.leased_until).toBeNull()
+
+      await store.deleteLivingArtifact(artId)
+      expect(await store.getLivingArtifact(artId)).toBeNull()
+    })
+  })
+
   describe(`${label}: standalone image assets (POST /v1/assets -> GET /blob/:hash)`, () => {
     it("stages an asset, reads it back by hash, and is idempotent on re-upload", async () => {
       const hash = uuid().replace(/-/g, "").padEnd(64, "0")
