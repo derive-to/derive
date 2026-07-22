@@ -86,15 +86,30 @@ export const livingRoutes = (ctx: AppContext) => {
     if (!agent) return fail(c, 401, "agent token required")
     const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20))
     const due = await meta.claimDueLivingArtifacts(agent.id, isoNow(), LEASE_MS, limit)
+    // The claim keys on the internal artifact id, but every agent read/publish
+    // surface is keyed by short_id — so resolve the batch (one query, no N+1) and
+    // hand back the short_id + title the agent actually acts on. An artifact
+    // deleted out from under a live lease is simply dropped from the batch.
+    const byId = new Map(
+      (await meta.getArtifactsByIds(due.map((l) => l.artifact_id))).map((a) => [a.id, a]),
+    )
     return c.json({
       lease_ms: LEASE_MS,
-      work: due.map((l) => ({
-        artifact_id: l.artifact_id,
-        route: l.route,
-        cadence_seconds: l.cadence_seconds,
-        last_settled_at: l.last_settled_at,
-        leased_until: l.leased_until,
-      })),
+      work: due.flatMap((l) => {
+        const art = byId.get(l.artifact_id)
+        if (!art) return []
+        return [
+          {
+            artifact_id: l.artifact_id,
+            short_id: art.short_id,
+            title: art.title,
+            route: l.route,
+            cadence_seconds: l.cadence_seconds,
+            last_settled_at: l.last_settled_at,
+            leased_until: l.leased_until,
+          },
+        ]
+      }),
     })
   })
 

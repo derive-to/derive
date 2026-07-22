@@ -37,6 +37,8 @@ const PLANTED_COMMENT = `Welcome! Here's your first task for the loop: add a sho
 one-line greeting to the top of this page that mentions the reader by name. When you're
 done, this comment resolves and the page becomes v2 — same URL, new version.`
 
+const WELCOME_TITLE = "Welcome to Derive"
+
 export const conciergeRoutes = (ctx: AppContext) => {
   const { meta, blobs, requireUser, activeWorkspace } = ctx
   const app = new Hono()
@@ -45,6 +47,21 @@ export const conciergeRoutes = (ctx: AppContext) => {
     const me = await requireUser(c)
     if (me instanceof Response) return me
     const org = await activeWorkspace(c)
+
+    // Idempotent: the web welcome flow can fire more than once (a retry, a second
+    // tab, a re-signin). If this user already holds a welcome seed in this
+    // workspace, return it rather than planting another. Keyed on the owner
+    // roster (written at creation) + the seed title, not the mutable author_id.
+    const ownedIds = await meta.artifactIdsOwnedBy(org, me.id)
+    const owned = ownedIds.length ? await meta.getArtifactsByIds(ownedIds) : []
+    const seed = owned.find((a) => a.title === WELCOME_TITLE)
+    if (seed) {
+      const existing = await meta.listComments(seed.id)
+      return c.json(
+        { short_id: seed.short_id, comment_thread: existing[0]?.thread_id ?? null, existing: true },
+        200,
+      )
+    }
 
     // The planted comment is authored by the workspace's fallback agent when one
     // is set (so an agent-less user still gets a first loop), else a neutral
@@ -57,7 +74,7 @@ export const conciergeRoutes = (ctx: AppContext) => {
       bytes: new TextEncoder().encode(WELCOME_HTML),
       filename: "index.html",
       isBundle: false,
-      title: "Welcome to Derive",
+      title: WELCOME_TITLE,
       author: me.name ?? "You",
       authorId: me.id,
       source: "web",
@@ -67,6 +84,16 @@ export const conciergeRoutes = (ctx: AppContext) => {
       workspaceAccess: "member",
       linkRole: "none",
       listed: "none",
+    })
+
+    // Put the user on the artifact's owner roster — the same one row the publish
+    // route writes — so the seed is genuinely theirs (shows in "Created by me")
+    // and the idempotency check above can find it on a re-fire.
+    await meta.setArtifactMember({
+      id: newId("am"),
+      artifact_id: artifact.id,
+      user_id: me.id,
+      role: "owner",
     })
 
     const thread = newId("th")
