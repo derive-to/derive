@@ -1,19 +1,33 @@
 import { execSync } from "node:child_process"
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import http from "node:http"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import { describe, expect, it } from "vitest"
 import {
   buildPrompt,
+  checkWritable,
+  doctor,
   loadRunnerConfig,
   OUTPUT_CONTRACT,
   once,
   parseAnswer,
   parseManifest,
+  RETRY_DELAY_MS,
   renderServiceUnit,
   repoCatalogBlock,
   repoSlug,
+  resolveArtifactHtml,
+  runClaude,
+  serveSession,
   syncRepos,
 } from "../src/runner.js"
 
@@ -265,6 +279,402 @@ brandprint: off
     expect(out).toHaveLength(1)
     expect(out[0].sha).toBeNull()
   }, 30_000)
+
+  it("an unwritable cwd is non-fatal too — it must not crash-loop serve at boot", async () => {
+    // The field failure: a bind-mounted /work owned by the host uid, cloned into
+    // by a container running as a different one. The mkdir threw and, unlike a
+    // failed clone, took the whole daemon down under restart:unless-stopped.
+    const cwd = mkdtempSync(join(tmpdir(), "runner-ro-cwd-"))
+    chmodSync(cwd, 0o555)
+    try {
+      const out = await syncRepos([{ url: "file:///some/repo", ref: null, description: "" }], cwd)
+      expect(out).toHaveLength(1)
+      expect(out[0].sha).toBeNull()
+    } finally {
+      chmodSync(cwd, 0o755)
+    }
+  }, 30_000)
+
+  it("checkWritable tells a writable dir from one the runner only has read access to", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "runner-probe-"))
+    expect(checkWritable(cwd)).toBeNull()
+    chmodSync(cwd, 0o555)
+    try {
+      expect(checkWritable(cwd)).toMatch(/EACCES|permission/i)
+    } finally {
+      chmodSync(cwd, 0o755)
+    }
+    // A missing dir reports rather than throws — doctor prints, it doesn't crash.
+    expect(checkWritable(join(cwd, "nope"))).toBeTruthy()
+  })
+})
+
+describe("artifact file channel", () => {
+  it("parseAnswer accepts a path artifact, and inline html still wins", () => {
+    const byPath = parseAnswer(
+      '<answer>{"body_md":"page below","artifact":{"title":"Companion","path":"companion.html"}}</answer>',
+    )
+    expect(byPath.answer.artifact).toEqual({ title: "Companion", path: "companion.html" })
+    const inline = parseAnswer(
+      '<answer>{"body_md":"x","artifact":{"title":"t","html":"<p>hi</p>","path":"x.html"}}</answer>',
+    )
+    expect(inline.answer.artifact).toMatchObject({ html: "<p>hi</p>" })
+    // Neither channel filled is still nothing to publish.
+    expect(
+      parseAnswer('<answer>{"body_md":"x","artifact":{"title":"t","path":"  "}}</answer>').answer
+        .artifact,
+    ).toBeNull()
+    // Oversized inline WITH a path falls back to the file — the exact case that
+    // made a 107KB companion page unrecoverable.
+    const both = JSON.stringify({
+      body_md: "x",
+      artifact: { title: "t", html: "a".repeat(2_000_001), path: "big.html" },
+    })
+    expect(parseAnswer(`<answer>${both}</answer>`).answer.artifact).toEqual({
+      title: "t",
+      path: "big.html",
+    })
+  })
+
+  it("resolves a relative path under cwd and refuses to leave it", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "runner-art-"))
+    mkdirSync(join(cwd, "out"))
+    writeFileSync(join(cwd, "out", "page.html"), "<!doctype html><p>hi</p>")
+    expect(resolveArtifactHtml({ title: "t", path: "out/page.html" }, cwd).html).toContain(
+      "<p>hi</p>",
+    )
+    // Inline artifacts pass straight through — no filesystem involved.
+    expect(resolveArtifactHtml({ title: "t", html: "<b>x</b>" }, cwd).html).toBe("<b>x</b>")
+    // Escapes and misses report, never publish. Publishing an arbitrary host
+    // file into a workspace artifact would be a real leak.
+    const elsewhere = mkdtempSync(join(tmpdir(), "runner-elsewhere-"))
+    writeFileSync(join(elsewhere, "secret.html"), "<p>not yours</p>")
+    expect(
+      resolveArtifactHtml({ title: "t", path: join(elsewhere, "secret.html") }, cwd).error,
+    ).toMatch(/outside/)
+    expect(
+      resolveArtifactHtml({ title: "t", path: `../${basename(elsewhere)}/secret.html` }, cwd).error,
+    ).toMatch(/outside/)
+    // A symlink the model itself plants inside cwd is still an escape.
+    symlinkSync(join(elsewhere, "secret.html"), join(cwd, "link.html"))
+    expect(resolveArtifactHtml({ title: "t", path: "link.html" }, cwd).error).toMatch(/outside/)
+    expect(resolveArtifactHtml({ title: "t", path: "missing.html" }, cwd).error).toMatch(/read/i)
+    writeFileSync(join(cwd, "empty.html"), "   ")
+    expect(resolveArtifactHtml({ title: "t", path: "empty.html" }, cwd).error).toMatch(/empty/)
+    writeFileSync(join(cwd, "huge.html"), "a".repeat(2_000_001))
+    expect(resolveArtifactHtml({ title: "t", path: "huge.html" }, cwd).error).toMatch(/cap/)
+  })
+
+  it("only publishes a regular .html file — a FIFO would wedge the poll loop forever", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "runner-art-guard-"))
+    // The path names the PAGE the model built. This is not a confidentiality
+    // boundary — a model with shell in cwd can `cp .env page.html` — but it
+    // stops the zero-effort form, where one innocuous-looking field points
+    // straight at the runner's own credentials (cwd/.env on the prod host).
+    writeFileSync(join(cwd, ".env"), "DERIVE_TOKEN=dk_secret\nMONGO_URI=mongodb://x")
+    expect(resolveArtifactHtml({ title: "t", path: ".env" }, cwd).error).toMatch(/\.html/)
+    mkdirSync(join(cwd, "dir.html"))
+    expect(resolveArtifactHtml({ title: "t", path: "dir.html" }, cwd).error).toBeTruthy()
+    // readFileSync on a FIFO blocks the event loop with no timeout: the daemon
+    // stays "up" under restart:unless-stopped while answering nothing, ever.
+    execSync(`mkfifo ${join(cwd, "pipe.html")}`)
+    expect(resolveArtifactHtml({ title: "t", path: "pipe.html" }, cwd).error).toMatch(
+      /not a regular file/,
+    )
+  })
+
+  it("serveSession publishes the file's bytes, and a bad path is a caveat not a dead session", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "runner-serve-"))
+    writeFileSync(join(cwd, "page.html"), "<!doctype html><h1>companion</h1>")
+    const calls = { published: [], answered: [], failed: [] }
+    const client = {
+      publishArtifact: async (title, html) => {
+        calls.published.push({ title, html })
+        return { short_id: "art123" }
+      },
+      answer: async (id, body, meta, state) => calls.answered.push({ id, body, meta, state }),
+      fail: async (id) => calls.failed.push(id),
+    }
+    const session = () => ({
+      id: "ses_1",
+      messages: [{ id: "m1", author_kind: "asker", body_md: "build me a page" }],
+    })
+    const cfg = { cwd, mock: false }
+    // A fake `claude` that just emits the block, so the artifact channel runs
+    // end to end — parse → resolve from disk → publish → answer.
+    const fake = (answerJson) => {
+      const dir = mkdtempSync(join(tmpdir(), "runner-fake-"))
+      const bin = join(dir, "claude")
+      writeFileSync(
+        bin,
+        `#!/bin/sh\ncat <<'EOF'\n{"type":"result","result":"<answer>${answerJson}</answer>"}\nEOF\n`,
+      )
+      chmodSync(bin, 0o755)
+      return bin
+    }
+    const base = { ...cfg, model: "sonnet", timeoutMs: 30_000 }
+
+    await serveSession(
+      client,
+      session(),
+      "manifest",
+      {
+        ...base,
+        claudeBin: fake(
+          '{\\"body_md\\":\\"page built\\",\\"artifact\\":{\\"title\\":\\"Companion\\",\\"path\\":\\"page.html\\"}}',
+        ),
+      },
+      [],
+      [],
+    )
+    expect(calls.published[0]).toMatchObject({ title: "Companion" })
+    expect(calls.published[0].html).toContain("<h1>companion</h1>") // the FILE's bytes
+    expect(calls.answered[0].meta.artifacts).toEqual([{ short_id: "art123", title: "Companion" }])
+
+    await serveSession(
+      client,
+      session(),
+      "manifest",
+      {
+        ...base,
+        claudeBin: fake(
+          '{\\"body_md\\":\\"page built\\",\\"artifact\\":{\\"title\\":\\"Gone\\",\\"path\\":\\"nope.html\\"}}',
+        ),
+      },
+      [],
+      [],
+    )
+    expect(calls.published).toHaveLength(1) // nothing published for the missing file
+    expect(calls.failed).toHaveLength(0) // and the session still answered
+    expect(calls.answered[1].state).toBe("answered")
+    expect(calls.answered[1].meta.caveats.join(" ")).toMatch(/nope\.html/)
+  }, 30_000)
+})
+
+describe("runClaude transient-failure retry", () => {
+  /** A stub `claude` that records each invocation's argv and replays canned
+   *  stream-json. `script` is sh run per invocation with $n = attempt number. */
+  const fakeClaude = (body) => {
+    const dir = mkdtempSync(join(tmpdir(), "runner-fake-claude-"))
+    const bin = join(dir, "claude")
+    writeFileSync(
+      bin,
+      `#!/bin/sh
+d="${dir}"
+n=$(cat "$d/count" 2>/dev/null || echo 0)
+n=$((n+1))
+echo $n > "$d/count"
+printf '%s\\n' "$@" > "$d/args.$n"
+${body}
+`,
+    )
+    chmodSync(bin, 0o755)
+    return {
+      bin,
+      attempts: () => Number(readFileSync(join(dir, "count"), "utf8").trim()),
+      args: (n) => readFileSync(join(dir, `args.${n}`), "utf8"),
+    }
+  }
+  const opts = (bin) => ({
+    bin,
+    cwd: tmpdir(),
+    model: "sonnet",
+    timeoutMs: 30_000,
+    systemPrompt: "you are a runner",
+    prompt: "how many orgs?",
+    retryDelayMs: 0,
+  })
+
+  // The shape below is COPIED FROM THE REAL CLI (v2.1.216): an API failure is a
+  // `result` event with is_error + api_error_status and a POPULATED `result`
+  // string. Assuming it exited silently is exactly the mistake that made the
+  // first cut of this retry inert for the failure it was written for.
+  const apiError = (status, msg) =>
+    `echo '{"type":"result","subtype":"success","is_error":true,"api_error_status":${status},"result":"${msg}","session_id":"sess-abc"}'\nexit 1`
+
+  it("resumes the session after a transient API error instead of losing the run", async () => {
+    // The field failure: `API Error: 529 Overloaded` five minutes into a review.
+    const fake = fakeClaude(`
+if [ "$n" = 1 ]; then
+  echo '{"type":"system","session_id":"sess-abc"}'
+  ${apiError(529, "API Error: 529 Overloaded")}
+fi
+echo '{"type":"result","result":"<answer>{\\"body_md\\":\\"32%\\"}</answer>"}'
+`)
+    const out = await runClaude(opts(fake.bin))
+    expect(out.ok).toBe(true)
+    expect(out.answer.body_md).toBe("32%")
+    expect(fake.attempts()).toBe(2)
+    // Resumed, not restarted: the five minutes of work already done survives.
+    expect(fake.args(2)).toContain("--resume")
+    expect(fake.args(2)).toContain("sess-abc")
+  }, 30_000)
+
+  it("does NOT retry a 4xx — a wrong model name fails identically twice", async () => {
+    // Real capture: `--model bogus-model-xyz` → api_error_status 404, exit 1.
+    const fake = fakeClaude(
+      apiError(404, "There is an issue with the selected model (bogus-model-xyz)."),
+    )
+    const out = await runClaude(opts(fake.bin))
+    expect(out.ok).toBe(false)
+    expect(out.error).toMatch(/selected model/)
+    expect(fake.attempts()).toBe(1) // no sleep, no second spawn
+  }, 30_000)
+
+  it("does NOT retry a spawn failure — a missing binary is not a busy service", async () => {
+    const out = await runClaude(opts("/nonexistent/claude"))
+    expect(out.ok).toBe(false)
+    expect(out.error).toMatch(/ENOENT/)
+  }, 30_000)
+
+  it("an error run is never salvaged — the asker must not get 'API Error: 529' as an answer", async () => {
+    const fake = fakeClaude(apiError(529, "API Error: 529 Overloaded"))
+    const out = await runClaude(opts(fake.bin))
+    expect(out.ok).toBe(false)
+    expect(out.error).toContain("529")
+    expect(fake.attempts()).toBe(2) // bounded at one retry
+  }, 30_000)
+
+  it("takes a valid block even when the process exits nonzero after emitting it", async () => {
+    const fake = fakeClaude(`
+echo '{"type":"result","result":"<answer>{\\"body_md\\":\\"the work got done\\"}</answer>"}'
+exit 1
+`)
+    const out = await runClaude(opts(fake.bin))
+    expect(out.ok).toBe(true)
+    expect(out.answer.body_md).toBe("the work got done")
+  }, 30_000)
+
+  it("does NOT retry a timeout — that's the owner's signal, not a busy service", async () => {
+    const fake = fakeClaude(`sleep 10`)
+    const out = await runClaude({ ...opts(fake.bin), timeoutMs: 1_000 })
+    expect(out.ok).toBe(false)
+    expect(out.error).toBe("timed out")
+    expect(fake.attempts()).toBe(1)
+  }, 30_000)
+
+  it("re-sends the system prompt on every resume — --resume does not carry it", async () => {
+    // Verified against the real CLI: a turn started with --resume runs WITHOUT
+    // the original --append-system-prompt. Without this, the retry and the nudge
+    // both judge the model against a contract it can no longer see.
+    const fake = fakeClaude(`
+if [ "$n" = 1 ]; then
+  echo '{"type":"system","session_id":"sess-abc"}'
+  ${apiError(529, "API Error: 529 Overloaded")}
+fi
+echo '{"type":"result","result":"<answer>{\\"body_md\\":\\"ok\\"}</answer>"}'
+`)
+    await runClaude(opts(fake.bin))
+    expect(fake.args(2)).toContain("--resume")
+    expect(fake.args(2)).toContain("--append-system-prompt")
+    expect(fake.args(2)).toContain("you are a runner") // the manifest
+    expect(fake.args(2)).toContain("<answer>") // and the output contract
+  }, 30_000)
+
+  it("the nudge carries the system prompt too", async () => {
+    const fake = fakeClaude(`
+echo '{"type":"system","session_id":"sess-x"}'
+echo '{"type":"result","result":"prose, no block"}'
+`)
+    await runClaude(opts(fake.bin))
+    expect(fake.args(2)).toContain("--resume")
+    expect(fake.args(2)).toContain("--append-system-prompt")
+  }, 30_000)
+
+  it("waits before retrying, and the default wait clears the CLI's own backoff", async () => {
+    // Two halves, so neither costs 30s of CI: the delay is really awaited...
+    const fake = fakeClaude(apiError(503, "overloaded"))
+    const started = Date.now()
+    await runClaude({ ...opts(fake.bin), retryDelayMs: 1_000 })
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1_000)
+    expect(fake.attempts()).toBe(2)
+    // ...and the production default (every other test overrides it to 0) is long
+    // enough not to land inside the overload window the CLI just gave up on.
+    expect(RETRY_DELAY_MS).toBeGreaterThanOrEqual(20_000)
+  }, 30_000)
+
+  it("retries from scratch when the run died before a session id existed", async () => {
+    const fake = fakeClaude(`
+if [ "$n" = 1 ]; then exit 1; fi
+echo '{"type":"result","result":"<answer>{\\"body_md\\":\\"ok\\"}</answer>"}'
+`)
+    const out = await runClaude(opts(fake.bin))
+    expect(out.ok).toBe(true)
+    expect(fake.args(2)).not.toContain("--resume")
+    expect(fake.args(2)).toContain("how many orgs?")
+  }, 30_000)
+
+  it("does NOT retry a run that produced output — that's the nudge/salvage path", async () => {
+    const fake = fakeClaude(`
+echo '{"type":"system","session_id":"sess-x"}'
+echo '{"type":"result","result":"here is prose but no block"}'
+`)
+    const out = await runClaude(opts(fake.bin))
+    expect(out.ok).toBe(true) // salvaged
+    expect(out.answer.body_md).toBe("here is prose but no block")
+    expect(fake.attempts()).toBe(2) // the original run + the nudge, not a retry
+    expect(fake.args(2)).toContain("--resume")
+  }, 30_000)
+})
+
+describe("doctor", () => {
+  // The point of the writability check is that DOCTOR reports it — testing
+  // checkWritable alone leaves the actual fix (and the field regression it
+  // exists for: doctor green while serve crash-looped) free to be reverted.
+  const runDoctor = async (cfg) => {
+    const lines = []
+    const spy =
+      (m) =>
+      (...a) => {
+        lines.push(a.join(" "))
+        return m
+      }
+    const orig = [console.log, console.error, console.warn]
+    console.log = spy()
+    console.error = spy()
+    console.warn = spy()
+    try {
+      const failures = await doctor({
+        server: "http://127.0.0.1:9",
+        token: "",
+        contextId: "",
+        claudeBin: "/nonexistent/claude",
+        ...cfg,
+      })
+      return { failures, out: lines.join("\n") }
+    } finally {
+      ;[console.log, console.error, console.warn] = orig
+    }
+  }
+
+  it.skipIf(process.getuid?.() === 0)(
+    "fails on a cwd it cannot write, and says why",
+    async () => {
+      const cwd = mkdtempSync(join(tmpdir(), "runner-doctor-"))
+      const before = await runDoctor({ cwd })
+      expect(before.out).toContain("(writable)")
+
+      chmodSync(cwd, 0o555)
+      try {
+        const after = await runDoctor({ cwd })
+        expect(after.out).toMatch(/cwd writable/)
+        expect(after.out).toMatch(/uid/) // names the bind-mount cause
+        // Without a manifest there are no repos or skills to materialize, so an
+        // unwritable cwd is survivable — a warning, not a refusal to start.
+        expect(after.failures).toBe(before.failures)
+      } finally {
+        chmodSync(cwd, 0o755)
+      }
+    },
+    60_000,
+  )
+
+  it("leaves no probe directory behind", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "runner-doctor-"))
+    await runDoctor({ cwd })
+    await runDoctor({ cwd })
+    expect(readdirSync(cwd)).toEqual([])
+  }, 60_000)
 })
 
 describe("output contract + service units", () => {
@@ -273,10 +683,17 @@ describe("output contract + service units", () => {
     expect(OUTPUT_CONTRACT).toContain("body_md")
   })
 
-  it("the contract hammers the two things that failed in the field", () => {
-    // A model deep in a build forgot the block and wrote the artifact to a file.
+  it("the contract still demands the block, and no longer forbids the file channel", () => {
+    // Weak by nature — it greps a prompt — so it asserts only the two things a
+    // future edit could silently invert. The block is still mandatory...
     expect(OUTPUT_CONTRACT).toMatch(/FINAL message MUST END/i)
-    expect(OUTPUT_CONTRACT).toMatch(/do NOT write it to a file/i)
+    // ...and the old "do NOT write it to a file" rule is GONE: it was what made
+    // a 107KB page unrecoverable, since re-emitting it inline never fit.
+    expect(OUTPUT_CONTRACT).not.toMatch(/do NOT write it to a file/i)
+    expect(
+      parseAnswer('<answer>{"body_md":"x","artifact":{"title":"t","path":"p.html"}}</answer>')
+        .answer.artifact,
+    ).toEqual({ title: "t", path: "p.html" })
   })
 
   it("renders units that reproduce the FULL running config (nothing silently dropped)", () => {
