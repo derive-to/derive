@@ -37,6 +37,23 @@ export interface HostedAgentClient {
     rev: RevisionInput,
     opts: { requestReview: boolean },
   ): Promise<PublishResult>
+  /** Append a run to the ledger (WP6). Best-effort — a failed record must never
+   *  fail the run it describes. org_id + agent_id are derived server-side from
+   *  the bearer, so only the outcome fields travel. */
+  recordRun(run: RunLedgerInput): Promise<void>
+}
+
+export interface RunLedgerInput {
+  lane: "owner" | "shared"
+  trigger: string
+  outcome: "answered" | "published" | "proposed" | "shadow" | "escalated" | "failed"
+  model?: string | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+  cost_micro_usd?: number | null
+  artifact_short_id?: string | null
+  session_id?: string | null
+  detail?: string | null
 }
 
 const isoTimeout = 60_000
@@ -102,6 +119,17 @@ export function httpClient(server: string, token: string): HostedAgentClient {
           ...(opts.requestReview ? { request_review: "true" } : {}),
         }),
       )
+    },
+    async recordRun(run) {
+      // Best-effort: the ledger is observability, never a gate on the work. A
+      // failed record is logged by the caller, not thrown.
+      const res = await fetch(`${base}/v1/agent/runs`, {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify(run),
+        signal: AbortSignal.timeout(isoTimeout),
+      })
+      if (!res.ok) throw new Error(`recordRun → ${res.status}`)
     },
   }
 }

@@ -8,6 +8,7 @@ const mockClient = (current: string): HostedAgentClient => ({
   comment: vi.fn().mockResolvedValue(undefined),
   proposeRevision: vi.fn().mockResolvedValue({ short_id: "a1", version: 5 }),
   publishLive: vi.fn().mockResolvedValue({ short_id: "a1", version: 6 }),
+  recordRun: vi.fn().mockResolvedValue(undefined),
 })
 
 const ctxFor = (

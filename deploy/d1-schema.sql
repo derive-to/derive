@@ -180,6 +180,23 @@ CREATE TABLE IF NOT EXISTS agent_mention (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS agent_run (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  lane TEXT NOT NULL,
+  trigger TEXT NOT NULL,
+  model TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  cost_micro_usd INTEGER,
+  outcome TEXT NOT NULL,
+  artifact_short_id TEXT,
+  session_id TEXT,
+  detail TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS invitation (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,

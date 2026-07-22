@@ -1,4 +1,5 @@
 import {
+  type AgentRunOutcome,
   type AutonomyFlags,
   type AutonomyLevel,
   classifyChange,
@@ -30,6 +31,9 @@ export interface SubmitContext {
   autonomy: AutonomyLevel
   flags: AutonomyFlags
   confidenceFloor?: number
+  /** Set by submitRevision to the last write's result, so the host can record the
+   *  run's real outcome in the ledger (WP6) without re-deriving it. */
+  lastResult?: SubmitResult
 }
 
 export interface SubmitInput {
@@ -82,7 +86,9 @@ export async function submitRevision(
   // is filed. The rollout tier — a human can score what it WOULD have written.
   if (decision === "shadow") {
     ctx.latch.settled = true
-    return { decision, changeKind }
+    const out: SubmitResult = { decision, changeKind }
+    ctx.lastResult = out
+    return out
   }
 
   const result =
@@ -93,5 +99,20 @@ export async function submitRevision(
   // Latch only AFTER a clean write: a thrown publish leaves the run un-settled so
   // the agent can legitimately retry within the same run (matching the runner).
   ctx.latch.settled = true
-  return { decision, changeKind, shortId: result.short_id, version: result.version }
+  const out: SubmitResult = {
+    decision,
+    changeKind,
+    shortId: result.short_id,
+    version: result.version,
+  }
+  ctx.lastResult = out
+  return out
+}
+
+/** Map a submit decision to a ledger outcome; a run with no submit is an answer. */
+export function outcomeOf(result: SubmitResult | undefined): AgentRunOutcome {
+  if (!result) return "answered"
+  if (result.decision === "live_publish_with_review") return "published"
+  if (result.decision === "proposal") return "proposed"
+  return "shadow"
 }

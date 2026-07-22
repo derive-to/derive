@@ -931,6 +931,10 @@ export interface AgentStore {
   /** Flip whether Derive's managed executor serves this agent. Workspace-scoped by
    *  (id, org) like deleteAgent; null when the agent isn't in this workspace. */
   setAgentHosted(id: string, orgId: string, hosted: 0 | 1): Promise<AgentRecord | null>
+  /** Append a run to the ledger (WP6). */
+  recordAgentRun(run: NewAgentRun): Promise<AgentRunRecord>
+  /** The workspace's recent runs, newest first (the activity view). Default 50. */
+  listAgentRuns(orgId: string, limit?: number): Promise<AgentRunRecord[]>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>
   /** Resolve a live OAuth access token (by its stored hash) to its grant. */
@@ -1252,6 +1256,56 @@ export interface NewAgent {
   role: Role
   created_by?: string | null
   hosted?: 0 | 1
+}
+
+/** Which executor lane produced a run: the owner-run runner, or the shared
+ *  Derive-hosted agent host. */
+export type AgentRunLane = "owner" | "shared"
+
+/** How a run landed. Publish outcomes mirror the autonomy-gate decisions plus the
+ *  ask-answer and failure terminals. */
+export type AgentRunOutcome =
+  | "answered"
+  | "published"
+  | "proposed"
+  | "shadow"
+  | "escalated"
+  | "failed"
+
+/** One row in the run ledger (WP6): the durable record behind the activity view.
+ *  Cost is snapshotted at record time (micro-USD, integer), never recomputed. */
+export interface AgentRunRecord {
+  id: string
+  org_id: string
+  agent_id: string
+  lane: AgentRunLane
+  /** What woke the run: ask, mention, freshness, draft, concierge, … (free text). */
+  trigger: string
+  model: string | null
+  input_tokens: number | null
+  output_tokens: number | null
+  cost_micro_usd: number | null
+  outcome: AgentRunOutcome
+  artifact_short_id: string | null
+  session_id: string | null
+  detail: string | null
+  created_at: string
+}
+
+export interface NewAgentRun {
+  id: string
+  org_id: string
+  agent_id: string
+  lane: AgentRunLane
+  trigger: string
+  model?: string | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+  cost_micro_usd?: number | null
+  outcome: AgentRunOutcome
+  artifact_short_id?: string | null
+  session_id?: string | null
+  detail?: string | null
 }
 
 export type AgentMentionState = "pending" | "done"

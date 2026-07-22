@@ -1,5 +1,7 @@
 import type {
   AgentMentionState,
+  AgentRunLane,
+  AgentRunOutcome,
   ArtifactKind,
   AuditAction,
   CommentState,
@@ -194,6 +196,26 @@ export const renderJob = sqliteTable("render_job", {
   attempts: integer("attempts").notNull().default(0),
   last_error: text("last_error"),
   next_attempt_at: text("next_attempt_at").notNull().default(now),
+  created_at: text("created_at").notNull().default(now),
+})
+
+// The run ledger (WP6): one row per hosted/owner agent invocation — the durable
+// record behind the workspace activity view. Cost is snapshotted at record time
+// (micro-USD, integer, so no float drift across dialects), never recomputed.
+export const agentRun = sqliteTable("agent_run", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  agent_id: text("agent_id").notNull(),
+  lane: text("lane").$type<AgentRunLane>().notNull(),
+  trigger: text("trigger").notNull(),
+  model: text("model"),
+  input_tokens: integer("input_tokens"),
+  output_tokens: integer("output_tokens"),
+  cost_micro_usd: integer("cost_micro_usd"),
+  outcome: text("outcome").$type<AgentRunOutcome>().notNull(),
+  artifact_short_id: text("artifact_short_id"),
+  session_id: text("session_id"),
+  detail: text("detail"),
   created_at: text("created_at").notNull().default(now),
 })
 
@@ -845,6 +867,7 @@ const TABLES = [
   notification,
   agent,
   agentMention,
+  agentRun,
   invitation,
   artifactInvite,
   betaSignup,

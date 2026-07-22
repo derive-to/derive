@@ -1,6 +1,7 @@
 import type {
   AgentMentionRecord,
   AgentRecord,
+  AgentRunRecord,
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
@@ -31,6 +32,7 @@ import type {
   MembershipRecord,
   NewAgent,
   NewAgentMention,
+  NewAgentRun,
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
@@ -114,6 +116,7 @@ import type { Exhaustive, Shapes } from "./parity"
 import {
   agent,
   agentMention,
+  agentRun,
   artifact,
   artifactFavorite,
   artifactInvite,
@@ -264,6 +267,7 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  agentRun,
   artifactInvite,
   invitation,
   betaSignup,
@@ -305,6 +309,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
+  agentRun: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2311,6 +2316,16 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
       .returning()
       .get()) ?? null
+  const recordAgentRun = async (run: NewAgentRun): Promise<AgentRunRecord> =>
+    (await db.insert(agentRun).values(run).returning().get()) as AgentRunRecord
+  const listAgentRuns = async (orgId: string, limit = 50): Promise<AgentRunRecord[]> =>
+    db
+      .select()
+      .from(agentRun)
+      .where(eq(agentRun.org_id, orgId))
+      .orderBy(desc(agentRun.created_at))
+      .limit(limit)
+      .all()
   const getAgentByToken = async (token: string): Promise<AgentRecord | null> =>
     (await db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
   // Introspect a Better Auth oidc-provider access token (its own tables, same DB).
@@ -3030,6 +3045,8 @@ export function makeRepos(db: SqliteDb) {
     createAgent,
     listAgents,
     setAgentHosted,
+    recordAgentRun,
+    listAgentRuns,
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,

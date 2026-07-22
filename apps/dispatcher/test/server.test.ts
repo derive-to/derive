@@ -16,6 +16,7 @@ const validBody = {
   agentToken: "dk_agt_x",
   manifest: "You maintain docs.",
   task: "Refresh the status line.",
+  trigger: "draft",
   autonomy: "suggest",
   flags: { agentKillswitch: false, agentAutoEnabled: false },
 }

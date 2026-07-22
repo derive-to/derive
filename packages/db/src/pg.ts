@@ -1,6 +1,7 @@
 import type {
   AgentMentionRecord,
   AgentRecord,
+  AgentRunRecord,
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
@@ -33,6 +34,7 @@ import type {
   MetaStore,
   NewAgent,
   NewAgentMention,
+  NewAgentRun,
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
@@ -114,6 +116,7 @@ import type { Exhaustive, Shapes } from "./parity"
 import {
   agent,
   agentMention,
+  agentRun,
   artifact,
   artifactFavorite,
   artifactInvite,
@@ -189,6 +192,7 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  agentRun,
   artifactInvite,
   invitation,
   betaSignup,
@@ -230,6 +234,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
+  agentRun: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2289,6 +2294,18 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
       .returning()
     return rows[0] ?? null
+  }
+  async recordAgentRun(run: NewAgentRun): Promise<AgentRunRecord> {
+    const rows = await this.db.insert(agentRun).values(run).returning()
+    return one(rows)
+  }
+  listAgentRuns(orgId: string, limit = 50): Promise<AgentRunRecord[]> {
+    return this.db
+      .select()
+      .from(agentRun)
+      .where(eq(agentRun.org_id, orgId))
+      .orderBy(desc(agentRun.created_at))
+      .limit(limit)
   }
   async getAgentByToken(token: string): Promise<AgentRecord | null> {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))

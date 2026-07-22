@@ -3,6 +3,8 @@ import {
   type AutonomyLevel,
   createHostedAgent,
   httpClient,
+  outcomeOf,
+  type RunContext,
   RunLatch,
 } from "@derive/hosted-agent"
 import type { MastraLanguageModel } from "@mastra/core/agent"
@@ -25,6 +27,8 @@ export interface InvokeRequest {
   conventions?: string
   /** The task for this run (the ask, the draft request, the maintenance prompt). */
   task: string
+  /** What woke the run (ask, mention, draft, freshness, concierge) — the ledger trigger. */
+  trigger: string
   /** Autonomy level + workspace flags for the gate, loaded fresh by the API. */
   autonomy: AutonomyLevel
   flags: AutonomyFlags
@@ -53,12 +57,43 @@ export async function invokeHostedAgent(
 ): Promise<InvokeResult> {
   // One client, one latch, one agent per invocation — no cross-run state.
   const client = httpClient(deps.server, req.agentToken)
+  const run: RunContext = {
+    client,
+    latch: new RunLatch(),
+    autonomy: req.autonomy,
+    flags: req.flags,
+  }
   const agent = createHostedAgent({
     manifest: req.manifest,
     conventions: req.conventions,
     model: deps.resolveModel(),
-    run: { client, latch: new RunLatch(), autonomy: req.autonomy, flags: req.flags },
+    run,
   })
-  const text = await (deps.run ?? defaultRunner)(agent, req.task)
+  let text = ""
+  let failed = false
+  try {
+    text = await (deps.run ?? defaultRunner)(agent, req.task)
+  } catch (e) {
+    failed = true
+    // Record the failure below, then re-throw so the HTTP layer surfaces it.
+    await recordRun(client, req, failed, run).catch(() => {})
+    throw e
+  }
+  // Best-effort ledger write — observability, never a gate on the work.
+  await recordRun(client, req, failed, run).catch(() => {})
   return { text }
+}
+
+async function recordRun(
+  client: ReturnType<typeof httpClient>,
+  req: InvokeRequest,
+  failed: boolean,
+  run: RunContext,
+): Promise<void> {
+  await client.recordRun({
+    lane: "shared",
+    trigger: req.trigger,
+    outcome: failed ? "failed" : outcomeOf(run.lastResult),
+    artifact_short_id: run.lastResult?.shortId ?? null,
+  })
 }

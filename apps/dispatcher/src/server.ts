@@ -17,9 +17,11 @@ export function parseInvoke(body: unknown): InvokeRequest | string {
   const agentToken = str("agentToken")
   const manifest = str("manifest")
   const task = str("task")
+  const trigger = str("trigger")
   if (!agentToken) return "agentToken is required"
   if (!manifest) return "manifest is required"
   if (!task) return "task is required"
+  if (!trigger) return "trigger is required"
   const autonomy = b.autonomy
   if (autonomy !== "shadow" && autonomy !== "suggest" && autonomy !== "auto")
     return "autonomy must be shadow | suggest | auto"
@@ -34,6 +36,7 @@ export function parseInvoke(body: unknown): InvokeRequest | string {
     agentToken,
     manifest,
     task,
+    trigger,
     conventions: str("conventions") ?? undefined,
     autonomy,
     flags: { agentKillswitch: flags.agentKillswitch, agentAutoEnabled: flags.agentAutoEnabled },
