@@ -928,6 +928,9 @@ export interface AgentStore {
   // ---- Agents (mentionable principals that act via a scoped token) -------
   createAgent(a: NewAgent): Promise<AgentRecord>
   listAgents(orgId: string): Promise<AgentRecord[]>
+  /** Flip whether Derive's managed executor serves this agent. Workspace-scoped by
+   *  (id, org) like deleteAgent; null when the agent isn't in this workspace. */
+  setAgentHosted(id: string, orgId: string, hosted: 0 | 1): Promise<AgentRecord | null>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>
   /** Resolve a live OAuth access token (by its stored hash) to its grant. */
@@ -1236,6 +1239,9 @@ export interface AgentRecord {
   /** The user who registered the agent — who it publishes on behalf of.
    *  Null for pre-column agents (they publish as themselves). */
   created_by: string | null
+  /** 1 = served by Derive's managed executor. Hosting changes where the agent
+   *  runs, never its principal, role cap, or attribution. */
+  hosted: 0 | 1
   created_at: string
 }
 export interface NewAgent {
@@ -1245,6 +1251,7 @@ export interface NewAgent {
   token: string
   role: Role
   created_by?: string | null
+  hosted?: 0 | 1
 }
 
 export type AgentMentionState = "pending" | "done"
@@ -1824,6 +1831,20 @@ export interface OrgSettings {
   defaultWorkspaceAccess: WorkspaceAccess
   defaultLinkRole: LinkRole
   defaultListed: Listed
+  /** Master switch for Derive-hosted agent runs in this workspace. Off silences every
+   *  hosted run (the managed executor skips the workspace); owner-run agents are
+   *  unaffected. */
+  hostedAgentsEnabled: boolean
+  /** The agent-write killswitch, read fresh per run by the autonomy gate: when true,
+   *  every hosted agent write demotes to a proposal, instantly. */
+  agentKillswitch: boolean
+  /** Workspace opt-in for autonomy level `auto` to live-publish (always with a review
+   *  round). Off = auto behaves as suggest. */
+  agentAutoEnabled: boolean
+  /** The workspace's default agent (a registered agent id): the fallback actor for
+   *  users with no connected agent (the concierge, workspace-owned living docs).
+   *  Absent = none. */
+  defaultAgentId?: string
   /** The workspace's Brandprint: a conventions collection agents pull as context, plus
    *  the generated brand profile. Absent until set. Mirrored on a profile (user layer);
    *  resolved profile-over-workspace. */
@@ -1852,6 +1873,12 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   defaultWorkspaceAccess: "member",
   defaultLinkRole: "none",
   defaultListed: "none",
+  // Hosting on by default: it does nothing until an agent is flagged hosted, and
+  // the run-time safety lives in the autonomy gate (killswitch defaults off but
+  // every write still lands as a proposal until a workspace opts into auto).
+  hostedAgentsEnabled: true,
+  agentKillswitch: false,
+  agentAutoEnabled: false,
 }
 
 /** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot

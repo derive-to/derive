@@ -1120,7 +1120,29 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        patch?: never;
+        /** Update an agent's hosted flag (Admin only). */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The updated agent. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Agent"];
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/v1/me/connected-agents": {
@@ -5673,6 +5695,14 @@ export interface components {
              * @enum {string}
              */
             defaultListed: "none" | "workspace" | "public";
+            /** @description Master switch for Derive-hosted agent runs; off silences every hosted run. */
+            hostedAgentsEnabled: boolean;
+            /** @description When true, every hosted agent write demotes to a proposal, instantly. */
+            agentKillswitch: boolean;
+            /** @description Opt-in for autonomy 'auto' to live-publish (always with a review round). */
+            agentAutoEnabled: boolean;
+            /** @description The workspace's default agent: the fallback actor for users with no connected agent. Absent = none. */
+            defaultAgentId?: string;
             /** @description The workspace's Brandprint (conventions collection + brand-profile artifact); absent until set. */
             brandprint?: {
                 collectionId?: string | null;
@@ -5713,6 +5743,8 @@ export interface components {
              * @enum {string}
              */
             role: "viewer" | "commenter" | "editor" | "owner";
+            /** @description Served by Derive's managed executor. Hosting changes where the agent runs, never its principal or cap. */
+            hosted: boolean;
             created_at: string;
         };
         ConnectedAgent: {

@@ -259,6 +259,9 @@ export const agent = sqliteTable(
     // user). Null for agents from before the column existed — those publish as
     // themselves, so recreating the agent is the upgrade path.
     created_by: text("created_by"),
+    // Served by Derive's managed executor when 1. Hosting changes WHERE the
+    // agent runs — never its principal, role cap, or attribution.
+    hosted: integer("hosted").notNull().default(0).$type<0 | 1>(),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [

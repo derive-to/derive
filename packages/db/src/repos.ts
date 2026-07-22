@@ -2300,6 +2300,17 @@ export function makeRepos(db: SqliteDb) {
     (await db.insert(agent).values(a).returning().get()) as AgentRecord
   const listAgents = async (orgId: string): Promise<AgentRecord[]> =>
     db.select().from(agent).where(eq(agent.org_id, orgId)).all()
+  const setAgentHosted = async (
+    id: string,
+    orgId: string,
+    hosted: 0 | 1,
+  ): Promise<AgentRecord | null> =>
+    (await db
+      .update(agent)
+      .set({ hosted })
+      .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
+      .returning()
+      .get()) ?? null
   const getAgentByToken = async (token: string): Promise<AgentRecord | null> =>
     (await db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
   // Introspect a Better Auth oidc-provider access token (its own tables, same DB).
@@ -3018,6 +3029,7 @@ export function makeRepos(db: SqliteDb) {
     markNotificationsRead,
     createAgent,
     listAgents,
+    setAgentHosted,
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,

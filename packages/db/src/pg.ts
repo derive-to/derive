@@ -2282,6 +2282,14 @@ export class PgMetaStore implements MetaStore {
   listAgents(orgId: string): Promise<AgentRecord[]> {
     return this.db.select().from(agent).where(eq(agent.org_id, orgId))
   }
+  async setAgentHosted(id: string, orgId: string, hosted: 0 | 1): Promise<AgentRecord | null> {
+    const rows = await this.db
+      .update(agent)
+      .set({ hosted })
+      .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
+      .returning()
+    return rows[0] ?? null
+  }
   async getAgentByToken(token: string): Promise<AgentRecord | null> {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))
     return rows[0] ?? null
