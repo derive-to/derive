@@ -35,7 +35,7 @@ const WELCOME_HTML = `<!doctype html>
 
 const PLANTED_COMMENT = `Welcome! Here's your first task for the loop: add a short, warm
 one-line greeting to the top of this page that mentions the reader by name. When you're
-done, this comment resolves and the page becomes v2 — same URL, new version.`
+done, this comment resolves and the page becomes v2 at the same URL, a new version.`
 
 const WELCOME_TITLE = "Welcome to Derive"
 
