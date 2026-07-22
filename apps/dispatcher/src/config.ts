@@ -25,6 +25,11 @@ export type DispatcherConfig = {
   dataDir: string
   drainTimeoutMs: number
   contexts: ManagedContext[]
+  /** The shared secret the API presents to the host's internal HTTP surface.
+   *  Absent (self-host without the shared lane) disables the HTTP server. */
+  hostSecret: string | null
+  /** Port for the internal invoke/health surface. */
+  httpPort: number
 }
 
 // Per-minute: the pull cadence until the webhook kick lands. pg-boss cron is
@@ -90,6 +95,8 @@ export function loadDispatcherConfig(env: NodeJS.ProcessEnv = process.env): Disp
     // past this, and pg-boss's retry takes it from there.
     drainTimeoutMs: positiveMs(env.DISPATCHER_DRAIN_TIMEOUT_MS, 660_000),
     contexts,
+    hostSecret: env.DISPATCHER_HOST_SECRET?.trim() || null,
+    httpPort: Number(env.DISPATCHER_HTTP_PORT) || 3040,
   }
 }
 

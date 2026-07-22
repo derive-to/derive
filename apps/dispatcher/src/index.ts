@@ -1,14 +1,26 @@
 // The managed executor from the built-in agent plan: pg-boss (cron + retries +
-// singleton-per-queue, all in Postgres) pointed at the public runner contract.
-// One queue per managed context; every cron tick drains that context's session
-// queue via `derive runner once`. Deliberately thin: the Derive API, the model,
-// and the answer contract all live in the runner — if this process needed a
-// private API, that would be a bug in the plan.
+// singleton-per-queue, all in Postgres) drains OWNER-run contexts via `derive
+// runner once`, and — when the hosted lane is configured — an internal HTTP
+// surface (WP3) runs SHARED hosted agents live. The Derive API, the model, and
+// the answer contract live in the runner and the hosted-agent harness; the
+// dispatcher owns scheduling + process lifecycle only.
+import { serve } from "@hono/node-server"
 import PgBoss from "pg-boss"
 import { loadDispatcherConfig, resolveToken } from "./config"
 import { runDrain } from "./drain"
+import type { ModelResolver } from "./invoke"
+import { buildServer } from "./server"
 
 const queueFor = (id: string) => `drain:${id}`
+
+// The model is wired by the host, never by the harness (Q4 neutrality). Until a
+// provider is configured, the hosted lane accepts requests but fails the run
+// with a clear message rather than pretending to be ready.
+const resolveModel: ModelResolver = () => {
+  throw new Error(
+    "no model provider configured for the hosted lane — set one up in the host (e.g. an @ai-sdk provider) and wire resolveModel",
+  )
+}
 
 async function main() {
   const cfg = loadDispatcherConfig()
@@ -46,7 +58,16 @@ async function main() {
     console.log(`[dispatcher] scheduled ${ctx.id} (${ctx.cron})`)
   }
 
+  // The hosted-lane HTTP surface, only when a secret is configured — self-host
+  // without the shared lane runs pg-boss alone.
+  let httpServer: ReturnType<typeof serve> | undefined
+  if (cfg.hostSecret) {
+    httpServer = serve({ fetch: buildServer({ cfg, resolveModel }).fetch, port: cfg.httpPort })
+    console.log(`[dispatcher] hosted-lane HTTP surface on :${cfg.httpPort}`)
+  }
+
   const stop = async () => {
+    httpServer?.close()
     await boss.stop()
     process.exit(0)
   }
