@@ -156,6 +156,40 @@ export type Notification = components["schemas"]["Notification"]
 export type Webhook = components["schemas"]["Webhook"]
 /** A workspace-registered agent. Generated from the OpenAPI spec. */
 export type Agent = components["schemas"]["Agent"]
+
+/** How an automation fires. Manual = a Run button; schedule = a cron in a timezone;
+ *  event = a subscription. Hand-typed: the automation routes are the agent-facing plain
+ *  surface, not the OpenAPI web spec. */
+export interface AutomationTrigger {
+  kind: "manual" | "schedule" | "event"
+  cron?: string
+  tz?: string
+  on?: string
+}
+/** A standing agent job: an agent + a trigger + a free-form instruction (+ optional refs).
+ *  Every firing is a Run. */
+export interface Automation {
+  id: string
+  agent_id: string
+  trigger: AutomationTrigger
+  instruction: string
+  refs: string[]
+  route: "auto" | "proposal"
+  enabled: boolean
+  created_at: string
+}
+/** One execution — the queue (queued/running) and the ledger (succeeded/failed) in one row. */
+export interface Run {
+  id: string
+  automation_id: string | null
+  agent_id: string
+  reason: string
+  status: "queued" | "running" | "succeeded" | "failed"
+  cost_micro_usd: number | null
+  meta: string | null
+  created_at: string
+  finished_at: string | null
+}
 /** An askable agent setup: a registered agent wired to a manifest artifact.
  *  Generated from the OpenAPI spec. */
 export type ContextInfo = components["schemas"]["ContextInfo"]
@@ -690,6 +724,22 @@ export const api = {
     f("/v1/agents", opts({ name, role })).then(j),
   deleteAgent: (id: string): Promise<void> =>
     f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+
+  // Automations + runs (the standing-agent-work surface; see routes/automations.ts).
+  listAutomations: (): Promise<{ automations: Automation[] }> =>
+    f("/v1/automations", opts()).then(j),
+  createAutomation: (input: {
+    agentId: string
+    trigger: AutomationTrigger
+    instruction: string
+    refs?: string[]
+    route?: "auto" | "proposal"
+  }): Promise<Automation> => f("/v1/automations", opts(input)).then(j),
+  deleteAutomation: (id: string): Promise<void> =>
+    f(`/v1/automations/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+  runAutomation: (id: string): Promise<{ id: string; status: string }> =>
+    f(`/v1/automations/${id}/run`, opts({})).then(j),
+  listRuns: (): Promise<{ runs: Run[] }> => f("/v1/workspace/runs", opts()).then(j),
 
   // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
   listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),

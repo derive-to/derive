@@ -345,6 +345,20 @@ export const agentsQuery = () =>
     queryFn: () => api.listAgents().then((r) => r.agents),
   })
 
+// Automations (standing agent jobs) + runs (their executions — the activity ledger).
+// Invalidated on create / delete / run-now.
+export const automationsQuery = () =>
+  queryOptions({
+    queryKey: ["automations"] as const,
+    queryFn: () => api.listAutomations().then((r) => r.automations),
+  })
+
+export const runsQuery = () =>
+  queryOptions({
+    queryKey: ["runs"] as const,
+    queryFn: () => api.listRuns().then((r) => r.runs),
+  })
+
 // The agents an artifact viewer may address (the "ask an agent to revise" flow). Read
 // off the @mention directory (which any commenter can see, unlike /v1/agents which is
 // owner-only), filtered to kind:"agent". Stable per artifact.

@@ -8,6 +8,7 @@ import { reportsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AgentsSection } from "./agents-section"
 import { AppearanceSection } from "./appearance-section"
+import { AutomationsSection } from "./automations-section"
 import { CustomDomainsSection } from "./custom-domains-section"
 import { GeneralSection } from "./general-section"
 import { GithubSection } from "./github-section"
@@ -35,6 +36,7 @@ const SECTION_TITLES: Record<string, string> = {
   github: "GitHub",
   webhooks: "Webhooks",
   agents: "Agents",
+  automations: "Automations",
   domains: "Domains",
   reports: "Reports",
 }
@@ -86,6 +88,7 @@ export function Settings() {
         { id: "github", label: "GitHub", testId: "settings-tab-github" },
         { id: "webhooks", label: "Webhooks", testId: "settings-tab-webhooks" },
         { id: "agents", label: "Agents", testId: "settings-tab-agents" },
+        { id: "automations", label: "Automations", testId: "settings-tab-automations" },
         { id: "domains", label: "Domains", testId: "settings-tab-domains" },
       ],
     },
@@ -139,6 +142,7 @@ export function Settings() {
             {active === "github" && <GithubSection />}
             {active === "webhooks" && <WebhooksSection />}
             {active === "agents" && <AgentsSection />}
+            {active === "automations" && <AutomationsSection />}
             {active === "domains" && <CustomDomainsSection />}
             {active === "reports" && (
               <ReportsSection
