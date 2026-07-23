@@ -2232,6 +2232,30 @@ export function runStoreContract(
       expect(list.some((a) => a.id === a1.id)).toBe(true)
     })
 
+    it("updates an automation partially, org-scoped; wrong org is a null no-op", async () => {
+      const rec = await store.createAutomation({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: uuid(),
+        trigger: JSON.stringify({ kind: "manual" }),
+        instruction: "before",
+      })
+      const upd = await store.updateAutomation(rec.id, ORG, {
+        instruction: "after",
+        enabled: 0,
+      })
+      expect(upd?.instruction).toBe("after")
+      expect(upd?.enabled).toBe(0)
+      // Untouched fields survive.
+      expect(upd?.trigger).toBe(rec.trigger)
+      // Cross-org: no row updated.
+      expect(
+        await store.updateAutomation(rec.id, "other-org", { instruction: "hijack" }),
+      ).toBeNull()
+      // Empty patch returns the current row.
+      expect((await store.updateAutomation(rec.id, ORG, {}))?.instruction).toBe("after")
+    })
+
     it("batch-loads automations by id in one query; empty ids ⇒ []", async () => {
       const agentId = uuid()
       const mk = () =>
