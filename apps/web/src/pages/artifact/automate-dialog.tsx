@@ -44,7 +44,7 @@ export function AutomateDialog({
           <AutomationForm
             refs={[shortId]}
             defaultInstruction="Keep this document current."
-            onCreated={() => onOpenChange(false)}
+            onDone={() => onOpenChange(false)}
           />
         ) : (
           <p className="text-sm text-muted-foreground">
