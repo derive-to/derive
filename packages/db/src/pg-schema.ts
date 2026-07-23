@@ -17,6 +17,7 @@ import type {
   ReportState,
   ReviewRoundState,
   Role,
+  RunStatus,
   SessionMessageAuthor,
   SessionState,
   VersionSource,
@@ -169,6 +170,35 @@ export const renderJob = pgTable("render_job", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
+// An automation (WP5): a standing agent job (agent + trigger + instruction + refs). The
+// definition only; every firing is a `run`. See schema.ts for the full contract.
+export const automation = pgTable("automation", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  agent_id: text("agent_id").notNull(),
+  trigger: text("trigger").notNull(),
+  instruction: text("instruction").notNull(),
+  refs: text("refs"),
+  enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+
+// A run (WP5/WP6): one execution — the queue and the ledger in one table. See schema.ts.
+export const run = pgTable("run", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  automation_id: text("automation_id"),
+  agent_id: text("agent_id").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").$type<RunStatus>().notNull(),
+  scheduled_for: text("scheduled_for"),
+  started_at: text("started_at"),
+  finished_at: text("finished_at"),
+  cost_micro_usd: integer("cost_micro_usd"),
+  meta: text("meta"),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+
 export const membership = pgTable(
   "membership",
   {
@@ -227,6 +257,8 @@ export const agent = pgTable(
     role: text("role").$type<Role>().notNull().default("commenter"),
     // Who registered the agent — the person it publishes on behalf of (see schema.ts).
     created_by: text("created_by"),
+    // Served by Derive's managed executor when 1 (see schema.ts).
+    hosted: integer("hosted").notNull().default(0).$type<0 | 1>(),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [
@@ -712,6 +744,8 @@ const TABLES = [
   notification,
   agent,
   agentMention,
+  automation,
+  run,
   invitation,
   artifactInvite,
   betaSignup,

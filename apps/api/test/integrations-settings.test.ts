@@ -20,6 +20,10 @@ describe("workspace integration settings", () => {
       defaultWorkspaceAccess: "member",
       defaultLinkRole: "none",
       defaultListed: "none",
+      // Hosted-agent controls (WP1): hosting available, no autonomy until opted in.
+      hostedAgentsEnabled: true,
+      agentKillswitch: false,
+      agentAutoEnabled: false,
     })
   })
 

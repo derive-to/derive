@@ -86,6 +86,21 @@ export const workspaceRoutes = (ctx: AppContext) => {
       defaultListed: z
         .enum(["none", "workspace", "public"])
         .describe("Listing a new publish lands with: none (default), workspace, or public."),
+      hostedAgentsEnabled: z
+        .boolean()
+        .describe("Master switch for Derive-hosted agent runs; off silences every hosted run."),
+      agentKillswitch: z
+        .boolean()
+        .describe("When true, every hosted agent write demotes to a proposal, instantly."),
+      agentAutoEnabled: z
+        .boolean()
+        .describe("Opt-in for autonomy 'auto' to live-publish (always with a review round)."),
+      defaultAgentId: z
+        .string()
+        .optional()
+        .describe(
+          "The workspace's default agent: the fallback actor for users with no connected agent. Absent = none.",
+        ),
       brandprint: BrandprintSchema.optional().describe(
         "The workspace's Brandprint (conventions collection + brand-profile artifact); absent until set.",
       ),
@@ -583,6 +598,10 @@ export const workspaceRoutes = (ctx: AppContext) => {
             defaultWorkspaceAccess: z.enum(["none", "member"]),
             defaultLinkRole: z.enum(["none", "viewer", "commenter", "editor"]),
             defaultListed: z.enum(["none", "workspace", "public"]),
+            hostedAgentsEnabled: z.boolean(),
+            agentKillswitch: z.boolean(),
+            agentAutoEnabled: z.boolean(),
+            defaultAgentId: z.string().nullable(),
             brandprint: BrandprintSchema.nullable(),
           })
           .partial(),
@@ -590,10 +609,19 @@ export const workspaceRoutes = (ctx: AppContext) => {
       if (b instanceof Response) return bail(b)
       // Merge over current (so a partial PATCH only flips the keys it sends). Brandprint
       // is pulled out and merged one level deep below, so setting collectionId alone
-      // doesn't wipe an existing profileId (and vice versa).
-      const { brandprint, ...flat } = b
+      // doesn't wipe an existing profileId (and vice versa). defaultAgentId is pulled
+      // out too: null clears it, and a set must name an agent in THIS workspace (the
+      // store doesn't check ownership, so the route does — same rule as brandprint).
+      const { brandprint, defaultAgentId, ...flat } = b
       const cur = await meta.getOrgSettings(org)
       const next = { ...cur, ...flat }
+      if (defaultAgentId === null) next.defaultAgentId = undefined
+      else if (defaultAgentId) {
+        const agents = await meta.listAgents(org)
+        if (!agents.some((a) => a.id === defaultAgentId))
+          return bail(fail(c, 400, "default agent not found in this workspace"))
+        next.defaultAgentId = defaultAgentId
+      }
       if (brandprint === null) next.brandprint = undefined
       else if (brandprint) {
         // Both pointers must be owned by this workspace: an unvalidated id could point
@@ -795,6 +823,16 @@ export const workspaceRoutes = (ctx: AppContext) => {
       return c.json({ deleted: id, active: wasActive ? next : null })
     },
   )
+
+  // The agent activity view (WP6): the workspace's recent runs, newest first — the ledger
+  // half of the run table. Admin-only: it exposes what every agent did, why, and what it
+  // cost. A plain route (not in the OpenAPI spec); the web activity page consumes it directly.
+  app.get("/v1/workspace/runs", async (c) => {
+    const org = await requireWorkspace(c, "manage")
+    if (org instanceof Response) return org
+    const limit = Math.min(200, Math.max(1, Number(c.req.query("limit")) || 50))
+    return c.json({ runs: await meta.listRuns(org, limit) })
+  })
 
   return app
 }

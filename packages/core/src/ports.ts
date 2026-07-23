@@ -962,6 +962,43 @@ export interface AgentStore {
   // ---- Agents (mentionable principals that act via a scoped token) -------
   createAgent(a: NewAgent): Promise<AgentRecord>
   listAgents(orgId: string): Promise<AgentRecord[]>
+  /** Flip whether Derive's managed executor serves this agent. Workspace-scoped by
+   *  (id, org) like deleteAgent; null when the agent isn't in this workspace. */
+  setAgentHosted(id: string, orgId: string, hosted: 0 | 1): Promise<AgentRecord | null>
+  // ---- Automations + runs (the generic agent-work primitive) -------------
+  /** Create an automation (a standing agent job). */
+  createAutomation(a: NewAutomation): Promise<AutomationRecord>
+  /** One automation by id, or null. */
+  getAutomation(id: string): Promise<AutomationRecord | null>
+  /** Batch-load automations by id in ONE query (id ∈ ids). Order is unspecified; callers
+   *  key by `id`. Empty ids ⇒ []. Use this over a per-id getAutomation loop. */
+  getAutomationsByIds(ids: string[]): Promise<AutomationRecord[]>
+  /** A workspace's automations, newest first. Default 100. */
+  listAutomations(orgId: string, limit?: number): Promise<AutomationRecord[]>
+  /** Remove an automation and cancel its still-queued runs, org-scoped so a caller can't
+   *  reach across tenants. Running/finished runs stay as history. */
+  deleteAutomation(id: string, orgId: string): Promise<void>
+  /** Enqueue or record a run. status defaults to "queued" (pending work); pass a terminal
+   *  status to record an already-finished run straight into the ledger. */
+  createRun(r: NewRun): Promise<RunRecord>
+  /** Atomically claim due queued runs for one agent: status "queued" with scheduled_for ≤
+   *  now, flipped to "running" (started_at = now) under a row lock so concurrent executors
+   *  never double-run one. Returns the claimed rows, oldest-scheduled first. */
+  claimDueRuns(agentId: string, now: string, limit?: number): Promise<RunRecord[]>
+  /** Terminate a run: set the terminal status, finished_at, and (optional) cost + meta.
+   *  Scoped to (id, agent) so only the claiming agent settles it. */
+  finishRun(
+    id: string,
+    agentId: string,
+    fields: {
+      status: RunStatus
+      finishedAt: string
+      costMicroUsd?: number | null
+      meta?: string | null
+    },
+  ): Promise<RunRecord | null>
+  /** The workspace's recent runs, newest first (the activity view / ledger). Default 50. */
+  listRuns(orgId: string, limit?: number): Promise<RunRecord[]>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>
   /** Resolve a live OAuth access token (by its stored hash) to its grant. */
@@ -1270,6 +1307,9 @@ export interface AgentRecord {
   /** The user who registered the agent — who it publishes on behalf of.
    *  Null for pre-column agents (they publish as themselves). */
   created_by: string | null
+  /** 1 = served by Derive's managed executor. Hosting changes where the agent
+   *  runs, never its principal, role cap, or attribution. */
+  hosted: 0 | 1
   created_at: string
 }
 export interface NewAgent {
@@ -1279,6 +1319,99 @@ export interface NewAgent {
   token: string
   role: Role
   created_by?: string | null
+  hosted?: 0 | 1
+}
+
+// ---- Automations + runs: the generic agent-work primitive --------------
+// Two tables, industry-standard: a DEFINITION (what to run, and the rule for when) and its
+// EXECUTIONS (each firing, with state + result — the queue and the ledger in one table,
+// pg-boss's model). Living-doc refresh, a scheduled digest, an event-driven update, an
+// ad-hoc "run once" are all rows here with different triggers and instructions.
+
+export type TriggerKind = "manual" | "schedule" | "event"
+
+/** How an automation fires. Open-ended JSON on the row — a new kind adds no columns. */
+export interface AutomationTrigger {
+  kind: TriggerKind
+  /** schedule: a 5-field cron. */
+  cron?: string
+  /** schedule: an IANA timezone. */
+  tz?: string
+  /** event: the event name (e.g. "comment.opened", "upstream.published", "webhook"). */
+  on?: string
+}
+
+/** A standing agent job: WHAT to do (instruction), WHO does it (agent), and the rule for
+ *  WHEN (trigger). The definition only — every firing is a `run`. A "living artifact" is
+ *  just an automation whose instruction is "keep this current" with a ref to the doc. */
+export interface AutomationRecord {
+  id: string
+  org_id: string
+  /** The agent that runs it — the runs act as this principal. */
+  agent_id: string
+  /** Serialized AutomationTrigger (JSON text); parse with parseTrigger. */
+  trigger: string
+  /** Free-form: what the agent should do. */
+  instruction: string
+  /** Serialized inputs/targets (artifact ids, urls, arbitrary), or null. */
+  refs: string | null
+  enabled: 0 | 1
+  created_at: string
+}
+
+export interface NewAutomation {
+  id: string
+  org_id: string
+  agent_id: string
+  trigger: string
+  instruction: string
+  refs?: string | null
+  enabled?: 0 | 1
+}
+
+/** How a run's work landed — the semantic outcome, kept in the run's meta blob (not a
+ *  column). Mirrors the autonomy-gate decisions plus the ask-answer terminal. */
+export type RunOutcome = "answered" | "published" | "proposed" | "shadow" | "escalated"
+
+/** A run's execution state. queued = pending work in the queue; a terminal state = history
+ *  in the ledger. The same table serves both. */
+export type RunStatus = "queued" | "running" | "succeeded" | "failed"
+
+/** One execution of an automation (or an ad-hoc one-off). The queue and the ledger in one
+ *  table: a worker claims the oldest queued run due now, runs it, and finishes it. Cost is
+ *  snapshotted at finish (micro-USD, integer). */
+export interface RunRecord {
+  id: string
+  org_id: string
+  /** The automation that produced it, or null for an ad-hoc run. */
+  automation_id: string | null
+  agent_id: string
+  /** What fired it: "manual:<userId>", "schedule", "event:<name>" (free text). */
+  reason: string
+  status: RunStatus
+  /** When it should run (queue time); claimed once this is <= now. Null = as soon as possible. */
+  scheduled_for: string | null
+  started_at: string | null
+  finished_at: string | null
+  cost_micro_usd: number | null
+  /** Serialized meta (model, tokens, outcome, refs, anything), or null. */
+  meta: string | null
+  created_at: string
+}
+
+export interface NewRun {
+  id: string
+  org_id: string
+  automation_id?: string | null
+  agent_id: string
+  reason: string
+  /** Defaults to "queued". */
+  status?: RunStatus
+  scheduled_for?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+  cost_micro_usd?: number | null
+  meta?: string | null
 }
 
 export type AgentMentionState = "pending" | "done"
@@ -1885,6 +2018,20 @@ export interface OrgSettings {
   defaultWorkspaceAccess: WorkspaceAccess
   defaultLinkRole: LinkRole
   defaultListed: Listed
+  /** Master switch for Derive-hosted agent runs in this workspace. Off silences every
+   *  hosted run (the managed executor skips the workspace); owner-run agents are
+   *  unaffected. */
+  hostedAgentsEnabled: boolean
+  /** The agent-write killswitch, read fresh per run by the autonomy gate: when true,
+   *  every hosted agent write demotes to a proposal, instantly. */
+  agentKillswitch: boolean
+  /** Workspace opt-in for autonomy level `auto` to live-publish (always with a review
+   *  round). Off = auto behaves as suggest. */
+  agentAutoEnabled: boolean
+  /** The workspace's default agent (a registered agent id): the fallback actor for
+   *  users with no connected agent (the concierge, workspace-owned living docs).
+   *  Absent = none. */
+  defaultAgentId?: string
   /** The workspace's Brandprint: a conventions collection agents pull as context, plus
    *  the generated brand profile. Absent until set. Mirrored on a profile (user layer);
    *  resolved profile-over-workspace. */
@@ -1913,6 +2060,12 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   defaultWorkspaceAccess: "member",
   defaultLinkRole: "none",
   defaultListed: "none",
+  // Hosting on by default: it does nothing until an agent is flagged hosted, and
+  // the run-time safety lives in the autonomy gate (killswitch defaults off but
+  // every write still lands as a proposal until a workspace opts into auto).
+  hostedAgentsEnabled: true,
+  agentKillswitch: false,
+  agentAutoEnabled: false,
 }
 
 /** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot

@@ -71,7 +71,7 @@ describe("can", () => {
   })
 })
 
-// The world link (docs/plans/access-model.md), every cell of the matrix. The
+// The world link (docs/access-model.md), every cell of the matrix. The
 // invariants: an anonymous holder is NEVER more than viewer; the link grants any
 // signed-in holder (member or not) its role; a non-member gets NOTHING by
 // workspace access. Mirrors SECURITY.md.

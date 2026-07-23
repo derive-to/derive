@@ -863,6 +863,22 @@
             ],
             "description": "Listing a new publish lands with: none (default), workspace, or public."
           },
+          "hostedAgentsEnabled": {
+            "type": "boolean",
+            "description": "Master switch for Derive-hosted agent runs; off silences every hosted run."
+          },
+          "agentKillswitch": {
+            "type": "boolean",
+            "description": "When true, every hosted agent write demotes to a proposal, instantly."
+          },
+          "agentAutoEnabled": {
+            "type": "boolean",
+            "description": "Opt-in for autonomy 'auto' to live-publish (always with a review round)."
+          },
+          "defaultAgentId": {
+            "type": "string",
+            "description": "The workspace's default agent: the fallback actor for users with no connected agent. Absent = none."
+          },
           "brandprint": {
             "type": "object",
             "properties": {
@@ -888,7 +904,10 @@
           "slackPost",
           "defaultWorkspaceAccess",
           "defaultLinkRole",
-          "defaultListed"
+          "defaultListed",
+          "hostedAgentsEnabled",
+          "agentKillswitch",
+          "agentAutoEnabled"
         ]
       },
       "Workspaces": {
@@ -993,6 +1012,10 @@
             ],
             "description": "Permission level; commenter proposes only, editor can write, owner never allowed"
           },
+          "hosted": {
+            "type": "boolean",
+            "description": "Served by Derive's managed executor. Hosting changes where the agent runs, never its principal or cap."
+          },
           "created_at": {
             "type": "string"
           }
@@ -1001,6 +1024,7 @@
           "id",
           "name",
           "role",
+          "hosted",
           "created_at"
         ]
       },
@@ -3887,6 +3911,34 @@
       }
     },
     "/v1/agents/{id}": {
+      "patch": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Update an agent's hosted flag (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated agent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Agent"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "Agents"

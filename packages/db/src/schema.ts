@@ -17,6 +17,7 @@ import type {
   ReportState,
   ReviewRoundState,
   Role,
+  RunStatus,
   SessionMessageAuthor,
   SessionState,
   VersionSource,
@@ -44,7 +45,7 @@ export const artifact = sqliteTable("artifact", {
   org_id: text("org_id").notNull().default("local"),
   slug: text("slug"),
   title: text("title"),
-  // The access model (docs/plans/access-model.md), three independent fields.
+  // The access model (docs/access-model.md), three independent fields.
   // workspace_access: does the artifact's workspace get access at each member's
   // SEAT role (`member`) or not (`none`). link_role: the WORLD link — what anyone
   // holding the URL gets (`none` inert / viewer / commenter / editor; anon clamped
@@ -197,6 +198,46 @@ export const renderJob = sqliteTable("render_job", {
   created_at: text("created_at").notNull().default(now),
 })
 
+// The run ledger (WP6): one row per hosted/owner agent invocation — the durable
+// An automation (WP5): a standing agent job — WHO (agent), WHEN (trigger, open-ended
+// JSON), WHAT (free-form instruction), on WHAT (refs). The definition only; every firing
+// is a `run`. A "living doc" is just an automation whose instruction keeps a doc current.
+export const automation = sqliteTable("automation", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  agent_id: text("agent_id").notNull(),
+  // Serialized AutomationTrigger { kind: manual|schedule|event, cron?, tz?, on? }. A new
+  // trigger kind adds no columns — it is a new value in this blob.
+  trigger: text("trigger").notNull(),
+  instruction: text("instruction").notNull(),
+  // Serialized inputs/targets (artifact ids, urls, arbitrary), or null.
+  // How each write lands (publish vs propose) rides IN the refs blob per target —
+  // policy is config, config evolves, and evolving config never gets a column.
+  refs: text("refs"),
+  enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
+  created_at: text("created_at").notNull().default(now),
+})
+
+// A run (WP5/WP6): one execution of an automation (or an ad-hoc one-off). The queue and
+// the ledger in ONE table (pg-boss's model): a `queued` row is pending work, a terminal
+// row is history. A worker claims the oldest due queued run under a row lock, runs it, and
+// finishes it. Cost is snapshotted at finish (micro-USD int); everything else lives in the
+// open `meta` blob, so a new field never means a new column.
+export const run = sqliteTable("run", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  automation_id: text("automation_id"),
+  agent_id: text("agent_id").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").$type<RunStatus>().notNull(),
+  scheduled_for: text("scheduled_for"),
+  started_at: text("started_at"),
+  finished_at: text("finished_at"),
+  cost_micro_usd: integer("cost_micro_usd"),
+  meta: text("meta"),
+  created_at: text("created_at").notNull().default(now),
+})
+
 export const membership = sqliteTable(
   "membership",
   {
@@ -259,6 +300,9 @@ export const agent = sqliteTable(
     // user). Null for agents from before the column existed — those publish as
     // themselves, so recreating the agent is the upgrade path.
     created_by: text("created_by"),
+    // Served by Derive's managed executor when 1. Hosting changes WHERE the
+    // agent runs — never its principal, role cap, or attribution.
+    hosted: integer("hosted").notNull().default(0).$type<0 | 1>(),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [
@@ -861,6 +905,8 @@ const TABLES = [
   notification,
   agent,
   agentMention,
+  automation,
+  run,
   invitation,
   artifactInvite,
   betaSignup,

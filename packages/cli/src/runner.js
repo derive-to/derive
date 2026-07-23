@@ -9,8 +9,16 @@
 // Ported from packages/runner (TS) into the published CLI so `derive runner
 // serve` works from a bare npx on any machine — one package, no build step.
 import { spawn } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs"
-import { dirname, join } from "node:path"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "node:fs"
+import { dirname, join, resolve, sep } from "node:path"
 import {
   conventionsBlock,
   materializeNotes,
@@ -311,7 +319,17 @@ export async function syncRepos(repos, cwd) {
       res = await git(["-C", dir, "fetch", "--depth", "1", "origin", ...(r.ref ? [r.ref] : [])])
       if (res.code === 0) res = await git(["-C", dir, "checkout", "-q", "--detach", "FETCH_HEAD"])
     } else {
-      mkdirSync(dirname(dir), { recursive: true })
+      // Same "loud but non-fatal" contract as a failed clone. An unwritable cwd
+      // (bind-mount owner vs container uid) used to throw HERE, before the
+      // handling below — taking the whole daemon down at boot, on repeat, under
+      // restart:unless-stopped. A runner with no repos still answers.
+      try {
+        mkdirSync(dirname(dir), { recursive: true })
+      } catch (e) {
+        console.error(`[runner] repo ${r.url}: cannot create ${dirname(dir)} — ${e.message}`)
+        catalog.push({ ...r, dir, sha: null })
+        continue
+      }
       res = await git(["clone", "--depth", "1", ...(r.ref ? ["--branch", r.ref] : []), r.url, dir])
     }
     if (res.code !== 0) {
@@ -324,6 +342,26 @@ export async function syncRepos(repos, cwd) {
     console.log(`[runner] repo ${repoSlug(r.url)} @ ${sha.out} (${r.ref ?? "default branch"})`)
   }
   return catalog
+}
+
+/** Can the runner actually WRITE here? `statSync` proves the cwd exists, which
+ *  is not the same thing: the runner clones repos, materializes skills, and now
+ *  reads back artifact files under it. Returns null when writable, else the
+ *  reason — so doctor reports rather than throws. */
+export function checkWritable(dir) {
+  let probe
+  try {
+    // mkdtemp, not a pid-named dir: a probe leaked by a killed doctor (pid 1 in
+    // a fresh container, every time) would make the NEXT run report EEXIST on a
+    // perfectly writable directory — a health check that fails once and then
+    // fails forever.
+    probe = mkdtempSync(join(dir, ".derive-probe-"))
+    return null
+  } catch (e) {
+    return e.message
+  } finally {
+    if (probe) rmSync(probe, { recursive: true, force: true })
+  }
 }
 
 /** The prompt block that tells the model what's on disk and at which SHA. An
@@ -368,11 +406,17 @@ Do not end with prose like "this looks good" — end with the block.
 Escalate (escalate: true, with a short reason) when the manifest's escalation
 rules say so — still produce your best draft in body_md.
 
-When the asker wants a chart, visual, or report page, set "artifact" to
-{"title": "...", "html": "<!doctype html>..."} — ONE fully self-contained HTML
-document (inline CSS/JS/SVG, no external requests; it renders in a sandbox).
-Put the artifact's FULL HTML INLINE in that field — do NOT write it to a file
-and do NOT reference a path; a file on disk never reaches the asker. It is
+When the asker wants a chart, visual, or report page, set "artifact" to ONE
+fully self-contained HTML document (inline CSS/JS/SVG, no external requests; it
+renders in a sandbox), through either channel:
+  - small page — inline it: {"title": "...", "html": "<!doctype html>..."}
+  - large page, or one you built with a script — write the file inside your
+    WORKING DIRECTORY (not /tmp — a path outside it is refused) and send its
+    relative path instead: {"title": "...", "path": "companion.html"}
+The runner reads that file and publishes it for you, so a big page never has to
+survive being re-typed into JSON. The path must be a .html file that already
+exists inside your working directory when you send the block — it names the page
+you built, never some other file you happen to have read. It is
 published for you and linked under your answer; keep body_md as the prose
 summary. Otherwise leave artifact null.`
 
@@ -385,6 +429,66 @@ export function buildPrompt(messages) {
     .map((m) => `[${m.author_kind === "asker" ? "asker" : "you"}] ${m.body_md}`)
     .join("\n\n")
   return `Session transcript:\n\n${transcript}\n\nAnswer the asker's latest message (it may sit above your own last reply, if they followed up while you were answering).`
+}
+
+// 2MB cap: big enough for any inline-SVG/JS chart, small enough that a runaway
+// generation can't turn one answer into a storage-quota event.
+const MAX_ARTIFACT_CHARS = 2_000_000
+
+/** Resolve an artifact to the HTML to publish. Inline passes straight through;
+ *  a path is read from disk under three guards.
+ *
+ *  Be honest about what those guards are for. They are NOT a confidentiality
+ *  boundary against the model: it runs with permissions skipped in this very
+ *  directory, already holds the runner's credentials in its environment, and
+ *  can `cp` any file it can read into cwd. What they stop is a path STRING
+ *  that shouldn't be honored — one an asker's prompt injection, or a confused
+ *  model, points at something that was never meant for publication — and a
+ *  mis-aimed path taking the daemon down:
+ *    - inside cwd (both sides realpath'd, so a symlink out is an escape;
+ *      relative is what the contract asks for, absolute-inside-cwd is tolerated)
+ *    - a regular .html/.htm file, so a FIFO can't block the poll loop forever
+ *      and a directory/device isn't read at all
+ *    - sized BEFORE reading, so a mis-pointed 600MB dump can't OOM the daemon
+ *  Returns {html} or {error}; the caller demotes an error to a caveat, never a
+ *  failed session. */
+export function resolveArtifactHtml(artifact, cwd) {
+  if (typeof artifact.html === "string") {
+    // parseAnswer already enforces both, but this function is the guard layer
+    // its own callers trust — don't let the invariant live in one place only.
+    if (!artifact.html.trim()) return { error: "the inline artifact html is empty" }
+    if (artifact.html.length > MAX_ARTIFACT_CHARS)
+      return { error: "the inline artifact html is over the 2MB cap" }
+    return { html: artifact.html }
+  }
+  const rel = artifact.path
+  if (!/\.html?$/i.test(rel))
+    return { error: `${rel} is not a .html file — the artifact path must name the page you built` }
+  let root
+  let full
+  let st
+  try {
+    root = realpathSync(resolve(cwd))
+    full = realpathSync(resolve(root, rel))
+    st = statSync(full)
+  } catch (e) {
+    return { error: `cannot read ${rel} (${e.code ?? e.message})` }
+  }
+  if (full !== root && !full.startsWith(root + sep))
+    return { error: `${rel} resolves outside the working directory` }
+  if (!st.isFile()) return { error: `${rel} is not a regular file` }
+  if (st.size > MAX_ARTIFACT_CHARS)
+    return {
+      error: `${rel} is ${st.size} bytes — over the ${MAX_ARTIFACT_CHARS}-char artifact cap`,
+    }
+  let html
+  try {
+    html = readFileSync(full, "utf8")
+  } catch (e) {
+    return { error: `cannot read ${rel} (${e.code ?? e.message})` }
+  }
+  if (!html.trim()) return { error: `${rel} is empty` }
+  return { html }
 }
 
 /** Extract + validate the <answer> block from the assistant's final text. */
@@ -406,20 +510,18 @@ export function parseAnswer(text) {
   if (!raw || typeof raw !== "object") return { error: "answer is not an object" }
   if (typeof raw.body_md !== "string" || !raw.body_md.trim())
     return { error: "body_md must be a non-empty string" }
-  // 2MB cap: big enough for any inline-SVG/JS chart, small enough that a
-  // runaway generation can't turn one answer into a storage-quota event.
+  // Two channels, inline first: html when it fits, otherwise a file the runner
+  // reads (resolveArtifactHtml). Oversized inline WITH a path falls through to
+  // the file rather than dropping the artifact on the floor.
   const a = raw.artifact
-  const artifact =
-    a &&
-    typeof a === "object" &&
-    typeof a.title === "string" &&
-    a.title.trim() &&
-    typeof a.html === "string" &&
-    a.html.trim() &&
-    a.html.length <= 2_000_000
-      ? // Title is model-generated: clamp it to card width, not to trust it less.
-        { title: a.title.trim().slice(0, 120), html: a.html }
-      : null
+  let artifact = null
+  if (a && typeof a === "object" && typeof a.title === "string" && a.title.trim()) {
+    // Title is model-generated: clamp it to card width, not to trust it less.
+    const title = a.title.trim().slice(0, 120)
+    if (typeof a.html === "string" && a.html.trim() && a.html.length <= MAX_ARTIFACT_CHARS)
+      artifact = { title, html: a.html }
+    else if (typeof a.path === "string" && a.path.trim()) artifact = { title, path: a.path.trim() }
+  }
   return {
     answer: {
       artifact,
@@ -436,9 +538,14 @@ export function parseAnswer(text) {
 
 // The nudge for a run that ended without the <answer> block. Sent as a follow-up
 // turn on the SAME claude session (--resume), so the model still holds everything
-// it just built — cheap to reformat, and it can re-emit an inline artifact it had
-// only written to a file.
-const NUDGE_PROMPT = `Your previous reply was NOT accepted — it did not end with the required <answer> block, so it never reached the asker. Reply now with ONLY that block and nothing else: <answer>{"body_md":"…","query":…,"confidence":…,"caveats":[…],"escalate":false,"escalation_reason":null,"artifact":…}</answer>. If you built a chart or page, put its FULL HTML inline in "artifact".html — never a file path.`
+// it just built — cheap to reformat, and a page it had only written to a file is
+// now recovered by pointing at that file rather than re-typing it into JSON.
+const NUDGE_PROMPT = `Your previous reply was NOT accepted — it did not end with the required <answer> block, so it never reached the asker. Reply now with ONLY that block and nothing else: <answer>{"body_md":"…","query":…,"confidence":…,"caveats":[…],"escalate":false,"escalation_reason":null,"artifact":…}</answer>. If you built a chart or page, either inline its full HTML in "artifact".html or — if it is large or you already wrote it to a file — send {"title":"…","path":"<relative path inside your working directory>"} and the runner will publish that file — write it into your working directory first if it is currently somewhere else like /tmp. Do not re-type a large page into JSON.`
+
+// The follow-up for a run the API cut short. Resume, don't restart: the session
+// still holds everything the model built before the error, which on a long
+// review is minutes of tool calls that would otherwise be paid for twice.
+const RESUME_PROMPT = `Your previous turn was cut short by a transient service error before you could reply — everything you had already done is still here in this session. Pick up where you left off, finish the job, and end with the required <answer> block.`
 
 /** One `claude -p` run (or resume). Streams events (logged as they arrive),
  *  captures the session id (first system event) and the final `result` text. */
@@ -449,6 +556,17 @@ function spawnClaude({ bin, cwd, args, timeoutMs }) {
     let resultText = ""
     let sessionId = null
     let stderr = ""
+    // The model's last words, kept for the failure message: a crash mid-run
+    // exits nonzero with EMPTY stderr, so `exit 1: ` was all an owner ever saw.
+    // The reason ("API Error: 529 Overloaded") is in the assistant stream.
+    let lastText = ""
+    // The CLI's own verdict on the run. An API failure is NOT a silent exit: it
+    // emits a result event with is_error + api_error_status and a `result`
+    // string carrying the message ("API Error: 529 Overloaded"). Reading those
+    // is the difference between "retry, the service was busy" and "don't, the
+    // model name is wrong" — the exit code alone can't tell them apart.
+    let isError = false
+    let apiErrorStatus = null
     let timedOut = false
     let killTimer
     const timer = setTimeout(() => {
@@ -459,9 +577,13 @@ function spawnClaude({ bin, cwd, args, timeoutMs }) {
     const take = (line) => {
       try {
         const event = JSON.parse(line)
-        logEvent(event)
+        lastText = logEvent(event) || lastText
         if (!sessionId && typeof event.session_id === "string") sessionId = event.session_id
-        if (event.type === "result" && typeof event.result === "string") resultText = event.result
+        if (event.type === "result") {
+          if (typeof event.result === "string") resultText = event.result
+          if (event.is_error === true) isError = true
+          if (Number.isFinite(event.api_error_status)) apiErrorStatus = event.api_error_status
+        }
       } catch {
         // partial line / non-JSON noise
       }
@@ -485,26 +607,68 @@ function spawnClaude({ bin, cwd, args, timeoutMs }) {
       // The stream can end without a trailing newline; the unterminated line may
       // be the `result` event itself.
       if (buffer.trim()) take(buffer.trim())
-      resolve({ timedOut, code, resultText, sessionId, stderr })
+      resolve({ timedOut, code, resultText, sessionId, stderr, lastText, isError, apiErrorStatus })
     })
     child.on("error", (err) => {
       clearTimeout(timer)
       clearTimeout(killTimer)
-      resolve({ timedOut: false, code: -1, resultText: "", sessionId: null, stderr: String(err) })
+      resolve({
+        timedOut: false,
+        code: -1,
+        resultText: "",
+        sessionId: null,
+        stderr: String(err),
+        lastText: "",
+        isError: true,
+        // A spawn failure (missing binary, missing cwd) never reached the
+        // service — deterministic, so it must not look retryable.
+        apiErrorStatus: null,
+      })
     })
   })
 }
 
+// Long enough to be worth taking. The CLI does its OWN backoff first — a run
+// that surfaces `api_error_status` has already burned ~10 attempts over minutes
+// — so a 5s wait just re-enters the same overload window the CLI gave up on.
+// (`--fallback-model` is the CLI's other answer to overload; deliberately not
+// used: silently answering from a different model changes the answer without
+// telling the asker, and which model a context speaks with is the owner's call.)
+export const RETRY_DELAY_MS = 30_000
+
+/** Is this run worth a second attempt? Only when the SERVICE failed, never when
+ *  the configuration did — a wrong model name or a missing binary fails exactly
+ *  the same way twice, and paying a sleep plus a second spawn per session to
+ *  learn that is pure latency.
+ *    - 429 / 5xx from the API (the 529 that killed a review five minutes deep)
+ *    - an engine/turn error: nonzero exit, no api status, nothing to show
+ *  Excluded: timeouts (the owner's signal that the work doesn't fit the budget),
+ *  spawn failures (code -1: missing claude, missing cwd), and every 4xx — a 404
+ *  model_not_found or a 401 will never come good on its own. */
+function retryable(r) {
+  if (r.timedOut || r.code === 0 || r.code === -1) return false
+  if (r.apiErrorStatus != null) return r.apiErrorStatus === 429 || r.apiErrorStatus >= 500
+  return true
+}
+
 /** Produce a validated answer from a claude run, robustly:
- *   1. run → parse the <answer> block
- *   2. no block? nudge-retry on the SAME session (--resume) — a model deep in a
- *      build often just forgets the block; reformatting is cheap and recovers a
- *      built-but-file-only artifact.
- *   3. still no block, but there IS substantive output? SALVAGE it — post the raw
- *      reply as the answer with a caveat rather than hard-fail a run that did the
- *      work. A real crash (timeout / nonzero exit / empty output) still fails.
- *  Fresh process per run is unchanged — the resume is one follow-up turn within
- *  the same run, never across Derive sessions. */
+ *   1. run → a parseable <answer> counts EVEN IF the CLI exited nonzero after
+ *      emitting it; the block is the contract, the exit code is a hint.
+ *   2. the service failed (429/5xx/engine error)? retry ONCE, resuming the
+ *      session when there is one so minutes of tool calls aren't paid for twice.
+ *   3. still nothing, and the run is an ERROR run? fail — its `result` text is
+ *      the API's error message, and posting "API Error: 529" as an answer would
+ *      be worse than a failed session.
+ *   4. a clean exit with no block? nudge-retry on the SAME session (--resume) —
+ *      a model deep in a build often just forgets the block; reformatting is
+ *      cheap and recovers a page it had only written to a file.
+ *   5. still no block but there IS substantive output? SALVAGE it — post the raw
+ *      reply with a caveat rather than hard-fail a run that did the work.
+ *  Fresh process per run is unchanged — a resume is one follow-up turn within
+ *  the same run, never across Derive sessions. Retries stay bounded at one, and
+ *  the retry borrows the FIRST run's unspent budget rather than a fresh full
+ *  one, so a wedged session can't stall the (strictly sequential) queue for
+ *  double the timeout. */
 export async function runClaude(opts) {
   const baseArgs = [
     "--output-format",
@@ -516,23 +680,54 @@ export async function runClaude(opts) {
     "--model",
     opts.model,
   ]
-  const r = await spawnClaude({
+  // --resume does NOT carry the original --append-system-prompt (verified
+  // against the CLI): a resumed turn would run with neither the output contract
+  // nor the manifest, then be judged for not following a contract it could no
+  // longer see. Every spawn re-sends it.
+  const systemArgs = ["--append-system-prompt", opts.systemPrompt + OUTPUT_CONTRACT, ...baseArgs]
+  const firstArgs = ["-p", opts.prompt, ...systemArgs]
+  // An API failure's message arrives in the result STRING, a crash's in the
+  // assistant stream, a spawn failure's on stderr. Try all three before
+  // reporting the bare `exit 1: ` an owner used to get.
+  const why = (x) => (x.lastText || x.resultText || x.stderr || "").replace(/\s+/g, " ").trim()
+  const started = Date.now()
+  let r = await spawnClaude({
     bin: opts.bin,
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs,
-    args: [
-      "-p",
-      opts.prompt,
-      "--append-system-prompt",
-      opts.systemPrompt + OUTPUT_CONTRACT,
-      ...baseArgs,
-    ],
+    args: firstArgs,
   })
-  if (r.timedOut) return { ok: false, error: "timed out" }
-  if (r.code !== 0) return { ok: false, error: `exit ${r.code}: ${r.stderr.slice(0, 500)}` }
+  let parsed = parseAnswer(r.resultText)
 
-  const parsed = parseAnswer(r.resultText)
+  // The service failed and gave us nothing usable. One retry — resumed if the
+  // run got far enough to have a session id, otherwise from the top.
+  if (!parsed.answer && retryable(r)) {
+    const sid = r.sessionId
+    console.error(
+      `[runner] run exited ${r.code}${r.apiErrorStatus ? ` (api ${r.apiErrorStatus})` : ""}: ${why(r).slice(0, 160) || "no output"} — retrying once${sid ? ` (resume ${sid.slice(0, 8)})` : ""}`,
+    )
+    await new Promise((res) => setTimeout(res, opts.retryDelayMs ?? RETRY_DELAY_MS))
+    // Whatever the first attempt didn't spend, floored so a late failure still
+    // gets a usable window. The queue is sequential: an unbounded second run
+    // would stall every other asker for double the timeout.
+    const left = opts.timeoutMs - (Date.now() - started)
+    r = await spawnClaude({
+      bin: opts.bin,
+      cwd: opts.cwd,
+      timeoutMs: Math.max(left, 120_000),
+      args: sid ? ["-p", RESUME_PROMPT, "--resume", sid, ...systemArgs] : firstArgs,
+    })
+    parsed = parseAnswer(r.resultText)
+  }
+
+  // A block is a valid answer however the process exited — the model did the
+  // work and said so in the contract's own words.
   if (parsed.answer) return { ok: true, answer: parsed.answer }
+  if (r.timedOut) return { ok: false, error: "timed out" }
+  // An error run's `result` text is the API's error message, not an answer:
+  // fail rather than let the salvage path post "API Error: 529" to the asker.
+  if (r.code !== 0 || r.isError)
+    return { ok: false, error: `exit ${r.code}: ${why(r).slice(0, 500)}` }
 
   // Nudge-retry on the same session (bounded — this is a reformat, not new work).
   if (r.sessionId) {
@@ -541,7 +736,7 @@ export async function runClaude(opts) {
       bin: opts.bin,
       cwd: opts.cwd,
       timeoutMs: Math.min(opts.timeoutMs, 180_000),
-      args: ["-p", NUDGE_PROMPT, "--resume", r.sessionId, ...baseArgs],
+      args: ["-p", NUDGE_PROMPT, "--resume", r.sessionId, ...systemArgs],
     })
     const p2 = parseAnswer(r2.resultText)
     if (p2.answer) return { ok: true, answer: p2.answer }
@@ -570,13 +765,19 @@ export async function runClaude(opts) {
   return { ok: false, error: parsed.error }
 }
 
+/** Log one stream event; returns the assistant text it carried (if any), which
+ *  the caller keeps as the run's last words for diagnostics. */
 function logEvent(event) {
-  if (event.type !== "assistant") return
+  if (event.type !== "assistant") return ""
+  let text = ""
   for (const c of event.message?.content ?? []) {
     if (c.type === "tool_use") console.log(`[claude] → ${String(c.name)}`)
-    else if (c.type === "text" && typeof c.text === "string" && c.text.trim())
+    else if (c.type === "text" && typeof c.text === "string" && c.text.trim()) {
+      text = c.text
       console.log(`[claude] ${c.text.replace(/\s+/g, " ").slice(0, 200)}`)
+    }
   }
+  return text
 }
 
 // ---- serve --------------------------------------------------------------------
@@ -591,7 +792,10 @@ const MOCK_ANSWER = {
   artifact: null,
 }
 
-async function serveSession(client, session, manifest, cfg, repoMeta = [], skillMeta = []) {
+// Exported for tests: this is where a model's answer becomes a posted message —
+// artifact resolution, the publish-failure demotion, and the quota cap all live
+// here, and all three are things that must not take a session down with them.
+export async function serveSession(client, session, manifest, cfg, repoMeta = [], skillMeta = []) {
   const asked = session.messages.at(-1)?.body_md?.slice(0, 80) ?? "?"
   console.log(`[runner] session ${session.id}: "${asked}"`)
   const result = cfg.mock
@@ -636,9 +840,20 @@ async function serveSession(client, session, manifest, cfg, repoMeta = [], skill
     meta.caveats = [...a.caveats, "chart skipped — this session already published 10 artifacts"]
   } else if (a.artifact) {
     try {
-      const pub = await client.publishArtifact(a.artifact.title, a.artifact.html)
+      // Inline or a file under cwd — a bad path reads as a publish failure, so
+      // the prose answer still lands with the reason attached.
+      const src = resolveArtifactHtml(a.artifact, cfg.cwd)
+      if (src.error) throw new Error(src.error)
+      const pub = await client.publishArtifact(a.artifact.title, src.html)
       meta.artifacts = [{ short_id: pub.short_id, title: a.artifact.title }]
-      console.log(`[runner] published artifact ${pub.short_id} ("${a.artifact.title}")`)
+      // Name the FILE, not just the model's chosen title: bytes published from
+      // disk never pass through the event stream, so without this the host log
+      // records only a title the model wrote — no record of what was actually
+      // sent to the workspace.
+      console.log(
+        `[runner] published artifact ${pub.short_id} ("${a.artifact.title}"` +
+          `${a.artifact.path ? ` from ${a.artifact.path}` : ""})`,
+      )
     } catch (err) {
       const reason = err.message.slice(0, 120)
       meta.caveats = [...a.caveats, `a chart was produced but failed to publish (${reason})`]
@@ -667,7 +882,10 @@ async function serveSession(client, session, manifest, cfg, repoMeta = [], skill
   )
 }
 
-export async function serve(cfg) {
+/** Boot the host state serve/once share: context info, repo corpus, skills,
+ *  conventions. Everything here is per-boot truth on purpose (see the comments
+ *  inline) — `once` inherits the same freshness contract as a serve restart. */
+async function bootHost(cfg, modeLabel) {
   const client = new DeriveClient(cfg.server, cfg.token)
   const info = await client.getContext(cfg.contextId)
   if (!info.manifest_md && !cfg.manifestFile) throw new Error("context has no readable manifest")
@@ -677,7 +895,7 @@ export async function serve(cfg) {
   console.log(
     `[runner] serving "${info.name}" (${cfg.contextId}) on ${cfg.server} — ` +
       `${cfg.manifestFile ? `manifest LOCAL ${cfg.manifestFile}` : `manifest v${info.manifest_version}`}, ` +
-      `${cfg.mock ? "MOCK" : `${cfg.claudeBin} (${cfg.model})`}, poll ${cfg.pollMs}ms`,
+      `${cfg.mock ? "MOCK" : `${cfg.claudeBin} (${cfg.model})`}, ${modeLabel}`,
   )
   // Pointers sync at boot, like every other piece of host state — a manifest
   // edit that adds one applies on the next start (the catalog in the prompt is
@@ -711,45 +929,76 @@ export async function serve(cfg) {
   const conventions = conventionsBlock(skillCatalog, noteCatalog)
   // Provenance, alongside the repo SHAs: which skill versions this run had on disk.
   const skillMeta = skillCatalog.filter((s) => s.ok).map((s) => ({ id: s.id, version: s.version }))
+  return { client, info, catalog, repoMeta, conventions, skillMeta }
+}
 
+/** One queue pass: fetch open sessions, serve each sequentially. Throws on a
+ *  queue/manifest fetch failure (the caller decides whether that is a logged
+ *  poll error or a failed drain); a single session's failure is recorded
+ *  server-side via fail() and counted, never thrown — same isolation the serve
+ *  loop always had. Returns {considered, served, failed}. */
+export async function drainPass(cfg, host) {
+  const { client, info, catalog, repoMeta, conventions, skillMeta } = host
+  // An open session ending on an agent turn is one of two things: a settle
+  // whose state write was lost (the store's two writes aren't transactional)
+  // — re-answering would double-post, skip it — or an answer the server
+  // marked stale because a follow-up landed mid-run: that one MUST re-serve,
+  // and the transcript above the stale answer carries the follow-up.
+  const sessions = (await client.queue(cfg.contextId)).filter((s) => {
+    const last = s.messages.at(-1)
+    if (last?.author_kind !== "agent") return true
+    return last.meta?.stale === true
+  })
+  const counts = { considered: sessions.length, served: 0, failed: 0 }
+  if (sessions.length === 0) return counts
+  // Re-read the manifest only when the queue has work — an edit applies
+  // from the next answer, and idle polls stay one call. In dev mode the
+  // working-tree file wins, same freshness contract. The repo catalog is
+  // appended from the BOOT sync — the frontmatter may promise new repos,
+  // but the prompt only ever claims what's actually on disk.
+  const md = cfg.manifestFile
+    ? readFileSync(cfg.manifestFile, "utf8")
+    : ((await client.getContext(cfg.contextId)).manifest_md ?? info.manifest_md ?? "")
+  const manifest = parseManifest(md).body + repoCatalogBlock(catalog) + conventions
+  // Sequential on purpose: one runner, one model, no fan-out — fairness
+  // comes from the queue's oldest-first order. One session's failure must
+  // not starve the rest of the batch.
+  for (const s of sessions) {
+    try {
+      await serveSession(client, s, manifest, cfg, repoMeta, skillMeta)
+      counts.served += 1
+    } catch (err) {
+      counts.failed += 1
+      console.error(`[runner] session ${s.id}: ${err.message}`)
+    }
+  }
+  return counts
+}
+
+export async function serve(cfg) {
+  const host = await bootHost(cfg, `poll ${cfg.pollMs}ms`)
   for (;;) {
     try {
-      // An open session ending on an agent turn is one of two things: a settle
-      // whose state write was lost (the store's two writes aren't transactional)
-      // — re-answering would double-post, skip it — or an answer the server
-      // marked stale because a follow-up landed mid-run: that one MUST re-serve,
-      // and the transcript above the stale answer carries the follow-up.
-      const sessions = (await client.queue(cfg.contextId)).filter((s) => {
-        const last = s.messages.at(-1)
-        if (last?.author_kind !== "agent") return true
-        return last.meta?.stale === true
-      })
-      if (sessions.length > 0) {
-        // Re-read the manifest only when the queue has work — an edit applies
-        // from the next answer, and idle polls stay one call. In dev mode the
-        // working-tree file wins, same freshness contract. The repo catalog is
-        // appended from the BOOT sync — the frontmatter may promise new repos,
-        // but the prompt only ever claims what's actually on disk.
-        const md = cfg.manifestFile
-          ? readFileSync(cfg.manifestFile, "utf8")
-          : ((await client.getContext(cfg.contextId)).manifest_md ?? info.manifest_md ?? "")
-        const manifest = parseManifest(md).body + repoCatalogBlock(catalog) + conventions
-        // Sequential on purpose: one runner, one model, no fan-out — fairness
-        // comes from the queue's oldest-first order. One session's failure must
-        // not starve the rest of the batch.
-        for (const s of sessions) {
-          try {
-            await serveSession(client, s, manifest, cfg, repoMeta, skillMeta)
-          } catch (err) {
-            console.error(`[runner] session ${s.id}: ${err.message}`)
-          }
-        }
-      }
+      await drainPass(cfg, host)
     } catch (err) {
       console.error(`[runner] poll error: ${err.message}`)
     }
     await new Promise((r) => setTimeout(r, cfg.pollMs))
   }
+}
+
+/** Drain the queue once and exit: the executor mode. Any scheduler — a pg-boss
+ *  dispatcher, a GitHub Actions cron, a systemd timer — becomes a standing
+ *  process by running this on a cadence. Boot or queue failures throw (the
+ *  scheduler's retry is the retry); per-session failures are already recorded
+ *  server-side, so they end the run quietly with a nonzero `failed` count. */
+export async function once(cfg) {
+  const host = await bootHost(cfg, "single drain")
+  const counts = await drainPass(cfg, host)
+  console.log(
+    `[runner] drain complete — ${counts.served} served, ${counts.failed} failed, ${counts.considered} considered`,
+  )
+  return counts
 }
 
 // ---- doctor ---------------------------------------------------------------------
@@ -787,6 +1036,7 @@ export async function doctor(cfg) {
   }
 
   let repos = []
+  let skills = []
   if (!cfg.token || !cfg.contextId) {
     // Partial config: still worth running the local checks below.
     bad(
@@ -799,7 +1049,9 @@ export async function doctor(cfg) {
       info.manifest_md
         ? ok("context + manifest", `"${info.name}" manifest v${info.manifest_version}`)
         : bad("manifest", "context resolves but its manifest is unreadable")
-      repos = parseManifest(info.manifest_md ?? "").repos
+      const parsedManifest = parseManifest(info.manifest_md ?? "")
+      repos = parsedManifest.repos
+      skills = parsedManifest.skills
     } catch (e) {
       bad("token/context", `cannot resolve ${cfg.contextId} (${e.message.slice(0, 120)})`)
     }
@@ -818,12 +1070,33 @@ export async function doctor(cfg) {
   }
 
   // A missing cwd makes spawn fail with the same ENOENT as a missing binary —
-  // check it separately so the error points at the actual problem.
+  // check it separately so the error points at the actual problem. And EXISTS
+  // is not ENOUGH: the runner clones repos, materializes skills, and reads back
+  // artifact files here. A read-only cwd passed doctor while serve crash-looped
+  // on it — the check has to be the same one serve makes.
+  let isDir = false
   try {
-    if (!statSync(cfg.cwd).isDirectory()) throw new Error("not a directory")
-    ok("cwd", cfg.cwd)
+    isDir = statSync(cfg.cwd).isDirectory()
   } catch {
-    bad("cwd", `${cfg.cwd} is not a directory — check --cwd / RUNNER_CWD`)
+    isDir = false
+  }
+  if (!isDir) bad("cwd", `${cfg.cwd} is not a directory — check --cwd / RUNNER_CWD`)
+  else {
+    const why = checkWritable(cfg.cwd)
+    // Fatal only when this context actually needs to write: repos and skills
+    // materialize into cwd, and their absence is a WRONG answer, not a missing
+    // one. Without either, an unwritable cwd is survivable (the model keeps its
+    // scratch in /tmp), so it's a warning — doctor must not refuse to start a
+    // deployment that serves correctly, now that a failed clone is non-fatal.
+    const needsWrite = repos.length > 0 || skills.length > 0
+    const detail =
+      `${cfg.cwd} — ${why}. A bind-mount owned by a different uid than the runner ` +
+      "process is the usual cause"
+    if (!why) ok("cwd", `${cfg.cwd} (writable)`)
+    else if (needsWrite)
+      bad("cwd writable", `${detail}; this context's repos/skills cannot materialize`)
+    else
+      warn("cwd writable", `${detail}; fine while this context clones no repos and pins no skills`)
   }
 
   // launchd/systemd PATHs don't include shell profile additions — the exact

@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS agent (
   token TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'commenter',
   created_by TEXT,
+  hosted INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (token),
   UNIQUE (org_id, name)
@@ -176,6 +177,32 @@ CREATE TABLE IF NOT EXISTS agent_mention (
   body TEXT NOT NULL,
   author TEXT NOT NULL,
   state TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS automation (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  trigger TEXT NOT NULL,
+  instruction TEXT NOT NULL,
+  refs TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS run (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  automation_id TEXT,
+  agent_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL,
+  scheduled_for TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  cost_micro_usd INTEGER,
+  meta TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 

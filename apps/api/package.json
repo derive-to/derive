@@ -54,6 +54,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260615.1",
+    "@derive/hosted-agent": "workspace:*",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^25.9.3",
     "@types/pg": "^8.11.10",

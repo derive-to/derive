@@ -20,6 +20,7 @@ import type {
   ArtifactRecord,
   AssetRecord,
   AuditLogRecord,
+  AutomationRecord,
   BetaSignupRecord,
   CollectionMemberRecord,
   CollectionRecord,
@@ -40,6 +41,7 @@ import type {
   ReportRecord,
   RepoSourceRecord,
   ReviewRoundRecord,
+  RunRecord,
   SessionMessageRecord,
   SessionRecord,
   VersionRecord,
@@ -67,6 +69,8 @@ export interface TypedTables {
   reviewRound: ReviewRoundRecord
   agent: AgentRecord
   agentMention: AgentMentionRecord
+  automation: AutomationRecord
+  run: RunRecord
   artifactInvite: ArtifactInviteRecord
   invitation: InvitationRecord
   betaSignup: BetaSignupRecord

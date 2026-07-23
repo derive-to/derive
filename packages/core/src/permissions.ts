@@ -67,7 +67,7 @@ export interface Actor {
 
 /**
  * The actor's effective role on an artifact — the max of three independent grants
- * (docs/plans/access-model.md). null means no access at all. The single source of
+ * (docs/access-model.md). null means no access at all. The single source of
  * truth for the access matrix; SECURITY.md documents the same for humans.
  *
  *   access = max( explicit share , workspace seat , world link )

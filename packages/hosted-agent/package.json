@@ -1,0 +1,29 @@
+{
+  "name": "@derive/hosted-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "FSL-1.1-ALv2",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/derive-to/derive.git",
+    "directory": "packages/hosted-agent"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@derive/core": "workspace:*",
+    "@mastra/core": "1.51.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}

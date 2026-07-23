@@ -28,7 +28,7 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   (Better Auth is always available, even zero-config) or presents a static `DERIVE_TOKEN`
   (set it for headless CI/agent automation).
 
-  Access is three independent, single-purpose fields (docs/plans/access-model.md).
+  Access is three independent, single-purpose fields (docs/access-model.md).
   **`workspace_access`** (`none` / `member`): do the artifact's workspace members
   reach it, each at their own SEAT role (owner→manage, editor→edit, commenter→comment)?
   **`link_role`** (`none` / viewer / commenter / editor): what merely holding the

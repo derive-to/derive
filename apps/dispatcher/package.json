@@ -1,0 +1,31 @@
+{
+  "name": "@derive/dispatcher",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "FSL-1.1-ALv2",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/derive-to/derive.git",
+    "directory": "apps/dispatcher"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsgo --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@derive/hosted-agent": "workspace:*",
+    "@hono/node-server": "^2.0.5",
+    "@mastra/core": "1.51.0",
+    "hono": "^4.6.0",
+    "pg-boss": "^10.3.2",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}

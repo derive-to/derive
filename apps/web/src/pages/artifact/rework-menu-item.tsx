@@ -144,7 +144,7 @@ export function ReworkMenuItem({
 }
 
 // The shared Connect-an-agent surface, dialog-wrapped — Rework's no-agent state is
-// one of its entry points (see docs/plans/brandprint.md, "one shared surface").
+// one of its entry points.
 export function ReworkConnectDialog({
   open,
   onOpenChange,

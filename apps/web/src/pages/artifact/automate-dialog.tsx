@@ -1,0 +1,57 @@
+import { useQuery } from "@tanstack/react-query"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { workspaceQuery } from "@/lib/queries"
+import { AutomationForm } from "../settings/automation-form"
+
+// The per-artifact automate flow: create an automation scoped to THIS artifact (its short id
+// rides along as a ref, and the instruction is seeded to "keep this current"). Same form as
+// Settings → Automations, framed for one doc. Creation is workspace-Admin-gated server-side
+// (the menu item shows for any doc owner), so a non-Admin gets an honest note, not a form
+// whose submit is guaranteed a 403.
+export function AutomateDialog({
+  shortId,
+  title,
+  open,
+  onOpenChange,
+}: {
+  shortId: string
+  title?: string | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  // On a failed role read, fall back to the non-Admin note — never a form whose
+  // submit would 403.
+  const { data: ws, isError } = useQuery(workspaceQuery())
+  const isAdmin = !isError && ws?.role === "owner"
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent data-testid="automate-dialog">
+        <DialogHeader>
+          <DialogTitle>Automate this artifact</DialogTitle>
+          <DialogDescription>
+            A standing job for {title ? `“${title}”` : "this document"}: an agent keeps it current
+            on a schedule, on an event, or whenever you press Run now. Every run goes through the
+            review loop.
+          </DialogDescription>
+        </DialogHeader>
+        {isAdmin ? (
+          <AutomationForm
+            refs={[shortId]}
+            defaultInstruction="Keep this document current."
+            onCreated={() => onOpenChange(false)}
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Only a workspace Admin can create automations. Ask an Admin to set this up.
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}

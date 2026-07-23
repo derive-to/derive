@@ -1,0 +1,52 @@
+# The managed executor, self-contained: Postgres for pg-boss + the dispatcher
+# draining managed contexts on a cadence. Copy, fill in the env, and:
+#
+#   docker build -f deploy/runner.Dockerfile -t derive-runner .
+#   docker build -f deploy/dispatcher.Dockerfile -t derive-dispatcher .
+#   docker compose -f deploy/dispatcher.compose.example.yml up -d
+#
+# This is one of the interchangeable executor recipes from the built-in agent
+# plan — the same `derive runner once` runs under a GitHub Actions cron or a
+# plain compose-interval timer; this recipe adds retries, singleton drains, and
+# a durable job log via pg-boss.
+services:
+  dispatcher-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: dispatcher
+      POSTGRES_USER: dispatcher
+      POSTGRES_PASSWORD: dispatcher
+    volumes:
+      - dispatcher-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dispatcher"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  dispatcher:
+    image: derive-dispatcher
+    depends_on:
+      dispatcher-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://dispatcher:dispatcher@dispatcher-db/dispatcher
+      # Which Derive to drain against; the cloud by default.
+      DERIVE_SERVER: https://derive.to
+      # The registry: which contexts this executor serves. Tokens by env name,
+      # never inline — pair each token_env with a real env entry below.
+      DISPATCHER_CONTEXTS: >-
+        [{"id":"ctx_REPLACE_ME","token_env":"CTX_A_TOKEN"}]
+      CTX_A_TOKEN: dk_agt_REPLACE_ME
+      # The model credential, exactly one (same contract as the runner image):
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+    volumes:
+      # Per-context working dirs persist across drains AND restarts: repo
+      # clones and materialized skills survive, so a per-minute cadence stays
+      # cheap.
+      - dispatcher-data:/data
+
+volumes:
+  dispatcher-db:
+  dispatcher-data:
