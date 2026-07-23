@@ -35,12 +35,19 @@ export interface DrainDeps {
   /** Override the per-run executor (tests inject a fake); default builds + generates. */
   runOne?: RunOne
   limit?: number
+  /** Hard ceiling per run; a model call that hangs past it finishes `failed` and the
+   *  drain moves on (default 5 minutes). */
+  runTimeoutMs?: number
 }
 
 export interface DrainResult {
   claimed: number
   finished: number
   failed: number
+  /** Runs whose work completed but whose finish POST failed even after a retry — they
+   *  are stuck `running` server-side until the reclaim sweep. Never silently folded
+   *  into `finished`: an executor that can't report is a fact worth surfacing. */
+  finishFailures: number
 }
 
 /** The task text for a claimed run: its instruction, plus any refs as trailing context. */
@@ -49,9 +56,19 @@ const taskFor = (r: ClaimedRun): string =>
     ? `${r.instruction}\n\nTarget artifacts (short ids): ${r.refs.join(", ")}`
     : r.instruction
 
+/** `runOne` raced against the per-run ceiling; a hang counts as a thrown run. */
+const withTimeout = (work: Promise<void>, ms: number): Promise<void> => {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`run timed out after ${ms}ms`)), ms)
+  })
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer))
+}
+
 /** Run one claim → execute → finish pass for a hosted agent. */
 export async function drainRuns(deps: DrainDeps): Promise<DrainResult> {
   const client = httpClient(deps.server, deps.agentToken)
+  const timeoutMs = deps.runTimeoutMs ?? 5 * 60_000
   const runOne: RunOne =
     deps.runOne ??
     (async (ctx, task) => {
@@ -67,6 +84,7 @@ export async function drainRuns(deps: DrainDeps): Promise<DrainResult> {
   const claimed = await client.claimRuns(deps.limit ?? 10)
   let finished = 0
   let failed = 0
+  let finishFailures = 0
   for (const r of claimed) {
     // One fresh context per run: its own latch, and the gate inputs the server resolved and
     // handed back with the claim (autonomy from the automation's route, workspace flags fresh
@@ -77,24 +95,40 @@ export async function drainRuns(deps: DrainDeps): Promise<DrainResult> {
       autonomy: r.autonomy,
       flags: r.flags,
     }
-    let ok = true
-    try {
-      await runOne(ctx, taskFor(r))
-    } catch {
-      ok = false
+    // Belt to the claim endpoint's suspenders: an empty instruction must never reach the
+    // model — a primed agent with live tools and a task of nothing does arbitrary work.
+    const empty = r.instruction.trim() === ""
+    let ok = false
+    if (!empty) {
+      try {
+        await withTimeout(runOne(ctx, taskFor(r)), timeoutMs)
+        ok = true
+      } catch {
+        ok = false
+      }
     }
-    // Finish the CLAIMED run (not an ad-hoc record). Best-effort: the ledger never gates work.
-    await client
-      .finishRun(r.id, {
-        status: ok ? "succeeded" : "failed",
-        meta: {
-          outcome: ok ? outcomeOf(ctx.lastResult) : "failed",
-          artifact_short_id: ctx.lastResult?.shortId ?? null,
-        },
-      })
-      .catch(() => {})
+    // Finish the CLAIMED run (not an ad-hoc record). One retry — a lost finish leaves the
+    // run stuck `running` server-side, so it's worth a second attempt; a double failure is
+    // counted separately, never passed off as finished work.
+    const fields = {
+      status: ok ? ("succeeded" as const) : ("failed" as const),
+      meta: {
+        outcome: empty ? "cancelled" : ok ? outcomeOf(ctx.lastResult) : "failed",
+        artifact_short_id: ctx.lastResult?.shortId ?? null,
+      },
+    }
+    const finishOk = await client
+      .finishRun(r.id, fields)
+      .then(() => true)
+      .catch(() =>
+        client
+          .finishRun(r.id, fields)
+          .then(() => true)
+          .catch(() => false),
+      )
+    if (!finishOk) finishFailures += 1
     if (ok) finished += 1
     else failed += 1
   }
-  return { claimed: claimed.length, finished, failed }
+  return { claimed: claimed.length, finished, failed, finishFailures }
 }

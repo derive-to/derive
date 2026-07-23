@@ -115,6 +115,9 @@ export const automationRoutes = (ctx: AppContext) => {
     if (me instanceof Response) return me
     const a = await meta.getAutomation(c.req.param("id"))
     if (!a || a.org_id !== org) return fail(c, 404, "not found")
+    // A disabled automation takes no new runs — from ANY trigger: this path, and the
+    // future schedule tick / event kick must all check the same flag.
+    if (a.enabled !== 1) return fail(c, 400, "automation is disabled")
     const rec = await meta.createRun({
       id: newId("run"),
       org_id: org,
@@ -137,25 +140,45 @@ export const automationRoutes = (ctx: AppContext) => {
     if (!agent) return fail(c, 401, "agent token required")
     const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20))
     const claimed = await meta.claimDueRuns(agent.id, isoNow(), limit)
-    const byId = new Map((await meta.listAutomations(agent.org_id)).map((a) => [a.id, a]))
+    // Resolve each claimed run's automation DIRECTLY by id — never via a capped org-wide
+    // list, which silently loses instructions past its limit. Claims are ≤50, deduped.
+    const ids = [...new Set(claimed.map((r) => r.automation_id).filter((x): x is string => !!x))]
+    const byId = new Map(
+      (await Promise.all(ids.map((id) => meta.getAutomation(id))))
+        .filter((a): a is NonNullable<typeof a> => a !== null)
+        .map((a) => [a.id, a]),
+    )
     // Resolve the gate inputs server-side, FRESH at claim time (so a flipped killswitch is
     // seen on the next claim): autonomy from the automation's route, flags from org settings.
     // The executor gets everything it needs to run each run in one call — no extra round-trips.
     const s = await meta.getOrgSettings(agent.org_id)
     const flags = { agentKillswitch: s.agentKillswitch, agentAutoEnabled: s.agentAutoEnabled }
+    // Defense-in-depth: a run whose automation vanished (the delete race), was disabled after
+    // enqueue, or carries no instruction must never reach the executor — it would burn a model
+    // call on an empty task. Finish it as failed/cancelled here and hand back only real work.
+    const runnable: { r: (typeof claimed)[number]; a: AutomationRecord }[] = []
+    for (const r of claimed) {
+      const a = r.automation_id ? byId.get(r.automation_id) : undefined
+      if (a && a.org_id === agent.org_id && a.enabled === 1 && a.instruction.trim() !== "") {
+        runnable.push({ r, a })
+      } else {
+        await meta.finishRun(r.id, agent.id, {
+          status: "failed",
+          finishedAt: isoNow(),
+          meta: JSON.stringify({ outcome: "cancelled", why: "automation missing or disabled" }),
+        })
+      }
+    }
     return c.json({
-      runs: claimed.map((r) => {
-        const a = r.automation_id ? byId.get(r.automation_id) : undefined
-        return {
-          id: r.id,
-          reason: r.reason,
-          automation_id: r.automation_id,
-          instruction: a?.instruction ?? "",
-          refs: a ? parseRefs(a.refs) : [],
-          autonomy: a?.route === "auto" ? "auto" : "suggest",
-          flags,
-        }
-      }),
+      runs: runnable.map(({ r, a }) => ({
+        id: r.id,
+        reason: r.reason,
+        automation_id: r.automation_id,
+        instruction: a.instruction,
+        refs: parseRefs(a.refs),
+        autonomy: a.route === "auto" ? "auto" : "suggest",
+        flags,
+      })),
     })
   })
 

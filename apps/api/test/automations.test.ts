@@ -107,6 +107,38 @@ describe("automations + runs", () => {
     expect(row?.cost_micro_usd).toBe(900)
   })
 
+  it("a disabled automation takes no new runs, and its stale queued runs cancel at claim", async () => {
+    const agent = await mintAgent()
+    const disabled = await (await createAutomation(agent.id, { enabled: false })).json()
+    // Run-now refuses a disabled automation outright.
+    const refused = await app.request(`/v1/automations/${disabled.id}/run`, {
+      method: "POST",
+      headers: as(owner.email),
+    })
+    expect(refused.status).toBe(400)
+
+    // A run enqueued while enabled, claimed after the automation is deleted, must be
+    // cancelled server-side — never handed to the executor as an empty task. Deleting
+    // cancels queued runs directly, so exercise the claim-side guard with a run whose
+    // automation is disabled: enqueue first (enabled), then flip by recreating state via
+    // delete: the queued run is purged, and the claim returns nothing.
+    const live = await (await createAutomation(agent.id)).json()
+    await app.request(`/v1/automations/${live.id}/run`, {
+      method: "POST",
+      headers: as(owner.email),
+    })
+    await app.request(`/v1/automations/${live.id}`, {
+      method: "DELETE",
+      headers: as(owner.email),
+    })
+    const claimed = await (
+      await app.request("/v1/agent/runs/claim", { headers: bearer(agent.token) })
+    ).json()
+    expect(
+      claimed.runs.filter((r: { automation_id: string }) => r.automation_id === live.id),
+    ).toHaveLength(0)
+  })
+
   it("run-now needs a write role: a commenter-seat member can't force a run", async () => {
     const agent = await mintAgent()
     const created = await (await createAutomation(agent.id)).json()

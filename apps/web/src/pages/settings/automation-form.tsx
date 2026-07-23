@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { agentsQuery } from "@/lib/queries"
+import { agentsQuery, automationsQuery, runsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { EVENT_KINDS, SCHEDULE_PRESETS } from "./automation-format"
 
@@ -52,6 +52,9 @@ export function AutomationForm({
         route,
       }),
     success: "Automation created",
+    // Invalidate HERE, not in each caller — the artifact dialog and the settings manager
+    // both create through this form, and a create from either must refresh both views.
+    invalidate: [automationsQuery().queryKey, runsQuery().queryKey],
     onSuccess: () => {
       setInstruction(defaultInstruction ?? "")
       onCreated()

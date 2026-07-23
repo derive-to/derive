@@ -8,7 +8,7 @@ import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { automationsQuery, runsQuery } from "@/lib/queries"
+import { automationsQuery, runsQuery, workspaceQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { AutomationForm } from "./automation-form"
@@ -19,6 +19,12 @@ import { SettingsSection } from "./settings-section"
 export function AutomationsSection() {
   const qc = useQueryClient()
   const { data: automations, isPending, isError, refetch } = useQuery(automationsQuery())
+  // Creating / removing / activity are Admin-gated server-side; Run now needs a write seat.
+  // Read the caller's role once and render only what they can actually do — never a form
+  // whose submit is guaranteed a 403.
+  const { data: ws } = useQuery(workspaceQuery())
+  const isAdmin = ws?.role === "owner"
+  const canRun = ws?.role === "owner" || ws?.role === "editor"
   const reload = () => {
     qc.invalidateQueries({ queryKey: automationsQuery().queryKey })
     qc.invalidateQueries({ queryKey: runsQuery().queryKey })
@@ -31,13 +37,18 @@ export function AutomationsSection() {
         <>
           An automation is a standing job: an agent, a trigger, and an instruction. It runs on
           demand, on a schedule, or on an event — always through the review loop, never around it.
-          Every run lands in the activity below.
         </>
       }
     >
-      <div className="rounded-lg border bg-card p-4">
-        <AutomationForm onCreated={reload} />
-      </div>
+      {isAdmin ? (
+        <div className="rounded-lg border bg-card p-4">
+          <AutomationForm onCreated={reload} />
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Only a workspace Admin can create automations. Ask an Admin to set one up.
+        </p>
+      )}
 
       {isPending ? (
         <SettingsListSkeleton />
@@ -58,21 +69,40 @@ export function AutomationsSection() {
           }
         />
       ) : !automations || automations.length === 0 ? (
-        <EmptyState>No automations yet. Create one above.</EmptyState>
+        <EmptyState>
+          {isAdmin ? "No automations yet. Create one above." : "No automations yet."}
+        </EmptyState>
       ) : (
         <SettingsGroup>
           {automations.map((a) => (
-            <AutomationRow key={a.id} automation={a} onDone={reload} />
+            <AutomationRow
+              key={a.id}
+              automation={a}
+              canRun={canRun}
+              canRemove={isAdmin}
+              onDone={reload}
+            />
           ))}
         </SettingsGroup>
       )}
 
-      <Activity />
+      {/* The runs endpoint is Admin-gated: don't issue a query that can only 403. */}
+      {isAdmin && <Activity />}
     </SettingsSection>
   )
 }
 
-function AutomationRow({ automation, onDone }: { automation: Automation; onDone: () => void }) {
+function AutomationRow({
+  automation,
+  canRun,
+  canRemove,
+  onDone,
+}: {
+  automation: Automation
+  canRun: boolean
+  canRemove: boolean
+  onDone: () => void
+}) {
   const [confirming, setConfirming] = useState(false)
   const run = useApiMutation({
     mutationFn: () => api.runAutomation(automation.id),
@@ -99,24 +129,28 @@ function AutomationRow({ automation, onDone }: { automation: Automation; onDone:
           {automation.route === "auto" ? "publishes for review" : "proposes"}
         </div>
       </div>
-      <Button
-        data-testid={`automation-run-${automation.id}`}
-        variant="secondary"
-        size="sm"
-        onClick={() => run.mutate()}
-        loading={run.isPending}
-        disabled={run.isPending}
-      >
-        Run now
-      </Button>
-      <Button
-        data-testid={`automation-remove-${automation.id}`}
-        variant="destructive-ghost"
-        size="sm"
-        onClick={() => setConfirming(true)}
-      >
-        Remove
-      </Button>
+      {canRun && (
+        <Button
+          data-testid={`automation-run-${automation.id}`}
+          variant="secondary"
+          size="sm"
+          onClick={() => run.mutate()}
+          loading={run.isPending}
+          disabled={run.isPending}
+        >
+          Run now
+        </Button>
+      )}
+      {canRemove && (
+        <Button
+          data-testid={`automation-remove-${automation.id}`}
+          variant="destructive-ghost"
+          size="sm"
+          onClick={() => setConfirming(true)}
+        >
+          Remove
+        </Button>
+      )}
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
@@ -130,8 +164,10 @@ function AutomationRow({ automation, onDone }: { automation: Automation; onDone:
 }
 
 function Activity() {
-  const { data: runs, isPending } = useQuery(runsQuery())
+  const { data: runs, isPending, isError } = useQuery(runsQuery())
   if (isPending) return null
+  if (isError)
+    return <p className="mt-6 text-sm text-muted-foreground">Couldn't load recent activity.</p>
   if (!runs || runs.length === 0) return null
   return (
     <div className="mt-6">
