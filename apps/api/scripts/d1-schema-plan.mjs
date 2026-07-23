@@ -26,6 +26,27 @@ export const parseExpectedColumns = (sql) => {
 }
 
 /**
+ * Split a generated d1-schema.sql into the statements that must run BEFORE the additive
+ * column reconciler (tables, virtual tables) and the CREATE [UNIQUE] INDEX statements that
+ * must run AFTER it. A partial index — context_session_dedupe — references a column the
+ * `alters` add on an existing DB, so creating it before the ADD COLUMN throws "no such
+ * column" and aborts the whole apply before any ALTER runs (the exact hazard PG and SQLite
+ * already order around: index after alters). Deferring every index to the tail mirrors that.
+ * The generated file has no `;` inside a statement, so a split on `;` is safe; the header's
+ * full-line `--` comments are dropped so they don't ride along as a bare statement.
+ */
+export const partitionStatements = (sql) => {
+  const preIndex = []
+  const indexes = []
+  for (const raw of sql.replace(/^\s*--.*$/gm, "").split(";")) {
+    const stmt = raw.trim()
+    if (!stmt) continue
+    ;(/^CREATE\s+(?:UNIQUE\s+)?INDEX\b/i.test(stmt) ? indexes : preIndex).push(`${stmt};`)
+  }
+  return { preIndex, indexes }
+}
+
+/**
  * A column ADDED to an existing (populated) table must be nullable or carry a constant
  * DEFAULT — SQLite/D1 reject `ADD COLUMN` of a NOT NULL column with no default. Derive's
  * schema policy is additive-only (CONTRIBUTING.md → Database migrations); this is the

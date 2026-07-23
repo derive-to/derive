@@ -44,7 +44,7 @@ export function registerFindTool(tc: ToolContext): void {
           online: runnerOnline(x),
           manifest: manifest ? { short_id: manifest.short_id, title: manifest.title } : null,
           your_open_sessions: open,
-          note: "Ask it on your user's behalf with `use` (a question or a commission).",
+          note: "Give it an instruction on your user's behalf with `use({context, instruction})`.",
         }
       }),
     )

@@ -6,9 +6,11 @@
 // runtime sqlite_master introspection the Node tier uses at boot).
 //
 // Idempotent and safe to run on every deploy:
-//   1. CREATE TABLE/INDEX IF NOT EXISTS from deploy/d1-schema.sql → adds any new tables.
+//   1. CREATE TABLE IF NOT EXISTS (tables/virtual tables) from deploy/d1-schema.sql.
 //   2. Diff each table's columns against the live DB and ALTER ... ADD COLUMN only the
 //      missing ones (CREATE-IF-NOT-EXISTS never adds columns to a table that exists).
+//   3. CREATE [UNIQUE] INDEX IF NOT EXISTS last — a partial index can reference a column
+//      step 2 just added, so indexes must not run before the reconciler.
 //
 // No-op on the Postgres tier: with Hyperdrive → Neon bound, the worker reads Postgres
 // and this D1 sits idle, so its schema is irrelevant. DATABASE_URL set ⇒ skip (see the
@@ -17,10 +19,11 @@
 //   node scripts/apply-d1-schema.mjs           # --remote (production D1)
 //   node scripts/apply-d1-schema.mjs --local   # local/dev D1
 import { execFileSync } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { parseExpectedColumns, planColumnAdds } from "./d1-schema-plan.mjs"
+import { parseExpectedColumns, partitionStatements, planColumnAdds } from "./d1-schema-plan.mjs"
 
 const DB = process.env.DERIVE_D1_NAME ?? "derive"
 const TARGET = process.argv.includes("--local") ? "--local" : "--remote"
@@ -48,13 +51,31 @@ const wrangler = (args, capture = false) =>
     maxBuffer: 16 * 1024 * 1024,
   })
 
-// Parse expected columns (+ their full definitions) per table from the generated schema.
+// Apply a batch of statements via a temp .sql file — wrangler's --file takes the whole
+// batch, sidestepping any --command length cap. Cleaned up whether or not it throws.
+const applySql = (label, statements) => {
+  if (!statements.length) return
+  const tmp = join(tmpdir(), `d1-apply-${label}-${process.pid}.sql`)
+  writeFileSync(tmp, statements.join("\n\n"))
+  try {
+    wrangler(["--file", tmp])
+  } finally {
+    rmSync(tmp, { force: true })
+  }
+}
+
+// Parse expected columns (+ their full definitions) per table from the generated schema,
+// and split it: tables/virtual tables apply first, indexes AFTER the column reconciler.
 const sql = readFileSync(schemaPath, "utf8")
 const expected = parseExpectedColumns(sql)
+const { preIndex, indexes } = partitionStatements(sql)
 
 console.log(`[d1] applying schema to "${DB}" (${TARGET})`)
-// 1. Create any missing tables/indexes. IF NOT EXISTS → no-op for existing ones.
-wrangler(["--file", schemaPath])
+// 1. Create any missing tables/virtual tables (IF NOT EXISTS → no-op for existing ones).
+//    NOT the indexes: a partial index (context_session_dedupe) references a column the
+//    step-2 alters add on an existing DB, so it must wait until step 3 — otherwise its
+//    CREATE fails "no such column" and aborts the apply before a single ALTER runs.
+applySql("tables", preIndex)
 
 // 2. Find which columns the live DB is missing (D1 caps compound SELECT, so chunk).
 const chunk = (a, n) => {
@@ -97,4 +118,8 @@ if (alters.length === 0) {
   for (const a of alters) console.log(`  ${a}`)
   wrangler(["--command", alters.join(" ")])
 }
+
+// 3. Indexes last — every column they reference (e.g. context_session.dedupe_key) now
+//    exists, whether just ALTER-added above or already present. IF NOT EXISTS → idempotent.
+applySql("indexes", indexes)
 console.log("[d1] schema up to date")

@@ -6205,10 +6205,10 @@ export interface components {
             /** @description The manifest version this session was opened against. */
             context_version: number;
             /**
-             * @description open = awaiting the agent; answered; escalated = draft went to review; failed = run crashed; closed = ended by asker/owner.
+             * @description open = awaiting the agent; working = a runner claimed it and is answering; answered; escalated = draft went to review; failed = run crashed; closed = ended by asker/owner.
              * @enum {string}
              */
-            state: "open" | "answered" | "escalated" | "failed" | "closed";
+            state: "open" | "working" | "answered" | "escalated" | "failed" | "closed";
             created_at: string;
             /** @description Last state/message change; equals created_at when never updated. */
             updated_at: string;

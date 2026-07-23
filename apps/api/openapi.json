@@ -2333,12 +2333,13 @@
             "type": "string",
             "enum": [
               "open",
+              "working",
               "answered",
               "escalated",
               "failed",
               "closed"
             ],
-            "description": "open = awaiting the agent; answered; escalated = draft went to review; failed = run crashed; closed = ended by asker/owner."
+            "description": "open = awaiting the agent; working = a runner claimed it and is answering; answered; escalated = draft went to review; failed = run crashed; closed = ended by asker/owner."
           },
           "created_at": {
             "type": "string"

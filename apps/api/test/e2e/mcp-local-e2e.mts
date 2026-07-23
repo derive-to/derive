@@ -71,6 +71,19 @@ seed.close()
 
 const meta = new SqliteMetaStore(dbPath)
 const blobs = new FsBlobStore(join(dir, "blobs"))
+// A minimal session shim (the integration tests' fakeAuth): an `x-test-user` header
+// picks the acting user. It drives the MANAGEMENT REST endpoints (register an agent,
+// create a context) that have no MCP path — the OAuth/agent bearer paths are untouched
+// by it, so the human-surface checks above still run exactly as before.
+const E2E_USER = { id: "u_e2e", email: "e2e@x.test", name: "E2E User", username: "e2e" }
+const fakeAuth = {
+  handler: async () => new Response(null, { status: 404 }),
+  api: {
+    getSession: async ({ headers }: { headers: Headers }) =>
+      headers.get("x-test-user") === E2E_USER.email ? { user: E2E_USER } : null,
+  },
+  // biome-ignore lint/suspicious/noExplicitAny: test-only auth stand-in
+} as any
 const app = createApp({
   meta,
   blobs,
@@ -78,8 +91,18 @@ const app = createApp({
   token: "dev-operator",
   encryptionKey: "e2e-secret",
   backplane: createInProcessBackplane(),
+  auth: fakeAuth,
 })
 const server = serve({ fetch: app.fetch, port: PORT })
+// A management REST call as the E2E user (session shim; no bearer).
+const restPost = async (path: string, body: unknown) => {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-test-user": E2E_USER.email },
+    body: JSON.stringify(body),
+  })
+  return { status: res.status, json: (await res.json().catch(() => null)) as Record<string, unknown> | null }
+}
 
 let id = 0
 const rpc = async (method: string, params: Record<string, unknown> = {}, bearer = BEARER) => {
@@ -276,7 +299,7 @@ const main = async () => {
 
   // 17. use: an unknown context fails with an actionable error, not a crash.
   console.log("\n[use] graceful with no wired context")
-  const u = await call("use", { context: "nonexistent-ctx", question: "hi" })
+  const u = await call("use", { context: "nonexistent-ctx", instruction: "hi" })
   ok(u.isError && /context|no /i.test(u.text ?? ""), "use with an unknown context returns an actionable error")
 
   // 18. read render:wait — no renderer configured here, so it must RETURN gracefully, never hang.
@@ -288,6 +311,94 @@ const main = async () => {
   console.log("\n[list_workspaces]")
   const lw = await call("list_workspaces")
   ok(!lw.isError && Array.isArray(lw.json?.workspaces), "list_workspaces returns the grant's workspaces")
+
+  // 20. CONTEXTS end to end: the (context, instruction) roundtrip over the ONE `use` tool.
+  //     u_e2e (the OAuth user) is Admin of their auto-provisioned workspace, so via the
+  //     session shim they register two agents and create a context; then the whole
+  //     give -> pull -> progress -> report loop runs over /mcp with the two dk_agt_ tokens.
+  console.log("\n[contexts] register agents + create a context (management REST, session shim)")
+  await fetch(`${BASE}/v1/me`, { headers: { "x-test-user": E2E_USER.email } }) // ensure the workspace exists
+  const runnerReg = await restPost("/v1/agents", { name: "Walkthrough Runner" })
+  const askerReg = await restPost("/v1/agents", { name: "Asker Bot" })
+  const runnerToken = runnerReg.json?.token as string | undefined
+  const runnerAgentId = runnerReg.json?.id as string | undefined
+  const askerToken = askerReg.json?.token as string | undefined
+  ok(!!runnerToken && !!runnerAgentId, `registered the runner agent (${runnerAgentId})`)
+  ok(!!askerToken, "registered the asker agent")
+
+  // The manifest is authored via the OAuth grant (same ws_p_u_e2e org), then u_e2e wires
+  // the context to the runner agent. Default ask_policy = invited => the CREATOR (u_e2e,
+  // whom askerToken acts for) may give it instructions. (A bare seeded agent has no
+  // workspace membership seat here, so it publishes via the grant, not its own token —
+  // that's a harness seeding detail, not the loop under test.)
+  const man = await call("publish", { title: "Walkthrough Manifest", content: "# Walkthrough\n\nBuild a per-brand walkthrough." })
+  const manifestShortId = (man.json?.short_id as string) || (man.json?.artifact as { short_id?: string })?.short_id
+  ok(!!manifestShortId, `published the manifest (${manifestShortId})`)
+  const cxRes = await restPost("/v1/contexts", { name: "Walkthrough", agent_id: runnerAgentId, manifest_short_id: manifestShortId })
+  const cxId = cxRes.json?.id as string | undefined
+  ok(cxRes.status < 300 && !!cxId, `created the context (${cxId}) wired to the runner agent`)
+  if (!cxId || !runnerToken || !askerToken) throw new Error("context setup failed — cannot run the roundtrip")
+
+  // 20a. GIVE: the asker hands the context an instruction (names the target). wait:0 so we
+  //      drive the runner by hand rather than blocking on it.
+  console.log("\n[contexts] GIVE an instruction")
+  const give = await call("use", { context: cxId, instruction: "Build the walkthrough for Airbnb.", wait: 0 }, askerToken)
+  const sid = give.json?.session_id as string | undefined
+  ok(!give.isError && !!sid, `give opened a session (${sid})`)
+  ok(give.json?.state === "open", `session starts open (was ${give.json?.state})`)
+
+  // 20b. OWNERSHIP DISPATCH: the asker is NOT the context's agent, so a bare use({context})
+  //      (no instruction) is a GIVE with a missing instruction — an error, never a pull.
+  const askerBare = await call("use", { context: cxId }, askerToken)
+  ok(askerBare.isError && /instruction/i.test(askerBare.text ?? ""), "non-agent bare use({context}) asks for an instruction (does not pull work)")
+
+  // 20c. PULL: the runner (the context's agent) claims its queued work. Bare use({context}),
+  //      no instruction => "hand me my sessions". The give flips to `working`.
+  console.log("\n[contexts] PULL work as the agent")
+  const pull = await call("use", { context: cxId }, runnerToken)
+  // biome-ignore lint/suspicious/noExplicitAny: test convenience over the pulled payload
+  const pulled = (pull.json?.sessions as any[]) ?? []
+  const mine = pulled.find((s) => s.session_id === sid)
+  ok(!pull.isError && !!mine, `runner pulled the waiting session (claimed ${pull.json?.claimed})`)
+  ok(mine?.state === "working", `pulled session is now working (was ${mine?.state})`)
+  // biome-ignore lint/suspicious/noExplicitAny: test convenience over the transcript
+  const askerMsg = ((mine?.messages as any[]) ?? []).find((m) => m.author === "asker")
+  ok(!!askerMsg && /Airbnb/.test(askerMsg?.body_md ?? ""), "the pulled transcript carries the instruction (names Airbnb)")
+
+  // 20d. A living result page is published (via the grant, per the seeding note above);
+  //      the runner BINDS it to the session and REPORTS progress against it.
+  console.log("\n[contexts] REPORT progress + bind a result page")
+  const building = await call("publish", { title: "Airbnb Walkthrough (building)", content: "<h1>building…</h1>" })
+  const resultShortId = (building.json?.short_id as string) || (building.json?.artifact as { short_id?: string })?.short_id
+  ok(!!resultShortId, `published the building result page (${resultShortId})`)
+  const prog = await call("use", { session_id: sid, answer: "Running the skill chain for Airbnb…", progress: true, result_artifact_id: resultShortId }, runnerToken)
+  ok(!prog.isError && prog.json?.state === "working", "progress tick keeps the session working")
+  ok(typeof prog.json?.result_url === "string" && (prog.json?.result_url as string).includes(resultShortId ?? "\0"), "report returns a result_url for the bound page")
+
+  // 20e. The asker sees the stream: still working, the progress note, and the result link.
+  const watch = await call("use", { session_id: sid, wait: 0 }, askerToken)
+  ok(watch.json?.state === "working", "asker sees the session working")
+  ok(/skill chain/i.test(JSON.stringify(watch.json?.progress ?? "")), "asker sees the progress note")
+  ok(typeof watch.json?.result_url === "string", "asker has the result_url from the first tick")
+
+  // 20f. REPORT the final answer (settles). `answers` = the instruction message id, the
+  //      guard against clobbering a mid-run follow-up.
+  console.log("\n[contexts] REPORT the final answer (settles)")
+  const done = await call("use", { session_id: sid, answer: "Done — the Airbnb walkthrough is live.", state: "answered", answers: askerMsg?.id, result_artifact_id: resultShortId }, runnerToken)
+  ok(!done.isError && done.json?.state === "answered", "final report settles the session to answered")
+
+  // 20g. The asker collects the settled answer + the result link.
+  const collected = await call("use", { session_id: sid, wait: 0 }, askerToken)
+  ok(collected.json?.state === "answered", "asker sees the settled state")
+  ok(/is live/i.test(JSON.stringify(collected.json?.answer ?? "")), "asker collects the final answer body")
+  ok(typeof collected.json?.result_url === "string", "the result link survives to the settled answer")
+
+  // 20h. IDEMPOTENCY: two gives with the same dedupe_key while one is in flight JOIN one
+  //      session (a double "do it for X" never runs twice).
+  console.log("\n[contexts] dedupe_key joins an in-flight session")
+  const d1 = await call("use", { context: cxId, instruction: "Do it for Delta.", dedupe_key: "brand-delta", wait: 0 }, askerToken)
+  const d2 = await call("use", { context: cxId, instruction: "Do it for Delta (again).", dedupe_key: "brand-delta", wait: 0 }, askerToken)
+  ok(!d1.isError && !d2.isError && !!d1.json?.session_id && d1.json?.session_id === d2.json?.session_id, "same dedupe_key returns the same session (joined, not duplicated)")
 }
 
 main()

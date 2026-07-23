@@ -367,6 +367,46 @@ describe("sessions: the ask → answer → follow-up loop", () => {
     ).json()
     expect(settled.session.state).toBe("answered")
   })
+
+  it("F6: a follow-up on a CLAIMED (working) session keeps it working — the claim isn't vacated", async () => {
+    const asked = await (
+      await app.request(
+        `/v1/contexts/${contextId}/sessions`,
+        jsonAs(as(daniel.email), { body_md: "long-running question" }),
+      )
+    ).json()
+    const sid = asked.session.id
+
+    // The runner claims it: open -> working, holding a live lease.
+    const q = await (
+      await app.request(`/v1/contexts/${contextId}/queue`, { headers: bearer(agentToken) })
+    ).json()
+    expect(q.sessions.some((s: { id: string }) => s.id === sid)).toBe(true)
+    const afterClaim = await (
+      await app.request(`/v1/sessions/${sid}`, { headers: as(daniel.email) })
+    ).json()
+    expect(afterClaim.session.state).toBe("working")
+
+    // A follow-up lands mid-run. It must STAY `working` (the active claim is not vacated) —
+    // a read-then-write reopen could race a concurrent settle and strand it `working` with
+    // no runner, or flip it to `open` where a second runner double-claims. This is the exact
+    // stranding race the atomic appendFollowupReopen closes.
+    const followUp = await app.request(
+      `/v1/sessions/${sid}/messages`,
+      jsonAs(as(daniel.email), { body_md: "one more thing" }),
+    )
+    expect(followUp.status).toBe(201)
+    const afterFollowUp = await (
+      await app.request(`/v1/sessions/${sid}`, { headers: as(daniel.email) })
+    ).json()
+    expect(afterFollowUp.session.state).toBe("working")
+
+    // A concurrent serve does not re-claim it (still working, live lease) — no double-run.
+    const q2 = await (
+      await app.request(`/v1/contexts/${contextId}/queue`, { headers: bearer(agentToken) })
+    ).json()
+    expect(q2.sessions.some((s: { id: string }) => s.id === sid)).toBe(false)
+  })
 })
 
 // Revoking ask-access closes an IN-FLIGHT session too: a member who opened a
