@@ -28,7 +28,7 @@
 //   derive send-back [--id] [--note m]     (human) return your answers to the agent
 //   derive approve [--id] [--note m]       (human) approve — the build go-signal
 //   derive doctor [--server url] [--token t]  report which optional features are configured
-//   derive runner serve|doctor|install     run a context's answer daemon (npx-able anywhere)
+//   derive runner serve|once|doctor|install   run a context's answer daemon, or drain once (npx-able anywhere)
 //   derive context push|dev                ship a context dir as its manifest / tune it live
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
@@ -749,15 +749,18 @@ if (cmd === "doctor") {
 // loads a context's own secrets (KEY=VALUE) before anything reads them.
 if (cmd === "runner") {
   const sub = positional.shift()
-  if (!["serve", "doctor", "install"].includes(sub ?? "")) {
+  if (!["serve", "once", "doctor", "install"].includes(sub ?? "")) {
     console.error(`usage:
   derive runner serve  [ctx_id] [--server url] [--token t | --token-file f] [--env-file f]
                        [--cwd dir] [--claude-bin path] [--model m] [--poll ms] [--timeout ms] [--mock]
+  derive runner once   [same flags]        drain the queue once and exit — for schedulers (cron, pg-boss, Actions)
   derive runner doctor [same flags]        preflight: server, token+context, manifest, cwd, claude, gh, python3
   derive runner install [same flags]       print a launchd/systemd unit for this config`)
     process.exit(1)
   }
-  const { doctor, loadRunnerConfig, renderServiceUnit, serve } = await import("../src/runner.js")
+  const { doctor, loadRunnerConfig, once, renderServiceUnit, serve } = await import(
+    "../src/runner.js"
+  )
   if (positional[0]) flags.context = positional[0]
   let rcfg
   try {
@@ -791,6 +794,14 @@ if (cmd === "runner") {
     process.exit(0)
   }
   try {
+    if (sub === "once") {
+      // Per-session failures are recorded server-side (fail()) and are not a
+      // reason to retry the drain — the same input fails the same way until the
+      // asker follows up. Only boot/queue errors reach the catch and exit 1,
+      // which is the scheduler's signal to retry with backoff.
+      await once(rcfg)
+      process.exit(0)
+    }
     await serve(rcfg) // runs until killed
   } catch (e) {
     // Startup failures (bad token, missing manifest) get the house one-liner,

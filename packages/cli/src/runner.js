@@ -882,7 +882,10 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
   )
 }
 
-export async function serve(cfg) {
+/** Boot the host state serve/once share: context info, repo corpus, skills,
+ *  conventions. Everything here is per-boot truth on purpose (see the comments
+ *  inline) — `once` inherits the same freshness contract as a serve restart. */
+async function bootHost(cfg, modeLabel) {
   const client = new DeriveClient(cfg.server, cfg.token)
   const info = await client.getContext(cfg.contextId)
   if (!info.manifest_md && !cfg.manifestFile) throw new Error("context has no readable manifest")
@@ -892,7 +895,7 @@ export async function serve(cfg) {
   console.log(
     `[runner] serving "${info.name}" (${cfg.contextId}) on ${cfg.server} — ` +
       `${cfg.manifestFile ? `manifest LOCAL ${cfg.manifestFile}` : `manifest v${info.manifest_version}`}, ` +
-      `${cfg.mock ? "MOCK" : `${cfg.claudeBin} (${cfg.model})`}, poll ${cfg.pollMs}ms`,
+      `${cfg.mock ? "MOCK" : `${cfg.claudeBin} (${cfg.model})`}, ${modeLabel}`,
   )
   // Pointers sync at boot, like every other piece of host state — a manifest
   // edit that adds one applies on the next start (the catalog in the prompt is
@@ -926,45 +929,76 @@ export async function serve(cfg) {
   const conventions = conventionsBlock(skillCatalog, noteCatalog)
   // Provenance, alongside the repo SHAs: which skill versions this run had on disk.
   const skillMeta = skillCatalog.filter((s) => s.ok).map((s) => ({ id: s.id, version: s.version }))
+  return { client, info, catalog, repoMeta, conventions, skillMeta }
+}
 
+/** One queue pass: fetch open sessions, serve each sequentially. Throws on a
+ *  queue/manifest fetch failure (the caller decides whether that is a logged
+ *  poll error or a failed drain); a single session's failure is recorded
+ *  server-side via fail() and counted, never thrown — same isolation the serve
+ *  loop always had. Returns {considered, served, failed}. */
+export async function drainPass(cfg, host) {
+  const { client, info, catalog, repoMeta, conventions, skillMeta } = host
+  // An open session ending on an agent turn is one of two things: a settle
+  // whose state write was lost (the store's two writes aren't transactional)
+  // — re-answering would double-post, skip it — or an answer the server
+  // marked stale because a follow-up landed mid-run: that one MUST re-serve,
+  // and the transcript above the stale answer carries the follow-up.
+  const sessions = (await client.queue(cfg.contextId)).filter((s) => {
+    const last = s.messages.at(-1)
+    if (last?.author_kind !== "agent") return true
+    return last.meta?.stale === true
+  })
+  const counts = { considered: sessions.length, served: 0, failed: 0 }
+  if (sessions.length === 0) return counts
+  // Re-read the manifest only when the queue has work — an edit applies
+  // from the next answer, and idle polls stay one call. In dev mode the
+  // working-tree file wins, same freshness contract. The repo catalog is
+  // appended from the BOOT sync — the frontmatter may promise new repos,
+  // but the prompt only ever claims what's actually on disk.
+  const md = cfg.manifestFile
+    ? readFileSync(cfg.manifestFile, "utf8")
+    : ((await client.getContext(cfg.contextId)).manifest_md ?? info.manifest_md ?? "")
+  const manifest = parseManifest(md).body + repoCatalogBlock(catalog) + conventions
+  // Sequential on purpose: one runner, one model, no fan-out — fairness
+  // comes from the queue's oldest-first order. One session's failure must
+  // not starve the rest of the batch.
+  for (const s of sessions) {
+    try {
+      await serveSession(client, s, manifest, cfg, repoMeta, skillMeta)
+      counts.served += 1
+    } catch (err) {
+      counts.failed += 1
+      console.error(`[runner] session ${s.id}: ${err.message}`)
+    }
+  }
+  return counts
+}
+
+export async function serve(cfg) {
+  const host = await bootHost(cfg, `poll ${cfg.pollMs}ms`)
   for (;;) {
     try {
-      // An open session ending on an agent turn is one of two things: a settle
-      // whose state write was lost (the store's two writes aren't transactional)
-      // — re-answering would double-post, skip it — or an answer the server
-      // marked stale because a follow-up landed mid-run: that one MUST re-serve,
-      // and the transcript above the stale answer carries the follow-up.
-      const sessions = (await client.queue(cfg.contextId)).filter((s) => {
-        const last = s.messages.at(-1)
-        if (last?.author_kind !== "agent") return true
-        return last.meta?.stale === true
-      })
-      if (sessions.length > 0) {
-        // Re-read the manifest only when the queue has work — an edit applies
-        // from the next answer, and idle polls stay one call. In dev mode the
-        // working-tree file wins, same freshness contract. The repo catalog is
-        // appended from the BOOT sync — the frontmatter may promise new repos,
-        // but the prompt only ever claims what's actually on disk.
-        const md = cfg.manifestFile
-          ? readFileSync(cfg.manifestFile, "utf8")
-          : ((await client.getContext(cfg.contextId)).manifest_md ?? info.manifest_md ?? "")
-        const manifest = parseManifest(md).body + repoCatalogBlock(catalog) + conventions
-        // Sequential on purpose: one runner, one model, no fan-out — fairness
-        // comes from the queue's oldest-first order. One session's failure must
-        // not starve the rest of the batch.
-        for (const s of sessions) {
-          try {
-            await serveSession(client, s, manifest, cfg, repoMeta, skillMeta)
-          } catch (err) {
-            console.error(`[runner] session ${s.id}: ${err.message}`)
-          }
-        }
-      }
+      await drainPass(cfg, host)
     } catch (err) {
       console.error(`[runner] poll error: ${err.message}`)
     }
     await new Promise((r) => setTimeout(r, cfg.pollMs))
   }
+}
+
+/** Drain the queue once and exit: the executor mode. Any scheduler — a pg-boss
+ *  dispatcher, a GitHub Actions cron, a systemd timer — becomes a standing
+ *  process by running this on a cadence. Boot or queue failures throw (the
+ *  scheduler's retry is the retry); per-session failures are already recorded
+ *  server-side, so they end the run quietly with a nonzero `failed` count. */
+export async function once(cfg) {
+  const host = await bootHost(cfg, "single drain")
+  const counts = await drainPass(cfg, host)
+  console.log(
+    `[runner] drain complete — ${counts.served} served, ${counts.failed} failed, ${counts.considered} considered`,
+  )
+  return counts
 }
 
 // ---- doctor ---------------------------------------------------------------------
