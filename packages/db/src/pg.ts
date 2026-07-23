@@ -2426,31 +2426,6 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(automation.created_at))
       .limit(limit)
   }
-  async updateAutomation(
-    id: string,
-    orgId: string,
-    fields: {
-      agent_id?: string
-      trigger?: string
-      instruction?: string
-      refs?: string | null
-      enabled?: 0 | 1
-    },
-  ): Promise<AutomationRecord | null> {
-    const set: Record<string, unknown> = {}
-    if (fields.agent_id !== undefined) set.agent_id = fields.agent_id
-    if (fields.trigger !== undefined) set.trigger = fields.trigger
-    if (fields.instruction !== undefined) set.instruction = fields.instruction
-    if (fields.refs !== undefined) set.refs = fields.refs
-    if (fields.enabled !== undefined) set.enabled = fields.enabled
-    if (Object.keys(set).length === 0) return this.getAutomation(id)
-    const rows = await this.db
-      .update(automation)
-      .set(set)
-      .where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
-      .returning()
-    return rows[0] ?? null
-  }
   async deleteAutomation(id: string, orgId: string): Promise<void> {
     // Cancel pending work first, then remove the definition — both org-scoped so a stray
     // caller can't reach across tenants. Running/finished runs stay as history.

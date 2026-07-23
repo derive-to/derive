@@ -181,56 +181,6 @@ describe("automations + runs", () => {
     ).toHaveLength(0)
   })
 
-  it("PATCH edits in place: instruction, refs (normalized), pause/resume; org + role scoped", async () => {
-    const agent = await mintAgent()
-    const created = await (await createAutomation(agent.id)).json()
-
-    const edited = await (
-      await app.request(`/v1/automations/${created.id}`, {
-        ...jsonAs(as(owner.email), {
-          instruction: "keep the CHANGELOG current",
-          refs: [{ kind: "artifact", id: "art_x", mode: "publish" }, "art_y"],
-        }),
-        method: "PATCH",
-      })
-    ).json()
-    expect(edited.instruction).toBe("keep the CHANGELOG current")
-    expect(edited.refs).toEqual([
-      { kind: "artifact", id: "art_x", mode: "publish" },
-      { kind: "artifact", id: "art_y" },
-    ])
-    // Untouched fields survive a partial patch.
-    expect(edited.trigger).toMatchObject({ kind: "manual" })
-    expect(edited.enabled).toBe(true)
-
-    // Pause: run-now refuses; resume: it enqueues again.
-    await app.request(`/v1/automations/${created.id}`, {
-      ...jsonAs(as(owner.email), { enabled: false }),
-      method: "PATCH",
-    })
-    const refused = await app.request(`/v1/automations/${created.id}/run`, {
-      method: "POST",
-      headers: as(owner.email),
-    })
-    expect(refused.status).toBe(400)
-    await app.request(`/v1/automations/${created.id}`, {
-      ...jsonAs(as(owner.email), { enabled: true }),
-      method: "PATCH",
-    })
-    const ok = await app.request(`/v1/automations/${created.id}/run`, {
-      method: "POST",
-      headers: as(owner.email),
-    })
-    expect(ok.status).toBe(201)
-
-    // A commenter seat can't edit.
-    const denied = await app.request(`/v1/automations/${created.id}`, {
-      ...jsonAs(as(member.email), { instruction: "hijack" }),
-      method: "PATCH",
-    })
-    expect([403, 404]).toContain(denied.status)
-  })
-
   it("run-now needs a write role: a commenter-seat member can't force a run", async () => {
     const agent = await mintAgent()
     const created = await (await createAutomation(agent.id)).json()

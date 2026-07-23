@@ -61,12 +61,6 @@ const REF = z.union([
   z.object({ kind: z.literal("tag"), tag: z.string().min(1).max(128), mode: MODE }),
 ])
 const REFS = z.array(REF).max(100)
-const TRIGGER = z.object({
-  kind: z.enum(["manual", "schedule", "event"]),
-  cron: z.string().optional(),
-  tz: z.string().optional(),
-  on: z.string().optional(),
-})
 
 export const automationRoutes = (ctx: AppContext) => {
   const { meta, agentFor, requireUser, requireWorkspace } = ctx
@@ -80,7 +74,12 @@ export const automationRoutes = (ctx: AppContext) => {
       c,
       z.object({
         agentId: z.string(),
-        trigger: TRIGGER,
+        trigger: z.object({
+          kind: z.enum(["manual", "schedule", "event"]),
+          cron: z.string().optional(),
+          tz: z.string().optional(),
+          on: z.string().optional(),
+        }),
         instruction: z.string().min(1).max(4000),
         refs: REFS.optional(),
         enabled: z.boolean().default(true),
@@ -102,47 +101,6 @@ export const automationRoutes = (ctx: AppContext) => {
       enabled: b.enabled ? 1 : 0,
     })
     return c.json(present(rec), 201)
-  })
-
-  // Edit in place: instruction, trigger, refs (write modes ride IN them), the agent,
-  // and enabled (pause/resume). Same manage gate as create; org-scoped update so a
-  // shared short id can never cross tenants. Pausing composes with the existing
-  // guards: run-now 400s and stale queued runs cancel at claim.
-  app.patch("/v1/automations/:id", async (c) => {
-    const org = await requireWorkspace(c, "manage")
-    if (org instanceof Response) return org
-    const a = await meta.getAutomation(c.req.param("id"))
-    if (!a || a.org_id !== org) return fail(c, 404, "not found")
-    const b = await readJson(
-      c,
-      z.object({
-        agentId: z.string().optional(),
-        trigger: TRIGGER.optional(),
-        instruction: z.string().min(1).max(4000).optional(),
-        refs: REFS.nullable().optional(),
-        enabled: z.boolean().optional(),
-      }),
-    )
-    if (b instanceof Response) return bail(b)
-    if (b.agentId !== undefined) {
-      const agents = await meta.listAgents(org)
-      if (!agents.some((ag) => ag.id === b.agentId))
-        return bail(fail(c, 400, "agent must be in this workspace"))
-    }
-    const rec = await meta.updateAutomation(a.id, org, {
-      agent_id: b.agentId,
-      trigger: b.trigger ? JSON.stringify(b.trigger satisfies AutomationTrigger) : undefined,
-      instruction: b.instruction,
-      refs:
-        b.refs === undefined
-          ? undefined
-          : b.refs === null
-            ? null
-            : JSON.stringify(normalizeSelectors(b.refs)),
-      enabled: b.enabled === undefined ? undefined : b.enabled ? 1 : 0,
-    })
-    if (!rec) return fail(c, 404, "not found")
-    return c.json(present(rec))
   })
 
   app.get("/v1/automations", async (c) => {
