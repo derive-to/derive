@@ -14,7 +14,7 @@ import { automationsQuery, runsQuery, workspaceQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { AutomationForm } from "./automation-form"
-import { runOutcome, runStatusLabel, triggerLabel } from "./automation-format"
+import { runOutcome, runStatusLabel, runWrites, triggerLabel } from "./automation-format"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
@@ -248,26 +248,21 @@ function Activity() {
 }
 
 /** What the run actually wrote, from meta.writes[] — each write linked to its artifact,
- *  creations marked. Absent or empty writes render nothing (asks and failed runs). */
+ *  the verb (created/proposed/revised) shown. Parsing lives in runWrites (unit-tested);
+ *  absent or empty writes render nothing (asks and failed runs). */
 function RunWrites({ meta }: { meta: string | null }) {
-  let writes: { short_id: string | null; decision?: string; created?: boolean }[] = []
-  try {
-    const parsed = meta ? JSON.parse(meta) : null
-    if (Array.isArray(parsed?.writes)) writes = parsed.writes
-  } catch {}
-  const linked = writes.filter((w) => w.short_id)
-  if (linked.length === 0) return null
+  const writes = runWrites(meta)
+  if (writes.length === 0) return null
   return (
     <div className="flex flex-wrap items-center gap-2 pl-1 text-2xs text-muted-foreground">
-      {linked.map((w) => (
+      {writes.map((w) => (
         <Link
-          key={`${w.short_id}`}
+          key={w.shortId}
           to="/artifacts/$ref"
-          params={{ ref: w.short_id as string }}
+          params={{ ref: w.shortId }}
           className="font-mono underline-offset-2 hover:underline"
         >
-          {w.created ? "created" : w.decision === "proposal" ? "proposed" : "revised"} ·{" "}
-          {w.short_id}
+          {w.verb} · {w.shortId}
         </Link>
       ))}
     </div>

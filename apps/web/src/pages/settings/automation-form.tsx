@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQueries, useQuery } from "@tanstack/react-query"
 import { Plus, X } from "lucide-react"
 import { useMemo, useState } from "react"
 import { type Automation, type AutomationRef, type AutomationTrigger, api } from "@/api"
@@ -22,9 +22,15 @@ import {
 } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { agentsQuery, automationsQuery, runsQuery, targetPickerQuery } from "@/lib/queries"
+import {
+  agentsQuery,
+  artifactQuery,
+  automationsQuery,
+  runsQuery,
+  targetPickerQuery,
+} from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { EVENT_KINDS, SCHEDULE_PRESETS } from "./automation-format"
+import { EVENT_KINDS, SCHEDULE_PRESETS, stampMode } from "./automation-format"
 
 // The automation form, shared by the Settings manager (create + edit) and the
 // per-artifact Automate dialog. Targets are first-class here — a doc picker and a
@@ -81,6 +87,35 @@ export function AutomationForm({
   const [pickerQ, setPickerQ] = useState("")
   const [tagDraft, setTagDraft] = useState("")
   const picker = useQuery(targetPickerQuery(pickerQ))
+  // Resolve real titles for artifact targets seeded from an edit-load (their label is the
+  // short id). Picker adds already carry titles; this fills the rest. Per-id queries are
+  // cache-deduped and each isolates its own error, so a deleted/inaccessible target simply
+  // keeps showing its id rather than breaking the row.
+  const artifactIds = useMemo(
+    () => [
+      ...new Set(
+        targets
+          .map((t) => t.ref)
+          .filter((r) => r.kind === "artifact")
+          .map((r) => r.id),
+      ),
+    ],
+    [targets],
+  )
+  const titleResults = useQueries({
+    queries: artifactIds.map((id) => ({ ...artifactQuery(id), retry: false })),
+  })
+  const titles = useMemo(() => {
+    const m: Record<string, string> = {}
+    titleResults.forEach((r, i) => {
+      const id = artifactIds[i]
+      const t = r.data?.title
+      if (id && t) m[id] = t
+    })
+    return m
+  }, [titleResults, artifactIds])
+  const labelFor = (t: Target): string =>
+    t.ref.kind === "artifact" ? (titles[t.ref.id] ?? t.label) : t.label
   const tz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", [])
 
   const addTarget = (t: Target) =>
@@ -94,10 +129,13 @@ export function AutomationForm({
 
   const buildTrigger = (): AutomationTrigger =>
     kind === "schedule" ? { kind, cron, tz } : kind === "event" ? { kind, on } : { kind }
-  // Write mode is an attribute OF the targets: stamp the explicit publish opt-in on
-  // every target at submit; propose is the default and stays unstored (canonical).
+  // Write mode is an attribute OF the targets: stampMode sets the publish opt-in on each
+  // (propose stays unstored). Pure + unit-tested in automation-format.
   const buildRefs = (): AutomationRef[] =>
-    targets.map((t) => (mode === "publish" ? { ...t.ref, mode: "publish" as const } : t.ref))
+    stampMode(
+      targets.map((t) => t.ref),
+      mode,
+    )
 
   const save = useApiMutation({
     mutationFn: () =>
@@ -171,11 +209,11 @@ export function AutomationForm({
       <div className="flex flex-wrap items-center gap-1.5">
         {targets.map((t, i) => (
           <Badge key={keyOf(t.ref)} variant="outline" className="gap-1 pr-1">
-            <span className="max-w-40 truncate">{t.label}</span>
+            <span className="max-w-40 truncate">{labelFor(t)}</span>
             <button
               type="button"
               data-testid={`automation-target-remove-${i}`}
-              aria-label={`Remove ${t.label}`}
+              aria-label={`Remove ${labelFor(t)}`}
               className="rounded-sm p-0.5 hover:bg-accent"
               onClick={() => setTargets((cur) => cur.filter((x) => keyOf(x.ref) !== keyOf(t.ref)))}
             >

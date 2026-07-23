@@ -367,6 +367,10 @@ export const runsQuery = () =>
   queryOptions({
     queryKey: ["runs"] as const,
     queryFn: () => api.listRuns().then((r) => r.runs),
+    // The ledger changes out-of-band (the executor writes runs the tab never saw),
+    // so revalidate whenever the Automations view mounts — never strand a cached page
+    // that predates the latest runs.
+    refetchOnMount: "always",
   })
 
 // The agents an artifact viewer may address (the "ask an agent to revise" flow). Read
