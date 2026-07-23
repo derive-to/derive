@@ -124,6 +124,9 @@ export function makeOauthAgent({
           // workspace where the granting user is only a viewer).
           role: capRole(scopeRole, ws.memberRole),
           created_by: grant.userId,
+          // An OAuth grant is never hosted directly: hosting means a registered
+          // agent record (a grant has no server-storable credential to run with).
+          hosted: 0,
           created_at: new Date().toISOString(),
         },
       }
@@ -183,6 +186,8 @@ export function makeOauthAgent({
         token: "",
         role: capRole(scopeRole, ws.memberRole),
         created_by: userId,
+        // Never hosted directly, same as the opaque-token branch above.
+        hosted: 0,
         created_at: new Date().toISOString(),
       },
     }

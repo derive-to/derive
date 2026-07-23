@@ -227,6 +227,8 @@ export const agent = pgTable(
     role: text("role").$type<Role>().notNull().default("commenter"),
     // Who registered the agent — the person it publishes on behalf of (see schema.ts).
     created_by: text("created_by"),
+    // Served by Derive's managed executor when 1 (see schema.ts).
+    hosted: integer("hosted").notNull().default(0).$type<0 | 1>(),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [

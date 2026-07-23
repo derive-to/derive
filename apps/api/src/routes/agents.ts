@@ -18,6 +18,7 @@ export const agentRoutes = (ctx: AppContext) => {
     id: a.id,
     name: a.name,
     role: a.role,
+    hosted: a.hosted === 1,
     created_at: a.created_at,
   })
 
@@ -30,6 +31,11 @@ export const agentRoutes = (ctx: AppContext) => {
         .enum(["viewer", "commenter", "editor", "owner"])
         .describe(
           "Permission level; commenter proposes only, editor can write, owner never allowed",
+        ),
+      hosted: z
+        .boolean()
+        .describe(
+          "Served by Derive's managed executor. Hosting changes where the agent runs, never its principal or cap.",
         ),
       created_at: z.string(),
     })
@@ -119,6 +125,35 @@ export const agentRoutes = (ctx: AppContext) => {
       } catch {
         return bail(fail(c, 409, "an agent with that name already exists"))
       }
+    },
+  )
+
+  // Flip whether Derive's managed executor serves this agent. Deliberately the ONLY
+  // mutable field here: name/role changes stay recreate-the-agent, so hosting can't
+  // become a side door for privilege edits.
+  app.openapi(
+    createRoute({
+      method: "patch",
+      path: "/v1/agents/{id}",
+      tags: ["Agents"],
+      summary: "Update an agent's hosted flag (Admin only).",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The updated agent.",
+          content: { "application/json": { schema: Agent } },
+        },
+      },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      const b = await readJson(c, z.object({ hosted: z.boolean() }))
+      if (b instanceof Response) return bail(b)
+      // Scoped to (id, org) like delete, so an Admin can't flip another workspace's agent.
+      const updated = await meta.setAgentHosted(c.req.param("id"), org, b.hosted ? 1 : 0)
+      if (!updated) return bail(fail(c, 404, "agent not found"))
+      return c.json(agentJson(updated))
     },
   )
 
