@@ -742,6 +742,16 @@ export const api = {
     /** Bare strings are artifact shorthand; the server stores canonical selectors. */
     refs?: (string | AutomationRef)[]
   }): Promise<Automation> => f("/v1/automations", opts(input)).then(j),
+  updateAutomation: (
+    id: string,
+    input: {
+      agentId?: string
+      trigger?: AutomationTrigger
+      instruction?: string
+      refs?: (string | AutomationRef)[] | null
+      enabled?: boolean
+    },
+  ): Promise<Automation> => f(`/v1/automations/${id}`, { ...opts(input), method: "PATCH" }).then(j),
   deleteAutomation: (id: string): Promise<void> =>
     f(`/v1/automations/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
   runAutomation: (id: string): Promise<{ id: string; status: string }> =>

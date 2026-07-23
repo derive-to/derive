@@ -203,6 +203,16 @@ export const peopleQuery = (query: string) =>
     placeholderData: keepPreviousData,
   })
 
+// Doc search for the automation-target picker: title search over the workspace's
+// artifacts, small page, previous results held while typing so the list never
+// flashes empty mid-keystroke.
+export const targetPickerQuery = (q: string) =>
+  queryOptions({
+    queryKey: ["artifacts", "target-picker", q] as const,
+    queryFn: () => api.listArtifacts({ q: q.trim() || undefined, limit: 8 }),
+    placeholderData: keepPreviousData,
+  })
+
 // Full workspace search for the /search results page — the same hybrid (lexical + dense/semantic)
 // endpoint the ⌘K palette uses, but a deeper page (default 30 vs the palette's 6). Gated to ≥2
 // chars (the server also requires a query); keepPreviousData holds the list across refinements so
