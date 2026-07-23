@@ -941,6 +941,19 @@ export interface AgentStore {
   getAutomationsByIds(ids: string[]): Promise<AutomationRecord[]>
   /** A workspace's automations, newest first. Default 100. */
   listAutomations(orgId: string, limit?: number): Promise<AutomationRecord[]>
+  /** Partial update, org-scoped (id + orgId must both match). Undefined fields are
+   *  untouched; refs null clears. Returns the updated row, or null when not found. */
+  updateAutomation(
+    id: string,
+    orgId: string,
+    fields: {
+      agent_id?: string
+      trigger?: string
+      instruction?: string
+      refs?: string | null
+      enabled?: 0 | 1
+    },
+  ): Promise<AutomationRecord | null>
   /** Remove an automation and cancel its still-queued runs, org-scoped so a caller can't
    *  reach across tenants. Running/finished runs stay as history. */
   deleteAutomation(id: string, orgId: string): Promise<void>
