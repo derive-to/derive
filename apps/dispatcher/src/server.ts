@@ -1,6 +1,33 @@
+import { type DrainResult, drainRuns } from "@derive/hosted-agent"
 import { Hono } from "hono"
 import type { DispatcherConfig } from "./config"
 import { type InvokeRequest, invokeHostedAgent, type ModelResolver } from "./invoke"
+
+/** A drain request: run the executor loop for ONE hosted agent (claim its due runs, run each
+ *  through the gate, finish it). The API/cron supplies the agent's bearer + system prompt. */
+export interface DrainRequest {
+  agentToken: string
+  manifest: string
+  conventions?: string
+  limit?: number
+}
+
+/** Parse + validate a drain body; returns the request or a message. */
+export function parseDrain(body: unknown): DrainRequest | string {
+  if (typeof body !== "object" || body === null) return "body must be an object"
+  const b = body as Record<string, unknown>
+  const str = (k: string) => (typeof b[k] === "string" && b[k] ? (b[k] as string) : null)
+  const agentToken = str("agentToken")
+  const manifest = str("manifest")
+  if (!agentToken) return "agentToken is required"
+  if (!manifest) return "manifest is required"
+  return {
+    agentToken,
+    manifest,
+    conventions: str("conventions") ?? undefined,
+    limit: typeof b.limit === "number" ? b.limit : undefined,
+  }
+}
 
 // WP3: the agent host's internal HTTP surface. The API reaches it over a shared
 // secret to run a shared-lane hosted agent live (Draft with your agent, an
@@ -48,6 +75,8 @@ export interface ServerDeps {
   resolveModel: ModelResolver
   /** Injectable for tests; defaults to the real Mastra invoke. */
   invoke?: typeof invokeHostedAgent
+  /** Injectable for tests; defaults to the real executor loop. */
+  drain?: (req: DrainRequest) => Promise<DrainResult>
 }
 
 export function buildServer(deps: ServerDeps): Hono {
@@ -56,15 +85,17 @@ export function buildServer(deps: ServerDeps): Hono {
 
   app.get("/internal/health", (c) => c.json({ ok: true }))
 
-  // Constant-shape auth: a single shared secret in a header. Timing-safe compare
-  // isn't warranted (the secret is high-entropy and this surface is internal,
-  // not public), but a missing secret config fails every call closed.
-  app.use("/internal/invoke", async (c, next) => {
+  // Constant-shape auth: a single shared secret in a header, on every /internal write
+  // surface. Timing-safe compare isn't warranted (the secret is high-entropy and this
+  // surface is internal, not public), but a missing secret config fails every call closed.
+  const guard = async (c: Parameters<Parameters<Hono["use"]>[1]>[0], next: () => Promise<void>) => {
     if (!secret) return c.json(bad("hosted lane not configured", 500), 500)
     if (c.req.header("x-derive-host-secret") !== secret)
       return c.json(bad("unauthorized", 401), 401)
     await next()
-  })
+  }
+  app.use("/internal/invoke", guard)
+  app.use("/internal/drain-runs", guard)
 
   app.post("/internal/invoke", async (c) => {
     const parsed = parseInvoke(await c.req.json().catch(() => null))
@@ -77,6 +108,22 @@ export function buildServer(deps: ServerDeps): Hono {
       return c.json(result)
     } catch (e) {
       return c.json(bad(`invoke failed: ${(e as Error).message}`, 500), 500)
+    }
+  })
+
+  // The pull executor: drain one hosted agent's due runs. The default calls drainRuns with the
+  // host's model resolver; a cron (or the API) hits this per hosted agent on a cadence.
+  const drain =
+    deps.drain ??
+    ((req: DrainRequest) =>
+      drainRuns({ server: deps.cfg.server, resolveModel: deps.resolveModel, ...req }))
+  app.post("/internal/drain-runs", async (c) => {
+    const parsed = parseDrain(await c.req.json().catch(() => null))
+    if (typeof parsed === "string") return c.json(bad(parsed, 400), 400)
+    try {
+      return c.json(await drain(parsed))
+    } catch (e) {
+      return c.json(bad(`drain failed: ${(e as Error).message}`, 500), 500)
     }
   })
 

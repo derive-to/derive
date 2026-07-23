@@ -1,3 +1,5 @@
+import type { AutonomyFlags, AutonomyLevel } from "@derive/core"
+
 // The hosted agent's window onto Derive: every call is bearer-authed as ONE
 // hosted agent (its registered token), so the server resolves the agent's
 // principal, its on-behalf-of human, and its role cap exactly as it does for the
@@ -41,6 +43,31 @@ export interface HostedAgentClient {
    *  fail the run it describes. org_id + agent_id are derived server-side from
    *  the bearer, so only the outcome fields travel. */
   recordRun(run: RunLedgerInput): Promise<void>
+  /** Claim this agent's due queued runs — the executor pull. Each carries what to do
+   *  (instruction + refs) and the gate inputs (autonomy + flags, resolved server-side and
+   *  fresh at claim time), so the executor needs no extra calls to run one. */
+  claimRuns(limit?: number): Promise<ClaimedRun[]>
+  /** Finish a claimed run: a terminal status, the cost, and the result meta. */
+  finishRun(id: string, fields: RunFinishInput): Promise<void>
+}
+
+/** A run handed to the executor by claimRuns: the work plus the resolved gate inputs. */
+export interface ClaimedRun {
+  id: string
+  reason: string
+  automation_id: string | null
+  /** The automation's free-form instruction — the task to run. */
+  instruction: string
+  /** The automation's refs (artifact short ids, urls) as context for the task. */
+  refs: string[]
+  autonomy: AutonomyLevel
+  flags: AutonomyFlags
+}
+
+export interface RunFinishInput {
+  status: "succeeded" | "failed"
+  cost_micro_usd?: number | null
+  meta?: Record<string, unknown> | null
 }
 
 export interface RunLedgerInput {
@@ -127,6 +154,24 @@ export function httpClient(server: string, token: string): HostedAgentClient {
         signal: AbortSignal.timeout(isoTimeout),
       })
       if (!res.ok) throw new Error(`recordRun → ${res.status}`)
+    },
+    async claimRuns(limit = 10) {
+      const res = await fetch(`${base}/v1/agent/runs/claim?limit=${limit}`, {
+        headers: auth,
+        signal: AbortSignal.timeout(isoTimeout),
+      })
+      if (!res.ok) throw new Error(`claimRuns → ${res.status}`)
+      const json = (await res.json()) as { runs: ClaimedRun[] }
+      return json.runs
+    },
+    async finishRun(id, fields) {
+      const res = await fetch(`${base}/v1/agent/runs/${id}/finish`, {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify(fields),
+        signal: AbortSignal.timeout(isoTimeout),
+      })
+      if (!res.ok) throw new Error(`finishRun ${id} → ${res.status}`)
     },
   }
 }

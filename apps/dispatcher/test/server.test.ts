@@ -98,4 +98,32 @@ describe("the hosted-lane HTTP surface", () => {
     })
     expect(res.status).toBe(400)
   })
+
+  it("drain-runs is behind the same secret and reaches the executor", async () => {
+    const drain = vi.fn().mockResolvedValue({ claimed: 3, finished: 2, failed: 1 })
+    const app = buildServer({ cfg: cfg("s3cr3t"), resolveModel: throwModel, drain })
+    // Wrong secret: rejected.
+    const denied = await app.request("/internal/drain-runs", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-derive-host-secret": "nope" },
+      body: JSON.stringify({ agentToken: "dk_agt_x", manifest: "m" }),
+    })
+    expect(denied.status).toBe(401)
+    // Right secret + a valid body reaches the executor.
+    const ok = await app.request("/internal/drain-runs", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-derive-host-secret": "s3cr3t" },
+      body: JSON.stringify({ agentToken: "dk_agt_x", manifest: "m" }),
+    })
+    expect(ok.status).toBe(200)
+    expect(await ok.json()).toEqual({ claimed: 3, finished: 2, failed: 1 })
+    expect(drain).toHaveBeenCalledWith(expect.objectContaining({ agentToken: "dk_agt_x" }))
+    // A missing agentToken is a 400 after auth.
+    const bad = await app.request("/internal/drain-runs", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-derive-host-secret": "s3cr3t" },
+      body: JSON.stringify({ manifest: "m" }),
+    })
+    expect(bad.status).toBe(400)
+  })
 })

@@ -138,6 +138,11 @@ export const automationRoutes = (ctx: AppContext) => {
     const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20))
     const claimed = await meta.claimDueRuns(agent.id, isoNow(), limit)
     const byId = new Map((await meta.listAutomations(agent.org_id)).map((a) => [a.id, a]))
+    // Resolve the gate inputs server-side, FRESH at claim time (so a flipped killswitch is
+    // seen on the next claim): autonomy from the automation's route, flags from org settings.
+    // The executor gets everything it needs to run each run in one call — no extra round-trips.
+    const s = await meta.getOrgSettings(agent.org_id)
+    const flags = { agentKillswitch: s.agentKillswitch, agentAutoEnabled: s.agentAutoEnabled }
     return c.json({
       runs: claimed.map((r) => {
         const a = r.automation_id ? byId.get(r.automation_id) : undefined
@@ -145,7 +150,10 @@ export const automationRoutes = (ctx: AppContext) => {
           id: r.id,
           reason: r.reason,
           automation_id: r.automation_id,
-          automation: a ? present(a) : null,
+          instruction: a?.instruction ?? "",
+          refs: a ? parseRefs(a.refs) : [],
+          autonomy: a?.route === "auto" ? "auto" : "suggest",
+          flags,
         }
       }),
     })
