@@ -35,16 +35,21 @@ export function buildTools(ctx: RunContext) {
     },
   })
 
-  // Terminal. The model calls this once with the full proposed source; the
-  // autonomy gate decides whether it publishes live (with a review round), files
-  // a proposal, or records a shadow. The model does NOT choose the write mode —
-  // "a model-supplied decision could only ever be wrong" (Sift's rule).
+  // Terminal. The model calls this with the full proposed source; the autonomy
+  // gate decides whether it publishes live (with a review round), files a
+  // proposal, or records a shadow. The model does NOT choose the write mode —
+  // "a model-supplied decision could only ever be wrong" (Sift's rule). A small
+  // per-run budget (default 3 writes) bounds how many times this can act.
   const submit_revision = createTool({
     id: "submit_revision",
     description:
-      "Submit the full revised source of an artifact. Derive decides whether it publishes for review, files a proposal, or is recorded — you never choose. Call this exactly once, at the end.",
+      "Submit the full source of an artifact: pass shortId to revise an existing one, or omit shortId (and give a title) to create a new artifact when the task asks for one. Derive decides whether it publishes for review, files a proposal, or is recorded — you never choose. Budget: a few writes per run; prefer one.",
     inputSchema: z.object({
-      shortId: z.string(),
+      shortId: z
+        .string()
+        .optional()
+        .describe("The artifact to revise. OMIT to create a new artifact."),
+      title: z.string().optional().describe("Title when creating; ignored on revision."),
       content: z.string().describe("The COMPLETE new source of the artifact."),
       filename: z.string().describe("index.html or notes.md — sets the content type."),
       confidence: z
@@ -52,7 +57,7 @@ export function buildTools(ctx: RunContext) {
         .min(0)
         .max(1)
         .nullable()
-        .describe("Your confidence in this revision, 0 to 1; null if you can't say."),
+        .describe("Your confidence in this write, 0 to 1; null if you can't say."),
       message: z.string().optional().describe("A one-line version message."),
       addresses: z
         .array(z.string())

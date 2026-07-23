@@ -4,8 +4,8 @@ import {
   createHostedAgent,
   httpClient,
   outcomeOf,
+  RunBudget,
   type RunContext,
-  RunLatch,
 } from "@derive/hosted-agent"
 import type { MastraLanguageModel } from "@mastra/core/agent"
 
@@ -55,13 +55,14 @@ export async function invokeHostedAgent(
   deps: { server: string; resolveModel: ModelResolver; run?: AgentRunner },
   req: InvokeRequest,
 ): Promise<InvokeResult> {
-  // One client, one latch, one agent per invocation — no cross-run state.
+  // One client, one write budget, one agent per invocation — no cross-run state.
   const client = httpClient(deps.server, req.agentToken)
   const run: RunContext = {
     client,
-    latch: new RunLatch(),
+    budget: new RunBudget(),
     autonomy: req.autonomy,
     flags: req.flags,
+    results: [],
   }
   const agent = createHostedAgent({
     manifest: req.manifest,
@@ -96,8 +97,13 @@ async function recordRun(
     // The semantic result and lane live in the open meta blob, not in columns.
     meta: {
       lane: "shared",
-      outcome: failed ? "failed" : outcomeOf(run.lastResult),
-      artifact_short_id: run.lastResult?.shortId ?? null,
+      outcome: failed ? "failed" : outcomeOf(run.results),
+      writes: run.results.map((w) => ({
+        short_id: w.shortId ?? null,
+        decision: w.decision,
+        created: w.created ?? false,
+      })),
+      artifact_short_id: run.results[0]?.shortId ?? null,
     },
   })
 }

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
   type AutonomyLevel,
-  type ChangeKind,
   DEFAULT_CONFIDENCE_FLOOR,
   decideWrite,
   type GateDecision,
@@ -9,44 +8,37 @@ import {
 
 const base = {
   autonomy: "auto" as AutonomyLevel,
-  changeKind: "freshness" as ChangeKind,
   confidence: 1,
   flags: { agentKillswitch: false, agentAutoEnabled: true },
 }
 
 describe("decideWrite", () => {
   it("the full truth table — every combination lands where the precedence says", () => {
-    const rows: Array<[AutonomyLevel, ChangeKind, number | null, boolean, boolean, GateDecision]> =
-      []
+    const rows: Array<[AutonomyLevel, number | null, boolean, boolean, GateDecision]> = []
     for (const autonomy of ["shadow", "suggest", "auto"] as const)
-      for (const changeKind of ["freshness", "structural"] as const)
-        for (const confidence of [null, 0.5, 1])
-          for (const killswitch of [false, true])
-            for (const autoEnabled of [false, true]) {
-              const expected: GateDecision = killswitch
-                ? "proposal"
-                : autonomy === "shadow"
-                  ? "shadow"
-                  : autonomy === "suggest"
+      for (const confidence of [null, 0.5, 1])
+        for (const killswitch of [false, true])
+          for (const autoEnabled of [false, true]) {
+            const expected: GateDecision = killswitch
+              ? "proposal"
+              : autonomy === "shadow"
+                ? "shadow"
+                : autonomy === "suggest"
+                  ? "proposal"
+                  : !autoEnabled || confidence === null || confidence < DEFAULT_CONFIDENCE_FLOOR
                     ? "proposal"
-                    : !autoEnabled ||
-                        changeKind === "structural" ||
-                        confidence === null ||
-                        confidence < DEFAULT_CONFIDENCE_FLOOR
-                      ? "proposal"
-                      : "live_publish_with_review"
-              rows.push([autonomy, changeKind, confidence, killswitch, autoEnabled, expected])
-            }
-    expect(rows).toHaveLength(72)
-    for (const [autonomy, changeKind, confidence, killswitch, autoEnabled, expected] of rows) {
+                    : "live_publish_with_review"
+            rows.push([autonomy, confidence, killswitch, autoEnabled, expected])
+          }
+    expect(rows).toHaveLength(36)
+    for (const [autonomy, confidence, killswitch, autoEnabled, expected] of rows) {
       expect(
         decideWrite({
           autonomy,
-          changeKind,
           confidence,
           flags: { agentKillswitch: killswitch, agentAutoEnabled: autoEnabled },
         }),
-        `${autonomy}/${changeKind}/conf=${confidence}/kill=${killswitch}/auto=${autoEnabled}`,
+        `${autonomy}/conf=${confidence}/kill=${killswitch}/auto=${autoEnabled}`,
       ).toBe(expected)
     }
   })
@@ -61,9 +53,8 @@ describe("decideWrite", () => {
     ).toBe("proposal")
   })
 
-  it("only a confident freshness change on an opted-in workspace publishes live", () => {
+  it("only a confident publish-consented write on an opted-in workspace goes live", () => {
     expect(decideWrite(base)).toBe("live_publish_with_review")
-    expect(decideWrite({ ...base, changeKind: "structural" })).toBe("proposal")
     expect(decideWrite({ ...base, confidence: null })).toBe("proposal")
     expect(decideWrite({ ...base, confidence: 0.79 })).toBe("proposal")
     expect(

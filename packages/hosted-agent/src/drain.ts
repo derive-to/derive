@@ -1,7 +1,8 @@
+import { artifactTargets, tagTargets, writeModes } from "@derive/core"
 import type { MastraLanguageModel } from "@mastra/core/agent"
 import { createHostedAgent } from "./agent"
 import { type ClaimedRun, httpClient } from "./client"
-import { outcomeOf, RunLatch } from "./submit"
+import { outcomeOf, RunBudget } from "./submit"
 import type { RunContext } from "./tools"
 
 // The executor loop for the run queue — the pull half of the executor. It claims this
@@ -21,7 +22,7 @@ export type DrainModelResolver = () => MastraLanguageModel
 
 /** Execute one claimed run's task in its context: build the agent and generate. Injectable
  *  as a whole so the loop is testable without constructing a live model. The context's
- *  submit tool sets ctx.lastResult, which the loop maps to the finish outcome. */
+ *  submit tool appends to ctx.results, which the loop maps to the finish outcome. */
 export type RunOne = (ctx: RunContext, task: string) => Promise<void>
 
 export interface DrainDeps {
@@ -38,6 +39,9 @@ export interface DrainDeps {
   /** Hard ceiling per run; a model call that hangs past it finishes `failed` and the
    *  drain moves on (default 5 minutes). */
   runTimeoutMs?: number
+  /** Writes allowed per run (default 3): the destination plus a couple of auxiliary
+   *  creations — a hard blast-radius bound, never a promise. */
+  writeBudget?: number
 }
 
 export interface DrainResult {
@@ -50,11 +54,30 @@ export interface DrainResult {
   finishFailures: number
 }
 
-/** The task text for a claimed run: its instruction, plus any refs as trailing context. */
-const taskFor = (r: ClaimedRun): string =>
-  r.refs.length > 0
-    ? `${r.instruction}\n\nTarget artifacts (short ids): ${r.refs.join(", ")}`
-    : r.instruction
+/** The task text for a claimed run: the instruction, plus each target kind spelled out.
+ *  Artifact targets → revise those; a collection/tag-only target set → create new work
+ *  (the submit tool's omit-shortId mode); tag stamping is stated as automatic so the
+ *  model never tries to do it by hand. */
+const taskFor = (r: ClaimedRun): string => {
+  const lines = [r.instruction]
+  const arts = artifactTargets(r.targets)
+  const collections = r.targets.filter((t) => t.kind === "collection")
+  const tags = tagTargets(r.targets)
+  if (arts.length > 0) lines.push(`Target artifacts to revise (short ids): ${arts.join(", ")}`)
+  if (collections.length > 0)
+    lines.push(
+      `Create new work as a NEW artifact (omit shortId in submit); intended collection(s): ${collections
+        .map((c) => c.id)
+        .join(", ")}.`,
+    )
+  if (arts.length === 0 && collections.length === 0 && tags.length > 0)
+    lines.push("No existing target: create a NEW artifact via submit (omit shortId).")
+  if (tags.length > 0)
+    lines.push(
+      `Anything you write is tagged automatically: ${tags.join(", ")}. Don't add tags yourself.`,
+    )
+  return lines.join("\n\n")
+}
 
 /** `runOne` raced against the per-run ceiling; a hang counts as a thrown run. */
 const withTimeout = (work: Promise<void>, ms: number): Promise<void> => {
@@ -91,9 +114,13 @@ export async function drainRuns(deps: DrainDeps): Promise<DrainResult> {
     // at claim time). The submit tool consumes them — the executor never re-decides.
     const ctx: RunContext = {
       client,
-      latch: new RunLatch(),
-      autonomy: r.autonomy,
+      budget: new RunBudget(deps.writeBudget ?? 3),
+      // Per-target write consent from the claim; anything unlisted proposes.
+      autonomy: "suggest",
+      writeModes: writeModes(r.targets),
       flags: r.flags,
+      stampTags: tagTargets(r.targets),
+      results: [],
     }
     // Belt to the claim endpoint's suspenders: an empty instruction must never reach the
     // model — a primed agent with live tools and a task of nothing does arbitrary work.
@@ -113,8 +140,15 @@ export async function drainRuns(deps: DrainDeps): Promise<DrainResult> {
     const fields = {
       status: ok ? ("succeeded" as const) : ("failed" as const),
       meta: {
-        outcome: empty ? "cancelled" : ok ? outcomeOf(ctx.lastResult) : "failed",
-        artifact_short_id: ctx.lastResult?.shortId ?? null,
+        outcome: empty ? "cancelled" : ok ? outcomeOf(ctx.results) : "failed",
+        // Every write this run made, in order — the run ↔ writes accountability record.
+        writes: ctx.results.map((w) => ({
+          short_id: w.shortId ?? null,
+          decision: w.decision,
+          created: w.created ?? false,
+        })),
+        // Kept for one-write runs and older readers: the first write's artifact.
+        artifact_short_id: ctx.results[0]?.shortId ?? null,
       },
     }
     const finishOk = await client

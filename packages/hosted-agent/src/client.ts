@@ -1,4 +1,4 @@
-import type { AutonomyFlags, AutonomyLevel } from "@derive/core"
+import type { AutonomyFlags, Selector } from "@derive/core"
 
 // The hosted agent's window onto Derive: every call is bearer-authed as ONE
 // hosted agent (its registered token), so the server resolves the agent's
@@ -16,6 +16,9 @@ export interface RevisionInput {
   message?: string
   /** Thread ids this revision addresses (resolved on publish / on approval). */
   addresses?: string[]
+  /** Tag labels stamped ADDITIVELY on the write (the run's tag-targets). Sent as
+   *  `add_tags`, which unions server-side — a stamp never wipes curated tags. */
+  addTags?: string[]
 }
 
 export interface PublishResult {
@@ -39,6 +42,13 @@ export interface HostedAgentClient {
     rev: RevisionInput,
     opts: { requestReview: boolean },
   ): Promise<PublishResult>
+  /** Create a NEW artifact through the same door. `privateDraft` creates it with
+   *  workspace_access=none — visible only to the agent's registrant, who promotes
+   *  it to make it real: the creation analogue of a proposal. */
+  createArtifact(
+    rev: RevisionInput,
+    opts: { title: string; requestReview: boolean; privateDraft: boolean },
+  ): Promise<PublishResult>
   /** Append a run to the ledger (WP6). Best-effort — a failed record must never
    *  fail the run it describes. org_id + agent_id are derived server-side from
    *  the bearer, so only the outcome fields travel. */
@@ -58,9 +68,10 @@ export interface ClaimedRun {
   automation_id: string | null
   /** The automation's free-form instruction — the task to run. */
   instruction: string
-  /** The automation's refs (artifact short ids, urls) as context for the task. */
-  refs: string[]
-  autonomy: AutonomyLevel
+  /** The automation's targets as canonical selectors: artifact = revise it,
+   *  collection = file new work there, tag = stamped on every write. Each target's
+   *  `mode` (publish | propose, default propose) is the user's write consent. */
+  targets: Selector[]
   flags: AutonomyFlags
 }
 
@@ -92,6 +103,7 @@ export function httpClient(server: string, token: string): HostedAgentClient {
     form.set("file", new Blob([rev.content], { type: "text/html" }), rev.filename)
     if (rev.message) form.set("message", rev.message)
     if (rev.addresses?.length) form.set("addresses", JSON.stringify(rev.addresses))
+    if (rev.addTags?.length) form.set("add_tags", JSON.stringify(rev.addTags))
     for (const [k, v] of Object.entries(extra)) form.set(k, v)
     return form
   }
@@ -134,13 +146,25 @@ export function httpClient(server: string, token: string): HostedAgentClient {
       return post(`/v1/artifacts/${shortId}/proposals`, revisionForm(rev))
     },
     publishLive(shortId, rev, opts) {
-      // A live revision is POST /v1/artifacts with the target short_id; request_review
-      // opens a round on the new version. Same handler the MCP publish tool uses.
+      // A live revision is POST /v1/artifacts/:shortId/versions — the same handlePublish
+      // as creation, with the target bound in the PATH. (A `short_id` form field on the
+      // bare collection route is IGNORED by the handler and would CREATE a new artifact —
+      // the scenario e2e caught exactly that.) request_review opens a round on the version.
+      return post(
+        `/v1/artifacts/${shortId}/versions`,
+        revisionForm(rev, opts.requestReview ? { request_review: "true" } : {}),
+      )
+    },
+    createArtifact(rev, opts) {
+      // Creation is the SAME handler with short_id omitted. A private draft (the
+      // creation analogue of a proposal) sets workspace_access=none: only the agent's
+      // registrant — who owns the new artifact and gets the review round — can see it.
       return post(
         "/v1/artifacts",
         revisionForm(rev, {
-          short_id: shortId,
+          title: opts.title,
           ...(opts.requestReview ? { request_review: "true" } : {}),
+          ...(opts.privateDraft ? { workspace_access: "none", link_role: "none" } : {}),
         }),
       )
     },

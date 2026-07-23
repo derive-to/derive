@@ -40,7 +40,51 @@ describe("automations + runs", () => {
     const rec = await ok.json()
     expect(rec).toMatchObject({ agent_id: agent.id, enabled: true })
     expect(rec.trigger).toMatchObject({ kind: "schedule", cron: "0 9 * * 1" })
-    expect(rec.refs).toEqual(["art_123"])
+    // A bare string ref is artifact shorthand; the API stores and returns CANONICAL selectors.
+    expect(rec.refs).toEqual([{ kind: "artifact", id: "art_123" }])
+  })
+
+  it("refs are selectors: bare strings, collections, and tags all normalize; junk is rejected", async () => {
+    const agent = await mintAgent()
+    const ok = await createAutomation(agent.id, {
+      refs: [
+        "art_9",
+        { kind: "collection", id: "col_1" },
+        { kind: "tag", tag: "weekly-health" },
+        "art_9", // duplicate — deduped on normalize
+      ],
+    })
+    expect(ok.status).toBe(201)
+    const rec = await ok.json()
+    expect(rec.refs).toEqual([
+      { kind: "artifact", id: "art_9" },
+      { kind: "collection", id: "col_1" },
+      { kind: "tag", tag: "weekly-health" },
+    ])
+    // Write mode rides ON the target: only the explicit publish opt-in is stored;
+    // mode:"propose" is the default and normalizes away (canonical minimal form).
+    const moded = await (
+      await createAutomation(agent.id, {
+        refs: [
+          { kind: "artifact", id: "art_pub", mode: "publish" },
+          { kind: "artifact", id: "art_prop", mode: "propose" },
+        ],
+      })
+    ).json()
+    expect(moded.refs).toEqual([
+      { kind: "artifact", id: "art_pub", mode: "publish" },
+      { kind: "artifact", id: "art_prop" },
+    ])
+    // The claim payload hands the executor the SAME canonical targets.
+    await app.request(`/v1/automations/${rec.id}/run`, { method: "POST", headers: as(owner.email) })
+    const claimed = await (
+      await app.request("/v1/agent/runs/claim", { headers: bearer(agent.token) })
+    ).json()
+    const mine = claimed.runs.find((r: { automation_id: string }) => r.automation_id === rec.id)
+    expect(mine.targets).toEqual(rec.refs)
+
+    const junk = await createAutomation(agent.id, { refs: [{ kind: "nope", id: "x" }] })
+    expect(junk.status).toBe(400)
   })
 
   it("defining requires manage; a commenter-seat member can't", async () => {
@@ -78,7 +122,6 @@ describe("automations + runs", () => {
     // The claim hands the executor everything it needs: the instruction + resolved gate inputs.
     // Automation runs propose by default; write mode will ride per-target in refs.
     expect(mine.instruction).toBe("keep the roadmap current")
-    expect(mine.autonomy).toBe("suggest")
     expect(mine.flags).toMatchObject({ agentKillswitch: expect.any(Boolean) })
     // Claimed once: a second poll gets nothing.
     const again = await (

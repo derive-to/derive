@@ -166,6 +166,14 @@ export interface AutomationTrigger {
   tz?: string
   on?: string
 }
+/** A ref is a selector — one generic way to point at a set of artifacts: a specific
+ *  doc (revise it), a collection (file new work into it), or a tag (stamped on every
+ *  write the run makes). The API accepts a bare short-id string as artifact shorthand
+ *  and always RETURNS the canonical object form. */
+export type AutomationRef =
+  | { kind: "artifact"; id: string; mode?: "publish" | "propose" }
+  | { kind: "collection"; id: string; mode?: "publish" | "propose" }
+  | { kind: "tag"; tag: string; mode?: "publish" | "propose" }
 /** A standing agent job: an agent + a trigger + a free-form instruction (+ optional refs).
  *  Every firing is a Run. */
 export interface Automation {
@@ -173,7 +181,7 @@ export interface Automation {
   agent_id: string
   trigger: AutomationTrigger
   instruction: string
-  refs: string[]
+  refs: AutomationRef[]
   enabled: boolean
   created_at: string
 }
@@ -731,7 +739,8 @@ export const api = {
     agentId: string
     trigger: AutomationTrigger
     instruction: string
-    refs?: string[]
+    /** Bare strings are artifact shorthand; the server stores canonical selectors. */
+    refs?: (string | AutomationRef)[]
   }): Promise<Automation> => f("/v1/automations", opts(input)).then(j),
   deleteAutomation: (id: string): Promise<void> =>
     f(`/v1/automations/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),

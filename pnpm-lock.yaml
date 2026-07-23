@@ -122,6 +122,9 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^4.20260615.1
         version: 4.20260615.1
+      '@derive/hosted-agent':
+        specifier: workspace:*
+        version: link:../../packages/hosted-agent
       '@types/better-sqlite3':
         specifier: ^7.6.11
         version: 7.6.13
