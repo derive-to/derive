@@ -6,6 +6,7 @@ import type {
   ArtifactRecord,
   AssetRecord,
   AuditLogRecord,
+  AutomationRecord,
   CollectionMemberRecord,
   CollectionRecord,
   CommentListOpts,
@@ -38,6 +39,7 @@ import type {
   NewArtifactMember,
   NewAsset,
   NewAuditLog,
+  NewAutomation,
   NewCollection,
   NewCollectionMember,
   NewComment,
@@ -55,6 +57,7 @@ import type {
   NewReport,
   NewRepoSource,
   NewReviewRound,
+  NewRun,
   NewSession,
   NewSessionMessage,
   NewVersion,
@@ -75,6 +78,8 @@ import type {
   ReviewRoundRecord,
   ReviewRoundState,
   Role,
+  RunRecord,
+  RunStatus,
   SessionMessageRecord,
   SessionRecord,
   SessionState,
@@ -121,6 +126,7 @@ import {
   artifactTag,
   asset,
   auditLog,
+  automation,
   betaSignup,
   collection,
   collectionItem,
@@ -145,6 +151,7 @@ import {
   report,
   repoSource,
   reviewRound,
+  run,
   sessionMessage,
   slackInstall,
   slackThreadLink,
@@ -189,6 +196,8 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  automation,
+  run,
   artifactInvite,
   invitation,
   betaSignup,
@@ -230,6 +239,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
+  automation: true,
+  run: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2289,6 +2300,96 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
       .returning()
     return rows[0] ?? null
+  }
+  async createAutomation(a: NewAutomation): Promise<AutomationRecord> {
+    const rows = await this.db.insert(automation).values(a).returning()
+    return one(rows)
+  }
+  async getAutomation(id: string): Promise<AutomationRecord | null> {
+    const rows = await this.db.select().from(automation).where(eq(automation.id, id))
+    return rows[0] ?? null
+  }
+  async getAutomationsByIds(ids: string[]): Promise<AutomationRecord[]> {
+    if (ids.length === 0) return []
+    return this.db.select().from(automation).where(inArray(automation.id, ids))
+  }
+  listAutomations(orgId: string, limit = 100): Promise<AutomationRecord[]> {
+    return this.db
+      .select()
+      .from(automation)
+      .where(eq(automation.org_id, orgId))
+      .orderBy(desc(automation.created_at))
+      .limit(limit)
+  }
+  async deleteAutomation(id: string, orgId: string): Promise<void> {
+    // Cancel pending work first, then remove the definition — both org-scoped so a stray
+    // caller can't reach across tenants. Running/finished runs stay as history.
+    await this.db.delete(run).where(and(eq(run.automation_id, id), eq(run.status, "queued")))
+    await this.db.delete(automation).where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
+  }
+  async createRun(r: NewRun): Promise<RunRecord> {
+    const rows = await this.db
+      .insert(run)
+      .values({ ...r, status: r.status ?? "queued" })
+      .returning()
+    return one(rows)
+  }
+  claimDueRuns(agentId: string, now: string, limit = 20): Promise<RunRecord[]> {
+    // The oldest queued runs due now for this agent, flipped to running under a row lock
+    // (FOR UPDATE SKIP LOCKED) so two executors never claim the same run. A null
+    // scheduled_for means "as soon as possible"; coalesce to '' so it orders FIRST
+    // identically on Postgres and sqlite (asc(scheduled_for) puts NULLs last on pg).
+    const due = this.db
+      .select({ id: run.id })
+      .from(run)
+      .where(
+        and(
+          eq(run.agent_id, agentId),
+          eq(run.status, "queued"),
+          or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
+        ),
+      )
+      .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
+      .limit(limit)
+      .for("update", { skipLocked: true })
+    return this.db
+      .update(run)
+      .set({ status: "running", started_at: now })
+      .where(inArray(run.id, due))
+      .returning()
+  }
+  async finishRun(
+    id: string,
+    agentId: string,
+    fields: {
+      status: RunStatus
+      finishedAt: string
+      costMicroUsd?: number | null
+      meta?: string | null
+    },
+  ): Promise<RunRecord | null> {
+    // Strict running → terminal transition: only the claiming agent, and only a run that is
+    // actually running — a duplicate/retried finish can't clobber a settled run's cost, and a
+    // finish can't terminate a never-claimed queued run.
+    const rows = await this.db
+      .update(run)
+      .set({
+        status: fields.status,
+        finished_at: fields.finishedAt,
+        cost_micro_usd: fields.costMicroUsd ?? null,
+        meta: fields.meta ?? null,
+      })
+      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
+      .returning()
+    return rows[0] ?? null
+  }
+  listRuns(orgId: string, limit = 50): Promise<RunRecord[]> {
+    return this.db
+      .select()
+      .from(run)
+      .where(eq(run.org_id, orgId))
+      .orderBy(desc(run.created_at))
+      .limit(limit)
   }
   async getAgentByToken(token: string): Promise<AgentRecord | null> {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))

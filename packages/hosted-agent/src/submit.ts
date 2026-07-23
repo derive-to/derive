@@ -1,0 +1,121 @@
+import {
+  type AutonomyFlags,
+  type AutonomyLevel,
+  classifyChange,
+  decideWrite,
+  type GateDecision,
+  type RunOutcome,
+} from "@derive/core"
+import type { HostedAgentClient, RevisionInput } from "./client"
+
+// The terminal action of a hosted-agent run: submit a revised artifact. This is
+// the ONE write chokepoint the plan names — the autonomy gate is consumed here
+// and nowhere else. The flow, safety-first:
+//   1. read the current source
+//   2. classify the change (freshness vs structural) — deterministic, no model
+//   3. decideWrite(...) → live publish w/ review, proposal, or shadow
+//   4. act, once (the run latch no-ops a second submit in the same run)
+// Every input the gate needs is loaded by the CALLER (workspace flags, autonomy
+// level) and passed in; this function does the classify + route, so it stays a
+// small, exhaustively-testable seam over a mock client.
+
+/** Per-run guard so a model that calls submit twice can't double-write. One
+ *  instance per hosted-agent invocation; `settled` flips on the first success. */
+export class RunLatch {
+  settled = false
+}
+
+export interface SubmitContext {
+  client: HostedAgentClient
+  latch: RunLatch
+  autonomy: AutonomyLevel
+  flags: AutonomyFlags
+  confidenceFloor?: number
+  /** Set by submitRevision to the last write's result, so the host can record the
+   *  run's real outcome in the ledger (WP6) without re-deriving it. */
+  lastResult?: SubmitResult
+}
+
+export interface SubmitInput {
+  shortId: string
+  /** The full proposed new source. */
+  content: string
+  filename: string
+  /** The agent's stated confidence in [0,1]; null when unstated (never auto-publishes). */
+  confidence: number | null
+  message?: string
+  addresses?: string[]
+}
+
+export interface SubmitResult {
+  decision: GateDecision
+  changeKind: "freshness" | "structural"
+  /** Present when a version or proposal was created; absent for shadow. */
+  shortId?: string
+  version?: number
+  /** True when the run latch short-circuited a duplicate submit. */
+  duplicate?: boolean
+}
+
+export async function submitRevision(
+  ctx: SubmitContext,
+  input: SubmitInput,
+): Promise<SubmitResult> {
+  // Claim the latch SYNCHRONOUSLY (check-then-set with no await between) so a second submit
+  // — the model runtime can fire tool calls in parallel, not only re-emit sequentially — is a
+  // no-op rather than a second write. A thrown publish releases it (in the catch) so a
+  // legitimate retry within the same run can still proceed.
+  if (ctx.latch.settled) return { decision: "shadow", changeKind: "freshness", duplicate: true }
+  ctx.latch.settled = true
+  try {
+    const before = await ctx.client.read(input.shortId)
+    const changeKind = classifyChange(before, input.content)
+    const decision = decideWrite({
+      autonomy: ctx.autonomy,
+      changeKind,
+      confidence: input.confidence,
+      flags: ctx.flags,
+      confidenceFloor: ctx.confidenceFloor,
+    })
+
+    const rev: RevisionInput = {
+      content: input.content,
+      filename: input.filename,
+      message: input.message,
+      addresses: input.addresses,
+    }
+
+    // Shadow: the run happened and is recorded by the caller's ledger, but nothing is filed.
+    // The rollout tier — a human can score what it WOULD have written.
+    if (decision === "shadow") {
+      const out: SubmitResult = { decision, changeKind }
+      ctx.lastResult = out
+      return out
+    }
+
+    const result =
+      decision === "live_publish_with_review"
+        ? await ctx.client.publishLive(input.shortId, rev, { requestReview: true })
+        : await ctx.client.proposeRevision(input.shortId, rev)
+
+    const out: SubmitResult = {
+      decision,
+      changeKind,
+      shortId: result.short_id,
+      version: result.version,
+    }
+    ctx.lastResult = out
+    return out
+  } catch (e) {
+    ctx.latch.settled = false
+    throw e
+  }
+}
+
+/** Map a submit decision to a ledger outcome; a run with no submit is an answer. */
+export function outcomeOf(result: SubmitResult | undefined): RunOutcome {
+  if (!result) return "answered"
+  if (result.decision === "live_publish_with_review") return "published"
+  if (result.decision === "proposal") return "proposed"
+  return "shadow"
+}

@@ -6,6 +6,7 @@ import type {
   ArtifactRecord,
   AssetRecord,
   AuditLogRecord,
+  AutomationRecord,
   CollectionMemberRecord,
   CollectionRecord,
   CommentListOpts,
@@ -36,6 +37,7 @@ import type {
   NewArtifactMember,
   NewAsset,
   NewAuditLog,
+  NewAutomation,
   NewCollection,
   NewCollectionMember,
   NewComment,
@@ -53,6 +55,7 @@ import type {
   NewReport,
   NewRepoSource,
   NewReviewRound,
+  NewRun,
   NewSession,
   NewSessionMessage,
   NewVersion,
@@ -72,6 +75,8 @@ import type {
   ReviewRoundRecord,
   ReviewRoundState,
   Role,
+  RunRecord,
+  RunStatus,
   SessionMessageRecord,
   SessionRecord,
   SessionState,
@@ -121,6 +126,7 @@ import {
   artifactTag,
   asset,
   auditLog,
+  automation,
   betaSignup,
   collection,
   collectionItem,
@@ -144,6 +150,7 @@ import {
   report,
   repoSource,
   reviewRound,
+  run,
   sessionMessage,
   slackInstall,
   slackThreadLink,
@@ -264,6 +271,8 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
+  automation,
+  run,
   artifactInvite,
   invitation,
   betaSignup,
@@ -305,6 +314,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
+  automation: true,
+  run: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2311,6 +2322,93 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
       .returning()
       .get()) ?? null
+  const createAutomation = async (a: NewAutomation): Promise<AutomationRecord> =>
+    (await db.insert(automation).values(a).returning().get()) as AutomationRecord
+  const getAutomation = async (id: string): Promise<AutomationRecord | null> =>
+    (await db.select().from(automation).where(eq(automation.id, id)).get()) ?? null
+  const getAutomationsByIds = async (ids: string[]): Promise<AutomationRecord[]> =>
+    ids.length === 0 ? [] : db.select().from(automation).where(inArray(automation.id, ids)).all()
+  const listAutomations = async (orgId: string, limit = 100): Promise<AutomationRecord[]> =>
+    db
+      .select()
+      .from(automation)
+      .where(eq(automation.org_id, orgId))
+      .orderBy(desc(automation.created_at))
+      .limit(limit)
+      .all()
+  const deleteAutomation = async (id: string, orgId: string): Promise<void> => {
+    // Cancel pending work first, then remove the definition — both org-scoped so a stray
+    // caller can't reach across tenants. Running/finished runs stay as history.
+    await db
+      .delete(run)
+      .where(and(eq(run.automation_id, id), eq(run.status, "queued")))
+      .run()
+    await db
+      .delete(automation)
+      .where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
+      .run()
+  }
+  const createRun = async (r: NewRun): Promise<RunRecord> =>
+    (await db
+      .insert(run)
+      .values({ ...r, status: r.status ?? "queued" })
+      .returning()
+      .get()) as RunRecord
+  const claimDueRuns = async (agentId: string, now: string, limit = 20): Promise<RunRecord[]> => {
+    // The oldest queued runs due now for this agent, flipped to running under a row lock so
+    // two executors never claim the same run. A null scheduled_for means "as soon as possible";
+    // coalesce to '' so it orders FIRST identically on sqlite and Postgres (asc(scheduled_for)
+    // alone puts NULLs first on sqlite but last on pg — a cross-dialect divergence).
+    const due = db
+      .select({ id: run.id })
+      .from(run)
+      .where(
+        and(
+          eq(run.agent_id, agentId),
+          eq(run.status, "queued"),
+          or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
+        ),
+      )
+      .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
+      .limit(limit)
+    return (await db
+      .update(run)
+      .set({ status: "running", started_at: now })
+      .where(inArray(run.id, due))
+      .returning()) as RunRecord[]
+  }
+  const finishRun = async (
+    id: string,
+    agentId: string,
+    fields: {
+      status: RunStatus
+      finishedAt: string
+      costMicroUsd?: number | null
+      meta?: string | null
+    },
+  ): Promise<RunRecord | null> =>
+    // Strict running → terminal transition: only the claiming agent, and only a run that is
+    // actually running. Guards a duplicate/retried finish from clobbering a settled run's
+    // status/cost, and stops a finish from terminating a never-claimed queued run.
+    (await db
+      .update(run)
+      .set({
+        status: fields.status,
+        finished_at: fields.finishedAt,
+        cost_micro_usd: fields.costMicroUsd ?? null,
+        meta: fields.meta ?? null,
+      })
+      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
+      .returning()
+      .get()) ?? null
+  const listRuns = async (orgId: string, limit = 50): Promise<RunRecord[]> =>
+    db
+      .select()
+      .from(run)
+      .where(eq(run.org_id, orgId))
+      .orderBy(desc(run.created_at))
+      .limit(limit)
+      .all()
   const getAgentByToken = async (token: string): Promise<AgentRecord | null> =>
     (await db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
   // Introspect a Better Auth oidc-provider access token (its own tables, same DB).
@@ -3030,6 +3128,15 @@ export function makeRepos(db: SqliteDb) {
     createAgent,
     listAgents,
     setAgentHosted,
+    createAutomation,
+    getAutomation,
+    getAutomationsByIds,
+    listAutomations,
+    deleteAutomation,
+    createRun,
+    claimDueRuns,
+    finishRun,
+    listRuns,
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,

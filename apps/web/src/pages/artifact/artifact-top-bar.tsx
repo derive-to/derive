@@ -1,4 +1,4 @@
-import { Maximize2, MousePointer2Off } from "lucide-react"
+import { Maximize2, MousePointer2Off, Zap } from "lucide-react"
 import { useState } from "react"
 import type { CollectionGrant, LinkRole, Listed, Role, WorkspaceAccess } from "@/api"
 import { Icon } from "@/components/icons"
@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useCursorPref } from "@/ctx"
 import { cn } from "@/lib/utils"
+import { AutomateDialog } from "./automate-dialog"
 import { MoveToWorkspaceDialog, ReportDialog, StarButton } from "./header-actions"
 import { ReworkConnectDialog, ReworkMenuItem } from "./rework-menu-item"
 import { ShareButton } from "./share-dialog"
@@ -80,6 +81,7 @@ export function ArtifactTopBar(props: {
   const [tagsOpen, setTagsOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
   const [moveOpen, setMoveOpen] = useState(false)
+  const [automateOpen, setAutomateOpen] = useState(false)
   const [reworkConnectOpen, setReworkConnectOpen] = useState(false)
   return (
     <>
@@ -198,6 +200,14 @@ export function ArtifactTopBar(props: {
                 <Icon name="move" size={16} /> Move to workspace…
               </DropdownMenuItem>
             )}
+            {props.canMove && (
+              <DropdownMenuItem
+                data-testid="artifact-automate"
+                onSelect={() => setAutomateOpen(true)}
+              >
+                <Zap className="size-4" aria-hidden /> Automate…
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem data-testid="artifact-report" onSelect={() => setReportOpen(true)}>
               <Icon name="report" size={16} /> Report artifact
@@ -251,6 +261,7 @@ export function ArtifactTopBar(props: {
         onOpenChange={setMoveOpen}
       />
       <ReworkConnectDialog open={reworkConnectOpen} onOpenChange={setReworkConnectOpen} />
+      <AutomateDialog shortId={shortId} open={automateOpen} onOpenChange={setAutomateOpen} />
     </>
   )
 }

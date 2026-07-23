@@ -16,10 +16,12 @@ import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
 import { assetRoutes } from "./routes/assets"
+import { automationRoutes } from "./routes/automations"
 import { betaRoutes } from "./routes/beta"
 import { blobRoutes } from "./routes/blob"
 import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
+import { conciergeRoutes } from "./routes/concierge"
 import { contextRoutes } from "./routes/contexts"
 import { domainRoutes } from "./routes/domains"
 import { embedRoutes } from "./routes/embeds"
@@ -383,6 +385,8 @@ export function createApp(deps: AppDeps): Hono {
     moderationRoutes,
     proposalRoutes,
     reviewRoutes,
+    automationRoutes,
+    conciergeRoutes,
     reworkRoutes,
     commentRoutes,
     contextRoutes,

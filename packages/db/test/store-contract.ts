@@ -2116,6 +2116,174 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: automations + runs (WP5/WP6)`, () => {
+    it("creates automations and lists them scoped to the workspace", async () => {
+      const agentId = uuid()
+      const a1 = await store.createAutomation({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        trigger: JSON.stringify({ kind: "manual" }),
+        instruction: "keep the roadmap current",
+      })
+      expect((await store.getAutomation(a1.id))?.instruction).toBe("keep the roadmap current")
+      // An automation in another workspace must not leak into this list.
+      await store.createAutomation({
+        id: uuid(),
+        org_id: `org_${uuid()}`,
+        agent_id: agentId,
+        trigger: JSON.stringify({ kind: "schedule", cron: "0 9 * * 1", tz: "UTC" }),
+        instruction: "elsewhere",
+      })
+      const list = await store.listAutomations(ORG)
+      expect(list.every((a) => a.org_id === ORG)).toBe(true)
+      expect(list.some((a) => a.id === a1.id)).toBe(true)
+    })
+
+    it("batch-loads automations by id in one query; empty ids ⇒ []", async () => {
+      const agentId = uuid()
+      const mk = () =>
+        store.createAutomation({
+          id: uuid(),
+          org_id: ORG,
+          agent_id: agentId,
+          trigger: JSON.stringify({ kind: "manual" }),
+          instruction: "batch me",
+        })
+      const [a, b] = await Promise.all([mk(), mk()])
+      expect(await store.getAutomationsByIds([])).toEqual([])
+      const got = await store.getAutomationsByIds([a.id, b.id, "auto_missing"])
+      expect(got.map((x) => x.id).sort()).toEqual([a.id, b.id].sort())
+    })
+
+    it("queue + ledger: enqueue → claim (running) → finish; a second claim gets nothing", async () => {
+      const agentId = uuid()
+      // A queued run due in the past.
+      const queued = await store.createRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        reason: "manual:u1",
+        scheduled_for: "2000-01-01T00:00:00.000Z",
+      })
+      expect(queued.status).toBe("queued")
+      // A future run is NOT due yet.
+      await store.createRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        reason: "schedule",
+        scheduled_for: "2999-01-01T00:00:00.000Z",
+      })
+
+      const now = "2100-01-01T00:00:00.000Z"
+      const claimed = await store.claimDueRuns(agentId, now)
+      expect(claimed).toHaveLength(1)
+      expect(claimed[0]?.id).toBe(queued.id)
+      expect(claimed[0]?.status).toBe("running")
+      // Claimed once: a second claim finds no queued-due run.
+      expect(await store.claimDueRuns(agentId, now)).toHaveLength(0)
+      // A different agent never claims this agent's run.
+      expect(await store.claimDueRuns(uuid(), now)).toHaveLength(0)
+
+      const done = await store.finishRun(queued.id, agentId, {
+        status: "succeeded",
+        finishedAt: now,
+        costMicroUsd: 1200,
+        meta: JSON.stringify({ outcome: "published" }),
+      })
+      expect(done?.status).toBe("succeeded")
+      expect(done?.cost_micro_usd).toBe(1200)
+      // The wrong agent can't finish it.
+      const wrong = await store.finishRun(queued.id, uuid(), {
+        status: "failed",
+        finishedAt: now,
+      })
+      expect(wrong).toBeNull()
+    })
+
+    it("listRuns is the ledger: workspace-scoped", async () => {
+      const agentId = uuid()
+      await store.createRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        reason: "ask",
+        status: "succeeded",
+      })
+      await store.createRun({
+        id: uuid(),
+        org_id: `org_${uuid()}`,
+        agent_id: agentId,
+        reason: "ask",
+        status: "succeeded",
+      })
+      const runs = await store.listRuns(ORG, 50)
+      expect(runs.every((r) => r.org_id === ORG)).toBe(true)
+      expect(runs.length).toBeGreaterThan(0)
+    })
+
+    it("finishRun is a strict running → terminal transition (guards the ledger)", async () => {
+      const agentId = uuid()
+      // A queued (never-claimed) run can't be finished — no clobbering the queue.
+      const queued = await store.createRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        reason: "manual:u1",
+        scheduled_for: "2000-01-01T00:00:00.000Z",
+      })
+      const early = await store.finishRun(queued.id, agentId, {
+        status: "succeeded",
+        finishedAt: "2100-01-01T00:00:00.000Z",
+      })
+      expect(early).toBeNull()
+      // Claim it (→ running), finish it once, then a duplicate finish is a no-op.
+      const now = "2100-01-01T00:00:00.000Z"
+      await store.claimDueRuns(agentId, now)
+      const first = await store.finishRun(queued.id, agentId, {
+        status: "succeeded",
+        finishedAt: now,
+        costMicroUsd: 500,
+      })
+      expect(first?.status).toBe("succeeded")
+      const dup = await store.finishRun(queued.id, agentId, {
+        status: "failed",
+        finishedAt: now,
+        costMicroUsd: 0,
+      })
+      expect(dup).toBeNull()
+    })
+
+    it("deleteAutomation cancels its queued runs and is org-scoped", async () => {
+      const agentId = uuid()
+      const a = await store.createAutomation({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        trigger: JSON.stringify({ kind: "manual" }),
+        instruction: "keep current",
+      })
+      const pending = await store.createRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        automation_id: a.id,
+        reason: "manual:u1",
+        scheduled_for: "2000-01-01T00:00:00.000Z",
+      })
+      // Wrong org can't delete it (still there after).
+      await store.deleteAutomation(a.id, `org_${uuid()}`)
+      expect(await store.getAutomation(a.id)).not.toBeNull()
+      // Correct org: the automation and its queued run are both gone.
+      await store.deleteAutomation(a.id, ORG)
+      expect(await store.getAutomation(a.id)).toBeNull()
+      expect(await store.claimDueRuns(agentId, "2100-01-01T00:00:00.000Z")).not.toContainEqual(
+        expect.objectContaining({ id: pending.id }),
+      )
+    })
+  })
+
   describe(`${label}: standalone image assets (POST /v1/assets -> GET /blob/:hash)`, () => {
     it("stages an asset, reads it back by hash, and is idempotent on re-upload", async () => {
       const hash = uuid().replace(/-/g, "").padEnd(64, "0")

@@ -20,10 +20,24 @@ this process ever needs a private API the public contract lacks, that is a bug.
 | `DISPATCHER_RUNNER_BIN` | Defaults to `derive` (the CLI on PATH). |
 | `DISPATCHER_DATA_DIR` | Per-context working dirs (repo clones, skills persist between drains). Defaults `/data`. |
 | `DISPATCHER_DRAIN_TIMEOUT_MS` | Kill deadline per drain. Defaults 660000 (runner timeout + margin). |
+| `DISPATCHER_HOST_SECRET` | The shared secret the Derive API presents to the internal invoke surface. Unset ⇒ the hosted lane (HTTP server) is off; the owner-run drain lane still works. |
+| `DISPATCHER_HTTP_PORT` | Port for the internal invoke/health surface. Defaults `3040`. |
 
 Plus the runner's own env, passed through untouched: exactly one of
 `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`, optional `RUNNER_*` knobs,
 `GH_TOKEN` for private repo pointers.
+
+## Two lanes
+
+The dispatcher runs both halves of the executor split:
+
+- **Owner-run drain lane** (pg-boss cron → `derive runner once`): serves contexts
+  whose agent runs on the owner's own credential. Always on.
+- **Shared hosted lane** (`POST /internal/invoke`, behind `DISPATCHER_HOST_SECRET`):
+  runs a Derive-hosted agent (the `@derive/hosted-agent` Mastra harness) live for a
+  single task. The API calls it for "Draft with your agent" and @mention replies.
+  A model provider is wired in the host (`resolveModel`); until one is configured,
+  the surface accepts requests and fails the run with a clear message.
 
 Registry shape — tokens are **never** inline (name an env var or a file, the
 same discipline as `runner install`):
