@@ -146,14 +146,13 @@ export function httpClient(server: string, token: string): HostedAgentClient {
       return post(`/v1/artifacts/${shortId}/proposals`, revisionForm(rev))
     },
     publishLive(shortId, rev, opts) {
-      // A live revision is POST /v1/artifacts with the target short_id; request_review
-      // opens a round on the new version. Same handler the MCP publish tool uses.
+      // A live revision is POST /v1/artifacts/:shortId/versions — the same handlePublish
+      // as creation, with the target bound in the PATH. (A `short_id` form field on the
+      // bare collection route is IGNORED by the handler and would CREATE a new artifact —
+      // the scenario e2e caught exactly that.) request_review opens a round on the version.
       return post(
-        "/v1/artifacts",
-        revisionForm(rev, {
-          short_id: shortId,
-          ...(opts.requestReview ? { request_review: "true" } : {}),
-        }),
+        `/v1/artifacts/${shortId}/versions`,
+        revisionForm(rev, opts.requestReview ? { request_review: "true" } : {}),
       )
     },
     createArtifact(rev, opts) {
