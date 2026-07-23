@@ -2208,6 +2208,67 @@ export function runStoreContract(
       expect(runs.every((r) => r.org_id === ORG)).toBe(true)
       expect(runs.length).toBeGreaterThan(0)
     })
+
+    it("finishRun is a strict running → terminal transition (guards the ledger)", async () => {
+      const agentId = uuid()
+      // A queued (never-claimed) run can't be finished — no clobbering the queue.
+      const queued = await store.createRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        reason: "manual:u1",
+        scheduled_for: "2000-01-01T00:00:00.000Z",
+      })
+      const early = await store.finishRun(queued.id, agentId, {
+        status: "succeeded",
+        finishedAt: "2100-01-01T00:00:00.000Z",
+      })
+      expect(early).toBeNull()
+      // Claim it (→ running), finish it once, then a duplicate finish is a no-op.
+      const now = "2100-01-01T00:00:00.000Z"
+      await store.claimDueRuns(agentId, now)
+      const first = await store.finishRun(queued.id, agentId, {
+        status: "succeeded",
+        finishedAt: now,
+        costMicroUsd: 500,
+      })
+      expect(first?.status).toBe("succeeded")
+      const dup = await store.finishRun(queued.id, agentId, {
+        status: "failed",
+        finishedAt: now,
+        costMicroUsd: 0,
+      })
+      expect(dup).toBeNull()
+    })
+
+    it("deleteAutomation cancels its queued runs and is org-scoped", async () => {
+      const agentId = uuid()
+      const a = await store.createAutomation({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        trigger: JSON.stringify({ kind: "manual" }),
+        instruction: "keep current",
+        route: "auto",
+      })
+      const pending = await store.createRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        automation_id: a.id,
+        reason: "manual:u1",
+        scheduled_for: "2000-01-01T00:00:00.000Z",
+      })
+      // Wrong org can't delete it (still there after).
+      await store.deleteAutomation(a.id, `org_${uuid()}`)
+      expect(await store.getAutomation(a.id)).not.toBeNull()
+      // Correct org: the automation and its queued run are both gone.
+      await store.deleteAutomation(a.id, ORG)
+      expect(await store.getAutomation(a.id)).toBeNull()
+      expect(await store.claimDueRuns(agentId, "2100-01-01T00:00:00.000Z")).not.toContainEqual(
+        expect.objectContaining({ id: pending.id }),
+      )
+    })
   })
 
   describe(`${label}: standalone image assets (POST /v1/assets -> GET /blob/:hash)`, () => {

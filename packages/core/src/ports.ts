@@ -938,8 +938,9 @@ export interface AgentStore {
   getAutomation(id: string): Promise<AutomationRecord | null>
   /** A workspace's automations, newest first. Default 100. */
   listAutomations(orgId: string, limit?: number): Promise<AutomationRecord[]>
-  /** Remove an automation (its queued runs are left to drain or be ignored). */
-  deleteAutomation(id: string): Promise<void>
+  /** Remove an automation and cancel its still-queued runs, org-scoped so a caller can't
+   *  reach across tenants. Running/finished runs stay as history. */
+  deleteAutomation(id: string, orgId: string): Promise<void>
   /** Enqueue or record a run. status defaults to "queued" (pending work); pass a terminal
    *  status to record an already-finished run straight into the ledger. */
   createRun(r: NewRun): Promise<RunRecord>

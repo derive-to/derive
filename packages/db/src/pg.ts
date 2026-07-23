@@ -2318,8 +2318,11 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(automation.created_at))
       .limit(limit)
   }
-  async deleteAutomation(id: string): Promise<void> {
-    await this.db.delete(automation).where(eq(automation.id, id))
+  async deleteAutomation(id: string, orgId: string): Promise<void> {
+    // Cancel pending work first, then remove the definition — both org-scoped so a stray
+    // caller can't reach across tenants. Running/finished runs stay as history.
+    await this.db.delete(run).where(and(eq(run.automation_id, id), eq(run.status, "queued")))
+    await this.db.delete(automation).where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
   }
   async createRun(r: NewRun): Promise<RunRecord> {
     const rows = await this.db
@@ -2331,7 +2334,8 @@ export class PgMetaStore implements MetaStore {
   claimDueRuns(agentId: string, now: string, limit = 20): Promise<RunRecord[]> {
     // The oldest queued runs due now for this agent, flipped to running under a row lock
     // (FOR UPDATE SKIP LOCKED) so two executors never claim the same run. A null
-    // scheduled_for means "as soon as possible".
+    // scheduled_for means "as soon as possible"; coalesce to '' so it orders FIRST
+    // identically on Postgres and sqlite (asc(scheduled_for) puts NULLs last on pg).
     const due = this.db
       .select({ id: run.id })
       .from(run)
@@ -2342,7 +2346,7 @@ export class PgMetaStore implements MetaStore {
           or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
         ),
       )
-      .orderBy(asc(run.scheduled_for))
+      .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
       .limit(limit)
       .for("update", { skipLocked: true })
     return this.db
@@ -2361,6 +2365,9 @@ export class PgMetaStore implements MetaStore {
       meta?: string | null
     },
   ): Promise<RunRecord | null> {
+    // Strict running → terminal transition: only the claiming agent, and only a run that is
+    // actually running — a duplicate/retried finish can't clobber a settled run's cost, and a
+    // finish can't terminate a never-claimed queued run.
     const rows = await this.db
       .update(run)
       .set({
@@ -2369,7 +2376,7 @@ export class PgMetaStore implements MetaStore {
         cost_micro_usd: fields.costMicroUsd ?? null,
         meta: fields.meta ?? null,
       })
-      .where(and(eq(run.id, id), eq(run.agent_id, agentId)))
+      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
       .returning()
     return rows[0] ?? null
   }

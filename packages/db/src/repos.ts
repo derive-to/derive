@@ -2334,8 +2334,17 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(desc(automation.created_at))
       .limit(limit)
       .all()
-  const deleteAutomation = async (id: string): Promise<void> => {
-    await db.delete(automation).where(eq(automation.id, id)).run()
+  const deleteAutomation = async (id: string, orgId: string): Promise<void> => {
+    // Cancel pending work first, then remove the definition — both org-scoped so a stray
+    // caller can't reach across tenants. Running/finished runs stay as history.
+    await db
+      .delete(run)
+      .where(and(eq(run.automation_id, id), eq(run.status, "queued")))
+      .run()
+    await db
+      .delete(automation)
+      .where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
+      .run()
   }
   const createRun = async (r: NewRun): Promise<RunRecord> =>
     (await db
@@ -2345,7 +2354,9 @@ export function makeRepos(db: SqliteDb) {
       .get()) as RunRecord
   const claimDueRuns = async (agentId: string, now: string, limit = 20): Promise<RunRecord[]> => {
     // The oldest queued runs due now for this agent, flipped to running under a row lock so
-    // two executors never claim the same run. A null scheduled_for means "as soon as possible".
+    // two executors never claim the same run. A null scheduled_for means "as soon as possible";
+    // coalesce to '' so it orders FIRST identically on sqlite and Postgres (asc(scheduled_for)
+    // alone puts NULLs first on sqlite but last on pg — a cross-dialect divergence).
     const due = db
       .select({ id: run.id })
       .from(run)
@@ -2356,7 +2367,7 @@ export function makeRepos(db: SqliteDb) {
           or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
         ),
       )
-      .orderBy(asc(run.scheduled_for))
+      .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
       .limit(limit)
     return (await db
       .update(run)
@@ -2374,6 +2385,9 @@ export function makeRepos(db: SqliteDb) {
       meta?: string | null
     },
   ): Promise<RunRecord | null> =>
+    // Strict running → terminal transition: only the claiming agent, and only a run that is
+    // actually running. Guards a duplicate/retried finish from clobbering a settled run's
+    // status/cost, and stops a finish from terminating a never-claimed queued run.
     (await db
       .update(run)
       .set({
@@ -2382,7 +2396,7 @@ export function makeRepos(db: SqliteDb) {
         cost_micro_usd: fields.costMicroUsd ?? null,
         meta: fields.meta ?? null,
       })
-      .where(and(eq(run.id, id), eq(run.agent_id, agentId)))
+      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
       .returning()
       .get()) ?? null
   const listRuns = async (orgId: string, limit = 50): Promise<RunRecord[]> =>

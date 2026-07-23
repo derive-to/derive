@@ -103,6 +103,16 @@ describe("automations + runs", () => {
     expect(row?.cost_micro_usd).toBe(900)
   })
 
+  it("run-now needs a write role: a commenter-seat member can't force a run", async () => {
+    const agent = await mintAgent()
+    const created = await (await createAutomation(agent.id)).json()
+    const denied = await app.request(`/v1/automations/${created.id}/run`, {
+      method: "POST",
+      headers: as(member.email),
+    })
+    expect([403, 404]).toContain(denied.status)
+  })
+
   it("an agent records an ad-hoc finished run; org + agent come from the bearer", async () => {
     const agent = await mintAgent()
     const res = await app.request(

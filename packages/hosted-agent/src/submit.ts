@@ -61,52 +61,55 @@ export async function submitRevision(
   ctx: SubmitContext,
   input: SubmitInput,
 ): Promise<SubmitResult> {
-  // Idempotency: a clean prior submit settles the run. A second call is a no-op,
-  // not a second write — the model occasionally re-emits its terminal tool call.
+  // Claim the latch SYNCHRONOUSLY (check-then-set with no await between) so a second submit
+  // — the model runtime can fire tool calls in parallel, not only re-emit sequentially — is a
+  // no-op rather than a second write. A thrown publish releases it (in the catch) so a
+  // legitimate retry within the same run can still proceed.
   if (ctx.latch.settled) return { decision: "shadow", changeKind: "freshness", duplicate: true }
+  ctx.latch.settled = true
+  try {
+    const before = await ctx.client.read(input.shortId)
+    const changeKind = classifyChange(before, input.content)
+    const decision = decideWrite({
+      autonomy: ctx.autonomy,
+      changeKind,
+      confidence: input.confidence,
+      flags: ctx.flags,
+      confidenceFloor: ctx.confidenceFloor,
+    })
 
-  const before = await ctx.client.read(input.shortId)
-  const changeKind = classifyChange(before, input.content)
-  const decision = decideWrite({
-    autonomy: ctx.autonomy,
-    changeKind,
-    confidence: input.confidence,
-    flags: ctx.flags,
-    confidenceFloor: ctx.confidenceFloor,
-  })
+    const rev: RevisionInput = {
+      content: input.content,
+      filename: input.filename,
+      message: input.message,
+      addresses: input.addresses,
+    }
 
-  const rev: RevisionInput = {
-    content: input.content,
-    filename: input.filename,
-    message: input.message,
-    addresses: input.addresses,
-  }
+    // Shadow: the run happened and is recorded by the caller's ledger, but nothing is filed.
+    // The rollout tier — a human can score what it WOULD have written.
+    if (decision === "shadow") {
+      const out: SubmitResult = { decision, changeKind }
+      ctx.lastResult = out
+      return out
+    }
 
-  // Shadow: the run happened and is recorded by the caller's ledger, but nothing
-  // is filed. The rollout tier — a human can score what it WOULD have written.
-  if (decision === "shadow") {
-    ctx.latch.settled = true
-    const out: SubmitResult = { decision, changeKind }
+    const result =
+      decision === "live_publish_with_review"
+        ? await ctx.client.publishLive(input.shortId, rev, { requestReview: true })
+        : await ctx.client.proposeRevision(input.shortId, rev)
+
+    const out: SubmitResult = {
+      decision,
+      changeKind,
+      shortId: result.short_id,
+      version: result.version,
+    }
     ctx.lastResult = out
     return out
+  } catch (e) {
+    ctx.latch.settled = false
+    throw e
   }
-
-  const result =
-    decision === "live_publish_with_review"
-      ? await ctx.client.publishLive(input.shortId, rev, { requestReview: true })
-      : await ctx.client.proposeRevision(input.shortId, rev)
-
-  // Latch only AFTER a clean write: a thrown publish leaves the run un-settled so
-  // the agent can legitimately retry within the same run (matching the runner).
-  ctx.latch.settled = true
-  const out: SubmitResult = {
-    decision,
-    changeKind,
-    shortId: result.short_id,
-    version: result.version,
-  }
-  ctx.lastResult = out
-  return out
 }
 
 /** Map a submit decision to a ledger outcome; a run with no submit is an answer. */

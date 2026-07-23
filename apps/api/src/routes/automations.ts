@@ -21,16 +21,34 @@ const parseTrigger = (raw: string): AutomationTrigger => {
   return { kind: "manual" }
 }
 
-/** Present an automation with its JSON blobs parsed and enabled as a boolean. */
+const parseRefs = (raw: string | null): string[] => {
+  try {
+    if (raw) {
+      const r = JSON.parse(raw)
+      if (Array.isArray(r)) return r as string[]
+    }
+  } catch {}
+  return []
+}
+
+/** Present an automation with its JSON blobs parsed and enabled as a boolean. Both blobs
+ *  parse defensively so a single malformed row can't 500 every list/claim response. */
 const present = (a: AutomationRecord) => ({
   ...a,
   trigger: parseTrigger(a.trigger),
-  refs: a.refs ? (JSON.parse(a.refs) as string[]) : [],
+  refs: parseRefs(a.refs),
   enabled: a.enabled === 1,
 })
 
+// Bound the free-form blobs so a manage user (refs) or an agent token (meta) can't store
+// multi-MB rows. The instruction is capped at its zod schema.
+const META = z.record(z.string(), z.unknown()).refine((m) => JSON.stringify(m).length <= 8000, {
+  message: "meta too large",
+})
+const REFS = z.array(z.string().max(512)).max(100)
+
 export const automationRoutes = (ctx: AppContext) => {
-  const { meta, agentFor, requireUser, activeWorkspace, requireWorkspace } = ctx
+  const { meta, agentFor, requireUser, requireWorkspace } = ctx
   const app = new Hono()
 
   // ---- Owner surface: define / list / delete ---------------------------------
@@ -48,7 +66,7 @@ export const automationRoutes = (ctx: AppContext) => {
           on: z.string().optional(),
         }),
         instruction: z.string().min(1).max(4000),
-        refs: z.array(z.string()).optional(),
+        refs: REFS.optional(),
         route: z.enum(["auto", "proposal"]).default("proposal"),
         enabled: z.boolean().default(true),
       }),
@@ -82,16 +100,19 @@ export const automationRoutes = (ctx: AppContext) => {
     if (org instanceof Response) return org
     const a = await meta.getAutomation(c.req.param("id"))
     if (!a || a.org_id !== org) return fail(c, 404, "not found")
-    await meta.deleteAutomation(a.id)
+    await meta.deleteAutomation(a.id, org)
     return c.body(null, 204)
   })
 
-  // Run now: a person asks the automation to run. Enqueues a run scheduled for now — the
-  // SAME path a schedule tick or a webhook takes. This is "refresh please".
+  // Run now: a write-capable member asks the automation to run. Enqueues a run scheduled
+  // for now — the SAME path a schedule tick or a webhook takes. This is "refresh please".
+  // Gated at `publish` (not just membership): triggering an agent action + paid model calls
+  // is a write, so a viewer/commenter can't force it.
   app.post("/v1/automations/:id/run", async (c) => {
+    const org = await requireWorkspace(c, "publish")
+    if (org instanceof Response) return org
     const me = await requireUser(c)
     if (me instanceof Response) return me
-    const org = await activeWorkspace(c)
     const a = await meta.getAutomation(c.req.param("id"))
     if (!a || a.org_id !== org) return fail(c, 404, "not found")
     const rec = await meta.createRun({
@@ -106,9 +127,11 @@ export const automationRoutes = (ctx: AppContext) => {
   })
 
   // ---- Agent surface: claim due runs, finish them, record ad-hoc runs ---------
-  // The executor contract: an agent claims the oldest queued runs due now (its own),
-  // flipped to running under a row lock so replicas never double-run. Each carries its
-  // automation definition so the agent knows what to do.
+  // The executor CONTRACT: an agent claims the oldest queued runs due now (its own), flipped
+  // to running under a row lock so replicas never double-run, then finishes each. This is the
+  // surface an executor drives; wiring the executor loop that polls it (and reclaims runs
+  // orphaned by a crashed worker) is deployment work, deferred alongside the schedule tick and
+  // the webhook kick. Today the queue is fed by run-now and drained in tests + a future loop.
   app.get("/v1/agent/runs/claim", async (c) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
@@ -137,7 +160,7 @@ export const automationRoutes = (ctx: AppContext) => {
       z.object({
         status: z.enum(["succeeded", "failed"]),
         cost_micro_usd: z.number().int().nonnegative().nullish(),
-        meta: z.record(z.string(), z.unknown()).nullish(),
+        meta: META.nullish(),
       }),
     )
     if (b instanceof Response) return bail(b)
@@ -162,16 +185,23 @@ export const automationRoutes = (ctx: AppContext) => {
         status: z.enum(["succeeded", "failed"]).default("succeeded"),
         automation_id: z.string().max(64).nullish(),
         cost_micro_usd: z.number().int().nonnegative().nullish(),
-        meta: z.record(z.string(), z.unknown()).nullish(),
+        meta: META.nullish(),
       }),
     )
     if (b instanceof Response) return bail(b)
+    // Only attribute the run to an automation that actually belongs to this agent's org —
+    // an unknown or foreign id is dropped (ledger hygiene), the run still records.
+    let automationId = b.automation_id ?? null
+    if (automationId) {
+      const owner = await meta.getAutomation(automationId)
+      if (!owner || owner.org_id !== agent.org_id) automationId = null
+    }
     const now = isoNow()
     const rec = await meta.createRun({
       id: newId("run"),
       org_id: agent.org_id,
       agent_id: agent.id,
-      automation_id: b.automation_id ?? null,
+      automation_id: automationId,
       reason: b.reason,
       status: b.status,
       started_at: now,
