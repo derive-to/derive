@@ -2125,7 +2125,6 @@ export function runStoreContract(
         agent_id: agentId,
         trigger: JSON.stringify({ kind: "manual" }),
         instruction: "keep the roadmap current",
-        route: "auto",
       })
       expect((await store.getAutomation(a1.id))?.instruction).toBe("keep the roadmap current")
       // An automation in another workspace must not leak into this list.
@@ -2135,7 +2134,6 @@ export function runStoreContract(
         agent_id: agentId,
         trigger: JSON.stringify({ kind: "schedule", cron: "0 9 * * 1", tz: "UTC" }),
         instruction: "elsewhere",
-        route: "proposal",
       })
       const list = await store.listAutomations(ORG)
       expect(list.every((a) => a.org_id === ORG)).toBe(true)
@@ -2151,7 +2149,6 @@ export function runStoreContract(
           agent_id: agentId,
           trigger: JSON.stringify({ kind: "manual" }),
           instruction: "batch me",
-          route: "proposal",
         })
       const [a, b] = await Promise.all([mk(), mk()])
       expect(await store.getAutomationsByIds([])).toEqual([])
@@ -2266,7 +2263,6 @@ export function runStoreContract(
         agent_id: agentId,
         trigger: JSON.stringify({ kind: "manual" }),
         instruction: "keep current",
-        route: "auto",
       })
       const pending = await store.createRun({
         id: uuid(),

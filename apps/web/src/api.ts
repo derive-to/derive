@@ -174,7 +174,6 @@ export interface Automation {
   trigger: AutomationTrigger
   instruction: string
   refs: string[]
-  route: "auto" | "proposal"
   enabled: boolean
   created_at: string
 }
@@ -733,7 +732,6 @@ export const api = {
     trigger: AutomationTrigger
     instruction: string
     refs?: string[]
-    route?: "auto" | "proposal"
   }): Promise<Automation> => f("/v1/automations", opts(input)).then(j),
   deleteAutomation: (id: string): Promise<void> =>
     f(`/v1/automations/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),

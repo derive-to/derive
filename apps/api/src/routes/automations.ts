@@ -67,7 +67,6 @@ export const automationRoutes = (ctx: AppContext) => {
         }),
         instruction: z.string().min(1).max(4000),
         refs: REFS.optional(),
-        route: z.enum(["auto", "proposal"]).default("proposal"),
         enabled: z.boolean().default(true),
       }),
     )
@@ -83,7 +82,6 @@ export const automationRoutes = (ctx: AppContext) => {
       trigger: JSON.stringify(b.trigger satisfies AutomationTrigger),
       instruction: b.instruction,
       refs: b.refs ? JSON.stringify(b.refs) : null,
-      route: b.route,
       enabled: b.enabled ? 1 : 0,
     })
     return c.json(present(rec), 201)
@@ -146,7 +144,7 @@ export const automationRoutes = (ctx: AppContext) => {
     const ids = [...new Set(claimed.map((r) => r.automation_id).filter((x): x is string => !!x))]
     const byId = new Map((await meta.getAutomationsByIds(ids)).map((a) => [a.id, a]))
     // Resolve the gate inputs server-side, FRESH at claim time (so a flipped killswitch is
-    // seen on the next claim): autonomy from the automation's route, flags from org settings.
+    // seen on the next claim): flags from org settings; write mode rides per-target in refs.
     // The executor gets everything it needs to run each run in one call — no extra round-trips.
     const s = await meta.getOrgSettings(agent.org_id)
     const flags = { agentKillswitch: s.agentKillswitch, agentAutoEnabled: s.agentAutoEnabled }
@@ -181,7 +179,7 @@ export const automationRoutes = (ctx: AppContext) => {
         automation_id: r.automation_id,
         instruction: a.instruction,
         refs: parseRefs(a.refs),
-        autonomy: a.route === "auto" ? "auto" : "suggest",
+        autonomy: "suggest",
         flags,
       })),
     })

@@ -36,7 +36,6 @@ export function AutomationForm({
   const [kind, setKind] = useState<AutomationTrigger["kind"]>("manual")
   const [cron, setCron] = useState<string>(SCHEDULE_PRESETS[0].cron)
   const [on, setOn] = useState<string>(EVENT_KINDS[0].id)
-  const [route, setRoute] = useState<"auto" | "proposal">("proposal")
   const tz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", [])
 
   const buildTrigger = (): AutomationTrigger =>
@@ -49,7 +48,6 @@ export function AutomationForm({
         trigger: buildTrigger(),
         instruction: instruction.trim(),
         refs,
-        route,
       }),
     success: "Automation created",
     // Invalidate HERE, not in each caller — the artifact dialog and the settings manager
@@ -78,15 +76,6 @@ export function AutomationForm({
                 @{a.name}
               </SelectItem>
             ))}
-          </SelectContent>
-        </Select>
-        <Select value={route} onValueChange={(v) => setRoute(v as "auto" | "proposal")}>
-          <SelectTrigger data-testid="automation-route" aria-label="Route" className="w-45">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="proposal">Propose for review</SelectItem>
-            <SelectItem value="auto">Publish, then review</SelectItem>
           </SelectContent>
         </Select>
       </div>

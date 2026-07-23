@@ -1307,10 +1307,6 @@ export interface AutomationTrigger {
   on?: string
 }
 
-/** The maintainer's default route hint for what a run writes (the autonomy gate still has
- *  the final say per-change). */
-export type AutomationRoute = "auto" | "proposal"
-
 /** A standing agent job: WHAT to do (instruction), WHO does it (agent), and the rule for
  *  WHEN (trigger). The definition only — every firing is a `run`. A "living artifact" is
  *  just an automation whose instruction is "keep this current" with a ref to the doc. */
@@ -1325,7 +1321,6 @@ export interface AutomationRecord {
   instruction: string
   /** Serialized inputs/targets (artifact ids, urls, arbitrary), or null. */
   refs: string | null
-  route: AutomationRoute
   enabled: 0 | 1
   created_at: string
 }
@@ -1337,7 +1332,6 @@ export interface NewAutomation {
   trigger: string
   instruction: string
   refs?: string | null
-  route: AutomationRoute
   enabled?: 0 | 1
 }
 
