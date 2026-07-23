@@ -140,14 +140,11 @@ export const automationRoutes = (ctx: AppContext) => {
     if (!agent) return fail(c, 401, "agent token required")
     const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20))
     const claimed = await meta.claimDueRuns(agent.id, isoNow(), limit)
-    // Resolve each claimed run's automation DIRECTLY by id — never via a capped org-wide
-    // list, which silently loses instructions past its limit. Claims are ≤50, deduped.
+    // Resolve each claimed run's automation DIRECTLY by id, in ONE batched query — never
+    // via a capped org-wide list (which silently loses instructions past its limit), and
+    // never a per-id loop (the no-N+1 rule).
     const ids = [...new Set(claimed.map((r) => r.automation_id).filter((x): x is string => !!x))]
-    const byId = new Map(
-      (await Promise.all(ids.map((id) => meta.getAutomation(id))))
-        .filter((a): a is NonNullable<typeof a> => a !== null)
-        .map((a) => [a.id, a]),
-    )
+    const byId = new Map((await meta.getAutomationsByIds(ids)).map((a) => [a.id, a]))
     // Resolve the gate inputs server-side, FRESH at claim time (so a flipped killswitch is
     // seen on the next claim): autonomy from the automation's route, flags from org settings.
     // The executor gets everything it needs to run each run in one call — no extra round-trips.
@@ -157,18 +154,26 @@ export const automationRoutes = (ctx: AppContext) => {
     // enqueue, or carries no instruction must never reach the executor — it would burn a model
     // call on an empty task. Finish it as failed/cancelled here and hand back only real work.
     const runnable: { r: (typeof claimed)[number]; a: AutomationRecord }[] = []
+    const cancelled: string[] = []
     for (const r of claimed) {
       const a = r.automation_id ? byId.get(r.automation_id) : undefined
       if (a && a.org_id === agent.org_id && a.enabled === 1 && a.instruction.trim() !== "") {
         runnable.push({ r, a })
       } else {
-        await meta.finishRun(r.id, agent.id, {
-          status: "failed",
-          finishedAt: isoNow(),
-          meta: JSON.stringify({ outcome: "cancelled", why: "automation missing or disabled" }),
-        })
+        cancelled.push(r.id)
       }
     }
+    // Concurrent, not per-row sequential — the rare cancel path shouldn't serialize.
+    const cancelAt = isoNow()
+    await Promise.all(
+      cancelled.map((id) =>
+        meta.finishRun(id, agent.id, {
+          status: "failed",
+          finishedAt: cancelAt,
+          meta: JSON.stringify({ outcome: "cancelled", why: "automation missing or disabled" }),
+        }),
+      ),
+    )
     return c.json({
       runs: runnable.map(({ r, a }) => ({
         id: r.id,

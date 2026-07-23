@@ -2309,6 +2309,10 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select().from(automation).where(eq(automation.id, id))
     return rows[0] ?? null
   }
+  async getAutomationsByIds(ids: string[]): Promise<AutomationRecord[]> {
+    if (ids.length === 0) return []
+    return this.db.select().from(automation).where(inArray(automation.id, ids))
+  }
   listAutomations(orgId: string, limit = 100): Promise<AutomationRecord[]> {
     return this.db
       .select()

@@ -936,6 +936,9 @@ export interface AgentStore {
   createAutomation(a: NewAutomation): Promise<AutomationRecord>
   /** One automation by id, or null. */
   getAutomation(id: string): Promise<AutomationRecord | null>
+  /** Batch-load automations by id in ONE query (id ∈ ids). Order is unspecified; callers
+   *  key by `id`. Empty ids ⇒ []. Use this over a per-id getAutomation loop. */
+  getAutomationsByIds(ids: string[]): Promise<AutomationRecord[]>
   /** A workspace's automations, newest first. Default 100. */
   listAutomations(orgId: string, limit?: number): Promise<AutomationRecord[]>
   /** Remove an automation and cancel its still-queued runs, org-scoped so a caller can't

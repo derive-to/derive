@@ -2326,6 +2326,8 @@ export function makeRepos(db: SqliteDb) {
     (await db.insert(automation).values(a).returning().get()) as AutomationRecord
   const getAutomation = async (id: string): Promise<AutomationRecord | null> =>
     (await db.select().from(automation).where(eq(automation.id, id)).get()) ?? null
+  const getAutomationsByIds = async (ids: string[]): Promise<AutomationRecord[]> =>
+    ids.length === 0 ? [] : db.select().from(automation).where(inArray(automation.id, ids)).all()
   const listAutomations = async (orgId: string, limit = 100): Promise<AutomationRecord[]> =>
     db
       .select()
@@ -3128,6 +3130,7 @@ export function makeRepos(db: SqliteDb) {
     setAgentHosted,
     createAutomation,
     getAutomation,
+    getAutomationsByIds,
     listAutomations,
     deleteAutomation,
     createRun,

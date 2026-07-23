@@ -2142,6 +2142,23 @@ export function runStoreContract(
       expect(list.some((a) => a.id === a1.id)).toBe(true)
     })
 
+    it("batch-loads automations by id in one query; empty ids ⇒ []", async () => {
+      const agentId = uuid()
+      const mk = () =>
+        store.createAutomation({
+          id: uuid(),
+          org_id: ORG,
+          agent_id: agentId,
+          trigger: JSON.stringify({ kind: "manual" }),
+          instruction: "batch me",
+          route: "proposal",
+        })
+      const [a, b] = await Promise.all([mk(), mk()])
+      expect(await store.getAutomationsByIds([])).toEqual([])
+      const got = await store.getAutomationsByIds([a.id, b.id, "auto_missing"])
+      expect(got.map((x) => x.id).sort()).toEqual([a.id, b.id].sort())
+    })
+
     it("queue + ledger: enqueue → claim (running) → finish; a second claim gets nothing", async () => {
       const agentId = uuid()
       // A queued run due in the past.
