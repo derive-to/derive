@@ -466,6 +466,9 @@ CREATE TABLE IF NOT EXISTS context (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   runner_seen_at TEXT,
   ask_policy TEXT NOT NULL DEFAULT 'invited',
+  max_run_ms INTEGER,
+  max_concurrency INTEGER NOT NULL DEFAULT 1,
+  config TEXT,
   UNIQUE (org_id, name),
   FOREIGN KEY (manifest_artifact_id) REFERENCES artifact(id)
 );
@@ -489,6 +492,10 @@ CREATE TABLE IF NOT EXISTS context_session (
   state TEXT NOT NULL DEFAULT 'open',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT,
+  started_at TEXT,
+  lease_until TEXT,
+  result_artifact_id TEXT,
+  dedupe_key TEXT,
   FOREIGN KEY (context_id) REFERENCES context(id)
 );
 
@@ -593,3 +600,5 @@ CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at);
 CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61 remove_diacritics 0');
+
+CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session (context_id, asker_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working');

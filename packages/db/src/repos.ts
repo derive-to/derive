@@ -2227,6 +2227,121 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(asc(contextSession.created_at))
       .limit(limit)
       .all()
+  const claimPendingSessions = async (
+    contextId: string,
+    limit: number,
+    leaseUntil: string,
+  ): Promise<SessionRecord[]> => {
+    // sqlite/d1 are single-writer, so the UPDATE…WHERE id IN (SELECT…) claim is
+    // atomic without row locks (the claimDueDeliveries / claimDueRenderJobs pattern).
+    // Runnable = `open`, or `working` with a lapsed lease (crash recovery); the
+    // `working` flip + lease hide the rows from overlapping claims until it lapses.
+    const now = new Date().toISOString()
+    const runnable = db
+      .select({ id: contextSession.id })
+      .from(contextSession)
+      .where(
+        and(
+          eq(contextSession.context_id, contextId),
+          or(
+            eq(contextSession.state, "open"),
+            // A `working` row with a lapsed OR missing lease is reclaimable (crash recovery,
+            // and a never-leased zombie self-heals) — mirrors countWorkingSessions, which
+            // only counts LIVE leases toward the cap.
+            and(
+              eq(contextSession.state, "working"),
+              or(lte(contextSession.lease_until, now), isNull(contextSession.lease_until)),
+            ),
+          ),
+        ),
+      )
+      .orderBy(asc(contextSession.created_at))
+      .limit(limit)
+    return (await db
+      .update(contextSession)
+      .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
+      .where(inArray(contextSession.id, runnable))
+      .returning()) as SessionRecord[]
+  }
+  // Count only LIVE working sessions (lease not lapsed): a crashed run whose lease has
+  // expired must NOT fill the concurrency cap, or the queue wedges — the lapsed-lease
+  // reclaim lives in claimPendingSessions, which only runs when there is room.
+  const countWorkingSessions = async (contextId: string): Promise<number> => {
+    const now = new Date().toISOString()
+    return (
+      (
+        await db
+          .select({ n: count() })
+          .from(contextSession)
+          .where(
+            and(
+              eq(contextSession.context_id, contextId),
+              eq(contextSession.state, "working"),
+              gt(contextSession.lease_until, now),
+            ),
+          )
+          .get()
+      )?.n ?? 0
+    )
+  }
+  const findInflightSession = async (
+    contextId: string,
+    askerId: string,
+    dedupeKey: string,
+  ): Promise<SessionRecord | null> =>
+    (await db
+      .select()
+      .from(contextSession)
+      .where(
+        and(
+          eq(contextSession.context_id, contextId),
+          eq(contextSession.asker_id, askerId),
+          eq(contextSession.dedupe_key, dedupeKey),
+          inArray(contextSession.state, ["open", "working"]),
+        ),
+      )
+      .orderBy(desc(contextSession.created_at))
+      .limit(1)
+      .get()) ?? null
+  const setResultArtifact = async (sessionId: string, artifactShortId: string): Promise<void> => {
+    await db
+      .update(contextSession)
+      .set({ result_artifact_id: artifactShortId, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, sessionId))
+      .run()
+  }
+  // Extend a claimed session's lease — a runner streaming progress is alive, so its
+  // lease must move forward or a slow-but-live run gets re-served and double-run.
+  const renewSessionLease = async (sessionId: string, leaseUntil: string): Promise<void> => {
+    await db
+      .update(contextSession)
+      .set({ lease_until: leaseUntil, updated_at: new Date().toISOString() })
+      .where(eq(contextSession.id, sessionId))
+      .run()
+  }
+  // Append an asker follow-up and reopen the session in ONE atomic compare-and-set: a
+  // `working` session STAYS working (don't vacate the active claim), while a settled or open
+  // one goes to `open` (reclaimable), dropping the dedupe key on the settled path so it can't
+  // collide with a newer same-key session. The CASE reads the row's live state inside the
+  // update, so a settle racing the reopen can't strand the session `working` with no runner.
+  const appendFollowupReopen = async (m: NewSessionMessage): Promise<SessionMessageRecord> => {
+    const row = (await db
+      .insert(sessionMessage)
+      .values(m)
+      .returning()
+      .get()) as SessionMessageRecord
+    const now = new Date().toISOString()
+    await db
+      .update(contextSession)
+      .set({
+        state: sql`CASE WHEN ${contextSession.state} = 'working' THEN 'working' ELSE 'open' END`,
+        dedupe_key: sql`CASE WHEN ${contextSession.state} IN ('answered', 'escalated', 'failed') THEN NULL ELSE ${contextSession.dedupe_key} END`,
+        updated_at: now,
+      })
+      .where(eq(contextSession.id, m.session_id))
+      .run()
+    return row
+  }
   const setSessionState = async (id: string, state: SessionState): Promise<SessionRecord | null> =>
     (await db
       .update(contextSession)
@@ -3113,6 +3228,12 @@ export function makeRepos(db: SqliteDb) {
     getSession,
     listSessions,
     pendingSessions,
+    claimPendingSessions,
+    countWorkingSessions,
+    findInflightSession,
+    setResultArtifact,
+    renewSessionLease,
+    appendFollowupReopen,
     setSessionState,
     addSessionMessage,
     listSessionMessages,

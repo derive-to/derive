@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
-// @ts-expect-error — plain .mjs deploy helper, no types; tested for behavior only.
-import { isUnsafeAdd, parseExpectedColumns, planColumnAdds } from "../scripts/d1-schema-plan.mjs"
+import {
+  isUnsafeAdd,
+  parseExpectedColumns,
+  partitionStatements,
+  planColumnAdds,
+  // @ts-expect-error — plain .mjs deploy helper, no types; tested for behavior only.
+} from "../scripts/d1-schema-plan.mjs"
 
 const SCHEMA = `-- header
 CREATE TABLE IF NOT EXISTS artifact (
@@ -31,6 +36,38 @@ describe("parseExpectedColumns", () => {
     expect(expected.artifact).not.toHaveProperty("UNIQUE")
     expect(expected.version).not.toHaveProperty("FOREIGN")
     expect(expected.artifact.author_login).toBe("author_login TEXT")
+  })
+})
+
+describe("partitionStatements", () => {
+  it("defers every CREATE [UNIQUE] INDEX past the tables, dropping header comments", () => {
+    const sql = `-- header line one
+-- header line two
+CREATE TABLE IF NOT EXISTS context_session (
+  id TEXT PRIMARY KEY,
+  context_id TEXT NOT NULL,
+  asker_id TEXT NOT NULL,
+  dedupe_key TEXT
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(text);
+
+CREATE INDEX IF NOT EXISTS artifact_org ON artifact (org_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session (context_id, asker_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working');
+`
+    const { preIndex, indexes } = partitionStatements(sql)
+    // Tables/virtual tables run first; both indexes are deferred to the tail.
+    expect(preIndex).toHaveLength(2)
+    expect(preIndex[0]).toMatch(/^CREATE TABLE IF NOT EXISTS context_session/)
+    expect(preIndex[1]).toMatch(/^CREATE VIRTUAL TABLE/)
+    expect(indexes).toHaveLength(2)
+    // The partial index on the ALTER-added dedupe_key must land in the deferred bucket, so
+    // it runs AFTER the column reconciler (else "no such column" wedges an existing-DB apply).
+    expect(indexes.some((s: string) => s.includes("context_session_dedupe"))).toBe(true)
+    // Header comments don't survive as a bare statement, and everything stays `;`-terminated.
+    expect([...preIndex, ...indexes].every((s: string) => s.endsWith(";"))).toBe(true)
+    expect([...preIndex, ...indexes].some((s: string) => s.startsWith("--"))).toBe(false)
   })
 })
 

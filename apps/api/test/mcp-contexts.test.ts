@@ -212,7 +212,7 @@ describe("use — open, check, and the grant edges", () => {
     ).toBe(200)
     const res = await call(app, ownerToken, "use", {
       context: "Analytics",
-      question: "What changed this week?",
+      instruction: "What changed this week?",
       wait: 0,
     })
     expect(res.state).toBe("open")
@@ -238,7 +238,11 @@ describe("use — open, check, and the grant edges", () => {
         )
       ).status,
     ).toBe(200)
-    const opened = await call(app, ownerToken, "use", { context: cx.id, question: "Q?", wait: 0 })
+    const opened = await call(app, ownerToken, "use", {
+      context: cx.id,
+      instruction: "Q?",
+      wait: 0,
+    })
     expect(
       (
         await answerAs(app, answeringToken, opened.session_id, {
@@ -271,7 +275,7 @@ describe("use — open, check, and the grant edges", () => {
     // A 5k question and a 50k answer — both over their caps (1.5k/entry, 40k answer).
     const opened = await call(app, ownerToken, "use", {
       context: cx.id,
-      question: "q".repeat(5_000),
+      instruction: "q".repeat(5_000),
       wait: 0,
     })
     expect(
@@ -300,7 +304,7 @@ describe("use — open, check, and the grant edges", () => {
     // No grant at all: the miss must not enumerate what exists.
     const dark = await callRaw(app, ownerToken, "use", {
       context: "Analytics",
-      question: "Q?",
+      instruction: "Q?",
       wait: 0,
     })
     expect(dark.isError).toBe(true)
@@ -316,7 +320,7 @@ describe("use — open, check, and the grant edges", () => {
     ).toBe(200)
     const miss = await callRaw(app, ownerToken, "use", {
       context: "Analytcs",
-      question: "Q?",
+      instruction: "Q?",
       wait: 0,
     })
     expect(miss.isError).toBe(true)
@@ -358,7 +362,7 @@ describe("use({wait}) — the settle wake and the session loop", () => {
     await openPolicy(app, cx.id)
     const opened = await call(app, ownerToken, "use", {
       context: "Analytics",
-      question: "Q?",
+      instruction: "Q?",
       wait: 0,
     })
     const started = Date.now()
@@ -386,7 +390,7 @@ describe("use({wait}) — the settle wake and the session loop", () => {
     await openPolicy(app, cx.id)
     const opened = await call(app, ownerToken, "use", {
       context: "Analytics",
-      question: "Q?",
+      instruction: "Q?",
       wait: 0,
     })
     expect(
@@ -399,7 +403,7 @@ describe("use({wait}) — the settle wake and the session loop", () => {
     ).toBe(201)
     const follow = await call(app, ownerToken, "use", {
       session_id: opened.session_id,
-      question: "And why?",
+      instruction: "And why?",
       wait: 0,
     })
     expect(follow.state).toBe("open")
@@ -415,7 +419,7 @@ describe("use({wait}) — the settle wake and the session loop", () => {
     ).toBe(200)
     const refused = await callRaw(app, ownerToken, "use", {
       session_id: opened.session_id,
-      question: "still there?",
+      instruction: "still there?",
       wait: 0,
     })
     expect(refused.isError).toBe(true)
@@ -430,13 +434,13 @@ describe("use({wait}) — the settle wake and the session loop", () => {
     await openPolicy(app, cx.id)
     const first = await call(app, ownerToken, "use", {
       context: "Analytics",
-      question: "1",
+      instruction: "1",
       wait: 0,
     })
-    await call(app, ownerToken, "use", { context: "Analytics", question: "2", wait: 0 })
+    await call(app, ownerToken, "use", { context: "Analytics", instruction: "2", wait: 0 })
     const third = await callRaw(app, ownerToken, "use", {
       context: "Analytics",
-      question: "3",
+      instruction: "3",
       wait: 0,
     })
     expect(third.isError).toBe(true)

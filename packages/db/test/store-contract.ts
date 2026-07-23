@@ -1682,6 +1682,98 @@ export function runStoreContract(
       expect(await store.getSession(s.id)).toBeNull()
       expect(await store.listSessionMessages(s.id)).toHaveLength(0)
     })
+
+    it("claim/lease queue: lapsed-lease self-heal, concurrency cap, dedupe, result binding", async () => {
+      const ctx = await newContext()
+      const open = (asker: string, dedupe_key?: string) =>
+        store.createSession({
+          id: uuid(),
+          context_id: ctx.id,
+          org_id: ORG,
+          asker_id: asker,
+          context_version: 1,
+          dedupe_key,
+        })
+
+      // CLAIM flips open -> working, stamps started_at + the lease; only claimed rows return.
+      const s1 = await open("a")
+      const s2 = await open("b")
+      const future = new Date(Date.now() + 60_000).toISOString()
+      const claimed = await store.claimPendingSessions(ctx.id, 10, future)
+      expect(claimed.map((s) => s.id).sort()).toEqual([s1.id, s2.id].sort())
+      expect(
+        claimed.every((s) => s.state === "working" && !!s.started_at && s.lease_until === future),
+      ).toBe(true)
+      // A second claim gets nothing — both are working with a LIVE lease.
+      expect(await store.claimPendingSessions(ctx.id, 10, future)).toHaveLength(0)
+      expect(await store.countWorkingSessions(ctx.id)).toBe(2)
+
+      // F1: a LAPSED lease drops out of the concurrency-cap count AND is reclaimable, so a
+      // crashed run self-heals instead of wedging the queue. renewSessionLease sets it.
+      const past = new Date(Date.now() - 60_000).toISOString()
+      await store.renewSessionLease(s1.id, past)
+      expect(await store.countWorkingSessions(ctx.id)).toBe(1)
+      expect((await store.claimPendingSessions(ctx.id, 10, future)).map((s) => s.id)).toEqual([
+        s1.id,
+      ])
+      expect(await store.countWorkingSessions(ctx.id)).toBe(2)
+
+      // The living result page binds to a session.
+      await store.setResultArtifact(s1.id, "art_xyz")
+      expect((await store.getSession(s1.id))?.result_artifact_id).toBe("art_xyz")
+
+      // findInflightSession is scoped to (context, asker, key): the newest live match for
+      // THIS asker, null once settled.
+      const k1 = await open("c", "brand-x")
+      expect((await store.findInflightSession(ctx.id, "c", "brand-x"))?.id).toBe(k1.id)
+      expect(await store.findInflightSession(ctx.id, "c", "missing")).toBeNull()
+
+      // Cross-asker isolation: a DIFFERENT asker reusing the same key gets their OWN live
+      // session (the unique index is per-asker), and c's lookup never returns it — the exact
+      // cross-asker join-leak the asker scope closes. A global (context, key) index would
+      // have rejected d's insert and joined d onto c's private session.
+      const kd = await open("d", "brand-x")
+      expect(kd.id).not.toBe(k1.id)
+      expect((await store.findInflightSession(ctx.id, "d", "brand-x"))?.id).toBe(kd.id)
+      expect((await store.findInflightSession(ctx.id, "c", "brand-x"))?.id).toBe(k1.id)
+
+      await store.setSessionState(k1.id, "answered")
+      expect(await store.findInflightSession(ctx.id, "c", "brand-x")).toBeNull()
+
+      // Two LIVE sessions for the SAME asker can't share a dedupe key (the partial unique index).
+      const k2 = await open("c", "brand-x") // ok — k1 is settled, out of the partial index
+      await expect(open("c", "brand-x")).rejects.toThrow() // k2 is live: collision
+
+      // appendFollowupReopen on a SETTLED session (k1 is answered): it goes to `open` AND
+      // drops its dedupe key atomically, so it can reopen alongside the live same-key k2
+      // without colliding on the partial index (folds the old F4 clear).
+      await expect(
+        store.appendFollowupReopen({
+          id: uuid(),
+          session_id: k1.id,
+          author_kind: "asker",
+          author_id: "c",
+          body_md: "more",
+        }),
+      ).resolves.toBeTruthy()
+      const k1re = await store.getSession(k1.id)
+      expect(k1re?.state).toBe("open")
+      expect(k1re?.dedupe_key).toBeNull()
+      expect(k2.state).toBe("open")
+
+      // F6: appendFollowupReopen on a WORKING session must STAY working (don't vacate the
+      // active claim) — a read-then-write reopen would race a concurrent settle and could
+      // strand it `working` with no runner. s2 is still working with a live lease.
+      expect((await store.getSession(s2.id))?.state).toBe("working")
+      await store.appendFollowupReopen({
+        id: uuid(),
+        session_id: s2.id,
+        author_kind: "asker",
+        author_id: "b",
+        body_md: "still there?",
+      })
+      expect((await store.getSession(s2.id))?.state).toBe("working")
+    })
   })
 
   describe(`${label}: deleteArtifact`, () => {

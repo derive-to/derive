@@ -822,9 +822,43 @@ export interface ContextStore {
     opts?: { askerId?: string; limit?: number },
   ): Promise<SessionRecord[]>
   /** The runner's queue: `open` sessions on a context, oldest first. A plain
-   *  polling read — claiming/leasing is unnecessary while each context has one
-   *  runner; revisit if runners multiply. */
+   *  polling read that does NOT claim — `claimPendingSessions` is the
+   *  concurrency-safe path (it leases rows so overlapping runners can't
+   *  double-run one). Kept for read-only queue views. */
   pendingSessions(contextId: string, limit: number): Promise<SessionRecord[]>
+  /** Atomically claim up to `limit` runnable sessions on a context, oldest first:
+   *  a session is runnable when `open`, or `working` with a lapsed `lease_until`
+   *  (crash recovery). Flips each to `working`, stamps `started_at`, and leases it
+   *  to `leaseUntil`; returns the claimed rows. Mirrors the webhook_delivery /
+   *  render_job lease claim (single-writer UPDATE…IN(SELECT) on sqlite/d1, FOR
+   *  UPDATE SKIP LOCKED on Postgres). */
+  claimPendingSessions(
+    contextId: string,
+    limit: number,
+    leaseUntil: string,
+  ): Promise<SessionRecord[]>
+  /** How many sessions are currently `working` on a context — the per-context
+   *  concurrency cap (the route claims min(limit, max_concurrency - working)). */
+  countWorkingSessions(contextId: string): Promise<number>
+  /** The newest still-live session (`open` or `working`) matching a dedupe key for a
+   *  given asker on a context, or null — the ask idempotency join. Scoped to the asker so
+   *  a shared key never joins one asker onto another's private session. */
+  findInflightSession(
+    contextId: string,
+    askerId: string,
+    dedupeKey: string,
+  ): Promise<SessionRecord | null>
+  /** Record the artifact a run produced (its short_id) on a session + bump updated_at. */
+  setResultArtifact(sessionId: string, artifactShortId: string): Promise<void>
+  /** Extend a claimed session's lease (a streaming runner's heartbeat) — keeps a
+   *  slow-but-live run from being re-served/double-run at max_concurrency > 1. */
+  renewSessionLease(sessionId: string, leaseUntil: string): Promise<void>
+  /** Append an asker follow-up and reopen the session ATOMICALLY (compare-and-set): a
+   *  `working` session stays working (don't vacate the active claim); a settled/open one
+   *  goes to `open` (reclaimable), and a settled one drops its dedupe key so it can't collide
+   *  with a newer same-key session. The CAS closes the settle-vs-reopen race a read-then-write
+   *  would strand `working` with no runner. */
+  appendFollowupReopen(m: NewSessionMessage): Promise<SessionMessageRecord>
   /** Set a session's state and bump updated_at; null if the session is unknown. */
   setSessionState(id: string, state: SessionState): Promise<SessionRecord | null>
   /** Append a message and set the session's state in the same call (the turn flip:
@@ -1593,6 +1627,13 @@ export interface ContextRecord {
    *  a context is workspace-scoped by construction, with no world-link/public
    *  path. Workspace membership is the hard floor regardless (the ask gate). */
   ask_policy: "workspace" | "invited"
+  /** Per-run wall-clock budget in ms; null = the server's default run budget. */
+  max_run_ms: number | null
+  /** How many sessions the runner may work in parallel on this context (>= 1). */
+  max_concurrency: number
+  /** Opaque JSON sidecar, parsed only at the route layer (like session_message.meta)
+   *  — the store never reads it. Null until the owner sets one. */
+  config: string | null
 }
 export interface NewContext {
   id: string
@@ -1603,6 +1644,12 @@ export interface NewContext {
   created_by: string
   /** Defaults to `invited` (creator-only) when omitted (the store default). */
   ask_policy?: "workspace" | "invited"
+  /** Per-run budget in ms; omitted → the server default (stored null). */
+  max_run_ms?: number | null
+  /** Parallel sessions the runner may work; omitted → 1 (the column default). */
+  max_concurrency?: number
+  /** Opaque JSON sidecar; omitted → null. */
+  config?: string | null
 }
 export interface ContextAskerRecord {
   id: string
@@ -1619,11 +1666,12 @@ export interface NewContextAsker {
 }
 
 /** A session's lifecycle. `state` also encodes whose turn it is: `open` means the
- *  runner owes a reply (the queue predicate); an asker follow-up on an `answered`
- *  session flips it back to `open`. `escalated` = the runner filed its draft for
- *  the owner's approval; `failed` = the run crashed (surfaced, never auto-retried);
- *  `closed` = the asker or owner ended it. */
-export type SessionState = "open" | "answered" | "escalated" | "failed" | "closed"
+ *  runner owes a reply (the queue predicate); `working` = a runner has claimed and
+ *  is answering it (leased, so overlapping runners don't double-run); an asker
+ *  follow-up on an `answered` session flips it back to `open`. `escalated` = the
+ *  runner filed its draft for the owner's approval; `failed` = the run crashed
+ *  (surfaced, never auto-retried); `closed` = the asker or owner ended it. */
+export type SessionState = "open" | "working" | "answered" | "escalated" | "failed" | "closed"
 
 /** Who wrote a session message: the human asking, or the context's agent. */
 export type SessionMessageAuthor = "asker" | "agent"
@@ -1642,6 +1690,17 @@ export interface SessionRecord {
   created_at: string
   /** Bumped on every message/state change; null until then (read as ?? created_at). */
   updated_at: string | null
+  /** When a runner first claimed this session (ISO); null while still `open`. */
+  started_at: string | null
+  /** The claim lease expiry (ISO); once it lapses another claim may reclaim a
+   *  `working` session (crash recovery). Null while unclaimed. */
+  lease_until: string | null
+  /** The short_id of the artifact the run produced, if any (soft ref — the
+   *  artifact may be deleted out from under the session). Null until set. */
+  result_artifact_id: string | null
+  /** Optional idempotency key; the partial-unique index keeps at most one live
+   *  (open|working) session per (context, dedupe_key). Null = not deduped. */
+  dedupe_key: string | null
 }
 export interface NewSession {
   id: string
@@ -1649,6 +1708,8 @@ export interface NewSession {
   org_id: string
   asker_id: string
   context_version: number
+  /** Optional idempotency key; when set, a matching in-flight session is reused. */
+  dedupe_key?: string | null
 }
 
 export interface SessionMessageRecord {
