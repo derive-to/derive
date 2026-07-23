@@ -18,8 +18,10 @@ describe("decideWrite", () => {
   it("the full truth table — every combination lands where the precedence says", () => {
     const rows: Array<[AutonomyLevel, ChangeKind, number | null, boolean, boolean, GateDecision]> =
       []
+    // Creation is additive (no existing doc at risk), so it rides the freshness
+    // rung: only structural edits are categorically barred from auto-publishing.
     for (const autonomy of ["shadow", "suggest", "auto"] as const)
-      for (const changeKind of ["freshness", "structural"] as const)
+      for (const changeKind of ["freshness", "structural", "creation"] as const)
         for (const confidence of [null, 0.5, 1])
           for (const killswitch of [false, true])
             for (const autoEnabled of [false, true]) {
@@ -37,7 +39,7 @@ describe("decideWrite", () => {
                       : "live_publish_with_review"
               rows.push([autonomy, changeKind, confidence, killswitch, autoEnabled, expected])
             }
-    expect(rows).toHaveLength(72)
+    expect(rows).toHaveLength(108)
     for (const [autonomy, changeKind, confidence, killswitch, autoEnabled, expected] of rows) {
       expect(
         decideWrite({

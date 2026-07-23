@@ -12,7 +12,10 @@ const claimBody = {
       reason: "manual:u1",
       automation_id: "a1",
       instruction: "keep the roadmap current",
-      refs: ["road1"],
+      targets: [
+        { kind: "artifact", id: "road1" },
+        { kind: "tag", tag: "weekly" },
+      ],
       autonomy: "suggest",
       flags: { agentKillswitch: false, agentAutoEnabled: false },
     },
@@ -21,7 +24,7 @@ const claimBody = {
       reason: "schedule",
       automation_id: "a2",
       instruction: "boom",
-      refs: [],
+      targets: [],
       autonomy: "auto",
       flags: { agentKillswitch: false, agentAutoEnabled: true },
     },
@@ -101,7 +104,7 @@ describe("drainRuns", () => {
         reason: "manual:u1",
         automation_id: "gone",
         instruction: "   ",
-        refs: [],
+        targets: [],
         autonomy: "suggest",
         flags: { agentKillswitch: false, agentAutoEnabled: false },
       },
@@ -112,6 +115,59 @@ describe("drainRuns", () => {
     expect(res).toEqual({ claimed: 1, finished: 0, failed: 1, finishFailures: 0 })
     expect(finishes[0]?.body.status).toBe("failed")
     expect(finishes[0]?.body.meta?.outcome).toBe("cancelled")
+  })
+
+  it("the task spells out target kinds: revise artifacts, create for tag-only, stamping is automatic", async () => {
+    mockFetch([
+      {
+        id: "r10",
+        reason: "schedule",
+        automation_id: "a9",
+        instruction: "file this week's report",
+        targets: [{ kind: "tag", tag: "weekly-health" }],
+        autonomy: "suggest",
+        flags: { agentKillswitch: false, agentAutoEnabled: false },
+      },
+    ])
+    const runOne = vi.fn<RunOne>(async () => {})
+    await drainRuns(deps(runOne))
+    const task = runOne.mock.calls[0]?.[1] ?? ""
+    expect(task).toContain("create a NEW artifact")
+    expect(task).toContain("weekly-health")
+    expect(task).toContain("tagged automatically")
+    // The run context carries the stamp labels for the platform-side add_tags.
+    expect(runOne.mock.calls[0]?.[0]?.stampTags).toEqual(["weekly-health"])
+  })
+
+  it("finish meta records every write the run made (writes[]), not just the first", async () => {
+    const { finishes } = mockFetch([claimBody.runs[0]])
+    const runOne = vi.fn<RunOne>(async (ctx) => {
+      ctx.results.push(
+        {
+          decision: "live_publish_with_review",
+          changeKind: "freshness",
+          shortId: "road1",
+          version: 7,
+        },
+        {
+          decision: "proposal",
+          changeKind: "creation",
+          shortId: "new1",
+          version: 1,
+          created: true,
+        },
+      )
+    })
+    await drainRuns(deps(runOne))
+    const meta = finishes[0]?.body.meta as {
+      outcome?: string
+      writes?: { short_id: string | null; created: boolean }[]
+      artifact_short_id?: string | null
+    }
+    expect(meta.outcome).toBe("published")
+    expect(meta.writes).toHaveLength(2)
+    expect(meta.writes?.[1]).toMatchObject({ short_id: "new1", created: true })
+    expect(meta.artifact_short_id).toBe("road1")
   })
 
   it("retries a failed finish once; a double failure is counted, never passed off as finished", async () => {

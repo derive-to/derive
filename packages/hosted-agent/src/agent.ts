@@ -13,7 +13,7 @@ export interface HostedAgentInput {
   manifest: string
   /** Optional Brandprint conventions block (materialized notes/skills summary). */
   conventions?: string
-  /** The per-run context: the client (bearer-authed), run latch, autonomy + flags. */
+  /** The per-run context: the client (bearer-authed), write budget, autonomy + flags. */
   run: RunContext
   /** The model instance, wired by the host (Vercel AI SDK model). */
   model: MastraLanguageModel
@@ -22,10 +22,12 @@ export interface HostedAgentInput {
 const CONTRACT = `
 
 You maintain and draft Derive artifacts. Read before you write. When you have the
-complete revised source, call submit_revision exactly once with the FULL new
-content and your honest confidence — Derive decides how it lands (a review round,
-a proposal, or a recorded shadow); that is never your call. Do not describe the
-change instead of submitting it.`
+complete source, call submit_revision exactly once per piece of work — pass shortId
+to revise a target artifact, omit it (with a title) to create a new one when the
+task asks for that — with the FULL content and your honest confidence. Derive
+decides how each write lands (a review round, a proposal, or a recorded shadow);
+that is never your call. A small per-run write budget applies: prefer one write.
+Do not describe the change instead of submitting it.`
 
 export function buildInstructions(
   input: Pick<HostedAgentInput, "manifest" | "conventions">,
@@ -33,7 +35,7 @@ export function buildInstructions(
   return `${input.manifest}${input.conventions ? `\n\n${input.conventions}` : ""}${CONTRACT}`
 }
 
-/** Build a fresh Mastra agent for one invocation. One agent, one run latch. */
+/** Build a fresh Mastra agent for one invocation. One agent, one write budget. */
 export function createHostedAgent(input: HostedAgentInput): Agent {
   return new Agent({
     id: "derive-hosted-agent",

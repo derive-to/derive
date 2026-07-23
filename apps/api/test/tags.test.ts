@@ -21,6 +21,20 @@ describe("tags on publish", () => {
     expect((await detail(short_id)).tags).toEqual(["planning", "q3 plan"])
   })
 
+  it("add_tags is ADDITIVE: unions with existing tags, never replaces — the automation stamp", async () => {
+    const { short_id } = await (
+      await upload("p3.md", "x", { title: "Stamped", tags: "curated" })
+    ).json()
+    // A republish carrying add_tags (the executor's tag-target stamp) unions in.
+    await upload("p3.md", "y", { add_tags: JSON.stringify(["weekly-health", "Curated"]) }, short_id)
+    expect((await detail(short_id)).tags).toEqual(["curated", "weekly-health"])
+    // And a stamp on a fresh create works with no pre-existing tags.
+    const fresh = await (
+      await upload("p4.md", "x", { title: "Fresh", add_tags: "weekly-health" })
+    ).json()
+    expect((await detail(fresh.short_id)).tags).toEqual(["weekly-health"])
+  })
+
   it("accepts a comma/space list too, and an empty field leaves a republish's tags intact", async () => {
     const { short_id } = await (
       await upload("p2.md", "x", { title: "T", tags: "alpha, beta" })

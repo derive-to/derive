@@ -1,4 +1,10 @@
-import { type AutomationRecord, type AutomationTrigger, newId } from "@derive/core"
+import {
+  type AutomationRecord,
+  type AutomationTrigger,
+  newId,
+  normalizeSelectors,
+  type Selector,
+} from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
@@ -21,12 +27,12 @@ const parseTrigger = (raw: string): AutomationTrigger => {
   return { kind: "manual" }
 }
 
-const parseRefs = (raw: string | null): string[] => {
+/** Stored refs → canonical selectors. Rows predating selectors hold bare short-id strings;
+ *  normalizeSelectors turns those into artifact selectors, so every historical row stays
+ *  valid with no migration. Malformed JSON parses to []. */
+const parseRefs = (raw: string | null): Selector[] => {
   try {
-    if (raw) {
-      const r = JSON.parse(raw)
-      if (Array.isArray(r)) return r as string[]
-    }
+    if (raw) return normalizeSelectors(JSON.parse(raw))
   } catch {}
   return []
 }
@@ -45,7 +51,15 @@ const present = (a: AutomationRecord) => ({
 const META = z.record(z.string(), z.unknown()).refine((m) => JSON.stringify(m).length <= 8000, {
   message: "meta too large",
 })
-const REFS = z.array(z.string().max(512)).max(100)
+// A ref is a selector: a bare artifact short id (the shorthand) or a typed pointer at a
+// collection or tag. Same discriminated-union pattern as the trigger.
+const REF = z.union([
+  z.string().min(1).max(512),
+  z.object({ kind: z.literal("artifact"), id: z.string().min(1).max(512) }),
+  z.object({ kind: z.literal("collection"), id: z.string().min(1).max(512) }),
+  z.object({ kind: z.literal("tag"), tag: z.string().min(1).max(128) }),
+])
+const REFS = z.array(REF).max(100)
 
 export const automationRoutes = (ctx: AppContext) => {
   const { meta, agentFor, requireUser, requireWorkspace } = ctx
@@ -82,7 +96,8 @@ export const automationRoutes = (ctx: AppContext) => {
       agent_id: b.agentId,
       trigger: JSON.stringify(b.trigger satisfies AutomationTrigger),
       instruction: b.instruction,
-      refs: b.refs ? JSON.stringify(b.refs) : null,
+      // Stored CANONICAL (bare strings become artifact selectors) so readers never re-guess.
+      refs: b.refs ? JSON.stringify(normalizeSelectors(b.refs)) : null,
       route: b.route,
       enabled: b.enabled ? 1 : 0,
     })
@@ -180,7 +195,10 @@ export const automationRoutes = (ctx: AppContext) => {
         reason: r.reason,
         automation_id: r.automation_id,
         instruction: a.instruction,
-        refs: parseRefs(a.refs),
+        // Canonical selectors: artifact = revise it, collection = file new work there,
+        // tag = the platform stamps it on every write. The executor formats the task
+        // and passes tag labels back on writes; it never re-derives semantics.
+        targets: parseRefs(a.refs),
         autonomy: a.route === "auto" ? "auto" : "suggest",
         flags,
       })),

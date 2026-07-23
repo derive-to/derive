@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import { buildInstructions } from "../src/agent"
 import type { HostedAgentClient } from "../src/client"
-import { RunLatch } from "../src/submit"
+import { RunBudget } from "../src/submit"
 import { buildTools, type RunContext } from "../src/tools"
 
 const client: HostedAgentClient = {
@@ -9,6 +9,7 @@ const client: HostedAgentClient = {
   comment: vi.fn().mockResolvedValue(undefined),
   proposeRevision: vi.fn().mockResolvedValue({ short_id: "a1", version: 2 }),
   publishLive: vi.fn().mockResolvedValue({ short_id: "a1", version: 3 }),
+  createArtifact: vi.fn().mockResolvedValue({ short_id: "new1", version: 1 }),
   recordRun: vi.fn().mockResolvedValue(undefined),
   claimRuns: vi.fn().mockResolvedValue([]),
   finishRun: vi.fn().mockResolvedValue(undefined),
@@ -16,9 +17,10 @@ const client: HostedAgentClient = {
 
 const runCtx = (): RunContext => ({
   client,
-  latch: new RunLatch(),
+  budget: new RunBudget(),
   autonomy: "suggest",
   flags: { agentKillswitch: false, agentAutoEnabled: false },
+  results: [],
 })
 
 describe("buildInstructions", () => {

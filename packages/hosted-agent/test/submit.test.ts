@@ -1,13 +1,14 @@
 import type { AutonomyLevel } from "@derive/core"
 import { describe, expect, it, vi } from "vitest"
 import type { HostedAgentClient } from "../src/client"
-import { RunLatch, type SubmitContext, submitRevision } from "../src/submit"
+import { RunBudget, type SubmitContext, submitRevision } from "../src/submit"
 
 const mockClient = (current: string): HostedAgentClient => ({
   read: vi.fn().mockResolvedValue(current),
   comment: vi.fn().mockResolvedValue(undefined),
   proposeRevision: vi.fn().mockResolvedValue({ short_id: "a1", version: 5 }),
   publishLive: vi.fn().mockResolvedValue({ short_id: "a1", version: 6 }),
+  createArtifact: vi.fn().mockResolvedValue({ short_id: "new1", version: 1 }),
   recordRun: vi.fn().mockResolvedValue(undefined),
   claimRuns: vi.fn().mockResolvedValue([]),
   finishRun: vi.fn().mockResolvedValue(undefined),
@@ -15,27 +16,28 @@ const mockClient = (current: string): HostedAgentClient => ({
 
 const ctxFor = (
   client: HostedAgentClient,
-  over: Partial<Pick<SubmitContext, "autonomy" | "flags">> = {},
+  over: Partial<Pick<SubmitContext, "autonomy" | "flags" | "stampTags" | "budget">> = {},
 ): SubmitContext => ({
   client,
-  latch: new RunLatch(),
+  budget: over.budget ?? new RunBudget(),
   autonomy: (over.autonomy ?? "auto") as AutonomyLevel,
   flags: over.flags ?? { agentKillswitch: false, agentAutoEnabled: true },
+  stampTags: over.stampTags,
+  results: [],
 })
 
 const roadmap = "# Roadmap\n\nStatus: in review\nCount: 41"
 const freshness = "# Roadmap\n\nStatus: shipped\nCount: 43"
 const structural = "# Roadmap\n\nStatus: in review\nCount: 41\n\n## A whole new section"
 
+const revise = (ctx: SubmitContext, content: string) =>
+  submitRevision(ctx, { shortId: "a1", content, filename: "index.html", confidence: 1 })
+
 describe("submitRevision", () => {
   it("a confident freshness change on an opted-in workspace publishes live with a review round", async () => {
     const client = mockClient(roadmap)
-    const r = await submitRevision(ctxFor(client), {
-      shortId: "a1",
-      content: freshness,
-      filename: "index.html",
-      confidence: 1,
-    })
+    const ctx = ctxFor(client)
+    const r = await revise(ctx, freshness)
     expect(r).toMatchObject({ decision: "live_publish_with_review", changeKind: "freshness" })
     expect(client.publishLive).toHaveBeenCalledWith(
       "a1",
@@ -43,16 +45,12 @@ describe("submitRevision", () => {
       { requestReview: true },
     )
     expect(client.proposeRevision).not.toHaveBeenCalled()
+    expect(ctx.results).toHaveLength(1)
   })
 
   it("a structural change is a proposal even at full confidence and auto", async () => {
     const client = mockClient(roadmap)
-    const r = await submitRevision(ctxFor(client), {
-      shortId: "a1",
-      content: structural,
-      filename: "index.html",
-      confidence: 1,
-    })
+    const r = await revise(ctxFor(client), structural)
     expect(r).toMatchObject({ decision: "proposal", changeKind: "structural" })
     expect(client.proposeRevision).toHaveBeenCalledOnce()
     expect(client.publishLive).not.toHaveBeenCalled()
@@ -60,67 +58,108 @@ describe("submitRevision", () => {
 
   it("the killswitch forces a proposal even for a freshness change", async () => {
     const client = mockClient(roadmap)
-    const r = await submitRevision(
+    const r = await revise(
       ctxFor(client, { flags: { agentKillswitch: true, agentAutoEnabled: true } }),
-      { shortId: "a1", content: freshness, filename: "index.html", confidence: 1 },
+      freshness,
     )
     expect(r.decision).toBe("proposal")
     expect(client.proposeRevision).toHaveBeenCalledOnce()
   })
 
-  it("shadow files nothing — no write of either kind", async () => {
+  it("shadow files nothing and refunds the budget", async () => {
     const client = mockClient(roadmap)
-    const r = await submitRevision(ctxFor(client, { autonomy: "shadow" }), {
-      shortId: "a1",
-      content: freshness,
-      filename: "index.html",
-      confidence: 1,
-    })
+    const ctx = ctxFor(client, { autonomy: "shadow" })
+    const r = await revise(ctx, freshness)
     expect(r.decision).toBe("shadow")
     expect(client.proposeRevision).not.toHaveBeenCalled()
     expect(client.publishLive).not.toHaveBeenCalled()
+    expect(ctx.budget.used).toBe(0)
   })
 
-  it("the run latch no-ops a duplicate submit after a clean write", async () => {
+  it("the write budget allows three writes and refuses the fourth", async () => {
     const client = mockClient(roadmap)
     const ctx = ctxFor(client)
-    await submitRevision(ctx, {
-      shortId: "a1",
-      content: freshness,
-      filename: "index.html",
-      confidence: 1,
-    })
-    const second = await submitRevision(ctx, {
-      shortId: "a1",
-      content: freshness,
-      filename: "index.html",
-      confidence: 1,
-    })
-    expect(second.duplicate).toBe(true)
-    expect(client.publishLive).toHaveBeenCalledOnce()
+    for (let i = 0; i < 3; i += 1) {
+      const r = await revise(ctx, freshness)
+      expect(r.overBudget).toBeUndefined()
+    }
+    const fourth = await revise(ctx, freshness)
+    expect(fourth.overBudget).toBe(true)
+    expect(client.publishLive).toHaveBeenCalledTimes(3)
+    expect(ctx.results).toHaveLength(3)
   })
 
-  it("a failed write leaves the run un-settled so the agent can retry", async () => {
+  it("a failed write refunds the budget so the agent can retry", async () => {
     const client = mockClient(roadmap)
     ;(client.proposeRevision as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("529"))
     const ctx = ctxFor(client, { autonomy: "suggest" })
-    await expect(
-      submitRevision(ctx, {
-        shortId: "a1",
-        content: freshness,
-        filename: "index.html",
-        confidence: 1,
-      }),
-    ).rejects.toThrow("529")
-    expect(ctx.latch.settled).toBe(false)
-    // Retry succeeds and writes.
-    const retry = await submitRevision(ctx, {
-      shortId: "a1",
-      content: freshness,
-      filename: "index.html",
-      confidence: 1,
-    })
+    await expect(revise(ctx, freshness)).rejects.toThrow("529")
+    expect(ctx.budget.used).toBe(0)
+    const retry = await revise(ctx, freshness)
     expect(retry.decision).toBe("proposal")
     expect(client.proposeRevision).toHaveBeenCalledTimes(2)
+    expect(ctx.results).toHaveLength(1)
+  })
+
+  it("creation on auto (flags on, confident) publishes live as a NEW artifact with a review round", async () => {
+    const client = mockClient(roadmap)
+    const ctx = ctxFor(client)
+    const r = await submitRevision(ctx, {
+      title: "Weekly report",
+      content: "# Week 1",
+      filename: "notes.md",
+      confidence: 1,
+    })
+    expect(r).toMatchObject({ decision: "live_publish_with_review", changeKind: "creation" })
+    expect(r.created).toBe(true)
+    expect(r.shortId).toBe("new1")
+    expect(client.createArtifact).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "# Week 1" }),
+      { title: "Weekly report", requestReview: true, privateDraft: false },
+    )
+    // Creation never touches the read/classify path — there is no before-text.
+    expect(client.read).not.toHaveBeenCalled()
+  })
+
+  it("creation on the suggest route lands as a PRIVATE draft — the creation analogue of a proposal", async () => {
+    const client = mockClient(roadmap)
+    const r = await submitRevision(ctxFor(client, { autonomy: "suggest" }), {
+      title: "Draft",
+      content: "# Draft",
+      filename: "notes.md",
+      confidence: 1,
+    })
+    expect(r.decision).toBe("proposal")
+    expect(client.createArtifact).toHaveBeenCalledWith(expect.anything(), {
+      title: "Draft",
+      requestReview: true,
+      privateDraft: true,
+    })
+  })
+
+  it("unstated confidence never auto-publishes a creation", async () => {
+    const client = mockClient(roadmap)
+    const r = await submitRevision(ctxFor(client), {
+      title: "Unsure",
+      content: "x",
+      filename: "notes.md",
+      confidence: null,
+    })
+    expect(r.decision).toBe("proposal")
+    expect(client.createArtifact).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ privateDraft: true }),
+    )
+  })
+
+  it("stamp tags ride every write as addTags", async () => {
+    const client = mockClient(roadmap)
+    const ctx = ctxFor(client, { stampTags: ["weekly-health", "ai"] })
+    await revise(ctx, freshness)
+    expect(client.publishLive).toHaveBeenCalledWith(
+      "a1",
+      expect.objectContaining({ addTags: ["weekly-health", "ai"] }),
+      expect.anything(),
+    )
   })
 })

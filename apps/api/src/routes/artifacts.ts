@@ -746,6 +746,15 @@ export const artifactRoutes = (ctx: AppContext) => {
       // republish that doesn't mention tags keeps them.
       const parsedTags = parseTagsField(body["tags"])
       if (parsedTags !== null) await meta.setArtifactTags(artifact.id, normalizeTags(parsedTags))
+      // `add_tags` is the ADDITIVE variant: union with whatever's already on the artifact,
+      // never a replace. This is the platform-side stamp for automation tag-targets — the
+      // executor passes the run's tag labels here so stamping is deterministic (the model
+      // never has to remember), and a stamp can't wipe tags a human curated.
+      const addTags = parseTagsField(body["add_tags"])
+      if (addTags !== null && addTags.length > 0) {
+        const current = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
+        await meta.setArtifactTags(artifact.id, normalizeTags([...current, ...addTags]))
+      }
       // Open a review round if the publisher asked for one (the /derive loop). The
       // reviewer is the human behind the publish (onBehalf covers both a session
       // user and an agent's registrant); falls back to the workspace's first owner

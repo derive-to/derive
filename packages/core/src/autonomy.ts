@@ -10,10 +10,14 @@
  *  the run happens and is recorded, nothing is filed. */
 export type AutonomyLevel = "shadow" | "suggest" | "auto"
 
-/** What kind of change the revision is: a freshness refresh (dates, statuses,
- *  counts — the things a living declaration names) or a structural edit.
- *  Supplied by the diff classifier; when in doubt, classify structural. */
-export type ChangeKind = "freshness" | "structural"
+/** What kind of change the write is: a freshness refresh (dates, statuses,
+ *  counts — the things a living declaration names), a structural edit, or the
+ *  creation of a NEW artifact. Freshness/structural come from the diff
+ *  classifier (when in doubt, structural); creation is declared by the write
+ *  path itself (no before-text exists). Creation is additive — it cannot damage
+ *  an existing trusted doc — so it rides the freshness rung at `auto`, not the
+ *  structural one. */
+export type ChangeKind = "freshness" | "structural" | "creation"
 
 export type GateDecision = "live_publish_with_review" | "proposal" | "shadow"
 
@@ -45,7 +49,9 @@ export const DEFAULT_CONFIDENCE_FLOOR = 0.8
  *   3. autonomy suggest      → proposal
  *   4. autonomy auto:
  *      a. workspace opt-in off      → proposal
- *      b. structural change         → proposal (only freshness auto-publishes)
+ *      b. structural change         → proposal (freshness and additive
+ *                                     creations may auto-publish; edits that
+ *                                     reshape an existing doc may not)
  *      c. confidence unstated/low   → proposal
  *      d. otherwise                 → live publish, review round opens
  */
