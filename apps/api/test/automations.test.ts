@@ -34,12 +34,11 @@ describe("automations + runs", () => {
 
     const ok = await createAutomation(agent.id, {
       trigger: { kind: "schedule", cron: "0 9 * * 1", tz: "America/Los_Angeles" },
-      route: "auto",
       refs: ["art_123"],
     })
     expect(ok.status).toBe(201)
     const rec = await ok.json()
-    expect(rec).toMatchObject({ agent_id: agent.id, route: "auto", enabled: true })
+    expect(rec).toMatchObject({ agent_id: agent.id, enabled: true })
     expect(rec.trigger).toMatchObject({ kind: "schedule", cron: "0 9 * * 1" })
     // A bare string ref is artifact shorthand; the API stores and returns CANONICAL selectors.
     expect(rec.refs).toEqual([{ kind: "artifact", id: "art_123" }])
@@ -107,7 +106,7 @@ describe("automations + runs", () => {
     const mine = claimed.runs.find((r: { id: string }) => r.id === runId)
     expect(mine).toBeTruthy()
     // The claim hands the executor everything it needs: the instruction + resolved gate inputs.
-    // This automation's route defaults to "proposal", so autonomy resolves to "suggest".
+    // Automation runs propose by default; write mode will ride per-target in refs.
     expect(mine.instruction).toBe("keep the roadmap current")
     expect(mine.autonomy).toBe("suggest")
     expect(mine.flags).toMatchObject({ agentKillswitch: expect.any(Boolean) })

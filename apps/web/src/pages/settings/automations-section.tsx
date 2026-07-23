@@ -125,8 +125,7 @@ function AutomationRow({
           <Badge variant="secondary">{triggerLabel(automation.trigger)}</Badge>
         </div>
         <div className="text-sm text-muted-foreground">
-          Runs as this workspace's agent ·{" "}
-          {automation.route === "auto" ? "publishes for review" : "proposes"}
+          Runs as this workspace's agent · proposes for review
         </div>
       </div>
       {canRun && (

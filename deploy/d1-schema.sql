@@ -187,7 +187,6 @@ CREATE TABLE IF NOT EXISTS automation (
   trigger TEXT NOT NULL,
   instruction TEXT NOT NULL,
   refs TEXT,
-  route TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );

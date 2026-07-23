@@ -182,7 +182,6 @@ export interface Automation {
   trigger: AutomationTrigger
   instruction: string
   refs: AutomationRef[]
-  route: "auto" | "proposal"
   enabled: boolean
   created_at: string
 }
@@ -742,7 +741,6 @@ export const api = {
     instruction: string
     /** Bare strings are artifact shorthand; the server stores canonical selectors. */
     refs?: (string | AutomationRef)[]
-    route?: "auto" | "proposal"
   }): Promise<Automation> => f("/v1/automations", opts(input)).then(j),
   deleteAutomation: (id: string): Promise<void> =>
     f(`/v1/automations/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),

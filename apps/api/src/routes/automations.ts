@@ -81,7 +81,6 @@ export const automationRoutes = (ctx: AppContext) => {
         }),
         instruction: z.string().min(1).max(4000),
         refs: REFS.optional(),
-        route: z.enum(["auto", "proposal"]).default("proposal"),
         enabled: z.boolean().default(true),
       }),
     )
@@ -98,7 +97,6 @@ export const automationRoutes = (ctx: AppContext) => {
       instruction: b.instruction,
       // Stored CANONICAL (bare strings become artifact selectors) so readers never re-guess.
       refs: b.refs ? JSON.stringify(normalizeSelectors(b.refs)) : null,
-      route: b.route,
       enabled: b.enabled ? 1 : 0,
     })
     return c.json(present(rec), 201)
@@ -161,7 +159,7 @@ export const automationRoutes = (ctx: AppContext) => {
     const ids = [...new Set(claimed.map((r) => r.automation_id).filter((x): x is string => !!x))]
     const byId = new Map((await meta.getAutomationsByIds(ids)).map((a) => [a.id, a]))
     // Resolve the gate inputs server-side, FRESH at claim time (so a flipped killswitch is
-    // seen on the next claim): autonomy from the automation's route, flags from org settings.
+    // seen on the next claim): flags from org settings; write mode rides per-target in refs.
     // The executor gets everything it needs to run each run in one call — no extra round-trips.
     const s = await meta.getOrgSettings(agent.org_id)
     const flags = { agentKillswitch: s.agentKillswitch, agentAutoEnabled: s.agentAutoEnabled }
@@ -196,10 +194,10 @@ export const automationRoutes = (ctx: AppContext) => {
         automation_id: r.automation_id,
         instruction: a.instruction,
         // Canonical selectors: artifact = revise it, collection = file new work there,
-        // tag = the platform stamps it on every write. The executor formats the task
-        // and passes tag labels back on writes; it never re-derives semantics.
+        // tag = the platform stamps it on every write. Each target's `mode` says how the
+        // write lands (publish live vs propose, default propose) — the executor maps it
+        // per write; it never re-derives semantics.
         targets: parseRefs(a.refs),
-        autonomy: a.route === "auto" ? "auto" : "suggest",
         flags,
       })),
     })

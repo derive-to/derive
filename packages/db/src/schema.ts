@@ -2,7 +2,6 @@ import type {
   AgentMentionState,
   ArtifactKind,
   AuditAction,
-  AutomationRoute,
   CommentState,
   DeliveryKind,
   DeliveryStatus,
@@ -212,8 +211,9 @@ export const automation = sqliteTable("automation", {
   trigger: text("trigger").notNull(),
   instruction: text("instruction").notNull(),
   // Serialized inputs/targets (artifact ids, urls, arbitrary), or null.
+  // How each write lands (publish vs propose) rides IN the refs blob per target —
+  // policy is config, config evolves, and evolving config never gets a column.
   refs: text("refs"),
-  route: text("route").$type<AutomationRoute>().notNull(),
   enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
   created_at: text("created_at").notNull().default(now),
 })

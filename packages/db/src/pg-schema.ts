@@ -2,7 +2,6 @@ import type {
   AgentMentionState,
   ArtifactKind,
   AuditAction,
-  AutomationRoute,
   CommentState,
   DeliveryKind,
   DeliveryStatus,
@@ -180,7 +179,6 @@ export const automation = pgTable("automation", {
   trigger: text("trigger").notNull(),
   instruction: text("instruction").notNull(),
   refs: text("refs"),
-  route: text("route").$type<AutomationRoute>().notNull(),
   enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
