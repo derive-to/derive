@@ -1,4 +1,4 @@
-import type { AutonomyFlags, AutonomyLevel, Selector } from "@derive/core"
+import type { AutonomyFlags, Selector } from "@derive/core"
 
 // The hosted agent's window onto Derive: every call is bearer-authed as ONE
 // hosted agent (its registered token), so the server resolves the agent's
@@ -69,9 +69,9 @@ export interface ClaimedRun {
   /** The automation's free-form instruction — the task to run. */
   instruction: string
   /** The automation's targets as canonical selectors: artifact = revise it,
-   *  collection = file new work there, tag = stamped on every write. */
+   *  collection = file new work there, tag = stamped on every write. Each target's
+   *  `mode` (publish | propose, default propose) is the user's write consent. */
   targets: Selector[]
-  autonomy: AutonomyLevel
   flags: AutonomyFlags
 }
 

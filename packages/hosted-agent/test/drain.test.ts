@@ -16,7 +16,6 @@ const claimBody = {
         { kind: "artifact", id: "road1" },
         { kind: "tag", tag: "weekly" },
       ],
-      autonomy: "suggest",
       flags: { agentKillswitch: false, agentAutoEnabled: false },
     },
     {
@@ -25,7 +24,6 @@ const claimBody = {
       automation_id: "a2",
       instruction: "boom",
       targets: [],
-      autonomy: "auto",
       flags: { agentKillswitch: false, agentAutoEnabled: true },
     },
   ],
@@ -105,7 +103,6 @@ describe("drainRuns", () => {
         automation_id: "gone",
         instruction: "   ",
         targets: [],
-        autonomy: "suggest",
         flags: { agentKillswitch: false, agentAutoEnabled: false },
       },
     ])
@@ -125,7 +122,6 @@ describe("drainRuns", () => {
         automation_id: "a9",
         instruction: "file this week's report",
         targets: [{ kind: "tag", tag: "weekly-health" }],
-        autonomy: "suggest",
         flags: { agentKillswitch: false, agentAutoEnabled: false },
       },
     ])

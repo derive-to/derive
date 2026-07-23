@@ -1,4 +1,4 @@
-import { artifactTargets, tagTargets } from "@derive/core"
+import { artifactTargets, tagTargets, writeModes } from "@derive/core"
 import type { MastraLanguageModel } from "@mastra/core/agent"
 import { createHostedAgent } from "./agent"
 import { type ClaimedRun, httpClient } from "./client"
@@ -115,7 +115,9 @@ export async function drainRuns(deps: DrainDeps): Promise<DrainResult> {
     const ctx: RunContext = {
       client,
       budget: new RunBudget(deps.writeBudget ?? 3),
-      autonomy: r.autonomy,
+      // Per-target write consent from the claim; anything unlisted proposes.
+      autonomy: "suggest",
+      writeModes: writeModes(r.targets),
       flags: r.flags,
       stampTags: tagTargets(r.targets),
       results: [],

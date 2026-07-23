@@ -171,9 +171,9 @@ export interface AutomationTrigger {
  *  write the run makes). The API accepts a bare short-id string as artifact shorthand
  *  and always RETURNS the canonical object form. */
 export type AutomationRef =
-  | { kind: "artifact"; id: string }
-  | { kind: "collection"; id: string }
-  | { kind: "tag"; tag: string }
+  | { kind: "artifact"; id: string; mode?: "publish" | "propose" }
+  | { kind: "collection"; id: string; mode?: "publish" | "propose" }
+  | { kind: "tag"; tag: string; mode?: "publish" | "propose" }
 /** A standing agent job: an agent + a trigger + a free-form instruction (+ optional refs).
  *  Every firing is a Run. */
 export interface Automation {

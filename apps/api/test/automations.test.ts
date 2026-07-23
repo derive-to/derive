@@ -61,6 +61,20 @@ describe("automations + runs", () => {
       { kind: "collection", id: "col_1" },
       { kind: "tag", tag: "weekly-health" },
     ])
+    // Write mode rides ON the target: only the explicit publish opt-in is stored;
+    // mode:"propose" is the default and normalizes away (canonical minimal form).
+    const moded = await (
+      await createAutomation(agent.id, {
+        refs: [
+          { kind: "artifact", id: "art_pub", mode: "publish" },
+          { kind: "artifact", id: "art_prop", mode: "propose" },
+        ],
+      })
+    ).json()
+    expect(moded.refs).toEqual([
+      { kind: "artifact", id: "art_pub", mode: "publish" },
+      { kind: "artifact", id: "art_prop" },
+    ])
     // The claim payload hands the executor the SAME canonical targets.
     await app.request(`/v1/automations/${rec.id}/run`, { method: "POST", headers: as(owner.email) })
     const claimed = await (
@@ -108,7 +122,6 @@ describe("automations + runs", () => {
     // The claim hands the executor everything it needs: the instruction + resolved gate inputs.
     // Automation runs propose by default; write mode will ride per-target in refs.
     expect(mine.instruction).toBe("keep the roadmap current")
-    expect(mine.autonomy).toBe("suggest")
     expect(mine.flags).toMatchObject({ agentKillswitch: expect.any(Boolean) })
     // Claimed once: a second poll gets nothing.
     const again = await (

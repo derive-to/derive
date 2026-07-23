@@ -101,8 +101,11 @@ describe("scenario 1 — the automation pass: nightly test runs keep a results d
       agentId: agent.id,
       trigger: { kind: "schedule", cron: "0 2 * * *", tz: "UTC" },
       instruction: `Run every check in the test plan (${plan.short_id}); update the results doc.`,
-      refs: [results.short_id, { kind: "tag", tag: "test-run" }],
-      route: "auto",
+      // Publish consent rides ON the target — no route field anywhere.
+      refs: [
+        { kind: "artifact", id: results.short_id, mode: "publish" },
+        { kind: "tag", tag: "test-run" },
+      ],
     })
 
     for (let night = 1; night <= 3; night += 1) {
@@ -154,8 +157,7 @@ describe("scenario 2 — the client walkthrough: authored page, then a freshness
       agentId: agent.id,
       trigger: { kind: "manual" },
       instruction: "Verify facts and dates on the walkthrough are current.",
-      refs: [page.short_id],
-      route: "auto",
+      refs: [{ kind: "artifact", id: page.short_id, mode: "publish" }],
     })
     await runNow(auto.id)
     const res = await drain(agent.token, async (ctx) => {
@@ -187,8 +189,8 @@ describe("scenario 3 — customer health: weekly digest through review, editions
       agentId: agent.id,
       trigger: { kind: "schedule", cron: "0 9 * * 1", tz: "UTC" },
       instruction: "Run the weekly health pass: update the doc, file this week's edition.",
+      // No publish modes: every write proposes — the review round IS the weekly digest read.
       refs: [health.short_id, { kind: "tag", tag: "weekly-health" }],
-      route: "proposal", // the review round IS the weekly digest read
     })
 
     const seenByModel: string[] = []

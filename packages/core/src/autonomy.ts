@@ -32,7 +32,6 @@ export interface AutonomyFlags {
 
 export interface GateInput {
   autonomy: AutonomyLevel
-  changeKind: ChangeKind
   /** The agent's stated confidence in [0,1]; null when unstated. Fail-safe:
    *  an unstated confidence never auto-publishes. */
   confidence: number | null
@@ -47,21 +46,20 @@ export const DEFAULT_CONFIDENCE_FLOOR = 0.8
  *   1. killswitch            → proposal (work surfaces, never silently drops)
  *   2. autonomy shadow       → shadow
  *   3. autonomy suggest      → proposal
- *   4. autonomy auto:
+ *   4. autonomy auto (= the target's explicit publish mode):
  *      a. workspace opt-in off      → proposal
- *      b. structural change         → proposal (freshness and additive
- *                                     creations may auto-publish; edits that
- *                                     reshape an existing doc may not)
- *      c. confidence unstated/low   → proposal
- *      d. otherwise                 → live publish, review round opens
- */
+ *      b. confidence unstated/low   → proposal
+ *      c. otherwise                 → live publish, review round opens
+ *
+ *  The KIND of change no longer gates: autonomy here is the user's per-target
+ *  write-mode consent, and recoverability (versioned writes + review rounds +
+ *  the killswitch) is what makes the top rung safe to offer. */
 export function decideWrite(input: GateInput): GateDecision {
   const floor = input.confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR
   if (input.flags.agentKillswitch) return "proposal"
   if (input.autonomy === "shadow") return "shadow"
   if (input.autonomy === "suggest") return "proposal"
   if (!input.flags.agentAutoEnabled) return "proposal"
-  if (input.changeKind === "structural") return "proposal"
   if (input.confidence === null || input.confidence < floor) return "proposal"
   return "live_publish_with_review"
 }

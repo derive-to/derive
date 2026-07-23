@@ -36,6 +36,7 @@ export function AutomationForm({
   const [kind, setKind] = useState<AutomationTrigger["kind"]>("manual")
   const [cron, setCron] = useState<string>(SCHEDULE_PRESETS[0].cron)
   const [on, setOn] = useState<string>(EVENT_KINDS[0].id)
+  const [mode, setMode] = useState<"propose" | "publish">("propose")
   const tz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", [])
 
   const buildTrigger = (): AutomationTrigger =>
@@ -47,7 +48,12 @@ export function AutomationForm({
         agentId,
         trigger: buildTrigger(),
         instruction: instruction.trim(),
-        refs,
+        // Write mode is an attribute OF the targets (no field of its own): publishing
+        // is per-target consent, and the default is always propose.
+        refs:
+          mode === "publish"
+            ? refs?.map((id) => ({ kind: "artifact" as const, id, mode: "publish" as const }))
+            : refs,
       }),
     success: "Automation created",
     // Invalidate HERE, not in each caller — the artifact dialog and the settings manager
@@ -78,6 +84,17 @@ export function AutomationForm({
             ))}
           </SelectContent>
         </Select>
+        {(refs?.length ?? 0) > 0 && (
+          <Select value={mode} onValueChange={(v) => setMode(v as "propose" | "publish")}>
+            <SelectTrigger data-testid="automation-mode" aria-label="Write mode" className="w-45">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="propose">Propose for review</SelectItem>
+              <SelectItem value="publish">Publish live</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       <Textarea

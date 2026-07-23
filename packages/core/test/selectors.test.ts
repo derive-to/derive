@@ -4,6 +4,7 @@ import {
   normalizeSelector,
   normalizeSelectors,
   tagTargets,
+  writeModes,
 } from "../src/selectors"
 
 describe("normalizeSelector", () => {
@@ -60,5 +61,37 @@ describe("target views", () => {
   it("artifactTargets = revision destinations; tagTargets = stamp labels", () => {
     expect(artifactTargets(sel)).toEqual(["a1"])
     expect(tagTargets(sel)).toEqual(["t"])
+  })
+})
+
+describe("write modes", () => {
+  it("mode survives normalize only as the explicit publish opt-in", () => {
+    expect(normalizeSelector({ kind: "artifact", id: "a1", mode: "publish" })).toEqual({
+      kind: "artifact",
+      id: "a1",
+      mode: "publish",
+    })
+    // propose is the default — canonical form omits it; junk modes are dropped too.
+    expect(normalizeSelector({ kind: "artifact", id: "a1", mode: "propose" })).toEqual({
+      kind: "artifact",
+      id: "a1",
+    })
+    expect(normalizeSelector({ kind: "tag", tag: "t", mode: "yolo" })).toEqual({
+      kind: "tag",
+      tag: "t",
+    })
+  })
+
+  it("writeModes: per-artifact consent, and create follows any publishing container", () => {
+    const m = writeModes(
+      normalizeSelectors([
+        { kind: "artifact", id: "a1", mode: "publish" },
+        "a2",
+        { kind: "tag", tag: "weekly" },
+      ]),
+    )
+    expect(m).toEqual({ byArtifact: { a1: "publish", a2: "propose" }, create: "propose" })
+    const pub = writeModes(normalizeSelectors([{ kind: "tag", tag: "weekly", mode: "publish" }]))
+    expect(pub.create).toBe("publish")
   })
 })

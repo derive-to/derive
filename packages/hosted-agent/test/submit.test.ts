@@ -16,11 +16,14 @@ const mockClient = (current: string): HostedAgentClient => ({
 
 const ctxFor = (
   client: HostedAgentClient,
-  over: Partial<Pick<SubmitContext, "autonomy" | "flags" | "stampTags" | "budget">> = {},
+  over: Partial<
+    Pick<SubmitContext, "autonomy" | "flags" | "stampTags" | "budget" | "writeModes">
+  > = {},
 ): SubmitContext => ({
   client,
   budget: over.budget ?? new RunBudget(),
   autonomy: (over.autonomy ?? "auto") as AutonomyLevel,
+  writeModes: over.writeModes,
   flags: over.flags ?? { agentKillswitch: false, agentAutoEnabled: true },
   stampTags: over.stampTags,
   results: [],
@@ -48,12 +51,28 @@ describe("submitRevision", () => {
     expect(ctx.results).toHaveLength(1)
   })
 
-  it("a structural change is a proposal even at full confidence and auto", async () => {
+  it("a structural change publishes live when the target's mode says publish — the user decided", async () => {
     const client = mockClient(roadmap)
-    const r = await revise(ctxFor(client), structural)
-    expect(r).toMatchObject({ decision: "proposal", changeKind: "structural" })
+    const ctx = ctxFor(client, {
+      autonomy: "suggest",
+      writeModes: { byArtifact: { a1: "publish" }, create: "propose" },
+    })
+    const r = await revise(ctx, structural)
+    expect(r).toMatchObject({ decision: "live_publish_with_review", changeKind: "structural" })
+    expect(client.publishLive).toHaveBeenCalledOnce()
+  })
+
+  it("no per-target mode → the write proposes (automation default), whatever the blanket says", async () => {
+    const client = mockClient(roadmap)
+    // The modes map covers a9 only; the write targets a1, which falls back to the
+    // blanket autonomy (suggest) and proposes.
+    const ctx = ctxFor(client, {
+      autonomy: "suggest",
+      writeModes: { byArtifact: { a9: "publish" }, create: "propose" },
+    })
+    const r = await revise(ctx, freshness)
+    expect(r.decision).toBe("proposal")
     expect(client.proposeRevision).toHaveBeenCalledOnce()
-    expect(client.publishLive).not.toHaveBeenCalled()
   })
 
   it("the killswitch forces a proposal even for a freshness change", async () => {

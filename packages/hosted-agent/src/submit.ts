@@ -6,6 +6,7 @@ import {
   decideWrite,
   type GateDecision,
   type RunOutcome,
+  type WriteModes,
 } from "@derive/core"
 import type { HostedAgentClient, RevisionInput } from "./client"
 
@@ -35,7 +36,11 @@ export class RunBudget {
 export interface SubmitContext {
   client: HostedAgentClient
   budget: RunBudget
+  /** Blanket autonomy for writes with no per-target mode (the ask/invoke lane). */
   autonomy: AutonomyLevel
+  /** Per-target write modes from the run's targets (the automation lane): the
+   *  user's explicit publish/propose consent, resolved per write below. */
+  writeModes?: WriteModes
   flags: AutonomyFlags
   confidenceFloor?: number
   /** Tag labels from the run's targets — stamped on every write (add_tags). */
@@ -82,10 +87,14 @@ export async function submitRevision(
   try {
     const creating = !input.shortId
     const before = creating ? "" : await ctx.client.read(input.shortId as string)
+    // Recorded in the result for the ledger; it no longer gates — the target's mode is
+    // the user's decision, and the gate's rungs are the platform's only overrides.
     const changeKind: ChangeKind = creating ? "creation" : classifyChange(before, input.content)
+    const mode = creating
+      ? ctx.writeModes?.create
+      : ctx.writeModes?.byArtifact[input.shortId as string]
     const decision = decideWrite({
-      autonomy: ctx.autonomy,
-      changeKind,
+      autonomy: mode ? (mode === "publish" ? "auto" : "suggest") : ctx.autonomy,
       confidence: input.confidence,
       flags: ctx.flags,
       confidenceFloor: ctx.confidenceFloor,

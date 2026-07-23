@@ -53,11 +53,12 @@ const META = z.record(z.string(), z.unknown()).refine((m) => JSON.stringify(m).l
 })
 // A ref is a selector: a bare artifact short id (the shorthand) or a typed pointer at a
 // collection or tag. Same discriminated-union pattern as the trigger.
+const MODE = z.enum(["publish", "propose"]).optional()
 const REF = z.union([
   z.string().min(1).max(512),
-  z.object({ kind: z.literal("artifact"), id: z.string().min(1).max(512) }),
-  z.object({ kind: z.literal("collection"), id: z.string().min(1).max(512) }),
-  z.object({ kind: z.literal("tag"), tag: z.string().min(1).max(128) }),
+  z.object({ kind: z.literal("artifact"), id: z.string().min(1).max(512), mode: MODE }),
+  z.object({ kind: z.literal("collection"), id: z.string().min(1).max(512), mode: MODE }),
+  z.object({ kind: z.literal("tag"), tag: z.string().min(1).max(128), mode: MODE }),
 ])
 const REFS = z.array(REF).max(100)
 
