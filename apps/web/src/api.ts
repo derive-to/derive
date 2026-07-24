@@ -342,6 +342,33 @@ export interface SearchHit {
   semantic: boolean
 }
 
+// An owner-authored action on an artifact (WO5) as the web sees it — a button bound to an
+// instruction, a gate, and an audience. Params ride as data.
+export interface Verb {
+  id: string
+  artifact_id: string
+  name: string
+  instruction_template: string
+  created_by: string
+  agent_id: string
+  params_schema: { required?: string[] } | null
+  connection_ids: string[]
+  gate: "propose" | "direct"
+  audience: "owner" | "members"
+  enabled: boolean
+}
+
+// A per-user connected external account (WO3) — a Source. Always the caller's own.
+export interface Connection {
+  id: string
+  user_id: string
+  broker: string
+  toolkit: string
+  scopes_label: string | null
+  status: "active" | "pending" | "revoked"
+  created_at: string
+}
+
 export const api = {
   // The ONE identity read — behind meQuery, and re-read after login/signup to seed the
   // auth cache. Prerender-safe (null at build — no document); a resolved null for an
@@ -1047,5 +1074,30 @@ export const api = {
     const fields: Record<string, string> = { message }
     if (title?.trim()) fields.title = title.trim()
     return this.publish(new File([text], filename), fields, id)
+  },
+
+  // --- Mini app: verbs + connected sources (plain /v1 routes, hand-written client) -------
+  verbsForArtifact(shortId: string): Promise<Verb[]> {
+    return f(`/v1/artifacts/${shortId}/verbs`, opts())
+      .then(j)
+      .then((r) => r.verbs as Verb[])
+  },
+  invokeVerb(
+    id: string,
+    params?: Record<string, unknown>,
+  ): Promise<{ id: string; status: string }> {
+    return f(`/v1/verbs/${id}/invoke`, opts({ params: params ?? {} })).then(j)
+  },
+  connections(): Promise<Connection[]> {
+    return f("/v1/connections?mine=1", opts())
+      .then(j)
+      .then((r) => r.connections as Connection[])
+  },
+  connect(toolkit: string): Promise<Connection & { connect_url: string }> {
+    return f("/v1/connections", opts({ toolkit })).then(j)
+  },
+  async revokeConnection(id: string): Promise<void> {
+    const r = await f(`/v1/connections/${id}`, { credentials: "include", method: "DELETE" })
+    if (!r.ok) throw new ApiError("Couldn't revoke the connection.", r.status)
   },
 }
