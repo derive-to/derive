@@ -295,7 +295,8 @@ export const commentRoutes = (ctx: AppContext) => {
       method: "get",
       path: "/v1/artifacts/{shortId}/comments",
       tags: ["Comments"],
-      summary: "List an artifact's comments (authenticated readers only).",
+      summary:
+        "List an artifact's comments (authenticated readers, or anon guests on a commenter+ link).",
       request: {
         params: z.object({ shortId: z.string() }),
         query: z.object({
@@ -312,10 +313,12 @@ export const commentRoutes = (ctx: AppContext) => {
     async (c) => {
       const artifact = await requireArtifact(c, "read")
       if (artifact instanceof Response) return bail(artifact)
-      // Comments are collaboration, not content: anonymous visitors (no account) never
-      // see them, even on a public link. Authenticated readers — including a plain
-      // viewer — do, the Google-Docs way. So the gate is "has an account", not the role.
-      if (await anonLocked(c, artifact)) return bail(fail(c, 404, "not found"))
+      // Comments are collaboration, not content: anonymous visitors on a
+      // viewer/none link never see them. A commenter+ link admits guests to
+      // the conversation they can write into, so the gate is "can comment",
+      // not "has an account".
+      if ((await anonLocked(c, artifact)) && !(await authorize(c, "comment", artifact)))
+        return bail(fail(c, 404, "not found"))
       // state is validated by the route's query contract (the enum above): an
       // out-of-enum ?state= is rejected with a 400 before we reach here, so consume
       // the typed value directly rather than re-coercing. Absent ⇒ undefined ⇒ all.

@@ -101,6 +101,25 @@ describe("anonymous commenting", () => {
     expect(resolve.status).toBe(403)
   })
 
+  it("anon can read comments on a commenter link", async () => {
+    const shortId = await artifactWithLink("commenter")
+    await anonApp.request(
+      `/v1/artifacts/${shortId}/comments`,
+      json({ body_md: "first!", author: "Guest" }),
+    )
+    const res = await anonApp.request(`/v1/artifacts/${shortId}/comments`)
+    expect(res.status).toBe(200)
+    const list = await res.json()
+    expect(list.comments).toHaveLength(1)
+    expect(list.comments[0].author).toBe("Guest")
+  })
+
+  it("anon still cannot read comments on a viewer link", async () => {
+    const shortId = await artifactWithLink("viewer")
+    const res = await anonApp.request(`/v1/artifacts/${shortId}/comments`)
+    expect(res.status).toBe(404)
+  })
+
   it("signed-in callers ignore a body author (session name wins)", async () => {
     // A real signed-in session is cheap here via makeAuthedApp/as/jsonAs (same
     // pattern as comment-access.test.ts), so exercise the actual route code
