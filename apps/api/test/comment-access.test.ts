@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest"
 import { as, json, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // The general-access comment grant, enforced end to end at the route layer (the
-// companion to packages/core's effectiveRole matrix). The invariant under test: an
-// anonymous caller can never comment, no matter the grant — auth is the gate — while a
-// signed-in caller reaching purely via the link rises to commenter when the link allows
-// it. Mirrors the access matrix in SECURITY.md.
+// companion to packages/core's effectiveRole matrix). The invariant under test: a
+// signed-in caller reaching purely via the link rises to commenter when the link
+// allows it; an anonymous caller reaches that same cap ONLY on a commenter-or-better
+// link, and only as a self-named guest — no name, no comment (never silently
+// "anonymous"). Mirrors the access matrix in SECURITY.md.
 describe("comment access via the general-access link", () => {
   const alice: TestUser = { id: "u_ca_alice", email: "alice@ca.test", name: "Alice" }
   // Bob is signed in but reaches Alice's artifact purely via the link (his own isolated
@@ -40,7 +41,7 @@ describe("comment access via the general-access link", () => {
     ).toBe(403)
   })
 
-  it("comment link: a signed-in reacher comments; an anonymous one is forced to auth", async () => {
+  it("comment link: a signed-in reacher comments; an anonymous one must name themself", async () => {
     await app.request("/v1/me", { headers: as(alice.email) })
     const shortId = (await (await publishAs(app, "<h1>doc2</h1>", {}, as(alice.email))).json())
       .short_id
@@ -48,17 +49,24 @@ describe("comment access via the general-access link", () => {
 
     // Signed in via the link → commenter → may comment.
     expect((await comment(shortId, as(bob.email))).ok).toBe(true)
-    // Anonymous → still viewer → 403 even on a comment link (the invariant).
+    // Anonymous, no name → 400 (the guest-naming requirement), never a silent
+    // "anonymous" author.
     expect(
       (await app.request(`/v1/artifacts/${shortId}/comments`, json({ body_md: "no" }))).status,
-    ).toBe(403)
+    ).toBe(400)
+    // Anonymous, named → commenter reach applies: the guest comments too.
+    const guest = await app.request(
+      `/v1/artifacts/${shortId}/comments`,
+      json({ body_md: "guest note", author: "Guest" }),
+    )
+    expect(guest.status).toBe(201)
 
     // my_role reflects the grant per caller; the GET returns the persisted link role.
     const bobView = await (await view(shortId, as(bob.email))).json()
     expect(bobView.my_role).toBe("commenter")
     expect(bobView.link_role).toBe("commenter")
     const anonView = await (await view(shortId)).json()
-    expect(anonView.my_role).toBe("viewer")
+    expect(anonView.my_role).toBe("commenter")
   })
 
   it("revoking the comment grant locks commenting again", async () => {

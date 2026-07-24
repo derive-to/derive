@@ -41,6 +41,7 @@ export const commentRoutes = (ctx: AppContext) => {
     background,
     actingUser,
     anonLocked,
+    isPrincipal,
     requireArtifact,
     authorize,
     limited,
@@ -189,11 +190,21 @@ export const commentRoutes = (ctx: AppContext) => {
         return bail(fail(c, 400, "anchor is too large (max 16000 characters)"))
 
       const acting = await actingUser(c)
-      const author = acting
-        ? acting.name
-        : typeof body.author === "string" && body.author
-          ? body.author
-          : "anonymous"
+      // A signed-in author is always the session identity; a guest MUST name
+      // themself (the UI requires it; the API enforces it). Names are display-
+      // only — authorization never keys on them.
+      //
+      // "Guest" means genuinely anonymous (no session, agent, or static
+      // token) — actingUser is ALSO null for the static-token principal (it
+      // authors no byline), so the name requirement keys on isPrincipal
+      // (true anonymous) rather than `!acting`, preserving the pre-existing
+      // token-authenticated body.author/"anonymous" fallback automation relies on.
+      const anon = !(await isPrincipal(c))
+      const guestName = typeof body.author === "string" ? body.author.trim() : ""
+      if (anon && !guestName) return bail(fail(c, 400, "name required"))
+      if (anon && guestName.length > 80)
+        return bail(fail(c, 400, "name is too long (max 80 characters)"))
+      const author = acting ? acting.name : guestName || "anonymous"
       const mentions = parseMentions(body.mentions)
 
       let created = await meta.createComment({
@@ -209,9 +220,15 @@ export const commentRoutes = (ctx: AppContext) => {
       })
       // Mentions live in the comment's meta JSON (the picker supplies user ids, so
       // there's no fragile server-side @name parsing); persist them with the row.
-      if (mentions.length) {
+      const metaPatch: Record<string, unknown> = {}
+      if (mentions.length) metaPatch.mentions = mentions
+      // Stamp guest authorship at write time: author_id is null for legacy
+      // signed-in rows AND token-authenticated automation too, so rendering
+      // keys on this explicit flag instead.
+      if (anon) metaPatch.guest = true
+      if (Object.keys(metaPatch).length) {
         const patched = await meta.updateComment(created.id, {
-          meta: JSON.stringify({ ...parseMeta(created.meta), mentions }),
+          meta: JSON.stringify({ ...parseMeta(created.meta), ...metaPatch }),
         })
         if (patched) created = patched
       }

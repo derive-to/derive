@@ -347,6 +347,7 @@ export function createApp(deps: AppDeps): Hono {
     /^\/v1\/artifacts\/[^/]+\/cursor$/, // ephemeral live cursor (viral viewing)
     /^\/v1\/artifacts\/[^/]+\/view$/, // de-duped, anonymous-safe view counter
     /^\/v1\/artifacts\/[^/]+\/unlock$/, // password unlock — the password is the gate
+    /^\/v1\/artifacts\/[^/]+\/comments$/, // guest comment create — role-gated in the route (commenter+ link required); create only, never edit/delete/resolve
     /^\/v1\/vitals$/, // anonymous Core Web Vitals beacon (telemetry, no state)
     /^\/v1\/beta\/signup$/, // marketing-site beta signup — anonymous is the point; IP-capped
     /^\/v1\/sync\/github\/webhook$/, // GitHub App webhook — HMAC signature is the gate
