@@ -188,6 +188,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       "checkpoint",
       "comment",
       "find",
+      "invoke",
       "list_workspaces",
       "organize",
       "publish",

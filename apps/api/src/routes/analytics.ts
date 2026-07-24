@@ -63,11 +63,12 @@ export const analyticsRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
+      if (!analyticsOn) return c.body(null, 204)
       const artifact = await meta.getByShortId(c.req.param("shortId"))
       if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
         return bail(fail(c, 404, "not found"))
       // On-view freshness (WO7): enqueue a refresh for any stale "view" automation targeting
-      // this artifact. Runs on every authorized open, independent of analytics config.
+      // this artifact. Rides the view beacon (active when analytics is on).
       await maybeRefreshOnView(meta, artifact)
       if (!analyticsOn) return c.body(null, 204)
       // The owner's own opens aren't audience — don't count them (Notion/Docs do
