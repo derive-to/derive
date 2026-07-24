@@ -30,7 +30,8 @@
       "sharp": ">=0.35.0",
       "shell-quote": ">=1.9.0",
       "undici": "^7.28.0",
-      "ws": "^8.21.0"
+      "ws": "^8.21.0",
+      "postcss": ">=8.5.18"
     },
     "patchedDependencies": {
       "@better-auth/oauth-provider@1.6.19": "patches/@better-auth__oauth-provider@1.6.19.patch",

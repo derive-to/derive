@@ -794,6 +794,7 @@ const TABLES = [
   report,
   auditLog,
   asset,
+  modelCredential,
 ]
 
 /** Build the Postgres boot DDL: generated table/index CREATEs + placeholder tables
