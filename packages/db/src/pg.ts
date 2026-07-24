@@ -2539,6 +2539,10 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(run.created_at))
       .limit(limit)
   }
+  async getRun(id: string): Promise<RunRecord | null> {
+    const rows = await this.db.select().from(run).where(eq(run.id, id))
+    return rows[0] ?? null
+  }
   async findCoalescibleRun(automationId: string, cutoffIso: string): Promise<RunRecord | null> {
     const rows = await this.db
       .select()

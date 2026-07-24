@@ -1012,6 +1012,8 @@ export interface AgentStore {
   ): Promise<RunRecord | null>
   /** The workspace's recent runs, newest first (the activity view / ledger). Default 50. */
   listRuns(orgId: string, limit?: number): Promise<RunRecord[]>
+  /** One run by id, or null — resolves a claimed run to its automation for the tool endpoint. */
+  getRun(id: string): Promise<RunRecord | null>
   /** The newest still-queued run for an automation whose scheduled_for ≤ cutoff — the
    *  coalescing target when a burst of webhook fires arrives close together. Null when none
    *  is open, so the caller enqueues a fresh run. */
@@ -1424,6 +1426,9 @@ export interface AutomationRecord {
   instruction: string
   /** Serialized inputs/targets (artifact ids, urls, arbitrary), or null. */
   refs: string | null
+  /** Serialized JSON array of bound connection ids — the SOURCES a run may read from. A run
+   *  gets the tools of these connections only (least privilege); null = no sources. */
+  connection_ids: string | null
   enabled: 0 | 1
   created_at: string
 }
@@ -1435,6 +1440,7 @@ export interface NewAutomation {
   trigger: string
   instruction: string
   refs?: string | null
+  connection_ids?: string | null
   enabled?: 0 | 1
 }
 

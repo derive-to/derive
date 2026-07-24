@@ -181,6 +181,7 @@ export const automation = pgTable("automation", {
   trigger: text("trigger").notNull(),
   instruction: text("instruction").notNull(),
   refs: text("refs"),
+  connection_ids: text("connection_ids"),
   enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })

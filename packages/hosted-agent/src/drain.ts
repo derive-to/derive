@@ -3,7 +3,7 @@ import type { MastraLanguageModel } from "@mastra/core/agent"
 import { createHostedAgent } from "./agent"
 import { type ClaimedRun, httpClient } from "./client"
 import { outcomeOf, RunBudget } from "./submit"
-import type { RunContext } from "./tools"
+import { buildBrokerTools, type RunContext } from "./tools"
 
 // The executor loop for the run queue — the pull half of the executor. It claims this
 // agent's due queued runs and, for each, runs the harness with the automation's instruction:
@@ -100,6 +100,7 @@ export async function drainRuns(deps: DrainDeps): Promise<DrainResult> {
         conventions: deps.conventions,
         model: deps.resolveModel(),
         run: ctx,
+        extraTools: ctx.extraTools,
       })
       await agent.generate(task)
     })
@@ -121,6 +122,12 @@ export async function drainRuns(deps: DrainDeps): Promise<DrainResult> {
       flags: r.flags,
       stampTags: tagTargets(r.targets),
       results: [],
+      // The run's source tools, wrapped to proxy each call back through the API as this run
+      // (credentials never enter the executor). Empty when the automation binds no sources, and
+      // tolerant of a claim payload that omits the field (an older API must not crash the drain).
+      extraTools: r.tools?.length
+        ? buildBrokerTools(r.tools, (ref, tool, args) => client.executeTool(r.id, ref, tool, args))
+        : undefined,
     }
     // Belt to the claim endpoint's suspenders: an empty instruction must never reach the
     // model — a primed agent with live tools and a task of nothing does arbitrary work.

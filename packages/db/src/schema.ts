@@ -216,6 +216,9 @@ export const automation = sqliteTable("automation", {
   // How each write lands (publish vs propose) rides IN the refs blob per target —
   // policy is config, config evolves, and evolving config never gets a column.
   refs: text("refs"),
+  // JSON array of bound connection ids — the sources a run may read from (least privilege).
+  // Nullable + no default, so it ALTER ADDs cleanly on existing databases.
+  connection_ids: text("connection_ids"),
   enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
   created_at: text("created_at").notNull().default(now),
 })

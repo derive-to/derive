@@ -2569,6 +2569,8 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(desc(run.created_at))
       .limit(limit)
       .all()
+  const getRun = async (id: string): Promise<RunRecord | null> =>
+    (await db.select().from(run).where(eq(run.id, id)).get()) ?? null
   const findCoalescibleRun = async (
     automationId: string,
     cutoffIso: string,
@@ -3442,6 +3444,7 @@ export function makeRepos(db: SqliteDb) {
     claimDueRuns,
     finishRun,
     listRuns,
+    getRun,
     findCoalescibleRun,
     appendRunPayload,
     createPlan,

@@ -7,7 +7,8 @@ import {
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
-import { parseRefs, parseTrigger } from "../lib/automation"
+import { parseConnectionIds, parseRefs, parseTrigger } from "../lib/automation"
+import { brokerFor, toolsForRun } from "../lib/broker"
 import { overBudget } from "../lib/budget"
 import { mintToken, safeEqual, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
@@ -39,6 +40,7 @@ const present = (a: AutomationRecord) => {
     ...a,
     trigger,
     refs: parseRefs(a.refs),
+    connection_ids: parseConnectionIds(a.connection_ids),
     enabled: a.enabled === 1,
     has_fire_url: secret_hash !== undefined,
   }
@@ -69,7 +71,7 @@ const TRIGGER = z.object({
 })
 
 export const automationRoutes = (ctx: AppContext) => {
-  const { meta, agentFor, requireUser, requireWorkspace } = ctx
+  const { meta, agentFor, requireUser, requireWorkspace, deps } = ctx
   const app = new Hono()
 
   // ---- Owner surface: define / list / delete ---------------------------------
@@ -83,6 +85,7 @@ export const automationRoutes = (ctx: AppContext) => {
         trigger: TRIGGER,
         instruction: z.string().min(1).max(4000),
         refs: REFS.optional(),
+        connectionIds: z.array(z.string().max(64)).max(20).optional(),
         enabled: z.boolean().default(true),
       }),
     )
@@ -91,6 +94,13 @@ export const automationRoutes = (ctx: AppContext) => {
     const agents = await meta.listAgents(org)
     if (!agents.some((a) => a.id === b.agentId))
       return bail(fail(c, 400, "agent must be in this workspace"))
+    // Bound sources must be connections that exist in THIS workspace (least privilege: a run
+    // reads only through these). Ownership isn't required — an automation is a workspace job.
+    if (b.connectionIds?.length) {
+      const conns = await meta.getConnectionsByIds(b.connectionIds)
+      if (conns.length !== b.connectionIds.length || conns.some((cn) => cn.org_id !== org))
+        return bail(fail(c, 400, "connections must exist in this workspace"))
+    }
     // A webhook trigger gets a fire secret minted here: stored only as its sha256, the raw
     // secret returned ONCE in this response and never readable again (like an agent token).
     const trigger: AutomationTrigger = { ...b.trigger }
@@ -107,6 +117,7 @@ export const automationRoutes = (ctx: AppContext) => {
       instruction: b.instruction,
       // Stored CANONICAL (bare strings become artifact selectors) so readers never re-guess.
       refs: b.refs ? JSON.stringify(normalizeSelectors(b.refs)) : null,
+      connection_ids: b.connectionIds?.length ? JSON.stringify(b.connectionIds) : null,
       enabled: b.enabled ? 1 : 0,
     })
     const out = present(rec)
@@ -300,20 +311,35 @@ export const automationRoutes = (ctx: AppContext) => {
         }),
       ),
     )
-    return c.json({
-      runs: runnable.map(({ r, a }) => ({
-        id: r.id,
-        reason: r.reason,
-        automation_id: r.automation_id,
-        instruction: a.instruction,
-        // Canonical selectors: artifact = revise it, collection = file new work there,
-        // tag = the platform stamps it on every write. Each target's `mode` says how the
-        // write lands (publish live vs propose, default propose) — the executor maps it
-        // per write; it never re-derives semantics.
-        targets: parseRefs(a.refs),
-        flags,
-      })),
-    })
+    // One broker for this workspace (the owner's Composio plan → its key, else the LocalBroker),
+    // used to resolve each run's LEAST-PRIVILEGE source tools: a run gets the tools of ITS
+    // automation's bound connections only. The executor calls these back through the tool
+    // endpoint below — credentials never leave the API.
+    const broker = runnable.length
+      ? await brokerFor(meta, agent.org_id, null, deps.encryptionKey)
+      : null
+    const runs = await Promise.all(
+      runnable.map(async ({ r, a }) => {
+        const connIds = parseConnectionIds(a.connection_ids)
+        const tools =
+          broker && connIds.length ? await toolsForRun(meta, broker, agent.org_id, connIds) : []
+        return {
+          id: r.id,
+          reason: r.reason,
+          automation_id: r.automation_id,
+          instruction: a.instruction,
+          // Canonical selectors: artifact = revise it, collection = file new work there,
+          // tag = the platform stamps it on every write. Each target's `mode` says how the
+          // write lands (publish live vs propose, default propose) — the executor maps it
+          // per write; it never re-derives semantics.
+          targets: parseRefs(a.refs),
+          // The run's source tools (name/description/params + broker ref), least-privilege.
+          tools,
+          flags,
+        }
+      }),
+    )
+    return c.json({ runs })
   })
 
   // Finish a claimed run: terminal status + cost + result meta. Only the claiming agent.
@@ -336,6 +362,43 @@ export const automationRoutes = (ctx: AppContext) => {
       meta: b.meta ? JSON.stringify(b.meta) : null,
     })
     return rec ? c.json({ id: rec.id, status: rec.status }) : fail(c, 404, "not found")
+  })
+
+  // Execute a source tool for a claimed run — the least-privilege callback the executor uses
+  // when the agent invokes one of the run's bound-connection tools. Resolves the run → its
+  // automation's connections, verifies the ref belongs to them + is active, and runs it through
+  // the broker. Credentials stay server-side; the executor only ever holds tool defs + refs.
+  app.post("/v1/agent/runs/:id/tool", async (c) => {
+    const agent = await agentFor(c)
+    if (!agent) return fail(c, 401, "agent token required")
+    const run = await meta.getRun(c.req.param("id"))
+    if (!run || run.agent_id !== agent.id || run.org_id !== agent.org_id)
+      return fail(c, 404, "not found")
+    const b = await readJson(
+      c,
+      z.object({
+        ref: z.string().max(200),
+        tool: z.string().max(200),
+        args: z.unknown().optional(),
+      }),
+    )
+    if (b instanceof Response) return bail(b)
+    const auto = run.automation_id ? await meta.getAutomation(run.automation_id) : null
+    const connIds = parseConnectionIds(auto?.connection_ids ?? null)
+    if (connIds.length === 0) return fail(c, 403, "run has no bound sources")
+    // Least privilege: the ref must be one of THIS run's bound, active connections.
+    const conns = (await meta.getConnectionsByIds(connIds)).filter(
+      (cn) => cn.org_id === agent.org_id && cn.status === "active",
+    )
+    if (!conns.some((cn) => cn.broker_ref === b.ref))
+      return fail(c, 403, "tool not allowed for this run")
+    const broker = await brokerFor(meta, agent.org_id, null, deps.encryptionKey)
+    try {
+      const result = await broker.execute({ ref: b.ref, tool: b.tool, args: b.args ?? {} })
+      return c.json({ result })
+    } catch (e) {
+      return fail(c, 502, e instanceof Error ? e.message : "tool failed")
+    }
   })
 
   // Record an already-finished run straight into the ledger — the host's best-effort write

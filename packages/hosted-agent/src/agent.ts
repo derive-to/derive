@@ -1,5 +1,6 @@
 import type { MastraLanguageModel } from "@mastra/core/agent"
 import { Agent } from "@mastra/core/agent"
+import type { createTool } from "@mastra/core/tools"
 import { buildTools, type RunContext } from "./tools"
 
 // The Mastra hosted-agent. Instructions are assembled from the SAME manifest +
@@ -17,6 +18,11 @@ export interface HostedAgentInput {
   run: RunContext
   /** The model instance, wired by the host (Vercel AI SDK model). */
   model: MastraLanguageModel
+  /** The run's SOURCE tools (from its bound connections), already wrapped by buildBrokerTools.
+   *  Merged alongside the built-in artifact tools so a pull run can fetch from its sources; empty
+   *  for automations that bind none. Built-ins win a name collision — the artifact surface is
+   *  never shadowed by a source tool. */
+  extraTools?: Record<string, ReturnType<typeof createTool>>
 }
 
 const CONTRACT = `
@@ -42,6 +48,7 @@ export function createHostedAgent(input: HostedAgentInput): Agent {
     name: "Derive hosted agent",
     instructions: buildInstructions(input),
     model: input.model,
-    tools: buildTools(input.run),
+    // Built-ins last so an artifact tool always wins a name collision with a source tool.
+    tools: { ...input.extraTools, ...buildTools(input.run) },
   })
 }

@@ -12,6 +12,7 @@ const mockClient = (current: string): HostedAgentClient => ({
   recordRun: vi.fn().mockResolvedValue(undefined),
   claimRuns: vi.fn().mockResolvedValue([]),
   finishRun: vi.fn().mockResolvedValue(undefined),
+  executeTool: vi.fn().mockResolvedValue(undefined),
 })
 
 const ctxFor = (
