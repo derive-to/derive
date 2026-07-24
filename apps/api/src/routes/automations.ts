@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import {
   type AutomationRecord,
   type AutomationTrigger,
@@ -8,6 +9,7 @@ import {
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
+import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 
 // WP5/WP6 — automations + runs, the generic agent-work primitive. An automation is a
@@ -69,7 +71,7 @@ const TRIGGER = z.object({
 })
 
 export const automationRoutes = (ctx: AppContext) => {
-  const { meta, agentFor, requireUser, requireWorkspace } = ctx
+  const { meta, agentFor, privateOwnerId, requireUser, requireWorkspace } = ctx
   const app = new Hono()
 
   // ---- Owner surface: define / list / delete ---------------------------------
@@ -79,7 +81,10 @@ export const automationRoutes = (ctx: AppContext) => {
     const b = await readJson(
       c,
       z.object({
-        agentId: z.string(),
+        // Omit to auto-mint a MANAGED agent for this automation — its own Derive
+        // access, no roster persona, nothing to pick. Pass an id to run as an
+        // existing (service) agent instead. Mirrors context creation (#525).
+        agentId: z.string().optional(),
         trigger: TRIGGER,
         instruction: z.string().min(1).max(4000),
         refs: REFS.optional(),
@@ -87,21 +92,52 @@ export const automationRoutes = (ctx: AppContext) => {
       }),
     )
     if (b instanceof Response) return bail(b)
-    // The agent must belong to this workspace — never an id from another tenant.
-    const agents = await meta.listAgents(org)
-    if (!agents.some((a) => a.id === b.agentId))
-      return bail(fail(c, 400, "agent must be in this workspace"))
-    const rec = await meta.createAutomation({
-      id: newId("auto"),
-      org_id: org,
-      agent_id: b.agentId,
-      trigger: JSON.stringify(b.trigger satisfies AutomationTrigger),
-      instruction: b.instruction,
-      // Stored CANONICAL (bare strings become artifact selectors) so readers never re-guess.
-      refs: b.refs ? JSON.stringify(normalizeSelectors(b.refs)) : null,
-      enabled: b.enabled ? 1 : 0,
-    })
-    return c.json(present(rec), 201)
+    if (b.agentId) {
+      // The agent must belong to this workspace — never an id from another tenant.
+      const agents = await meta.listAgents(org)
+      if (!agents.some((a) => a.id === b.agentId))
+        return bail(fail(c, 400, "agent must be in this workspace"))
+    }
+    let agentId = b.agentId ?? null
+    let agentToken: string | null = null
+    if (!agentId) {
+      agentToken = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
+      // Automations have no name; derive one from the instruction so the (hidden)
+      // roster row is still recognizable. Names are unique per workspace — a
+      // collision suffixes instead of failing the create.
+      const base = b.instruction.trim().slice(0, 40).trim() || "Automation"
+      const owner = (await privateOwnerId(c)) ?? null
+      const mint = (name: string) =>
+        meta.createAgent({
+          id: newId("ag"),
+          org_id: org,
+          name,
+          token: sha256(agentToken as string),
+          role: "editor",
+          created_by: owner,
+          managed: 1,
+        })
+      const minted = await mint(base).catch(() => mint(`${base} ${randomUUID().slice(0, 4)}`))
+      agentId = minted.id
+    }
+    try {
+      const rec = await meta.createAutomation({
+        id: newId("auto"),
+        org_id: org,
+        agent_id: agentId,
+        trigger: JSON.stringify(b.trigger satisfies AutomationTrigger),
+        instruction: b.instruction,
+        // Stored CANONICAL (bare strings become artifact selectors) so readers never re-guess.
+        refs: b.refs ? JSON.stringify(normalizeSelectors(b.refs)) : null,
+        enabled: b.enabled ? 1 : 0,
+      })
+      return c.json({ ...present(rec), ...(agentToken ? { agent_token: agentToken } : {}) }, 201)
+    } catch (e) {
+      // A failed create after an auto-mint must not strand an orphaned managed
+      // agent (and its live token) — unwind the mint with the create.
+      if (agentToken && agentId) await meta.deleteAgent(agentId, org).catch(() => {})
+      throw e
+    }
   })
 
   // Edit in place: instruction, trigger, refs (write modes ride IN them), the agent,

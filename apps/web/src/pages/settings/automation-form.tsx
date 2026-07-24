@@ -2,6 +2,7 @@ import { useQueries, useQuery } from "@tanstack/react-query"
 import { FileText, FolderOpen, Hash, Plus, X } from "lucide-react"
 import { type ReactNode, useMemo, useState } from "react"
 import { type Automation, type AutomationRef, type AutomationTrigger, api } from "@/api"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -20,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { toast } from "@/components/ui/sonner"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -85,7 +87,12 @@ export function AutomationForm({
   onDone: () => void
 }) {
   const { data: agents, isError: agentsError } = useQuery(agentsQuery())
+  // "" = auto-mint on create (the default; nobody picks an agent). Edit mode keeps
+  // the automation's existing agent. A non-empty id = run as a service agent.
   const [agentId, setAgentId] = useState(automation?.agent_id ?? "")
+  // The minted agent's bearer, shown exactly once; onDone waits for Done so the
+  // token's only display can't be lost to the dialog closing.
+  const [mintedToken, setMintedToken] = useState<string | null>(null)
   const [instruction, setInstruction] = useState(
     automation?.instruction ?? defaultInstruction ?? "",
   )
@@ -161,44 +168,60 @@ export function AutomationForm({
   const save = useApiMutation({
     mutationFn: () => {
       const body = {
-        agentId,
+        ...(agentId ? { agentId } : {}),
         trigger: buildTrigger(),
         instruction: instruction.trim(),
         refs: buildRefs(),
       }
-      return automation ? api.updateAutomation(automation.id, body) : api.createAutomation(body)
+      return automation
+        ? api.updateAutomation(automation.id, { agentId, ...body })
+        : api.createAutomation(body)
     },
     success: automation ? "Automation updated" : "Automation created",
     // Invalidate HERE, not in each caller — both the manager and the artifact dialog write
     // through this form, and a change from either must refresh both views.
     invalidate: [automationsQuery().queryKey, runsQuery().queryKey],
-    onSuccess: () => {
+    onSuccess: (a) => {
       if (!automation) setInstruction(defaultInstruction ?? "")
+      // An auto-minted runner token arrives exactly once — hold the form open on
+      // its panel; onDone fires from its Done button instead.
+      const token = (a as { agent_token?: string }).agent_token
+      if (!automation && token) {
+        setMintedToken(token)
+        return
+      }
       onDone()
     },
   })
-  const ready = agentId !== "" && instruction.trim() !== "" && !agentsError
+  // Edit keeps requiring its agent; create no longer needs one (auto-mint), and a
+  // roster error only blocks someone who actually picked a service agent.
+  const ready =
+    instruction.trim() !== "" && (automation ? agentId !== "" : !(agentId && agentsError))
 
   return (
     <div className="flex flex-col gap-4">
-      {agentsError && (
-        <p className="text-sm text-destructive">Couldn't load agents. Reload and try again.</p>
+      {(automation || (agents ?? []).some((a) => !a.managed)) && (
+        <Field label="Runs as">
+          <Select
+            value={agentId || "auto"}
+            onValueChange={(v) => setAgentId(v === "auto" ? "" : v)}
+          >
+            <SelectTrigger data-testid="automation-agent" aria-label="Runs as" className="w-full">
+              <SelectValue placeholder="Its own agent" />
+            </SelectTrigger>
+            <SelectContent>
+              {!automation && <SelectItem value="auto">Its own agent (default)</SelectItem>}
+              {(agents ?? [])
+                .filter((a) => !a.managed || a.id === automation?.agent_id)
+                .map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    @{a.name}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+        </Field>
       )}
-
-      <Field label="Agent">
-        <Select value={agentId} onValueChange={setAgentId}>
-          <SelectTrigger data-testid="automation-agent" aria-label="Agent" className="w-full">
-            <SelectValue placeholder="Pick an agent" />
-          </SelectTrigger>
-          <SelectContent>
-            {(agents ?? []).map((a) => (
-              <SelectItem key={a.id} value={a.id}>
-                @{a.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </Field>
 
       <Field label="Instruction">
         <Textarea
@@ -385,6 +408,47 @@ export function AutomationForm({
         )}
       </Field>
 
+      {mintedToken && (
+        <div data-testid="automation-agent-token">
+          <StatusPanel
+            tone="warning"
+            layout="inline"
+            title="Runner token for this automation — copy it now, it won't be shown again."
+            description={
+              <code className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground">
+                {mintedToken}
+              </code>
+            }
+            action={
+              <div className="flex items-center gap-2">
+                <Button
+                  data-testid="automation-agent-token-copy"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(mintedToken)
+                    toast.success("Token copied")
+                  }}
+                >
+                  Copy
+                </Button>
+                <Button
+                  data-testid="automation-agent-token-done"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setMintedToken(null)
+                    onDone()
+                  }}
+                >
+                  Done
+                </Button>
+              </div>
+            }
+          />
+        </div>
+      )}
+
       <div className="flex justify-end">
         <Button
           data-testid="automation-create"
@@ -392,7 +456,7 @@ export function AutomationForm({
           size="sm"
           onClick={() => ready && save.mutate()}
           loading={save.isPending}
-          disabled={save.isPending || !ready}
+          disabled={save.isPending || !ready || !!mintedToken}
         >
           {save.isPending
             ? "Saving…"
