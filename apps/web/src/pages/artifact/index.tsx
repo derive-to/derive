@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useNavigate, useParams } from "@tanstack/react-router"
+import { Link, useNavigate, useParams } from "@tanstack/react-router"
 import { Minimize2 } from "lucide-react"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { API_BASE, ApiError, api } from "@/api"
 import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
+import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
@@ -689,7 +690,30 @@ export function Artifact() {
               which the API gates for anon (anonLocked). So it stays gated on `!isAnon`
               even now an anon commenter falls through: showing it would be a row of dead,
               forbidden affordances. Their comment surfaces come from the rail/sheet below
-              (which the panel opens by default), not from this bar's comments toggle. */}
+              (which the panel opens by default), not from this bar's comments toggle.
+              A commenting guest instead gets the PublicViewer growth verbs in this slot:
+              the signup CTA and a sign-in that returns to this artifact (the seam the
+              future track-this-artifact flow grows into). */}
+          {isAnon && (
+            <div className="flex items-center gap-0.5">
+              <Button asChild variant="default" size="sm" data-testid="guest-make-your-own">
+                <Link to="/login" search={{ signup: true, return_to: "/new" }}>
+                  {isMobile ? "Make yours" : "Make your own"}
+                </Link>
+              </Button>
+              <Button
+                asChild
+                variant="ghost"
+                size="sm"
+                data-testid="guest-sign-in"
+                className="max-sm:sr-only"
+              >
+                <Link to="/login" search={{ return_to: `/artifacts/${ref}` }}>
+                  Sign in
+                </Link>
+              </Button>
+            </div>
+          )}
           {!isAnon && (
             <ArtifactTopBar
               shortId={shortId}
