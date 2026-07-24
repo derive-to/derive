@@ -52,7 +52,7 @@ Add ONLY the comment-create path (`POST /v1/artifacts/{shortId}/comments`) to `A
 
 - Scope: only artifacts whose owner explicitly set the link to commenter+. Private/view-only artifacts see zero behavior change.
 - IP rate limit on create (above).
-- Owners/editors can already delete comments — moderation exists.
+- Moderation today: resolve the thread, revoke the link role (cut off further guest comments), or use the instance `DERIVE_TOKEN`. Owner/editor deletion of a guest's comment is a follow-up (DELETE is author-only right now).
 - Anonymous commenters cannot edit or delete anything, including their own comments (no identity to authorize against).
 
 ## Out of scope (deliberate, tracked separately)

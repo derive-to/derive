@@ -195,3 +195,102 @@ describe("anonymous commenting", () => {
     expect(owner.guest).toBeUndefined()
   })
 })
+
+// The mention[] array on a guest comment is caller-supplied and unauthenticated. Email
+// has no downstream re-filter (bells + Slack DMs do), so the route must gate the email
+// fan-out to the artifact's collaborators. Otherwise a guest could email any registered
+// user an attacker-chosen author + body. We drive the real route and inspect the outbox.
+describe("guest comment mention-email is collaborator-gated", () => {
+  const claim = (m: ReturnType<typeof quotaApp>["meta"]) =>
+    m.claimDueDeliveries(
+      new Date(Date.now() + 60_000).toISOString(),
+      100,
+      new Date(Date.now() + 120_000).toISOString(),
+    )
+
+  it("mentioning a NON-collaborator enqueues no email", async () => {
+    const collab: TestUser = { id: "u_gm_collab", email: "collab@gm.test", name: "Collab" }
+    // Registered (getUsers resolves them, they have an email) but NOT a workspace member
+    // and NOT an artifact share — a non-collaborator, the exact relay target.
+    const outsider: TestUser = { id: "u_gm_out", email: "outsider@gm.test", name: "Outsider" }
+    const { app: gmApp, meta } = quotaApp(
+      "gm-noncollab",
+      {},
+      [collab, outsider],
+      [{ user_id: collab.id, role: "editor" }],
+    )
+    const shortId = await artifactWithLinkOn(gmApp, "commenter")
+    const res = await gmApp.request(
+      `/v1/artifacts/${shortId}/comments`,
+      json({
+        body_md: "look here",
+        author: "Guest",
+        mentions: [{ id: outsider.id, name: "Outsider" }],
+      }),
+    )
+    expect(res.status).toBe(201)
+    const emails = (await claim(meta)).filter((d) => d.kind === "email")
+    expect(emails).toHaveLength(0)
+  })
+
+  it("mentioning a collaborator enqueues an email to them", async () => {
+    const collab: TestUser = { id: "u_gm_collab2", email: "collab2@gm.test", name: "Collab" }
+    const { app: gmApp, meta } = quotaApp(
+      "gm-collab",
+      {},
+      [collab],
+      [{ user_id: collab.id, role: "editor" }],
+    )
+    const shortId = await artifactWithLinkOn(gmApp, "commenter")
+    const res = await gmApp.request(
+      `/v1/artifacts/${shortId}/comments`,
+      json({
+        body_md: "look here",
+        author: "Guest",
+        mentions: [{ id: collab.id, name: "Collab" }],
+      }),
+    )
+    expect(res.status).toBe(201)
+    const emails = (await claim(meta)).filter((d) => d.kind === "email")
+    expect(emails).toHaveLength(1)
+    expect(emails[0]?.payload).toContain(collab.email)
+  })
+})
+
+// A guest row has a null author_id, and its author byline is a self-attested, unverified
+// name. So authorship must NOT fall back to a display-name match for guest rows: a member
+// who renames their profile to a guest's name must never edit or delete that guest's comment.
+describe("guest comment cannot be hijacked by a name-colliding member", () => {
+  it("a member whose name equals the guest's gets 403 on PATCH and DELETE", async () => {
+    const owner: TestUser = { id: "u_hj_owner", email: "owner@hj.test", name: "Owner" }
+    // The attacker: a signed-in member who renamed their profile to the guest's byline.
+    const evil: TestUser = { id: "u_hj_evil", email: "evil@hj.test", name: "Collision" }
+    const { app: hjApp } = makeAuthedApp("guest-hijack", [owner, evil], "editor")
+    const shortId = (await (await publishAs(hjApp, "<h1>doc</h1>", {}, as(owner.email))).json())
+      .short_id as string
+    const acc = await hjApp.request(`/v1/artifacts/${shortId}/access`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      body: JSON.stringify({ linkRole: "commenter" }),
+    })
+    expect(acc.status).toBe(200)
+    // A guest posts, self-naming "Collision" (the same display name the evil member wears).
+    const guest = await (
+      await hjApp.request(
+        `/v1/artifacts/${shortId}/comments`,
+        json({ body_md: "guest note", author: "Collision" }),
+      )
+    ).json()
+    expect(guest.guest).toBe(true)
+    const edit = await hjApp.request(`/v1/artifacts/${shortId}/comments/${guest.id}`, {
+      ...jsonAs(as(evil.email), { body_md: "hijacked" }),
+      method: "PATCH",
+    })
+    expect(edit.status).toBe(403)
+    const del = await hjApp.request(`/v1/artifacts/${shortId}/comments/${guest.id}`, {
+      ...jsonAs(as(evil.email), {}),
+      method: "DELETE",
+    })
+    expect(del.status).toBe(403)
+  })
+})

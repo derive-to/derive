@@ -138,10 +138,15 @@ export const commentRoutes = (ctx: AppContext) => {
 
   // Authorship is keyed on the stable actor id, never the mutable display name:
   // renaming your profile to a victim's name must not grant edit/delete rights.
-  // Legacy rows (author_id null, written before this column) fall back to the
-  // name match so their authors don't lose access.
+  // Legacy rows (author_id null, written before this column) fall back to the name
+  // match so their authors don't lose access. GUEST rows also have a null author_id,
+  // but a self-attested guest name is unauthenticated, so they're excluded from the
+  // fallback: a member who renames their profile to a guest's display name must not be
+  // able to PATCH/DELETE that guest's comment.
   const ownsComment = (cm: CommentRecord, acting: { id: string; name: string }): boolean =>
-    cm.author_id ? cm.author_id === acting.id : cm.author === acting.name
+    cm.author_id
+      ? cm.author_id === acting.id
+      : !parseMeta(cm.meta).guest && cm.author === acting.name
 
   // Create a comment (new thread) or a reply (pass thread_id).
   app.openapi(
@@ -242,8 +247,9 @@ export const commentRoutes = (ctx: AppContext) => {
         if (patched) created = patched
       }
       // Signal-only: never put the comment body on the realtime bus. Clients refetch
-      // /comments (which is account-gated), so the content can't leak to an anonymous
-      // SSE subscriber. Webhooks carry their own payload via notify() below.
+      // /comments, readable only by callers who can comment (members, or guests on a
+      // commenter+ link) and never a viewer/none visitor, so the content can't leak to
+      // an unentitled SSE subscriber. Webhooks carry their own payload via notify() below.
       // The realtime signal goes out now (cheap, in-process); everyone watching
       // refetches. The webhook enqueues and mention notifications are best-effort
       // fan-out, so they run after the response instead of stacking sequential D1
@@ -376,6 +382,10 @@ export const commentRoutes = (ctx: AppContext) => {
     async (c) => {
       const artifact = await requireArtifact(c, "comment", { split: true })
       if (artifact instanceof Response) return bail(artifact)
+      // Route-level defense in depth: authorize("comment") now passes for anon guests
+      // (create is their one allowed mutation, gated at the door). Resolve/react/edit/
+      // delete are principal-only; never rely on the door regex alone to block them.
+      if (!(await isPrincipal(c))) return bail(fail(c, 403, "forbidden"))
       const cm = await meta.getComment(c.req.param("commentId"))
       if (!cm || cm.artifact_id !== artifact.id) return bail(fail(c, 404, "not found"))
       const body = await readJson(c, z.object({ state: z.string().optional() }))
@@ -411,6 +421,8 @@ export const commentRoutes = (ctx: AppContext) => {
       if (!r.ok) return bail(r.error)
       const { artifact, cm } = r
       if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
+      // Principal-only (see resolve): a guest never reacts, edits, or deletes.
+      if (!(await isPrincipal(c))) return bail(fail(c, 403, "forbidden"))
       const body = await readJson(
         c,
         z.object({ emoji: z.string().refine((e) => REACTIONS.includes(e), "unknown reaction") }),
@@ -452,6 +464,8 @@ export const commentRoutes = (ctx: AppContext) => {
       if (!r.ok) return bail(r.error)
       const { artifact, cm } = r
       if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
+      // Principal-only (see resolve): a guest never edits.
+      if (!(await isPrincipal(c))) return bail(fail(c, 403, "forbidden"))
       const acting = await actingUser(c)
       if (acting && !ownsComment(cm, acting)) return bail(fail(c, 403, "forbidden"))
       const body = await readJson(
@@ -501,6 +515,8 @@ export const commentRoutes = (ctx: AppContext) => {
       if (!r.ok) return bail(r.error)
       const { artifact, cm } = r
       if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
+      // Principal-only (see resolve): a guest never deletes.
+      if (!(await isPrincipal(c))) return bail(fail(c, 403, "forbidden"))
       const acting = await actingUser(c)
       if (acting && !ownsComment(cm, acting)) return bail(fail(c, 403, "forbidden"))
       const md = parseMeta(cm.meta)

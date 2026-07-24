@@ -148,8 +148,8 @@ namespace_id = "1004"
   limit = 60
   period = 60
 
-# Shared by the two tight 3/60 surfaces (unlock + oauth registration); the worker
-# namespaces the key per surface so their counts stay separate.
+# Shared by the four tight 3/60 surfaces (auth-email, anon-comment, unlock, oauth
+# registration); the worker namespaces the key per surface so their counts stay separate.
 [[ratelimits]]
 name = "RL_STRICT"
 namespace_id = "1005"

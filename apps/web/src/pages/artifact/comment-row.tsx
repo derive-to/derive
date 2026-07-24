@@ -212,6 +212,10 @@ export function CommentRow({
                 <button
                   type="button"
                   data-testid={`reaction-pill-${emoji}`}
+                  // Guests can SEE reactions but can't toggle one (react is a door-blocked
+                  // mutation for them) — render the pill non-interactive rather than let an
+                  // optimistic toggle flip and roll back with an error toast.
+                  disabled={A.isGuest}
                   // title shows on mouse hover; aria-label carries the same reactor list to
                   // keyboard + touch (where title never appears), and aria-pressed exposes
                   // the toggle state.
@@ -220,7 +224,7 @@ export function CommentRow({
                   aria-pressed={reacted}
                   onClick={(e) => {
                     e.stopPropagation()
-                    A.react(c.id, emoji)
+                    if (!A.isGuest) A.react(c.id, emoji)
                   }}
                 >
                   {/* The emoji keeps its original glyph size; the count takes the pill's register. */}
@@ -253,37 +257,42 @@ export function CommentRow({
           )}
           onClick={(e) => e.stopPropagation()}
         >
-          <Popover open={open === "react"} onOpenChange={(o) => setOpen(o ? "react" : null)}>
-            <PopoverTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Add reaction"
-                data-testid="comment-react"
-              >
-                <Icon name="react" className="size-4" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-auto p-1">
-              <div className="grid grid-cols-4 gap-px">
-                {REACTION_EMOJI.map((em) => (
-                  <button
-                    key={em}
-                    type="button"
-                    aria-label={`React with ${em}`}
-                    data-testid={`react-emoji-${em}`}
-                    onClick={() => {
-                      A.react(c.id, em)
-                      setOpen(null)
-                    }}
-                    className="grid size-7 place-items-center rounded-md text-lg outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-                  >
-                    {em}
-                  </button>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
+          {/* Adding a reaction is a mutation a guest can't perform (door-blocked), so the
+              trigger is hidden for guests — no dead affordance that flips optimistically
+              and rolls back. The ⋯ menu below stays (Copy link works for everyone). */}
+          {!A.isGuest && (
+            <Popover open={open === "react"} onOpenChange={(o) => setOpen(o ? "react" : null)}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Add reaction"
+                  data-testid="comment-react"
+                >
+                  <Icon name="react" className="size-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-auto p-1">
+                <div className="grid grid-cols-4 gap-px">
+                  {REACTION_EMOJI.map((em) => (
+                    <button
+                      key={em}
+                      type="button"
+                      aria-label={`React with ${em}`}
+                      data-testid={`react-emoji-${em}`}
+                      onClick={() => {
+                        A.react(c.id, em)
+                        setOpen(null)
+                      }}
+                      className="grid size-7 place-items-center rounded-md text-lg outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                    >
+                      {em}
+                    </button>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
           <DropdownMenu open={open === "menu"} onOpenChange={(o) => setOpen(o ? "menu" : null)}>
             <DropdownMenuTrigger asChild>
               <Button

@@ -567,10 +567,11 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
                 </div>
               ))}
           </div>
-          {active && (
+          {active && !isGuest && (
             // Labeled, not icon-only: at launch, "Resolve" has to teach itself.
             // Still quiet in the title bar (ghost, muted → success on hover) —
-            // the verb carries the meaning, no tooltip needed.
+            // the verb carries the meaning, no tooltip needed. Hidden for guests:
+            // resolve is a door-blocked mutation, so no dead affordance for them.
             <Button
               variant="ghost"
               size="xs"

@@ -13,6 +13,7 @@ import type { ArtifactRecord, CommentRecord, MetaStore } from "@derive/core"
 import { enqueueChannelDelivery } from "../webhooks"
 import { quoteOf } from "./comments"
 import { buildCommentEmail } from "./email"
+import { collaboratorIds } from "./mentions"
 
 export interface EmailFanoutDeps {
   meta: MetaStore
@@ -32,6 +33,15 @@ export const enqueueCommentEmails = async (
   const recipientIds = new Set<string>(opts.mentionIds)
   recipientIds.delete("") // guard
   if (opts.actorId) recipientIds.delete(opts.actorId)
+  if (recipientIds.size === 0) return
+
+  // Gate the recipients to the artifact's collaborators (workspace members ∪ share
+  // recipients), the SAME set the bell/Slack-DM fan-out filters on (lib/mentions).
+  // getUsers resolves ANY registered user id, so without this a caller-supplied mention
+  // (e.g. an anonymous guest comment) could email an attacker-chosen author+body to any
+  // account. Email has no second re-filter downstream; this is it.
+  const collaborators = await collaboratorIds(meta, artifact)
+  for (const id of [...recipientIds]) if (!collaborators.has(id)) recipientIds.delete(id)
   if (recipientIds.size === 0) return
 
   const users = await meta.getUsers([...recipientIds])

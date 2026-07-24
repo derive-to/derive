@@ -14,6 +14,18 @@ import {
 import type { Backplane } from "../bus"
 import { type Mention, previewOf } from "./comments"
 
+/** The collaborator set for an artifact: workspace members ∪ explicit artifact-share
+ *  recipients. This is the gate for who a comment may notify — a mention (bell OR email)
+ *  only reaches someone who can actually SEE the artifact, never an arbitrary registered
+ *  user id a caller supplied. Shared by the mention fan-out here and the email fan-out
+ *  (lib/notify-email) so both apply the identical rule; "could view a public artifact" is
+ *  intentionally NOT enough. */
+export const collaboratorIds = async (meta: MetaStore, a: ArtifactRecord): Promise<Set<string>> =>
+  new Set<string>([
+    ...(await meta.listMemberships(a.org_id)).map((m) => m.user_id),
+    ...(await meta.listArtifactMembers(a.id)).map((r) => r.user_id),
+  ])
+
 export const notifyMentions = async (
   deps: { meta: MetaStore; bus: Backplane },
   a: ArtifactRecord,
@@ -32,12 +44,8 @@ export const notifyMentions = async (
   // workspace or an explicit share recipient. The `mentions[]` array is caller-supplied,
   // so without this gate any caller could push a notification carrying attacker-controlled
   // title/preview to ANY other user — cross-workspace spam/phishing into the bell + SSE.
-  // "Could view a public artifact" is intentionally NOT enough; a real collaboration
-  // mention means a member/share, not a stranger.
-  const collaborators = new Set<string>([
-    ...(await meta.listMemberships(a.org_id)).map((m) => m.user_id),
-    ...(await meta.listArtifactMembers(a.id)).map((r) => r.user_id),
-  ])
+  // Same collaborator set the email fan-out gates on (see lib/notify-email).
+  const collaborators = await collaboratorIds(meta, a)
   const preview = previewOf(cm.body_md)
   // Collect the human-mention bell rows so the whole fan-out is ONE bulk insert; agent
   // mentions land in their own table (a pull inbox), still one row each.
