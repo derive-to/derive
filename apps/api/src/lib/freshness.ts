@@ -1,28 +1,13 @@
-import type { ArtifactRecord, AutomationTrigger, MetaStore } from "@derive/core"
+import type { ArtifactRecord, MetaStore } from "@derive/core"
 import { newId } from "@derive/core"
+import { parseRefs, parseTrigger } from "./automation"
 
-const parseTrigger = (raw: string): AutomationTrigger => {
-  try {
-    const t = JSON.parse(raw)
-    if (t && typeof t === "object") return t as AutomationTrigger
-  } catch {}
-  return { kind: "manual" }
-}
-
-/** Does an automation's refs blob target this artifact (by internal id or short id)? */
-const refsInclude = (refsRaw: string | null, artifact: ArtifactRecord): boolean => {
-  if (!refsRaw) return false
-  try {
-    const refs = JSON.parse(refsRaw)
-    if (!Array.isArray(refs)) return false
-    return refs.some((r) => {
-      const id = typeof r === "string" ? r : (r as { id?: string })?.id
-      return id === artifact.id || id === artifact.short_id
-    })
-  } catch {
-    return false
-  }
-}
+/** Does an automation's refs blob target this artifact (by internal id or short id)? Reuses the
+ *  shared canonical-selector parse rather than re-walking the raw JSON. */
+const targetsArtifact = (refsRaw: string | null, artifact: ArtifactRecord): boolean =>
+  parseRefs(refsRaw).some(
+    (r) => r.kind === "artifact" && (r.id === artifact.id || r.id === artifact.short_id),
+  )
 
 /**
  * WO7 — on a view of `artifact`, enqueue a refresh run for each ENABLED "view" automation that
@@ -42,7 +27,7 @@ export const maybeRefreshOnView = async (
     if (a.enabled !== 1) continue
     const t = parseTrigger(a.trigger)
     if (t.kind !== "view") continue
-    if (!refsInclude(a.refs, artifact)) continue
+    if (!targetsArtifact(a.refs, artifact)) continue
     const maxAge = typeof t.maxAgeMinutes === "number" ? t.maxAgeMinutes : 0
     if (ageMinutes < maxAge) continue // still fresh
     // Debounce: a run already queued for this automation covers this view.

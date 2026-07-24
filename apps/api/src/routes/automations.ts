@@ -3,11 +3,11 @@ import {
   type AutomationTrigger,
   newId,
   normalizeSelectors,
-  type Selector,
 } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
+import { parseRefs, parseTrigger } from "../lib/automation"
 import { overBudget } from "../lib/budget"
 import { mintToken, safeEqual, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
@@ -28,24 +28,6 @@ const MAX_FIRE_META_BYTES = 256_000
 // A fire folds into an already-queued run for the same automation scheduled within this
 // forward window (i.e. until a worker claims it), so a burst becomes one run of many payloads.
 const COALESCE_WINDOW_MS = 60_000
-
-const parseTrigger = (raw: string): AutomationTrigger => {
-  try {
-    const t = JSON.parse(raw)
-    if (t && typeof t === "object") return t as AutomationTrigger
-  } catch {}
-  return { kind: "manual" }
-}
-
-/** Stored refs → canonical selectors. Rows predating selectors hold bare short-id strings;
- *  normalizeSelectors turns those into artifact selectors, so every historical row stays
- *  valid with no migration. Malformed JSON parses to []. */
-const parseRefs = (raw: string | null): Selector[] => {
-  try {
-    if (raw) return normalizeSelectors(JSON.parse(raw))
-  } catch {}
-  return []
-}
 
 /** Present an automation with its JSON blobs parsed and enabled as a boolean. Both blobs
  *  parse defensively so a single malformed row can't 500 every list/claim response. */
