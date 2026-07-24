@@ -64,6 +64,7 @@ import type {
   NewRun,
   NewSession,
   NewSessionMessage,
+  NewSignupAttribution,
   NewVerb,
   NewVersion,
   NewView,
@@ -90,6 +91,7 @@ import type {
   SessionMessageRecord,
   SessionRecord,
   SessionState,
+  SignupAttributionRecord,
   SlackInstallRecord,
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
@@ -166,6 +168,7 @@ import {
   reviewRound,
   run,
   sessionMessage,
+  signupAttribution,
   slackInstall,
   slackThreadLink,
   slackUserLink,
@@ -218,6 +221,7 @@ export const schema = {
   artifactInvite,
   invitation,
   betaSignup,
+  signupAttribution,
   oauthClientWorkspace,
   context,
   contextAsker,
@@ -264,6 +268,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
+  signupAttribution: true,
   context: true,
   contextAsker: true,
   contextSession: true,
@@ -2445,6 +2450,31 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(automation.created_at))
       .limit(limit)
   }
+  async updateAutomation(
+    id: string,
+    orgId: string,
+    fields: {
+      agent_id?: string
+      trigger?: string
+      instruction?: string
+      refs?: string | null
+      enabled?: 0 | 1
+    },
+  ): Promise<AutomationRecord | null> {
+    const set: Record<string, unknown> = {}
+    if (fields.agent_id !== undefined) set.agent_id = fields.agent_id
+    if (fields.trigger !== undefined) set.trigger = fields.trigger
+    if (fields.instruction !== undefined) set.instruction = fields.instruction
+    if (fields.refs !== undefined) set.refs = fields.refs
+    if (fields.enabled !== undefined) set.enabled = fields.enabled
+    if (Object.keys(set).length === 0) return this.getAutomation(id)
+    const rows = await this.db
+      .update(automation)
+      .set(set)
+      .where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
+      .returning()
+    return rows[0] ?? null
+  }
   async deleteAutomation(id: string, orgId: string): Promise<void> {
     // Cancel pending work first, then remove the definition — both org-scoped so a stray
     // caller can't reach across tenants. Running/finished runs stay as history.
@@ -2922,6 +2952,22 @@ export class PgMetaStore implements MetaStore {
       .onConflictDoNothing()
       .returning()
     return rows.length > 0
+  }
+
+  // ---- Signup attribution ----------------------------------------------------
+  async recordSignupAttribution(a: NewSignupAttribution): Promise<void> {
+    // The unique user_id index makes a duplicate hook fire a no-op — first write
+    // wins, so the attribution of record stays the one captured at signup time.
+    await this.db.insert(signupAttribution).values(a).onConflictDoNothing()
+  }
+
+  async getSignupAttribution(userId: string): Promise<SignupAttributionRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(signupAttribution)
+      .where(eq(signupAttribution.user_id, userId))
+      .limit(1)
+    return rows[0] ?? null
   }
 
   // ---- Artifact invitations ------------------------------------------------

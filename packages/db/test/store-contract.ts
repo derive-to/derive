@@ -2232,6 +2232,30 @@ export function runStoreContract(
       expect(list.some((a) => a.id === a1.id)).toBe(true)
     })
 
+    it("updates an automation partially, org-scoped; wrong org is a null no-op", async () => {
+      const rec = await store.createAutomation({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: uuid(),
+        trigger: JSON.stringify({ kind: "manual" }),
+        instruction: "before",
+      })
+      const upd = await store.updateAutomation(rec.id, ORG, {
+        instruction: "after",
+        enabled: 0,
+      })
+      expect(upd?.instruction).toBe("after")
+      expect(upd?.enabled).toBe(0)
+      // Untouched fields survive.
+      expect(upd?.trigger).toBe(rec.trigger)
+      // Cross-org: no row updated.
+      expect(
+        await store.updateAutomation(rec.id, "other-org", { instruction: "hijack" }),
+      ).toBeNull()
+      // Empty patch returns the current row.
+      expect((await store.updateAutomation(rec.id, ORG, {}))?.instruction).toBe("after")
+    })
+
     it("batch-loads automations by id in one query; empty ids ⇒ []", async () => {
       const agentId = uuid()
       const mk = () =>
@@ -2430,6 +2454,60 @@ export function runStoreContract(
       expect(await store.assetStorageBytes(ORG)).toBeGreaterThanOrEqual(350)
       const otherTotal = await store.assetStorageBytes(otherOrg)
       expect(otherTotal).toBe(999)
+    })
+  })
+
+  describe(`${label}: signup attribution`, () => {
+    it("records the signup source once per user (first write wins) and reads it back", async () => {
+      const userId = `u_${uuid()}`
+      await store.recordSignupAttribution({
+        id: uuid(),
+        user_id: userId,
+        source_kind: "badge",
+        source_artifact: "ab12cd34",
+        landing_path: "/artifacts/doc-ab12cd34",
+        referrer: "news.ycombinator.com",
+      })
+      // A duplicate hook fire (retry, double submit) must not add a second row or
+      // overwrite the first — the attribution of record is the one at signup time.
+      await store.recordSignupAttribution({
+        id: uuid(),
+        user_id: userId,
+        source_kind: "comment_wall",
+        source_artifact: null,
+        landing_path: null,
+        referrer: null,
+      })
+
+      const rec = await store.getSignupAttribution(userId)
+      expect(rec).toMatchObject({
+        user_id: userId,
+        source_kind: "badge",
+        source_artifact: "ab12cd34",
+        landing_path: "/artifacts/doc-ab12cd34",
+        referrer: "news.ycombinator.com",
+      })
+      expect(rec?.created_at).toBeTruthy()
+    })
+
+    it("returns null for a user with no recorded source (organic signup)", async () => {
+      expect(await store.getSignupAttribution(`u_${uuid()}`)).toBeNull()
+    })
+
+    it("stores nullable fields as null (a campaign link with no artifact)", async () => {
+      const userId = `u_${uuid()}`
+      await store.recordSignupAttribution({
+        id: uuid(),
+        user_id: userId,
+        source_kind: "hn-launch",
+        source_artifact: null,
+        landing_path: "/",
+        referrer: null,
+      })
+      const rec = await store.getSignupAttribution(userId)
+      expect(rec?.source_kind).toBe("hn-launch")
+      expect(rec?.source_artifact).toBeNull()
+      expect(rec?.referrer).toBeNull()
     })
   })
 }

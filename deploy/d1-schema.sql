@@ -282,6 +282,17 @@ CREATE TABLE IF NOT EXISTS beta_signup (
   UNIQUE (email)
 );
 
+CREATE TABLE IF NOT EXISTS signup_attribution (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  source_kind TEXT NOT NULL,
+  source_artifact TEXT,
+  landing_path TEXT,
+  referrer TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (user_id)
+);
+
 CREATE TABLE IF NOT EXISTS oauth_client_workspace (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

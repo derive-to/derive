@@ -23,6 +23,7 @@ import { hyperdriveConn, livePgPool, requestPg } from "./edge-pg"
 import type { SendEmailBinding } from "./email-cf"
 import { bindingEmbedder, EMBED_DIMENSIONS, type WorkersAiLike } from "./embedder"
 import { workspacesBlockingDeletion } from "./lib/account"
+import { signupAttributionHook } from "./lib/attribution"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
@@ -225,6 +226,8 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
             : null
         },
         purgeUserData: (userId) => meta.deleteUserData(userId),
+        // The d_src stamp (lib/attribution.ts) becomes the account's signup_attribution row.
+        recordSignupAttribution: signupAttributionHook(meta),
       })
       app = createApp({
         meta,

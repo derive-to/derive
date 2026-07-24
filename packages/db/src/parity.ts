@@ -46,6 +46,7 @@ import type {
   RunRecord,
   SessionMessageRecord,
   SessionRecord,
+  SignupAttributionRecord,
   VerbRecord,
   VersionRecord,
   WebhookRecord,
@@ -80,6 +81,7 @@ export interface TypedTables {
   artifactInvite: ArtifactInviteRecord
   invitation: InvitationRecord
   betaSignup: BetaSignupRecord
+  signupAttribution: SignupAttributionRecord
   context: ContextRecord
   contextAsker: ContextAskerRecord
   contextSession: SessionRecord

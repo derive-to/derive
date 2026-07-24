@@ -62,6 +62,7 @@ import type {
   NewRun,
   NewSession,
   NewSessionMessage,
+  NewSignupAttribution,
   NewVerb,
   NewVersion,
   NewWebhook,
@@ -87,6 +88,7 @@ import type {
   SessionMessageRecord,
   SessionRecord,
   SessionState,
+  SignupAttributionRecord,
   SlackInstallRecord,
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
@@ -164,6 +166,7 @@ import {
   reviewRound,
   run,
   sessionMessage,
+  signupAttribution,
   slackInstall,
   slackThreadLink,
   slackUserLink,
@@ -292,6 +295,7 @@ export const schema = {
   artifactInvite,
   invitation,
   betaSignup,
+  signupAttribution,
   oauthClientWorkspace,
   context,
   contextAsker,
@@ -338,6 +342,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
+  signupAttribution: true,
   context: true,
   contextAsker: true,
   contextSession: true,
@@ -2470,6 +2475,33 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(desc(automation.created_at))
       .limit(limit)
       .all()
+  const updateAutomation = async (
+    id: string,
+    orgId: string,
+    fields: {
+      agent_id?: string
+      trigger?: string
+      instruction?: string
+      refs?: string | null
+      enabled?: 0 | 1
+    },
+  ): Promise<AutomationRecord | null> => {
+    const set: Record<string, unknown> = {}
+    if (fields.agent_id !== undefined) set.agent_id = fields.agent_id
+    if (fields.trigger !== undefined) set.trigger = fields.trigger
+    if (fields.instruction !== undefined) set.instruction = fields.instruction
+    if (fields.refs !== undefined) set.refs = fields.refs
+    if (fields.enabled !== undefined) set.enabled = fields.enabled
+    if (Object.keys(set).length === 0) return getAutomation(id)
+    return (
+      (await db
+        .update(automation)
+        .set(set)
+        .where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
+        .returning()
+        .get()) ?? null
+    )
+  }
   const deleteAutomation = async (id: string, orgId: string): Promise<void> => {
     // Cancel pending work first, then remove the definition — both org-scoped so a stray
     // caller can't reach across tenants. Running/finished runs stay as history.
@@ -2967,6 +2999,22 @@ export function makeRepos(db: SqliteDb) {
     return row !== undefined
   }
 
+  // ---- Signup attribution ---------------------------------------------------
+  const recordSignupAttribution = async (a: NewSignupAttribution): Promise<void> => {
+    // The unique user_id index makes a duplicate hook fire a no-op — first write
+    // wins, so the attribution of record stays the one captured at signup time.
+    await db.insert(signupAttribution).values(a).onConflictDoNothing().run()
+  }
+
+  const getSignupAttribution = async (userId: string): Promise<SignupAttributionRecord | null> => {
+    const row = await db
+      .select()
+      .from(signupAttribution)
+      .where(eq(signupAttribution.user_id, userId))
+      .get()
+    return row ?? null
+  }
+
   // ---- Artifact invitations ------------------------------------------------
   const createArtifactInvite = async (i: NewArtifactInvite): Promise<ArtifactInviteRecord> =>
     (await db.insert(artifactInvite).values(i).returning().get()) as ArtifactInviteRecord
@@ -3422,6 +3470,7 @@ export function makeRepos(db: SqliteDb) {
     getAutomation,
     getAutomationsByIds,
     listAutomations,
+    updateAutomation,
     deleteAutomation,
     createRun,
     claimDueRuns,
@@ -3466,6 +3515,8 @@ export function makeRepos(db: SqliteDb) {
     deleteInvitation,
     markInvitationAccepted,
     recordBetaSignup,
+    recordSignupAttribution,
+    getSignupAttribution,
     createArtifactInvite,
     getArtifactInviteByToken,
     listPendingArtifactInvites,

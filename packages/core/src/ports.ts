@@ -975,6 +975,19 @@ export interface AgentStore {
   getAutomationsByIds(ids: string[]): Promise<AutomationRecord[]>
   /** A workspace's automations, newest first. Default 100. */
   listAutomations(orgId: string, limit?: number): Promise<AutomationRecord[]>
+  /** Partial update, org-scoped (id + orgId must both match). Undefined fields are
+   *  untouched; refs null clears. Returns the updated row, or null when not found. */
+  updateAutomation(
+    id: string,
+    orgId: string,
+    fields: {
+      agent_id?: string
+      trigger?: string
+      instruction?: string
+      refs?: string | null
+      enabled?: 0 | 1
+    },
+  ): Promise<AutomationRecord | null>
   /** Remove an automation and cancel its still-queued runs, org-scoped so a caller can't
    *  reach across tenants. Running/finished runs stay as history. */
   deleteAutomation(id: string, orgId: string): Promise<void>
@@ -1117,6 +1130,13 @@ export interface AgentStore {
    *  new, false when it was already on the list — the caller resends the access
    *  email either way, so "sign up again" doubles as "resend my link". */
   recordBetaSignup(id: string, email: string): Promise<boolean>
+
+  // ---- Signup attribution (which surface sourced a signup) -----------------
+  /** Record where a signup came from, once per user — a duplicate hook fire is a
+   *  no-op (first write wins; the attribution of record is the one at signup). */
+  recordSignupAttribution(a: NewSignupAttribution): Promise<void>
+  /** The recorded source for a user, or null for an organic signup. */
+  getSignupAttribution(userId: string): Promise<SignupAttributionRecord | null>
 
   /** Queue a mention into an agent's pull inbox. */
   createAgentMention(m: NewAgentMention): Promise<void>
@@ -1672,6 +1692,29 @@ export interface BetaSignupRecord {
   email: string
   created_at: string
 }
+
+/**
+ * Where a signup came from. One row per user, recorded by the
+ * auth layer's user-create hook from the `d_src` cookie the capture middleware
+ * stamped on the way in; first write wins. Organic signups have no row.
+ */
+export interface SignupAttributionRecord {
+  id: string
+  /** The Better Auth user this attribution belongs to (no FK; auth owns its tables). */
+  user_id: string
+  /** The sourcing surface: an artifact surface (badge, comment_wall, duplicate,
+   *  share_chrome, artifact_visit) or a campaign token (hn-launch, …). */
+  source_kind: string
+  /** The artifact (short id) the sourcing surface lived on, when known. */
+  source_artifact: string | null
+  /** Path of the page that stamped the cookie. */
+  landing_path: string | null
+  /** Referrer host at stamp time. */
+  referrer: string | null
+  created_at: string
+}
+
+export type NewSignupAttribution = Omit<SignupAttributionRecord, "created_at">
 
 /**
  * A pending per-artifact share invitation: an email invited to one artifact at a

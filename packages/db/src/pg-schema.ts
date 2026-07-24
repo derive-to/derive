@@ -364,6 +364,21 @@ export const betaSignup = pgTable(
   (t) => [uniqueIndex("beta_signup_email").on(t.email)],
 )
 
+// Where a signup came from (see schema.ts for the full note).
+export const signupAttribution = pgTable(
+  "signup_attribution",
+  {
+    id: text("id").primaryKey(),
+    user_id: text("user_id").notNull(),
+    source_kind: text("source_kind").notNull(),
+    source_artifact: text("source_artifact"),
+    landing_path: text("landing_path"),
+    referrer: text("referrer"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("signup_attribution_user").on(t.user_id)],
+)
+
 export const agentMention = pgTable("agent_mention", {
   id: text("id").primaryKey(),
   agent_id: text("agent_id").notNull(),
@@ -798,6 +813,7 @@ const TABLES = [
   invitation,
   artifactInvite,
   betaSignup,
+  signupAttribution,
   oauthClientWorkspace,
   artifactFavorite,
   follow,
