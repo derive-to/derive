@@ -181,6 +181,14 @@ export class DeriveClient {
     return r.sessions
   }
 
+  /** The owner's connected model credential for a provider (decrypted), or null. The
+   *  server scopes it to THIS agent's registrant, so a runner only ever sees its own
+   *  owner's plan token. */
+  async modelCredential(provider) {
+    const r = await this.call(`/v1/agent/model-credential?provider=${encodeURIComponent(provider)}`)
+    return r.credential ?? null
+  }
+
   /** Post an answer. `answers` names the asker message it addresses — if a
    *  follow-up landed mid-run, the server keeps the session open for re-serve
    *  instead of settling it over the unseen follow-up. */
@@ -773,8 +781,46 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
 /** Boot the host state serve/once share: context info, repo corpus, skills,
  *  conventions. Everything here is per-boot truth on purpose (see the comments
  *  inline) — `once` inherits the same freshness contract as a serve restart. */
+/** Resolve the model credential this run authenticates with. The runner process serves
+ *  exactly one context (one owner), so injecting the owner's connected plan token into this
+ *  process's env is isolation by construction: it is used only for this owner's runs and
+ *  overrides any ambient token. Precedence:
+ *    1. the owner's connected per-user plan (fetched, decrypted, provider-mapped) — inject it;
+ *    2. no connection but an ambient token is set (self-host's single global plan) — use it;
+ *    3. neither — FAIL CLOSED with a connect-your-plan message (never a shared fallback).
+ *  A lookup error (older/self-host server without the endpoint) degrades to the ambient path. */
+export async function applyModelCredential(cfg, client) {
+  if (cfg.mock) return
+  const provider = selectProvider(cfg.providerName)
+  let cred = null
+  try {
+    cred = await client.modelCredential(cfg.providerName)
+  } catch (e) {
+    console.error(`[runner] model-credential lookup failed (${e.message}); using ambient env`)
+    return
+  }
+  if (cred) {
+    const env = provider.credentialEnv?.(cred.kind, cred.value)
+    if (!env)
+      throw new Error(
+        `the connected ${cfg.providerName} credential (${cred.kind}) can't be injected — connect an API key, or use a provider that supports it`,
+      )
+    for (const [k, v] of Object.entries(env)) process.env[k] = v
+    console.log(`[runner] running on the owner's connected ${cfg.providerName} plan`)
+    return
+  }
+  const ambient = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"].some(
+    (k) => process.env[k],
+  )
+  if (!ambient)
+    throw new Error(
+      `no model plan connected for this context's owner — connect one at ${cfg.server} (Settings → Model plans)`,
+    )
+}
+
 async function bootHost(cfg, modeLabel) {
   const client = new DeriveClient(cfg.server, cfg.token)
+  await applyModelCredential(cfg, client)
   const info = await client.getContext(cfg.contextId)
   if (!info.manifest_md && !cfg.manifestFile) throw new Error("context has no readable manifest")
   const readManifest = () =>

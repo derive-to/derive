@@ -161,6 +161,13 @@ export const claudeCode = {
     return true
   },
 
+  /** Map an owner's fetched credential to the env the `claude` CLI reads. A plan/OAuth
+   *  token rides CLAUDE_CODE_OAUTH_TOKEN; an API key rides ANTHROPIC_API_KEY. Returns an
+   *  env map the runner sets for this (single-owner) run process. */
+  credentialEnv(kind, value) {
+    return kind === "oauth" ? { CLAUDE_CODE_OAUTH_TOKEN: value } : { ANTHROPIC_API_KEY: value }
+  },
+
   /** Version probe for `derive runner doctor`. Resolves the version string, or
    *  null when the binary is missing / not spawnable. */
   version(bin) {

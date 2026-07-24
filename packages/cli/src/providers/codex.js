@@ -101,6 +101,14 @@ export const codex = {
     return true
   },
 
+  /** Map an owner's credential to Codex's env. An API key rides OPENAI_API_KEY. A
+   *  ChatGPT-plan login is file-based (~/.codex/auth.json), not an env var, so it can't
+   *  be injected this way yet — returns null (the runner then fails closed with a clear
+   *  message); wiring per-run file auth is a follow-up. */
+  credentialEnv(kind, value) {
+    return kind === "api_key" ? { OPENAI_API_KEY: value } : null
+  },
+
   version(bin) {
     return new Promise((resolve) => {
       const p = spawn(bin, ["--version"], { stdio: ["ignore", "pipe", "ignore"], timeout: 15_000 })

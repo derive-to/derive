@@ -714,6 +714,19 @@ export interface IntegrationStore {
   setSlackInstall(s: SlackInstallRecord): Promise<void>
   /** Disconnect Slack for a workspace. */
   deleteSlackInstall(orgId: string): Promise<void>
+  // ---- Per-user model-plan credentials -----------------------------------
+  /** A user's own model credential for a provider (encrypted `secret`), or null. */
+  getModelCredential(
+    orgId: string,
+    userId: string,
+    provider: string,
+  ): Promise<ModelCredentialRecord | null>
+  /** Upsert a user's model credential (keyed org+user+provider). */
+  setModelCredential(c: ModelCredentialRecord): Promise<void>
+  /** Remove a user's model credential for a provider. */
+  deleteModelCredential(orgId: string, userId: string, provider: string): Promise<void>
+  /** A user's connected credentials (all providers) — for the settings hint list. */
+  listModelCredentials(orgId: string, userId: string): Promise<ModelCredentialRecord[]>
   /** The Slack message a Derive thread is mirrored to (for threading replies), or null. */
   getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null>
   /** The Derive thread a Slack message maps to (for reply-back), or null. */
@@ -2084,6 +2097,21 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
 /** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot
  *  token, AES-encrypted at rest. `default_channel` is where Derive posts when an artifact
  *  has no more specific channel. */
+/** A team member's own model-plan credential, encrypted at rest. `secret` is the AES-GCM
+ *  blob (lib/crypto); `provider` matches a runner provider ("claude-code" | "codex"); `kind`
+ *  distinguishes an OAuth/plan token from a plain API key. Scoped (org, user, provider). */
+export interface ModelCredentialRecord {
+  id: string
+  org_id: string
+  user_id: string
+  provider: string
+  kind: "oauth" | "api_key"
+  secret: string
+  hint: string
+  created_at: string
+  updated_at: string
+}
+
 export interface SlackInstallRecord {
   org_id: string
   team_id: string

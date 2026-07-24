@@ -2272,6 +2272,44 @@ export function runStoreContract(
       expect(got.map((x) => x.id).sort()).toEqual([a.id, b.id].sort())
     })
 
+    it("model credentials: upsert, get, list per user, delete — all scoped (org, user, provider)", async () => {
+      const now = "2026-07-24T00:00:00.000Z"
+      const cred = (userId: string, provider: string, secret: string) => ({
+        id: uuid(),
+        org_id: ORG,
+        user_id: userId,
+        provider,
+        kind: "oauth" as const,
+        secret,
+        hint: secret.slice(-4),
+        created_at: now,
+        updated_at: now,
+      })
+      await store.setModelCredential(cred("u1", "codex", "enc-A"))
+      await store.setModelCredential(cred("u1", "claude-code", "enc-B"))
+      await store.setModelCredential(cred("u2", "codex", "enc-C"))
+
+      // Get is keyed (org, user, provider) — never leaks across users.
+      expect((await store.getModelCredential(ORG, "u1", "codex"))?.secret).toBe("enc-A")
+      expect((await store.getModelCredential(ORG, "u2", "codex"))?.secret).toBe("enc-C")
+      expect(await store.getModelCredential(ORG, "u1", "gemini")).toBeNull()
+
+      // Upsert replaces the secret for the same key, not a second row.
+      await store.setModelCredential(cred("u1", "codex", "enc-A2"))
+      expect((await store.getModelCredential(ORG, "u1", "codex"))?.secret).toBe("enc-A2")
+
+      // List returns only that user's rows.
+      const u1 = await store.listModelCredentials(ORG, "u1")
+      expect(u1.map((c) => c.provider).sort()).toEqual(["claude-code", "codex"])
+      expect((await store.listModelCredentials(ORG, "u2")).map((c) => c.provider)).toEqual(["codex"])
+
+      // Delete is scoped: removing u1/codex leaves u1/claude-code and u2/codex.
+      await store.deleteModelCredential(ORG, "u1", "codex")
+      expect(await store.getModelCredential(ORG, "u1", "codex")).toBeNull()
+      expect((await store.getModelCredential(ORG, "u1", "claude-code"))?.secret).toBe("enc-B")
+      expect((await store.getModelCredential(ORG, "u2", "codex"))?.secret).toBe("enc-C")
+    })
+
     it("queue + ledger: enqueue → claim (running) → finish; a second claim gets nothing", async () => {
       const agentId = uuid()
       // A queued run due in the past.
