@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest"
 import type { AutomationRef } from "@/api"
-import { runOutcome, runStatusLabel, runWrites, stampMode, triggerLabel } from "./automation-format"
+import {
+  runOutcome,
+  runStatusLabel,
+  runWrites,
+  stampMode,
+  targetSummary,
+  triggerLabel,
+} from "./automation-format"
 
 describe("triggerLabel", () => {
   it("labels each trigger kind in plain words", () => {
@@ -51,6 +58,26 @@ describe("stampMode", () => {
   })
   it("empty targets → empty", () => {
     expect(stampMode([], "publish")).toEqual([])
+  })
+})
+
+describe("targetSummary", () => {
+  it("counts by kind and pluralizes; empty when there are no targets", () => {
+    expect(targetSummary([])).toBe("")
+    expect(targetSummary([{ kind: "artifact", id: "a1" }])).toBe("1 document")
+    expect(
+      targetSummary([
+        { kind: "artifact", id: "a1" },
+        { kind: "artifact", id: "a2" },
+        { kind: "tag", tag: "weekly" },
+      ]),
+    ).toBe("2 documents, 1 tag")
+    expect(
+      targetSummary([
+        { kind: "collection", id: "c1" },
+        { kind: "collection", id: "c2" },
+      ]),
+    ).toBe("2 collections")
   })
 })
 

@@ -14,7 +14,13 @@ import { automationsQuery, runsQuery, workspaceQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { AutomationForm } from "./automation-form"
-import { runOutcome, runStatusLabel, runWrites, triggerLabel } from "./automation-format"
+import {
+  runOutcome,
+  runStatusLabel,
+  runWrites,
+  targetSummary,
+  triggerLabel,
+} from "./automation-format"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
@@ -122,6 +128,7 @@ function AutomationRow({
     success: "Automation removed",
     onSuccess: () => onDone(),
   })
+  const summary = targetSummary(automation.refs)
   return (
     <div data-testid={`automation-row-${automation.id}`} className="flex items-center gap-3 py-3">
       <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent">
@@ -133,57 +140,59 @@ function AutomationRow({
           <Badge variant="secondary">{triggerLabel(automation.trigger)}</Badge>
           {!automation.enabled && <Badge variant="outline">Paused</Badge>}
         </div>
-        <div className="text-sm text-muted-foreground">
-          Runs as this workspace's agent ·{" "}
+        <div className="truncate text-sm text-muted-foreground">
           {automation.refs.some((r) => r.mode === "publish")
-            ? "publishes live"
-            : "proposes for review"}
+            ? "Publishes live"
+            : "Proposes for review"}
+          {summary && ` · ${summary}`}
         </div>
       </div>
-      {canRun && automation.enabled && (
-        <Button
-          data-testid={`automation-run-${automation.id}`}
-          variant="secondary"
-          size="sm"
-          onClick={() => run.mutate()}
-          loading={run.isPending}
-          disabled={run.isPending}
-        >
-          Run now
-        </Button>
-      )}
-      {canRemove && (
-        <Button
-          data-testid={`automation-edit-${automation.id}`}
-          variant="ghost"
-          size="sm"
-          onClick={() => setEditing(true)}
-        >
-          Edit
-        </Button>
-      )}
-      {canRemove && (
-        <Button
-          data-testid={`automation-pause-${automation.id}`}
-          variant="ghost"
-          size="sm"
-          onClick={() => pause.mutate()}
-          loading={pause.isPending}
-          disabled={pause.isPending}
-        >
-          {automation.enabled ? "Pause" : "Resume"}
-        </Button>
-      )}
-      {canRemove && (
-        <Button
-          data-testid={`automation-remove-${automation.id}`}
-          variant="destructive-ghost"
-          size="sm"
-          onClick={() => setConfirming(true)}
-        >
-          Remove
-        </Button>
-      )}
+      <div className="flex shrink-0 items-center gap-1">
+        {canRun && automation.enabled && (
+          <Button
+            data-testid={`automation-run-${automation.id}`}
+            variant="secondary"
+            size="sm"
+            onClick={() => run.mutate()}
+            loading={run.isPending}
+            disabled={run.isPending}
+          >
+            Run now
+          </Button>
+        )}
+        {canRemove && (
+          <Button
+            data-testid={`automation-edit-${automation.id}`}
+            variant="ghost"
+            size="sm"
+            onClick={() => setEditing(true)}
+          >
+            Edit
+          </Button>
+        )}
+        {canRemove && (
+          <Button
+            data-testid={`automation-pause-${automation.id}`}
+            variant="ghost"
+            size="sm"
+            onClick={() => pause.mutate()}
+            loading={pause.isPending}
+            disabled={pause.isPending}
+          >
+            {automation.enabled ? "Pause" : "Resume"}
+          </Button>
+        )}
+        {canRemove && (
+          <Button
+            data-testid={`automation-remove-${automation.id}`}
+            variant="destructive-ghost"
+            size="sm"
+            onClick={() => setConfirming(true)}
+          >
+            Remove
+          </Button>
+        )}
+      </div>
       <Dialog open={editing} onOpenChange={setEditing}>
         <DialogContent data-testid="automation-edit-dialog">
           <DialogHeader>
