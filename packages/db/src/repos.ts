@@ -2524,6 +2524,56 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(desc(run.created_at))
       .limit(limit)
       .all()
+  const findCoalescibleRun = async (
+    automationId: string,
+    cutoffIso: string,
+  ): Promise<RunRecord | null> =>
+    (await db
+      .select()
+      .from(run)
+      .where(
+        and(
+          eq(run.automation_id, automationId),
+          eq(run.status, "queued"),
+          lte(run.scheduled_for, cutoffIso),
+        ),
+      )
+      .orderBy(desc(run.created_at))
+      .limit(1)
+      .get()) ?? null
+  const appendRunPayload = async (
+    runId: string,
+    payload: unknown,
+    maxMetaBytes: number,
+  ): Promise<RunRecord | null> => {
+    // Read the current meta, then CAS on it: the UPDATE applies only while the run is still
+    // queued AND its meta is unchanged since the read. A concurrent claim (→ running) or a
+    // racing append both fall through to null, and the caller enqueues a fresh run — so a
+    // payload is never dropped, at worst an extra run is created under contention.
+    const row = await db
+      .select()
+      .from(run)
+      .where(and(eq(run.id, runId), eq(run.status, "queued")))
+      .get()
+    if (!row?.meta) return null
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(row.meta) as Record<string, unknown>
+    } catch {
+      return null
+    }
+    const payloads = Array.isArray(parsed.payloads) ? parsed.payloads : []
+    const nextMeta = JSON.stringify({ ...parsed, payloads: [...payloads, payload] })
+    if (nextMeta.length > maxMetaBytes) return null
+    return (
+      (await db
+        .update(run)
+        .set({ meta: nextMeta })
+        .where(and(eq(run.id, runId), eq(run.status, "queued"), eq(run.meta, row.meta)))
+        .returning()
+        .get()) ?? null
+    )
+  }
   const getAgentByToken = async (token: string): Promise<AgentRecord | null> =>
     (await db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
   // Introspect a Better Auth oidc-provider access token (its own tables, same DB).
@@ -3258,6 +3308,8 @@ export function makeRepos(db: SqliteDb) {
     claimDueRuns,
     finishRun,
     listRuns,
+    findCoalescibleRun,
+    appendRunPayload,
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,

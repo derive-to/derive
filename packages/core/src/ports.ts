@@ -999,6 +999,16 @@ export interface AgentStore {
   ): Promise<RunRecord | null>
   /** The workspace's recent runs, newest first (the activity view / ledger). Default 50. */
   listRuns(orgId: string, limit?: number): Promise<RunRecord[]>
+  /** The newest still-queued run for an automation whose scheduled_for ≤ cutoff — the
+   *  coalescing target when a burst of webhook fires arrives close together. Null when none
+   *  is open, so the caller enqueues a fresh run. */
+  findCoalescibleRun(automationId: string, cutoffIso: string): Promise<RunRecord | null>
+  /** Append a payload into a STILL-QUEUED run's `meta.payloads[]`, guarded so it applies only
+   *  while the run is queued and its meta is unchanged since the read (optimistic concurrency).
+   *  Returns the updated row, or null if the run left the queue, was appended concurrently, or
+   *  would exceed maxMetaBytes — in every null case the caller enqueues a fresh run, so a
+   *  payload is never lost (at worst an extra run is created under contention). */
+  appendRunPayload(runId: string, payload: unknown, maxMetaBytes: number): Promise<RunRecord | null>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>
   /** Resolve a live OAuth access token (by its stored hash) to its grant. */
@@ -1339,6 +1349,10 @@ export interface AutomationTrigger {
   tz?: string
   /** event: the event name (e.g. "comment.opened", "upstream.published", "webhook"). */
   on?: string
+  /** event/webhook: sha256 of the fire secret. The raw secret rides only the create
+   *  response that mints it; the fire endpoint verifies a presented bearer against this
+   *  hash. Never surfaced on read — redacted to a boolean when an automation is presented. */
+  secret_hash?: string
 }
 
 /** A standing agent job: WHAT to do (instruction), WHO does it (agent), and the rule for

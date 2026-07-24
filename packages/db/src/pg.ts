@@ -2496,6 +2496,52 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(run.created_at))
       .limit(limit)
   }
+  async findCoalescibleRun(automationId: string, cutoffIso: string): Promise<RunRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(run)
+      .where(
+        and(
+          eq(run.automation_id, automationId),
+          eq(run.status, "queued"),
+          lte(run.scheduled_for, cutoffIso),
+        ),
+      )
+      .orderBy(desc(run.created_at))
+      .limit(1)
+    return rows[0] ?? null
+  }
+  async appendRunPayload(
+    runId: string,
+    payload: unknown,
+    maxMetaBytes: number,
+  ): Promise<RunRecord | null> {
+    // Read the current meta, then CAS on it: the UPDATE applies only while the run is still
+    // queued AND its meta is unchanged since the read. A concurrent claim (→ running) or a
+    // racing append both fall through to null, and the caller enqueues a fresh run — so a
+    // payload is never dropped, at worst an extra run is created under contention.
+    const rows = await this.db
+      .select()
+      .from(run)
+      .where(and(eq(run.id, runId), eq(run.status, "queued")))
+    const row = rows[0]
+    if (!row?.meta) return null
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(row.meta) as Record<string, unknown>
+    } catch {
+      return null
+    }
+    const payloads = Array.isArray(parsed.payloads) ? parsed.payloads : []
+    const nextMeta = JSON.stringify({ ...parsed, payloads: [...payloads, payload] })
+    if (nextMeta.length > maxMetaBytes) return null
+    const updated = await this.db
+      .update(run)
+      .set({ meta: nextMeta })
+      .where(and(eq(run.id, runId), eq(run.status, "queued"), eq(run.meta, row.meta)))
+      .returning()
+    return updated[0] ?? null
+  }
   async getAgentByToken(token: string): Promise<AgentRecord | null> {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))
     return rows[0] ?? null

@@ -350,6 +350,7 @@ export function createApp(deps: AppDeps): Hono {
     /^\/v1\/vitals$/, // anonymous Core Web Vitals beacon (telemetry, no state)
     /^\/v1\/beta\/signup$/, // marketing-site beta signup — anonymous is the point; IP-capped
     /^\/v1\/sync\/github\/webhook$/, // GitHub App webhook — HMAC signature is the gate
+    /^\/v1\/automations\/[^/]+\/fire$/, // automation fire URL — the per-automation secret is the gate
     /^\/v1\/slack\/events$/, // Slack Events API — signing-secret signature is the gate
     /^\/v1\/slack\/interactivity$/, // Slack Block Kit actions — signing-secret signature is the gate
     /^\/v1\/slack\/commands$/, // Slack slash command (/derive) — signing-secret signature is the gate
