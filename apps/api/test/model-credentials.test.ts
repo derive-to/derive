@@ -38,7 +38,7 @@ describe("model credentials", () => {
     await connect(owner.email, {
       provider: "codex",
       kind: "api_key",
-      token: "sk-owner-plan-1234",
+      token: "owner-plan-fixture-value",
     })
     const agent = await mintAgent(owner.email, "Owner Runner")
     const got = await (
@@ -47,7 +47,7 @@ describe("model credentials", () => {
       })
     ).json()
     // Decrypted round-trip: the runner gets the real value to inject.
-    expect(got.credential).toEqual({ kind: "api_key", value: "sk-owner-plan-1234" })
+    expect(got.credential).toEqual({ kind: "api_key", value: "owner-plan-fixture-value" })
   })
 
   it("ISOLATION: the endpoint resolves ONLY the calling agent's registrant + provider", async () => {
