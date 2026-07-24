@@ -483,11 +483,13 @@ export function Artifact() {
   const canMove = art.my_role === "owner"
   const isLocked = !!art.locked
   const effectiveCanPublish = canPublish && !isLocked
-  // A logged-out visitor on a public/link artifact: strictly view-only. They get
-  // the document + live presence/cursors (Google-Docs style) and nothing else —
-  // no favorite, tags, collections, share, report, comments, or version tools.
-  // The API gates every one of those for anon (anonLocked); hiding them here keeps
-  // the chrome honest so there's no dead/forbidden affordance to bump into.
+  // A logged-out visitor on a public/link artifact. On a view-only link they're
+  // strictly view-only — the document + live presence/cursors (Google-Docs style) and
+  // nothing else — and drop into PublicViewer below. On a commenter+ link they ALSO get
+  // the comment surface (canComment below), but never the member tools: no favorite,
+  // tags, collections, share, report, or version tools. The API gates every one of
+  // those for anon (anonLocked); hiding them here keeps the chrome honest so there's no
+  // dead/forbidden affordance to bump into.
   const isAnon = !me
   // Commenting needs commenter+ (matches the API's `comment` gate). A signed-in viewer
   // reading via a view-only link sees comments but gets no write affordance. An
@@ -525,7 +527,10 @@ export function Artifact() {
   // entry point — there's no top-bar toggle or `c` key on a phone, and a hidden
   // panel made comments unreachable). Computed here rather than in the panel hook
   // so a desktop→mobile resize with a persisted "hidden" can't strand a phone.
-  const effectivePanel = isMobile && !isAnon ? "open" : panel
+  // Keyed on "can this viewer see comments here" (any signed-in viewer, or an anon
+  // commenter on a commenter+ link) — an anon view-only visitor never reaches here
+  // (PublicViewer below), so this only forces the sheet open for someone with a sheet.
+  const effectivePanel = isMobile && (!isAnon || canComment) ? "open" : panel
 
   // The rendered artifact frame — identical for the anon public viewer and the authed
   // workbench, so build it once and place it in both branches (no prop drift).
@@ -560,11 +565,14 @@ export function Artifact() {
     />
   )
 
-  // Anonymous visitor → the chrome-light public/viral viewer (the app shell has
-  // dropped the rail). The render is the hero; a slim public header carries the
-  // brand, the creator byline, presence, and the growth verbs. The comment/editor
-  // chrome is absent — the API gates every write for anon anyway.
-  if (isAnon)
+  // Anonymous view-only visitor → the chrome-light public/viral viewer (the app shell
+  // has dropped the rail). The render is the hero; a slim public header carries the
+  // brand, the creator byline, presence, and the growth verbs. The comment/editor chrome
+  // is absent — the API gates every write for a view-only anon anyway. An anon visitor
+  // who CAN comment (a commenter+ link — canComment true) falls through to the full
+  // workbench below instead, so the comment surfaces (rail, selection composer, mobile
+  // sheet) mount for them; the member-only chrome there stays gated on `!isAnon`.
+  if (isAnon && !canComment)
     return (
       <PublicViewer
         art={art}
@@ -668,8 +676,20 @@ export function Artifact() {
                 <span className="hidden sm:inline">Reconnecting…</span>
               </span>
             )}
-            <Presence viewers={live.viewers} selfId={me?.id} compact={isMobile} />
+            {/* Self id matches the live hook's (me, else the stable guest id) so an anon
+                commenter — who now reaches this facepile — filters out their own dot. */}
+            <Presence
+              viewers={live.viewers}
+              selfId={me?.id ?? guestPresenceId()}
+              compact={isMobile}
+            />
           </div>
+          {/* The workbench action bar is a signed-in workspace member's toolbar — Share,
+              favorite, tags/collections, insights, review, edit, report — every one of
+              which the API gates for anon (anonLocked). So it stays gated on `!isAnon`
+              even now an anon commenter falls through: showing it would be a row of dead,
+              forbidden affordances. Their comment surfaces come from the rail/sheet below
+              (which the panel opens by default), not from this bar's comments toggle. */}
           {!isAnon && (
             <ArtifactTopBar
               shortId={shortId}
@@ -768,17 +788,21 @@ export function Artifact() {
                 the empty panel. On mobile NEITHER exists (the toggle is desktop-only,
                 there's no keyboard), so the FAB is the sole entry point and must show
                 even at zero — otherwise a comment-less doc has no way into comments. */}
-            {!isAnon && !focus && !isMobile && panel === "hidden" && openCount > 0 && (
-              <DocFab
-                title="Show comments (c)"
-                testId="artifact-comments-fab"
-                onClick={() => setPanel("open")}
-              >
-                {openCount > 0
-                  ? `${openCount} comment${openCount === 1 ? "" : "s"}`
-                  : "Show comments"}
-              </DocFab>
-            )}
+            {(!isAnon || canComment) &&
+              !focus &&
+              !isMobile &&
+              panel === "hidden" &&
+              openCount > 0 && (
+                <DocFab
+                  title="Show comments (c)"
+                  testId="artifact-comments-fab"
+                  onClick={() => setPanel("open")}
+                >
+                  {openCount > 0
+                    ? `${openCount} comment${openCount === 1 ? "" : "s"}`
+                    : "Show comments"}
+                </DocFab>
+              )}
             {/* Focus mode: the one way back (the header is hidden). Esc also exits. */}
             {focus && (
               <FloatingControl
@@ -802,8 +826,12 @@ export function Artifact() {
               isAnon={isAnon}
               canComment={canComment}
               reviewCard={
-                // Top of the comments rail, not its own pane; members who can act only.
-                canComment ? <ReviewCard shortId={shortId} refreshKey={reviewTick} /> : undefined
+                // Top of the comments rail, not its own pane; signed-in members who can
+                // act only — never an anon commenter (the review/approve loop, incl. the
+                // card's send-back, is account-gated), so keep it off the anon path.
+                canComment && !isAnon ? (
+                  <ReviewCard shortId={shortId} refreshKey={reviewTick} />
+                ) : undefined
               }
               onSheetHeight={setSheetInset}
               docLive={docLive}

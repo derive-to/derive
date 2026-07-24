@@ -483,8 +483,11 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
                 : "Revision applied"}
           </span>
           {/* Ready → the one click from "the agent proposed" to the review overlay that
-              lets you approve it, closing the loop without hunting through the ⋯ menu. */}
-          {requestStage === "ready" && canComment && (
+              lets you approve it, closing the loop without hunting through the ⋯ menu.
+              The review/approve loop is account-gated (a member surface), so an anonymous
+              commenter — who reaches this card via a commenter+ link — never gets the
+              trigger: it's the one comment-adjacent affordance that opens Review. */}
+          {requestStage === "ready" && canComment && !isGuest && (
             <Button
               variant="default"
               size="xs"
@@ -690,6 +693,10 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
                   bare
                   testId="comment-reply-input"
                   sendTestId="comment-reply-send"
+                  // A guest with no name yet can't send — disable the send affordance
+                  // instead of letting it look live and silently no-op (sendReply's
+                  // guard), matching the composer's own disabled gate.
+                  canSend={!isGuest || !!guestName.trim()}
                   className="field-sizing-content max-h-32 min-h-8 resize-none px-1.5"
                   value={reply}
                   onChange={setReply}

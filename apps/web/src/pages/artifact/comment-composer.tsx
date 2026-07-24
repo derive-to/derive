@@ -69,6 +69,7 @@ export function MentionField({
   style,
   testId,
   sendTestId,
+  canSend,
   bare,
 }: {
   value: string
@@ -89,6 +90,11 @@ export function MentionField({
    *  Replaces the emoji trigger — the two share the right rail, and :shortcodes:
    *  still cover emoji here. */
   sendTestId?: string
+  /** Gate for the send affordance (Enter + the in-well ↑ button), matching the
+   *  composer's `disabled` gate. `false` disables sending even with text — the reply
+   *  line passes this so a guest with no name can't silently no-op a send. Undefined
+   *  (the default) keeps sending open once there's text. */
+  canSend?: boolean
   /** No border/ring of its own — for a field living inside a container that
    *  already draws the edge (the thread card's reply line). A bordered well
    *  inside a bordered card stacked three edges in twenty pixels. Focus shows
@@ -185,7 +191,7 @@ export function MentionField({
   // Mentions whose "@Name" survived edits are the real ones.
   const resolve = () => mentions.filter((m) => value.includes(`@${m.name}`))
   const submit = () => {
-    if (value.trim()) onSubmit(resolve())
+    if (value.trim() && canSend !== false) onSubmit(resolve())
   }
 
   const onKeyDown = (e: ReactKeyboardEvent) => {
@@ -347,6 +353,9 @@ export function MentionField({
           size="icon-xs"
           data-testid={sendTestId}
           aria-label="Send"
+          // Disabled the same way the composer's Comment button is (see canSend) —
+          // so a guest with no name sees an inert send, not one that silently no-ops.
+          disabled={canSend === false}
           // mousedown-preventDefault keeps the field focused through the click.
           onMouseDown={(e) => e.preventDefault()}
           onClick={submit}

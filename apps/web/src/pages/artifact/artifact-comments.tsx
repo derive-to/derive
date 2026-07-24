@@ -21,8 +21,11 @@ import {
 /**
  * All the comment surfaces for an artifact, in one place: the desktop margin aside,
  * the phone slide-up sheet, and the floating "comment on the selection" affordance.
- * Hidden entirely for an anonymous visitor (read-only). The page owns the state +
- * mutations and threads them in.
+ * Shown to any viewer who can SEE comments here — a signed-in viewer (read, incl.
+ * view-only), or an anonymous commenter on a commenter+ link (`canComment`); an
+ * anonymous view-only visitor never reaches this (they get PublicViewer). Write
+ * affordances inside stay gated on `canComment`. The page owns the state + mutations
+ * and threads them in.
  */
 export function ArtifactComments(p: {
   shortId: string
@@ -132,7 +135,7 @@ export function ArtifactComments(p: {
             className="pointer-events-none fixed bottom-0 left-0 -z-10 size-px resize-none border-0 bg-transparent p-0 text-base opacity-0"
           />
         )}
-        {!isMobile && !isAnon && (
+        {!isMobile && (!isAnon || canComment) && (
           <aside
             className={cn(
               // overflow-clip: focus scrolling must never shift this box — the pin
@@ -164,7 +167,7 @@ export function ArtifactComments(p: {
         {/* Phones: comments live in a slide-up sheet that takes the bottom half, so
           the document stays visible above it. Tapping a quote scrolls the visible
           document to the highlight without closing the sheet. */}
-        {isMobile && !isAnon && (
+        {isMobile && (!isAnon || canComment) && (
           <MobileComments
             open={panel === "open"}
             openThreads={p.openThreads}

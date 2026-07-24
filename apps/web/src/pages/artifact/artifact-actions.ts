@@ -65,8 +65,13 @@ export function useArtifactActions(p: {
   // re-renders the composer/reply line immediately, mirrored to storage on every change.
   const [guestName, setGuestNameState] = useState(getGuestName)
   const setGuestName = (v: string) => {
+    // Persist trims (the lib), but the LIVE mirror must keep interior + trailing
+    // spaces so a name can be typed word by word — trimming here on every keystroke
+    // ate the space between "Jane" and "Doe" ("Jane Doe" collapsed to "JaneDoe").
+    // Trimming happens where it matters: at persist, at the submit-gate checks
+    // (`guestName.trim()`), and on the author sent with the comment (below).
     persistGuestName(v)
-    setGuestNameState(v.trim().slice(0, 80))
+    setGuestNameState(v.slice(0, 80))
   }
 
   const startEdit = async () => {
@@ -177,7 +182,10 @@ export function useArtifactActions(p: {
     const tempId = `temp-${crypto.randomUUID()}`
     // An anonymous poster sends their self-named `guestName` as the author (the server
     // requires it for anon on a commenter+ link); a signed-in `me` never carries one.
-    const guestAuthor = !me ? guestName : undefined
+    // Trim here: the live state mirror now keeps trailing spaces (so typing works), so
+    // the value that ships must be trimmed like the persisted one — the submit gate has
+    // already guaranteed it's non-empty.
+    const guestAuthor = !me ? guestName.trim() : undefined
     const optimistic: Comment = {
       id: tempId,
       thread_id: opts?.threadId ?? tempId,
