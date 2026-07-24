@@ -2445,6 +2445,18 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.insert(agent).values(a).returning()
     return one(rows)
   }
+  async rotateAgentToken(
+    id: string,
+    orgId: string,
+    tokenHash: string,
+  ): Promise<AgentRecord | null> {
+    const rows = await this.db
+      .update(agent)
+      .set({ token: tokenHash })
+      .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
+      .returning()
+    return (rows[0] as AgentRecord | undefined) ?? null
+  }
   listAgents(orgId: string): Promise<AgentRecord[]> {
     return this.db.select().from(agent).where(eq(agent.org_id, orgId))
   }

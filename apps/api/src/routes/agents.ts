@@ -19,6 +19,7 @@ export const agentRoutes = (ctx: AppContext) => {
     name: a.name,
     role: a.role,
     hosted: a.hosted === 1,
+    managed: a.managed === 1,
     created_at: a.created_at,
   })
 
@@ -36,6 +37,11 @@ export const agentRoutes = (ctx: AppContext) => {
         .boolean()
         .describe(
           "Served by Derive's managed executor. Hosting changes where the agent runs, never its principal or cap.",
+        ),
+      managed: z
+        .boolean()
+        .describe(
+          "Auto-minted for one context at creation — the context's Derive access, not a user-named persona. Hidden from the roster UI.",
         ),
       created_at: z.string(),
     })
@@ -154,6 +160,33 @@ export const agentRoutes = (ctx: AppContext) => {
       const updated = await meta.setAgentHosted(c.req.param("id"), org, b.hosted ? 1 : 0)
       if (!updated) return bail(fail(c, 404, "agent not found"))
       return c.json(agentJson(updated))
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/agents/{id}/rotate",
+      tags: ["Agents"],
+      summary: "Rotate an agent's token (Admin only) — the old bearer dies at once.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The agent, plus its NEW bearer token (shown only here).",
+          content: { "application/json": { schema: Agent.extend({ token: z.string() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      // Same mint shape as registration; only the hash is stored. Identity, role,
+      // hosting, and attribution are untouched — rotation is a credential event,
+      // never an identity event.
+      const token = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
+      const rotated = await meta.rotateAgentToken(c.req.param("id"), org, sha256(token))
+      if (!rotated) return bail(fail(c, 404, "agent not found"))
+      return c.json({ ...agentJson(rotated), token })
     },
   )
 

@@ -1473,6 +1473,36 @@ export function runStoreContract(
       await store.deleteAgent(agent.id, ORG)
       expect(await store.getAgentByToken(token)).toBeNull()
     })
+
+    it("rotates a token (org-scoped) and round-trips the managed flag", async () => {
+      const t1 = `tok_${uuid()}`
+      const agent = await store.createAgent({
+        id: uuid(),
+        org_id: ORG,
+        name: "ctx access",
+        token: t1,
+        role: "editor",
+        managed: 1,
+      })
+      // managed round-trips; an unmarked agent defaults to 0.
+      expect(agent.managed).toBe(1)
+      const plain = await store.createAgent({
+        id: uuid(),
+        org_id: ORG,
+        name: "persona",
+        token: `tok_${uuid()}`,
+        role: "editor",
+      })
+      expect(plain.managed).toBe(0)
+      // Rotation: the old hash dies, the new one resolves, identity is untouched.
+      const t2 = `tok_${uuid()}`
+      const rotated = await store.rotateAgentToken(agent.id, ORG, t2)
+      expect(rotated).toMatchObject({ id: agent.id, name: "ctx access", managed: 1 })
+      expect(await store.getAgentByToken(t1)).toBeNull()
+      expect(await store.getAgentByToken(t2)).toMatchObject({ id: agent.id })
+      // Org-scoped: a foreign org rotates nothing.
+      expect(await store.rotateAgentToken(agent.id, "org_other", `tok_${uuid()}`)).toBeNull()
+    })
   })
 
   describe(`${label}: contexts + sessions`, () => {

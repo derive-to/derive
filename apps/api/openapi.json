@@ -1016,6 +1016,10 @@
             "type": "boolean",
             "description": "Served by Derive's managed executor. Hosting changes where the agent runs, never its principal or cap."
           },
+          "managed": {
+            "type": "boolean",
+            "description": "Auto-minted for one context at creation — the context's Derive access, not a user-named persona. Hidden from the roster UI."
+          },
           "created_at": {
             "type": "string"
           }
@@ -1025,6 +1029,7 @@
           "name",
           "role",
           "hosted",
+          "managed",
           "created_at"
         ]
       },
@@ -3961,6 +3966,51 @@
         }
       }
     },
+    "/v1/agents/{id}/rotate": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Rotate an agent's token (Admin only) — the old bearer dies at once.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agent, plus its NEW bearer token (shown only here).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Agent"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "token": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "token"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/me/connected-agents": {
       "get": {
         "tags": [
@@ -6866,14 +6916,26 @@
         "tags": [
           "Contexts"
         ],
-        "summary": "Create a context (wire an agent to a manifest artifact).",
+        "summary": "Create a context (wire an agent to a manifest artifact, or auto-mint one).",
         "responses": {
           "201": {
-            "description": "The created context.",
+            "description": "The created context. When no agent_id was given, agent_token carries the auto-minted agent's bearer — shown only here.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ContextInfo"
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ContextInfo"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "agent_token": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
                 }
               }
             }
