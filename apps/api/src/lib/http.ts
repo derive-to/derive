@@ -55,6 +55,13 @@ export const WS_COOKIE = "derive_ws"
 /** Long-lived cookie that gives an anonymous browser one stable identity — used
  *  for unique-view counts and a stable presence name across opens. */
 export const VIEWER_COOKIE = "derive_vid"
+/** Better Auth's session cookie, both spellings (useSecureCookies adds the
+ *  __Secure- prefix on https origins). For presence-only checks; never validate
+ *  a session by cookie name alone. */
+export const SESSION_COOKIE_NAMES = [
+  "__Secure-better-auth.session_token",
+  "better-auth.session_token",
+]
 
 // Friendly, anonymous presence handles — `helpful-kitty-95` style. An anonymous
 // viewer never picks their own name (no impersonation/spam); the server derives a

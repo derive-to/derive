@@ -140,6 +140,11 @@ export interface AuthHooks {
   /** Purge the user's Derive-domain data AFTER Better Auth deletes the account (the
    *  deleteUserData cascade). Unset (tests) ⇒ no cascade. */
   purgeUserData?: (userId: string) => Promise<void>
+  /** Record where the signup came from: called once per created user with the raw
+   *  Cookie header, so the d_src stamp (see lib/attribution.ts) becomes the account's
+   *  signup_attribution row. Best-effort telemetry — failures never block creation.
+   *  Unset (tests, schema-gen) ⇒ signups are simply unattributed. */
+  recordSignupAttribution?: (userId: string, cookieHeader: string | null) => Promise<void>
 }
 
 export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: AuthHooks = {}) {
@@ -300,6 +305,19 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
               return { data: { ...user, username } }
             } catch {
               return { data: user }
+            }
+          },
+          // Signup attribution: hand the arriving Cookie header (the d_src stamp) to
+          // the app. Every provider — email, Google, OIDC — creates users through
+          // this one path, and OAuth callbacks are top-level GETs, so the Lax cookie
+          // rides along.
+          after: async (user, ctx) => {
+            try {
+              const cookie =
+                ctx?.headers?.get("cookie") ?? ctx?.request?.headers.get("cookie") ?? null
+              await hooks.recordSignupAttribution?.(user.id, cookie)
+            } catch {
+              // Best-effort telemetry: the account always wins.
             }
           },
         },

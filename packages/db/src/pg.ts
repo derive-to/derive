@@ -60,6 +60,7 @@ import type {
   NewRun,
   NewSession,
   NewSessionMessage,
+  NewSignupAttribution,
   NewVersion,
   NewView,
   NewWebhook,
@@ -83,6 +84,7 @@ import type {
   SessionMessageRecord,
   SessionRecord,
   SessionState,
+  SignupAttributionRecord,
   SlackInstallRecord,
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
@@ -154,6 +156,7 @@ import {
   reviewRound,
   run,
   sessionMessage,
+  signupAttribution,
   slackInstall,
   slackThreadLink,
   slackUserLink,
@@ -202,6 +205,7 @@ export const schema = {
   artifactInvite,
   invitation,
   betaSignup,
+  signupAttribution,
   oauthClientWorkspace,
   context,
   contextAsker,
@@ -245,6 +249,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
+  signupAttribution: true,
   context: true,
   contextAsker: true,
   contextSession: true,
@@ -2752,6 +2757,22 @@ export class PgMetaStore implements MetaStore {
       .onConflictDoNothing()
       .returning()
     return rows.length > 0
+  }
+
+  // ---- Signup attribution ----------------------------------------------------
+  async recordSignupAttribution(a: NewSignupAttribution): Promise<void> {
+    // The unique user_id index makes a duplicate hook fire a no-op — first write
+    // wins, so the attribution of record stays the one captured at signup time.
+    await this.db.insert(signupAttribution).values(a).onConflictDoNothing()
+  }
+
+  async getSignupAttribution(userId: string): Promise<SignupAttributionRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(signupAttribution)
+      .where(eq(signupAttribution.user_id, userId))
+      .limit(1)
+    return rows[0] ?? null
   }
 
   // ---- Artifact invitations ------------------------------------------------

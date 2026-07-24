@@ -58,6 +58,7 @@ import type {
   NewRun,
   NewSession,
   NewSessionMessage,
+  NewSignupAttribution,
   NewVersion,
   NewWebhook,
   NotificationRecord,
@@ -80,6 +81,7 @@ import type {
   SessionMessageRecord,
   SessionRecord,
   SessionState,
+  SignupAttributionRecord,
   SlackInstallRecord,
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
@@ -152,6 +154,7 @@ import {
   reviewRound,
   run,
   sessionMessage,
+  signupAttribution,
   slackInstall,
   slackThreadLink,
   slackUserLink,
@@ -276,6 +279,7 @@ export const schema = {
   artifactInvite,
   invitation,
   betaSignup,
+  signupAttribution,
   oauthClientWorkspace,
   context,
   contextAsker,
@@ -319,6 +323,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
+  signupAttribution: true,
   context: true,
   contextAsker: true,
   contextSession: true,
@@ -2798,6 +2803,22 @@ export function makeRepos(db: SqliteDb) {
     return row !== undefined
   }
 
+  // ---- Signup attribution ---------------------------------------------------
+  const recordSignupAttribution = async (a: NewSignupAttribution): Promise<void> => {
+    // The unique user_id index makes a duplicate hook fire a no-op — first write
+    // wins, so the attribution of record stays the one captured at signup time.
+    await db.insert(signupAttribution).values(a).onConflictDoNothing().run()
+  }
+
+  const getSignupAttribution = async (userId: string): Promise<SignupAttributionRecord | null> => {
+    const row = await db
+      .select()
+      .from(signupAttribution)
+      .where(eq(signupAttribution.user_id, userId))
+      .get()
+    return row ?? null
+  }
+
   // ---- Artifact invitations ------------------------------------------------
   const createArtifactInvite = async (i: NewArtifactInvite): Promise<ArtifactInviteRecord> =>
     (await db.insert(artifactInvite).values(i).returning().get()) as ArtifactInviteRecord
@@ -3279,6 +3300,8 @@ export function makeRepos(db: SqliteDb) {
     deleteInvitation,
     markInvitationAccepted,
     recordBetaSignup,
+    recordSignupAttribution,
+    getSignupAttribution,
     createArtifactInvite,
     getArtifactInviteByToken,
     listPendingArtifactInvites,
