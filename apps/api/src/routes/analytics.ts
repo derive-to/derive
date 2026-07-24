@@ -2,7 +2,6 @@ import { can, newId } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { maybeRefreshOnView } from "../lib/freshness"
 import { bail, fail, readJson, VIEW_DEDUP_MS } from "../lib/http"
 
 /** View recording (de-duped, owner self-views excluded) + per-artifact stats. The
@@ -67,10 +66,6 @@ export const analyticsRoutes = (ctx: AppContext) => {
       const artifact = await meta.getByShortId(c.req.param("shortId"))
       if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
         return bail(fail(c, 404, "not found"))
-      // On-view freshness (WO7): enqueue a refresh for any stale "view" automation targeting
-      // this artifact. Rides the view beacon (active when analytics is on).
-      await maybeRefreshOnView(meta, artifact)
-      if (!analyticsOn) return c.body(null, 204)
       // The owner's own opens aren't audience — don't count them (Notion/Docs do
       // the same). `manage` requires the owner role, so this is exactly "is owner";
       // editors/commenters/viewers and anonymous openers still count.

@@ -1,8 +1,8 @@
 import { type AutomationTrigger, normalizeSelectors, type Selector } from "@derive/core"
 
 // Shared parsing for an automation's serialized JSON blobs. Both blobs parse DEFENSIVELY — a
-// single malformed row must never 500 a list / claim / view path — so every reader (routes,
-// the executor surface, the on-view freshness check) goes through here rather than re-rolling it.
+// single malformed row must never 500 a list / claim path — so every reader (the routes and the
+// executor surface) goes through here rather than re-rolling it.
 
 /** Parse a stored AutomationTrigger, defaulting to a manual trigger on malformed JSON. */
 export const parseTrigger = (raw: string): AutomationTrigger => {

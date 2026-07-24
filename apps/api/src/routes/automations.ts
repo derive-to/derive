@@ -62,12 +62,10 @@ const REF = z.union([
 ])
 const REFS = z.array(REF).max(100)
 const TRIGGER = z.object({
-  kind: z.enum(["manual", "schedule", "event", "view"]),
+  kind: z.enum(["manual", "schedule", "event"]),
   cron: z.string().optional(),
   tz: z.string().optional(),
   on: z.string().optional(),
-  // view: refresh the artifact when opened if its content is older than this many minutes.
-  maxAgeMinutes: z.number().int().nonnegative().optional(),
 })
 
 export const automationRoutes = (ctx: AppContext) => {
