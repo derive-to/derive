@@ -746,13 +746,15 @@ export const api = {
   // Automations + runs (the standing-agent-work surface; see routes/automations.ts).
   listAutomations: (): Promise<{ automations: Automation[] }> =>
     f("/v1/automations", opts()).then(j),
+  // agentId omitted → the server auto-mints a MANAGED agent for this automation and
+  // returns its bearer as agent_token, exactly once on this response.
   createAutomation: (input: {
-    agentId: string
+    agentId?: string
     trigger: AutomationTrigger
     instruction: string
     /** Bare strings are artifact shorthand; the server stores canonical selectors. */
     refs?: (string | AutomationRef)[]
-  }): Promise<Automation> => f("/v1/automations", opts(input)).then(j),
+  }): Promise<Automation & { agent_token?: string }> => f("/v1/automations", opts(input)).then(j),
   updateAutomation: (
     id: string,
     input: {
