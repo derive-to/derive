@@ -229,22 +229,6 @@ CREATE TABLE IF NOT EXISTS connection (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
-CREATE TABLE IF NOT EXISTS verb (
-  id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  artifact_id TEXT NOT NULL,
-  name TEXT NOT NULL,
-  instruction_template TEXT NOT NULL,
-  created_by TEXT NOT NULL,
-  agent_id TEXT NOT NULL,
-  params_schema TEXT,
-  connection_ids TEXT,
-  gate TEXT NOT NULL DEFAULT 'propose',
-  audience TEXT NOT NULL DEFAULT 'members',
-  enabled INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-
 CREATE TABLE IF NOT EXISTS invitation (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,

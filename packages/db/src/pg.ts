@@ -65,7 +65,6 @@ import type {
   NewSession,
   NewSessionMessage,
   NewSignupAttribution,
-  NewVerb,
   NewVersion,
   NewView,
   NewWebhook,
@@ -99,8 +98,6 @@ import type {
   UserDir,
   UserNotificationPrefRecord,
   UserProfile,
-  VerbPatch,
-  VerbRecord,
   VersionRecord,
   ViewStats,
   WebhookRecord,
@@ -173,7 +170,6 @@ import {
   slackThreadLink,
   slackUserLink,
   userNotificationPref,
-  verb,
   version,
   webhook,
   webhookDelivery,
@@ -217,7 +213,6 @@ export const schema = {
   run,
   plan,
   connection,
-  verb,
   artifactInvite,
   invitation,
   betaSignup,
@@ -264,7 +259,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   run: true,
   plan: true,
   connection: true,
-  verb: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2669,32 +2663,6 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(connection.id, id), eq(connection.org_id, orgId)))
       .returning()
     return rows[0] ?? null
-  }
-  async createVerb(v: NewVerb): Promise<VerbRecord> {
-    const rows = await this.db.insert(verb).values(v).returning()
-    return one(rows)
-  }
-  async getVerb(id: string): Promise<VerbRecord | null> {
-    const rows = await this.db.select().from(verb).where(eq(verb.id, id))
-    return rows[0] ?? null
-  }
-  listVerbsForArtifact(artifactId: string): Promise<VerbRecord[]> {
-    return this.db
-      .select()
-      .from(verb)
-      .where(eq(verb.artifact_id, artifactId))
-      .orderBy(desc(verb.created_at))
-  }
-  async updateVerb(id: string, orgId: string, patch: VerbPatch): Promise<VerbRecord | null> {
-    const rows = await this.db
-      .update(verb)
-      .set(patch)
-      .where(and(eq(verb.id, id), eq(verb.org_id, orgId)))
-      .returning()
-    return rows[0] ?? null
-  }
-  async deleteVerb(id: string, orgId: string): Promise<void> {
-    await this.db.delete(verb).where(and(eq(verb.id, id), eq(verb.org_id, orgId)))
   }
   async getAgentByToken(token: string): Promise<AgentRecord | null> {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))

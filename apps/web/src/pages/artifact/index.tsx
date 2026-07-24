@@ -3,7 +3,6 @@ import { useNavigate, useParams } from "@tanstack/react-router"
 import { Minimize2 } from "lucide-react"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { API_BASE, ApiError, api } from "@/api"
-import { VerbBar } from "@/components/artifact/verb-bar"
 import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
 import { Kbd } from "@/components/ui/kbd"
@@ -723,9 +722,6 @@ export function Artifact() {
             />
           )}
         </div>
-        {/* WO6 — the viewer action bar: owner-authored verbs as real buttons, a row of its
-            own under the toolbar. Renders nothing when the artifact has no verbs. */}
-        {!isAnon && <VerbBar shortId={shortId} />}
         {/* The split row lives BELOW the full-width bar: the document stage on
                 the left, the comments aside on the right, so the panel slides in
                 under the toolbar rather than beside it. */}

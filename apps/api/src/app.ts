@@ -46,7 +46,6 @@ import { sharingRoutes } from "./routes/sharing"
 import { slackRoutes } from "./routes/slack"
 import { syncRoutes } from "./routes/sync"
 import { systemRoutes } from "./routes/system"
-import { verbRoutes } from "./routes/verbs"
 import { vitalsRoutes } from "./routes/vitals"
 import { webhookRoutes } from "./routes/webhooks"
 import { workspaceRoutes } from "./routes/workspace"
@@ -398,7 +397,6 @@ export function createApp(deps: AppDeps): Hono {
     automationRoutes,
     planRoutes,
     connectionRoutes,
-    verbRoutes,
     conciergeRoutes,
     reworkRoutes,
     commentRoutes,

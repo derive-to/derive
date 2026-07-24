@@ -134,13 +134,6 @@ export const workspaceSkillsQuery = () =>
         .then((r) => r.artifacts.filter((a) => a.current_content_type === "derive/skill")),
   })
 
-// An artifact's action verbs (WO6) — the source of its viewer action bar.
-export const artifactVerbsQuery = (shortId: string) =>
-  queryOptions({
-    queryKey: ["verbs", shortId] as const,
-    queryFn: () => api.verbsForArtifact(shortId),
-  })
-
 // The caller's own connected sources (WO3) — the Sources settings list.
 export const connectionsQuery = () =>
   queryOptions({

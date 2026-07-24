@@ -1054,17 +1054,6 @@ export interface AgentStore {
     orgId: string,
     status: ConnectionStatus,
   ): Promise<ConnectionRecord | null>
-  // ---- Verbs (owner-authored actions on an artifact) ---------------------
-  /** Create a verb. */
-  createVerb(v: NewVerb): Promise<VerbRecord>
-  /** One verb by id, or null. */
-  getVerb(id: string): Promise<VerbRecord | null>
-  /** An artifact's verbs, newest first — the action bar's source, and the MCP verb list. */
-  listVerbsForArtifact(artifactId: string): Promise<VerbRecord[]>
-  /** Patch a verb's mutable fields (edit + gate promotion), org-scoped. */
-  updateVerb(id: string, orgId: string, patch: VerbPatch): Promise<VerbRecord | null>
-  /** Remove a verb, org-scoped. */
-  deleteVerb(id: string, orgId: string): Promise<void>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>
   /** Resolve a live OAuth access token (by its stored hash) to its grant. */
@@ -1561,67 +1550,6 @@ export interface NewConnection {
   scopes_label?: string | null
   status?: ConnectionStatus
 }
-
-/** How a verb's run lands: propose (a proposal a human approves — the default) or direct
- *  (published live, once the verb has earned it). Per-verb, promoted individually. */
-export type VerbGate = "propose" | "direct"
-
-/** Who may click a verb: owner (only the verb's creator) or members (any workspace member). */
-export type VerbAudience = "owner" | "members"
-
-/** An owner-authored action on an artifact (WO5): a named button bound to an instruction
- *  template, a context (agent), optional connected accounts, and a gate. Viewers INVOKE it;
- *  they never type instructions at it. Viewer input arrives only as typed params, treated as
- *  data. The run bills to the OWNER (created_by), records the INVOKER, and starts propose-gated. */
-export interface VerbRecord {
-  id: string
-  org_id: string
-  artifact_id: string
-  name: string
-  /** Owner-written instruction. Viewer params never edit this — they ride as fenced data. */
-  instruction_template: string
-  /** The verb owner — runs bill to this person's plan, not the invoker's. */
-  created_by: string
-  /** The agent (packaged context) that runs it. */
-  agent_id: string
-  /** JSON param schema (loose; e.g. {"required":["note"]}), or null. */
-  params_schema: string | null
-  /** JSON array of bound connection ids — the least-privilege tool set for the run, or null. */
-  connection_ids: string | null
-  gate: VerbGate
-  audience: VerbAudience
-  enabled: 0 | 1
-  created_at: string
-}
-
-export interface NewVerb {
-  id: string
-  org_id: string
-  artifact_id: string
-  name: string
-  instruction_template: string
-  created_by: string
-  agent_id: string
-  params_schema?: string | null
-  connection_ids?: string | null
-  gate?: VerbGate
-  audience?: VerbAudience
-  enabled?: 0 | 1
-}
-
-/** The mutable fields of a verb (edit + gate promotion). */
-export type VerbPatch = Partial<
-  Pick<
-    VerbRecord,
-    | "name"
-    | "instruction_template"
-    | "params_schema"
-    | "connection_ids"
-    | "gate"
-    | "audience"
-    | "enabled"
-  >
->
 
 export type AgentMentionState = "pending" | "done"
 /** A queued mention for an agent's pull inbox (denormalized for a cheap read). */

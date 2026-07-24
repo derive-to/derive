@@ -342,22 +342,6 @@ export interface SearchHit {
   semantic: boolean
 }
 
-// An owner-authored action on an artifact (WO5) as the web sees it — a button bound to an
-// instruction, a gate, and an audience. Params ride as data.
-export interface Verb {
-  id: string
-  artifact_id: string
-  name: string
-  instruction_template: string
-  created_by: string
-  agent_id: string
-  params_schema: { required?: string[] } | null
-  connection_ids: string[]
-  gate: "propose" | "direct"
-  audience: "owner" | "members"
-  enabled: boolean
-}
-
 // A per-user connected external account (WO3) — a Source. Always the caller's own.
 export interface Connection {
   id: string
@@ -1086,18 +1070,7 @@ export const api = {
     return this.publish(new File([text], filename), fields, id)
   },
 
-  // --- Mini app: verbs + connected sources (plain /v1 routes, hand-written client) -------
-  verbsForArtifact(shortId: string): Promise<Verb[]> {
-    return f(`/v1/artifacts/${shortId}/verbs`, opts())
-      .then(j)
-      .then((r) => r.verbs as Verb[])
-  },
-  invokeVerb(
-    id: string,
-    params?: Record<string, unknown>,
-  ): Promise<{ id: string; status: string }> {
-    return f(`/v1/verbs/${id}/invoke`, opts({ params: params ?? {} })).then(j)
-  },
+  // --- Connected sources (plain /v1 routes, hand-written client) ------------------------
   connections(): Promise<Connection[]> {
     return f("/v1/connections?mine=1", opts())
       .then(j)
