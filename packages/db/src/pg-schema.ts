@@ -261,6 +261,9 @@ export const agent = pgTable(
     created_by: text("created_by"),
     // Served by Derive's managed executor when 1 (see schema.ts).
     hosted: integer("hosted").notNull().default(0).$type<0 | 1>(),
+    // 1 = auto-minted for one context at creation (never user-named): the context's
+    // Derive access, not a persona. The UI hides managed agents from the roster.
+    managed: integer("managed").notNull().default(0).$type<0 | 1>(),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [

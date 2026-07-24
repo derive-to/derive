@@ -2478,6 +2478,17 @@ export function makeRepos(db: SqliteDb) {
   // ---- Agents + pull inbox -----------------------------------------------
   const createAgent = async (a: NewAgent): Promise<AgentRecord> =>
     (await db.insert(agent).values(a).returning().get()) as AgentRecord
+  const rotateAgentToken = async (
+    id: string,
+    orgId: string,
+    tokenHash: string,
+  ): Promise<AgentRecord | null> =>
+    ((await db
+      .update(agent)
+      .set({ token: tokenHash })
+      .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
+      .returning()
+      .get()) as AgentRecord | undefined) ?? null
   const listAgents = async (orgId: string): Promise<AgentRecord[]> =>
     db.select().from(agent).where(eq(agent.org_id, orgId)).all()
   const setAgentHosted = async (
@@ -3350,6 +3361,7 @@ export function makeRepos(db: SqliteDb) {
     unreadNotificationCount,
     markNotificationsRead,
     createAgent,
+    rotateAgentToken,
     listAgents,
     setAgentHosted,
     createAutomation,

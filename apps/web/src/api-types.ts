@@ -1145,6 +1145,46 @@ export interface paths {
         };
         trace?: never;
     };
+    "/v1/agents/{id}/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rotate an agent's token (Admin only) — the old bearer dies at once. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The agent, plus its NEW bearer token (shown only here). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Agent"] & {
+                            token: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/connected-agents": {
         parameters: {
             query?: never;
@@ -4190,7 +4230,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create a context (wire an agent to a manifest artifact). */
+        /** Create a context (wire an agent to a manifest artifact, or auto-mint one). */
         post: {
             parameters: {
                 query?: never;
@@ -4200,13 +4240,15 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The created context. */
+                /** @description The created context. When no agent_id was given, agent_token carries the auto-minted agent's bearer — shown only here. */
                 201: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["ContextInfo"];
+                        "application/json": components["schemas"]["ContextInfo"] & {
+                            agent_token?: string;
+                        };
                     };
                 };
             };
@@ -5745,6 +5787,8 @@ export interface components {
             role: "viewer" | "commenter" | "editor" | "owner";
             /** @description Served by Derive's managed executor. Hosting changes where the agent runs, never its principal or cap. */
             hosted: boolean;
+            /** @description Auto-minted for one context at creation — the context's Derive access, not a user-named persona. Hidden from the roster UI. */
+            managed: boolean;
             created_at: string;
         };
         ConnectedAgent: {

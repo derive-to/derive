@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS agent (
   role TEXT NOT NULL DEFAULT 'commenter',
   created_by TEXT,
   hosted INTEGER NOT NULL DEFAULT 0,
+  managed INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (token),
   UNIQUE (org_id, name)

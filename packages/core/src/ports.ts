@@ -974,6 +974,9 @@ export interface DirectoryStore {
 export interface AgentStore {
   // ---- Agents (mentionable principals that act via a scoped token) -------
   createAgent(a: NewAgent): Promise<AgentRecord>
+  /** Replace the agent's token hash (org-scoped). The old bearer dies at once;
+   *  identity, role, hosting, and attribution are untouched. Null = not found. */
+  rotateAgentToken(id: string, orgId: string, tokenHash: string): Promise<AgentRecord | null>
   listAgents(orgId: string): Promise<AgentRecord[]>
   /** Flip whether Derive's managed executor serves this agent. Workspace-scoped by
    *  (id, org) like deleteAgent; null when the agent isn't in this workspace. */
@@ -1345,6 +1348,9 @@ export interface AgentRecord {
   /** 1 = served by Derive's managed executor. Hosting changes where the agent
    *  runs, never its principal, role cap, or attribution. */
   hosted: 0 | 1
+  /** 1 = auto-minted for one context at creation — the context's Derive access,
+   *  not a user-named persona. Hidden from the roster UI. */
+  managed: 0 | 1
   created_at: string
 }
 export interface NewAgent {
@@ -1355,6 +1361,7 @@ export interface NewAgent {
   role: Role
   created_by?: string | null
   hosted?: 0 | 1
+  managed?: 0 | 1
 }
 
 // ---- Automations + runs: the generic agent-work primitive --------------
