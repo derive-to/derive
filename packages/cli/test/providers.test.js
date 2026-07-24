@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { codex } from "../src/providers/codex.js"
 import { DEFAULT_PROVIDER, PROVIDERS, selectProvider } from "../src/providers/index.js"
-import { runAgent } from "../src/runner.js"
+import { loadRunnerConfig, runAgent } from "../src/runner.js"
 
 describe("provider registry", () => {
   it("defaults to claude-code, resolves known names, and throws on an unknown one", () => {
@@ -13,6 +13,19 @@ describe("provider registry", () => {
     expect(selectProvider("codex").name).toBe("codex")
     expect(Object.keys(PROVIDERS).sort()).toEqual(["claude-code", "codex"])
     expect(() => selectProvider("nope")).toThrow(/unknown provider "nope"/)
+  })
+
+  it("an unknown provider is fatal for a real run but degrades to a finding under partial (doctor)", () => {
+    // A real run must fail loudly rather than silently pick a different agent.
+    expect(() =>
+      loadRunnerConfig({ RUNNER_PROVIDER: "nope", DERIVE_TOKEN: "t", DERIVE_CONTEXT: "c" }, {}),
+    ).toThrow(/unknown provider "nope"/)
+    // doctor (partial) must survive a bad config and report it, not crash: the
+    // name is preserved so doctor can flag it, and defaults fall back sanely.
+    const cfg = loadRunnerConfig({ RUNNER_PROVIDER: "nope" }, {}, { partial: true })
+    expect(cfg.providerName).toBe("nope")
+    expect(cfg.model).toBe("sonnet")
+    expect(cfg.agentBin).toBe("claude")
   })
 })
 

@@ -20,7 +20,7 @@ import {
 } from "node:fs"
 import { dirname, join, resolve, sep } from "node:path"
 import { claudeCode } from "./providers/claude-code.js"
-import { DEFAULT_PROVIDER, selectProvider } from "./providers/index.js"
+import { DEFAULT_PROVIDER, PROVIDERS, selectProvider } from "./providers/index.js"
 import {
   conventionsBlock,
   materializeNotes,
@@ -86,9 +86,14 @@ export function loadRunnerConfig(env = process.env, flags = {}, { partial = fals
       "a context id and an agent token are required (positional/--context + --token|--token-file, or DERIVE_CONTEXT + DERIVE_TOKEN)",
     )
   // Which agent CLI drives the runs. Default claude-code; the provider owns its
-  // binary resolution and default model so this stays agnostic.
+  // binary resolution and default model so this stays agnostic. An unknown name
+  // is fatal for a real run, but in `partial` mode (doctor) it must degrade to a
+  // FINDING, not a crash — the same contract as a missing token/context — so we
+  // fall back to the default for the derived defaults and let doctor report it.
   const providerName = flags.provider ?? env.RUNNER_PROVIDER ?? DEFAULT_PROVIDER
-  const provider = selectProvider(providerName)
+  const provider = partial
+    ? (PROVIDERS[providerName] ?? PROVIDERS[DEFAULT_PROVIDER])
+    : selectProvider(providerName)
   return {
     server,
     token,
@@ -983,15 +988,20 @@ export async function doctor(cfg) {
   }
 
   // launchd/systemd PATHs don't include shell profile additions — the exact
-  // failure mode that produced `spawn claude ENOENT` in the field.
-  const provider = selectProvider(cfg.providerName)
-  const version = await provider.version(cfg.agentBin)
-  version
-    ? ok(cfg.providerName, `${cfg.agentBin} (${version.slice(0, 40)})`)
-    : bad(
-        cfg.providerName,
-        `${cfg.agentBin} not spawnable — pass --agent-bin with an absolute path`,
-      )
+  // failure mode that produced `spawn claude ENOENT` in the field. An unknown
+  // provider is a finding here, not a throw (doctor must survive a bad config).
+  const provider = PROVIDERS[cfg.providerName]
+  if (!provider)
+    bad("provider", `unknown "${cfg.providerName}" — known: ${Object.keys(PROVIDERS).join(", ")}`)
+  else {
+    const version = await provider.version(cfg.agentBin)
+    version
+      ? ok(cfg.providerName, `${cfg.agentBin} (${version.slice(0, 40)})`)
+      : bad(
+          cfg.providerName,
+          `${cfg.agentBin} not spawnable — pass --agent-bin with an absolute path`,
+        )
+  }
 
   for (const tool of ["gh", "python3"]) {
     ;(await spawnable(tool)) !== null
