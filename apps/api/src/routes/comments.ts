@@ -96,6 +96,10 @@ export const commentRoutes = (ctx: AppContext) => {
         .boolean()
         .optional()
         .describe("True if soft-deleted; the row stays but the body is blanked."),
+      guest: z
+        .boolean()
+        .optional()
+        .describe("True when the author was an anonymous guest (self-named, no account)."),
       mentions: z
         .array(MentionSchema)
         .optional()

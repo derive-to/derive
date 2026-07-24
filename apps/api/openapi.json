@@ -2184,6 +2184,10 @@
             "type": "boolean",
             "description": "True if soft-deleted; the row stays but the body is blanked."
           },
+          "guest": {
+            "type": "boolean",
+            "description": "True when the author was an anonymous guest (self-named, no account)."
+          },
           "mentions": {
             "type": "array",
             "items": {
@@ -6639,7 +6643,7 @@
         "tags": [
           "Comments"
         ],
-        "summary": "List an artifact's comments (authenticated readers only).",
+        "summary": "List an artifact's comments (authenticated readers, or anon guests on a commenter+ link).",
         "parameters": [
           {
             "schema": {

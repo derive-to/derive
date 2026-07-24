@@ -179,4 +179,19 @@ describe("anonymous commenting", () => {
     }
     expect(last).toBe(429)
   })
+
+  it("guest comments carry guest:true on the wire; signed rows do not", async () => {
+    const shortId = await artifactWithLink("commenter")
+    const guest = await (
+      await anonApp.request(
+        `/v1/artifacts/${shortId}/comments`,
+        json({ body_md: "guest here", author: "Guest" }),
+      )
+    ).json()
+    expect(guest.guest).toBe(true)
+    const owner = await (
+      await app.request(`/v1/artifacts/${shortId}/comments`, json({ body_md: "owner here" }))
+    ).json()
+    expect(owner.guest).toBeUndefined()
+  })
 })

@@ -3953,7 +3953,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List an artifact's comments (authenticated readers only). */
+        /** List an artifact's comments (authenticated readers, or anon guests on a commenter+ link). */
         get: {
             parameters: {
                 query?: {
@@ -6160,6 +6160,8 @@ export interface components {
             edited_at?: string | null;
             /** @description True if soft-deleted; the row stays but the body is blanked. */
             deleted?: boolean;
+            /** @description True when the author was an anonymous guest (self-named, no account). */
+            guest?: boolean;
             /** @description Users or agents @mentioned in the comment body. */
             mentions?: components["schemas"]["Mention"][];
         };

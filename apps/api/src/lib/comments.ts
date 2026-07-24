@@ -43,6 +43,10 @@ export type CommentMeta = {
   edited_at?: string
   deleted?: boolean
   mentions?: Mention[]
+  // Stamped true at write time for a genuinely anonymous (guest) author — see
+  // the guest stamp in routes/comments.ts. Never set for a signed-in or
+  // token-authenticated author.
+  guest?: boolean
   // The id of the open proposal whose revision claims to address this thread.
   // Set when the thread flips to `addressed`; cleared when that proposal is
   // approved (→ resolved) or withdrawn / sent back for changes (→ open).
@@ -96,6 +100,7 @@ export function commentJson(cm: CommentRecord, anchored?: boolean) {
     edited_at: md.edited_at ?? null,
     deleted,
     mentions: deleted ? [] : (md.mentions ?? []),
+    ...(md.guest ? { guest: true } : {}),
     ...(anchored !== undefined ? { anchored } : {}),
   }
 }
