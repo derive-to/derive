@@ -6,6 +6,7 @@ import { compress } from "hono/compress"
 import type { BlankEnv } from "hono/types"
 import { OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { type AppDeps, buildContext } from "./context"
+import { captureSignupSource } from "./lib/attribution"
 import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
 import { observability, redactPath } from "./lib/observability"
 import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
@@ -117,6 +118,11 @@ export function createApp(deps: AppDeps): Hono {
     const gzip = compress()
     app.use("*", (c, next) => (c.req.path.endsWith("/events") ? next() : gzip(c, next)))
   }
+
+  // Signup-source capture: external arrivals on the HTML entry points get a d_src
+  // cookie the auth layer reads back at signup (see lib/attribution.ts). The
+  // middleware scopes itself — API and raw paths never stamp.
+  app.use("*", captureSignupSource())
 
   // Uncaught errors become a consistent JSON 500 (never a stack trace to the
   // client) and a structured server log line.

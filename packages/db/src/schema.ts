@@ -372,6 +372,28 @@ export const betaSignup = sqliteTable(
   (t) => [uniqueIndex("beta_signup_email").on(t.email)],
 )
 
+// Where a signup came from. One row per user, written by the auth
+// layer's user-create hook from the `d_src` cookie the capture middleware stamped;
+// first write wins — the attribution of record is the one at signup time. No FK to
+// Better Auth's user table: auth owns its tables out-of-band, like beta_signup.
+export const signupAttribution = sqliteTable(
+  "signup_attribution",
+  {
+    id: text("id").primaryKey(),
+    user_id: text("user_id").notNull(),
+    // The surface that sourced the signup: an artifact surface (badge, comment_wall,
+    // duplicate, share_chrome, artifact_visit) or a campaign token (hn-launch, …).
+    source_kind: text("source_kind").notNull(),
+    // The artifact (short id) the sourcing surface lived on, when known.
+    source_artifact: text("source_artifact"),
+    // Path of the page that stamped the cookie, and the referrer host at stamp time.
+    landing_path: text("landing_path"),
+    referrer: text("referrer"),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("signup_attribution_user").on(t.user_id)],
+)
+
 // An agent's pull inbox: one row per mention directed at the agent.
 export const agentMention = sqliteTable("agent_mention", {
   id: text("id").primaryKey(),
@@ -910,6 +932,7 @@ const TABLES = [
   invitation,
   artifactInvite,
   betaSignup,
+  signupAttribution,
   oauthClientWorkspace,
   artifactFavorite,
   follow,

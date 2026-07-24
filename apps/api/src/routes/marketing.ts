@@ -1,6 +1,7 @@
 import { type Context, Hono } from "hono"
 import { getCookie } from "hono/cookie"
 import type { AppContext } from "../context"
+import { SESSION_COOKIE_NAMES } from "../lib/http"
 
 /**
  * The marketing site (the hosted front door). Two self-contained HTML pages that
@@ -39,10 +40,9 @@ export const marketingRoutes = (ctx: AppContext) => {
     }
     return app
   }
-  // Better Auth's session cookie, both spellings (useSecureCookies adds the
-  // __Secure- prefix on https origins). Presence only — never validated here.
-  const SESSION_COOKIES = ["__Secure-better-auth.session_token", "better-auth.session_token"]
-  const hasSession = (c: Context): boolean => SESSION_COOKIES.some((n) => !!getCookie(c, n))
+  // Presence only — never validated here; a stale cookie serves the shell and the
+  // SPA's own guard bounces to /login.
+  const hasSession = (c: Context): boolean => SESSION_COOKIE_NAMES.some((n) => !!getCookie(c, n))
 
   app.get("/", async (c) => {
     // app.* is the app alias: its visitors chose the app, never the brochure.

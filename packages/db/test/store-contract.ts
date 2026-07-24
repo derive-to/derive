@@ -2456,4 +2456,58 @@ export function runStoreContract(
       expect(otherTotal).toBe(999)
     })
   })
+
+  describe(`${label}: signup attribution`, () => {
+    it("records the signup source once per user (first write wins) and reads it back", async () => {
+      const userId = `u_${uuid()}`
+      await store.recordSignupAttribution({
+        id: uuid(),
+        user_id: userId,
+        source_kind: "badge",
+        source_artifact: "ab12cd34",
+        landing_path: "/artifacts/doc-ab12cd34",
+        referrer: "news.ycombinator.com",
+      })
+      // A duplicate hook fire (retry, double submit) must not add a second row or
+      // overwrite the first — the attribution of record is the one at signup time.
+      await store.recordSignupAttribution({
+        id: uuid(),
+        user_id: userId,
+        source_kind: "comment_wall",
+        source_artifact: null,
+        landing_path: null,
+        referrer: null,
+      })
+
+      const rec = await store.getSignupAttribution(userId)
+      expect(rec).toMatchObject({
+        user_id: userId,
+        source_kind: "badge",
+        source_artifact: "ab12cd34",
+        landing_path: "/artifacts/doc-ab12cd34",
+        referrer: "news.ycombinator.com",
+      })
+      expect(rec?.created_at).toBeTruthy()
+    })
+
+    it("returns null for a user with no recorded source (organic signup)", async () => {
+      expect(await store.getSignupAttribution(`u_${uuid()}`)).toBeNull()
+    })
+
+    it("stores nullable fields as null (a campaign link with no artifact)", async () => {
+      const userId = `u_${uuid()}`
+      await store.recordSignupAttribution({
+        id: uuid(),
+        user_id: userId,
+        source_kind: "hn-launch",
+        source_artifact: null,
+        landing_path: "/",
+        referrer: null,
+      })
+      const rec = await store.getSignupAttribution(userId)
+      expect(rec?.source_kind).toBe("hn-launch")
+      expect(rec?.source_artifact).toBeNull()
+      expect(rec?.referrer).toBeNull()
+    })
+  })
 }

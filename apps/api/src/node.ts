@@ -17,6 +17,7 @@ import { configWarnings } from "./config-manifest"
 import { restEmbedder } from "./embedder"
 import { loadLocalEmbedder } from "./embedder-local"
 import { workspacesBlockingDeletion } from "./lib/account"
+import { signupAttributionHook } from "./lib/attribution"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
@@ -205,6 +206,8 @@ const auth = makeAuth(authDb, cfg.baseUrl, authSecret, {
       : null
   },
   purgeUserData: (userId) => meta.deleteUserData(userId),
+  // The d_src stamp (lib/attribution.ts) becomes the account's signup_attribution row.
+  recordSignupAttribution: signupAttributionHook(meta),
 })
 await migrateAuth(auth)
 
