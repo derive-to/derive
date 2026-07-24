@@ -45,7 +45,7 @@ reimplemented client.
 The dispatcher runs both halves of the executor split:
 
 - **Owner-run drain lane** (pg-boss cron → `derive runner once`): serves contexts
-  whose agent runs on the owner's own credential. Always on.
+  whose agent runs on the run's initiator's credential (the asker's for a session, the clicker's for Run now), falling back to the owner's. Always on.
 - **Shared hosted lane** (`POST /internal/invoke`, behind `DISPATCHER_HOST_SECRET`):
   runs a Derive-hosted agent (the `@derive/hosted-agent` Mastra harness) live for a
   single task. The API calls it for "Draft with your agent" and @mention replies.
