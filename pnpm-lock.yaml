@@ -97,6 +97,9 @@ importers:
       better-sqlite3:
         specifier: ^12.11.1
         version: 12.11.1
+      croner:
+        specifier: ^10.0.1
+        version: 10.0.1
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(@cloudflare/workers-types@4.20260615.1)(@opentelemetry/api@1.9.1)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@12.11.1)(gel@2.2.0)(kysely@0.29.2)(pg@8.21.0)
@@ -3089,8 +3092,8 @@ packages:
   '@radix-ui/rect@1.1.2':
     resolution: {integrity: sha512-xnXE7wG13PI+cxieVssYXlQJuYVRhH9NBoxt3KNwzghDIA69GMm7d4wXRouHIYjE+KvS6U/MsMO73NdS2MH9ZA==}
 
-  '@react-grab/cli@0.1.48':
-    resolution: {integrity: sha512-KXRZFN0b78BeVa4Tq1FC9kiXPpC5lS4pQp/mvQ1azy9dZUJ3zfc7Ei84+yvGh+WoYdceMCFxXfBp6qhU/G056g==}
+  '@react-grab/cli@0.1.50':
+    resolution: {integrity: sha512-Px/Hwhhyk2PubCA4ZaRFsfvwxhbxXsetJyvqC6aFFi8WhJhA+oVC33aTzuAeWmM3fhb4/8ce8YsHXI1d6ChcKg==}
     hasBin: true
 
   '@redocly/ajv@8.11.2':
@@ -4191,8 +4194,8 @@ packages:
     peerDependencies:
       react: '>=17.0.1'
 
-  bippy@0.5.43:
-    resolution: {integrity: sha512-Tvu7b1M7+d8b9/YHaCeODEsi2CgbuoBql+dWSBrNnCuqJ1gMUeY3i0r+319hvjjl5GVBP6FFWxrKnq3fhZER0w==}
+  bippy@0.6.1:
+    resolution: {integrity: sha512-ky4m94Y/KfsddjGkKTsV4uFjZqkJjpOjQ2t5gKPdX6XH1MNxMNX5FrVefsxV4lpjemEmEdwe0e0YbzAMNs3oUQ==}
     peerDependencies:
       react: '>=17.0.1'
 
@@ -4556,8 +4559,8 @@ packages:
     resolution: {integrity: sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==}
     engines: {node: '>=6'}
 
-  deslop-js@0.9.0:
-    resolution: {integrity: sha512-A3FRlth+grf6x/v88BKBKx/0uQYcUJEgJOWu//v5Axwi09jT8dX0MzBf9g8rVvbJnn0tto92cmHy5XDylLNYag==}
+  deslop-js@0.9.1:
+    resolution: {integrity: sha512-eo3Tn37bqC1mMS3BwsdwRITYgQQQdT30g8SMY9C/zRbMu6ekNf9o7aGNUEkxWiKd1dTND58Sndi5fBlT9V6UvA==}
 
   detect-libc@2.1.2:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
@@ -5970,8 +5973,8 @@ packages:
   oxc-resolver@11.24.2:
     resolution: {integrity: sha512-FY91FiDBj7ls5MsFS9jN3tjz2o0/zsdSsymlakySaBwVJZorHhkWyICLZMKxlu1R9vYo+sd3z1jwb4J8x7bNDw==}
 
-  oxlint-plugin-react-doctor@0.9.0:
-    resolution: {integrity: sha512-s1xAicFC3RzkD44SVlXlE5KdQ7ry/0l8KerYHYhZMq0DN6VsnqyHzmSsvG/B21DfXAuIC3wpji1BCe56OweSWg==}
+  oxlint-plugin-react-doctor@0.9.1:
+    resolution: {integrity: sha512-yCW8USbiuszbVsUMN4fL1iU7mRu3Ae3w96+k/xqCyWvW6bF6DzCMtLy5N/w6WLRX78iQsWxVqW/SEgzRBXLfsA==}
     engines: {node: ^20.19.0 || >=22.13.0}
 
   oxlint@1.74.0:
@@ -6291,8 +6294,8 @@ packages:
     resolution: {integrity: sha512-y3bGgqKj3QBdxLbLkomlohkvsA8gdAiUQlSBJnBhfn+BPxg4bc62d8TcBW15wavDfgexCgccckhcZvywyQYPOw==}
     hasBin: true
 
-  react-doctor@0.9.0:
-    resolution: {integrity: sha512-9Vt6BLn5EofL7vTXXH5wpnhVnYdm3qsBG6OtdiosMtbWvyf8L5b97++4exTiv/Pk0pY2H8XIhDDwMfjFS1Imnw==}
+  react-doctor@0.9.1:
+    resolution: {integrity: sha512-pKCWENXuYZK7UNBHpNLbEBlpy+oVWwPnOxTD2B//gmrQLm+UvIknArzP3IOjNP5Nk1NKCR9uavypFA1QMbYFyg==}
     engines: {node: ^20.19.0 || >=22.13.0}
     hasBin: true
 
@@ -6301,8 +6304,8 @@ packages:
     peerDependencies:
       react: ^19.2.7
 
-  react-grab@0.1.48:
-    resolution: {integrity: sha512-p3WnmK9LLvXE/c4ITPLlXcP1fkXo2VFEQqK94tIfcHIWKNdqdhYYFyNVioO50HR+uyHIwT63Z4txZDqJlVcD/Q==}
+  react-grab@0.1.50:
+    resolution: {integrity: sha512-zRkHKq/8a1msCpEOp8BDROeQZT50m0OH2XPrP6jk5op+JAHrlsm3pj7eAQMOsct87EZDeGNnu4r+sGsJJzyw1Q==}
     hasBin: true
     peerDependencies:
       react: '>=17.0.0'
@@ -9876,7 +9879,7 @@ snapshots:
 
   '@radix-ui/rect@1.1.2': {}
 
-  '@react-grab/cli@0.1.48':
+  '@react-grab/cli@0.1.50':
     dependencies:
       agent-install: 0.0.6
       commander: 14.0.3
@@ -10872,7 +10875,7 @@ snapshots:
     dependencies:
       react: 19.2.7
 
-  bippy@0.5.43(react@19.2.7):
+  bippy@0.6.1(react@19.2.7):
     dependencies:
       react: 19.2.7
 
@@ -11240,7 +11243,7 @@ snapshots:
 
   dequal@2.0.3: {}
 
-  deslop-js@0.9.0:
+  deslop-js@0.9.1:
     dependencies:
       '@oxc-project/types': 0.141.0
       fast-glob: 3.3.3
@@ -12806,7 +12809,7 @@ snapshots:
       '@oxc-resolver/binding-win32-arm64-msvc': 11.24.2
       '@oxc-resolver/binding-win32-x64-msvc': 11.24.2
 
-  oxlint-plugin-react-doctor@0.9.0:
+  oxlint-plugin-react-doctor@0.9.1:
     dependencies:
       '@typescript-eslint/types': 8.61.1
       eslint-scope: 9.1.2
@@ -13184,14 +13187,14 @@ snapshots:
       minimist: 1.2.8
       strip-json-comments: 2.0.1
 
-  react-doctor@0.9.0(@types/react@19.2.17)(eslint@10.5.0(jiti@2.7.0)):
+  react-doctor@0.9.1(@types/react@19.2.17)(eslint@10.5.0(jiti@2.7.0)):
     dependencies:
       '@babel/code-frame': 7.29.7
       '@sentry/node': 10.58.0
       agent-install: 0.0.5
       conf: 15.1.0
       confbox: 0.2.4
-      deslop-js: 0.9.0
+      deslop-js: 0.9.1
       eslint-plugin-react-hooks: 7.1.1(eslint@10.5.0(jiti@2.7.0))
       figures: 6.1.0
       ink: 7.1.1(@types/react@19.2.17)(react@19.2.5)
@@ -13199,7 +13202,7 @@ snapshots:
       jiti: 2.7.0
       magicast: 0.5.3
       oxlint: 1.74.0
-      oxlint-plugin-react-doctor: 0.9.0
+      oxlint-plugin-react-doctor: 0.9.1
       prompts: 2.4.2
       react: 19.2.5
       typescript: 5.9.3
@@ -13223,10 +13226,10 @@ snapshots:
       react: 19.2.7
       scheduler: 0.27.0
 
-  react-grab@0.1.48(react@19.2.7):
+  react-grab@0.1.50(react@19.2.7):
     dependencies:
-      '@react-grab/cli': 0.1.48
-      bippy: 0.5.43(react@19.2.7)
+      '@react-grab/cli': 0.1.50
+      bippy: 0.6.1(react@19.2.7)
     optionalDependencies:
       react: 19.2.7
 
@@ -13266,9 +13269,9 @@ snapshots:
       preact: 10.29.2
       prompts: 2.4.2
       react: 19.2.7
-      react-doctor: 0.9.0(@types/react@19.2.17)(eslint@10.5.0(jiti@2.7.0))
+      react-doctor: 0.9.1(@types/react@19.2.17)(eslint@10.5.0(jiti@2.7.0))
       react-dom: 19.2.7(react@19.2.7)
-      react-grab: 0.1.48(react@19.2.7)
+      react-grab: 0.1.50(react@19.2.7)
     optionalDependencies:
       esbuild: 0.28.1
       unplugin: 3.0.0

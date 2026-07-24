@@ -1014,6 +1014,10 @@ export interface AgentStore {
   listRuns(orgId: string, limit?: number): Promise<RunRecord[]>
   /** One run by id, or null — resolves a claimed run to its automation for the tool endpoint. */
   getRun(id: string): Promise<RunRecord | null>
+  /** The newest run for an automation by scheduled_for (any status), or null. The schedule tick
+   *  reads it to decide whether the current cron occurrence has already been materialized — so a
+   *  runner polling several times inside one cron window enqueues exactly one run. */
+  latestRunForAutomation(automationId: string): Promise<RunRecord | null>
   /** The newest still-queued run for an automation whose scheduled_for ≤ cutoff — the
    *  coalescing target when a burst of webhook fires arrives close together. Null when none
    *  is open, so the caller enqueues a fresh run. */

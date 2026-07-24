@@ -11,9 +11,6 @@ const client: HostedAgentClient = {
   publishLive: vi.fn().mockResolvedValue({ short_id: "a1", version: 3 }),
   createArtifact: vi.fn().mockResolvedValue({ short_id: "new1", version: 1 }),
   recordRun: vi.fn().mockResolvedValue(undefined),
-  claimRuns: vi.fn().mockResolvedValue([]),
-  finishRun: vi.fn().mockResolvedValue(undefined),
-  executeTool: vi.fn().mockResolvedValue(undefined),
 }
 
 const runCtx = (): RunContext => ({

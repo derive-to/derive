@@ -2,6 +2,5 @@
 export type { AutonomyFlags, AutonomyLevel, ChangeKind, GateDecision } from "@derive/core"
 export * from "./agent"
 export * from "./client"
-export * from "./drain"
 export * from "./submit"
 export * from "./tools"

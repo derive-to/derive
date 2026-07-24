@@ -2571,6 +2571,14 @@ export function makeRepos(db: SqliteDb) {
       .all()
   const getRun = async (id: string): Promise<RunRecord | null> =>
     (await db.select().from(run).where(eq(run.id, id)).get()) ?? null
+  const latestRunForAutomation = async (automationId: string): Promise<RunRecord | null> =>
+    (await db
+      .select()
+      .from(run)
+      .where(eq(run.automation_id, automationId))
+      .orderBy(sql`coalesce(${run.scheduled_for}, '') desc`)
+      .limit(1)
+      .get()) ?? null
   const findCoalescibleRun = async (
     automationId: string,
     cutoffIso: string,
@@ -3445,6 +3453,7 @@ export function makeRepos(db: SqliteDb) {
     finishRun,
     listRuns,
     getRun,
+    latestRunForAutomation,
     findCoalescibleRun,
     appendRunPayload,
     createPlan,

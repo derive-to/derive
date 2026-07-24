@@ -12,6 +12,7 @@ import { brokerFor, toolsForRun } from "../lib/broker"
 import { overBudget } from "../lib/budget"
 import { mintToken, safeEqual, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { materializeDueRuns } from "../lib/schedule"
 
 // WP5/WP6 — automations + runs, the generic agent-work primitive. An automation is a
 // standing job: WHO (agent), WHEN (trigger: manual | schedule | event), WHAT (free-form
@@ -274,6 +275,10 @@ export const automationRoutes = (ctx: AppContext) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
     const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20))
+    // The schedule tick: turn any DUE cron automations of this agent into queued runs BEFORE
+    // claiming, so the runner's poll is the only thing that drives scheduling — no separate
+    // service. Best-effort (a bad cron is skipped), and never blocks the claim on failure.
+    await materializeDueRuns(meta, agent, new Date()).catch(() => 0)
     const claimed = await meta.claimDueRuns(agent.id, isoNow(), limit)
     // Resolve each claimed run's automation DIRECTLY by id, in ONE batched query — never
     // via a capped org-wide list (which silently loses instructions past its limit), and
@@ -362,10 +367,12 @@ export const automationRoutes = (ctx: AppContext) => {
     return rec ? c.json({ id: rec.id, status: rec.status }) : fail(c, 404, "not found")
   })
 
-  // Execute a source tool for a claimed run — the least-privilege callback the executor uses
-  // when the agent invokes one of the run's bound-connection tools. Resolves the run → its
-  // automation's connections, verifies the ref belongs to them + is active, and runs it through
-  // the broker. Credentials stay server-side; the executor only ever holds tool defs + refs.
+  // Execute a source tool for a claimed run — the least-privilege callback the runner's shim
+  // uses when the agent invokes one of the run's bound-connection tools. Resolves the run → its
+  // automation's bound source tools (the SAME least-privilege set the claim returned), so the
+  // shim only sends a tool NAME: the server maps it to the connected-account ref, verifies it is
+  // one of THIS run's tools, and runs it through the broker. Credentials stay server-side; the
+  // runner only ever holds tool names. An explicit `ref` is still honored (and re-checked).
   app.post("/v1/agent/runs/:id/tool", async (c) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
@@ -375,24 +382,23 @@ export const automationRoutes = (ctx: AppContext) => {
     const b = await readJson(
       c,
       z.object({
-        ref: z.string().max(200),
         tool: z.string().max(200),
         args: z.unknown().optional(),
+        ref: z.string().max(200).optional(),
       }),
     )
     if (b instanceof Response) return bail(b)
     const auto = run.automation_id ? await meta.getAutomation(run.automation_id) : null
     const connIds = parseConnectionIds(auto?.connection_ids ?? null)
     if (connIds.length === 0) return fail(c, 403, "run has no bound sources")
-    // Least privilege: the ref must be one of THIS run's bound, active connections.
-    const conns = (await meta.getConnectionsByIds(connIds)).filter(
-      (cn) => cn.org_id === agent.org_id && cn.status === "active",
-    )
-    if (!conns.some((cn) => cn.broker_ref === b.ref))
-      return fail(c, 403, "tool not allowed for this run")
+    // Resolve the run's allowed (tool → ref) set once, least-privilege. The requested tool must
+    // be one of them; if a ref is supplied it must match that tool's ref (never cross to another).
     const broker = await brokerFor(meta, agent.org_id, null, deps.encryptionKey)
+    const allowed = await toolsForRun(meta, broker, agent.org_id, connIds)
+    const match = allowed.find((t) => t.def.name === b.tool && (!b.ref || t.ref === b.ref))
+    if (!match) return fail(c, 403, "tool not allowed for this run")
     try {
-      const result = await broker.execute({ ref: b.ref, tool: b.tool, args: b.args ?? {} })
+      const result = await broker.execute({ ref: match.ref, tool: b.tool, args: b.args ?? {} })
       return c.json({ result })
     } catch (e) {
       return fail(c, 502, e instanceof Error ? e.message : "tool failed")

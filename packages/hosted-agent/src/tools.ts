@@ -1,4 +1,3 @@
-import type { BrokerToolDef } from "@derive/broker"
 import { createTool } from "@mastra/core/tools"
 import { z } from "zod"
 import type { HostedAgentClient } from "./client"
@@ -12,10 +11,6 @@ import { type SubmitContext, submitRevision } from "./submit"
 
 export interface RunContext extends SubmitContext {
   client: HostedAgentClient
-  /** The run's SOURCE tools, already wrapped (buildBrokerTools) and bound to this run's
-   *  executeTool proxy. The default runOne merges these into the agent so a pull run can fetch
-   *  from its bound connections; absent/empty when the automation binds no sources. */
-  extraTools?: Record<string, ReturnType<typeof createTool>>
 }
 
 export function buildTools(ctx: RunContext) {
@@ -73,37 +68,4 @@ export function buildTools(ctx: RunContext) {
   })
 
   return { read_artifact: read, comment, submit_revision }
-}
-
-/** Execute one source tool: (broker ref, tool name, args) → result. The executor never holds
- *  the broker or its credentials — this proxies back to the API (POST /v1/agent/runs/:id/tool),
- *  which runs the call server-side and re-checks that the ref belongs to the run's bound
- *  connections. Bound to a single run by the caller, so a tool can only reach that run's sources. */
-export type ToolExecutor = (ref: string, tool: string, args: unknown) => Promise<unknown>
-
-/**
- * Wrap a hosted run's LEAST-PRIVILEGE source tools as Mastra tools. `tools` is exactly the set
- * resolved from the run's bound connections (see toolsForRun in the host), so the model can only
- * reach those; each tool executes through the connected-account ref it was resolved with, and the
- * args the model supplies ride as DATA to `execute`. Execution proxies through the API so the
- * credentials never enter the executor. Keyed by a sanitized id so the host can merge them into
- * buildTools' set for one run.
- */
-export function buildBrokerTools(
-  tools: { def: BrokerToolDef; ref: string }[],
-  execute: ToolExecutor,
-): Record<string, ReturnType<typeof createTool>> {
-  const out: Record<string, ReturnType<typeof createTool>> = {}
-  for (const { def, ref } of tools) {
-    const id = def.name.replace(/[^a-zA-Z0-9_]/g, "_")
-    out[id] = createTool({
-      id,
-      description: def.description,
-      inputSchema: z.object({
-        args: z.record(z.string(), z.unknown()).optional().describe("Tool arguments (data)."),
-      }),
-      execute: async ({ args }) => execute(ref, def.name, args ?? {}),
-    })
-  }
-  return out
 }

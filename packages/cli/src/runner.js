@@ -17,6 +17,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs"
 import { dirname, join, resolve, sep } from "node:path"
 import {
@@ -205,6 +206,73 @@ export class DeriveClient {
     if (!res.ok) throw new Error(`publish → ${res.status}: ${await res.text()}`)
     return res.json()
   }
+
+  // ---- runs (the automation lane) --------------------------------------------
+
+  /** Claim this agent's due runs. The server materializes any DUE schedule runs first, so this
+   *  one call is the whole schedule tick — the runner's poll cadence drives it. */
+  async claimRuns(limit = 10) {
+    const r = await this.call(`/v1/agent/runs/claim?limit=${limit}`)
+    return r.runs
+  }
+
+  /** Finish a claimed run with a terminal status + result meta. */
+  finishRun(id, fields) {
+    return this.call(`/v1/agent/runs/${id}/finish`, {
+      method: "POST",
+      body: JSON.stringify(fields),
+    })
+  }
+
+  /** The current source of an artifact — the model's "before" so a run revises, not reinvents. */
+  async readArtifact(shortId) {
+    return (await this.callRaw(`/v1/artifacts/${shortId}/content`)).text()
+  }
+
+  // A multipart write as this agent, through the SAME endpoints a session's chart uses. The gate
+  // decision (in serveRun) picks which one; each just posts the revision form.
+  async _postForm(path, form) {
+    const res = await fetch(`${this.server}${path}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.token}` },
+      body: form,
+      signal: AbortSignal.timeout(120_000),
+    })
+    if (!res.ok) throw new Error(`${path} → ${res.status}: ${(await res.text()).slice(0, 200)}`)
+    return res.json()
+  }
+  /** Live revision: a new version with a review round. */
+  publishVersion(shortId, rev) {
+    return this._postForm(`/v1/artifacts/${shortId}/versions`, revisionForm(rev, { request_review: "true" }))
+  }
+  /** Proposed revision: a proposal a human approves. */
+  proposeRevision(shortId, rev) {
+    return this._postForm(`/v1/artifacts/${shortId}/proposals`, revisionForm(rev))
+  }
+  /** Create a new artifact (no target). A proposal becomes a PRIVATE draft + review round. */
+  createRevision(rev, { title, privateDraft }) {
+    return this._postForm(
+      "/v1/artifacts",
+      revisionForm(rev, {
+        title: title || "Untitled",
+        request_review: "true",
+        ...(privateDraft ? { workspace_access: "none", link_role: "none" } : {}),
+      }),
+    )
+  }
+}
+
+/** The multipart body the artifact write endpoints expect: the source as a file (content type
+ *  from the filename), plus optional message / add_tags and any extra fields (title, review flag,
+ *  visibility). Mirrors the hosted client's revisionForm. */
+function revisionForm(rev, extra = {}) {
+  const form = new FormData()
+  const type = rev.filename?.endsWith(".md") ? "text/markdown" : "text/html"
+  form.set("file", new Blob([rev.content], { type }), rev.filename || "index.html")
+  if (rev.message) form.set("message", rev.message)
+  if (rev.addTags?.length) form.set("add_tags", JSON.stringify(rev.addTags))
+  for (const [k, v] of Object.entries(extra)) form.set(k, v)
+  return form
 }
 
 // ---- repo pointers --------------------------------------------------------------
@@ -547,11 +615,94 @@ const NUDGE_PROMPT = `Your previous reply was NOT accepted — it did not end wi
 // review is minutes of tool calls that would otherwise be paid for twice.
 const RESUME_PROMPT = `Your previous turn was cut short by a transient service error before you could reply — everything you had already done is still here in this session. Pick up where you left off, finish the job, and end with the required <answer> block.`
 
+// ---- automation lane: run revisions -------------------------------------------
+// A run is an automation firing (schedule / fire-URL / run-now), not an ask. The model maintains
+// an artifact on a trigger: it pulls from the run's source tools (via the shim below) and returns
+// the FULL new artifact source in a <revision> block. The runner then writes it through the gate.
+
+/** The run output contract — a full artifact revision, not an answer. Appended after the manifest
+ *  like OUTPUT_CONTRACT so a manifest edit can't break the parse. */
+export const REVISION_CONTRACT = `
+
+## Output format — REQUIRED
+
+You are running an AUTOMATION: you maintain a Derive artifact on a trigger, you are not answering a
+person. Do what the instruction asks — if source tools are listed, pull from them — then end your
+FINAL message with a single <revision> block of JSON and NOTHING after it. A reply without the
+block is discarded and nothing is written.
+
+<revision>
+{
+  "content": "the COMPLETE new source of the artifact",
+  "filename": "index.html or notes.md — sets the content type",
+  "confidence": 0.0,
+  "message": "a one-line version note"
+}
+</revision>
+
+Return the WHOLE artifact source, not a diff. Derive decides how the write lands — publish,
+propose, or record — from the automation's settings and your confidence; that is never your call.`
+
+const REVISION_NUDGE = `Your previous reply was NOT accepted — it did not end with the required <revision> block, so nothing was written. Reply now with ONLY that block and nothing else: <revision>{"content":"<the full new artifact source>","filename":"index.html","confidence":…,"message":"…"}</revision>.`
+
+/** Extract + validate the <revision> block from the model's final text. Mirrors parseAnswer:
+ *  tolerant of ```json fences, clamps confidence to [0,1], caps content at the artifact limit. */
+export function parseRevision(text) {
+  const m = text.match(/<revision>([\s\S]*?)<\/revision>/i)
+  if (!m?.[1]) return { error: "no <revision> block in result" }
+  const cleaned = m[1]
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .trim()
+  let raw
+  try {
+    raw = JSON.parse(cleaned)
+  } catch (e) {
+    return { error: `revision JSON parse: ${e.message}` }
+  }
+  if (!raw || typeof raw !== "object") return { error: "revision is not an object" }
+  if (typeof raw.content !== "string" || !raw.content.trim())
+    return { error: "content must be a non-empty string" }
+  if (raw.content.length > MAX_ARTIFACT_CHARS) return { error: "content is over the 2MB cap" }
+  const filename =
+    typeof raw.filename === "string" && /\.[a-z0-9]+$/i.test(raw.filename.trim())
+      ? raw.filename.trim().slice(0, 120)
+      : "index.html"
+  return {
+    revision: {
+      content: raw.content,
+      filename,
+      confidence:
+        typeof raw.confidence === "number" ? Math.max(0, Math.min(1, raw.confidence)) : null,
+      message:
+        typeof raw.message === "string" && raw.message.trim()
+          ? raw.message.trim().slice(0, 200)
+          : undefined,
+    },
+  }
+}
+
+// The write gate, ported from @derive/core's decideWrite. The CLI stays dependency-free (it can't
+// import the TS core at runtime), so this is a faithful copy kept honest by a parity test that
+// imports the real one. The MODEL never chooses the write mode — this does, from the target's
+// consent (mode), the workspace flags, and confidence.
+export const DEFAULT_CONFIDENCE_FLOOR = 0.8
+export function decideWrite({ autonomy, confidence, flags, confidenceFloor }) {
+  const floor = confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR
+  if (flags.agentKillswitch) return "proposal"
+  if (autonomy === "shadow") return "shadow"
+  if (autonomy === "suggest") return "proposal"
+  if (!flags.agentAutoEnabled) return "proposal"
+  if (confidence === null || confidence === undefined || confidence < floor) return "proposal"
+  return "live_publish_with_review"
+}
+
 /** One `claude -p` run (or resume). Streams events (logged as they arrive),
  *  captures the session id (first system event) and the final `result` text. */
-function spawnClaude({ bin, cwd, args, timeoutMs }) {
+function spawnClaude({ bin, cwd, args, timeoutMs, env = process.env }) {
   return new Promise((resolve) => {
-    const child = spawn(bin, args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] })
+    const child = spawn(bin, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] })
     let buffer = ""
     let resultText = ""
     let sessionId = null
@@ -669,7 +820,20 @@ function retryable(r) {
  *  the retry borrows the FIRST run's unspent budget rather than a fresh full
  *  one, so a wedged session can't stall the (strictly sequential) queue for
  *  double the timeout. */
-export async function runClaude(opts) {
+/** One model run for a structured block, robustly — the retry/resume/nudge machine both lanes
+ *  share. Generic over the output CONTRACT (appended to the system prompt), its PARSE (returns
+ *  {value} or {error}), the NUDGE prompt, and an optional SALVAGE (raw text → value, or null: the
+ *  answer lane salvages an unstructured reply, the automation lane does not). `env` carries the
+ *  per-spawn environment (the run lane hands the tool shim its server/token/run-id). The numbered
+ *  cases are unchanged from the answer path this generalized:
+ *   1. a parseable block counts EVEN IF the CLI exited nonzero after emitting it;
+ *   2. a transient service failure retries ONCE, resuming the session when there is one;
+ *   3. an ERROR run with no block fails (its text is the API's error, not a result);
+ *   4. a clean exit with no block nudges once on the SAME session (a reformat, not new work);
+ *   5. real output but still no block SALVAGES it, when the lane allows.
+ *  Returns {ok, value} or {ok:false, error}. */
+async function runModel(opts) {
+  const { contract, parse, nudgePrompt, salvage } = opts
   const baseArgs = [
     "--output-format",
     "stream-json",
@@ -684,7 +848,7 @@ export async function runClaude(opts) {
   // against the CLI): a resumed turn would run with neither the output contract
   // nor the manifest, then be judged for not following a contract it could no
   // longer see. Every spawn re-sends it.
-  const systemArgs = ["--append-system-prompt", opts.systemPrompt + OUTPUT_CONTRACT, ...baseArgs]
+  const systemArgs = ["--append-system-prompt", opts.systemPrompt + contract, ...baseArgs]
   const firstArgs = ["-p", opts.prompt, ...systemArgs]
   // An API failure's message arrives in the result STRING, a crash's in the
   // assistant stream, a spawn failure's on stderr. Try all three before
@@ -696,12 +860,13 @@ export async function runClaude(opts) {
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs,
     args: firstArgs,
+    env: opts.env,
   })
-  let parsed = parseAnswer(r.resultText)
+  let parsed = parse(r.resultText)
 
   // The service failed and gave us nothing usable. One retry — resumed if the
   // run got far enough to have a session id, otherwise from the top.
-  if (!parsed.answer && retryable(r)) {
+  if (!parsed.value && retryable(r)) {
     const sid = r.sessionId
     console.error(
       `[runner] run exited ${r.code}${r.apiErrorStatus ? ` (api ${r.apiErrorStatus})` : ""}: ${why(r).slice(0, 160) || "no output"} — retrying once${sid ? ` (resume ${sid.slice(0, 8)})` : ""}`,
@@ -716,53 +881,85 @@ export async function runClaude(opts) {
       cwd: opts.cwd,
       timeoutMs: Math.max(left, 120_000),
       args: sid ? ["-p", RESUME_PROMPT, "--resume", sid, ...systemArgs] : firstArgs,
+      env: opts.env,
     })
-    parsed = parseAnswer(r.resultText)
+    parsed = parse(r.resultText)
   }
 
-  // A block is a valid answer however the process exited — the model did the
+  // A block is a valid result however the process exited — the model did the
   // work and said so in the contract's own words.
-  if (parsed.answer) return { ok: true, answer: parsed.answer }
+  if (parsed.value) return { ok: true, value: parsed.value }
   if (r.timedOut) return { ok: false, error: "timed out" }
-  // An error run's `result` text is the API's error message, not an answer:
-  // fail rather than let the salvage path post "API Error: 529" to the asker.
+  // An error run's `result` text is the API's error message, not a result:
+  // fail rather than let the salvage path post "API Error: 529".
   if (r.code !== 0 || r.isError)
     return { ok: false, error: `exit ${r.code}: ${why(r).slice(0, 500)}` }
 
   // Nudge-retry on the same session (bounded — this is a reformat, not new work).
   if (r.sessionId) {
-    console.log(`[runner] no <answer> block; nudging (resume ${r.sessionId.slice(0, 8)})`)
+    console.log(`[runner] no block; nudging (resume ${r.sessionId.slice(0, 8)})`)
     const r2 = await spawnClaude({
       bin: opts.bin,
       cwd: opts.cwd,
       timeoutMs: Math.min(opts.timeoutMs, 180_000),
-      args: ["-p", NUDGE_PROMPT, "--resume", r.sessionId, ...systemArgs],
+      args: ["-p", nudgePrompt, "--resume", r.sessionId, ...systemArgs],
+      env: opts.env,
     })
-    const p2 = parseAnswer(r2.resultText)
-    if (p2.answer) return { ok: true, answer: p2.answer }
+    const p2 = parse(r2.resultText)
+    if (p2.value) return { ok: true, value: p2.value }
   }
 
-  // Salvage: the run produced real output but never the block. Post the raw reply
-  // rather than lose the work — flagged so the number/prose is read with care.
+  // Salvage (answer lane only): real output but never the block — return the raw reply rather
+  // than lose the work, flagged so it's read with care. The run lane passes no salvage.
   const raw = r.resultText.trim()
-  if (raw) {
-    console.log("[runner] salvaging unstructured reply (no <answer> block after nudge)")
-    return {
-      ok: true,
-      answer: {
-        body_md: raw.slice(0, 20_000),
-        query: null,
-        confidence: null,
-        caveats: [
-          "The runner couldn't parse a structured answer, so this is the model's raw reply — treat any figures and confidence with extra care.",
-        ],
-        escalate: false,
-        escalation_reason: null,
-        artifact: null,
-      },
-    }
+  if (salvage && raw) {
+    console.log("[runner] salvaging unstructured reply (no block after nudge)")
+    const v = salvage(raw)
+    if (v) return { ok: true, value: v }
   }
   return { ok: false, error: parsed.error }
+}
+
+/** The answer lane: a session's reply. Wraps runModel with the answer contract, parse, nudge,
+ *  and the raw-reply salvage — behavior identical to before the generalization. */
+export async function runClaude(opts) {
+  const r = await runModel({
+    ...opts,
+    contract: OUTPUT_CONTRACT,
+    parse: (t) => {
+      const p = parseAnswer(t)
+      return p.answer ? { value: p.answer } : { error: p.error }
+    },
+    nudgePrompt: NUDGE_PROMPT,
+    salvage: (raw) => ({
+      body_md: raw.slice(0, 20_000),
+      query: null,
+      confidence: null,
+      caveats: [
+        "The runner couldn't parse a structured answer, so this is the model's raw reply — treat any figures and confidence with extra care.",
+      ],
+      escalate: false,
+      escalation_reason: null,
+      artifact: null,
+    }),
+  })
+  return r.ok ? { ok: true, answer: r.value } : r
+}
+
+/** The automation lane: one run's revision. Same retry/resume/nudge machine, the revision
+ *  contract + parse, no salvage (a run with no revision block did nothing — fail it). */
+export async function runRevision(opts) {
+  const r = await runModel({
+    ...opts,
+    contract: REVISION_CONTRACT,
+    parse: (t) => {
+      const p = parseRevision(t)
+      return p.revision ? { value: p.revision } : { error: p.error }
+    },
+    nudgePrompt: REVISION_NUDGE,
+    salvage: null,
+  })
+  return r.ok ? { ok: true, revision: r.value } : r
 }
 
 /** Log one stream event; returns the assistant text it carried (if any), which
@@ -882,6 +1079,170 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
   )
 }
 
+// ---- serve: the automation lane -----------------------------------------------
+
+// The mock revision for --mock: a wiring check without a model (parallels MOCK_ANSWER).
+const MOCK_REVISION = {
+  content: "# Mock run\n\nThe automation executed in mock mode — no model was consulted.",
+  filename: "notes.md",
+  confidence: 1,
+  message: "mock run",
+}
+
+// The source-tool shim, written into the run's cwd. The model calls a source by running
+// `node derive-source.mjs <tool> '<jsonArgs>'`; the shim proxies to the run's tool endpoint,
+// which enforces least-privilege server-side. Server/token/run-id ride the spawn env, so the
+// model reaches a source WITHOUT ever holding a broker credential.
+const TOOL_SHIM_SRC = `#!/usr/bin/env node
+const [tool, argsJson] = process.argv.slice(2)
+const server = process.env.DERIVE_SERVER, token = process.env.DERIVE_TOKEN, runId = process.env.DERIVE_RUN_ID
+if (!tool) { console.error("usage: derive-source <tool> '<jsonArgs>'"); process.exit(2) }
+let args = {}
+if (argsJson) { try { args = JSON.parse(argsJson) } catch (e) { console.error("args must be JSON: " + e.message); process.exit(2) } }
+const res = await fetch(server + "/v1/agent/runs/" + runId + "/tool", {
+  method: "POST",
+  headers: { authorization: "Bearer " + token, "content-type": "application/json" },
+  body: JSON.stringify({ tool, args }),
+})
+const text = await res.text()
+if (!res.ok) { console.error("tool " + tool + " failed (" + res.status + "): " + text); process.exit(1) }
+try { console.log(JSON.stringify(JSON.parse(text).result)) } catch { console.log(text) }
+`
+
+/** Write the tool shim into cwd for a run and return its filename. */
+function writeToolShim(cwd) {
+  writeFileSync(join(cwd, "derive-source.mjs"), TOOL_SHIM_SRC, { mode: 0o755 })
+  return "derive-source.mjs"
+}
+
+/** A run's targets are canonical selectors. The first artifact target is the doc to revise;
+ *  tag targets are stamped on the write; no artifact target means CREATE. */
+const firstArtifactTarget = (targets) => (targets ?? []).find((t) => t.kind === "artifact") ?? null
+const tagLabels = (targets) => (targets ?? []).filter((t) => t.kind === "tag").map((t) => t.tag)
+/** A title for a created artifact: the first non-empty line, stripped of a leading markdown #. */
+const firstLine = (s) =>
+  (s.split("\n").find((l) => l.trim()) ?? "")
+    .replace(/^#+\s*/, "")
+    .trim()
+    .slice(0, 120)
+
+/** The run's task prompt: the instruction, the target's current source (revise, don't reinvent),
+ *  the auto-stamped tags, and the source tools with how to call the shim. */
+function buildRunPrompt(run, before) {
+  const lines = [run.instruction]
+  const target = firstArtifactTarget(run.targets)
+  if (target)
+    lines.push(
+      `You are UPDATING artifact ${target.id}. Return its COMPLETE new source. Current source:\n\n----- CURRENT SOURCE -----\n${before}\n----- END CURRENT SOURCE -----`,
+    )
+  else lines.push("There is no existing target — CREATE a new artifact with your revision.")
+  const tags = tagLabels(run.targets)
+  if (tags.length)
+    lines.push(`Anything you write is tagged automatically: ${tags.join(", ")}. Don't add tags yourself.`)
+  if (run.tools?.length) {
+    const list = run.tools.map((t) => `- ${t.def.name}: ${t.def.description}`).join("\n")
+    lines.push(
+      `You have these SOURCE TOOLS. Call one by running \`node derive-source.mjs <toolName> '<jsonArgs>'\` in bash; it prints the tool's JSON result:\n${list}`,
+    )
+  }
+  return lines.join("\n\n")
+}
+
+/** The ledger outcome for a write decision (mirrors the hosted lane's outcomeOf). */
+const outcomeFor = (decision) =>
+  decision === "live_publish_with_review" ? "published" : decision === "proposal" ? "proposed" : "shadow"
+
+/** Execute one claimed run: build the prompt (instruction + target + tools), run the model with
+ *  the run contract + tool shim, parse the <revision>, run the write gate, write through the
+ *  matching endpoint, and finish the run. Soft failures (no revision, a write error) finish the
+ *  run `failed` server-side and return — never thrown — so one bad run can't stall the drain,
+ *  exactly like a failed session. */
+export async function serveRun(client, run, manifest, cfg) {
+  console.log(`[runner] run ${run.id}: "${run.instruction.slice(0, 80)}"`)
+  const target = firstArtifactTarget(run.targets)
+  let before = ""
+  if (target) {
+    try {
+      before = await client.readArtifact(target.id)
+    } catch (err) {
+      console.error(`[runner] run ${run.id}: could not read ${target.id} (${err.message})`)
+    }
+  }
+  const hasTools = run.tools?.length > 0
+  if (hasTools) writeToolShim(cfg.cwd)
+  const env = hasTools
+    ? { ...process.env, DERIVE_SERVER: cfg.server, DERIVE_TOKEN: cfg.token, DERIVE_RUN_ID: run.id }
+    : undefined
+
+  const result = cfg.mock
+    ? { ok: true, revision: MOCK_REVISION }
+    : await runRevision({
+        bin: cfg.claudeBin,
+        cwd: cfg.cwd,
+        model: cfg.model,
+        timeoutMs: cfg.timeoutMs,
+        systemPrompt: manifest,
+        prompt: buildRunPrompt(run, before),
+        env,
+      })
+
+  const finish = (fields) =>
+    client
+      .finishRun(run.id, fields)
+      .catch((err) => console.error(`[runner] run ${run.id} finish failed: ${err.message}`))
+
+  if (!result.ok || !result.revision) {
+    console.error(`[runner] run ${run.id} failed: ${result.error}`)
+    await finish({ status: "failed", meta: JSON.stringify({ outcome: "failed", why: (result.error ?? "").slice(0, 200) }) })
+    return
+  }
+
+  // The write MODE is the target's consent (publish/propose; default propose) — never the model's
+  // call. The gate then maps mode + workspace flags + confidence to the actual decision.
+  const rev = result.revision
+  const mode = target?.mode
+  const decision = decideWrite({
+    autonomy: mode ? (mode === "publish" ? "auto" : "suggest") : "suggest",
+    confidence: rev.confidence,
+    flags: run.flags ?? {},
+  })
+  const revInput = { content: rev.content, filename: rev.filename, message: rev.message, addTags: tagLabels(run.targets) }
+
+  let write = null
+  try {
+    if (decision === "shadow") {
+      // Killswitch / shadow: recorded, nothing filed.
+    } else if (target) {
+      const res =
+        decision === "live_publish_with_review"
+          ? await client.publishVersion(target.id, revInput)
+          : await client.proposeRevision(target.id, revInput)
+      write = { short_id: res.short_id, decision, created: false }
+    } else {
+      const res = await client.createRevision(revInput, {
+        title: firstLine(rev.content) || "Untitled",
+        privateDraft: decision !== "live_publish_with_review",
+      })
+      write = { short_id: res.short_id, decision, created: true }
+    }
+  } catch (err) {
+    console.error(`[runner] run ${run.id} write failed: ${err.message}`)
+    await finish({ status: "failed", meta: JSON.stringify({ outcome: "failed", why: err.message.slice(0, 200) }) })
+    return
+  }
+
+  const outcome = outcomeFor(decision)
+  await finish({
+    status: "succeeded",
+    meta: JSON.stringify({
+      outcome,
+      writes: write ? [write] : [],
+      artifact_short_id: write?.short_id ?? null,
+    }),
+  })
+  console.log(`[runner] run ${run.id} ${outcome}${write ? ` (${write.short_id})` : ""}`)
+}
+
 /** Boot the host state serve/once share: context info, repo corpus, skills,
  *  conventions. Everything here is per-boot truth on purpose (see the comments
  *  inline) — `once` inherits the same freshness contract as a serve restart. */
@@ -949,20 +1310,26 @@ export async function drainPass(cfg, host) {
     if (last?.author_kind !== "agent") return true
     return last.meta?.stale === true
   })
-  const counts = { considered: sessions.length, served: 0, failed: 0 }
-  if (sessions.length === 0) return counts
-  // Re-read the manifest only when the queue has work — an edit applies
-  // from the next answer, and idle polls stay one call. In dev mode the
-  // working-tree file wins, same freshness contract. The repo catalog is
-  // appended from the BOOT sync — the frontmatter may promise new repos,
-  // but the prompt only ever claims what's actually on disk.
+  // The automation lane, same runner: claim this agent's due runs. The server materializes any
+  // DUE schedule runs at claim time, so this call IS the schedule tick — no separate service.
+  let runs = []
+  try {
+    runs = await client.claimRuns()
+  } catch (err) {
+    console.error(`[runner] claim runs: ${err.message}`)
+  }
+  const counts = { considered: sessions.length + runs.length, served: 0, failed: 0 }
+  if (sessions.length === 0 && runs.length === 0) return counts
+  // Re-read the manifest only when there's work — an edit applies from the next
+  // pass, and idle polls stay one call. In dev mode the working-tree file wins,
+  // same freshness contract. The repo catalog is appended from the BOOT sync —
+  // the frontmatter may promise new repos, but the prompt only claims what's on disk.
   const md = cfg.manifestFile
     ? readFileSync(cfg.manifestFile, "utf8")
     : ((await client.getContext(cfg.contextId)).manifest_md ?? info.manifest_md ?? "")
   const manifest = parseManifest(md).body + repoCatalogBlock(catalog) + conventions
-  // Sequential on purpose: one runner, one model, no fan-out — fairness
-  // comes from the queue's oldest-first order. One session's failure must
-  // not starve the rest of the batch.
+  // Sequential on purpose: one runner, one model, no fan-out — fairness comes
+  // from oldest-first order. One item's failure must not starve the rest.
   for (const s of sessions) {
     try {
       await serveSession(client, s, manifest, cfg, repoMeta, skillMeta)
@@ -970,6 +1337,15 @@ export async function drainPass(cfg, host) {
     } catch (err) {
       counts.failed += 1
       console.error(`[runner] session ${s.id}: ${err.message}`)
+    }
+  }
+  for (const run of runs) {
+    try {
+      await serveRun(client, run, manifest, cfg)
+      counts.served += 1
+    } catch (err) {
+      counts.failed += 1
+      console.error(`[runner] run ${run.id}: ${err.message}`)
     }
   }
   return counts
