@@ -23,9 +23,22 @@ this process ever needs a private API the public contract lacks, that is a bug.
 | `DISPATCHER_HOST_SECRET` | The shared secret the Derive API presents to the internal invoke surface. Unset ⇒ the hosted lane (HTTP server) is off; the owner-run drain lane still works. |
 | `DISPATCHER_HTTP_PORT` | Port for the internal invoke/health surface. Defaults `3040`. |
 
-Plus the runner's own env, passed through untouched: exactly one of
-`ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`, optional `RUNNER_*` knobs,
-`GH_TOKEN` for private repo pointers.
+Plus the runner's own env, passed through untouched: the model credential for
+the chosen provider, optional `RUNNER_*` knobs, `GH_TOKEN` for private repo
+pointers.
+
+**Providers.** The runner is agent-CLI-agnostic (`RUNNER_PROVIDER` / `--provider`,
+default `claude-code`; add one in `packages/cli/src/providers/`). Each provider's
+own CLI owns its auth from the inherited env — no token is ever reimplemented:
+
+| Provider | Binary | Credential (either) |
+| --- | --- | --- |
+| `claude-code` | `claude` | `ANTHROPIC_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN` (a Pro/Max plan) |
+| `codex` (experimental) | `codex` | `OPENAI_API_KEY`, or a `codex login` (ChatGPT plan) |
+
+A subscription/plan token works because the runner drives the provider's real
+CLI, which consumes the token exactly as licensed — the sanctioned path, not a
+reimplemented client.
 
 ## Two lanes
 
