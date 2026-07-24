@@ -1381,7 +1381,7 @@ export interface NewAgent {
 // pg-boss's model). Living-doc refresh, a scheduled digest, an event-driven update, an
 // ad-hoc "run once" are all rows here with different triggers and instructions.
 
-export type TriggerKind = "manual" | "schedule" | "event"
+export type TriggerKind = "manual" | "schedule" | "event" | "view"
 
 /** How an automation fires. Open-ended JSON on the row — a new kind adds no columns. */
 export interface AutomationTrigger {
@@ -1396,6 +1396,9 @@ export interface AutomationTrigger {
    *  response that mints it; the fire endpoint verifies a presented bearer against this
    *  hash. Never surfaced on read — redacted to a boolean when an automation is presented. */
   secret_hash?: string
+  /** view: refresh the artifact when someone opens it and its content is older than this many
+   *  minutes (0 = always refresh on view). The automation's refs point at the artifact. */
+  maxAgeMinutes?: number
 }
 
 /** A standing agent job: WHAT to do (instruction), WHO does it (agent), and the rule for

@@ -91,10 +91,11 @@ export const automationRoutes = (ctx: AppContext) => {
       z.object({
         agentId: z.string(),
         trigger: z.object({
-          kind: z.enum(["manual", "schedule", "event"]),
+          kind: z.enum(["manual", "schedule", "event", "view"]),
           cron: z.string().optional(),
           tz: z.string().optional(),
           on: z.string().optional(),
+          maxAgeMinutes: z.number().int().nonnegative().optional(),
         }),
         instruction: z.string().min(1).max(4000),
         refs: REFS.optional(),
