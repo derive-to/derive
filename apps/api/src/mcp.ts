@@ -76,6 +76,7 @@ import { registerCatchUpTool } from "./mcp-tools/catch-up"
 import { registerCheckpointTool } from "./mcp-tools/checkpoint"
 import { registerCommentTool } from "./mcp-tools/comment"
 import { registerFindTool } from "./mcp-tools/find"
+import { registerInvokeTool } from "./mcp-tools/invoke"
 import { registerListWorkspacesTool } from "./mcp-tools/list-workspaces"
 import { registerOrganizeTool } from "./mcp-tools/organize"
 import { registerPublishTool } from "./mcp-tools/publish"
@@ -370,6 +371,7 @@ async function buildServer(
   registerPublishTool(tc)
   registerCheckpointTool(tc)
   registerUseTool(tc)
+  registerInvokeTool(tc)
 
   return server
 }

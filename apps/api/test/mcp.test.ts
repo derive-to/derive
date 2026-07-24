@@ -2966,3 +2966,56 @@ describe("checkpoint tool (lineage layers)", () => {
     expect(toolText(r)).toContain("publish")
   })
 })
+
+// WO8 — the third audience. An agent lists an artifact's verbs and invokes one over MCP,
+// exactly as a human clicks: the same verb, the same gate, a run billed to the verb's owner.
+describe("invoke tool — verbs over MCP (WO8)", () => {
+  it("lists and invokes an artifact's verbs on behalf of the human", async () => {
+    const { app, token, meta } = appWithGrant("invoke", "openid derive:read derive:publish")
+    const art = await (await publishRaw(app, token, "# Doc", "doc.md", "Doc")).json()
+    const stored = await meta.getByShortId(art.short_id)
+    if (!stored) throw new Error("artifact not stored")
+    const org = stored.org_id
+    await meta.createAgent({
+      id: "ag_inv",
+      org_id: org,
+      name: "Runner",
+      token: "agtok_inv",
+      role: "editor",
+    })
+    await meta.createVerb({
+      id: "verb_inv",
+      org_id: org,
+      artifact_id: stored.id,
+      name: "Ping",
+      instruction_template: "do the thing",
+      created_by: "u_o",
+      agent_id: "ag_inv",
+      gate: "propose",
+      audience: "members",
+    })
+    // The tool is registered.
+    const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
+    expect(toolNames(list)).toContain("invoke")
+    // Listing the artifact's verbs (no `verb`).
+    const listed = JSON.parse(
+      toolText(await call(app, token, "invoke", { short_id: art.short_id })),
+    )
+    expect(listed.verbs.map((v: { name: string }) => v.name)).toContain("Ping")
+    // Invoking it → a run enqueued, billed to the owner, ledgered like a human click.
+    const invoked = JSON.parse(
+      toolText(
+        await call(app, token, "invoke", {
+          short_id: art.short_id,
+          verb: "Ping",
+          params: { note: "hi" },
+        }),
+      ),
+    )
+    expect(invoked.status).toBe("queued")
+    expect(invoked.run_id).toMatch(/^run_/)
+    const run = (await meta.listRuns(org)).find((r) => r.id === invoked.run_id)
+    expect(run?.reason).toContain("agent:")
+    expect(JSON.parse(run?.meta ?? "{}").owner).toBe("u_o")
+  })
+})
