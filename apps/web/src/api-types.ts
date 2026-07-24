@@ -133,6 +133,8 @@ export interface paths {
                             /** @description Saved personal Brandprint (collection-only; the brand profile is workspace scope); null when cleared. */
                             brandprint: {
                                 collectionId?: string | null;
+                                /** @description False turns the workspace Brandprint off for this user; their personal collection still applies. Absent or true: the workspace layer applies. Personal scope only. */
+                                useWorkspaceBrandprint?: boolean;
                             } | null;
                         };
                     };

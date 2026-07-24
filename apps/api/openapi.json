@@ -3060,6 +3060,10 @@
                           "type": "string",
                           "nullable": true,
                           "maxLength": 64
+                        },
+                        "useWorkspaceBrandprint": {
+                          "type": "boolean",
+                          "description": "False turns the workspace Brandprint off for this user; their personal collection still applies. Absent or true: the workspace layer applies. Personal scope only."
                         }
                       },
                       "description": "Saved personal Brandprint (collection-only; the brand profile is workspace scope); null when cleared."
