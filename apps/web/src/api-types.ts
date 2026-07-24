@@ -3880,7 +3880,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description The rework request was posted and landed in the agent's pull inbox. 409 needsAgent when no agent is registered; 409 needsBrandprint when no Brandprint resolves; 409 alreadyQueued while an earlier request for this artifact still waits. */
+                /** @description The rework request was posted and landed in the agent's pull inbox. 409 needsAgent when no agent is registered; 409 needsBrandprint when no Brandprint resolves; 409 brandprintDisabled when the caller turned the workspace Brandprint off in their settings; 409 alreadyQueued while an earlier request for this artifact still waits. */
                 201: {
                     headers: {
                         [name: string]: unknown;

@@ -85,6 +85,50 @@ describe("rework: gating", () => {
     expect(((await res.json()) as { code: string }).code).toBe("needsBrandprint")
   })
 
+  it("409s brandprintDisabled when the caller turned the workspace Brandprint off", async () => {
+    const { app, meta } = makeAuthedApp("rework-disabled", [owner, editor], "editor")
+    const shortId = await newArtifact(app)
+    await seedBrandprint(meta, shortId)
+    await addAgent(app, "Reviser")
+    // The caller turns the workspace layer off, with no personal collection of
+    // their own to fall back to — the brief goes empty because of the toggle,
+    // not because nothing was ever set up.
+    const saved = await app.request(
+      "/v1/me/profile",
+      jsonAs(as(editor.email), { brandprint: { useWorkspaceBrandprint: false } }),
+    )
+    expect(saved.status).toBe(200)
+    const res = await rework(app, shortId)
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { code: string; error: string }
+    expect(body.code).toBe("brandprintDisabled")
+    expect(body.error).toBe("Brandprint is turned off in your settings. Turn it on to rework.")
+  })
+
+  it("rework proceeds on the personal collection when the workspace layer is off", async () => {
+    const { app, meta } = makeAuthedApp("rework-disabled-personal", [owner, editor], "editor")
+    const shortId = await newArtifact(app)
+    await seedBrandprint(meta, shortId)
+    const ag = await addAgent(app, "Reviser")
+    // The caller turns the workspace layer off but keeps their own collection —
+    // the resolved brief is non-empty, so rework fires as usual.
+    const col = await (
+      await app.request("/v1/collections", jsonAs(as(editor.email), { title: "My Brandprint" }))
+    ).json()
+    const saved = await app.request(
+      "/v1/me/profile",
+      jsonAs(as(editor.email), {
+        brandprint: { collectionId: col.id, useWorkspaceBrandprint: false },
+      }),
+    )
+    expect(saved.status).toBe(200)
+    const res = await rework(app, shortId)
+    expect(res.status).toBe(201)
+    const mentions = await inboxBodies(app, ag.token)
+    expect(mentions).toHaveLength(1)
+    expect(mentions[0]?.body).toContain("@Reviser")
+  })
+
   it("404 for an unknown artifact; 404 for an agentId from another workspace", async () => {
     const { app, meta } = makeAuthedApp("rework-404", [owner, editor], "editor")
     expect((await rework(app, "nope")).status).toBe(404)

@@ -11,6 +11,10 @@ import {
  * the two-read + merge sequence the MCP connection, the context runner, and the
  * rework endpoint all need, each keyed on a different user id. The reads are
  * independent, so they run concurrently. `userId` null ⇒ workspace layer only.
+ *
+ * A context's runs key on the context's CREATOR, not whoever triggers a given run:
+ * the creator's personal toggle governs every session that context spawns,
+ * regardless of who reads or fires it.
  */
 export const resolveActorBrandprint = async (
   meta: MetaStore,
