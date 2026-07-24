@@ -54,6 +54,9 @@ export interface RateLimiters {
   write: Limiter
   publish: Limiter
   comment: Limiter
+  /** Anonymous guest comment creation, keyed by IP: far tighter than the
+   *  signed-in rate — a guest thread is a conversation, not a firehose. */
+  anonComment: Limiter
   unlock: Limiter
   /** Invite creation (workspace + artifact). Each request emails an arbitrary,
    *  possibly unwilling address with caller-influenced content (the artifact
@@ -71,7 +74,12 @@ export interface RateLimiters {
  * rates.
  */
 export function inMemoryRateLimiters(
-  opts: { publishRate?: number; commentRate?: number; askRate?: number } = {},
+  opts: {
+    publishRate?: number
+    commentRate?: number
+    anonCommentRate?: number
+    askRate?: number
+  } = {},
 ): RateLimiters {
   return {
     auth: inMemoryLimiter(60_000, 20),
@@ -82,6 +90,7 @@ export function inMemoryRateLimiters(
     write: inMemoryLimiter(60_000, 120),
     publish: inMemoryLimiter(60_000, opts.publishRate ?? 30),
     comment: inMemoryLimiter(60_000, opts.commentRate ?? 60),
+    anonComment: inMemoryLimiter(60_000, opts.anonCommentRate ?? 5),
     unlock: inMemoryLimiter(5 * 60_000, 5),
     // 10 invite emails per minute per actor: a whole team invited in one sitting
     // clears it; a spam cannon doesn't.

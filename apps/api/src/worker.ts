@@ -272,6 +272,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           write: nativeLimiter(env.RL_WRITE, 60),
           publish: nativeLimiter(env.RL_PUBLISH, 60),
           comment: nativeLimiter(env.RL_COMMENT, 60),
+          // Rides RL_STRICT (3/60), namespaced — tighter than the in-process default
+          // (5/60) since the native window can't go narrower than 60s, but same
+          // "far below the signed-in rate" intent as unlock/oauth-register below.
+          anonComment: nativeLimiter(env.RL_STRICT, 60, "anon-comment"),
           // Both ride RL_STRICT (3/60); the prefix keeps their counts separate.
           unlock: nativeLimiter(env.RL_STRICT, 60, "unlock"),
           oauthRegister: nativeLimiter(env.RL_STRICT, 60, "oauth-register"),

@@ -256,6 +256,7 @@ export function buildContext(deps: AppDeps) {
   const limiters = deps.rateLimiters ?? inMemoryRateLimiters(deps)
   const publishLimiter = deps.rateLimit ? limiters.publish : null
   const commentLimiter = deps.rateLimit ? limiters.comment : null
+  const anonCommentLimiter = deps.rateLimit ? limiters.anonComment : null
   const unlockLimiter = deps.rateLimit ? limiters.unlock : null
   const inviteLimiter = deps.rateLimit ? limiters.invite : null
   const askLimiter = deps.rateLimit ? limiters.ask : null
@@ -939,6 +940,7 @@ export function buildContext(deps: AppDeps) {
     defaultRole,
     publishLimiter,
     commentLimiter,
+    anonCommentLimiter,
     unlockLimiter,
     inviteLimiter,
     askLimiter,

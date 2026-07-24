@@ -46,6 +46,7 @@ export const commentRoutes = (ctx: AppContext) => {
     authorize,
     limited,
     commentLimiter,
+    anonCommentLimiter,
     sourceText,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -157,7 +158,17 @@ export const commentRoutes = (ctx: AppContext) => {
       const artifact = await meta.getByShortId(c.req.param("shortId"))
       if (!artifact || artifact.current_version === 0) return bail(fail(c, 404, "not found"))
       if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
-      const rl = await limited(c, commentLimiter)
+      // "Guest" means genuinely anonymous (no session, agent, or static
+      // token) — actingUser is ALSO null for the static-token principal (it
+      // authors no byline), so this keys on isPrincipal (true anonymous)
+      // rather than `!acting`, preserving the pre-existing token-authenticated
+      // body.author/"anonymous" fallback automation relies on. Computed once,
+      // up front (isPrincipal is memoized), and reused below both to pick the
+      // rate limiter and to gate the name requirement.
+      const anon = !(await isPrincipal(c))
+      // Guests get a much tighter cap than the signed-in comment rate; keyed
+      // by IP via actorKey — a guest thread is a conversation, not a firehose.
+      const rl = await limited(c, anon ? anonCommentLimiter : commentLimiter)
       if (rl) return bail(rl)
       const body = await readJson(
         c,
@@ -192,14 +203,8 @@ export const commentRoutes = (ctx: AppContext) => {
       const acting = await actingUser(c)
       // A signed-in author is always the session identity; a guest MUST name
       // themself (the UI requires it; the API enforces it). Names are display-
-      // only — authorization never keys on them.
-      //
-      // "Guest" means genuinely anonymous (no session, agent, or static
-      // token) — actingUser is ALSO null for the static-token principal (it
-      // authors no byline), so the name requirement keys on isPrincipal
-      // (true anonymous) rather than `!acting`, preserving the pre-existing
-      // token-authenticated body.author/"anonymous" fallback automation relies on.
-      const anon = !(await isPrincipal(c))
+      // only — authorization never keys on them. `anon` was resolved above
+      // (before the rate-limit check).
       const guestName = typeof body.author === "string" ? body.author.trim() : ""
       if (anon && !guestName) return bail(fail(c, 400, "name required"))
       if (anon && guestName.length > 80)

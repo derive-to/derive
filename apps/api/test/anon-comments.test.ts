@@ -3,13 +3,37 @@ import {
   anonApp,
   app,
   as,
+  bearer,
   json,
   jsonAs,
   makeAuthedApp,
+  pub,
   publishAs,
+  quotaApp,
+  TEST_TOKEN,
   type TestUser,
   upload,
 } from "./helpers"
+
+// Create an artifact (as the token/owner) on a given app instance and set its
+// world link role; returns short_id. Like `artifactWithLink` above but parameterized
+// on the app, for the dedicated rate-limit-enabled instance below (quotaApp's app
+// is NOT auto-authed, so setup calls must carry the token explicitly).
+const artifactWithLinkOn = async (
+  targetApp: ReturnType<typeof quotaApp>["app"],
+  linkRole: "none" | "viewer" | "commenter" | "editor",
+) => {
+  const shortId = (
+    await (await pub(targetApp, "# feedback me", { title: "Anon rate limit" })).json()
+  ).short_id as string
+  const res = await targetApp.request(`/v1/artifacts/${shortId}/access`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json", ...bearer(TEST_TOKEN) },
+    body: JSON.stringify({ linkRole }),
+  })
+  expect(res.status).toBe(200)
+  return shortId
+}
 
 // Create an artifact and set its world link role; returns short_id.
 const artifactWithLink = async (linkRole: "none" | "viewer" | "commenter" | "editor") => {
@@ -136,5 +160,23 @@ describe("anonymous commenting", () => {
     const cm = await res.json()
     expect(cm.author).toBe("Alice")
     expect(cm.author).not.toBe("Spoof")
+  })
+
+  it("anon comment creation is capped at 5/min per IP", async () => {
+    // A fresh app + store (own in-memory limiter instance) so this test's budget
+    // can never be consumed by another test in the file — quotaApp isolates both.
+    const { app: rlApp } = quotaApp("rl-anon-comment", { rateLimit: true })
+    const shortId = await artifactWithLinkOn(rlApp, "commenter")
+    let last = 0
+    for (let i = 0; i < 6; i++) {
+      // No Authorization header: rlApp (from quotaApp) is not auto-authed, so this
+      // is a genuinely anonymous caller, same as anonApp above.
+      const res = await rlApp.request(
+        `/v1/artifacts/${shortId}/comments`,
+        json({ body_md: `spam ${i}`, author: "Flood" }),
+      )
+      last = res.status
+    }
+    expect(last).toBe(429)
   })
 })
