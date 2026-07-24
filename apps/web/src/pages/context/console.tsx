@@ -75,6 +75,16 @@ function Console({ id }: { id: string }) {
   const mine = (sessions ?? []).filter((s) => s.asker_id === me?.id)
   const active = picked === "new" ? null : (picked ?? mine[0]?.id ?? null)
   const isOwner = !!context && context.created_by === me?.id
+  // Rotate the context's agent token — the recovery path for a lost runner token
+  // (managed agents are hidden from the Settings roster, so this is their only
+  // credential surface). Admin-gated server-side; a non-admin owner gets a loud
+  // 403 toast, never a silent no-op. Shown exactly once, like every token.
+  const [rotatedToken, setRotatedToken] = useState<string | null>(null)
+  const rotateToken = useApiMutation({
+    mutationFn: () => api.rotateAgent(context?.agent_id ?? ""),
+    success: "Runner token rotated — the old one is dead",
+    onSuccess: (a) => setRotatedToken(a.token),
+  })
 
   // No ask-access reads as 404 (a context's existence never leaks outside its
   // workspace). Say so instead of spinning forever — the loader prefetches (no
@@ -110,6 +120,18 @@ function Console({ id }: { id: string }) {
         <RunnerLiveness seenAt={context.runner_seen_at} />
         <div className="ml-auto flex items-center gap-3">
           {isOwner && <ContextAccess id={id} name={context.name} policy={context.ask_policy} />}
+          {isOwner && (
+            <Button
+              data-testid="console-rotate-token"
+              variant="ghost"
+              size="sm"
+              onClick={() => rotateToken.mutate()}
+              loading={rotateToken.isPending}
+              disabled={rotateToken.isPending}
+            >
+              Rotate token
+            </Button>
+          )}
           {isOwner && context.manifest_short_id && (
             <Link
               to="/artifacts/$ref"
@@ -122,6 +144,50 @@ function Console({ id }: { id: string }) {
           )}
         </div>
       </div>
+
+      {rotatedToken && (
+        <div data-testid="console-rotated-token">
+          <StatusPanel
+            tone="warning"
+            layout="inline"
+            title="New runner token — copy it now, it won't be shown again. The old one is dead."
+            description={
+              <div className="flex flex-col gap-1.5">
+                <code className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground">
+                  {rotatedToken}
+                </code>
+                <span className="text-2xs text-muted-foreground">
+                  Update it where the runner reads it (e.g.{" "}
+                  <code className="font-mono">.derive/agent-token</code>) and restart the runner.
+                </span>
+              </div>
+            }
+            action={
+              <div className="flex items-center gap-2">
+                <Button
+                  data-testid="console-rotated-copy"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(rotatedToken)
+                    toast.success("Token copied")
+                  }}
+                >
+                  Copy
+                </Button>
+                <Button
+                  data-testid="console-rotated-done"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setRotatedToken(null)}
+                >
+                  Done
+                </Button>
+              </div>
+            }
+          />
+        </div>
+      )}
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line">

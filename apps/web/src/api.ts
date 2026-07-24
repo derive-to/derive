@@ -736,6 +736,10 @@ export const api = {
   listAgents: (): Promise<{ agents: Agent[] }> => f("/v1/agents", opts()).then(j),
   createAgent: (name: string, role?: Role): Promise<Agent & { token: string }> =>
     f("/v1/agents", opts({ name, role })).then(j),
+  // Rotation is a credential event, never an identity event: the old bearer dies at
+  // once; id, role, hosting, and attribution are untouched. Token shown only here.
+  rotateAgent: (id: string): Promise<Agent & { token: string }> =>
+    f(`/v1/agents/${id}/rotate`, opts({})).then(j),
   deleteAgent: (id: string): Promise<void> =>
     f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
 
@@ -782,11 +786,13 @@ export const api = {
   // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
   listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
   getContext: (id: string): Promise<ContextInfo> => f(`/v1/contexts/${id}`, opts()).then(j),
+  // agent_id omitted → the server auto-mints a MANAGED agent for this context and
+  // returns its bearer as agent_token, exactly once on this response.
   createContext: (input: {
     name: string
-    agent_id: string
+    agent_id?: string
     manifest_short_id: string
-  }): Promise<ContextInfo> => f("/v1/contexts", opts(input)).then(j),
+  }): Promise<ContextInfo & { agent_token?: string }> => f("/v1/contexts", opts(input)).then(j),
   askContext: (
     id: string,
     body_md: string,
