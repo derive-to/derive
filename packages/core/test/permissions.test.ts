@@ -49,13 +49,13 @@ describe("effectiveRole resolution", () => {
     expect(effectiveRole(user({}), "member")).toBe(null) // no seat
     expect(effectiveRole(user({ locked: true }), "none", "viewer")).toBe(null)
   })
-  it("a static token is owner; an anonymous caller is always read-only, never above viewer", () => {
+  it("a static token is owner; an anonymous caller never gets a workspace seat or more than commenter", () => {
     expect(effectiveRole({ kind: "token" }, "member")).toBe("owner")
-    // No "open"/trusted-anonymous path exists: anon never gets a writing role, even
-    // on an editor-grant world link, and never gets a workspace seat.
+    // No "open"/trusted-anonymous path exists: anon never gets a workspace seat, and
+    // is capped at commenter even on an editor-grant world link.
     expect(effectiveRole({ kind: "anon" }, "member")).toBe(null)
     expect(effectiveRole({ kind: "anon" }, "none", "viewer")).toBe("viewer")
-    expect(effectiveRole({ kind: "anon" }, "none", "editor")).toBe("viewer")
+    expect(effectiveRole({ kind: "anon" }, "none", "editor")).toBe("commenter")
   })
 })
 
@@ -72,9 +72,10 @@ describe("can", () => {
 })
 
 // The world link (docs/access-model.md), every cell of the matrix. The
-// invariants: an anonymous holder is NEVER more than viewer; the link grants any
-// signed-in holder (member or not) its role; a non-member gets NOTHING by
-// workspace access. Mirrors SECURITY.md.
+// invariants: an anonymous holder is NEVER more than commenter (and only via an
+// explicit commenter-or-better link); the link grants any signed-in holder
+// (member or not) its role; a non-member gets NOTHING by workspace access.
+// Mirrors SECURITY.md.
 describe("the world link (access matrix)", () => {
   const anon: Actor = { kind: "anon" }
   // A signed-in caller with no share/seat — reaching purely via the world link.
@@ -89,9 +90,9 @@ describe("the world link (access matrix)", () => {
     expect(can(outsider, "comment", "none", "viewer")).toBe(false)
   })
 
-  it("world comment link: anon stays viewer (forced auth), a signed-in holder becomes commenter", () => {
-    expect(effectiveRole(anon, "none", "commenter")).toBe("viewer")
-    expect(can(anon, "comment", "none", "commenter")).toBe(false) // anon never elevated
+  it("world comment link: anon becomes commenter (guest comments), a signed-in holder becomes commenter too", () => {
+    expect(effectiveRole(anon, "none", "commenter")).toBe("commenter")
+    expect(can(anon, "comment", "none", "commenter")).toBe(true) // guest commenting
     expect(can(anon, "read", "none", "commenter")).toBe(true)
     expect(effectiveRole(outsider, "none", "commenter")).toBe("commenter")
     expect(can(outsider, "comment", "none", "commenter")).toBe(true)
@@ -118,14 +119,14 @@ describe("the world link (access matrix)", () => {
     )
   })
 
-  it("a lock: the world grant follows unlock, and never elevates anon", () => {
+  it("a lock: the world grant follows unlock, and never elevates anon past commenter", () => {
     expect(effectiveRole({ ...anon, locked: true }, "none", "commenter")).toBe(null)
     expect(effectiveRole({ kind: "anon", locked: true, unlocked: true }, "none", "commenter")).toBe(
-      "viewer",
+      "commenter",
     )
     expect(
       can({ kind: "anon", locked: true, unlocked: true }, "comment", "none", "commenter"),
-    ).toBe(false)
+    ).toBe(true)
     expect(
       effectiveRole(
         { kind: "user", userId: "u", locked: true, unlocked: true },
@@ -144,5 +145,44 @@ describe("the world link (access matrix)", () => {
     expect(effectiveRole(outsider, "none")).toBe(null)
     expect(can(outsider, "comment", "none")).toBe(false)
     expect(effectiveRole(outsider, "none", "none")).toBe(null)
+  })
+})
+
+describe("anonymous commenter links", () => {
+  const anon = { kind: "anon" as const, locked: false, unlocked: false }
+
+  it("anon on a commenter link gets commenter", () => {
+    expect(effectiveRole(anon, "none", "commenter")).toBe("commenter")
+  })
+
+  it("anon on an editor link is capped at commenter", () => {
+    expect(effectiveRole(anon, "none", "editor")).toBe("commenter")
+  })
+
+  it("anon on a viewer link stays viewer", () => {
+    expect(effectiveRole(anon, "none", "viewer")).toBe("viewer")
+  })
+
+  it("anon with no link gets nothing", () => {
+    expect(effectiveRole(anon, "none", "none")).toBeNull()
+  })
+
+  it("anon on a locked commenter link gets nothing until unlocked", () => {
+    const lockedAnon = { kind: "anon" as const, locked: true, unlocked: false }
+    expect(effectiveRole(lockedAnon, "none", "commenter")).toBeNull()
+    const unlockedAnon = { kind: "anon" as const, locked: true, unlocked: true }
+    expect(effectiveRole(unlockedAnon, "none", "commenter")).toBe("commenter")
+  })
+
+  it("anon can comment but never edit/publish on an editor link", () => {
+    expect(can(anon, "comment", "none", "editor")).toBe(true)
+    expect(can(anon, "publish", "none", "editor")).toBe(false)
+    expect(can(anon, "propose", "none", "editor")).toBe(true)
+    expect(can(anon, "share", "none", "editor")).toBe(false)
+  })
+
+  it("signed-in holder still gets the link's full role", () => {
+    const user = { kind: "user" as const, locked: false, unlocked: false }
+    expect(effectiveRole(user, "none", "editor")).toBe("editor")
   })
 })

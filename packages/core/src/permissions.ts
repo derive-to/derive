@@ -84,16 +84,17 @@ export interface Actor {
  *   - `linkRole === "none"` → the link is inert.
  *   - a password (the lock) suspends it until unlocked; explicit standing and the
  *     workspace seat are untouched, so members and shares never need the password.
- *   - a signed-in holder gets `linkRole`; an anonymous holder is always clamped to
- *     `viewer` — never elevated to a writing role without an account.
+ *   - a signed-in holder gets `linkRole`; an anonymous holder is capped at
+ *     `commenter`.
  *
  * Note there is NO listing input: discovery (`listed`) carries no access, so it is
  * not part of this gate.
  *
- * Invariant: an anonymous caller is never more than `viewer`, regardless of the
- * grant. Anything past view (comment, propose, publish, share, manage) needs an
- * authenticated identity — a signed-in user or a `DERIVE_TOKEN`. There is
- * deliberately no "trusted anonymous" path.
+ * Invariant: an anonymous caller is never more than `commenter`, and reaches
+ * commenter only through an explicit commenter-or-better world link. Publish,
+ * approve, share, and manage always need an authenticated identity. The old
+ * rule ("anon is never more than viewer") was relaxed 2026-07 so external
+ * reviewers can leave named guest comments on a "can comment" link.
  */
 export function effectiveRole(
   actor: Actor,
@@ -107,8 +108,10 @@ export function effectiveRole(
   // only when the artifact grants workspace access.
   const seat: Role | null =
     workspaceAccess === "member" && actor.kind === "user" ? (actor.orgRole ?? null) : null
-  // The world link: anyone with the URL. A password suspends it until unlocked; an
-  // anonymous holder is clamped to viewer.
+  // The world link: anyone with the URL. A password suspends it until unlocked.
+  // A signed-in holder gets the link's role. An anonymous holder is capped at
+  // commenter: a "can comment" (or better) link admits named guest comments,
+  // but no anonymous caller ever holds a writing role past commenter.
   const world: Role | null =
     linkRole === "none"
       ? null
@@ -116,7 +119,9 @@ export function effectiveRole(
         ? null
         : actor.kind === "user"
           ? linkRole
-          : "viewer"
+          : linkRole === "viewer"
+            ? "viewer"
+            : "commenter"
   return maxRole(explicit, seat, world)
 }
 

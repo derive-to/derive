@@ -125,7 +125,7 @@ describe("effectiveRole — the three grants (max of explicit, seat, world)", ()
     expect(effectiveRole(user({ orgRole: "editor" }), "member", "commenter")).toBe("editor")
   })
 
-  // WORLD LINK — anyone with the URL, incl. non-members; anon clamps to viewer.
+  // WORLD LINK — anyone with the URL, incl. non-members; anon caps at commenter.
   it("the world link grants any signed-in holder its role; a non-member too", () => {
     expect(effectiveRole(user(), "none", "viewer")).toBe("viewer")
     expect(effectiveRole(user(), "none", "commenter")).toBe("commenter")
@@ -133,11 +133,11 @@ describe("effectiveRole — the three grants (max of explicit, seat, world)", ()
     expect(effectiveRole(user({ orgRole: null }), "none", "commenter")).toBe("commenter")
   })
 
-  it("an anonymous holder is clamped to viewer, whatever the world role", () => {
+  it("an anonymous holder is capped at commenter, whatever the world role", () => {
     expect(effectiveRole(anon, "none", "viewer")).toBe("viewer")
-    expect(effectiveRole(anon, "none", "commenter")).toBe("viewer")
-    expect(effectiveRole(anon, "none", "editor")).toBe("viewer")
-    expect(can(anon, "comment", "none", "commenter")).toBe(false)
+    expect(effectiveRole(anon, "none", "commenter")).toBe("commenter")
+    expect(effectiveRole(anon, "none", "editor")).toBe("commenter")
+    expect(can(anon, "comment", "none", "commenter")).toBe(true)
   })
 
   it("link_role=none is an inert link — no world grant", () => {
@@ -190,22 +190,22 @@ describe("effectiveRole — the three grants (max of explicit, seat, world)", ()
 })
 
 describe("effectiveRole — the anonymous invariant", () => {
-  it("never elevates anon above viewer, for ANY workspace access, world role, or lock", () => {
+  it("never elevates anon above commenter, for ANY workspace access, world role, or lock", () => {
     for (const wa of WORKSPACE_ACCESS)
       for (const lr of LINK_ROLES)
         for (const locked of [false, true])
           for (const unlocked of [false, true]) {
             const role = effectiveRole({ kind: "anon", locked, unlocked }, wa, lr)
             expect(
-              role === null || role === "viewer",
+              role === null || role === "viewer" || role === "commenter",
               `anon ${wa}/${lr}/locked=${locked}/unlocked=${unlocked}`,
             ).toBe(true)
           }
   })
 
-  it("anon reaches view ONLY through the world link — never through workspace access", () => {
+  it("anon reaches access ONLY through the world link — never through workspace access", () => {
     expect(effectiveRole(anon, "none", "viewer")).toBe("viewer")
-    expect(effectiveRole(anon, "none", "editor")).toBe("viewer") // clamp, not editor
+    expect(effectiveRole(anon, "none", "editor")).toBe("commenter") // cap, not editor
     expect(effectiveRole(anon, "member", "none")).toBeNull() // never a member
     expect(effectiveRole(anon, "none", "none")).toBeNull()
     expect(effectiveRole({ kind: "anon", locked: true }, "none", "commenter")).toBeNull()
@@ -216,12 +216,24 @@ describe("effectiveRole — the anonymous invariant", () => {
 })
 
 describe("can — the one authorization gate", () => {
-  it("denies every write action to an anonymous caller, on every workspace access and world role", () => {
-    // Not even an editor-grant world link lets an account-less caller write.
+  it("denies actions past commenter to an anonymous caller, on every workspace access and world role", () => {
+    // Not even an editor-grant world link lets an account-less caller publish,
+    // approve, share, or manage — those always need an authenticated identity.
+    const beyondCommenter = WRITE_ACTIONS.filter((a) => a !== "comment" && a !== "propose")
     for (const wa of WORKSPACE_ACCESS)
       for (const lr of LINK_ROLES)
-        for (const action of WRITE_ACTIONS)
+        for (const action of beyondCommenter)
           expect(can(anon, action, wa, lr), `anon ${action} on ${wa}/${lr}`).toBe(false)
+  })
+
+  it("lets an anon caller comment/propose only via a commenter-or-better world link", () => {
+    for (const wa of WORKSPACE_ACCESS) {
+      expect(can(anon, "comment", wa, "none")).toBe(false)
+      expect(can(anon, "comment", wa, "viewer")).toBe(false)
+      expect(can(anon, "comment", wa, "commenter")).toBe(true)
+      expect(can(anon, "comment", wa, "editor")).toBe(true)
+      expect(can(anon, "propose", wa, "commenter")).toBe(true)
+    }
   })
 
   it("lets an anon caller read via a world viewer link, never via workspace access", () => {
