@@ -217,6 +217,18 @@ CREATE TABLE IF NOT EXISTS plan (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS connection (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  broker TEXT NOT NULL,
+  toolkit TEXT NOT NULL,
+  broker_ref TEXT NOT NULL,
+  scopes_label TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS invitation (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,

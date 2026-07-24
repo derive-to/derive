@@ -13,6 +13,8 @@ import type {
   CommentRecord,
   CommentSignals,
   CommentState,
+  ConnectionRecord,
+  ConnectionStatus,
   ContextAskerRecord,
   ContextRecord,
   DeliveryRecord,
@@ -41,6 +43,7 @@ import type {
   NewCollection,
   NewCollectionMember,
   NewComment,
+  NewConnection,
   NewContext,
   NewContextAsker,
   NewDelivery,
@@ -136,6 +139,7 @@ import {
   collectionItem,
   collectionMember,
   comment,
+  connection,
   context,
   contextAsker,
   contextSession,
@@ -279,6 +283,7 @@ export const schema = {
   automation,
   run,
   plan,
+  connection,
   artifactInvite,
   invitation,
   betaSignup,
@@ -323,6 +328,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   automation: true,
   run: true,
   plan: true,
+  connection: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2625,6 +2631,34 @@ export function makeRepos(db: SqliteDb) {
       .get()
     return Number(row?.total ?? 0)
   }
+  const createConnection = async (cn: NewConnection): Promise<ConnectionRecord> =>
+    (await db.insert(connection).values(cn).returning().get()) as ConnectionRecord
+  const getConnection = async (id: string): Promise<ConnectionRecord | null> =>
+    (await db.select().from(connection).where(eq(connection.id, id)).get()) ?? null
+  const getConnectionsByIds = async (ids: string[]): Promise<ConnectionRecord[]> =>
+    ids.length === 0 ? [] : db.select().from(connection).where(inArray(connection.id, ids)).all()
+  const listConnections = async (orgId: string, userId?: string): Promise<ConnectionRecord[]> =>
+    db
+      .select()
+      .from(connection)
+      .where(
+        userId
+          ? and(eq(connection.org_id, orgId), eq(connection.user_id, userId))
+          : eq(connection.org_id, orgId),
+      )
+      .orderBy(desc(connection.created_at))
+      .all()
+  const setConnectionStatus = async (
+    id: string,
+    orgId: string,
+    status: ConnectionStatus,
+  ): Promise<ConnectionRecord | null> =>
+    (await db
+      .update(connection)
+      .set({ status })
+      .where(and(eq(connection.id, id), eq(connection.org_id, orgId)))
+      .returning()
+      .get()) ?? null
   const getAgentByToken = async (token: string): Promise<AgentRecord | null> =>
     (await db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
   // Introspect a Better Auth oidc-provider access token (its own tables, same DB).
@@ -3367,6 +3401,11 @@ export function makeRepos(db: SqliteDb) {
     deletePlan,
     resolvePlan,
     sumRunCostSince,
+    createConnection,
+    getConnection,
+    getConnectionsByIds,
+    listConnections,
+    setConnectionStatus,
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,

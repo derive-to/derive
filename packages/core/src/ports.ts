@@ -1025,6 +1025,22 @@ export interface AgentStore {
   /** Sum of cost_micro_usd across the org's runs at/after an ISO cutoff — backs the budget
    *  check at enqueue (spend this month vs a plan's monthlyMicroUsd limit). */
   sumRunCostSince(orgId: string, sinceIso: string): Promise<number>
+  // ---- Connections (per-user connected external accounts) ----------------
+  /** Record a connected account. */
+  createConnection(cn: NewConnection): Promise<ConnectionRecord>
+  /** One connection by id, or null. */
+  getConnection(id: string): Promise<ConnectionRecord | null>
+  /** Batch-load connections by id in ONE query — backs the least-privilege toolsFor: a run
+   *  resolves ONLY its bound connection ids, never the workspace's whole list. Empty ⇒ []. */
+  getConnectionsByIds(ids: string[]): Promise<ConnectionRecord[]>
+  /** A workspace's connections, newest first; pass userId to scope to one person's. */
+  listConnections(orgId: string, userId?: string): Promise<ConnectionRecord[]>
+  /** Flip a connection's status (activate on authorize, revoke on teardown), org-scoped. */
+  setConnectionStatus(
+    id: string,
+    orgId: string,
+    status: ConnectionStatus,
+  ): Promise<ConnectionRecord | null>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>
   /** Resolve a live OAuth access token (by its stored hash) to its grant. */
@@ -1474,6 +1490,42 @@ export interface NewPlan {
   provider: string
   secret_enc: string
   limits?: string | null
+}
+
+/** A connected external account's lifecycle. active once authorized; pending during the OAuth
+ *  round trip; revoked when torn down. */
+export type ConnectionStatus = "active" | "pending" | "revoked"
+
+/** A per-user connected external account (WO3): the owner authorized Derive's broker to act on
+ *  their Gmail/Stripe/GitHub/etc. Always bound to ONE person (identity never falls back), and
+ *  scoped least-privilege per toolkit. A hosted run sees the tools of its bound connections
+ *  only; the BYO path never touches these. */
+export interface ConnectionRecord {
+  id: string
+  org_id: string
+  /** The owner — always a specific person, never null. */
+  user_id: string
+  /** Broker provider slug: "local" | "composio". */
+  broker: string
+  /** Toolkit slug, e.g. "gmail" | "stripe" | "github". */
+  toolkit: string
+  /** Broker-side connected-account id. */
+  broker_ref: string
+  /** Human label of the granted scopes (display only), or null. */
+  scopes_label: string | null
+  status: ConnectionStatus
+  created_at: string
+}
+
+export interface NewConnection {
+  id: string
+  org_id: string
+  user_id: string
+  broker: string
+  toolkit: string
+  broker_ref: string
+  scopes_label?: string | null
+  status?: ConnectionStatus
 }
 
 export type AgentMentionState = "pending" | "done"

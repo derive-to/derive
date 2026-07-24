@@ -13,6 +13,8 @@ import type {
   CommentRecord,
   CommentSignals,
   CommentState,
+  ConnectionRecord,
+  ConnectionStatus,
   ContextAskerRecord,
   ContextRecord,
   DeliveryRecord,
@@ -43,6 +45,7 @@ import type {
   NewCollection,
   NewCollectionMember,
   NewComment,
+  NewConnection,
   NewContext,
   NewContextAsker,
   NewDelivery,
@@ -137,6 +140,7 @@ import {
   collectionItem,
   collectionMember,
   comment,
+  connection,
   context,
   contextAsker,
   contextSession,
@@ -205,6 +209,7 @@ export const schema = {
   automation,
   run,
   plan,
+  connection,
   artifactInvite,
   invitation,
   betaSignup,
@@ -249,6 +254,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   automation: true,
   run: true,
   plan: true,
+  connection: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2592,6 +2598,41 @@ export class PgMetaStore implements MetaStore {
       .from(run)
       .where(and(eq(run.org_id, orgId), gte(run.created_at, sinceIso)))
     return Number(rows[0]?.total ?? 0)
+  }
+  async createConnection(cn: NewConnection): Promise<ConnectionRecord> {
+    const rows = await this.db.insert(connection).values(cn).returning()
+    return one(rows)
+  }
+  async getConnection(id: string): Promise<ConnectionRecord | null> {
+    const rows = await this.db.select().from(connection).where(eq(connection.id, id))
+    return rows[0] ?? null
+  }
+  async getConnectionsByIds(ids: string[]): Promise<ConnectionRecord[]> {
+    if (ids.length === 0) return []
+    return this.db.select().from(connection).where(inArray(connection.id, ids))
+  }
+  listConnections(orgId: string, userId?: string): Promise<ConnectionRecord[]> {
+    return this.db
+      .select()
+      .from(connection)
+      .where(
+        userId
+          ? and(eq(connection.org_id, orgId), eq(connection.user_id, userId))
+          : eq(connection.org_id, orgId),
+      )
+      .orderBy(desc(connection.created_at))
+  }
+  async setConnectionStatus(
+    id: string,
+    orgId: string,
+    status: ConnectionStatus,
+  ): Promise<ConnectionRecord | null> {
+    const rows = await this.db
+      .update(connection)
+      .set({ status })
+      .where(and(eq(connection.id, id), eq(connection.org_id, orgId)))
+      .returning()
+    return rows[0] ?? null
   }
   async getAgentByToken(token: string): Promise<AgentRecord | null> {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))

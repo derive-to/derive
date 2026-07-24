@@ -3,6 +3,7 @@ import type {
   ArtifactKind,
   AuditAction,
   CommentState,
+  ConnectionStatus,
   DeliveryKind,
   DeliveryStatus,
   DomainKind,
@@ -250,6 +251,21 @@ export const plan = sqliteTable("plan", {
   provider: text("provider").notNull(),
   secret_enc: text("secret_enc").notNull(),
   limits: text("limits"),
+  created_at: text("created_at").notNull().default(now),
+})
+
+// A per-user connected external account (WO3): the owner authorized the broker to act on their
+// Gmail/Stripe/etc. Always bound to one person; a hosted run sees the tools of its bound
+// connections only. broker_ref is the broker-side connected-account id.
+export const connection = sqliteTable("connection", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  user_id: text("user_id").notNull(),
+  broker: text("broker").notNull(),
+  toolkit: text("toolkit").notNull(),
+  broker_ref: text("broker_ref").notNull(),
+  scopes_label: text("scopes_label"),
+  status: text("status").$type<ConnectionStatus>().notNull().default("pending"),
   created_at: text("created_at").notNull().default(now),
 })
 
@@ -923,6 +939,7 @@ const TABLES = [
   automation,
   run,
   plan,
+  connection,
   invitation,
   artifactInvite,
   betaSignup,

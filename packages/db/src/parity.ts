@@ -25,6 +25,7 @@ import type {
   CollectionMemberRecord,
   CollectionRecord,
   CommentRecord,
+  ConnectionRecord,
   ContextAskerRecord,
   ContextRecord,
   DeliveryRecord,
@@ -73,6 +74,7 @@ export interface TypedTables {
   automation: AutomationRecord
   run: RunRecord
   plan: PlanRecord
+  connection: ConnectionRecord
   artifactInvite: ArtifactInviteRecord
   invitation: InvitationRecord
   betaSignup: BetaSignupRecord

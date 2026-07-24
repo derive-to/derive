@@ -32,6 +32,7 @@
     "@better-auth/oauth-provider": "1.6.19",
     "@better-auth/passkey": "1.6.19",
     "@cloudflare/puppeteer": "^1.0.0",
+    "@derive/broker": "workspace:*",
     "@derive/core": "workspace:*",
     "@derive/db": "workspace:*",
     "@derive/storage": "workspace:*",

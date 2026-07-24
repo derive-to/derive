@@ -22,6 +22,7 @@ import { blobRoutes } from "./routes/blob"
 import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
 import { conciergeRoutes } from "./routes/concierge"
+import { connectionRoutes } from "./routes/connections"
 import { contextRoutes } from "./routes/contexts"
 import { domainRoutes } from "./routes/domains"
 import { embedRoutes } from "./routes/embeds"
@@ -389,6 +390,7 @@ export function createApp(deps: AppDeps): Hono {
     reviewRoutes,
     automationRoutes,
     planRoutes,
+    connectionRoutes,
     conciergeRoutes,
     reworkRoutes,
     commentRoutes,

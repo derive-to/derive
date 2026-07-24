@@ -3,6 +3,7 @@ import type {
   ArtifactKind,
   AuditAction,
   CommentState,
+  ConnectionStatus,
   DeliveryKind,
   DeliveryStatus,
   DomainKind,
@@ -209,6 +210,19 @@ export const plan = pgTable("plan", {
   provider: text("provider").notNull(),
   secret_enc: text("secret_enc").notNull(),
   limits: text("limits"),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+
+// A per-user connected external account (WO3): see schema.ts.
+export const connection = pgTable("connection", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  user_id: text("user_id").notNull(),
+  broker: text("broker").notNull(),
+  toolkit: text("toolkit").notNull(),
+  broker_ref: text("broker_ref").notNull(),
+  scopes_label: text("scopes_label"),
+  status: text("status").$type<ConnectionStatus>().notNull().default("pending"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
@@ -760,6 +774,7 @@ const TABLES = [
   automation,
   run,
   plan,
+  connection,
   invitation,
   artifactInvite,
   betaSignup,
