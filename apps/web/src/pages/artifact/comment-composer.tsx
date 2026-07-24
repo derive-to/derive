@@ -10,11 +10,13 @@ import {
 import { api, type DirUser, type Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { PICKER_EMOJI } from "@/lib/emoji"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
+import { useActions } from "./comment-actions"
 import { useCommentScope } from "./lib/comment-scope"
 import { quoteChipClass } from "./quote-chip"
 
@@ -457,14 +459,26 @@ export function Composer({
   // each time.
   const [text, setText] = useState("")
   const [mentions, setMentions] = useState<Mention[]>([])
+  const { isGuest, guestName, setGuestName } = useActions()
   const submit = (resolved: Mention[]) => {
-    if (text.trim()) onSubmit(text, resolved)
+    if (text.trim() && (!isGuest || guestName.trim())) onSubmit(text, resolved)
   }
   return (
     <div
       data-testid="comment-composer"
       className="overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow)]"
     >
+      {isGuest && (
+        <div className="px-2.5 pt-2.5">
+          <Input
+            data-testid="guest-name-input"
+            placeholder="Your name (required)"
+            value={guestName}
+            maxLength={80}
+            onChange={(e) => setGuestName(e.target.value)}
+          />
+        </div>
+      )}
       {quote && (
         // Inset with the card's padding (the reference is context, not a banner).
         // Phones get a longer multi-line preview of what you're commenting on; the
@@ -512,7 +526,7 @@ export function Composer({
           <Button
             variant="default"
             size="sm"
-            disabled={!text.trim()}
+            disabled={!text.trim() || (isGuest && !guestName.trim())}
             data-testid="composer-submit"
             onClick={() => submit(mentions.filter((m) => text.includes(`@${m.name}`)))}
           >

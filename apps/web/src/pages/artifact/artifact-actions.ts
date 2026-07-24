@@ -1,7 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query"
-import type { Dispatch, SetStateAction } from "react"
+import { type Dispatch, type SetStateAction, useState } from "react"
 import { type Artifact, api, type Comment, type Mention } from "@/api"
 import { toast } from "@/components/ui/sonner"
+import { getGuestName, setGuestName as persistGuestName } from "@/lib/guest-name"
 import { commentsQuery } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import type { CommentActions } from "./comment-actions"
@@ -59,6 +60,14 @@ export function useArtifactActions(p: {
   const { shortId, me, post, load, refetchComments } = p
   const qc = useQueryClient()
   const commentsKey = commentsQuery(shortId).queryKey
+
+  // The guest's self-named display name (localStorage-persisted): local state so an edit
+  // re-renders the composer/reply line immediately, mirrored to storage on every change.
+  const [guestName, setGuestNameState] = useState(getGuestName)
+  const setGuestName = (v: string) => {
+    persistGuestName(v)
+    setGuestNameState(v.trim().slice(0, 80))
+  }
 
   const startEdit = async () => {
     // Load the source BEFORE opening the editor: if the fetch fails, opening an empty editor
@@ -122,16 +131,19 @@ export function useArtifactActions(p: {
     mutationFn: ({
       text,
       opts,
+      author,
     }: {
       text: string
       opts?: { threadId?: string; anchor?: Sel | null; mentions?: Mention[] }
       optimistic: Comment
+      author?: string
     }) =>
       api.comment(shortId, {
         body_md: text,
         thread_id: opts?.threadId,
         anchor: opts?.threadId ? undefined : (opts?.anchor ?? undefined),
         mentions: opts?.mentions?.length ? opts.mentions : undefined,
+        author,
       }),
     optimistic: ({ optimistic }, client) => {
       client.setQueryData<Comment[]>(commentsKey, (old) => [...(old ?? []), optimistic])
@@ -163,6 +175,9 @@ export function useArtifactActions(p: {
   ) => {
     if (!text.trim() || !p.art) return
     const tempId = `temp-${crypto.randomUUID()}`
+    // An anonymous poster sends their self-named `guestName` as the author (the server
+    // requires it for anon on a commenter+ link); a signed-in `me` never carries one.
+    const guestAuthor = !me ? guestName : undefined
     const optimistic: Comment = {
       id: tempId,
       thread_id: opts?.threadId ?? tempId,
@@ -170,13 +185,14 @@ export function useArtifactActions(p: {
       path: null,
       anchor: opts?.anchor ? JSON.stringify(opts.anchor) : null,
       body_md: text,
-      author: me?.name ?? me?.email ?? "You",
+      author: me?.name ?? me?.email ?? (guestAuthor || "You"),
       state: "open",
       created_at: new Date().toISOString(),
       reactions: {},
       mentions: opts?.mentions,
+      ...(guestAuthor ? { guest: true } : {}),
     }
-    comment.mutate({ text, opts, optimistic })
+    comment.mutate({ text, opts, optimistic, author: guestAuthor })
   }
   const reply = (text: string, threadId: string, mentions: Mention[] = []) =>
     addComment(text, { threadId, mentions })
@@ -257,6 +273,9 @@ export function useArtifactActions(p: {
   })
   const actions: CommentActions = {
     meName: me?.name ?? me?.email ?? "",
+    isGuest: !me,
+    guestName,
+    setGuestName,
     react: (commentId, emoji) => react.mutate({ commentId, emoji }),
     edit: (commentId, body) => editComment.mutate({ commentId, body }),
     remove: (commentId) => removeComment.mutate(commentId),

@@ -972,6 +972,7 @@ export const api = {
       thread_id?: string
       anchor?: unknown
       mentions?: Mention[]
+      author?: string
     },
   ): Promise<Comment> => f(`/v1/artifacts/${id}/comments`, opts(body)).then(j),
   // Review rounds (the /derive loop). getReview → the pending round + history;

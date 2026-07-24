@@ -19,6 +19,7 @@ import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 import { useActions } from "./comment-actions"
@@ -361,7 +362,7 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
   const { canComment, currentSlide, landedSlides, anchorConf, agentIds } = useCommentScope()
   const { activeThread, hoverThread, inDoc, onActivate, onHover, onResolve, onReply, onJump } =
     useCommentTree()
-  const { openReview, meName } = useActions()
+  const { openReview, meName, isGuest, guestName, setGuestName } = useActions()
   const [reply, setReply] = useState("")
   const [replyMentions, setReplyMentions] = useState<Mention[]>([])
   const root = thread[0]
@@ -384,7 +385,7 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
   const hovered = hoverThread === root.thread_id
   const present = inDoc[root.thread_id]
   const sendReply = (resolved: Mention[]) => {
-    if (!reply.trim()) return
+    if (!reply.trim() || (isGuest && !guestName.trim())) return
     onReply(reply, root.thread_id, resolved)
     setReply("")
     setReplyMentions([])
@@ -674,6 +675,16 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
                 <AvatarFallback className="text-2xs">{getInitials(meName)}</AvatarFallback>
               </Avatar>
               <div className="min-w-0 flex-1">
+                {isGuest && (
+                  <Input
+                    data-testid="guest-name-reply-input"
+                    placeholder="Your name (required)"
+                    value={guestName}
+                    maxLength={80}
+                    onChange={(e) => setGuestName(e.target.value)}
+                    className="mb-1.5 h-7"
+                  />
+                )}
                 <MentionField
                   multiline
                   bare
