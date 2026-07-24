@@ -1,3 +1,4 @@
+import type { BrokerToolDef, ToolBroker } from "@derive/broker"
 import { createTool } from "@mastra/core/tools"
 import { z } from "zod"
 import type { HostedAgentClient } from "./client"
@@ -68,4 +69,30 @@ export function buildTools(ctx: RunContext) {
   })
 
   return { read_artifact: read, comment, submit_revision }
+}
+
+/**
+ * WO4 — wrap a hosted run's LEAST-PRIVILEGE broker tools as Mastra tools. `tools` is exactly the
+ * set resolved from the run's bound connections (see toolsForRun in the host), so the model can
+ * only reach those; each tool executes through the connected-account ref it was resolved with,
+ * and the args the model supplies ride as DATA to broker.execute. Keyed by a sanitized id so the
+ * host can merge them into buildTools' set for one run.
+ */
+export function buildBrokerTools(
+  broker: ToolBroker,
+  tools: { def: BrokerToolDef; ref: string }[],
+): Record<string, ReturnType<typeof createTool>> {
+  const out: Record<string, ReturnType<typeof createTool>> = {}
+  for (const { def, ref } of tools) {
+    const id = def.name.replace(/[^a-zA-Z0-9_]/g, "_")
+    out[id] = createTool({
+      id,
+      description: def.description,
+      inputSchema: z.object({
+        args: z.record(z.string(), z.unknown()).optional().describe("Tool arguments (data)."),
+      }),
+      execute: async ({ args }) => broker.execute({ ref, tool: def.name, args: args ?? {} }),
+    })
+  }
+  return out
 }
