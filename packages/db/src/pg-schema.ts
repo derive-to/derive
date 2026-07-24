@@ -54,6 +54,8 @@ export const artifact = pgTable("artifact", {
   // Set on every new version; null until first versioned (coalesces to created_at).
   updated_at: text("updated_at"),
   removed_at: text("removed_at"),
+  // First non-author view (the activation moment; see schema.ts).
+  first_foreign_view_at: text("first_foreign_view_at"),
   source_path: text("source_path"),
   // The CURRENT (last) author, denormalized from the latest version for the list view +
   // author filtering. For a GitHub-synced artifact these mirror the last commit's author.

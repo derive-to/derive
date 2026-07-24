@@ -75,6 +75,9 @@ export const artifact = sqliteTable("artifact", {
   // existing DBs (SQLite forbids a non-constant default there).
   updated_at: text("updated_at"),
   removed_at: text("removed_at"),
+  // When the first non-author view landed (recordView stamps it once — the
+  // activation moment). Nullable, no default, so it ALTER ADDs cleanly.
+  first_foreign_view_at: text("first_foreign_view_at"),
   source_path: text("source_path"),
   // The CURRENT (last) author, denormalized from the latest version row for the list
   // view + author filtering. For a GitHub-synced artifact these mirror the last commit's

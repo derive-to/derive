@@ -125,6 +125,10 @@ export interface ArtifactRecord {
   updated_at: string | null
   /** A takedown tombstone: when set, the content is gone (410) but the record stays. */
   removed_at: string | null
+  /** When the first non-author view landed (the activation moment — recordView
+   *  stamps it once; owner self-views were already excluded upstream). Null until
+   *  someone else has actually seen the work. */
+  first_foreign_view_at: string | null
   /** For a GitHub-synced artifact: its path within the repo (e.g. "docs/plans/foo.md").
    *  The structural "location" — drives the folder/tree view — kept distinct from the
    *  human `title`. Null for artifacts not mirrored from a repo. */

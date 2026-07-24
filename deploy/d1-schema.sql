@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS artifact (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT,
   removed_at TEXT,
+  first_foreign_view_at TEXT,
   source_path TEXT,
   author_name TEXT,
   author_login TEXT,
