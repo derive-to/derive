@@ -163,6 +163,7 @@ CREATE TABLE IF NOT EXISTS agent (
   created_by TEXT,
   hosted INTEGER NOT NULL DEFAULT 0,
   managed INTEGER NOT NULL DEFAULT 0,
+  runs_seen_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (token),
   UNIQUE (org_id, name)

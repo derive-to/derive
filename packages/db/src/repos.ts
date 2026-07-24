@@ -2478,6 +2478,9 @@ export function makeRepos(db: SqliteDb) {
   // ---- Agents + pull inbox -----------------------------------------------
   const createAgent = async (a: NewAgent): Promise<AgentRecord> =>
     (await db.insert(agent).values(a).returning().get()) as AgentRecord
+  const touchAgentRunsSeen = async (id: string, at: string): Promise<void> => {
+    await db.update(agent).set({ runs_seen_at: at }).where(eq(agent.id, id)).run()
+  }
   const rotateAgentToken = async (
     id: string,
     orgId: string,
@@ -3362,6 +3365,7 @@ export function makeRepos(db: SqliteDb) {
     markNotificationsRead,
     createAgent,
     rotateAgentToken,
+    touchAgentRunsSeen,
     listAgents,
     setAgentHosted,
     createAutomation,

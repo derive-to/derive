@@ -2445,6 +2445,9 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.insert(agent).values(a).returning()
     return one(rows)
   }
+  async touchAgentRunsSeen(id: string, at: string): Promise<void> {
+    await this.db.update(agent).set({ runs_seen_at: at }).where(eq(agent.id, id))
+  }
   async rotateAgentToken(
     id: string,
     orgId: string,
