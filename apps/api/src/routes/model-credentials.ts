@@ -9,8 +9,9 @@ import { bail, fail, readJson } from "../lib/http"
 // token (or an API key) here; it is encrypted at rest (lib/crypto, keyed by DERIVE_AUTH_SECRET)
 // and used ONLY for that user's own agent runs. Two surfaces:
 //   - personal (session): a user manages their own credential, one per provider.
-//   - agent (bearer): the executor fetches the calling agent's OWNER's credential to run on
-//     that user's plan. Scoped to the caller-agent's registrant — never another user's.
+//   - agent (bearer): the executor fetches the credential the run BILLS — the initiator's
+//     (the session's asker) first, then the caller-agent's registrant. Never an unrelated
+//     user's: session lookups are bound to the calling agent's own context.
 
 const PROVIDERS = ["claude-code", "codex"] as const
 const isoNow = () => new Date().toISOString()
@@ -80,21 +81,43 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
     return c.body(null, 204)
   })
 
-  // The executor fetches the calling agent's OWNER's credential for a provider, decrypted, so
-  // it can run on that user's plan. Returns `{ credential: null }` when the owner has none —
-  // the runner fails the run closed with a "connect your plan" message rather than falling back
-  // to a shared token. Isolation is structural: only the caller-agent's registrant's row is read.
+  // The executor fetches the credential a run bills against, decrypted. WHOSE plan is the
+  // run's INITIATOR's: pass `?session=` and the server resolves that session's ASKER first
+  // — their question, their tokens — falling back to the agent's registrant (the interim
+  // chain until the workspace pool lands; then the fallback becomes the pool). Without a
+  // session (boot preflight, scheduled runs) it is the registrant's. Returns
+  // `{ credential: null }` when nobody in the chain has one — the runner fails the run
+  // closed with a "connect your plan" message rather than falling back to a shared token.
+  // Isolation is structural twice over: a session id resolves only when that session
+  // belongs to THIS agent's own context (404 otherwise, so foreign ids don't leak), and
+  // only the resolved person's row is ever read.
   app.get("/v1/agent/model-credential", async (c) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
     const provider = c.req.query("provider") ?? "claude-code"
+    if (!deps.encryptionKey) return c.json({ credential: null })
+    const present = (cred: { kind: string; secret: string }, source: string) =>
+      c.json({
+        credential: {
+          kind: cred.kind,
+          value: decryptSecret(cred.secret, deps.encryptionKey as string),
+        },
+        source,
+      })
+    const sessionId = c.req.query("session")
+    if (sessionId) {
+      const s = await meta.getSession(sessionId)
+      const sctx = s ? await meta.getContext(s.context_id) : null
+      if (!s || !sctx || sctx.agent_id !== agent.id || s.org_id !== agent.org_id)
+        return fail(c, 404, "unknown session")
+      const asker = await meta.getModelCredential(agent.org_id, s.asker_id, provider)
+      if (asker) return present(asker, "asker")
+    }
     const owner = agent.created_by
-    if (!owner || !deps.encryptionKey) return c.json({ credential: null })
+    if (!owner) return c.json({ credential: null })
     const cred = await meta.getModelCredential(agent.org_id, owner, provider)
     if (!cred) return c.json({ credential: null })
-    return c.json({
-      credential: { kind: cred.kind, value: decryptSecret(cred.secret, deps.encryptionKey) },
-    })
+    return present(cred, "registrant")
   })
 
   return app

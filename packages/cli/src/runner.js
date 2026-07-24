@@ -184,8 +184,9 @@ export class DeriveClient {
   /** The owner's connected model credential for a provider (decrypted), or null. The
    *  server scopes it to THIS agent's registrant, so a runner only ever sees its own
    *  owner's plan token. */
-  async modelCredential(provider) {
-    const r = await this.call(`/v1/agent/model-credential?provider=${encodeURIComponent(provider)}`)
+  async modelCredential(provider, sessionId = null) {
+    const q = `provider=${encodeURIComponent(provider)}${sessionId ? `&session=${encodeURIComponent(sessionId)}` : ""}`
+    const r = await this.call(`/v1/agent/model-credential?${q}`)
     return r.credential ?? null
   }
 
@@ -597,6 +598,7 @@ export async function runAgent(provider, opts) {
     model: opts.model,
     systemPrompt,
     timeoutMs: opts.timeoutMs,
+    env: opts.env,
   }
   // An API failure's message arrives in the result text, a crash's in the last
   // assistant words, a spawn failure's on stderr. Try all three before reporting
@@ -694,6 +696,21 @@ const MOCK_ANSWER = {
 export async function serveSession(client, session, manifest, cfg, repoMeta = [], skillMeta = []) {
   const asked = session.messages.at(-1)?.body_md?.slice(0, 80) ?? "?"
   console.log(`[runner] session ${session.id}: "${asked}"`)
+  // Whose plan pays for THIS answer: the session's asker (the server resolves it,
+  // falling back to the registrant), composed as a per-spawn overlay so nothing
+  // sticks to process.env between sessions with different askers. A fail-closed
+  // resolve (no plan, no ambient) fails THIS session server-side like any other
+  // run failure — thrown, it would leave the claim dangling and retry-loop.
+  let modelEnv = null
+  if (!cfg.mock) {
+    try {
+      modelEnv = await resolveModelEnv(cfg, client, session.id)
+    } catch (err) {
+      console.error(`[runner] session ${session.id} failed: ${err.message}`)
+      await client.fail(session.id)
+      return
+    }
+  }
   const result = cfg.mock
     ? { ok: true, answer: MOCK_ANSWER }
     : await runAgent(selectProvider(cfg.providerName), {
@@ -703,6 +720,7 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
         timeoutMs: cfg.timeoutMs,
         systemPrompt: manifest,
         prompt: buildPrompt(session.messages),
+        env: modelEnv ? { ...process.env, ...modelEnv } : undefined,
       })
   if (!result.ok || !result.answer) {
     console.error(`[runner] session ${session.id} failed: ${result.error}`)
@@ -781,23 +799,25 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
 /** Boot the host state serve/once share: context info, repo corpus, skills,
  *  conventions. Everything here is per-boot truth on purpose (see the comments
  *  inline) — `once` inherits the same freshness contract as a serve restart. */
-/** Resolve the model credential this run authenticates with. The runner process serves
- *  exactly one context (one owner), so injecting the owner's connected plan token into this
- *  process's env is isolation by construction: it is used only for this owner's runs and
- *  overrides any ambient token. Precedence:
- *    1. the owner's connected per-user plan (fetched, decrypted, provider-mapped) — inject it;
- *    2. no connection but an ambient token is set (self-host's single global plan) — use it;
+/** Resolve the model credential a run authenticates with, as a per-spawn ENV OVERLAY —
+ *  never a process.env mutation, so one asker's plan token can't leak into the next
+ *  asker's session on a shared context. Pass a session id to bill the run's INITIATOR:
+ *  the server resolves the session's asker first and falls back to the agent's
+ *  registrant (interim until the workspace pool lands). Precedence:
+ *    1. the initiator's connected plan (fetched, decrypted, provider-mapped) — overlay it;
+ *    2. no connection but an ambient token is set (self-host's single global plan) — null
+ *       overlay, the spawn inherits process.env;
  *    3. neither — FAIL CLOSED with a connect-your-plan message (never a shared fallback).
  *  A lookup error (older/self-host server without the endpoint) degrades to the ambient path. */
-export async function applyModelCredential(cfg, client) {
-  if (cfg.mock) return
+export async function resolveModelEnv(cfg, client, sessionId = null) {
+  if (cfg.mock) return null
   const provider = selectProvider(cfg.providerName)
   let cred = null
   try {
-    cred = await client.modelCredential(cfg.providerName)
+    cred = await client.modelCredential(cfg.providerName, sessionId)
   } catch (e) {
     console.error(`[runner] model-credential lookup failed (${e.message}); using ambient env`)
-    return
+    return null
   }
   if (cred) {
     const env = provider.credentialEnv?.(cred.kind, cred.value)
@@ -805,22 +825,24 @@ export async function applyModelCredential(cfg, client) {
       throw new Error(
         `the connected ${cfg.providerName} credential (${cred.kind}) can't be injected — connect an API key, or use a provider that supports it`,
       )
-    for (const [k, v] of Object.entries(env)) process.env[k] = v
-    console.log(`[runner] running on the owner's connected ${cfg.providerName} plan`)
-    return
+    return env
   }
   const ambient = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"].some(
     (k) => process.env[k],
   )
   if (!ambient)
     throw new Error(
-      `no model plan connected for this context's owner — connect one at ${cfg.server} (Settings → Model plans)`,
+      `no model plan connected for this run's initiator — connect one at ${cfg.server} (Settings → Model plans)`,
     )
+  return null
 }
 
 async function bootHost(cfg, modeLabel) {
   const client = new DeriveClient(cfg.server, cfg.token)
-  await applyModelCredential(cfg, client)
+  // Preflight only — verifies SOME credential path exists (registrant plan or ambient)
+  // so misconfiguration fails at boot with a clear message, not at the first answer.
+  // The overlay is discarded: each session resolves its own initiator's credential.
+  await resolveModelEnv(cfg, client)
   const info = await client.getContext(cfg.contextId)
   if (!info.manifest_md && !cfg.manifestFile) throw new Error("context has no readable manifest")
   const readManifest = () =>

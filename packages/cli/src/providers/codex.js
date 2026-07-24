@@ -15,9 +15,13 @@
 import { spawn } from "node:child_process"
 
 /** Spawn `codex exec` once and capture stdout as the reply text. */
-function spawnCodex({ bin, cwd, args, timeoutMs }) {
+function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
   return new Promise((resolve) => {
-    const child = spawn(bin, args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] })
+    const child = spawn(bin, args, {
+      cwd,
+      env: env ?? process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    })
     let out = ""
     let stderr = ""
     let timedOut = false
@@ -81,7 +85,7 @@ export const codex = {
   /** Run one turn. Codex takes a single prompt, so the system prompt (which
    *  carries the answer contract) is prepended to the task rather than passed as
    *  a separate flag. resumeSessionId is ignored (no resume). */
-  async run({ bin, cwd, model, systemPrompt, prompt, timeoutMs }) {
+  async run({ bin, cwd, model, systemPrompt, prompt, timeoutMs, env }) {
     const args = [
       "exec",
       "--model",
@@ -90,7 +94,7 @@ export const codex = {
       "--dangerously-bypass-approvals-and-sandbox",
       `${systemPrompt}\n\n---\n\n${prompt}`,
     ]
-    return spawnCodex({ bin, cwd, args, timeoutMs })
+    return spawnCodex({ bin, cwd, args, timeoutMs, env })
   },
 
   /** Without a structured api status, a nonzero exit that produced no output is

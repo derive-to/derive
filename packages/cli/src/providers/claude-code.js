@@ -24,9 +24,13 @@ function logEvent(event) {
 
 /** Spawn `claude` once and normalize its stream-json output into the shared
  *  RunResult shape the runner's orchestrator consumes. */
-function spawnClaude({ bin, cwd, args, timeoutMs }) {
+function spawnClaude({ bin, cwd, args, timeoutMs, env }) {
   return new Promise((resolve) => {
-    const child = spawn(bin, args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] })
+    const child = spawn(bin, args, {
+      cwd,
+      env: env ?? process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    })
     let buffer = ""
     let resultText = ""
     let sessionId = null
@@ -129,7 +133,7 @@ export const claudeCode = {
    *  no longer see. Headless: --dangerously-skip-permissions, because an
    *  interactive prompt would hang the subprocess; the real safety boundary is
    *  the read-only credentials the MCP config carries. */
-  async run({ bin, cwd, model, systemPrompt, prompt, timeoutMs, resumeSessionId }) {
+  async run({ bin, cwd, model, systemPrompt, prompt, timeoutMs, resumeSessionId, env }) {
     const systemArgs = [
       "--append-system-prompt",
       systemPrompt,
@@ -143,7 +147,7 @@ export const claudeCode = {
     const args = resumeSessionId
       ? ["-p", prompt, "--resume", resumeSessionId, ...systemArgs]
       : ["-p", prompt, ...systemArgs]
-    return spawnClaude({ bin, cwd, args, timeoutMs })
+    return spawnClaude({ bin, cwd, args, timeoutMs, env })
   },
 
   /** Is this run worth a second attempt? Only when the SERVICE failed, never

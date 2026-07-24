@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest"
 import { claudeCode } from "../src/providers/claude-code.js"
 import { codex } from "../src/providers/codex.js"
 import { DEFAULT_PROVIDER, PROVIDERS, selectProvider } from "../src/providers/index.js"
-import { applyModelCredential, loadRunnerConfig, runAgent } from "../src/runner.js"
+import { loadRunnerConfig, resolveModelEnv, runAgent } from "../src/runner.js"
 
 describe("provider registry", () => {
   it("defaults to claude-code, resolves known names, and throws on an unknown one", () => {
@@ -108,53 +108,65 @@ describe("credentialEnv", () => {
   })
 })
 
-describe("applyModelCredential — per-user isolation + fail-closed", () => {
+describe("resolveModelEnv — per-initiator overlay + fail-closed", () => {
   const CRED_ENV = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
   const clean = () => {
     for (const k of CRED_ENV) delete process.env[k]
   }
   const cfg = (over = {}) => ({ providerName: "claude-code", server: "https://derive.to", ...over })
   const client = (credential, throws = false) => ({
-    modelCredential: async () => {
+    calls: [],
+    async modelCredential(provider, sessionId = null) {
+      this.calls.push({ provider, sessionId })
       if (throws) throw new Error("404")
       return credential
     },
   })
 
-  it("injects the owner's connected plan into this run's env (and overrides any ambient)", async () => {
+  it("returns the initiator's plan as an OVERLAY — process.env is never mutated", async () => {
     clean()
-    process.env.CLAUDE_CODE_OAUTH_TOKEN = "GLOBAL-should-be-overridden"
-    await applyModelCredential(cfg(), client({ kind: "oauth", value: "OWNER-A" }))
-    expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("OWNER-A")
-    clean()
-  })
-
-  it("FAILS CLOSED when the owner has no plan and no ambient token is set", async () => {
-    clean()
-    await expect(applyModelCredential(cfg(), client(null))).rejects.toThrow(
-      /no model plan connected/,
-    )
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = "ambient-should-survive"
+    const env = await resolveModelEnv(cfg(), client({ kind: "oauth", value: "ASKER-A" }))
+    expect(env).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "ASKER-A" })
+    // The isolation property itself: the parent env still holds the ambient value,
+    // so the NEXT session (a different asker) starts from clean ground.
+    expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("ambient-should-survive")
     clean()
   })
 
-  it("falls back to an ambient token (self-host's single plan) when the owner has none", async () => {
+  it("passes the session id through, so the server can resolve the ASKER's plan", async () => {
+    clean()
+    process.env.ANTHROPIC_API_KEY = "ambient"
+    const c = client(null)
+    await resolveModelEnv(cfg(), c, "ses_123")
+    expect(c.calls).toEqual([{ provider: "claude-code", sessionId: "ses_123" }])
+    clean()
+  })
+
+  it("FAILS CLOSED when the initiator has no plan and no ambient token is set", async () => {
+    clean()
+    await expect(resolveModelEnv(cfg(), client(null))).rejects.toThrow(/no model plan connected/)
+    clean()
+  })
+
+  it("falls back to an ambient token (self-host's single plan) — null overlay", async () => {
     clean()
     process.env.ANTHROPIC_API_KEY = "self-host-key"
-    await expect(applyModelCredential(cfg(), client(null))).resolves.toBeUndefined()
+    await expect(resolveModelEnv(cfg(), client(null))).resolves.toBeNull()
     clean()
   })
 
   it("a lookup error degrades to the ambient path rather than crashing the run", async () => {
     clean()
     process.env.CLAUDE_CODE_OAUTH_TOKEN = "ambient"
-    await expect(applyModelCredential(cfg(), client(null, true))).resolves.toBeUndefined()
+    await expect(resolveModelEnv(cfg(), client(null, true))).resolves.toBeNull()
     clean()
   })
 
   it("rejects a credential kind the provider can't inject (codex plan/oauth)", async () => {
     clean()
     await expect(
-      applyModelCredential(cfg({ providerName: "codex" }), client({ kind: "oauth", value: "x" })),
+      resolveModelEnv(cfg({ providerName: "codex" }), client({ kind: "oauth", value: "x" })),
     ).rejects.toThrow(/can't be injected/)
     clean()
   })
