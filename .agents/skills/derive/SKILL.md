@@ -69,6 +69,13 @@ short account of what changed.
 - If multiple workspaces are reachable and the destination is unclear, call
   `list_workspaces` and use the workspace descriptions. Ask only when the evidence does
   not identify the intended destination.
+- Derive hosts documents, pages, and versioned artifacts — not compute. Do not use it
+  for server-side code execution, general-purpose data storage, secrets, or as an app
+  backend; publish the artifact and keep the system elsewhere.
+- If this file and the live server disagree about a tool, parameter, or behavior, trust
+  the live server: installed copies of this file go stale. The server's tool
+  descriptions and `derive://skills/*` resources are current; re-read them before
+  answering capability questions.
 
 ## Compatibility surface
 

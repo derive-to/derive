@@ -13,6 +13,7 @@ import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
 import { log } from "./log"
 import { mountMcp } from "./mcp"
+import { agentDiscoveryRoutes } from "./routes/agent-discovery"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
@@ -411,6 +412,7 @@ export function createApp(deps: AppDeps): Hono {
     systemRoutes,
     betaRoutes,
     marketingRoutes,
+    agentDiscoveryRoutes,
   ])
     app.route("/", routes(ctx))
 

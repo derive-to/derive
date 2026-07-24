@@ -64,6 +64,8 @@ export default defineConfig({
         "/.well-known/oauth-authorization-server",
         "/.well-known/oauth-protected-resource",
         "/.well-known/openid-configuration",
+        "/skill.md",
+        "/.well-known/agent.json",
       ].map((p) => [p, { target: API, changeOrigin: true }]),
     ),
   },
