@@ -46,6 +46,7 @@ import type {
   RunRecord,
   SessionMessageRecord,
   SessionRecord,
+  VerbRecord,
   VersionRecord,
   WebhookRecord,
   WorkspaceRecord,
@@ -75,6 +76,7 @@ export interface TypedTables {
   run: RunRecord
   plan: PlanRecord
   connection: ConnectionRecord
+  verb: VerbRecord
   artifactInvite: ArtifactInviteRecord
   invitation: InvitationRecord
   betaSignup: BetaSignupRecord

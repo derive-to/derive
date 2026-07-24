@@ -62,6 +62,7 @@ import type {
   NewRun,
   NewSession,
   NewSessionMessage,
+  NewVerb,
   NewVersion,
   NewWebhook,
   NotificationRecord,
@@ -93,6 +94,8 @@ import type {
   TakedownInput,
   UserNotificationPrefRecord,
   UserProfile,
+  VerbPatch,
+  VerbRecord,
   VersionRecord,
   WebhookRecord,
   WorkspaceAccess,
@@ -165,6 +168,7 @@ import {
   slackThreadLink,
   slackUserLink,
   userNotificationPref,
+  verb,
   version,
   webhook,
   webhookDelivery,
@@ -284,6 +288,7 @@ export const schema = {
   run,
   plan,
   connection,
+  verb,
   artifactInvite,
   invitation,
   betaSignup,
@@ -329,6 +334,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   run: true,
   plan: true,
   connection: true,
+  verb: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2659,6 +2665,34 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(connection.id, id), eq(connection.org_id, orgId)))
       .returning()
       .get()) ?? null
+  const createVerb = async (v: NewVerb): Promise<VerbRecord> =>
+    (await db.insert(verb).values(v).returning().get()) as VerbRecord
+  const getVerb = async (id: string): Promise<VerbRecord | null> =>
+    (await db.select().from(verb).where(eq(verb.id, id)).get()) ?? null
+  const listVerbsForArtifact = async (artifactId: string): Promise<VerbRecord[]> =>
+    db
+      .select()
+      .from(verb)
+      .where(eq(verb.artifact_id, artifactId))
+      .orderBy(desc(verb.created_at))
+      .all()
+  const updateVerb = async (
+    id: string,
+    orgId: string,
+    patch: VerbPatch,
+  ): Promise<VerbRecord | null> =>
+    (await db
+      .update(verb)
+      .set(patch)
+      .where(and(eq(verb.id, id), eq(verb.org_id, orgId)))
+      .returning()
+      .get()) ?? null
+  const deleteVerb = async (id: string, orgId: string): Promise<void> => {
+    await db
+      .delete(verb)
+      .where(and(eq(verb.id, id), eq(verb.org_id, orgId)))
+      .run()
+  }
   const getAgentByToken = async (token: string): Promise<AgentRecord | null> =>
     (await db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
   // Introspect a Better Auth oidc-provider access token (its own tables, same DB).
@@ -3406,6 +3440,11 @@ export function makeRepos(db: SqliteDb) {
     getConnectionsByIds,
     listConnections,
     setConnectionStatus,
+    createVerb,
+    getVerb,
+    listVerbsForArtifact,
+    updateVerb,
+    deleteVerb,
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,

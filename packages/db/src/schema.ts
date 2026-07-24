@@ -22,6 +22,8 @@ import type {
   RunStatus,
   SessionMessageAuthor,
   SessionState,
+  VerbAudience,
+  VerbGate,
   VersionSource,
   WebhookKind,
   WorkspaceAccess,
@@ -266,6 +268,25 @@ export const connection = sqliteTable("connection", {
   broker_ref: text("broker_ref").notNull(),
   scopes_label: text("scopes_label"),
   status: text("status").$type<ConnectionStatus>().notNull().default("pending"),
+  created_at: text("created_at").notNull().default(now),
+})
+
+// An owner-authored action on an artifact (WO5): a named button bound to an instruction
+// template + a context + optional connected accounts + a gate. Viewers INVOKE it (params as
+// data); the run bills to created_by and starts propose-gated. See ports.ts for the contract.
+export const verb = sqliteTable("verb", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  artifact_id: text("artifact_id").notNull(),
+  name: text("name").notNull(),
+  instruction_template: text("instruction_template").notNull(),
+  created_by: text("created_by").notNull(),
+  agent_id: text("agent_id").notNull(),
+  params_schema: text("params_schema"),
+  connection_ids: text("connection_ids"),
+  gate: text("gate").$type<VerbGate>().notNull().default("propose"),
+  audience: text("audience").$type<VerbAudience>().notNull().default("members"),
+  enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
   created_at: text("created_at").notNull().default(now),
 })
 
@@ -940,6 +961,7 @@ const TABLES = [
   run,
   plan,
   connection,
+  verb,
   invitation,
   artifactInvite,
   betaSignup,
