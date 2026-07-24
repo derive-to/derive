@@ -32,6 +32,11 @@ const API_EXACT = [
   "/.well-known/oauth-authorization-server",
   "/.well-known/oauth-protected-resource",
   "/.well-known/openid-configuration",
+  // Agent discovery (routes/agent-discovery.ts): the served skill + capability
+  // manifest. Worker-first for the same reason as the OAuth docs — the SPA's
+  // not_found_handling would otherwise answer with the shell.
+  "/skill.md",
+  "/.well-known/agent.json",
 ] as const
 
 // Page prefixes the SERVER renders before handing off to the SPA, but that are NOT

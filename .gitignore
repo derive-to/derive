@@ -30,3 +30,7 @@ RUNNER.md
 
 # Local scratch DB from manual verification runs
 apps/api/.verify-data/
+
+# Claude Code session worktrees (live checkouts of other sessions' branches —
+# never repo content, and their nested configs break root tooling if scanned)
+.claude/worktrees/
