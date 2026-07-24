@@ -166,6 +166,13 @@ export interface AutomationTrigger {
   tz?: string
   on?: string
 }
+/** A connected model-plan credential, as the settings UI sees it — never the secret. */
+export interface ModelCredentialHint {
+  provider: "claude-code" | "codex"
+  kind: "oauth" | "api_key"
+  hint: string
+  updated_at: string
+}
 /** A ref is a selector — one generic way to point at a set of artifacts: a specific
  *  doc (revise it), a collection (file new work into it), or a tag (stamped on every
  *  write the run makes). The API accepts a bare short-id string as artifact shorthand
@@ -757,6 +764,20 @@ export const api = {
   runAutomation: (id: string): Promise<{ id: string; status: string }> =>
     f(`/v1/automations/${id}/run`, opts({})).then(j),
   listRuns: (): Promise<{ runs: Run[] }> => f("/v1/workspace/runs", opts()).then(j),
+
+  // Per-user model-plan credentials (the caller's own; see routes/model-credentials.ts).
+  listModelCredentials: (): Promise<{ credentials: ModelCredentialHint[] }> =>
+    f("/v1/me/model-credentials", opts()).then(j),
+  connectModelCredential: (input: {
+    provider: "claude-code" | "codex"
+    kind: "oauth" | "api_key"
+    token: string
+  }): Promise<{ ok: true; provider: string; hint: string }> =>
+    f("/v1/me/model-credentials", opts(input)).then(j),
+  disconnectModelCredential: (provider: string): Promise<void> =>
+    f(`/v1/me/model-credentials/${provider}`, { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
 
   // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
   listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),

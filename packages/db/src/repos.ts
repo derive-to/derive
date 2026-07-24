@@ -30,6 +30,7 @@ import type {
   ListArtifactsOpts,
   Listed,
   MembershipRecord,
+  ModelCredentialRecord,
   NewAgent,
   NewAgentMention,
   NewArtifact,
@@ -144,6 +145,7 @@ import {
   githubInstallation,
   invitation,
   membership,
+  modelCredential,
   notification,
   oauthClientWorkspace,
   orgSettings,
@@ -1895,6 +1897,53 @@ export function makeRepos(db: SqliteDb) {
   const deleteSlackInstall = async (orgId: string): Promise<void> => {
     await db.delete(slackInstall).where(eq(slackInstall.org_id, orgId)).run()
   }
+
+  // ---- Per-user model-plan credentials ------------------------------------
+  const modelCredWhere = (orgId: string, userId: string, provider: string) =>
+    and(
+      eq(modelCredential.org_id, orgId),
+      eq(modelCredential.user_id, userId),
+      eq(modelCredential.provider, provider),
+    )
+  const getModelCredential = async (
+    orgId: string,
+    userId: string,
+    provider: string,
+  ): Promise<ModelCredentialRecord | null> =>
+    (await db
+      .select()
+      .from(modelCredential)
+      .where(modelCredWhere(orgId, userId, provider))
+      .get()) ?? null
+  const setModelCredential = async (c: ModelCredentialRecord): Promise<void> => {
+    await db
+      .insert(modelCredential)
+      .values(c)
+      .onConflictDoUpdate({
+        target: [modelCredential.org_id, modelCredential.user_id, modelCredential.provider],
+        set: { secret: c.secret, kind: c.kind, hint: c.hint, updated_at: c.updated_at },
+      })
+      .run()
+  }
+  const deleteModelCredential = async (
+    orgId: string,
+    userId: string,
+    provider: string,
+  ): Promise<void> => {
+    await db
+      .delete(modelCredential)
+      .where(modelCredWhere(orgId, userId, provider))
+      .run()
+  }
+  const listModelCredentials = async (
+    orgId: string,
+    userId: string,
+  ): Promise<ModelCredentialRecord[]> =>
+    db
+      .select()
+      .from(modelCredential)
+      .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
+      .all()
   const getSlackThreadLinkByThread = async (
     threadId: string,
   ): Promise<SlackThreadLinkRecord | null> =>
@@ -2501,6 +2550,8 @@ export function makeRepos(db: SqliteDb) {
       .values({ ...r, status: r.status ?? "queued" })
       .returning()
       .get()) as RunRecord
+  const getRun = async (id: string): Promise<RunRecord | null> =>
+    ((await db.select().from(run).where(eq(run.id, id)).get()) as RunRecord | undefined) ?? null
   const claimDueRuns = async (agentId: string, now: string, limit = 20): Promise<RunRecord[]> => {
     // The oldest queued runs due now for this agent, flipped to running under a row lock so
     // two executors never claim the same run. A null scheduled_for means "as soon as possible";
@@ -3238,6 +3289,10 @@ export function makeRepos(db: SqliteDb) {
     getSlackInstall,
     setSlackInstall,
     deleteSlackInstall,
+    getModelCredential,
+    setModelCredential,
+    deleteModelCredential,
+    listModelCredentials,
     getSlackThreadLinkByThread,
     getSlackThreadLinkByTs,
     setSlackThreadLink,
@@ -3304,6 +3359,7 @@ export function makeRepos(db: SqliteDb) {
     updateAutomation,
     deleteAutomation,
     createRun,
+    getRun,
     claimDueRuns,
     finishRun,
     listRuns,

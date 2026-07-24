@@ -229,6 +229,8 @@ export const run = sqliteTable("run", {
   automation_id: text("automation_id"),
   agent_id: text("agent_id").notNull(),
   reason: text("reason").notNull(),
+  // The initiating person (wallet key) — null for clock/event runs. See RunRecord.
+  initiated_by: text("initiated_by"),
   status: text("status").$type<RunStatus>().notNull(),
   scheduled_for: text("scheduled_for"),
   started_at: text("started_at"),
@@ -614,6 +616,27 @@ export const userNotificationPref = sqliteTable(
   (t) => [uniqueIndex("user_notification_pref_key").on(t.org_id, t.user_id)],
 )
 
+// A team member's OWN model-plan credential — their Claude/Codex plan token (or an API
+// key) — encrypted at rest (AES-GCM, lib/crypto, keyed by DERIVE_AUTH_SECRET), scoped
+// (org, user, provider) and used ONLY for that user's own agent runs. Never a shared
+// token: this is what replaces the single global model-credential env for hosted runs.
+// `secret` is the encrypted blob; `hint` is a safe label (e.g. last 4) for the UI.
+export const modelCredential = sqliteTable(
+  "model_credential",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id").notNull(),
+    provider: text("provider").notNull(),
+    kind: text("kind").$type<"oauth" | "api_key">().notNull(),
+    secret: text("secret").notNull(),
+    hint: text("hint").notNull().default(""),
+    created_at: text("created_at").notNull().default(now),
+    updated_at: text("updated_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("model_credential_key").on(t.org_id, t.user_id, t.provider)],
+)
+
 // Derive comment thread ↔ the Slack message Derive posted for it (for two-way threading).
 export const slackThreadLink = sqliteTable(
   "slack_thread_link",
@@ -943,6 +966,7 @@ const TABLES = [
   folder,
   repoSource,
   orgSettings,
+  modelCredential,
   slackInstall,
   slackThreadLink,
   slackUserLink,

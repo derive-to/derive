@@ -197,6 +197,7 @@ CREATE TABLE IF NOT EXISTS run (
   automation_id TEXT,
   agent_id TEXT NOT NULL,
   reason TEXT NOT NULL,
+  initiated_by TEXT,
   status TEXT NOT NULL,
   scheduled_for TEXT,
   started_at TEXT,
@@ -354,6 +355,19 @@ CREATE TABLE IF NOT EXISTS org_settings (
   org_id TEXT PRIMARY KEY,
   settings TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS model_credential (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  secret TEXT NOT NULL,
+  hint TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (org_id, user_id, provider)
 );
 
 CREATE TABLE IF NOT EXISTS slack_install (

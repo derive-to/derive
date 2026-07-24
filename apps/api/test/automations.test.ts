@@ -122,6 +122,9 @@ describe("automations + runs", () => {
     // The claim hands the executor everything it needs: the instruction + resolved gate inputs.
     // Automation runs propose by default; write mode will ride per-target in refs.
     expect(mine.instruction).toBe("keep the roadmap current")
+    // The wallet key rides the claim: Run-now stamps the clicker as the initiator, so
+    // the executor bills THEIR plan (a schedule/event enqueue leaves it null).
+    expect(mine.initiated_by).toBe("u_auto_own")
     expect(mine.flags).toMatchObject({ agentKillswitch: expect.any(Boolean) })
     // Claimed once: a second poll gets nothing.
     const again = await (

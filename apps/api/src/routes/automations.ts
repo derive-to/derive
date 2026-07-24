@@ -180,6 +180,9 @@ export const automationRoutes = (ctx: AppContext) => {
       automation_id: a.id,
       agent_id: a.agent_id,
       reason: `manual:${me.id}`,
+      // First-class, not parsed out of `reason`: the clicker's plan bills this run
+      // (the wallet follows the initiator). Schedule/event enqueues leave it null.
+      initiated_by: me.id,
       scheduled_for: isoNow(),
     })
     return c.json({ id: rec.id, status: rec.status }, 201)
@@ -234,6 +237,10 @@ export const automationRoutes = (ctx: AppContext) => {
       runs: runnable.map(({ r, a }) => ({
         id: r.id,
         reason: r.reason,
+        // The wallet key: whose plan this run bills (null = clock/event → registrant
+        // today, the workspace pool once it lands). The executor passes it back on
+        // the model-credential fetch via ?run=.
+        initiated_by: r.initiated_by,
         automation_id: r.automation_id,
         instruction: a.instruction,
         // Canonical selectors: artifact = revise it, collection = file new work there,

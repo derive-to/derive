@@ -14,6 +14,7 @@ import { GeneralSection } from "./general-section"
 import { GithubSection } from "./github-section"
 import { IntegrationsSection } from "./integrations-section"
 import { MembersSection } from "./members-section"
+import { ModelPlansSection } from "./model-plans-section"
 import { ProfileSection } from "./profile-section"
 import { ReportsSection } from "./reports-section"
 import { SecuritySection } from "./security-section"
@@ -29,6 +30,7 @@ const route = getRouteApi("/settings/$section")
 const SECTION_TITLES: Record<string, string> = {
   profile: "Profile",
   security: "Security",
+  "model-plans": "Model plans",
   appearance: "Appearance",
   general: "General",
   members: "Members",
@@ -71,6 +73,7 @@ export function Settings() {
       items: [
         { id: "profile", label: "Profile", testId: "settings-tab-profile" },
         { id: "security", label: "Security", testId: "settings-tab-security" },
+        { id: "model-plans", label: "Model plans", testId: "settings-tab-model-plans" },
         { id: "appearance", label: "Appearance", testId: "settings-tab-appearance" },
       ],
     },
@@ -135,6 +138,7 @@ export function Settings() {
           <div className="min-w-0">
             {active === "profile" && <ProfileSection />}
             {active === "security" && <SecuritySection />}
+            {active === "model-plans" && <ModelPlansSection />}
             {active === "appearance" && <AppearanceSection />}
             {active === "general" && <GeneralSection />}
             {active === "members" && <MembersSection meId={me.id} />}
