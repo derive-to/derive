@@ -15,11 +15,23 @@ export interface ResolvedBrandprint {
   /** The workspace's brand-profile artifact short_id, when set. The profile is a
    *  team property, so a personal layer never contributes one. */
   profileId?: string
+  /** True when a workspace layer existed but the personal toggle dropped it.
+   *  Lets rework tell "you turned it off" from "nothing is set up". */
+  workspaceSuppressed?: boolean
 }
 
 /** Resolve the workspace + profile Brandprint into the collections to read and the
  *  workspace's brand-profile pointer. */
 export const resolveBrandprint = (ws?: Brandprint, profile?: Brandprint): ResolvedBrandprint => {
+  // The personal toggle: false removes the workspace layer wholesale. The personal
+  // collection is the user's own opt-in, so it survives the toggle.
+  if (profile?.useWorkspaceBrandprint === false) {
+    const hadWs = !!(ws?.collectionId || ws?.profileId)
+    return {
+      collectionIds: profile.collectionId ? [profile.collectionId] : [],
+      ...(hadWs ? { workspaceSuppressed: true } : {}),
+    }
+  }
   const ids = [ws?.collectionId, profile?.collectionId].filter((id): id is string => !!id)
   return { collectionIds: [...new Set(ids)], profileId: ws?.profileId }
 }

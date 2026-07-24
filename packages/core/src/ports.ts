@@ -2092,6 +2092,11 @@ export interface Brandprint {
    *  intake's stub (`profileState` derives live/pending from that). Workspace-only: a
    *  personal Brandprint never sets it. */
   profileId?: string
+  /** Personal-layer only: false turns the WORKSPACE Brandprint off for this user
+   *  (their agents skip the org's conventions and profile; a personal collection
+   *  above still applies). Absent or true = the workspace layer applies. A
+   *  workspace's own settings never carry this field. */
+  useWorkspaceBrandprint?: boolean
 }
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {

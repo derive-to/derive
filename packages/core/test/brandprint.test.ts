@@ -40,6 +40,44 @@ describe("resolveBrandprint", () => {
       resolveBrandprint({ collectionId: "c1" }, { profileId: "nope" }).profileId,
     ).toBeUndefined()
   })
+
+  it("toggle off drops the workspace layer but keeps the personal collection", () => {
+    const r = resolveBrandprint(
+      { collectionId: "ws-col", profileId: "prof" },
+      { collectionId: "my-col", useWorkspaceBrandprint: false },
+    )
+    expect(r.collectionIds).toEqual(["my-col"])
+    expect(r.profileId).toBeUndefined()
+    expect(r.workspaceSuppressed).toBe(true)
+  })
+
+  it("toggle off with no personal layer resolves empty, marked suppressed", () => {
+    const r = resolveBrandprint({ collectionId: "ws-col" }, { useWorkspaceBrandprint: false })
+    expect(r.collectionIds).toEqual([])
+    expect(r.profileId).toBeUndefined()
+    expect(r.workspaceSuppressed).toBe(true)
+  })
+
+  it("toggle off with no workspace layer is not marked suppressed", () => {
+    const r = resolveBrandprint(undefined, {
+      collectionId: "my-col",
+      useWorkspaceBrandprint: false,
+    })
+    expect(r.collectionIds).toEqual(["my-col"])
+    expect(r.workspaceSuppressed).toBeUndefined()
+  })
+
+  it("absent and true both keep today's merge", () => {
+    for (const p of [
+      { collectionId: "my-col" },
+      { collectionId: "my-col", useWorkspaceBrandprint: true },
+    ]) {
+      const r = resolveBrandprint({ collectionId: "ws-col", profileId: "prof" }, p)
+      expect(r.collectionIds).toEqual(["ws-col", "my-col"])
+      expect(r.profileId).toBe("prof")
+      expect(r.workspaceSuppressed).toBeUndefined()
+    }
+  })
 })
 
 describe("parseBrandprint", () => {
@@ -49,6 +87,12 @@ describe("parseBrandprint", () => {
     expect(parseBrandprint("")).toBeUndefined()
     expect(parseBrandprint("not json")).toBeUndefined()
     expect(parseBrandprint("42")).toBeUndefined()
+  })
+
+  it("round-trips the toggle", () => {
+    expect(parseBrandprint('{"useWorkspaceBrandprint":false}')).toEqual({
+      useWorkspaceBrandprint: false,
+    })
   })
 })
 
