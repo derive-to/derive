@@ -8,6 +8,7 @@ import {
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
+import { overBudget } from "../lib/budget"
 import { mintToken, safeEqual, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 
@@ -162,6 +163,8 @@ export const automationRoutes = (ctx: AppContext) => {
     // A disabled automation takes no new runs — from ANY trigger: this path, and the
     // future schedule tick / event kick must all check the same flag.
     if (a.enabled !== 1) return fail(c, 400, "automation is disabled")
+    // Budget guard at enqueue (invariant 2): a run-now bills to the requester.
+    if (await overBudget(meta, org, me.id)) return fail(c, 429, "monthly run budget reached")
     const rec = await meta.createRun({
       id: newId("run"),
       org_id: org,
@@ -190,6 +193,8 @@ export const automationRoutes = (ctx: AppContext) => {
     // Same enabled-gate as run-now: a disabled automation takes no new runs from ANY trigger.
     // (The killswitch stays enforced downstream at claim, exactly as for the other triggers.)
     if (a.enabled !== 1) return fail(c, 400, "automation is disabled")
+    // Budget guard at enqueue (invariant 2): a fire bills to the workspace pool (no user).
+    if (await overBudget(meta, a.org_id, null)) return fail(c, 429, "monthly run budget reached")
     // Read the body under a hard cap, then parse. An empty body fires with an empty payload.
     const raw = await c.req.text()
     if (raw.length > MAX_FIRE_BODY_BYTES) return fail(c, 413, "payload too large")

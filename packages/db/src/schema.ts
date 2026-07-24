@@ -11,6 +11,7 @@ import type {
   LinkRole,
   Listed,
   NotificationKind,
+  PlanKind,
   PreviewStatus,
   ProposalState,
   RenderJobStatus,
@@ -235,6 +236,20 @@ export const run = sqliteTable("run", {
   finished_at: text("finished_at"),
   cost_micro_usd: integer("cost_micro_usd"),
   meta: text("meta"),
+  created_at: text("created_at").notNull().default(now),
+})
+
+// A bring-your-own plan (WO2): an owner attaches their own model or broker credential and
+// runs meter against it. user_id set = that person's personal plan; user_id null = the
+// workspace pool (the fallback). The secret is encrypted at rest; limits ride a JSON blob.
+export const plan = sqliteTable("plan", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  user_id: text("user_id"),
+  kind: text("kind").$type<PlanKind>().notNull(),
+  provider: text("provider").notNull(),
+  secret_enc: text("secret_enc").notNull(),
+  limits: text("limits"),
   created_at: text("created_at").notNull().default(now),
 })
 
@@ -907,6 +922,7 @@ const TABLES = [
   agentMention,
   automation,
   run,
+  plan,
   invitation,
   artifactInvite,
   betaSignup,

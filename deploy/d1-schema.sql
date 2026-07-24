@@ -206,6 +206,17 @@ CREATE TABLE IF NOT EXISTS run (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS plan (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  user_id TEXT,
+  kind TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  secret_enc TEXT NOT NULL,
+  limits TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS invitation (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,

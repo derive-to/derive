@@ -1009,6 +1009,22 @@ export interface AgentStore {
    *  would exceed maxMetaBytes — in every null case the caller enqueues a fresh run, so a
    *  payload is never lost (at worst an extra run is created under contention). */
   appendRunPayload(runId: string, payload: unknown, maxMetaBytes: number): Promise<RunRecord | null>
+  // ---- Plans (bring-your-own model + broker credentials) -----------------
+  /** Attach a plan. */
+  createPlan(p: NewPlan): Promise<PlanRecord>
+  /** One plan by id, or null. */
+  getPlan(id: string): Promise<PlanRecord | null>
+  /** A workspace's plans, newest first (personal + pool). */
+  listPlans(orgId: string): Promise<PlanRecord[]>
+  /** Remove a plan, org-scoped so a caller can't reach across tenants. */
+  deletePlan(id: string, orgId: string): Promise<void>
+  /** The effective plan for (org, user, kind): the user's personal plan if any, else the
+   *  workspace-pool plan (user_id null), else null. Money falls back; the caller treats null
+   *  as the loud-failure case (no meter available). */
+  resolvePlan(orgId: string, userId: string | null, kind: PlanKind): Promise<PlanRecord | null>
+  /** Sum of cost_micro_usd across the org's runs at/after an ISO cutoff — backs the budget
+   *  check at enqueue (spend this month vs a plan's monthlyMicroUsd limit). */
+  sumRunCostSince(orgId: string, sinceIso: string): Promise<number>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>
   /** Resolve a live OAuth access token (by its stored hash) to its grant. */
@@ -1426,6 +1442,38 @@ export interface NewRun {
   finished_at?: string | null
   cost_micro_usd?: number | null
   meta?: string | null
+}
+
+/** What a plan pays for: the model (thinking) or the tool broker (hands). */
+export type PlanKind = "model" | "broker"
+
+/** A bring-your-own plan: an owner attaches their own model or broker credential, and runs
+ *  meter against it. `user_id` set = a person's personal plan; null = the workspace pool
+ *  (the fallback when a run's owner has no personal plan of that kind). The platform holds
+ *  the gate and the ledger, never the meter. */
+export interface PlanRecord {
+  id: string
+  org_id: string
+  /** Owner of a personal plan, or null for the workspace pool. */
+  user_id: string | null
+  kind: PlanKind
+  /** Provider slug, e.g. "anthropic" | "openai" | "composio". */
+  provider: string
+  /** The API key/secret, encrypted at rest. Never surfaced on read. */
+  secret_enc: string
+  /** Serialized limits (JSON), e.g. {"monthlyMicroUsd":N}, or null for unmetered. */
+  limits: string | null
+  created_at: string
+}
+
+export interface NewPlan {
+  id: string
+  org_id: string
+  user_id?: string | null
+  kind: PlanKind
+  provider: string
+  secret_enc: string
+  limits?: string | null
 }
 
 export type AgentMentionState = "pending" | "done"

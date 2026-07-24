@@ -50,6 +50,7 @@ import type {
   NewInvitation,
   NewMembership,
   NewNotification,
+  NewPlan,
   NewProposal,
   NewRenderJob,
   NewReport,
@@ -64,6 +65,8 @@ import type {
   OAuthGrant,
   OAuthGrantSummary,
   OrgSettings,
+  PlanKind,
+  PlanRecord,
   PreviewStatus,
   ProposalRecord,
   ProposalState,
@@ -102,6 +105,7 @@ import {
   eq,
   getTableColumns,
   gt,
+  gte,
   inArray,
   isNotNull,
   isNull,
@@ -145,6 +149,7 @@ import {
   notification,
   oauthClientWorkspace,
   orgSettings,
+  plan,
   proposal,
   renderJob,
   report,
@@ -273,6 +278,7 @@ export const schema = {
   agentMention,
   automation,
   run,
+  plan,
   artifactInvite,
   invitation,
   betaSignup,
@@ -316,6 +322,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentMention: true,
   automation: true,
   run: true,
+  plan: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2574,6 +2581,50 @@ export function makeRepos(db: SqliteDb) {
         .get()) ?? null
     )
   }
+  const createPlan = async (p: NewPlan): Promise<PlanRecord> =>
+    (await db.insert(plan).values(p).returning().get()) as PlanRecord
+  const getPlan = async (id: string): Promise<PlanRecord | null> =>
+    (await db.select().from(plan).where(eq(plan.id, id)).get()) ?? null
+  const listPlans = async (orgId: string): Promise<PlanRecord[]> =>
+    db.select().from(plan).where(eq(plan.org_id, orgId)).orderBy(desc(plan.created_at)).all()
+  const deletePlan = async (id: string, orgId: string): Promise<void> => {
+    await db
+      .delete(plan)
+      .where(and(eq(plan.id, id), eq(plan.org_id, orgId)))
+      .run()
+  }
+  const resolvePlan = async (
+    orgId: string,
+    userId: string | null,
+    kind: PlanKind,
+  ): Promise<PlanRecord | null> => {
+    // Money falls back: a personal plan first, then the workspace pool (user_id null).
+    if (userId) {
+      const personal = await db
+        .select()
+        .from(plan)
+        .where(and(eq(plan.org_id, orgId), eq(plan.user_id, userId), eq(plan.kind, kind)))
+        .orderBy(desc(plan.created_at))
+        .get()
+      if (personal) return personal
+    }
+    return (
+      (await db
+        .select()
+        .from(plan)
+        .where(and(eq(plan.org_id, orgId), isNull(plan.user_id), eq(plan.kind, kind)))
+        .orderBy(desc(plan.created_at))
+        .get()) ?? null
+    )
+  }
+  const sumRunCostSince = async (orgId: string, sinceIso: string): Promise<number> => {
+    const row = await db
+      .select({ total: sql<number>`coalesce(sum(${run.cost_micro_usd}), 0)` })
+      .from(run)
+      .where(and(eq(run.org_id, orgId), gte(run.created_at, sinceIso)))
+      .get()
+    return Number(row?.total ?? 0)
+  }
   const getAgentByToken = async (token: string): Promise<AgentRecord | null> =>
     (await db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
   // Introspect a Better Auth oidc-provider access token (its own tables, same DB).
@@ -3310,6 +3361,12 @@ export function makeRepos(db: SqliteDb) {
     listRuns,
     findCoalescibleRun,
     appendRunPayload,
+    createPlan,
+    getPlan,
+    listPlans,
+    deletePlan,
+    resolvePlan,
+    sumRunCostSince,
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,

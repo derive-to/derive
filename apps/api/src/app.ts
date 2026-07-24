@@ -33,6 +33,7 @@ import { marketingRoutes } from "./routes/marketing"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
 import { oauthRoutes } from "./routes/oauth"
+import { planRoutes } from "./routes/plans"
 import { proposalRoutes } from "./routes/proposals"
 import { rawRoutes } from "./routes/raw"
 import { realtimeRoutes } from "./routes/realtime"
@@ -387,6 +388,7 @@ export function createApp(deps: AppDeps): Hono {
     proposalRoutes,
     reviewRoutes,
     automationRoutes,
+    planRoutes,
     conciergeRoutes,
     reworkRoutes,
     commentRoutes,

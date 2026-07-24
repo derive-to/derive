@@ -36,6 +36,7 @@ import type {
   InvitationRecord,
   MembershipRecord,
   NotificationRecord,
+  PlanRecord,
   ProposalRecord,
   RenderJobRecord,
   ReportRecord,
@@ -71,6 +72,7 @@ export interface TypedTables {
   agentMention: AgentMentionRecord
   automation: AutomationRecord
   run: RunRecord
+  plan: PlanRecord
   artifactInvite: ArtifactInviteRecord
   invitation: InvitationRecord
   betaSignup: BetaSignupRecord

@@ -52,6 +52,7 @@ import type {
   NewInvitation,
   NewMembership,
   NewNotification,
+  NewPlan,
   NewProposal,
   NewRenderJob,
   NewReport,
@@ -67,6 +68,8 @@ import type {
   OAuthGrant,
   OAuthGrantSummary,
   OrgSettings,
+  PlanKind,
+  PlanRecord,
   PreviewStatus,
   ProposalRecord,
   ProposalState,
@@ -105,6 +108,7 @@ import {
   eq,
   getTableColumns,
   gt,
+  gte,
   inArray,
   isNotNull,
   isNull,
@@ -147,6 +151,7 @@ import {
   oauthClientWorkspace,
   orgSettings,
   PG_SCHEMA_STATEMENTS,
+  plan,
   proposal,
   renderJob,
   report,
@@ -199,6 +204,7 @@ export const schema = {
   agentMention,
   automation,
   run,
+  plan,
   artifactInvite,
   invitation,
   betaSignup,
@@ -242,6 +248,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentMention: true,
   automation: true,
   run: true,
+  plan: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2541,6 +2548,50 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(run.id, runId), eq(run.status, "queued"), eq(run.meta, row.meta)))
       .returning()
     return updated[0] ?? null
+  }
+  async createPlan(p: NewPlan): Promise<PlanRecord> {
+    const rows = await this.db.insert(plan).values(p).returning()
+    return one(rows)
+  }
+  async getPlan(id: string): Promise<PlanRecord | null> {
+    const rows = await this.db.select().from(plan).where(eq(plan.id, id))
+    return rows[0] ?? null
+  }
+  listPlans(orgId: string): Promise<PlanRecord[]> {
+    return this.db.select().from(plan).where(eq(plan.org_id, orgId)).orderBy(desc(plan.created_at))
+  }
+  async deletePlan(id: string, orgId: string): Promise<void> {
+    await this.db.delete(plan).where(and(eq(plan.id, id), eq(plan.org_id, orgId)))
+  }
+  async resolvePlan(
+    orgId: string,
+    userId: string | null,
+    kind: PlanKind,
+  ): Promise<PlanRecord | null> {
+    // Money falls back: a personal plan first, then the workspace pool (user_id null).
+    if (userId) {
+      const personal = await this.db
+        .select()
+        .from(plan)
+        .where(and(eq(plan.org_id, orgId), eq(plan.user_id, userId), eq(plan.kind, kind)))
+        .orderBy(desc(plan.created_at))
+        .limit(1)
+      if (personal[0]) return personal[0]
+    }
+    const pool = await this.db
+      .select()
+      .from(plan)
+      .where(and(eq(plan.org_id, orgId), isNull(plan.user_id), eq(plan.kind, kind)))
+      .orderBy(desc(plan.created_at))
+      .limit(1)
+    return pool[0] ?? null
+  }
+  async sumRunCostSince(orgId: string, sinceIso: string): Promise<number> {
+    const rows = await this.db
+      .select({ total: sql<number>`coalesce(sum(${run.cost_micro_usd}), 0)` })
+      .from(run)
+      .where(and(eq(run.org_id, orgId), gte(run.created_at, sinceIso)))
+    return Number(rows[0]?.total ?? 0)
   }
   async getAgentByToken(token: string): Promise<AgentRecord | null> {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))
