@@ -98,7 +98,11 @@ const stamp = (c: Context): void => {
   })
   setCookie(c, SRC_COOKIE, value, {
     path: "/",
-    httpOnly: true,
+    // Deliberately NOT HttpOnly: the SPA rewrites this cookie on badge/CTA clicks
+    // to refine WHICH surface converted (lib/src-stamp.ts in apps/web), and JS
+    // writes to an HttpOnly cookie are silently ignored. Contents are a path and
+    // a token — nothing sensitive — and artifacts render on an opaque origin that
+    // can't reach app cookies.
     sameSite: "Lax",
     maxAge: MAX_AGE_S,
     secure: c.req.url.startsWith("https://"),

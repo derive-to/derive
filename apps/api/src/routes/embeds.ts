@@ -268,7 +268,8 @@ export const embedRoutes = (ctx: AppContext) => {
 /**
  * The embeddable document: the artifact full-bleed in a sandboxed iframe, with a
  * plaque set into the frame's bottom-right corner — a "Made on Derive" link (to the
- * artifact page, `?ref=embed`; tooltip "View on Derive") beside an info button whose
+ * artifact page; `?ref=embed` for analytics URLs, `&src=embed_badge` so the capture
+ * middleware attributes the arrival to this surface) beside an info button whose
  * hover/focus reveals a one-line "what is Derive" tooltip. The shell follows the
  * viewer's light/dark scheme with the app's own tokens; the plaque is frosted so it
  * holds over any artifact content. `null` = a private/unavailable placeholder.
@@ -328,7 +329,7 @@ const embedShell = (data: { info: UnfurlInfo; src: string } | null): string => {
   const tip =
     "<b>Derive</b> is the home for AI artifacts: publish from any agent, review together, and own the result at a permanent versioned URL."
   const body = data
-    ? `<div class="c"><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe><div class="p"><a class="b" href="${escapeHtml(`${data.info.pageUrl}?ref=embed`)}" target="_blank" rel="noopener" title="View on Derive">${mark}Made on Derive</a><button type="button" class="i" aria-label="What is Derive?" aria-describedby="dtip">${infoIcon}</button><span class="tip" id="dtip" role="tooltip">${tip}</span></div></div>`
+    ? `<div class="c"><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe><div class="p"><a class="b" href="${escapeHtml(`${data.info.pageUrl}?ref=embed&src=embed_badge`)}" target="_blank" rel="noopener" title="View on Derive">${mark}Made on Derive</a><button type="button" class="i" aria-label="What is Derive?" aria-describedby="dtip">${infoIcon}</button><span class="tip" id="dtip" role="tooltip">${tip}</span></div></div>`
     : `<div class="empty">This artifact is private or no longer available.<br>Open it on Derive to request access.</div>`
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${data ? escapeHtml(data.info.title) : "Derive"}</title><style>${css}</style></head><body>${body}</body></html>`
 }

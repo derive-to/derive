@@ -4,6 +4,7 @@ import type { Artifact, Viewer } from "@/api"
 import { Logo } from "@/components/shared/logo"
 import { Button } from "@/components/ui/button"
 import { artifactTypeLabel } from "@/lib/artifact"
+import { stampSrc } from "@/lib/src-stamp"
 import { ago } from "@/lib/time"
 import { Presence } from "./rail-deck"
 
@@ -82,9 +83,14 @@ export function PublicViewer({
         {/* A shared link that's being viewed feels alive — even on a phone (compact). */}
         <Presence viewers={viewers} selfId={selfId} compact={isMobile} />
 
-        {/* The growth verb (the page's one filled primary) + a quiet sign-in. */}
+        {/* The growth verb (the page's one filled primary) + a quiet sign-in. Clicks
+            refine the d_src stamp so the funnel knows WHICH surface converted. */}
         <Button asChild variant="default" size="sm" data-testid="public-make-your-own">
-          <Link to="/login" search={{ signup: true, return_to: "/new" }}>
+          <Link
+            to="/login"
+            search={{ signup: true, return_to: "/new" }}
+            onClick={() => stampSrc("make_your_own", art.short_id)}
+          >
             {isMobile ? "Make yours" : "Make your own"}
           </Link>
         </Button>
@@ -105,10 +111,19 @@ export function PublicViewer({
       <div className="relative flex min-h-0 flex-1 flex-col">{children}</div>
 
       {/* A quiet, permanent brand mark (the "Made in Framer" idiom — attribution +
-          a soft nudge, never a wall). */}
-      <footer className="flex shrink-0 items-center justify-center gap-1.5 border-t border-border-soft py-1.5 font-mono text-2xs text-muted-foreground">
-        <Logo size={12} />
-        Made with Derive
+          a soft nudge, never a wall). A real link now: the click lands in product
+          (signup → publish), stamped as the badge surface. */}
+      <footer className="flex shrink-0 items-center justify-center border-t border-border-soft py-1.5 font-mono text-2xs text-muted-foreground">
+        <Link
+          to="/login"
+          search={{ signup: true, return_to: "/new" }}
+          onClick={() => stampSrc("badge", art.short_id)}
+          data-testid="public-made-with"
+          className="flex items-center gap-1.5 rounded-md outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        >
+          <Logo size={12} />
+          Made with Derive
+        </Link>
       </footer>
     </div>
   )

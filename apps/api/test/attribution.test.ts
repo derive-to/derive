@@ -54,7 +54,9 @@ describe("d_src capture middleware", () => {
     const res = await a.request(`/artifacts/${shortId}`)
     const cookie = srcCookie(res)
     expect(cookie).toBeTruthy()
-    expect(cookie).toContain("HttpOnly")
+    // NOT HttpOnly: the SPA refines the surface on click (badge vs make-your-own)
+    // by rewriting the cookie, and browsers ignore JS writes to HttpOnly cookies.
+    expect(cookie).not.toContain("HttpOnly")
     expect(cookie).toContain("SameSite=Lax")
     expect(cookie).toContain("Max-Age=2592000")
     expect(cookie).toContain("Path=/")
