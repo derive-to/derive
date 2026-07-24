@@ -167,10 +167,9 @@ describe("usernames + public profiles", () => {
       collectionId: col.id,
       useWorkspaceBrandprint: false,
     })
-    expect(JSON.parse(await meta.getUserBrandprint(remy.id))).toEqual({
-      collectionId: col.id,
-      useWorkspaceBrandprint: false,
-    })
+    expect(await meta.getUserBrandprint(remy.id)).toBe(
+      JSON.stringify({ collectionId: col.id, useWorkspaceBrandprint: false }),
+    )
   })
 
   it("strips a profileId from a personal brandprint (workspace-only field)", async () => {
