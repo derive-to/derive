@@ -1,7 +1,18 @@
-import { useQuery } from "@tanstack/react-query"
-import { useMemo, useState } from "react"
-import { type AutomationTrigger, api } from "@/api"
+import { useQueries, useQuery } from "@tanstack/react-query"
+import { FileText, FolderOpen, Hash, Plus, X } from "lucide-react"
+import { type ReactNode, useMemo, useState } from "react"
+import { type Automation, type AutomationRef, type AutomationTrigger, api } from "@/api"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Select,
   SelectContent,
@@ -11,69 +22,172 @@ import {
 } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { agentsQuery, automationsQuery, runsQuery } from "@/lib/queries"
+import {
+  agentsQuery,
+  artifactQuery,
+  automationsQuery,
+  collectionsQuery,
+  runsQuery,
+  targetPickerQuery,
+} from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { EVENT_KINDS, SCHEDULE_PRESETS } from "./automation-format"
+import { EVENT_KINDS, SCHEDULE_PRESETS, stampMode } from "./automation-format"
 
-// The create-automation form, shared by the Settings manager and the per-artifact Automate
-// dialog. Pass `refs` to scope the automation to specific artifacts (the per-artifact flow)
-// and `defaultInstruction` to seed the box. Renders just the fields — the caller frames it.
+// The automation form, shared by the Settings manager (create + edit) and the per-artifact
+// Automate dialog. Targets are first-class: one "Add target" search over documents and
+// collections, plus free tags — a doc is revised, a collection receives new editions, a tag
+// stamps (and archives) whatever the run writes. Write mode rides ON the targets (never a
+// field of its own): the mode select stamps `mode:"publish"` onto every target at submit;
+// propose is the default and stays unstored. Pass `automation` to edit in place (PATCH).
+
+/** A chosen target plus a display label. Modes are stripped on load and re-applied at submit
+ *  from the single mode select; titles resolve lazily (see below). */
+type Target = { ref: AutomationRef; label: string }
+
+const stripMode = (r: AutomationRef): AutomationRef => {
+  const { mode: _mode, ...rest } = r
+  return rest as AutomationRef
+}
+const keyOf = (r: AutomationRef): string =>
+  r.kind === "tag" ? `tag:${r.tag}` : `${r.kind}:${r.id}`
+const seedLabel = (r: AutomationRef): string => (r.kind === "tag" ? `#${r.tag}` : r.id)
+
+/** A small labelled field wrapper so the form reads as aligned groups, not a pile of controls. */
+function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
+      {children}
+      {hint && <p className="text-2xs text-muted-foreground">{hint}</p>}
+    </div>
+  )
+}
+
+function TargetIcon({ kind }: { kind: AutomationRef["kind"] }) {
+  const Icon = kind === "collection" ? FolderOpen : kind === "tag" ? Hash : FileText
+  return <Icon className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+}
 
 export function AutomationForm({
   refs,
   defaultInstruction,
-  submitLabel = "Create automation",
-  onCreated,
+  submitLabel,
+  automation,
+  onDone,
 }: {
   refs?: string[]
   defaultInstruction?: string
   submitLabel?: string
-  onCreated: () => void
+  /** Present ⇒ edit this automation in place instead of creating. */
+  automation?: Automation
+  onDone: () => void
 }) {
   const { data: agents, isError: agentsError } = useQuery(agentsQuery())
-  const [agentId, setAgentId] = useState("")
-  const [instruction, setInstruction] = useState(defaultInstruction ?? "")
-  const [kind, setKind] = useState<AutomationTrigger["kind"]>("manual")
-  const [cron, setCron] = useState<string>(SCHEDULE_PRESETS[0].cron)
-  const [on, setOn] = useState<string>(EVENT_KINDS[0].id)
-  const [mode, setMode] = useState<"propose" | "publish">("propose")
+  const [agentId, setAgentId] = useState(automation?.agent_id ?? "")
+  const [instruction, setInstruction] = useState(
+    automation?.instruction ?? defaultInstruction ?? "",
+  )
+  const [kind, setKind] = useState<AutomationTrigger["kind"]>(automation?.trigger.kind ?? "manual")
+  const [cron, setCron] = useState<string>(automation?.trigger.cron ?? SCHEDULE_PRESETS[0].cron)
+  const [on, setOn] = useState<string>(automation?.trigger.on ?? EVENT_KINDS[0].id)
+  const [mode, setMode] = useState<"propose" | "publish">(
+    automation?.refs.some((r) => r.mode === "publish") ? "publish" : "propose",
+  )
+  const [targets, setTargets] = useState<Target[]>(() => {
+    const seed = automation?.refs ?? refs?.map((id) => ({ kind: "artifact" as const, id }))
+    return (seed ?? []).map((r) => ({ ref: stripMode(r), label: seedLabel(r) }))
+  })
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [q, setQ] = useState("")
   const tz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", [])
+
+  const docs = useQuery(targetPickerQuery(q))
+  const collections = useQuery(collectionsQuery())
+  const collectionMatches = useMemo(() => {
+    const all = collections.data ?? []
+    const needle = q.trim().toLowerCase()
+    return (needle ? all.filter((c) => c.title.toLowerCase().includes(needle)) : all).slice(0, 6)
+  }, [collections.data, q])
+  const tagDraft = q.trim().toLowerCase().replace(/^#/, "")
+
+  // Resolve real titles for targets seeded from an edit-load (their label is the id).
+  // Collections come free from the already-loaded list; documents get per-id queries
+  // (cache-deduped, error-isolated — a deleted target keeps its id rather than breaking).
+  const collectionTitles = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const c of collections.data ?? []) m[c.id] = c.title
+    return m
+  }, [collections.data])
+  const docIds = useMemo(() => {
+    const ids: string[] = []
+    for (const t of targets) if (t.ref.kind === "artifact") ids.push(t.ref.id)
+    return [...new Set(ids)]
+  }, [targets])
+  const docResults = useQueries({
+    queries: docIds.map((id) => ({ ...artifactQuery(id), retry: false })),
+  })
+  const docTitles = useMemo(() => {
+    const m: Record<string, string> = {}
+    docResults.forEach((r, i) => {
+      const id = docIds[i]
+      if (id && r.data?.title) m[id] = r.data.title
+    })
+    return m
+  }, [docResults, docIds])
+  const labelFor = (t: Target): string => {
+    if (t.ref.kind === "artifact") return docTitles[t.ref.id] ?? t.label
+    if (t.ref.kind === "collection") return collectionTitles[t.ref.id] ?? t.label
+    return t.label
+  }
+
+  const addTarget = (t: Target) => {
+    setTargets((cur) => (cur.some((x) => keyOf(x.ref) === keyOf(t.ref)) ? cur : [...cur, t]))
+    setQ("")
+    setPickerOpen(false)
+  }
+  const removeTarget = (r: AutomationRef) =>
+    setTargets((cur) => cur.filter((x) => keyOf(x.ref) !== keyOf(r)))
 
   const buildTrigger = (): AutomationTrigger =>
     kind === "schedule" ? { kind, cron, tz } : kind === "event" ? { kind, on } : { kind }
+  const buildRefs = (): AutomationRef[] =>
+    stampMode(
+      targets.map((t) => t.ref),
+      mode,
+    )
 
-  const create = useApiMutation({
-    mutationFn: () =>
-      api.createAutomation({
+  const save = useApiMutation({
+    mutationFn: () => {
+      const body = {
         agentId,
         trigger: buildTrigger(),
         instruction: instruction.trim(),
-        // Write mode is an attribute OF the targets (no field of its own): publishing
-        // is per-target consent, and the default is always propose.
-        refs:
-          mode === "publish"
-            ? refs?.map((id) => ({ kind: "artifact" as const, id, mode: "publish" as const }))
-            : refs,
-      }),
-    success: "Automation created",
-    // Invalidate HERE, not in each caller — the artifact dialog and the settings manager
-    // both create through this form, and a create from either must refresh both views.
+        refs: buildRefs(),
+      }
+      return automation ? api.updateAutomation(automation.id, body) : api.createAutomation(body)
+    },
+    success: automation ? "Automation updated" : "Automation created",
+    // Invalidate HERE, not in each caller — both the manager and the artifact dialog write
+    // through this form, and a change from either must refresh both views.
     invalidate: [automationsQuery().queryKey, runsQuery().queryKey],
     onSuccess: () => {
-      setInstruction(defaultInstruction ?? "")
-      onCreated()
+      if (!automation) setInstruction(defaultInstruction ?? "")
+      onDone()
     },
   })
   const ready = agentId !== "" && instruction.trim() !== "" && !agentsError
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       {agentsError && (
         <p className="text-sm text-destructive">Couldn't load agents. Reload and try again.</p>
       )}
-      <div className="flex flex-wrap gap-2">
+
+      <Field label="Agent">
         <Select value={agentId} onValueChange={setAgentId}>
-          <SelectTrigger data-testid="automation-agent" aria-label="Agent" className="w-45">
+          <SelectTrigger data-testid="automation-agent" aria-label="Agent" className="w-full">
             <SelectValue placeholder="Pick an agent" />
           </SelectTrigger>
           <SelectContent>
@@ -84,9 +198,129 @@ export function AutomationForm({
             ))}
           </SelectContent>
         </Select>
-        {(refs?.length ?? 0) > 0 && (
+      </Field>
+
+      <Field label="Instruction">
+        <Textarea
+          data-testid="automation-instruction"
+          aria-label="Instruction"
+          placeholder="What should the agent do? e.g. Keep this doc's dates and statuses current."
+          value={instruction}
+          onChange={(e) => setInstruction(e.target.value)}
+          rows={2}
+        />
+      </Field>
+
+      <Field
+        label="Targets"
+        hint="Documents it revises, collections it files new work into, and tags it stamps on its output."
+      >
+        <div className="flex flex-wrap items-center gap-1.5">
+          {targets.map((t) => (
+            <Badge
+              key={keyOf(t.ref)}
+              variant="outline"
+              className="h-6 gap-1 pr-1 pl-1.5 font-normal"
+            >
+              <TargetIcon kind={t.ref.kind} />
+              <span className="max-w-40 truncate">{labelFor(t)}</span>
+              <button
+                type="button"
+                data-testid={`automation-target-remove-${keyOf(t.ref)}`}
+                aria-label={`Remove ${labelFor(t)}`}
+                className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={() => removeTarget(t.ref)}
+              >
+                <X className="size-3" aria-hidden />
+              </button>
+            </Badge>
+          ))}
+          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                data-testid="automation-add-target"
+                variant="outline"
+                size="sm"
+                className="h-6"
+              >
+                <Plus className="size-3.5" aria-hidden /> Add target
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 p-0" align="start">
+              <Command shouldFilter={false}>
+                <CommandInput
+                  data-testid="automation-target-search"
+                  placeholder="Search docs, collections, or type a tag…"
+                  value={q}
+                  onValueChange={setQ}
+                />
+                <CommandList>
+                  <CommandEmpty>
+                    {docs.isError ? "Couldn't search. Try again." : "No matches."}
+                  </CommandEmpty>
+                  {(docs.data?.artifacts ?? []).length > 0 && (
+                    <CommandGroup heading="Documents">
+                      {(docs.data?.artifacts ?? []).map((a) => (
+                        <CommandItem
+                          key={a.short_id}
+                          value={`doc:${a.short_id}`}
+                          onSelect={() =>
+                            addTarget({
+                              ref: { kind: "artifact", id: a.short_id },
+                              label: a.title || a.short_id,
+                            })
+                          }
+                        >
+                          <FileText className="size-3.5 text-muted-foreground" aria-hidden />
+                          <span className="truncate">{a.title || a.short_id}</span>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  )}
+                  {collectionMatches.length > 0 && (
+                    <CommandGroup heading="Collections">
+                      {collectionMatches.map((c) => (
+                        <CommandItem
+                          key={c.id}
+                          value={`col:${c.id}`}
+                          onSelect={() =>
+                            addTarget({ ref: { kind: "collection", id: c.id }, label: c.title })
+                          }
+                        >
+                          <FolderOpen className="size-3.5 text-muted-foreground" aria-hidden />
+                          <span className="truncate">{c.title}</span>
+                          <span className="ml-auto text-2xs text-muted-foreground">{c.count}</span>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  )}
+                  {tagDraft !== "" && (
+                    <CommandGroup heading="Tag">
+                      <CommandItem
+                        data-testid="automation-add-tag"
+                        value={`tag:${tagDraft}`}
+                        onSelect={() =>
+                          addTarget({ ref: { kind: "tag", tag: tagDraft }, label: `#${tagDraft}` })
+                        }
+                      >
+                        <Hash className="size-3.5 text-muted-foreground" aria-hidden />
+                        <span>
+                          Stamp with <span className="text-foreground">#{tagDraft}</span>
+                        </span>
+                      </CommandItem>
+                    </CommandGroup>
+                  )}
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
+        </div>
+      </Field>
+
+      {targets.length > 0 && (
+        <Field label="When it writes">
           <Select value={mode} onValueChange={(v) => setMode(v as "propose" | "publish")}>
-            <SelectTrigger data-testid="automation-mode" aria-label="Write mode" className="w-45">
+            <SelectTrigger data-testid="automation-mode" aria-label="Write mode" className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -94,76 +328,75 @@ export function AutomationForm({
               <SelectItem value="publish">Publish live</SelectItem>
             </SelectContent>
           </Select>
-        )}
-      </div>
-
-      <Textarea
-        data-testid="automation-instruction"
-        aria-label="Instruction"
-        placeholder="What should the agent do? e.g. Keep this doc's dates and statuses current."
-        value={instruction}
-        onChange={(e) => setInstruction(e.target.value)}
-        rows={2}
-      />
-
-      <Tabs value={kind} onValueChange={(v) => setKind(v as AutomationTrigger["kind"])}>
-        <TabsList>
-          <TabsTrigger data-testid="automation-trigger-manual" value="manual">
-            Manual
-          </TabsTrigger>
-          <TabsTrigger data-testid="automation-trigger-schedule" value="schedule">
-            Schedule
-          </TabsTrigger>
-          <TabsTrigger data-testid="automation-trigger-event" value="event">
-            Event
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
-      {kind === "manual" && (
-        <p className="text-sm text-muted-foreground">Runs only when you press Run now.</p>
+        </Field>
       )}
-      {kind === "schedule" && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Select value={cron} onValueChange={setCron}>
-            <SelectTrigger data-testid="automation-schedule" aria-label="Schedule" className="w-60">
+
+      <Field label="Trigger">
+        <Tabs value={kind} onValueChange={(v) => setKind(v as AutomationTrigger["kind"])}>
+          <TabsList>
+            <TabsTrigger data-testid="automation-trigger-manual" value="manual">
+              Manual
+            </TabsTrigger>
+            <TabsTrigger data-testid="automation-trigger-schedule" value="schedule">
+              Schedule
+            </TabsTrigger>
+            <TabsTrigger data-testid="automation-trigger-event" value="event">
+              Event
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        {kind === "manual" && (
+          <p className="text-sm text-muted-foreground">Runs only when you press Run now.</p>
+        )}
+        {kind === "schedule" && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={cron} onValueChange={setCron}>
+              <SelectTrigger
+                data-testid="automation-schedule"
+                aria-label="Schedule"
+                className="w-60"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SCHEDULE_PRESETS.map((p) => (
+                  <SelectItem key={p.id} value={p.cron}>
+                    {p.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className="font-mono text-2xs text-muted-foreground">{tz}</span>
+          </div>
+        )}
+        {kind === "event" && (
+          <Select value={on} onValueChange={setOn}>
+            <SelectTrigger data-testid="automation-event" aria-label="Event" className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {SCHEDULE_PRESETS.map((p) => (
-                <SelectItem key={p.id} value={p.cron}>
-                  {p.label}
+              {EVENT_KINDS.map((e) => (
+                <SelectItem key={e.id} value={e.id}>
+                  {e.label}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          <span className="font-mono text-2xs text-muted-foreground">{tz}</span>
-        </div>
-      )}
-      {kind === "event" && (
-        <Select value={on} onValueChange={setOn}>
-          <SelectTrigger data-testid="automation-event" aria-label="Event" className="w-72">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {EVENT_KINDS.map((e) => (
-              <SelectItem key={e.id} value={e.id}>
-                {e.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
+        )}
+      </Field>
 
       <div className="flex justify-end">
         <Button
           data-testid="automation-create"
           variant="secondary"
           size="sm"
-          onClick={() => ready && create.mutate()}
-          loading={create.isPending}
-          disabled={create.isPending || !ready}
+          onClick={() => ready && save.mutate()}
+          loading={save.isPending}
+          disabled={save.isPending || !ready}
         >
-          {create.isPending ? "Creating…" : submitLabel}
+          {save.isPending
+            ? "Saving…"
+            : (submitLabel ?? (automation ? "Save changes" : "Create automation"))}
         </Button>
       </div>
     </div>
