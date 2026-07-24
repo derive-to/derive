@@ -82,14 +82,16 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
   })
 
   // The executor fetches the credential a run bills against, decrypted. WHOSE plan is the
-  // run's INITIATOR's: pass `?session=` and the server resolves that session's ASKER first
-  // — their question, their tokens — falling back to the agent's registrant (the interim
-  // chain until the workspace pool lands; then the fallback becomes the pool). Without a
-  // session (boot preflight, scheduled runs) it is the registrant's. Returns
-  // `{ credential: null }` when nobody in the chain has one — the runner fails the run
-  // closed with a "connect your plan" message rather than falling back to a shared token.
-  // Isolation is structural twice over: a session id resolves only when that session
-  // belongs to THIS agent's own context (404 otherwise, so foreign ids don't leak), and
+  // run's INITIATOR's: pass `?session=` (the ask loop) or `?run=` (the automation lane)
+  // and the server resolves the initiator first — the session's asker, or the run's
+  // `initiated_by` (the person who clicked Run now) — falling back to the agent's
+  // registrant (the interim chain until the workspace pool lands; then the fallback
+  // becomes the pool). A clock/event run has no initiator (`initiated_by` null) and
+  // resolves straight to the fallback. Without either id (boot preflight) it is the
+  // registrant's. Returns `{ credential: null }` when nobody in the chain has one — the
+  // runner fails the run closed with a "connect your plan" message rather than falling
+  // back to a shared token. Isolation is structural twice over: a session/run id resolves
+  // only when it belongs to THIS agent (404 otherwise, so foreign ids don't leak), and
   // only the resolved person's row is ever read.
   app.get("/v1/agent/model-credential", async (c) => {
     const agent = await agentFor(c)
@@ -112,6 +114,16 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
         return fail(c, 404, "unknown session")
       const asker = await meta.getModelCredential(agent.org_id, s.asker_id, provider)
       if (asker) return present(asker, "asker")
+    }
+    const runId = c.req.query("run")
+    if (runId) {
+      const r = await meta.getRun(runId)
+      if (!r || r.agent_id !== agent.id || r.org_id !== agent.org_id)
+        return fail(c, 404, "unknown run")
+      if (r.initiated_by) {
+        const initiator = await meta.getModelCredential(agent.org_id, r.initiated_by, provider)
+        if (initiator) return present(initiator, "initiator")
+      }
     }
     const owner = agent.created_by
     if (!owner) return c.json({ credential: null })

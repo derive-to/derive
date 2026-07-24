@@ -2301,7 +2301,9 @@ export function runStoreContract(
       // List returns only that user's rows.
       const u1 = await store.listModelCredentials(ORG, "u1")
       expect(u1.map((c) => c.provider).sort()).toEqual(["claude-code", "codex"])
-      expect((await store.listModelCredentials(ORG, "u2")).map((c) => c.provider)).toEqual(["codex"])
+      expect((await store.listModelCredentials(ORG, "u2")).map((c) => c.provider)).toEqual([
+        "codex",
+      ])
 
       // Delete is scoped: removing u1/codex leaves u1/claude-code and u2/codex.
       await store.deleteModelCredential(ORG, "u1", "codex")
@@ -2318,17 +2320,24 @@ export function runStoreContract(
         org_id: ORG,
         agent_id: agentId,
         reason: "manual:u1",
+        // First-class wallet key, round-tripped — never parsed out of `reason`.
+        initiated_by: "u1",
         scheduled_for: "2000-01-01T00:00:00.000Z",
       })
       expect(queued.status).toBe("queued")
-      // A future run is NOT due yet.
-      await store.createRun({
+      expect(queued.initiated_by).toBe("u1")
+      // getRun round-trips it; a clock run (no initiator) stays null; unknown id is null.
+      expect((await store.getRun(queued.id))?.initiated_by).toBe("u1")
+      expect(await store.getRun(uuid())).toBeNull()
+      // A future run is NOT due yet — and a clock run carries no initiator.
+      const clockRun = await store.createRun({
         id: uuid(),
         org_id: ORG,
         agent_id: agentId,
         reason: "schedule",
         scheduled_for: "2999-01-01T00:00:00.000Z",
       })
+      expect(clockRun.initiated_by).toBeNull()
 
       const now = "2100-01-01T00:00:00.000Z"
       const claimed = await store.claimDueRuns(agentId, now)

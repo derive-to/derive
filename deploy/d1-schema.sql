@@ -197,6 +197,7 @@ CREATE TABLE IF NOT EXISTS run (
   automation_id TEXT,
   agent_id TEXT NOT NULL,
   reason TEXT NOT NULL,
+  initiated_by TEXT,
   status TEXT NOT NULL,
   scheduled_for TEXT,
   started_at TEXT,

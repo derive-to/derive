@@ -229,6 +229,8 @@ export const run = sqliteTable("run", {
   automation_id: text("automation_id"),
   agent_id: text("agent_id").notNull(),
   reason: text("reason").notNull(),
+  // The initiating person (wallet key) — null for clock/event runs. See RunRecord.
+  initiated_by: text("initiated_by"),
   status: text("status").$type<RunStatus>().notNull(),
   scheduled_for: text("scheduled_for"),
   started_at: text("started_at"),

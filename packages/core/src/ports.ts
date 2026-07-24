@@ -1007,6 +1007,8 @@ export interface AgentStore {
   /** Enqueue or record a run. status defaults to "queued" (pending work); pass a terminal
    *  status to record an already-finished run straight into the ledger. */
   createRun(r: NewRun): Promise<RunRecord>
+  /** One run by id — the model-credential endpoint resolves a run's initiator through this. */
+  getRun(id: string): Promise<RunRecord | null>
   /** Atomically claim due queued runs for one agent: status "queued" with scheduled_for ≤
    *  now, flipped to "running" (started_at = now) under a row lock so concurrent executors
    *  never double-run one. Returns the claimed rows, oldest-scheduled first. */
@@ -1414,6 +1416,11 @@ export interface RunRecord {
   agent_id: string
   /** What fired it: "manual:<userId>", "schedule", "event:<name>" (free text). */
   reason: string
+  /** The person whose action fired it — the WALLET key (their plan bills the run).
+   *  Null = a clock or event started it (no person), which resolves to the
+   *  registrant today and the workspace pool once it lands. First-class on
+   *  purpose: `reason` is display text, never a resolution key. */
+  initiated_by: string | null
   status: RunStatus
   /** When it should run (queue time); claimed once this is <= now. Null = as soon as possible. */
   scheduled_for: string | null
@@ -1431,6 +1438,8 @@ export interface NewRun {
   automation_id?: string | null
   agent_id: string
   reason: string
+  /** The initiating person (wallet key); omit for clock/event runs. */
+  initiated_by?: string | null
   /** Defaults to "queued". */
   status?: RunStatus
   scheduled_for?: string | null

@@ -2509,6 +2509,10 @@ export class PgMetaStore implements MetaStore {
       .returning()
     return one(rows)
   }
+  async getRun(id: string): Promise<RunRecord | null> {
+    const rows = await this.db.select().from(run).where(eq(run.id, id)).limit(1)
+    return (rows[0] as RunRecord | undefined) ?? null
+  }
   claimDueRuns(agentId: string, now: string, limit = 20): Promise<RunRecord[]> {
     // The oldest queued runs due now for this agent, flipped to running under a row lock
     // (FOR UPDATE SKIP LOCKED) so two executors never claim the same run. A null

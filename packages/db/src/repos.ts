@@ -2545,6 +2545,8 @@ export function makeRepos(db: SqliteDb) {
       .values({ ...r, status: r.status ?? "queued" })
       .returning()
       .get()) as RunRecord
+  const getRun = async (id: string): Promise<RunRecord | null> =>
+    ((await db.select().from(run).where(eq(run.id, id)).get()) as RunRecord | undefined) ?? null
   const claimDueRuns = async (agentId: string, now: string, limit = 20): Promise<RunRecord[]> => {
     // The oldest queued runs due now for this agent, flipped to running under a row lock so
     // two executors never claim the same run. A null scheduled_for means "as soon as possible";
@@ -3336,6 +3338,7 @@ export function makeRepos(db: SqliteDb) {
     updateAutomation,
     deleteAutomation,
     createRun,
+    getRun,
     claimDueRuns,
     finishRun,
     listRuns,
