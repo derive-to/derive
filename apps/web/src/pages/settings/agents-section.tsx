@@ -60,13 +60,15 @@ export function AgentsSection() {
             </Button>
           }
         />
-      ) : !agents || agents.length === 0 ? (
+      ) : !agents || agents.filter((a) => !a.managed).length === 0 ? (
         <EmptyState>No agents yet. Add one above.</EmptyState>
       ) : (
         <SettingsGroup>
-          {agents.map((a) => (
-            <AgentRow key={a.id} agent={a} onDone={reload} />
-          ))}
+          {agents
+            .filter((a) => !a.managed)
+            .map((a) => (
+              <AgentRow key={a.id} agent={a} onDone={reload} />
+            ))}
         </SettingsGroup>
       )}
     </SettingsSection>
@@ -168,43 +170,100 @@ function NewAgent({ onCreated }: { onCreated: () => void }) {
 
 function AgentRow({ agent, onDone }: { agent: Agent; onDone: () => void }) {
   const [confirming, setConfirming] = useState(false)
+  const [rotated, setRotated] = useState<string | null>(null)
   const remove = useApiMutation({
     mutationFn: () => api.deleteAgent(agent.id),
     success: `Agent ${agent.name} removed`,
     onSuccess: () => onDone(),
   })
+  // A credential event, never an identity event: the old bearer dies the moment
+  // this succeeds, and the new token is shown exactly once, right here.
+  const rotate = useApiMutation({
+    mutationFn: () => api.rotateAgent(agent.id),
+    success: `Token rotated for ${agent.name}`,
+    onSuccess: (a) => setRotated(a.token),
+  })
   return (
-    <div data-testid={`agent-row-${agent.id}`} className="flex items-center gap-3 py-3">
-      <Avatar className="size-7 shrink-0">
-        <AvatarFallback>
-          <Bot className="size-4" aria-hidden />
-        </AvatarFallback>
-      </Avatar>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-          @{agent.name}
-          <Badge variant="secondary">{agent.role}</Badge>
+    <div data-testid={`agent-row-${agent.id}`} className="flex flex-col py-3">
+      <div className="flex items-center gap-3">
+        <Avatar className="size-7 shrink-0">
+          <AvatarFallback>
+            <Bot className="size-4" aria-hidden />
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+            @{agent.name}
+            <Badge variant="secondary">{agent.role}</Badge>
+          </div>
+          <div className="text-sm text-muted-foreground">
+            Mention it in any thread to send it work.
+          </div>
         </div>
-        <div className="text-sm text-muted-foreground">
-          Mention it in any thread to send it work.
-        </div>
+        <Button
+          data-testid={`agent-rotate-${agent.id}`}
+          variant="ghost"
+          size="sm"
+          onClick={() => rotate.mutate()}
+          loading={rotate.isPending}
+          disabled={rotate.isPending}
+        >
+          Rotate token
+        </Button>
+        <Button
+          data-testid={`agent-remove-${agent.id}`}
+          variant="destructive-ghost"
+          size="sm"
+          onClick={() => setConfirming(true)}
+        >
+          Remove
+        </Button>
+        <ConfirmDialog
+          open={confirming}
+          onOpenChange={setConfirming}
+          title={`Remove @${agent.name}?`}
+          description="Its token stops working immediately."
+          confirmLabel="Remove"
+          onConfirm={() => remove.mutate()}
+        />
       </div>
-      <Button
-        data-testid={`agent-remove-${agent.id}`}
-        variant="destructive-ghost"
-        size="sm"
-        onClick={() => setConfirming(true)}
-      >
-        Remove
-      </Button>
-      <ConfirmDialog
-        open={confirming}
-        onOpenChange={setConfirming}
-        title={`Remove @${agent.name}?`}
-        description="Its token stops working immediately."
-        confirmLabel="Remove"
-        onConfirm={() => remove.mutate()}
-      />
+      {rotated && (
+        <div data-testid={`agent-rotated-${agent.id}`} className="mt-2">
+          <StatusPanel
+            tone="warning"
+            layout="inline"
+            title={`New token for ${agent.name} — copy it now, it won't be shown again. The old one is dead.`}
+            description={
+              <code className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground">
+                {rotated}
+              </code>
+            }
+            action={
+              <div className="flex items-center gap-2">
+                <Button
+                  data-testid={`agent-rotated-copy-${agent.id}`}
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(rotated)
+                    toast.success("Token copied")
+                  }}
+                >
+                  Copy
+                </Button>
+                <Button
+                  data-testid={`agent-rotated-done-${agent.id}`}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setRotated(null)}
+                >
+                  Done
+                </Button>
+              </div>
+            }
+          />
+        </div>
+      )}
     </div>
   )
 }

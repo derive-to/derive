@@ -714,6 +714,19 @@ export interface IntegrationStore {
   setSlackInstall(s: SlackInstallRecord): Promise<void>
   /** Disconnect Slack for a workspace. */
   deleteSlackInstall(orgId: string): Promise<void>
+  // ---- Per-user model-plan credentials -----------------------------------
+  /** A user's own model credential for a provider (encrypted `secret`), or null. */
+  getModelCredential(
+    orgId: string,
+    userId: string,
+    provider: string,
+  ): Promise<ModelCredentialRecord | null>
+  /** Upsert a user's model credential (keyed org+user+provider). */
+  setModelCredential(c: ModelCredentialRecord): Promise<void>
+  /** Remove a user's model credential for a provider. */
+  deleteModelCredential(orgId: string, userId: string, provider: string): Promise<void>
+  /** A user's connected credentials (all providers) — for the settings hint list. */
+  listModelCredentials(orgId: string, userId: string): Promise<ModelCredentialRecord[]>
   /** The Slack message a Derive thread is mirrored to (for threading replies), or null. */
   getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null>
   /** The Derive thread a Slack message maps to (for reply-back), or null. */
@@ -961,6 +974,9 @@ export interface DirectoryStore {
 export interface AgentStore {
   // ---- Agents (mentionable principals that act via a scoped token) -------
   createAgent(a: NewAgent): Promise<AgentRecord>
+  /** Replace the agent's token hash (org-scoped). The old bearer dies at once;
+   *  identity, role, hosting, and attribution are untouched. Null = not found. */
+  rotateAgentToken(id: string, orgId: string, tokenHash: string): Promise<AgentRecord | null>
   listAgents(orgId: string): Promise<AgentRecord[]>
   /** Flip whether Derive's managed executor serves this agent. Workspace-scoped by
    *  (id, org) like deleteAgent; null when the agent isn't in this workspace. */
@@ -994,6 +1010,8 @@ export interface AgentStore {
   /** Enqueue or record a run. status defaults to "queued" (pending work); pass a terminal
    *  status to record an already-finished run straight into the ledger. */
   createRun(r: NewRun): Promise<RunRecord>
+  /** One run by id — the model-credential endpoint resolves a run's initiator through this. */
+  getRun(id: string): Promise<RunRecord | null>
   /** Atomically claim due queued runs for one agent: status "queued" with scheduled_for ≤
    *  now, flipped to "running" (started_at = now) under a row lock so concurrent executors
    *  never double-run one. Returns the claimed rows, oldest-scheduled first. */
@@ -1378,6 +1396,9 @@ export interface AgentRecord {
   /** 1 = served by Derive's managed executor. Hosting changes where the agent
    *  runs, never its principal, role cap, or attribution. */
   hosted: 0 | 1
+  /** 1 = auto-minted for one context at creation — the context's Derive access,
+   *  not a user-named persona. Hidden from the roster UI. */
+  managed: 0 | 1
   created_at: string
 }
 export interface NewAgent {
@@ -1388,6 +1409,7 @@ export interface NewAgent {
   role: Role
   created_by?: string | null
   hosted?: 0 | 1
+  managed?: 0 | 1
 }
 
 // ---- Automations + runs: the generic agent-work primitive --------------
@@ -1464,6 +1486,11 @@ export interface RunRecord {
   agent_id: string
   /** What fired it: "manual:<userId>", "schedule", "event:<name>" (free text). */
   reason: string
+  /** The person whose action fired it — the WALLET key (their plan bills the run).
+   *  Null = a clock or event started it (no person), which resolves to the
+   *  registrant today and the workspace pool once it lands. First-class on
+   *  purpose: `reason` is display text, never a resolution key. */
+  initiated_by: string | null
   status: RunStatus
   /** When it should run (queue time); claimed once this is <= now. Null = as soon as possible. */
   scheduled_for: string | null
@@ -1481,6 +1508,8 @@ export interface NewRun {
   automation_id?: string | null
   agent_id: string
   reason: string
+  /** The initiating person (wallet key); omit for clock/event runs. */
+  initiated_by?: string | null
   /** Defaults to "queued". */
   status?: RunStatus
   scheduled_for?: string | null
@@ -2238,6 +2267,21 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
 /** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot
  *  token, AES-encrypted at rest. `default_channel` is where Derive posts when an artifact
  *  has no more specific channel. */
+/** A team member's own model-plan credential, encrypted at rest. `secret` is the AES-GCM
+ *  blob (lib/crypto); `provider` matches a runner provider ("claude-code" | "codex"); `kind`
+ *  distinguishes an OAuth/plan token from a plain API key. Scoped (org, user, provider). */
+export interface ModelCredentialRecord {
+  id: string
+  org_id: string
+  user_id: string
+  provider: string
+  kind: "oauth" | "api_key"
+  secret: string
+  hint: string
+  created_at: string
+  updated_at: string
+}
+
 export interface SlackInstallRecord {
   org_id: string
   team_id: string

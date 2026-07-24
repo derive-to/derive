@@ -193,6 +193,8 @@ export const run = pgTable("run", {
   automation_id: text("automation_id"),
   agent_id: text("agent_id").notNull(),
   reason: text("reason").notNull(),
+  // The initiating person (wallet key) — null for clock/event runs. See RunRecord.
+  initiated_by: text("initiated_by"),
   status: text("status").$type<RunStatus>().notNull(),
   scheduled_for: text("scheduled_for"),
   started_at: text("started_at"),
@@ -287,6 +289,9 @@ export const agent = pgTable(
     created_by: text("created_by"),
     // Served by Derive's managed executor when 1 (see schema.ts).
     hosted: integer("hosted").notNull().default(0).$type<0 | 1>(),
+    // 1 = auto-minted for one context at creation (never user-named): the context's
+    // Derive access, not a persona. The UI hides managed agents from the roster.
+    managed: integer("managed").notNull().default(0).$type<0 | 1>(),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [
@@ -532,6 +537,23 @@ export const userNotificationPref = pgTable(
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [uniqueIndex("user_notification_pref_key").on(t.org_id, t.user_id)],
+)
+// Per-user model-plan credential (Claude/Codex plan token or API key), encrypted at rest
+// and scoped (org, user, provider). Used only for that user's own runs — see schema.ts.
+export const modelCredential = pgTable(
+  "model_credential",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id").notNull(),
+    provider: text("provider").notNull(),
+    kind: text("kind").$type<"oauth" | "api_key">().notNull(),
+    secret: text("secret").notNull(),
+    hint: text("hint").notNull().default(""),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    updated_at: text("updated_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("model_credential_key").on(t.org_id, t.user_id, t.provider)],
 )
 export const slackThreadLink = pgTable(
   "slack_thread_link",
@@ -821,6 +843,7 @@ const TABLES = [
   report,
   auditLog,
   asset,
+  modelCredential,
 ]
 
 /** Build the Postgres boot DDL: generated table/index CREATEs + placeholder tables

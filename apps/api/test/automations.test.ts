@@ -122,6 +122,9 @@ describe("automations + runs", () => {
     // The claim hands the executor everything it needs: the instruction + resolved gate inputs.
     // Automation runs propose by default; write mode will ride per-target in refs.
     expect(mine.instruction).toBe("keep the roadmap current")
+    // The wallet key rides the claim: Run-now stamps the clicker as the initiator, so
+    // the executor bills THEIR plan (a schedule/event enqueue leaves it null).
+    expect(mine.initiated_by).toBe("u_auto_own")
     expect(mine.flags).toMatchObject({ agentKillswitch: expect.any(Boolean) })
     // Claimed once: a second poll gets nothing.
     const again = await (
@@ -253,5 +256,89 @@ describe("automations + runs", () => {
       method: "POST",
     })
     expect([401, 403]).toContain(anon.status)
+  })
+})
+
+// The end of "pick an agent", automation lane (mirrors contexts #525): creating an
+// automation without an agentId auto-mints a MANAGED agent — its own Derive access,
+// named from the instruction, token returned exactly once — and that agent drives the
+// whole run loop: Run now enqueues, the minted bearer claims, initiated_by rides along.
+describe("automations: auto-minted managed agents", () => {
+  const owner: TestUser = { id: "u_ama_own", email: "amaown@derive.test", name: "Owner" }
+  const { app } = makeAuthedApp("automations-managed", [owner], "editor")
+
+  it("create without agentId mints a managed agent; its token claims the run", async () => {
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const created = await app.request(
+      "/v1/automations",
+      jsonAs(as(owner.email), {
+        trigger: { kind: "manual" },
+        instruction: "keep the weekly ship report current",
+      }),
+    )
+    expect(created.status).toBe(201)
+    const auto = await created.json()
+    expect(auto.agent_id).toBeTruthy()
+    expect(auto.agent_token).toMatch(/^dk_agt_/)
+
+    // The roster row: managed, named from the instruction, attributed to the creator.
+    const roster = (await (await app.request("/v1/agents", { headers: as(owner.email) })).json())
+      .agents
+    const minted = roster.find((a: { id: string }) => a.id === auto.agent_id)
+    expect(minted).toMatchObject({ managed: true, role: "editor" })
+    expect(minted.name).toContain("keep the weekly ship report")
+    // The token never appears anywhere again.
+    expect(JSON.stringify(roster)).not.toContain(auto.agent_token)
+
+    // The loop: Run now → the MINTED agent's bearer claims its own run.
+    const run = await (
+      await app.request(`/v1/automations/${auto.id}/run`, {
+        method: "POST",
+        headers: as(owner.email),
+      })
+    ).json()
+    const claimed = await (
+      await app.request("/v1/agent/runs/claim", { headers: bearer(auto.agent_token) })
+    ).json()
+    const mine = claimed.runs.find((r: { id: string }) => r.id === run.id)
+    expect(mine).toBeTruthy()
+    expect(mine.instruction).toBe("keep the weekly ship report current")
+    expect(mine.initiated_by).toBe("u_ama_own")
+  })
+
+  it("an instruction colliding with an existing agent name mints under a suffix", async () => {
+    await app.request("/v1/agents", jsonAs(as(owner.email), { name: "watch the dashboards" }))
+    const created = await app.request(
+      "/v1/automations",
+      jsonAs(as(owner.email), {
+        trigger: { kind: "manual" },
+        instruction: "watch the dashboards",
+      }),
+    )
+    expect(created.status).toBe(201)
+    const auto = await created.json()
+    const roster = (await (await app.request("/v1/agents", { headers: as(owner.email) })).json())
+      .agents
+    const minted = roster.find((a: { id: string }) => a.id === auto.agent_id)
+    expect(minted.managed).toBe(true)
+    expect(minted.name).toMatch(/^watch the dashboards .{4}$/)
+  })
+
+  it("an explicit agentId still works and returns no token", async () => {
+    const ag = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Service Runner" }))
+    ).json()
+    const created = await (
+      await app.request(
+        "/v1/automations",
+        jsonAs(as(owner.email), {
+          agentId: ag.id,
+          trigger: { kind: "manual" },
+          instruction: "run as the service agent",
+        }),
+      )
+    ).json()
+    expect(created.agent_id).toBe(ag.id)
+    expect(created.agent_token).toBeUndefined()
   })
 })

@@ -20,6 +20,8 @@ import {
   writeFileSync,
 } from "node:fs"
 import { dirname, join, resolve, sep } from "node:path"
+import { claudeCode } from "./providers/claude-code.js"
+import { DEFAULT_PROVIDER, PROVIDERS, selectProvider } from "./providers/index.js"
 import {
   conventionsBlock,
   materializeNotes,
@@ -84,15 +86,26 @@ export function loadRunnerConfig(env = process.env, flags = {}, { partial = fals
     throw new Error(
       "a context id and an agent token are required (positional/--context + --token|--token-file, or DERIVE_CONTEXT + DERIVE_TOKEN)",
     )
+  // Which agent CLI drives the runs. Default claude-code; the provider owns its
+  // binary resolution and default model so this stays agnostic. An unknown name
+  // is fatal for a real run, but in `partial` mode (doctor) it must degrade to a
+  // FINDING, not a crash — the same contract as a missing token/context — so we
+  // fall back to the default for the derived defaults and let doctor report it.
+  const providerName = flags.provider ?? env.RUNNER_PROVIDER ?? DEFAULT_PROVIDER
+  const provider = partial
+    ? (PROVIDERS[providerName] ?? PROVIDERS[DEFAULT_PROVIDER])
+    : selectProvider(providerName)
   return {
     server,
     token,
     contextId,
     cwd: flags.cwd ?? env.RUNNER_CWD ?? process.cwd(),
-    claudeBin: flags["claude-bin"] ?? env.CLAUDE_BIN ?? "claude",
-    // Sonnet by default: an asker is sitting in the console waiting, and data
-    // Q&A is tool-call-bound — latency buys more than the top model's depth.
-    model: flags.model ?? env.RUNNER_MODEL ?? "sonnet",
+    providerName,
+    agentBin: provider.binFrom(flags, env),
+    // The provider's default (claude-code → sonnet): an asker is sitting in the
+    // console waiting, and data Q&A is tool-call-bound, so latency buys more than
+    // the top model's depth. --model / RUNNER_MODEL override it.
+    model: flags.model ?? env.RUNNER_MODEL ?? provider.defaultModel,
     timeoutMs: positiveMs(flags.timeout ?? env.RUNNER_TIMEOUT_MS, 600_000, 10_000),
     pollMs: positiveMs(flags.poll ?? env.RUNNER_POLL_MS, 5_000, 500),
     mock: flags.mock === "true" || env.RUNNER_MOCK === "1",
@@ -167,6 +180,15 @@ export class DeriveClient {
   async queue(contextId, limit = 10) {
     const r = await this.call(`/v1/contexts/${contextId}/queue?limit=${limit}`)
     return r.sessions
+  }
+
+  /** The owner's connected model credential for a provider (decrypted), or null. The
+   *  server scopes it to THIS agent's registrant, so a runner only ever sees its own
+   *  owner's plan token. */
+  async modelCredential(provider, sessionId = null) {
+    const q = `provider=${encodeURIComponent(provider)}${sessionId ? `&session=${encodeURIComponent(sessionId)}` : ""}`
+    const r = await this.call(`/v1/agent/model-credential?${q}`)
+    return r.credential ?? null
   }
 
   /** Post an answer. `answers` names the asker message it addresses — if a
@@ -615,10 +637,31 @@ const NUDGE_PROMPT = `Your previous reply was NOT accepted — it did not end wi
 // review is minutes of tool calls that would otherwise be paid for twice.
 const RESUME_PROMPT = `Your previous turn was cut short by a transient service error before you could reply — everything you had already done is still here in this session. Pick up where you left off, finish the job, and end with the required <answer> block.`
 
-// ---- automation lane: run revisions -------------------------------------------
-// A run is an automation firing (schedule / fire-URL / run-now), not an ask. The model maintains
-// an artifact on a trigger: it pulls from the run's source tools (via the shim below) and returns
-// the FULL new artifact source in a <revision> block. The runner then writes it through the gate.
+/** One `claude -p` run (or resume). Streams events (logged as they arrive),
+ *  captures the session id (first system event) and the final `result` text. */
+// Long enough to be worth taking. A provider whose CLI does its own backoff has
+// already burned attempts over minutes before it surfaces a retryable failure, so
+// a short wait would just re-enter the overload window it already gave up on.
+export const RETRY_DELAY_MS = 30_000
+
+// ---- automation lane: runs (a scheduled/triggered artifact update) ------------
+// A run is an automation firing, not an ask. The model maintains an artifact on a trigger: it
+// pulls from the run's source tools (via the shim in serveRun) and returns the FULL new artifact
+// source in a <revision> block. The runner then writes it through the gate.
+
+// The write gate, ported from @derive/core's decideWrite. The CLI stays dependency-free (it can't
+// import the TS core at runtime), so this is a faithful copy. The MODEL never chooses the write
+// mode — this does, from the target's consent (mode), the workspace flags, and confidence.
+export const DEFAULT_CONFIDENCE_FLOOR = 0.8
+export function decideWrite({ autonomy, confidence, flags, confidenceFloor }) {
+  const floor = confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR
+  if (flags.agentKillswitch) return "proposal"
+  if (autonomy === "shadow") return "shadow"
+  if (autonomy === "suggest") return "proposal"
+  if (!flags.agentAutoEnabled) return "proposal"
+  if (confidence === null || confidence === undefined || confidence < floor) return "proposal"
+  return "live_publish_with_review"
+}
 
 /** The run output contract — a full artifact revision, not an answer. Appended after the manifest
  *  like OUTPUT_CONTRACT so a manifest edit can't break the parse. */
@@ -683,234 +726,65 @@ export function parseRevision(text) {
   }
 }
 
-// The write gate, ported from @derive/core's decideWrite. The CLI stays dependency-free (it can't
-// import the TS core at runtime), so this is a faithful copy kept honest by a parity test that
-// imports the real one. The MODEL never chooses the write mode — this does, from the target's
-// consent (mode), the workspace flags, and confidence.
-export const DEFAULT_CONFIDENCE_FLOOR = 0.8
-export function decideWrite({ autonomy, confidence, flags, confidenceFloor }) {
-  const floor = confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR
-  if (flags.agentKillswitch) return "proposal"
-  if (autonomy === "shadow") return "shadow"
-  if (autonomy === "suggest") return "proposal"
-  if (!flags.agentAutoEnabled) return "proposal"
-  if (confidence === null || confidence === undefined || confidence < floor) return "proposal"
-  return "live_publish_with_review"
-}
-
-/** One `claude -p` run (or resume). Streams events (logged as they arrive),
- *  captures the session id (first system event) and the final `result` text. */
-function spawnClaude({ bin, cwd, args, timeoutMs, env = process.env }) {
-  return new Promise((resolve) => {
-    const child = spawn(bin, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] })
-    let buffer = ""
-    let resultText = ""
-    let sessionId = null
-    let stderr = ""
-    // The model's last words, kept for the failure message: a crash mid-run
-    // exits nonzero with EMPTY stderr, so `exit 1: ` was all an owner ever saw.
-    // The reason ("API Error: 529 Overloaded") is in the assistant stream.
-    let lastText = ""
-    // The CLI's own verdict on the run. An API failure is NOT a silent exit: it
-    // emits a result event with is_error + api_error_status and a `result`
-    // string carrying the message ("API Error: 529 Overloaded"). Reading those
-    // is the difference between "retry, the service was busy" and "don't, the
-    // model name is wrong" — the exit code alone can't tell them apart.
-    let isError = false
-    let apiErrorStatus = null
-    let timedOut = false
-    let killTimer
-    const timer = setTimeout(() => {
-      timedOut = true
-      child.kill("SIGTERM")
-      killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000)
-    }, timeoutMs)
-    const take = (line) => {
-      try {
-        const event = JSON.parse(line)
-        lastText = logEvent(event) || lastText
-        if (!sessionId && typeof event.session_id === "string") sessionId = event.session_id
-        if (event.type === "result") {
-          if (typeof event.result === "string") resultText = event.result
-          if (event.is_error === true) isError = true
-          if (Number.isFinite(event.api_error_status)) apiErrorStatus = event.api_error_status
-        }
-      } catch {
-        // partial line / non-JSON noise
-      }
-    }
-    child.stdout.on("data", (b) => {
-      buffer += b.toString()
-      let nl = buffer.indexOf("\n")
-      while (nl >= 0) {
-        const line = buffer.slice(0, nl).trim()
-        buffer = buffer.slice(nl + 1)
-        nl = buffer.indexOf("\n")
-        if (line) take(line)
-      }
-    })
-    child.stderr.on("data", (b) => {
-      stderr += b.toString()
-    })
-    child.on("close", (code) => {
-      clearTimeout(timer)
-      clearTimeout(killTimer)
-      // The stream can end without a trailing newline; the unterminated line may
-      // be the `result` event itself.
-      if (buffer.trim()) take(buffer.trim())
-      resolve({ timedOut, code, resultText, sessionId, stderr, lastText, isError, apiErrorStatus })
-    })
-    child.on("error", (err) => {
-      clearTimeout(timer)
-      clearTimeout(killTimer)
-      resolve({
-        timedOut: false,
-        code: -1,
-        resultText: "",
-        sessionId: null,
-        stderr: String(err),
-        lastText: "",
-        isError: true,
-        // A spawn failure (missing binary, missing cwd) never reached the
-        // service — deterministic, so it must not look retryable.
-        apiErrorStatus: null,
-      })
-    })
-  })
-}
-
-// Long enough to be worth taking. The CLI does its OWN backoff first — a run
-// that surfaces `api_error_status` has already burned ~10 attempts over minutes
-// — so a 5s wait just re-enters the same overload window the CLI gave up on.
-// (`--fallback-model` is the CLI's other answer to overload; deliberately not
-// used: silently answering from a different model changes the answer without
-// telling the asker, and which model a context speaks with is the owner's call.)
-export const RETRY_DELAY_MS = 30_000
-
-/** Is this run worth a second attempt? Only when the SERVICE failed, never when
- *  the configuration did — a wrong model name or a missing binary fails exactly
- *  the same way twice, and paying a sleep plus a second spawn per session to
- *  learn that is pure latency.
- *    - 429 / 5xx from the API (the 529 that killed a review five minutes deep)
- *    - an engine/turn error: nonzero exit, no api status, nothing to show
- *  Excluded: timeouts (the owner's signal that the work doesn't fit the budget),
- *  spawn failures (code -1: missing claude, missing cwd), and every 4xx — a 404
- *  model_not_found or a 401 will never come good on its own. */
-function retryable(r) {
-  if (r.timedOut || r.code === 0 || r.code === -1) return false
-  if (r.apiErrorStatus != null) return r.apiErrorStatus === 429 || r.apiErrorStatus >= 500
-  return true
-}
-
-/** Produce a validated answer from a claude run, robustly:
- *   1. run → a parseable <answer> counts EVEN IF the CLI exited nonzero after
- *      emitting it; the block is the contract, the exit code is a hint.
- *   2. the service failed (429/5xx/engine error)? retry ONCE, resuming the
- *      session when there is one so minutes of tool calls aren't paid for twice.
- *   3. still nothing, and the run is an ERROR run? fail — its `result` text is
- *      the API's error message, and posting "API Error: 529" as an answer would
- *      be worse than a failed session.
- *   4. a clean exit with no block? nudge-retry on the SAME session (--resume) —
- *      a model deep in a build often just forgets the block; reformatting is
- *      cheap and recovers a page it had only written to a file.
- *   5. still no block but there IS substantive output? SALVAGE it — post the raw
- *      reply with a caveat rather than hard-fail a run that did the work.
- *  Fresh process per run is unchanged — a resume is one follow-up turn within
- *  the same run, never across Derive sessions. Retries stay bounded at one, and
- *  the retry borrows the FIRST run's unspent budget rather than a fresh full
- *  one, so a wedged session can't stall the (strictly sequential) queue for
- *  double the timeout. */
-/** One model run for a structured block, robustly — the retry/resume/nudge machine both lanes
- *  share. Generic over the output CONTRACT (appended to the system prompt), its PARSE (returns
- *  {value} or {error}), the NUDGE prompt, and an optional SALVAGE (raw text → value, or null: the
- *  answer lane salvages an unstructured reply, the automation lane does not). `env` carries the
- *  per-spawn environment (the run lane hands the tool shim its server/token/run-id). The numbered
- *  cases are unchanged from the answer path this generalized:
- *   1. a parseable block counts EVEN IF the CLI exited nonzero after emitting it;
- *   2. a transient service failure retries ONCE, resuming the session when there is one;
+/** Produce a validated STRUCTURED result from one agent run, robustly and provider-agnostically —
+ *  the retry/resume/nudge machine both lanes share. Generic over the output CONTRACT (appended to
+ *  the system prompt), its PARSE (returns {value} or {error}), the NUDGE prompt, and an optional
+ *  SALVAGE (raw text -> value; the answer lane salvages an unstructured reply, the run lane does
+ *  not). The numbered cases:
+ *   1. a parseable block counts EVEN IF the process exited nonzero after emitting it;
+ *   2. a transient failure (provider.retryable) retries ONCE, resuming the session when there is one;
  *   3. an ERROR run with no block fails (its text is the API's error, not a result);
  *   4. a clean exit with no block nudges once on the SAME session (a reformat, not new work);
  *   5. real output but still no block SALVAGES it, when the lane allows.
  *  Returns {ok, value} or {ok:false, error}. */
-async function runModel(opts) {
+async function runStructured(provider, opts) {
   const { contract, parse, nudgePrompt, salvage } = opts
-  const baseArgs = [
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    // Headless: an interactive permission prompt would hang the subprocess.
-    // The safety boundary is the credentials the MCP config carries — read-only.
-    "--dangerously-skip-permissions",
-    "--model",
-    opts.model,
-  ]
-  // --resume does NOT carry the original --append-system-prompt (verified
-  // against the CLI): a resumed turn would run with neither the output contract
-  // nor the manifest, then be judged for not following a contract it could no
-  // longer see. Every spawn re-sends it.
-  const systemArgs = ["--append-system-prompt", opts.systemPrompt + contract, ...baseArgs]
-  const firstArgs = ["-p", opts.prompt, ...systemArgs]
-  // An API failure's message arrives in the result STRING, a crash's in the
-  // assistant stream, a spawn failure's on stderr. Try all three before
-  // reporting the bare `exit 1: ` an owner used to get.
-  const why = (x) => (x.lastText || x.resultText || x.stderr || "").replace(/\s+/g, " ").trim()
-  const started = Date.now()
-  let r = await spawnClaude({
+  const base = {
     bin: opts.bin,
     cwd: opts.cwd,
+    model: opts.model,
+    systemPrompt: opts.systemPrompt + contract,
     timeoutMs: opts.timeoutMs,
-    args: firstArgs,
     env: opts.env,
-  })
+  }
+  const why = (x) => (x.lastText || x.resultText || x.stderr || "").replace(/\s+/g, " ").trim()
+  const started = Date.now()
+  let r = await provider.run({ ...base, prompt: opts.prompt, resumeSessionId: null })
   let parsed = parse(r.resultText)
 
-  // The service failed and gave us nothing usable. One retry — resumed if the
-  // run got far enough to have a session id, otherwise from the top.
-  if (!parsed.value && retryable(r)) {
+  if (!parsed.value && provider.retryable(r)) {
     const sid = r.sessionId
     console.error(
-      `[runner] run exited ${r.code}${r.apiErrorStatus ? ` (api ${r.apiErrorStatus})` : ""}: ${why(r).slice(0, 160) || "no output"} — retrying once${sid ? ` (resume ${sid.slice(0, 8)})` : ""}`,
+      `[runner] run exited ${r.code}${r.apiErrorStatus ? ` (api ${r.apiErrorStatus})` : ""}: ${why(r).slice(0, 160) || "no output"} -- retrying once${sid ? ` (resume ${sid.slice(0, 8)})` : ""}`,
     )
     await new Promise((res) => setTimeout(res, opts.retryDelayMs ?? RETRY_DELAY_MS))
-    // Whatever the first attempt didn't spend, floored so a late failure still
-    // gets a usable window. The queue is sequential: an unbounded second run
-    // would stall every other asker for double the timeout.
     const left = opts.timeoutMs - (Date.now() - started)
-    r = await spawnClaude({
-      bin: opts.bin,
-      cwd: opts.cwd,
+    r = await provider.run({
+      ...base,
       timeoutMs: Math.max(left, 120_000),
-      args: sid ? ["-p", RESUME_PROMPT, "--resume", sid, ...systemArgs] : firstArgs,
-      env: opts.env,
+      prompt: sid ? RESUME_PROMPT : opts.prompt,
+      resumeSessionId: sid,
     })
     parsed = parse(r.resultText)
   }
 
-  // A block is a valid result however the process exited — the model did the
-  // work and said so in the contract's own words.
   if (parsed.value) return { ok: true, value: parsed.value }
   if (r.timedOut) return { ok: false, error: "timed out" }
-  // An error run's `result` text is the API's error message, not a result:
-  // fail rather than let the salvage path post "API Error: 529".
   if (r.code !== 0 || r.isError)
     return { ok: false, error: `exit ${r.code}: ${why(r).slice(0, 500)}` }
 
-  // Nudge-retry on the same session (bounded — this is a reformat, not new work).
   if (r.sessionId) {
     console.log(`[runner] no block; nudging (resume ${r.sessionId.slice(0, 8)})`)
-    const r2 = await spawnClaude({
-      bin: opts.bin,
-      cwd: opts.cwd,
+    const r2 = await provider.run({
+      ...base,
       timeoutMs: Math.min(opts.timeoutMs, 180_000),
-      args: ["-p", nudgePrompt, "--resume", r.sessionId, ...systemArgs],
-      env: opts.env,
+      prompt: nudgePrompt,
+      resumeSessionId: r.sessionId,
     })
     const p2 = parse(r2.resultText)
     if (p2.value) return { ok: true, value: p2.value }
   }
 
-  // Salvage (answer lane only): real output but never the block — return the raw reply rather
-  // than lose the work, flagged so it's read with care. The run lane passes no salvage.
   const raw = r.resultText.trim()
   if (salvage && raw) {
     console.log("[runner] salvaging unstructured reply (no block after nudge)")
@@ -920,10 +794,10 @@ async function runModel(opts) {
   return { ok: false, error: parsed.error }
 }
 
-/** The answer lane: a session's reply. Wraps runModel with the answer contract, parse, nudge,
- *  and the raw-reply salvage — behavior identical to before the generalization. */
-export async function runClaude(opts) {
-  const r = await runModel({
+/** The answer lane: a session's reply. Appends the <answer> contract; salvages an unstructured
+ *  reply so a run that did the work isn't lost to a missing block. */
+export async function runAgent(provider, opts) {
+  const r = await runStructured(provider, {
     ...opts,
     contract: OUTPUT_CONTRACT,
     parse: (t) => {
@@ -936,7 +810,7 @@ export async function runClaude(opts) {
       query: null,
       confidence: null,
       caveats: [
-        "The runner couldn't parse a structured answer, so this is the model's raw reply — treat any figures and confidence with extra care.",
+        "The runner couldn't parse a structured answer, so this is the model's raw reply -- treat any figures and confidence with extra care.",
       ],
       escalate: false,
       escalation_reason: null,
@@ -946,10 +820,10 @@ export async function runClaude(opts) {
   return r.ok ? { ok: true, answer: r.value } : r
 }
 
-/** The automation lane: one run's revision. Same retry/resume/nudge machine, the revision
- *  contract + parse, no salvage (a run with no revision block did nothing — fail it). */
-export async function runRevision(opts) {
-  const r = await runModel({
+/** The automation lane: one run's revision. Same machine, the <revision> contract, no salvage
+ *  (a run with no revision block did nothing — fail it). */
+export async function runRevisionAgent(provider, opts) {
+  const r = await runStructured(provider, {
     ...opts,
     contract: REVISION_CONTRACT,
     parse: (t) => {
@@ -962,20 +836,9 @@ export async function runRevision(opts) {
   return r.ok ? { ok: true, revision: r.value } : r
 }
 
-/** Log one stream event; returns the assistant text it carried (if any), which
- *  the caller keeps as the run's last words for diagnostics. */
-function logEvent(event) {
-  if (event.type !== "assistant") return ""
-  let text = ""
-  for (const c of event.message?.content ?? []) {
-    if (c.type === "tool_use") console.log(`[claude] → ${String(c.name)}`)
-    else if (c.type === "text" && typeof c.text === "string" && c.text.trim()) {
-      text = c.text
-      console.log(`[claude] ${c.text.replace(/\s+/g, " ").slice(0, 200)}`)
-    }
-  }
-  return text
-}
+/** Back-compat convenience for the default provider; the runClaude tests exercise
+ *  the full orchestration through it. New call sites pass a provider to runAgent. */
+export const runClaude = (opts) => runAgent(claudeCode, opts)
 
 // ---- serve --------------------------------------------------------------------
 
@@ -995,15 +858,31 @@ const MOCK_ANSWER = {
 export async function serveSession(client, session, manifest, cfg, repoMeta = [], skillMeta = []) {
   const asked = session.messages.at(-1)?.body_md?.slice(0, 80) ?? "?"
   console.log(`[runner] session ${session.id}: "${asked}"`)
+  // Whose plan pays for THIS answer: the session's asker (the server resolves it,
+  // falling back to the registrant), composed as a per-spawn overlay so nothing
+  // sticks to process.env between sessions with different askers. A fail-closed
+  // resolve (no plan, no ambient) fails THIS session server-side like any other
+  // run failure — thrown, it would leave the claim dangling and retry-loop.
+  let modelEnv = null
+  if (!cfg.mock) {
+    try {
+      modelEnv = await resolveModelEnv(cfg, client, session.id)
+    } catch (err) {
+      console.error(`[runner] session ${session.id} failed: ${err.message}`)
+      await client.fail(session.id)
+      return
+    }
+  }
   const result = cfg.mock
     ? { ok: true, answer: MOCK_ANSWER }
-    : await runClaude({
-        bin: cfg.claudeBin,
+    : await runAgent(selectProvider(cfg.providerName), {
+        bin: cfg.agentBin,
         cwd: cfg.cwd,
         model: cfg.model,
         timeoutMs: cfg.timeoutMs,
         systemPrompt: manifest,
         prompt: buildPrompt(session.messages),
+        env: modelEnv ? { ...process.env, ...modelEnv } : undefined,
       })
   if (!result.ok || !result.answer) {
     console.error(`[runner] session ${session.id} failed: ${result.error}`)
@@ -1079,7 +958,46 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
   )
 }
 
-// ---- serve: the automation lane -----------------------------------------------
+/** Boot the host state serve/once share: context info, repo corpus, skills,
+ *  conventions. Everything here is per-boot truth on purpose (see the comments
+ *  inline) — `once` inherits the same freshness contract as a serve restart. */
+/** Resolve the model credential a run authenticates with, as a per-spawn ENV OVERLAY —
+ *  never a process.env mutation, so one asker's plan token can't leak into the next
+ *  asker's session on a shared context. Pass a session id to bill the run's INITIATOR:
+ *  the server resolves the session's asker first and falls back to the agent's
+ *  registrant (interim until the workspace pool lands). Precedence:
+ *    1. the initiator's connected plan (fetched, decrypted, provider-mapped) — overlay it;
+ *    2. no connection but an ambient token is set (self-host's single global plan) — null
+ *       overlay, the spawn inherits process.env;
+ *    3. neither — FAIL CLOSED with a connect-your-plan message (never a shared fallback).
+ *  A lookup error (older/self-host server without the endpoint) degrades to the ambient path. */
+export async function resolveModelEnv(cfg, client, sessionId = null) {
+  if (cfg.mock) return null
+  const provider = selectProvider(cfg.providerName)
+  let cred = null
+  try {
+    cred = await client.modelCredential(cfg.providerName, sessionId)
+  } catch (e) {
+    console.error(`[runner] model-credential lookup failed (${e.message}); using ambient env`)
+    return null
+  }
+  if (cred) {
+    const env = provider.credentialEnv?.(cred.kind, cred.value)
+    if (!env)
+      throw new Error(
+        `the connected ${cfg.providerName} credential (${cred.kind}) can't be injected — connect an API key, or use a provider that supports it`,
+      )
+    return env
+  }
+  const ambient = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"].some(
+    (k) => process.env[k],
+  )
+  if (!ambient)
+    throw new Error(
+      `no model plan connected for this run's initiator — connect one at ${cfg.server} (Settings → Model plans)`,
+    )
+  return null
+}
 
 // The mock revision for --mock: a wiring check without a model (parallels MOCK_ANSWER).
 const MOCK_REVISION = {
@@ -1152,13 +1070,33 @@ function buildRunPrompt(run, before) {
 const outcomeFor = (decision) =>
   decision === "live_publish_with_review" ? "published" : decision === "proposal" ? "proposed" : "shadow"
 
-/** Execute one claimed run: build the prompt (instruction + target + tools), run the model with
- *  the run contract + tool shim, parse the <revision>, run the write gate, write through the
- *  matching endpoint, and finish the run. Soft failures (no revision, a write error) finish the
- *  run `failed` server-side and return — never thrown — so one bad run can't stall the drain,
- *  exactly like a failed session. */
+/** Execute one claimed run: resolve the initiator's model plan, build the prompt (instruction +
+ *  target + tools), run the model with the run contract + tool shim, parse the <revision>, run the
+ *  write gate, write through the matching endpoint, and finish the run. Soft failures (no revision,
+ *  a write error) finish the run `failed` server-side and return — never thrown — so one bad run
+ *  can't stall the drain, exactly like a failed session. */
 export async function serveRun(client, run, manifest, cfg) {
   console.log(`[runner] run ${run.id}: "${run.instruction.slice(0, 80)}"`)
+  const finish = (fields) =>
+    client
+      .finishRun(run.id, fields)
+      .catch((err) => console.error(`[runner] run ${run.id} finish failed: ${err.message}`))
+  const failRun = (why) =>
+    finish({ status: "failed", meta: JSON.stringify({ outcome: "failed", why: (why ?? "").slice(0, 200) }) })
+
+  // Whose plan pays for this run: its initiator (registrant fallback), a per-spawn overlay like a
+  // session's. A fail-closed resolve finishes the run failed, never thrown (a throw dangles it).
+  let modelEnv = null
+  if (!cfg.mock) {
+    try {
+      modelEnv = await resolveModelEnv(cfg, client, null)
+    } catch (err) {
+      console.error(`[runner] run ${run.id} failed: ${err.message}`)
+      await failRun(err.message)
+      return
+    }
+  }
+
   const target = firstArtifactTarget(run.targets)
   let before = ""
   if (target) {
@@ -1170,14 +1108,17 @@ export async function serveRun(client, run, manifest, cfg) {
   }
   const hasTools = run.tools?.length > 0
   if (hasTools) writeToolShim(cfg.cwd)
-  const env = hasTools
-    ? { ...process.env, DERIVE_SERVER: cfg.server, DERIVE_TOKEN: cfg.token, DERIVE_RUN_ID: run.id }
-    : undefined
+  // The spawn env: the model-plan overlay (session parity) plus the shim's server/token/run-id
+  // when the run has sources, so the shim authenticates without the model holding the token.
+  const shimEnv = hasTools
+    ? { DERIVE_SERVER: cfg.server, DERIVE_TOKEN: cfg.token, DERIVE_RUN_ID: run.id }
+    : {}
+  const env = modelEnv || hasTools ? { ...process.env, ...modelEnv, ...shimEnv } : undefined
 
   const result = cfg.mock
     ? { ok: true, revision: MOCK_REVISION }
-    : await runRevision({
-        bin: cfg.claudeBin,
+    : await runRevisionAgent(selectProvider(cfg.providerName), {
+        bin: cfg.agentBin,
         cwd: cfg.cwd,
         model: cfg.model,
         timeoutMs: cfg.timeoutMs,
@@ -1186,14 +1127,9 @@ export async function serveRun(client, run, manifest, cfg) {
         env,
       })
 
-  const finish = (fields) =>
-    client
-      .finishRun(run.id, fields)
-      .catch((err) => console.error(`[runner] run ${run.id} finish failed: ${err.message}`))
-
   if (!result.ok || !result.revision) {
     console.error(`[runner] run ${run.id} failed: ${result.error}`)
-    await finish({ status: "failed", meta: JSON.stringify({ outcome: "failed", why: (result.error ?? "").slice(0, 200) }) })
+    await failRun(result.error)
     return
   }
 
@@ -1227,7 +1163,7 @@ export async function serveRun(client, run, manifest, cfg) {
     }
   } catch (err) {
     console.error(`[runner] run ${run.id} write failed: ${err.message}`)
-    await finish({ status: "failed", meta: JSON.stringify({ outcome: "failed", why: err.message.slice(0, 200) }) })
+    await failRun(err.message)
     return
   }
 
@@ -1243,11 +1179,12 @@ export async function serveRun(client, run, manifest, cfg) {
   console.log(`[runner] run ${run.id} ${outcome}${write ? ` (${write.short_id})` : ""}`)
 }
 
-/** Boot the host state serve/once share: context info, repo corpus, skills,
- *  conventions. Everything here is per-boot truth on purpose (see the comments
- *  inline) — `once` inherits the same freshness contract as a serve restart. */
 async function bootHost(cfg, modeLabel) {
   const client = new DeriveClient(cfg.server, cfg.token)
+  // Preflight only — verifies SOME credential path exists (registrant plan or ambient)
+  // so misconfiguration fails at boot with a clear message, not at the first answer.
+  // The overlay is discarded: each session resolves its own initiator's credential.
+  await resolveModelEnv(cfg, client)
   const info = await client.getContext(cfg.contextId)
   if (!info.manifest_md && !cfg.manifestFile) throw new Error("context has no readable manifest")
   const readManifest = () =>
@@ -1256,7 +1193,7 @@ async function bootHost(cfg, modeLabel) {
   console.log(
     `[runner] serving "${info.name}" (${cfg.contextId}) on ${cfg.server} — ` +
       `${cfg.manifestFile ? `manifest LOCAL ${cfg.manifestFile}` : `manifest v${info.manifest_version}`}, ` +
-      `${cfg.mock ? "MOCK" : `${cfg.claudeBin} (${cfg.model})`}, ${modeLabel}`,
+      `${cfg.mock ? "MOCK" : `${cfg.providerName}:${cfg.agentBin} (${cfg.model})`}, ${modeLabel}`,
   )
   // Pointers sync at boot, like every other piece of host state — a manifest
   // edit that adds one applies on the next start (the catalog in the prompt is
@@ -1476,11 +1413,20 @@ export async function doctor(cfg) {
   }
 
   // launchd/systemd PATHs don't include shell profile additions — the exact
-  // failure mode that produced `spawn claude ENOENT` in the field.
-  const version = await spawnable(cfg.claudeBin, 15_000)
-  version
-    ? ok("claude", `${cfg.claudeBin} (${version.slice(0, 40)})`)
-    : bad("claude", `${cfg.claudeBin} not spawnable — pass --claude-bin with an absolute path`)
+  // failure mode that produced `spawn claude ENOENT` in the field. An unknown
+  // provider is a finding here, not a throw (doctor must survive a bad config).
+  const provider = PROVIDERS[cfg.providerName]
+  if (!provider)
+    bad("provider", `unknown "${cfg.providerName}" — known: ${Object.keys(PROVIDERS).join(", ")}`)
+  else {
+    const version = await provider.version(cfg.agentBin)
+    version
+      ? ok(cfg.providerName, `${cfg.agentBin} (${version.slice(0, 40)})`)
+      : bad(
+          cfg.providerName,
+          `${cfg.agentBin} not spawnable — pass --agent-bin with an absolute path`,
+        )
+  }
 
   for (const tool of ["gh", "python3"]) {
     ;(await spawnable(tool)) !== null
@@ -1516,8 +1462,10 @@ export function renderServiceUnit(cfg, binPath, platform = process.platform) {
     cfg.server,
     "--cwd",
     cfg.cwd,
-    "--claude-bin",
-    cfg.claudeBin,
+    "--provider",
+    cfg.providerName,
+    "--agent-bin",
+    cfg.agentBin,
     "--model",
     cfg.model,
     "--timeout",

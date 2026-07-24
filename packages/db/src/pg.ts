@@ -34,6 +34,7 @@ import type {
   Listed,
   MembershipRecord,
   MetaStore,
+  ModelCredentialRecord,
   NewAgent,
   NewAgentMention,
   NewArtifact,
@@ -153,6 +154,7 @@ import {
   githubInstallation,
   invitation,
   membership,
+  modelCredential,
   notification,
   oauthClientWorkspace,
   orgSettings,
@@ -1708,6 +1710,49 @@ export class PgMetaStore implements MetaStore {
   async deleteSlackInstall(orgId: string): Promise<void> {
     await this.db.delete(slackInstall).where(eq(slackInstall.org_id, orgId))
   }
+  async getModelCredential(
+    orgId: string,
+    userId: string,
+    provider: string,
+  ): Promise<ModelCredentialRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(modelCredential)
+      .where(
+        and(
+          eq(modelCredential.org_id, orgId),
+          eq(modelCredential.user_id, userId),
+          eq(modelCredential.provider, provider),
+        ),
+      )
+    return rows[0] ?? null
+  }
+  async setModelCredential(c: ModelCredentialRecord): Promise<void> {
+    await this.db
+      .insert(modelCredential)
+      .values(c)
+      .onConflictDoUpdate({
+        target: [modelCredential.org_id, modelCredential.user_id, modelCredential.provider],
+        set: { secret: c.secret, kind: c.kind, hint: c.hint, updated_at: c.updated_at },
+      })
+  }
+  async deleteModelCredential(orgId: string, userId: string, provider: string): Promise<void> {
+    await this.db
+      .delete(modelCredential)
+      .where(
+        and(
+          eq(modelCredential.org_id, orgId),
+          eq(modelCredential.user_id, userId),
+          eq(modelCredential.provider, provider),
+        ),
+      )
+  }
+  async listModelCredentials(orgId: string, userId: string): Promise<ModelCredentialRecord[]> {
+    return this.db
+      .select()
+      .from(modelCredential)
+      .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
+  }
   async getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null> {
     const rows = await this.db
       .select()
@@ -2413,6 +2458,18 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.insert(agent).values(a).returning()
     return one(rows)
   }
+  async rotateAgentToken(
+    id: string,
+    orgId: string,
+    tokenHash: string,
+  ): Promise<AgentRecord | null> {
+    const rows = await this.db
+      .update(agent)
+      .set({ token: tokenHash })
+      .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
+      .returning()
+    return (rows[0] as AgentRecord | undefined) ?? null
+  }
   listAgents(orgId: string): Promise<AgentRecord[]> {
     return this.db.select().from(agent).where(eq(agent.org_id, orgId))
   }
@@ -2482,6 +2539,10 @@ export class PgMetaStore implements MetaStore {
       .returning()
     return one(rows)
   }
+  async getRun(id: string): Promise<RunRecord | null> {
+    const rows = await this.db.select().from(run).where(eq(run.id, id)).limit(1)
+    return (rows[0] as RunRecord | undefined) ?? null
+  }
   claimDueRuns(agentId: string, now: string, limit = 20): Promise<RunRecord[]> {
     // The oldest queued runs due now for this agent, flipped to running under a row lock
     // (FOR UPDATE SKIP LOCKED) so two executors never claim the same run. A null
@@ -2538,10 +2599,6 @@ export class PgMetaStore implements MetaStore {
       .where(eq(run.org_id, orgId))
       .orderBy(desc(run.created_at))
       .limit(limit)
-  }
-  async getRun(id: string): Promise<RunRecord | null> {
-    const rows = await this.db.select().from(run).where(eq(run.id, id))
-    return rows[0] ?? null
   }
   async latestRunForAutomation(automationId: string): Promise<RunRecord | null> {
     const rows = await this.db

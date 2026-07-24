@@ -50,7 +50,12 @@ Derive injects `/raw/derive-client.js` into every served artifact. It handles te
 ## REST API
 
 Base URL: `https://derive.to` (or your self-hosted instance).
-Auth: `Authorization: Bearer $DERIVE_TOKEN` for write operations. Public and link-visibility artifacts are readable without auth.
+Auth: `Authorization: Bearer $DERIVE_TOKEN` for write operations. Artifacts whose link
+role grants viewer or better are readable without auth.
+
+If this file and the live API disagree, trust the live API — fetched copies go stale.
+The current capability surface is at `/.well-known/agent.json`, the agent skill at
+`/skill.md`, and the full spec at `/openapi.json` (reference UI at `/docs`).
 
 ### Publish a new artifact
 
@@ -62,9 +67,17 @@ file         required  File blob (name determines type: .md or .html)
 title        optional  Display title (defaults to filename)
 slug         optional  URL slug
 message      optional  Version message
-visibility   optional  public | link | org | password  (default: link)
-password     optional  Required when visibility=password
-spa          optional  true/1 for single-page apps (disables sandbox)
+workspace_access  optional  none | member — do workspace members reach it (at their seat role)
+link_role         optional  none | viewer | commenter | editor — what holding the URL confers on anyone
+listed            optional  none | workspace | public — where it surfaces for discovery
+password          optional  Locks the world link (only meaningful with link_role != none)
+visibility        optional  LEGACY public | link | org | password — still accepted, mapped to the fields above
+spa               optional  true/1 for single-page apps (disables sandbox)
+
+Omitted access fields use the workspace default; the factory default is the "team
+draft": workspace_access=member, link_role=none, listed=none. Two invariants are
+rejected, not coerced: listed=workspace requires workspace_access=member, and
+listed=public requires link_role != none.
 ```
 
 Response:
@@ -72,7 +85,7 @@ Response:
 ```json
 {
   "short_id": "nk0dsral",
-  "url": "https://derive.to/a/nk0dsral",
+  "url": "https://derive.to/artifacts/my-page-nk0dsral",
   "title": "My page",
   "kind": "file",
   "current_version": 1,
@@ -110,7 +123,7 @@ Response includes `preview_url` for the reviewer to inspect before approving.
 GET /v1/artifacts/:short_id
 ```
 
-Returns full metadata: title, kind, visibility, current_version, versions array, open_proposals count, tags, my_role.
+Returns full metadata: title, kind, workspace_access, link_role, listed, current_version, versions array, open_proposals count, tags, my_role.
 
 ### Read artifact source
 

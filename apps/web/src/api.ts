@@ -166,6 +166,13 @@ export interface AutomationTrigger {
   tz?: string
   on?: string
 }
+/** A connected model-plan credential, as the settings UI sees it — never the secret. */
+export interface ModelCredentialHint {
+  provider: "claude-code" | "codex"
+  kind: "oauth" | "api_key"
+  hint: string
+  updated_at: string
+}
 /** A ref is a selector — one generic way to point at a set of artifacts: a specific
  *  doc (revise it), a collection (file new work into it), or a tag (stamped on every
  *  write the run makes). The API accepts a bare short-id string as artifact shorthand
@@ -740,19 +747,25 @@ export const api = {
   listAgents: (): Promise<{ agents: Agent[] }> => f("/v1/agents", opts()).then(j),
   createAgent: (name: string, role?: Role): Promise<Agent & { token: string }> =>
     f("/v1/agents", opts({ name, role })).then(j),
+  // Rotation is a credential event, never an identity event: the old bearer dies at
+  // once; id, role, hosting, and attribution are untouched. Token shown only here.
+  rotateAgent: (id: string): Promise<Agent & { token: string }> =>
+    f(`/v1/agents/${id}/rotate`, opts({})).then(j),
   deleteAgent: (id: string): Promise<void> =>
     f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
 
   // Automations + runs (the standing-agent-work surface; see routes/automations.ts).
   listAutomations: (): Promise<{ automations: Automation[] }> =>
     f("/v1/automations", opts()).then(j),
+  // agentId omitted → the server auto-mints a MANAGED agent for this automation and
+  // returns its bearer as agent_token, exactly once on this response.
   createAutomation: (input: {
-    agentId: string
+    agentId?: string
     trigger: AutomationTrigger
     instruction: string
     /** Bare strings are artifact shorthand; the server stores canonical selectors. */
     refs?: (string | AutomationRef)[]
-  }): Promise<Automation> => f("/v1/automations", opts(input)).then(j),
+  }): Promise<Automation & { agent_token?: string }> => f("/v1/automations", opts(input)).then(j),
   updateAutomation: (
     id: string,
     input: {
@@ -769,14 +782,30 @@ export const api = {
     f(`/v1/automations/${id}/run`, opts({})).then(j),
   listRuns: (): Promise<{ runs: Run[] }> => f("/v1/workspace/runs", opts()).then(j),
 
+  // Per-user model-plan credentials (the caller's own; see routes/model-credentials.ts).
+  listModelCredentials: (): Promise<{ credentials: ModelCredentialHint[] }> =>
+    f("/v1/me/model-credentials", opts()).then(j),
+  connectModelCredential: (input: {
+    provider: "claude-code" | "codex"
+    kind: "oauth" | "api_key"
+    token: string
+  }): Promise<{ ok: true; provider: string; hint: string }> =>
+    f("/v1/me/model-credentials", opts(input)).then(j),
+  disconnectModelCredential: (provider: string): Promise<void> =>
+    f(`/v1/me/model-credentials/${provider}`, { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
+
   // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
   listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
   getContext: (id: string): Promise<ContextInfo> => f(`/v1/contexts/${id}`, opts()).then(j),
+  // agent_id omitted → the server auto-mints a MANAGED agent for this context and
+  // returns its bearer as agent_token, exactly once on this response.
   createContext: (input: {
     name: string
-    agent_id: string
+    agent_id?: string
     manifest_short_id: string
-  }): Promise<ContextInfo> => f("/v1/contexts", opts(input)).then(j),
+  }): Promise<ContextInfo & { agent_token?: string }> => f("/v1/contexts", opts(input)).then(j),
   askContext: (
     id: string,
     body_md: string,

@@ -13,6 +13,7 @@ import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
 import { log } from "./log"
 import { mountMcp } from "./mcp"
+import { agentDiscoveryRoutes } from "./routes/agent-discovery"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
@@ -32,6 +33,7 @@ import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
 import { githubAppRoutes } from "./routes/github-app"
 import { marketingRoutes } from "./routes/marketing"
+import { modelCredentialRoutes } from "./routes/model-credentials"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
 import { oauthRoutes } from "./routes/oauth"
@@ -397,6 +399,7 @@ export function createApp(deps: AppDeps): Hono {
     automationRoutes,
     planRoutes,
     connectionRoutes,
+    modelCredentialRoutes,
     conciergeRoutes,
     reworkRoutes,
     commentRoutes,
@@ -414,6 +417,7 @@ export function createApp(deps: AppDeps): Hono {
     systemRoutes,
     betaRoutes,
     marketingRoutes,
+    agentDiscoveryRoutes,
   ])
     app.route("/", routes(ctx))
 

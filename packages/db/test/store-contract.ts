@@ -1473,6 +1473,36 @@ export function runStoreContract(
       await store.deleteAgent(agent.id, ORG)
       expect(await store.getAgentByToken(token)).toBeNull()
     })
+
+    it("rotates a token (org-scoped) and round-trips the managed flag", async () => {
+      const t1 = `tok_${uuid()}`
+      const agent = await store.createAgent({
+        id: uuid(),
+        org_id: ORG,
+        name: "ctx access",
+        token: t1,
+        role: "editor",
+        managed: 1,
+      })
+      // managed round-trips; an unmarked agent defaults to 0.
+      expect(agent.managed).toBe(1)
+      const plain = await store.createAgent({
+        id: uuid(),
+        org_id: ORG,
+        name: "persona",
+        token: `tok_${uuid()}`,
+        role: "editor",
+      })
+      expect(plain.managed).toBe(0)
+      // Rotation: the old hash dies, the new one resolves, identity is untouched.
+      const t2 = `tok_${uuid()}`
+      const rotated = await store.rotateAgentToken(agent.id, ORG, t2)
+      expect(rotated).toMatchObject({ id: agent.id, name: "ctx access", managed: 1 })
+      expect(await store.getAgentByToken(t1)).toBeNull()
+      expect(await store.getAgentByToken(t2)).toMatchObject({ id: agent.id })
+      // Org-scoped: a foreign org rotates nothing.
+      expect(await store.rotateAgentToken(agent.id, "org_other", `tok_${uuid()}`)).toBeNull()
+    })
   })
 
   describe(`${label}: contexts + sessions`, () => {
@@ -2272,6 +2302,46 @@ export function runStoreContract(
       expect(got.map((x) => x.id).sort()).toEqual([a.id, b.id].sort())
     })
 
+    it("model credentials: upsert, get, list per user, delete — all scoped (org, user, provider)", async () => {
+      const now = "2026-07-24T00:00:00.000Z"
+      const cred = (userId: string, provider: string, secret: string) => ({
+        id: uuid(),
+        org_id: ORG,
+        user_id: userId,
+        provider,
+        kind: "oauth" as const,
+        secret,
+        hint: secret.slice(-4),
+        created_at: now,
+        updated_at: now,
+      })
+      await store.setModelCredential(cred("u1", "codex", "enc-A"))
+      await store.setModelCredential(cred("u1", "claude-code", "enc-B"))
+      await store.setModelCredential(cred("u2", "codex", "enc-C"))
+
+      // Get is keyed (org, user, provider) — never leaks across users.
+      expect((await store.getModelCredential(ORG, "u1", "codex"))?.secret).toBe("enc-A")
+      expect((await store.getModelCredential(ORG, "u2", "codex"))?.secret).toBe("enc-C")
+      expect(await store.getModelCredential(ORG, "u1", "gemini")).toBeNull()
+
+      // Upsert replaces the secret for the same key, not a second row.
+      await store.setModelCredential(cred("u1", "codex", "enc-A2"))
+      expect((await store.getModelCredential(ORG, "u1", "codex"))?.secret).toBe("enc-A2")
+
+      // List returns only that user's rows.
+      const u1 = await store.listModelCredentials(ORG, "u1")
+      expect(u1.map((c) => c.provider).sort()).toEqual(["claude-code", "codex"])
+      expect((await store.listModelCredentials(ORG, "u2")).map((c) => c.provider)).toEqual([
+        "codex",
+      ])
+
+      // Delete is scoped: removing u1/codex leaves u1/claude-code and u2/codex.
+      await store.deleteModelCredential(ORG, "u1", "codex")
+      expect(await store.getModelCredential(ORG, "u1", "codex")).toBeNull()
+      expect((await store.getModelCredential(ORG, "u1", "claude-code"))?.secret).toBe("enc-B")
+      expect((await store.getModelCredential(ORG, "u2", "codex"))?.secret).toBe("enc-C")
+    })
+
     it("queue + ledger: enqueue → claim (running) → finish; a second claim gets nothing", async () => {
       const agentId = uuid()
       // A queued run due in the past.
@@ -2280,17 +2350,24 @@ export function runStoreContract(
         org_id: ORG,
         agent_id: agentId,
         reason: "manual:u1",
+        // First-class wallet key, round-tripped — never parsed out of `reason`.
+        initiated_by: "u1",
         scheduled_for: "2000-01-01T00:00:00.000Z",
       })
       expect(queued.status).toBe("queued")
-      // A future run is NOT due yet.
-      await store.createRun({
+      expect(queued.initiated_by).toBe("u1")
+      // getRun round-trips it; a clock run (no initiator) stays null; unknown id is null.
+      expect((await store.getRun(queued.id))?.initiated_by).toBe("u1")
+      expect(await store.getRun(uuid())).toBeNull()
+      // A future run is NOT due yet — and a clock run carries no initiator.
+      const clockRun = await store.createRun({
         id: uuid(),
         org_id: ORG,
         agent_id: agentId,
         reason: "schedule",
         scheduled_for: "2999-01-01T00:00:00.000Z",
       })
+      expect(clockRun.initiated_by).toBeNull()
 
       const now = "2100-01-01T00:00:00.000Z"
       const claimed = await store.claimDueRuns(agentId, now)

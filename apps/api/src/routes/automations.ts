@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import {
   type AutomationRecord,
   type AutomationTrigger,
@@ -70,7 +71,7 @@ const TRIGGER = z.object({
 })
 
 export const automationRoutes = (ctx: AppContext) => {
-  const { meta, agentFor, requireUser, requireWorkspace, deps } = ctx
+  const { meta, agentFor, privateOwnerId, requireUser, requireWorkspace, deps } = ctx
   const app = new Hono()
 
   // ---- Owner surface: define / list / delete ---------------------------------
@@ -80,7 +81,10 @@ export const automationRoutes = (ctx: AppContext) => {
     const b = await readJson(
       c,
       z.object({
-        agentId: z.string(),
+        // Omit to auto-mint a MANAGED agent for this automation — its own Derive
+        // access, no roster persona, nothing to pick. Pass an id to run as an
+        // existing (service) agent instead. Mirrors context creation (#525).
+        agentId: z.string().optional(),
         trigger: TRIGGER,
         instruction: z.string().min(1).max(4000),
         refs: REFS.optional(),
@@ -89,16 +93,40 @@ export const automationRoutes = (ctx: AppContext) => {
       }),
     )
     if (b instanceof Response) return bail(b)
-    // The agent must belong to this workspace — never an id from another tenant.
-    const agents = await meta.listAgents(org)
-    if (!agents.some((a) => a.id === b.agentId))
-      return bail(fail(c, 400, "agent must be in this workspace"))
+    if (b.agentId) {
+      // The agent must belong to this workspace — never an id from another tenant.
+      const agents = await meta.listAgents(org)
+      if (!agents.some((a) => a.id === b.agentId))
+        return bail(fail(c, 400, "agent must be in this workspace"))
+    }
     // Bound sources must be connections that exist in THIS workspace (least privilege: a run
     // reads only through these). Ownership isn't required — an automation is a workspace job.
     if (b.connectionIds?.length) {
       const conns = await meta.getConnectionsByIds(b.connectionIds)
       if (conns.length !== b.connectionIds.length || conns.some((cn) => cn.org_id !== org))
         return bail(fail(c, 400, "connections must exist in this workspace"))
+    }
+    let agentId = b.agentId ?? null
+    let agentToken: string | null = null
+    if (!agentId) {
+      agentToken = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
+      // Automations have no name; derive one from the instruction so the (hidden)
+      // roster row is still recognizable. Names are unique per workspace — a
+      // collision suffixes instead of failing the create.
+      const base = b.instruction.trim().slice(0, 40).trim() || "Automation"
+      const owner = (await privateOwnerId(c)) ?? null
+      const mint = (name: string) =>
+        meta.createAgent({
+          id: newId("ag"),
+          org_id: org,
+          name,
+          token: sha256(agentToken as string),
+          role: "editor",
+          created_by: owner,
+          managed: 1,
+        })
+      const minted = await mint(base).catch(() => mint(`${base} ${randomUUID().slice(0, 4)}`))
+      agentId = minted.id
     }
     // A webhook trigger gets a fire secret minted here: stored only as its sha256, the raw
     // secret returned ONCE in this response and never readable again (like an agent token).
@@ -108,25 +136,33 @@ export const automationRoutes = (ctx: AppContext) => {
       fireSecret = mintToken("dfire")
       trigger.secret_hash = sha256(fireSecret)
     }
-    const rec = await meta.createAutomation({
-      id: newId("auto"),
-      org_id: org,
-      agent_id: b.agentId,
-      trigger: JSON.stringify(trigger satisfies AutomationTrigger),
-      instruction: b.instruction,
-      // Stored CANONICAL (bare strings become artifact selectors) so readers never re-guess.
-      refs: b.refs ? JSON.stringify(normalizeSelectors(b.refs)) : null,
-      connection_ids: b.connectionIds?.length ? JSON.stringify(b.connectionIds) : null,
-      enabled: b.enabled ? 1 : 0,
-    })
-    const out = present(rec)
-    // The secret + ready-to-copy fire URL ride this create response only.
-    return c.json(
-      fireSecret
-        ? { ...out, fire_secret: fireSecret, fire_url: `/v1/automations/${rec.id}/fire` }
-        : out,
-      201,
-    )
+    try {
+      const rec = await meta.createAutomation({
+        id: newId("auto"),
+        org_id: org,
+        agent_id: agentId,
+        trigger: JSON.stringify(trigger satisfies AutomationTrigger),
+        instruction: b.instruction,
+        // Stored CANONICAL (bare strings become artifact selectors) so readers never re-guess.
+        refs: b.refs ? JSON.stringify(normalizeSelectors(b.refs)) : null,
+        connection_ids: b.connectionIds?.length ? JSON.stringify(b.connectionIds) : null,
+        enabled: b.enabled ? 1 : 0,
+      })
+      // The auto-mint token + the fire secret/URL ride this create response ONCE.
+      return c.json(
+        {
+          ...present(rec),
+          ...(agentToken ? { agent_token: agentToken } : {}),
+          ...(fireSecret ? { fire_secret: fireSecret, fire_url: `/v1/automations/${rec.id}/fire` } : {}),
+        },
+        201,
+      )
+    } catch (e) {
+      // A failed create after an auto-mint must not strand an orphaned managed
+      // agent (and its live token) — unwind the mint with the create.
+      if (agentToken && agentId) await meta.deleteAgent(agentId, org).catch(() => {})
+      throw e
+    }
   })
 
   // Edit in place: instruction, trigger, refs (write modes ride IN them), the agent,
@@ -207,6 +243,9 @@ export const automationRoutes = (ctx: AppContext) => {
       automation_id: a.id,
       agent_id: a.agent_id,
       reason: `manual:${me.id}`,
+      // First-class, not parsed out of `reason`: the clicker's plan bills this run
+      // (the wallet follows the initiator). Schedule/event enqueues leave it null.
+      initiated_by: me.id,
       scheduled_for: isoNow(),
     })
     return c.json({ id: rec.id, status: rec.status }, 201)
@@ -316,7 +355,7 @@ export const automationRoutes = (ctx: AppContext) => {
     )
     // One broker for this workspace (the owner's Composio plan → its key, else the LocalBroker),
     // used to resolve each run's LEAST-PRIVILEGE source tools: a run gets the tools of ITS
-    // automation's bound connections only. The executor calls these back through the tool
+    // automation's bound connections only. The runner's shim calls these back through the tool
     // endpoint below — credentials never leave the API.
     const broker = runnable.length
       ? await brokerFor(meta, agent.org_id, null, deps.encryptionKey)
@@ -329,6 +368,10 @@ export const automationRoutes = (ctx: AppContext) => {
         return {
           id: r.id,
           reason: r.reason,
+          // The wallet key: whose plan this run bills (null = clock/event → registrant
+          // today, the workspace pool once it lands). The executor passes it back on
+          // the model-credential fetch via ?run=.
+          initiated_by: r.initiated_by,
           automation_id: r.automation_id,
           instruction: a.instruction,
           // Canonical selectors: artifact = revise it, collection = file new work there,
