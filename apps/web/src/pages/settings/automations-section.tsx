@@ -139,6 +139,7 @@ function AutomationRow({
           <span className="truncate">{automation.instruction}</span>
           <Badge variant="secondary">{triggerLabel(automation.trigger)}</Badge>
           {!automation.enabled && <Badge variant="outline">Paused</Badge>}
+          <ExecutorBadge seenAt={automation.executor_seen_at ?? null} />
         </div>
         <div className="truncate text-sm text-muted-foreground">
           {automation.refs.some((r) => r.mode === "publish")
@@ -290,6 +291,20 @@ function RunStatus({ status }: { status: Run["status"] }) {
   return (
     <Badge variant={variant} shape="pill">
       {runStatusLabel(status)}
+    </Badge>
+  )
+}
+
+/** Honesty over silence (the Buzz rule): an automation whose agent has no executor
+ *  polling for runs is INERT, and the row must say so instead of looking configured.
+ *  Quiet when live — the badge only appears when something's wrong. Thresholds match
+ *  the context console's RunnerLiveness. */
+function ExecutorBadge({ seenAt }: { seenAt: string | null }) {
+  const age = seenAt ? Date.now() - new Date(seenAt).getTime() : Number.POSITIVE_INFINITY
+  if (seenAt && age < 600_000) return null
+  return (
+    <Badge variant="outline" className="border-warning/40 text-warning">
+      {seenAt ? `Executor offline · seen ${ago(seenAt)}` : "No executor"}
     </Badge>
   )
 }

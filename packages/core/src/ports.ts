@@ -977,6 +977,8 @@ export interface AgentStore {
   /** Replace the agent's token hash (org-scoped). The old bearer dies at once;
    *  identity, role, hosting, and attribution are untouched. Null = not found. */
   rotateAgentToken(id: string, orgId: string, tokenHash: string): Promise<AgentRecord | null>
+  /** Stamp `runs_seen_at` (the claim route's liveness mark). Caller throttles. */
+  touchAgentRunsSeen(id: string, at: string): Promise<void>
   listAgents(orgId: string): Promise<AgentRecord[]>
   /** Flip whether Derive's managed executor serves this agent. Workspace-scoped by
    *  (id, org) like deleteAgent; null when the agent isn't in this workspace. */
@@ -1351,6 +1353,10 @@ export interface AgentRecord {
   /** 1 = auto-minted for one context at creation — the context's Derive access,
    *  not a user-named persona. Hidden from the roster UI. */
   managed: 0 | 1
+  /** Runs-lane liveness (twin of ContextRecord.runner_seen_at): when this agent's
+   *  bearer last polled the run claim endpoint. Null = no executor, ever — the
+   *  honesty signal behind the "No executor" badge. */
+  runs_seen_at: string | null
   created_at: string
 }
 export interface NewAgent {

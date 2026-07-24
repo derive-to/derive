@@ -308,6 +308,9 @@ export const agent = sqliteTable(
     // 1 = auto-minted for one context at creation (never user-named): the context's
     // Derive access, not a persona. The UI hides managed agents from the roster.
     managed: integer("managed").notNull().default(0).$type<0 | 1>(),
+    // The runs-lane liveness mark (twin of context.runner_seen_at): stamped when the
+    // agent's bearer polls the run claim endpoint. Null = no executor has ever polled.
+    runs_seen_at: text("runs_seen_at"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [

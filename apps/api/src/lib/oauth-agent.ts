@@ -128,6 +128,7 @@ export function makeOauthAgent({
           // agent record (a grant has no server-storable credential to run with).
           hosted: 0,
           managed: 0,
+          runs_seen_at: null,
           created_at: new Date().toISOString(),
         },
       }
@@ -190,6 +191,7 @@ export function makeOauthAgent({
         // Never hosted directly, same as the opaque-token branch above.
         hosted: 0,
         managed: 0,
+        runs_seen_at: null,
         created_at: new Date().toISOString(),
       },
     }

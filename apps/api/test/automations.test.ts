@@ -290,6 +290,12 @@ describe("automations: auto-minted managed agents", () => {
     // The token never appears anywhere again.
     expect(JSON.stringify(roster)).not.toContain(auto.agent_token)
 
+    // Before anything ever polls for runs, the list is honest: no executor.
+    const before = (
+      await (await app.request("/v1/automations", { headers: as(owner.email) })).json()
+    ).automations.find((x: { id: string }) => x.id === auto.id)
+    expect(before.executor_seen_at).toBeNull()
+
     // The loop: Run now → the MINTED agent's bearer claims its own run.
     const run = await (
       await app.request(`/v1/automations/${auto.id}/run`, {
@@ -304,6 +310,13 @@ describe("automations: auto-minted managed agents", () => {
     expect(mine).toBeTruthy()
     expect(mine.instruction).toBe("keep the weekly ship report current")
     expect(mine.initiated_by).toBe("u_ama_own")
+
+    // Honesty surface: before any claim the list said "no executor" (null); the
+    // claim above stamped the runs-lane heartbeat, so the row now reads live.
+    const after = (
+      await (await app.request("/v1/automations", { headers: as(owner.email) })).json()
+    ).automations.find((x: { id: string }) => x.id === auto.id)
+    expect(after.executor_seen_at).toBeTruthy()
   })
 
   it("an instruction colliding with an existing agent name mints under a suffix", async () => {
