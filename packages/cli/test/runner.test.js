@@ -420,7 +420,7 @@ describe("artifact file channel", () => {
       "manifest",
       {
         ...base,
-        claudeBin: fake(
+        agentBin: fake(
           '{\\"body_md\\":\\"page built\\",\\"artifact\\":{\\"title\\":\\"Companion\\",\\"path\\":\\"page.html\\"}}',
         ),
       },
@@ -437,7 +437,7 @@ describe("artifact file channel", () => {
       "manifest",
       {
         ...base,
-        claudeBin: fake(
+        agentBin: fake(
           '{\\"body_md\\":\\"page built\\",\\"artifact\\":{\\"title\\":\\"Gone\\",\\"path\\":\\"nope.html\\"}}',
         ),
       },
@@ -638,7 +638,8 @@ describe("doctor", () => {
         server: "http://127.0.0.1:9",
         token: "",
         contextId: "",
-        claudeBin: "/nonexistent/claude",
+        agentBin: "/nonexistent/claude",
+        providerName: "claude-code",
         ...cfg,
       })
       return { failures, out: lines.join("\n") }
