@@ -116,6 +116,15 @@ export function CommentRow({
             <AvatarFallback className="text-2xs">{getInitials(c.author)}</AvatarFallback>
           </Avatar>
           <span className="min-w-0 truncate text-sm font-medium text-foreground">{c.author}</span>
+          {c.guest && (
+            <span
+              data-testid="guest-badge"
+              className="rounded border border-border px-1 text-2xs text-muted-foreground"
+              title="Self-provided name, no account"
+            >
+              guest
+            </span>
+          )}
           {/* Terse: "1h", not "1h ago" — repeated per row, the word is noise; the
               precise date is a hover away. */}
           <span
