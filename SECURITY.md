@@ -21,12 +21,15 @@ release; please run a recent build.
 
 Derive ships safe defaults, but a few choices matter for an internet-facing deploy:
 
-- **Anonymous callers are always read-only.** This is the load-bearing access
-  invariant: an anonymous (no-account) caller is never more than a viewer. Anything past
-  view (comment, propose, publish, share, manage) requires an authenticated identity, so
-  there is no "open" mode that elevates an anonymous caller. To write, a caller signs in
-  (Better Auth is always available, even zero-config) or presents a static `DERIVE_TOKEN`
-  (set it for headless CI/agent automation).
+- **Anonymous callers are capped at commenter.** This is the load-bearing access
+  invariant: an anonymous (no-account) caller reaches commenter only by holding a
+  commenter-or-better world link, capped there even on an editor link; a viewer link
+  (or no link) still clamps them to view (or no access). Publish, approve, share, and
+  manage always require an authenticated identity, so there is no "open" mode that
+  elevates an anonymous caller past commenter. Guests must self-provide a display name
+  to comment. To do more than comment, a caller signs in (Better Auth is always
+  available, even zero-config) or presents a static `DERIVE_TOKEN` (set it for headless
+  CI/agent automation).
 
   Access is three independent, single-purpose fields (docs/access-model.md).
   **`workspace_access`** (`none` / `member`): do the artifact's workspace members
@@ -36,7 +39,8 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   link). **`listed`** (`none` / workspace / public): pure discoverability — the
   workspace library or the public directory — with no access meaning of its own.
   The effective role is `max(explicit share, workspace seat if a member, world
-  link)`; an anonymous holder of a live link is always clamped to view. The
+  link)`; an anonymous holder of a live link resolves to viewer on a viewer link, and
+  to commenter (capped there even on an editor link) on a commenter-or-better link. The
   effective capability by who's asking:
 
   | Field state                    | Anonymous (no account) | Signed in outside the workspace | Workspace member          | Explicit share          |
@@ -44,8 +48,8 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   | workspace_access none, link none | No access            | No access                       | Their share role only¹    | Their share role        |
   | workspace_access member          | No access            | No access                       | max(seat, share)          | max(seat², share)       |
   | link_role viewer                 | View                 | View                            | max(seat/share, view)     | max(share, view)        |
-  | link_role commenter              | View (sign in to comment) | View + comment             | max(seat/share, comment)  | max(share, comment)     |
-  | link_role editor                 | View (sign in to edit) | Editor                        | max(seat/share, edit)     | max(share, edit)        |
+  | link_role commenter              | Comment (as a named guest) | View + comment             | max(seat/share, comment)  | max(share, comment)     |
+  | link_role editor                 | Comment (as a named guest, capped below edit) | Editor  | max(seat/share, edit)     | max(share, edit)        |
 
   ¹ workspace_access=none withholds the seat grant, so a workspace owner cannot
   open a teammate's invite-only draft by role alone — only an explicit share does.

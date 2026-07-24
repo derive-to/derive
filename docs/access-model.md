@@ -40,7 +40,8 @@ effectiveRole(actor, workspaceAccess, linkRole):
   world    = linkRole === "none"        ? null     // link off
            : locked && !unlocked        ? null     // password gate
            : actor is a signed-in user  ? linkRole // any holder, member or not
-           : "viewer"                              // anonymous clamps to viewer
+           : linkRole === "viewer"      ? "viewer" // anon: viewer link stays viewer
+           : "commenter"                           // anon: commenter/editor link caps at commenter
   return max(explicit, seat, world)
 ```
 
