@@ -1,7 +1,0 @@
-{
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "types": ["node"] },
-  "include": ["src", "test"],
-  "//": "The Cloudflare Workers entry is checked separately (tsconfig.worker.json) under @cloudflare/workers-types; its Workers globals conflict with the Node/DOM lib used here.",
-  "exclude": ["src/worker.ts", "src/realtime-do.ts"]
-}

@@ -1,8 +1,0 @@
-{
-  "extends": "../tsconfig.json",
-  "compilerOptions": {
-    "types": ["node", "@playwright/test"],
-    "noEmit": true
-  },
-  "include": [".", "../playwright.config.ts"]
-}

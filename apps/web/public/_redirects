@@ -1,3 +1,0 @@
-# Cloudflare Pages SPA fallback — every route renders the prerendered shell,
-# then the client router takes over. _shell.html is TanStack Start's SPA shell.
-/*  /_shell.html  200

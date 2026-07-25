@@ -1,9 +1,0 @@
-node_modules
-**/node_modules
-**/dist
-.git
-*.log
-data
-.env
-.env.local
-apps/web/dist

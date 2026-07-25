@@ -1,5 +1,0 @@
-blank_issues_enabled: false
-contact_links:
-  - name: Security vulnerability
-    url: https://github.com/derive-to/derive/security/advisories/new
-    about: Report security issues privately — please do not open a public issue.
