@@ -1882,14 +1882,14 @@ export class PgMetaStore implements MetaStore {
     await this.db.update(artifact).set({ expires_at: expiresAt }).where(eq(artifact.id, artifactId))
   }
 
-  // lt() on the ISO text column: the file-wide convention keeps instants as ISO-8601
-  // strings, which sort lexically in timestamp order.
+  // expires_at is ISO-8601 text (the schema-wide convention), so lexical lt() IS
+  // chronological order.
   async listExpiredArtifacts(nowIso: string, limit: number): Promise<ArtifactRecord[]> {
     return this.db
       .select()
       .from(artifact)
       .where(and(isNotNull(artifact.expires_at), lt(artifact.expires_at, nowIso)))
-      .limit(limit) as Promise<ArtifactRecord[]>
+      .limit(limit)
   }
   async deleteDomain(host: string, orgId: string): Promise<void> {
     await this.db.delete(domain).where(and(eq(domain.host, host), eq(domain.org_id, orgId)))

@@ -235,8 +235,11 @@ export function createApp(deps: AppDeps): Hono {
       // through so an unregistered host pointed at us never serves stale content.
       if (record?.status !== "active") return isSub ? c.text("not found", 404) : next()
       // A claimed draft's old host: unbound from the artifact and left as a signpost
-      // to the artifact's permanent home. Never cache — the target can change again.
-      if (record.redirect_to) return c.redirect(record.redirect_to, 302)
+      // to the artifact's permanent home. no-store because the target can change.
+      if (record.redirect_to) {
+        c.header("Cache-Control", "no-store")
+        return c.redirect(record.redirect_to, 302)
+      }
       if (record.artifact_id) {
         // Artifact-bound host (subdomain today): serve that one artifact at the root.
         const a = await ctx.meta.getArtifactById(record.artifact_id)

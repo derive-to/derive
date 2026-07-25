@@ -974,10 +974,9 @@ export const artifactRoutes = (ctx: AppContext) => {
   )
 
   // ---- Anonymous drafts: publish before signup (the claim flow) ------------
-  // The account-less front door: any agent POSTs a file with no credentials and
-  // gets back a live expiring page on the usercontent domain plus a claim URL.
-  // The agent finishes the user's request FIRST; signing up happens after, on
-  // the claim page, where the loop (versions, comments, review) lights up.
+  // POST /v1/drafts takes a file with no credentials and returns a live expiring
+  // page on the usercontent domain plus a claim URL; claiming (below) moves the
+  // draft into a real workspace.
   //
   // A draft is an ordinary artifact with no owner, held in DRAFTS_ORG_ID with an
   // expires_at (see lib/drafts.ts). It is link-viewable and nothing else — the
@@ -988,8 +987,7 @@ export const artifactRoutes = (ctx: AppContext) => {
   // IP cap + the publish limiter (ip-keyed for an actorless caller) + the
   // ANON_WRITE_ALLOW entry in app.ts bound it.
   app.post("/v1/drafts", async (c) => {
-    // Both halves of the product need config: the usercontent host to serve on,
-    // and the signing secret for the claim capability. Absent either, be honest.
+    // Serving needs the usercontent host; the claim URL needs the signing secret.
     if (!deps.subdomainBase || !deps.encryptionKey)
       return fail(c, 501, "anonymous drafts need DERIVE_SUBDOMAIN_BASE and DERIVE_AUTH_SECRET")
     // Idempotent upsert: the holding workspace exists from the first mint onward.
@@ -1001,13 +999,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       draft: { expiresAt },
     })
     if (res.status !== 201) return res
-    const created = (await res.json()) as { short_id: string; title: string | null }
+    const created = (await res.json()) as { short_id: string }
     const artifact = await meta.getByShortId(created.short_id)
     if (!artifact) return fail(c, 500, "draft vanished after publish")
-    // The draft's home: <short_id>.<base>. The short id is random and fresh, so a
-    // host collision means only that an earlier row leaked — mint-and-move-on is
-    // not needed; fall back to the tokened raw URL shape rather than failing the
-    // publish that already succeeded.
+    // The draft's home: <short_id>.<base>. The short id is fresh and globally
+    // unique, so setDomain's insert-only conflict path is effectively unreachable;
+    // if it fires anyway, degrade to the raw URL (documented in llms.txt) rather
+    // than failing a publish that already succeeded.
     const host = `${artifact.short_id}.${deps.subdomainBase}`.toLowerCase()
     const bound = await meta.setDomain({
       host,
@@ -1021,17 +1019,16 @@ export const artifactRoutes = (ctx: AppContext) => {
       : `${deps.sandboxOrigin ?? deps.baseUrl}/raw/${artifact.short_id}/v/1/index.html`
     const claimToken = await signClaimToken(deps.encryptionKey, artifact.id, Date.parse(expiresAt))
     // Opportunistic sweep, the OAuth-reaper pattern: each mint reaps earlier
-    // expired drafts, best-effort and off the response path. This is the ONLY
-    // sweep the (cron-less-for-pg) edge tier gets; Node also runs an hourly
-    // timer, and the serve path 410s expired drafts regardless.
+    // expired drafts. This is the ONLY sweep the edge tier gets (its cron has no
+    // pg binding); on Workers it rides waitUntil, on Node background() awaits
+    // inline — one indexed SELECT when nothing has expired, and the hourly timer
+    // there does the real work. The serve path 410s expired drafts regardless.
     await background(sweepExpiredDrafts(meta, search))
     return c.json(
       {
         short_id: artifact.short_id,
-        title: created.title,
+        title: artifact.title,
         draft_url: draftUrl,
-        // The conversion handle: opening this signed URL (sign in, pick a
-        // workspace) moves the draft into that workspace for good.
         claim_url: `${deps.baseUrl}/claim/${claimToken}`,
         expires_at: expiresAt,
       },

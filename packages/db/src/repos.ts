@@ -2097,15 +2097,15 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(artifact.id, artifactId))
       .run()
   }
-  // lt() on the ISO text column: the file-wide convention keeps instants as ISO-8601
-  // strings, which sort lexically in timestamp order.
+  // expires_at is ISO-8601 text (the schema-wide convention), so lexical lt() IS
+  // chronological order.
   const listExpiredArtifacts = async (nowIso: string, limit: number): Promise<ArtifactRecord[]> =>
     db
       .select()
       .from(artifact)
       .where(and(isNotNull(artifact.expires_at), lt(artifact.expires_at, nowIso)))
       .limit(limit)
-      .all() as Promise<ArtifactRecord[]>
+      .all()
 
   // ---- Reviews: proposals ------------------------------------------------
   const createProposal = async (p: NewProposal): Promise<ProposalRecord> =>

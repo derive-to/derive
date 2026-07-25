@@ -128,6 +128,7 @@ describe("the claim flow", () => {
     const redirected = await drafts.request(`http://${short_id}.${BASE}/`, { redirect: "manual" })
     expect(redirected.status).toBe(302)
     expect(redirected.headers.get("location")).toBe(j.url)
+    expect(redirected.headers.get("cache-control")).toBe("no-store")
 
     // Single-use by state: a replayed token finds nothing to spend.
     const replay = await drafts.request("/v1/drafts/claim", {
