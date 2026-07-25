@@ -178,7 +178,7 @@ npx skills add derive-to/derive --skill derive
 Or skip installation entirely: the skill is served at [derive.to/skill.md](https://derive.to/skill.md) (paste the URL into a prompt), agents discover the surface via [llms.txt](https://derive.to/llms.txt) and [`/.well-known/agent.json`](https://derive.to/.well-known/agent.json), and publishing needs no account at all:
 
 ```bash
-curl -F file=@page.html https://derive.to/v1/drafts
+curl -F file=@page.html https://derive.to/v1/drafts   # or a .zip of a whole site
 # → a live URL in about a second, plus a claim link that turns the
 #   draft into a permanent, versioned artifact in your workspace
 ``` `derive init` scaffolds one canonical `derive` skill into the native Codex and Claude locations (`.agents/skills/derive` and `.claude/skills/derive`) plus each client's project MCP config. For an existing repo, run `derive agent setup`; rerun with `--update` to refresh only the packaged Derive skill files while preserving MCP configs. The skill declares its MCP dependency for Codex and routes either client into the matching `derive://skills/*` workflow before it acts.
