@@ -209,7 +209,17 @@ export const automationRoutes = (ctx: AppContext) => {
   app.get("/v1/automations", async (c) => {
     const org = await requireWorkspace(c, "read")
     if (org instanceof Response) return org
-    return c.json({ automations: (await meta.listAutomations(org)).map(present) })
+    // Each row carries its agent's runs-lane liveness so the UI can say, honestly,
+    // whether ANYTHING executes this automation — null = no executor has ever polled.
+    // One batched roster read (no-N+1), joined in memory.
+    const [autos, agents] = await Promise.all([meta.listAutomations(org), meta.listAgents(org)])
+    const seen = new Map(agents.map((a) => [a.id, a.runs_seen_at]))
+    return c.json({
+      automations: autos.map((a) => ({
+        ...present(a),
+        executor_seen_at: seen.get(a.agent_id) ?? null,
+      })),
+    })
   })
 
   app.delete("/v1/automations/:id", async (c) => {
@@ -314,6 +324,10 @@ export const automationRoutes = (ctx: AppContext) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
     const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20))
+    // The runs-lane heartbeat (twin of the session queue's runner_seen_at): throttled
+    // to ~minutely, best-effort — liveness display must never fail a claim.
+    if (!agent.runs_seen_at || Date.now() - new Date(agent.runs_seen_at).getTime() > 60_000)
+      await meta.touchAgentRunsSeen(agent.id, isoNow()).catch(() => {})
     // The schedule tick: turn any DUE cron automations of this agent into queued runs BEFORE
     // claiming, so the runner's poll is the only thing that drives scheduling — no separate
     // service. Best-effort (a bad cron is skipped), and never blocks the claim on failure.

@@ -1502,6 +1502,10 @@ export function runStoreContract(
       expect(await store.getAgentByToken(t2)).toMatchObject({ id: agent.id })
       // Org-scoped: a foreign org rotates nothing.
       expect(await store.rotateAgentToken(agent.id, "org_other", `tok_${uuid()}`)).toBeNull()
+      // Runs-lane liveness: null until an executor polls; the stamp round-trips.
+      expect(rotated?.runs_seen_at).toBeNull()
+      await store.touchAgentRunsSeen(agent.id, "2026-07-24T12:00:00.000Z")
+      expect((await store.getAgentByToken(t2))?.runs_seen_at).toBe("2026-07-24T12:00:00.000Z")
     })
   })
 
