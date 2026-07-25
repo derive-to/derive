@@ -72,6 +72,19 @@ describe("vanity subdomains", () => {
     expect((await anon.request(`http://nope.${BASE}/`)).status).toBe(404)
   })
 
+  it("301s the base apex and www to the app origin", async () => {
+    for (const host of [BASE, `www.${BASE}`]) {
+      const res = await anon.request(`http://${host}/anything`)
+      expect(res.status).toBe(301)
+      expect(res.headers.get("location")).toBe("http://derive.test")
+    }
+  })
+
+  it("rejects the sandbox host's label as reserved", async () => {
+    const short = await publish("<p>x</p>", { visibility: "public" })
+    expect((await setLabel(short, "raw")).status).toBe(400)
+  })
+
   it("releases a subdomain", async () => {
     const short = await publish("<p>x</p>", { visibility: "public" })
     await setLabel(short, "temp")

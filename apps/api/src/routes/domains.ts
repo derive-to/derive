@@ -9,6 +9,7 @@ const RESERVED = new Set([
   "www",
   "app",
   "api",
+  "raw",
   "admin",
   "mail",
   "smtp",

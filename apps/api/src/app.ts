@@ -214,6 +214,11 @@ export function createApp(deps: AppDeps): Hono {
       const host = (c.req.header("host") ?? new URL(c.req.url).host).toLowerCase().split(":")[0]
       if (!host || host === appHostForSub || (sandboxHost && host === sandboxHost.toLowerCase()))
         return next()
+      // The subdomain base's apex (and www) never serve content: once the base is on
+      // the Public Suffix List the apex is cookie-dead, so it can only ever bounce
+      // visitors to the app origin.
+      if (subBase && (host === subBase || host === `www.${subBase}`) && host !== appHostForSub)
+        return c.redirect(deps.baseUrl, 301)
       const isSub = !!subBase && host !== subBase && host.endsWith(`.${subBase}`)
       if (!isSub && !customEnabled) return next()
       // The served HTML references /raw/derive-client.js; let raw + health through.
