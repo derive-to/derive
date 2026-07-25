@@ -234,6 +234,12 @@ export class DeriveClient {
 
   // ---- runs (the automation lane) --------------------------------------------
 
+  /** Claim the ONE session this bearer's capability token names (the hosted ask lane). Returns
+   *  {session, context} or {session: null} when the race was lost / it settled meanwhile. */
+  async claimSession() {
+    return this.call(`/v1/agent/sessions/claim`, { method: "POST", body: JSON.stringify({}) })
+  }
+
   /** Claim this agent's due runs. The server materializes any DUE schedule runs first, so this
    *  one call is the whole schedule tick — the runner's poll cadence drives it. */
   async claimRuns(limit = 10) {
@@ -1254,11 +1260,52 @@ async function manifestForRun(cfg, run, cache) {
   return manifest
 }
 
+/** The hosted ASK entry: a session-scoped capability token names one session, so claim it,
+ *  answer it as its context, and exit. The same shape as runOnce — boot, do one thing, die —
+ *  because an ask and a schedule are the same (context, instruction) call and deserve the same
+ *  executor. Reuses serveSession wholesale: the answer contract, artifact publishing, escalation
+ *  and the failure path are the ask lane's, unchanged. */
+export async function serveSessionOnce(cfg) {
+  const client = new DeriveClient(cfg.server, cfg.token)
+  const claimed = await client.claimSession()
+  if (!claimed?.session) {
+    console.log("[runner] nothing to serve (already claimed, or the session settled)")
+    return { served: 0, failed: 0 }
+  }
+  // The packaged agent: the context's manifest + its skills, materialized exactly as the
+  // polling lane does, so a hosted answer is the same answer the owner's box would give.
+  let manifest = RUN_MANIFEST
+  try {
+    const host = await bootHost(
+      { ...cfg, contextId: claimed.context.id },
+      `session ${claimed.session.id}`,
+    )
+    manifest =
+      parseManifest(host.info.manifest_md ?? "").body +
+      repoCatalogBlock(host.catalog) +
+      host.conventions
+  } catch (err) {
+    console.error(
+      `[runner] session ${claimed.session.id}: context failed to materialize (${err.message}) — answering with the bare contract`,
+    )
+  }
+  try {
+    await serveSession(client, claimed.session, manifest, cfg)
+    return { served: 1, failed: 0 }
+  } catch (err) {
+    console.error(`[runner] session ${claimed.session.id}: ${err.message}`)
+    return { served: 0, failed: 1 }
+  }
+}
+
 /** The one-shot hosted entry (`derive runner run <token>`): claim whatever the bearer may claim
  *  — a per-run capability token claims EXACTLY its run; a double-booted substrate loses the
  *  claim race, gets an empty batch, and exits clean — execute it, and return the counts. No
  *  context, no poll loop: the substrate boots, this runs once, the process exits. */
 export async function runOnce(cfg) {
+  // The token says which lane this is: dksess_ names a session (an ask), dkrun_ a run (an
+  // automation). One entry point, because the substrate boots the same image for both.
+  if (typeof cfg.token === "string" && cfg.token.startsWith("dksess_")) return serveSessionOnce(cfg)
   const client = new DeriveClient(cfg.server, cfg.token)
   const runs = await client.claimRuns()
   const counts = { served: 0, failed: 0 }

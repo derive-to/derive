@@ -2362,6 +2362,56 @@ export function makeRepos(db: SqliteDb) {
   // Count only LIVE working sessions (lease not lapsed): a crashed run whose lease has
   // expired must NOT fill the concurrency cap, or the queue wedges — the lapsed-lease
   // reclaim lives in claimPendingSessions, which only runs when there is room.
+  const listDueOpenSessions = async (now: string, limit = 50): Promise<SessionRecord[]> =>
+    (await db
+      .select()
+      .from(contextSession)
+      .where(
+        or(
+          eq(contextSession.state, "open"),
+          // A `working` row whose lease lapsed (or never existed) is a dead executor's
+          // session — runnable again, exactly as claimPendingSessions treats it.
+          and(
+            eq(contextSession.state, "working"),
+            or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
+          ),
+        ),
+      )
+      .orderBy(contextSession.created_at)
+      .limit(limit)
+      .all()) as SessionRecord[]
+  const claimSessionById = async (
+    id: string,
+    agentId: string,
+    leaseUntil: string,
+  ): Promise<SessionRecord | null> => {
+    // The session belongs to a CONTEXT, and the context names the agent — so ownership is
+    // checked through it rather than on the row. A foreign agent claims nothing.
+    const s = await db.select().from(contextSession).where(eq(contextSession.id, id)).get()
+    if (!s) return null
+    const cx = await db.select().from(context).where(eq(context.id, s.context_id)).get()
+    if (!cx || cx.agent_id !== agentId) return null
+    const now = new Date().toISOString()
+    return (
+      (await db
+        .update(contextSession)
+        .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
+        .where(
+          and(
+            eq(contextSession.id, id),
+            or(
+              eq(contextSession.state, "open"),
+              and(
+                eq(contextSession.state, "working"),
+                or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
+              ),
+            ),
+          ),
+        )
+        .returning()
+        .get()) ?? null
+    )
+  }
   const countWorkingSessions = async (contextId: string): Promise<number> => {
     const now = new Date().toISOString()
     return (
@@ -3608,6 +3658,8 @@ export function makeRepos(db: SqliteDb) {
     pendingSessions,
     claimPendingSessions,
     countWorkingSessions,
+    listDueOpenSessions,
+    claimSessionById,
     findInflightSession,
     setResultArtifact,
     renewSessionLease,

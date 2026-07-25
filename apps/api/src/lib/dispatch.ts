@@ -2,7 +2,7 @@ import type { MetaStore, RunRecord } from "@derive/core"
 import { log } from "../log"
 import { overBudget } from "./budget"
 import { RUN_LEASE_MS, RUN_MAX_ATTEMPTS, RUN_TOKEN_TTL_MS } from "./run-lifecycle"
-import { signRunToken } from "./run-token"
+import { signWorkToken } from "./run-token"
 import { materializeAllDueRuns } from "./schedule"
 
 // HOSTED DISPATCH — the tick that makes an automation run with no machine on.
@@ -64,12 +64,22 @@ export interface DispatchResult {
   /** Runs left queued this pass because their workspace was at its in-flight cap or over its
    *  monthly model budget. Not failures — they are simply picked up by a later tick. */
   deferred: number
+  /** Sessions (somebody ASKED a context) dispatched this pass. Same executor, same substrate —
+   *  an ask and a schedule are both (context, instruction), so both run with no machine on. */
+  sessionsStarted: number
 }
 
-/** Mint the capability token for a run and hand it to the substrate. */
-const startOne = async (deps: DispatchDeps, r: RunRecord, expMs: number): Promise<void> => {
-  const token = await signRunToken(deps.secret, r.id, r.agent_id, r.org_id, expMs)
-  await deps.substrate.start({ runId: r.id, token, server: deps.server })
+/** Mint the capability token for a work item and hand it to the substrate. Runs and sessions
+ *  differ only in the token's kind and the id the executor is told to serve — the substrate
+ *  boots the same image either way, which is the whole point of unifying the two lanes. */
+const startOne = async (
+  deps: DispatchDeps,
+  kind: "run" | "session",
+  item: { id: string; agentId: string; orgId: string },
+  expMs: number,
+): Promise<void> => {
+  const token = await signWorkToken(kind, deps.secret, item.id, item.agentId, item.orgId, expMs)
+  await deps.substrate.start({ runId: item.id, token, server: deps.server })
 }
 
 /**
@@ -87,6 +97,7 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
     started: 0,
     failed: 0,
     deferred: 0,
+    sessionsStarted: 0,
   }
 
   // 1. Materialize due schedules.
@@ -118,7 +129,20 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
     log.warn("hosted dispatch: due scan failed", { error: (e as Error).message })
     return out
   }
-  if (due.length === 0) return out
+  // NOT an early return: the ask lane must still be swept when no RUN is due — a quiet
+  // automation queue is the common case for a workspace that mostly asks questions, and
+  // skipping sessions there would mean asks only ever ran when a schedule happened to fire.
+  if (due.length === 0) {
+    out.sessionsStarted = await dispatchSessions(
+      deps,
+      now,
+      now.getTime() + RUN_TOKEN_TTL_MS,
+      new Map(),
+    )
+    if (out.sessionsStarted > 0 || out.materialized > 0 || out.requeued > 0)
+      log.info("hosted dispatch", { ...out, substrate: deps.substrate.name })
+    return out
+  }
 
   // In-flight per workspace, counted ONCE for this pass and incremented as we start. Cost and
   // fairness: one workspace's burst must not consume the deployment's whole capacity, and a
@@ -170,7 +194,7 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
       continue
     }
     try {
-      await startOne(deps, r, expMs)
+      await startOne(deps, "run", { id: r.id, agentId: r.agent_id, orgId: r.org_id }, expMs)
       out.started += 1
       inFlight.set(r.org_id, (inFlight.get(r.org_id) ?? 0) + 1)
     } catch (e) {
@@ -183,9 +207,62 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
       })
     }
   }
-  if (out.started > 0 || out.materialized > 0 || out.requeued > 0 || out.deferred > 0)
+  // 4. The ASK lane. A session is somebody asking a context — the same (context, instruction)
+  //    call a schedule makes, so it earns the same hosted executor rather than needing a
+  //    machine someone keeps on. Reuses everything above: same substrate, same master switch,
+  //    same expiry. The session's own lease (not the run lease) is its concurrency guard, and
+  //    like runs, dispatch never claims — the booted executor does.
+  out.sessionsStarted = await dispatchSessions(deps, now, expMs, hostedOff)
+
+  if (
+    out.started > 0 ||
+    out.materialized > 0 ||
+    out.requeued > 0 ||
+    out.deferred > 0 ||
+    out.sessionsStarted > 0
+  )
     log.info("hosted dispatch", { ...out, substrate: deps.substrate.name })
   return out
+}
+
+/** Boot an executor for each session awaiting one. Best-effort per session and never throws:
+ *  the ask lane must not be able to break the run lane's tick. */
+const dispatchSessions = async (
+  deps: DispatchDeps,
+  now: Date,
+  expMs: number,
+  hostedOff: Map<string, boolean>,
+): Promise<number> => {
+  let started = 0
+  try {
+    const due = await deps.meta.listDueOpenSessions(now.toISOString(), deps.limit ?? 10)
+    for (const s of due) {
+      if (!hostedOff.has(s.org_id))
+        hostedOff.set(
+          s.org_id,
+          !(await deps.meta
+            .getOrgSettings(s.org_id)
+            .then((x) => x.hostedAgentsEnabled)
+            .catch(() => true)),
+        )
+      if (hostedOff.get(s.org_id)) continue
+      // A session's acting agent lives on its CONTEXT (sessions carry no agent column).
+      const cx = await deps.meta.getContext(s.context_id)
+      if (!cx) continue
+      try {
+        await startOne(deps, "session", { id: s.id, agentId: cx.agent_id, orgId: s.org_id }, expMs)
+        started += 1
+      } catch (e) {
+        log.warn("hosted dispatch: session start failed", {
+          session: s.id,
+          error: (e as Error).message,
+        })
+      }
+    }
+  } catch (e) {
+    log.warn("hosted dispatch: session scan failed", { error: (e as Error).message })
+  }
+  return started
 }
 
 /** How many of a workspace's runs are currently executing (claimed and not yet finished, within
@@ -218,7 +295,12 @@ export const dispatchRunNow = async (deps: DispatchDeps, runId: string): Promise
     const settings = await deps.meta.getOrgSettings(r.org_id).catch(() => null)
     if (settings && !settings.hostedAgentsEnabled) return false
     const now = deps.now?.() ?? new Date()
-    await startOne(deps, r, now.getTime() + RUN_TOKEN_TTL_MS)
+    await startOne(
+      deps,
+      "run",
+      { id: r.id, agentId: r.agent_id, orgId: r.org_id },
+      now.getTime() + RUN_TOKEN_TTL_MS,
+    )
     return true
   } catch (e) {
     log.warn("hosted dispatch: nudge failed (the tick will retry)", {

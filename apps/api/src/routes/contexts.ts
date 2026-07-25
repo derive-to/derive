@@ -35,6 +35,7 @@ export const contextRoutes = (ctx: AppContext) => {
     meta,
     activeWorkspace,
     agentFor,
+    agentSessionScope,
     authorize,
     bus,
     canAskContext,
@@ -1066,6 +1067,35 @@ export const contextRoutes = (ctx: AppContext) => {
       return c.json({ sessions: out })
     },
   )
+
+  // The HOSTED ask lane's claim: a session-scoped capability bearer (dksess_, minted by
+  // dispatch) claims EXACTLY its own session and gets the same payload the queue returns —
+  // context + manifest + transcript — so the executor serves an ask exactly as a polling
+  // runner does. No context id in the path: the token already names the one session it may
+  // touch, and pinning to it is the whole security story.
+  app.post("/v1/agent/sessions/claim", async (c) => {
+    const agent = await agentFor(c)
+    if (!agent) return fail(c, 401, "agent token required")
+    const scope = agentSessionScope(c)
+    // Deliberately session-token ONLY: a standing agent bearer has the context queue for this,
+    // and letting one claim by id would bypass the per-context concurrency cap.
+    if (!scope) return fail(c, 403, "a session capability token is required")
+    const s = await meta.getSession(scope)
+    const x = s ? await meta.getContext(s.context_id) : null
+    if (!s || !x || x.agent_id !== agent.id) return fail(c, 404, "not found")
+    const claimed = await meta.claimSessionById(scope, agent.id, leaseFor(x))
+    // Lost the race (a duplicate dispatch, or the asker closed it): nothing to serve, and the
+    // executor exits clean rather than double-answering.
+    if (!claimed) return c.json({ session: null })
+    const manifest = await meta.getArtifactById(x.manifest_artifact_id)
+    return c.json({
+      session: {
+        ...sessionJson(claimed),
+        messages: (await meta.listSessionMessagesFor([claimed.id])).map(messageJson),
+      },
+      context: { id: x.id, name: x.name, manifest_short_id: manifest?.short_id ?? null },
+    })
+  })
 
   return app
 }

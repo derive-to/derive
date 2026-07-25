@@ -2156,6 +2156,55 @@ export class PgMetaStore implements MetaStore {
   // Only LIVE working sessions (lease not lapsed) fill the concurrency cap — else a
   // crashed run wedges the queue (the lapsed-lease reclaim is in claimPendingSessions,
   // which only runs when there is room). Mirrors the sqlite/d1 layer.
+  async listDueOpenSessions(now: string, limit = 50): Promise<SessionRecord[]> {
+    return this.db
+      .select()
+      .from(contextSession)
+      .where(
+        or(
+          eq(contextSession.state, "open"),
+          // A `working` row whose lease lapsed (or never existed) is a dead executor's
+          // session — runnable again, exactly as claimPendingSessions treats it.
+          and(
+            eq(contextSession.state, "working"),
+            or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
+          ),
+        ),
+      )
+      .orderBy(contextSession.created_at)
+      .limit(limit)
+  }
+  async claimSessionById(
+    id: string,
+    agentId: string,
+    leaseUntil: string,
+  ): Promise<SessionRecord | null> {
+    // The session belongs to a CONTEXT, and the context names the agent — so ownership is
+    // checked through it rather than on the row. A foreign agent claims nothing.
+    const sRows = await this.db.select().from(contextSession).where(eq(contextSession.id, id))
+    const s = sRows[0]
+    if (!s) return null
+    const cRows = await this.db.select().from(context).where(eq(context.id, s.context_id))
+    if (cRows[0]?.agent_id !== agentId) return null
+    const now = new Date().toISOString()
+    const rows = await this.db
+      .update(contextSession)
+      .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
+      .where(
+        and(
+          eq(contextSession.id, id),
+          or(
+            eq(contextSession.state, "open"),
+            and(
+              eq(contextSession.state, "working"),
+              or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
+            ),
+          ),
+        ),
+      )
+      .returning()
+    return rows[0] ?? null
+  }
   async countWorkingSessions(contextId: string): Promise<number> {
     const now = new Date().toISOString()
     const rows = await this.db

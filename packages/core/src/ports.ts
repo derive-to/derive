@@ -869,6 +869,16 @@ export interface ContextStore {
   /** How many sessions are currently `working` on a context — the per-context
    *  concurrency cap (the route claims min(limit, max_concurrency - working)). */
   countWorkingSessions(contextId: string): Promise<number>
+  /** Sessions awaiting an executor across ALL workspaces (capped, oldest first) — the hosted
+   *  tick's ask-lane scan, the twin of listDueQueuedRuns. Runnable means `open`, or `working`
+   *  with a lapsed lease (a dead executor's session self-heals). Read-only: dispatch never
+   *  claims, the booted executor does. */
+  listDueOpenSessions(now: string, limit?: number): Promise<SessionRecord[]>
+  /** Claim EXACTLY one session for one agent (the capability-token path: a dispatched substrate
+   *  serves its one session, never a batch). open|lapsed-working → `working` under the same
+   *  lease, so a double-booted substrate loses the race and exits clean. Null when it isn't
+   *  claimable (missing, foreign agent, or already live). */
+  claimSessionById(id: string, agentId: string, leaseUntil: string): Promise<SessionRecord | null>
   /** The newest still-live session (`open` or `working`) matching a dedupe key for a
    *  given asker on a context, or null — the ask idempotency join. Scoped to the asker so
    *  a shared key never joins one asker onto another's private session. */

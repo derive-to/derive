@@ -2,7 +2,7 @@ import { newId } from "@derive/core"
 import { beforeEach, describe, expect, it } from "vitest"
 import { dispatchPass, dispatchRunNow, type Substrate } from "../src/lib/dispatch"
 import { signRunToken, verifyRunToken } from "../src/lib/run-token"
-import { as, bearer, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
+import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // HOSTED DISPATCH, tested with NO container, NO wrangler, and NO network. The substrate is the
 // only platform-specific piece, so a fake one lets the whole correctness story — materialize,
@@ -427,5 +427,55 @@ describe("the dispatch queue is a latency nudge, never the source of truth", () 
     const { substrate, started } = fakeSubstrate()
     expect(await dispatchRunNow(deps(substrate), run.id)).toBe(false)
     expect(started).toHaveLength(0)
+  })
+})
+
+describe("hosted ASKS — a question runs on the same executor as a schedule", () => {
+  it("dispatches an open session with a session-scoped token, and that token claims only it", async () => {
+    // A context (agent auto-mints), then somebody asks it something.
+    const brief = await publishAs(
+      app,
+      "# Brief\n\nAnswer plainly.",
+      { title: "Ask Brief" },
+      as(owner.email),
+    )
+    const briefJson = (await brief.json()) as { short_id: string }
+    const ctx = (await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), { name: "Asker Ctx", manifest_short_id: briefJson.short_id }),
+      )
+    ).json()) as { id: string; agent_token: string }
+    const sessRes = await app.request(
+      `/v1/contexts/${ctx.id}/sessions`,
+      jsonAs(as(owner.email), { body_md: "How flaky was checkout this week?" }),
+    )
+    expect(sessRes.status).toBeLessThan(300)
+    // The ask response wraps the session alongside its first message.
+    const { session } = (await sessRes.json()) as { session: { id: string } }
+
+    // The SAME tick that dispatches runs now dispatches asks — no separate lane, no daemon.
+    const { substrate, started } = fakeSubstrate()
+    const res = await dispatchPass(deps(substrate))
+    expect(res.sessionsStarted).toBeGreaterThanOrEqual(1)
+    const boot = started.find((s) => s.runId === session.id)
+    expect(boot).toBeTruthy()
+    // Session tokens are their OWN kind: a dksess_ bearer can never verify as a run, so the
+    // two scopes can't be confused even with an identical payload.
+    expect(boot?.token.startsWith("dksess_")).toBe(true)
+    expect(await verifyRunToken(SECRET, boot?.token ?? "", Date.now())).toBeNull()
+
+    // That token claims exactly its session — and only once: a duplicate boot loses the race.
+    const claim = async () =>
+      app.request("/v1/agent/sessions/claim", jsonAs(bearer(boot?.token ?? ""), {}))
+    const first = (await (await claim()).json()) as { session: { id: string } | null }
+    expect(first.session?.id).toBe(session.id)
+    const second = (await (await claim()).json()) as { session: { id: string } | null }
+    expect(second.session).toBeNull()
+  })
+
+  it("a standing agent bearer cannot use the hosted session claim (the queue is its door)", async () => {
+    const res = await app.request("/v1/agent/sessions/claim", jsonAs(as(owner.email), {}))
+    expect([401, 403]).toContain(res.status)
   })
 })

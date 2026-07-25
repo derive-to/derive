@@ -37,7 +37,7 @@ import {
   type RateLimiters,
   rateLimited,
 } from "./lib/rate-limit"
-import { isRunToken, verifyRunToken } from "./lib/run-token"
+import { verifyWorkToken, workTokenKind } from "./lib/run-token"
 import { enqueueSlackChannelEvent } from "./lib/slack-comments"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
@@ -448,31 +448,52 @@ export function buildContext(deps: AppDeps) {
   // Set only when agentFor resolved a dkrun_ token; the run endpoints read it to pin the
   // principal to exactly its run (a leaked token can't touch any other run).
   const runScopeCache = new WeakMap<Context, string>()
+  // The same, for a session-scoped bearer (the ask lane's half of hosted execution).
+  const sessionScopeCache = new WeakMap<Context, string>()
   const agentFor = async (c: Context): Promise<AgentRecord | null> => {
     if (agentCache.has(c)) return agentCache.get(c) ?? null
     const b = bearer(c)
     let a: AgentRecord | null = null
     let owner: string | null = null
-    if (b && isRunToken(b) && deps.encryptionKey) {
-      // A per-run capability token (unattended execution): signed + expiring, minted at
-      // dispatch, never stored. It resolves to the SAME agent principal a registered token
-      // would — the write path needs no special cases — with the run scope pinned above.
-      // Fail-closed at every step: bad signature/expiry, a foreign or terminal run, or a
-      // mismatched agent all resolve to anonymous.
-      const claim = await verifyRunToken(deps.encryptionKey, b, Date.now())
+    const workKind = b ? workTokenKind(b) : null
+    if (b && workKind && deps.encryptionKey) {
+      // A per-work capability token (unattended execution): signed + expiring, minted at
+      // dispatch, never stored. Both kinds resolve to the SAME agent principal a registered
+      // token would — the write path needs no special cases — with the work item pinned as
+      // this request's scope. Fail-closed at every step: bad signature/expiry, a foreign or
+      // already-settled item, or a mismatched agent all resolve to anonymous.
+      const claim = await verifyWorkToken(workKind, deps.encryptionKey, b, Date.now())
       if (claim) {
-        const r = await meta.getRun(claim.runId)
-        const live =
-          r &&
-          r.agent_id === claim.agentId &&
-          r.org_id === claim.orgId &&
-          (r.status === "queued" || r.status === "running")
+        // Still live? A settled run / session must not keep authorizing writes after the fact,
+        // even inside the token's remaining TTL.
+        let live = false
+        if (workKind === "run") {
+          const r = await meta.getRun(claim.id)
+          live = !!(
+            r &&
+            r.agent_id === claim.agentId &&
+            r.org_id === claim.orgId &&
+            (r.status === "queued" || r.status === "running")
+          )
+        } else {
+          const s = await meta.getSession(claim.id)
+          // A session's agent lives on its CONTEXT (sessions have no agent column).
+          const cx = s ? await meta.getContext(s.context_id) : null
+          live = !!(
+            s &&
+            cx &&
+            cx.agent_id === claim.agentId &&
+            s.org_id === claim.orgId &&
+            (s.state === "open" || s.state === "working")
+          )
+        }
         if (live) {
           const ag = await meta.getAgent(claim.agentId)
           if (ag && ag.org_id === claim.orgId) {
             a = ag
             owner = ag.created_by ?? null
-            runScopeCache.set(c, claim.runId)
+            if (workKind === "run") runScopeCache.set(c, claim.id)
+            else sessionScopeCache.set(c, claim.id)
           }
         }
       }
@@ -990,6 +1011,9 @@ export function buildContext(deps: AppDeps) {
     // The run id a dkrun_ capability bearer is pinned to (null for every other principal).
     // Run endpoints use it to constrain claim/tool/finish to exactly that run.
     agentRunScope: (c: Context): string | null => runScopeCache.get(c) ?? null,
+    /** The session id a dksess_ capability bearer is pinned to (null for every other
+     *  principal) — the ask lane's twin of agentRunScope. */
+    agentSessionScope: (c: Context): string | null => sessionScopeCache.get(c) ?? null,
     resolvePrincipal,
     actingUser,
     actingHuman,
