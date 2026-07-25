@@ -216,12 +216,20 @@ custom_domain = true
 pattern = "*.derive.page/*"
 zone_name = "derive.page"
 
-# baseUrl falls back to the request origin when unset. Secured by Better Auth; set
-# DERIVE_AUTH_SECRET via `wrangler secret put`. Cross-instance realtime fan-out uses
-# the ArtifactRoom Durable Object (one room per channel).
+# Secured by Better Auth; set DERIVE_AUTH_SECRET via `wrangler secret put`.
+# Cross-instance realtime fan-out uses the ArtifactRoom Durable Object (one room
+# per channel).
 [vars]
-# DERIVE_SUPERADMIN_EMAILS (operator allow-list) is optional; BASE_URL optional;
+# DERIVE_SUPERADMIN_EMAILS (operator allow-list) is optional;
 # DERIVE_AUTH_SECRET is a secret (`wrangler secret put`). Workspaces are always multi.
+#
+# BASE_URL pins the app origin. It is REQUIRED once DERIVE_SUBDOMAIN_BASE is set:
+# with the per-request-origin fallback, a request on derive.page (or any subdomain)
+# makes appHostForSub equal its own host, so app.ts's domain mode — the apex 301,
+# the unknown-subdomain 404, vanity serving — never engages. Same-origin requests
+# on other hosts (workers.dev smoke tests) stay trusted via auth-config's
+# same-origin rescue; only generated links now always point at derive.to.
+BASE_URL = "https://derive.to"
 #
 # Optional Slack app (all three are secrets; set them to enable Slack, else it stays off):
 #   wrangler secret put SLACK_CLIENT_ID
