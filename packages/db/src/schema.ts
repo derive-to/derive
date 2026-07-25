@@ -222,6 +222,10 @@ export const automation = sqliteTable("automation", {
   // JSON array of bound connection ids — the sources a run may read from (least privilege).
   // Nullable + no default, so it ALTER ADDs cleanly on existing databases.
   connection_ids: text("connection_ids"),
+  // The context this automation runs AS (nullable): its manifest + skills become the run's
+  // system prompt, making an automation literally a scheduled use(context, instruction).
+  // Unset = the bare run contract (an artifact-freshness job needs no methodology).
+  context_id: text("context_id"),
   enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
   created_at: text("created_at").notNull().default(now),
 })

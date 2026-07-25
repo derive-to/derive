@@ -1503,6 +1503,9 @@ export interface AutomationRecord {
   /** Serialized JSON array of bound connection ids — the SOURCES a run may read from. A run
    *  gets the tools of these connections only (least privilege); null = no sources. */
   connection_ids: string | null
+  /** The context this automation runs AS, or null. Bound, the run materializes that context's
+   *  manifest + skills — a scheduled use(context, instruction). */
+  context_id: string | null
   enabled: 0 | 1
   created_at: string
 }
@@ -1515,6 +1518,7 @@ export interface NewAutomation {
   instruction: string
   refs?: string | null
   connection_ids?: string | null
+  context_id?: string | null
   enabled?: 0 | 1
 }
 

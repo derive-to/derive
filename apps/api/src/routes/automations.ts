@@ -92,10 +92,24 @@ export const automationRoutes = (ctx: AppContext) => {
         instruction: z.string().min(1).max(4000),
         refs: REFS.optional(),
         connectionIds: z.array(z.string().max(64)).max(20).optional(),
+        // Bind a context: the automation becomes a scheduled use(context, instruction) — its
+        // runs materialize the context's manifest + skills, and it runs AS the context's agent.
+        contextId: z.string().max(64).optional(),
         enabled: z.boolean().default(true),
       }),
     )
     if (b instanceof Response) return bail(b)
+    // A bound context must exist in this workspace, and it decides the acting agent: the run
+    // must be the context's agent or the context's skills would belong to someone else. An
+    // explicit agentId is allowed only when it AGREES.
+    let boundContext = null as Awaited<ReturnType<typeof meta.getContext>> | null
+    if (b.contextId) {
+      boundContext = await meta.getContext(b.contextId)
+      if (!boundContext || boundContext.org_id !== org)
+        return bail(fail(c, 400, "context must exist in this workspace"))
+      if (b.agentId && b.agentId !== boundContext.agent_id)
+        return bail(fail(c, 400, "a context-bound automation runs as the context's agent"))
+    }
     if (b.agentId) {
       // The agent must belong to this workspace — never an id from another tenant.
       const agents = await meta.listAgents(org)
@@ -109,7 +123,7 @@ export const automationRoutes = (ctx: AppContext) => {
       if (conns.length !== b.connectionIds.length || conns.some((cn) => cn.org_id !== org))
         return bail(fail(c, 400, "connections must exist in this workspace"))
     }
-    let agentId = b.agentId ?? null
+    let agentId = b.agentId ?? boundContext?.agent_id ?? null
     let agentToken: string | null = null
     if (!agentId) {
       agentToken = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
@@ -149,6 +163,7 @@ export const automationRoutes = (ctx: AppContext) => {
         // Stored CANONICAL (bare strings become artifact selectors) so readers never re-guess.
         refs: b.refs ? JSON.stringify(normalizeSelectors(b.refs)) : null,
         connection_ids: b.connectionIds?.length ? JSON.stringify(b.connectionIds) : null,
+        context_id: b.contextId ?? null,
         enabled: b.enabled ? 1 : 0,
       })
       // The auto-mint token + the fire secret/URL ride this create response ONCE.
@@ -413,6 +428,9 @@ export const automationRoutes = (ctx: AppContext) => {
           // the model-credential fetch via ?run=.
           initiated_by: r.initiated_by,
           automation_id: r.automation_id,
+          // The bound context, when there is one: the executor materializes its manifest +
+          // skills as the run's system prompt (the ask lane's bootHost machinery, reused).
+          context_id: a.context_id,
           instruction: a.instruction,
           // Canonical selectors: artifact = revise it, collection = file new work there,
           // tag = the platform stamps it on every write. Each target's `mode` says how the

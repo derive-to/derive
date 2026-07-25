@@ -1227,6 +1227,33 @@ const RUN_MANIFEST = `You are this workspace's automation agent. You maintain De
 triggers: follow the run instruction exactly, keep the target accurate and current, and never
 invent content the instruction or the sources don't support.`
 
+/** The system prompt for one run. A CONTEXT-BOUND run gets the full packaged agent — the
+ *  context's manifest body, repo catalog, and materialized skills, via the same bootHost the
+ *  ask lane uses — so an automation is literally a scheduled use(context, instruction). An
+ *  unbound run gets the bare contract. Cached per context within one drain, and best-effort:
+ *  a context that fails to materialize falls back to the bare contract with a loud log,
+ *  because a run that executes without its methodology beats one that never executes.
+ *  (Materializing writes .claude/skills into cfg.cwd — per-run temp dirs on the hosted path,
+ *  so no cross-run bleed; a polling runner's cwd is its own context's home already.) */
+async function manifestForRun(cfg, run, cache) {
+  if (!run.context_id) return RUN_MANIFEST
+  if (cache.has(run.context_id)) return cache.get(run.context_id)
+  let manifest = RUN_MANIFEST
+  try {
+    const host = await bootHost({ ...cfg, contextId: run.context_id }, `run ${run.id}`)
+    manifest =
+      parseManifest(host.info.manifest_md ?? "").body +
+      repoCatalogBlock(host.catalog) +
+      host.conventions
+  } catch (err) {
+    console.error(
+      `[runner] run ${run.id}: context ${run.context_id} failed to materialize (${err.message}) — running with the bare contract`,
+    )
+  }
+  cache.set(run.context_id, manifest)
+  return manifest
+}
+
 /** The one-shot hosted entry (`derive runner run <token>`): claim whatever the bearer may claim
  *  — a per-run capability token claims EXACTLY its run; a double-booted substrate loses the
  *  claim race, gets an empty batch, and exits clean — execute it, and return the counts. No
@@ -1239,9 +1266,10 @@ export async function runOnce(cfg) {
     console.log("[runner] nothing to run (already claimed, or the token's run is settled)")
     return counts
   }
+  const manifests = new Map()
   for (const run of runs) {
     try {
-      await serveRun(client, run, RUN_MANIFEST, cfg)
+      await serveRun(client, run, await manifestForRun(cfg, run, manifests), cfg)
       counts.served += 1
     } catch (err) {
       counts.failed += 1
@@ -1348,9 +1376,13 @@ export async function drainPass(cfg, host) {
       console.error(`[runner] session ${s.id}: ${err.message}`)
     }
   }
+  const runManifests = new Map()
   for (const run of runs) {
     try {
-      await serveRun(client, run, manifest, cfg)
+      // A run bound to a context materializes THAT context; unbound runs get the bare
+      // contract rather than this polling context's manifest — an ask persona and an
+      // automation job are different registers, and mixing them was never intentional.
+      await serveRun(client, run, await manifestForRun(cfg, run, runManifests), cfg)
       counts.served += 1
     } catch (err) {
       counts.failed += 1

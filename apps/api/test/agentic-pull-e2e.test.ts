@@ -160,3 +160,79 @@ describe("agentic pull — a scheduled/triggered artifact pulls from a mock sour
     console.log(`\n[e2e] pulled + published ${doc.short_id} v${after.current_version}:\n${body}\n`)
   })
 })
+
+describe("scenario 2 — the QA context: an automation that runs WITH its methodology", () => {
+  it("a context-bound run materializes the manifest into the executor's system prompt", async () => {
+    // The QA methodology is an ordinary artifact...
+    const methodology = await publish(
+      "QA Methodology",
+      "# QA Methodology\n\nAlways check the health endpoint first. Grade PASS or FAIL. UNIQUE-MARKER-7391.",
+    )
+    // ...a context packages it (the agent auto-mints, #525)...
+    const ctxRes = await app.request(
+      "/v1/contexts",
+      jsonAs(as(owner.email), { name: "QA Runner", manifest_short_id: methodology.short_id }),
+    )
+    expect(ctxRes.status).toBe(201)
+    const ctx = (await ctxRes.json()) as { id: string; agent_token: string }
+
+    // ...and the automation binds it: no agentId passed, so it runs AS the context's agent.
+    const report = await publish("QA Report", "# QA Report\n\nStatus: never run")
+    const auto = (await (
+      await post("/v1/automations", {
+        trigger: { kind: "manual" },
+        instruction: `Run the QA checks and update ${report.short_id}.`,
+        refs: [{ kind: "artifact", id: report.short_id, mode: "publish" }],
+        contextId: ctx.id,
+      })
+    ).json()) as { id: string; context_id: string; agent_token?: string }
+    expect(auto.context_id).toBe(ctx.id)
+    // The context's agent acts — no second agent was minted for the automation.
+    expect(auto.agent_token).toBeUndefined()
+
+    await app.request(`/v1/automations/${auto.id}/run`, {
+      method: "POST",
+      headers: as(owner.email),
+    })
+
+    // The claim carries the context, and serveRun materializes it: prove the methodology text
+    // reached the MODEL by having the fake executor echo its own --append-system-prompt arg.
+    const cwd = mkdtempSync(join(tmpdir(), "qa-ctx-"))
+    const bin = join(cwd, "fake-claude.cjs")
+    writeFileSync(
+      bin,
+      `#!/usr/bin/env node
+const i = process.argv.indexOf("--append-system-prompt")
+const sys = i >= 0 ? process.argv[i + 1] : "(none)"
+const marker = sys.includes("UNIQUE-MARKER-7391") ? "METHODOLOGY-PRESENT" : "METHODOLOGY-MISSING"
+const revision = { content: "# QA Report\\n\\nStatus: PASS (" + marker + ")", filename: "notes.md", confidence: 0.9, message: "qa run" }
+process.stdout.write(JSON.stringify({ type: "system", session_id: "fake" }) + "\\n")
+process.stdout.write(JSON.stringify({ type: "result", result: "<revision>" + JSON.stringify(revision) + "</revision>" }) + "\\n")
+`,
+    )
+    chmodSync(bin, 0o755)
+    // Drive the REAL hosted entry (runOnce): it claims, resolves the bound context through
+    // bootHost (manifest + skills over the live socket, as the context's own agent), and runs.
+    const { runOnce } = (await import("../../../packages/cli/src/runner.js")) as unknown as {
+      runOnce: (cfg: Record<string, unknown>) => Promise<{ served: number; failed: number }>
+    }
+    const counts = await runOnce({
+      server: base,
+      token: ctx.agent_token,
+      cwd,
+      mock: false,
+      providerName: "claude-code",
+      agentBin: bin,
+      model: "sonnet",
+      timeoutMs: 30_000,
+    })
+    expect(counts).toMatchObject({ served: 1, failed: 0 })
+
+    const body = await content(report.short_id)
+    expect(body).toContain("Status: PASS")
+    // The load-bearing assertion: the context's manifest text reached the MODEL's system
+    // prompt. This is what makes the automation a scheduled use(context, instruction) rather
+    // than a bare job that happens to share an agent.
+    expect(body).toContain("METHODOLOGY-PRESENT")
+  })
+})

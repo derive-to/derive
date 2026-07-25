@@ -191,6 +191,7 @@ CREATE TABLE IF NOT EXISTS automation (
   instruction TEXT NOT NULL,
   refs TEXT,
   connection_ids TEXT,
+  context_id TEXT,
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
