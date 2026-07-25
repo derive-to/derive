@@ -23,6 +23,37 @@ describe("GET /skill.md", () => {
   })
 })
 
+describe("GET /.well-known/skills/*", () => {
+  it("serves the Agent Skills Discovery index and the skill file", async () => {
+    const idx = await anonApp.request("/.well-known/skills/index.json")
+    expect(idx.status).toBe(200)
+    const j = (await idx.json()) as {
+      skills: { name: string; description: string; files: string[] }[]
+    }
+    expect(j.skills).toHaveLength(1)
+    const skill = j.skills[0]
+    if (!skill) throw new Error("no skill entry")
+    // Spec name grammar: lowercase alphanumeric + hyphens.
+    expect(skill.name).toMatch(/^[a-z0-9-]{1,64}$/)
+    expect(skill.name).toBe("derive")
+    // The description is parsed from the generated skill's frontmatter — it must
+    // carry the trigger words, not a fallback stub.
+    expect(skill.description).toContain("Derive")
+    expect(skill.description.length).toBeGreaterThan(100)
+    expect(skill.files).toEqual(["SKILL.md"])
+
+    const md = await anonApp.request("/.well-known/skills/derive/SKILL.md")
+    expect(md.status).toBe(200)
+    expect(md.headers.get("content-type")).toContain("text/markdown")
+    expect(await md.text()).toContain("name: derive")
+  })
+
+  it("404s unknown paths under the prefix as JSON, never the SPA shell", async () => {
+    const r = await anonApp.request("/.well-known/skills/nope/SKILL.md")
+    expect(r.status).toBe(404)
+  })
+})
+
 describe("GET /.well-known/agent.json", () => {
   it("serves an instance-relative capability manifest to an anonymous caller", async () => {
     const r = await anonApp.request("https://example.test/.well-known/agent.json")
