@@ -289,7 +289,7 @@ const countInFlight = async (meta: MetaStore, orgId: string, now: Date): Promise
 export const dispatchRunNow = async (deps: DispatchDeps, runId: string): Promise<boolean> => {
   try {
     const r = await deps.meta.getRun(runId)
-    if (!r || r.status !== "queued") return false
+    if (r?.status !== "queued") return false
     // The master switch applies to the fast path too, or "Run now" would bypass the one
     // control an operator reaches for to stop everything.
     const settings = await deps.meta.getOrgSettings(r.org_id).catch(() => null)

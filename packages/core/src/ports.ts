@@ -1038,7 +1038,8 @@ export interface AgentStore {
   /** Enqueue or record a run. status defaults to "queued" (pending work); pass a terminal
    *  status to record an already-finished run straight into the ledger. */
   createRun(r: NewRun): Promise<RunRecord>
-  /** One run by id — the model-credential endpoint resolves a run's initiator through this. */
+  /** One run by id, or null. Resolves a run's initiator for the model-credential endpoint, its
+   *  automation for the tool endpoint, and its liveness when a capability token is presented. */
   getRun(id: string): Promise<RunRecord | null>
   /** One agent by id — resolves a run capability token to its agent principal. */
   getAgent(id: string): Promise<AgentRecord | null>
@@ -1087,8 +1088,6 @@ export interface AgentStore {
   ): Promise<RunRecord | null>
   /** The workspace's recent runs, newest first (the activity view / ledger). Default 50. */
   listRuns(orgId: string, limit?: number): Promise<RunRecord[]>
-  /** One run by id, or null — resolves a claimed run to its automation for the tool endpoint. */
-  getRun(id: string): Promise<RunRecord | null>
   /** The newest run for an automation by scheduled_for (any status), or null. The schedule tick
    *  reads it to decide whether the current cron occurrence has already been materialized — so a
    *  runner polling several times inside one cron window enqueues exactly one run. */
