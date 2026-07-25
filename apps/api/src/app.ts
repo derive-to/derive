@@ -215,6 +215,13 @@ export function createApp(deps: AppDeps): Hono {
         prefix,
         rawPath,
         a.expires_at ? "no-store" : cacheControlFor(a.link_role, !!a.password_hash),
+        undefined, // onMismatch: the raw route owns content-type self-healing
+        undefined, // transformHtml
+        true, // reflow
+        // No anchor client: these hosts are top-level pages, never embedded by the
+        // app viewer, so its hover/selection comment UI would render but reach no
+        // host — a "Comment" chip that can't comment.
+        false,
       )
     }
     app.use("*", async (c, next) => {

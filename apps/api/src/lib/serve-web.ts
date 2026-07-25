@@ -1,5 +1,6 @@
 import { serveStatic } from "@hono/node-server/serve-static"
 import type { Hono } from "hono"
+import { STATIC_NAMESPACE_PREFIXES } from "./static-namespaces"
 
 /**
  * The single source of truth for which request paths the API/server owns. Every
@@ -68,11 +69,18 @@ export const API_PATHS: readonly string[] = [...API_PREFIXES, ...API_EXACT]
 export const isApiPath = (path: string): boolean =>
   API_PREFIXES.some((p) => path.startsWith(p)) || (API_EXACT as readonly string[]).includes(path)
 
+// The static namespaces (see lib/static-namespaces.ts for why they're worker-first
+// on the edge). Deliberately NOT in `isApiPath` (an unmatched one must fall back to
+// the shell, never JSON) and not in the dev proxy (Vite serves them itself in dev);
+// on Node, mountWeb's own routes below serve them and domain mode runs first.
+
 /** The `run_worker_first` globs this contract implies: API prefixes + the
- *  server-rendered page prefixes (both → `/*`), plus the exact paths as-is. */
+ *  server-rendered page prefixes + the static namespaces (all → `/*`), plus the
+ *  exact paths as-is. */
 export const workerFirstGlobs = (): string[] => [
   ...API_PREFIXES.map((p) => `${p}/*`),
   ...SERVER_PAGE_PREFIXES.map((p) => `${p}/*`),
+  ...STATIC_NAMESPACE_PREFIXES.map((p) => `${p}/*`),
   ...API_EXACT,
   ...MARKETING_EXACT,
 ]

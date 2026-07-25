@@ -39,8 +39,16 @@ describe("POST /v1/drafts (anonymous mint)", () => {
     // Live on its own host, never CDN-cacheable.
     const served = await drafts.request(`http://${body.short_id}.${BASE}/`)
     expect(served.status).toBe(200)
-    expect(await served.text()).toContain("Hello draft")
+    const html = await served.text()
+    expect(html).toContain("Hello draft")
     expect(served.headers.get("cache-control")).toBe("no-store")
+    // Standalone hosts get no anchor client: its comment UI only works embedded in
+    // the app viewer, and a vanity/draft page is never iframed by the app.
+    expect(html).not.toContain("/raw/derive-client.js")
+    // The same artifact through the raw route (which the viewer embeds) keeps it.
+    const raw = await drafts.request(`/raw/${body.short_id}/v/1/index.html`)
+    expect(raw.status).toBe(200)
+    expect(await raw.text()).toContain("/raw/derive-client.js")
   })
 
   it("forces the draft access shape — client access fields are ignored", async () => {
