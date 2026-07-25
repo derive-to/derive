@@ -1,7 +1,7 @@
 // The managed executor from the built-in agent plan: pg-boss (cron + retries +
 // singleton-per-queue, all in Postgres) drains OWNER-run contexts via `derive
 // runner once`, and — when the hosted lane is configured — an internal HTTP
-// surface (WP3) runs SHARED hosted agents live. The Derive API, the model, and
+// surface runs SHARED hosted agents live. The Derive API, the model, and
 // the answer contract live in the runner and the hosted-agent harness; the
 // dispatcher owns scheduling + process lifecycle only.
 import { serve } from "@hono/node-server"

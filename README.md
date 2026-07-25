@@ -101,7 +101,10 @@ Also included:
 
 ## Roadmap
 
-Pages you ask for and never maintain.
+The roadmap is a living Derive artifact — maintained through its own review loop,
+versioned on every revision — at **[derive.to/roadmap](https://derive.to/roadmap)**
+(themes snapshot in [ROADMAP.md](ROADMAP.md)). The direction in one line: pages you
+ask for and never maintain.
 
 - **Living pages.** Describe a page in one sentence. A context builds it; a schedule keeps it current. Same URL, new version each run.
 - **Provenance.** Every generated artifact names the context and brief that produced it. Feedback goes on the brief; the next run picks it up.

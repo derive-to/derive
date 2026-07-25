@@ -559,7 +559,7 @@ describe("runner liveness: the queue poll stamps runner_seen_at, throttled", () 
   })
 })
 
-// WP3: the runner's config fetch carries the resolved Brandprint — its only window
+// The runner's config fetch carries the resolved Brandprint — its only window
 // into workspace conventions. Agent-branch only; a human never sees runner config.
 describe("contexts: the config fetch carries the resolved Brandprint", () => {
   const owner: TestUser = { id: "u_bp_own", email: "bpown@derive.test", name: "Owner" }

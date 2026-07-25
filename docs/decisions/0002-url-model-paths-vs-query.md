@@ -1,6 +1,6 @@
 # ADR 0002 — URL model: named feeds are paths, filters are query params
 
-**Status:** accepted (2026-07-03, mert)
+**Status:** accepted (2026-07-03)
 
 ## Context
 

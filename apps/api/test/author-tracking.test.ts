@@ -254,7 +254,7 @@ describe("self-healing bylines — a stale byline resolves to the live user", ()
     )
     raw
       .prepare(`INSERT OR IGNORE INTO user (id, email, name, username) VALUES (?,?,?,?)`)
-      .run("u_cli", "anir@x.test", "Anir Agarwal", "anir")
+      .run("u_cli", "maya@x.test", "Maya Iyer", "maya")
     raw.close()
 
     // Simulate a pre-fix CLI publish: the byline string is frozen as the OAuth client name,
@@ -285,13 +285,13 @@ describe("self-healing bylines — a stale byline resolves to the live user", ()
       await app.request(`/v1/artifacts/${art.short_id}`, { headers: auth })
     ).json()
     // Both the version byline and the current-author profile heal to the live user.
-    expect(detail.versions[0].author).toBe("Anir Agarwal")
-    expect(detail.versions[0].handle).toBe("anir")
-    expect(detail.author).toMatchObject({ name: "Anir Agarwal", handle: "anir" })
+    expect(detail.versions[0].author).toBe("Maya Iyer")
+    expect(detail.versions[0].handle).toBe("maya")
+    expect(detail.author).toMatchObject({ name: "Maya Iyer", handle: "maya" })
 
     // And the list view heals the same way (no stale name on the card).
     const list = await (await app.request("/v1/artifacts?limit=100", { headers: auth })).json()
     const row = list.artifacts.find((a: { short_id: string }) => a.short_id === art.short_id)
-    expect(row.author).toMatchObject({ name: "Anir Agarwal", handle: "anir" })
+    expect(row.author).toMatchObject({ name: "Maya Iyer", handle: "maya" })
   })
 })
