@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
-import { agentsQuery } from "@/lib/queries"
+import { agentsQuery, modelCredentialsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { ModelPlanManager } from "./model-plan-manager"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
@@ -29,6 +29,9 @@ export function AgentsSection({ meId }: { meId: string }) {
   const qc = useQueryClient()
   const { data: agents, isPending, isError, refetch } = useQuery(agentsQuery())
   const reload = () => qc.invalidateQueries({ queryKey: agentsQuery().queryKey })
+  // The per-agent lend toggle is inert until YOU have a plan connected, so gate it on that.
+  const { data: myPlans } = useQuery(modelCredentialsQuery())
+  const hasPersonalPlan = (myPlans?.length ?? 0) > 0
 
   return (
     <SettingsSection
@@ -69,7 +72,13 @@ export function AgentsSection({ meId }: { meId: string }) {
           {agents
             .filter((a) => !a.managed)
             .map((a) => (
-              <AgentRow key={a.id} agent={a} meId={meId} onDone={reload} />
+              <AgentRow
+                key={a.id}
+                agent={a}
+                meId={meId}
+                hasPersonalPlan={hasPersonalPlan}
+                onDone={reload}
+              />
             ))}
         </SettingsGroup>
       )}
@@ -184,7 +193,17 @@ function NewAgent({ onCreated }: { onCreated: () => void }) {
   )
 }
 
-function AgentRow({ agent, meId, onDone }: { agent: Agent; meId: string; onDone: () => void }) {
+function AgentRow({
+  agent,
+  meId,
+  hasPersonalPlan,
+  onDone,
+}: {
+  agent: Agent
+  meId: string
+  hasPersonalPlan: boolean
+  onDone: () => void
+}) {
   const [confirming, setConfirming] = useState(false)
   const [rotated, setRotated] = useState<string | null>(null)
   const remove = useApiMutation({
@@ -261,9 +280,11 @@ function AgentRow({ agent, meId, onDone }: { agent: Agent; meId: string; onDone:
             data-testid={`agent-lend-${agent.id}`}
             checked={agent.owner_lend}
             onCheckedChange={(v) => lend.mutate(v)}
-            disabled={lend.isPending}
+            disabled={lend.isPending || !hasPersonalPlan}
           />
-          Run on my plan when a request has no plan of its own
+          {hasPersonalPlan
+            ? "Fall back to my plan when a run has none of its own"
+            : "Connect your plan under Account → Model plans to lend it here"}
         </label>
       )}
       {rotated && (
