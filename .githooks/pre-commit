@@ -1,8 +1,11 @@
 #!/bin/sh
-# Pre-commit: the fast half of CI's "check" job — biome (lint + format +
-# organize-imports) plus the custom guardrails — so a format/import/testid slip is
-# caught here instead of on a red CI run. Typecheck, tests, and knip stay in CI
-# (too slow to run on every commit).
+# Pre-commit: `pnpm run ci`, which is CI's first check step verbatim — biome plus
+# every custom guardrail, including knip. It delegates rather than listing the
+# checks again, because a hook that keeps its own shorter list drifts from the
+# pipeline and then reports green on work CI rejects. ~8s.
+#
+# The slow half (typecheck + the coverage ratchet) runs in pre-push, where a
+# minute is affordable; together the two hooks cover CI's whole `check` job.
 #
 # Enabled automatically via the package.json "prepare" script
 # (git config core.hooksPath .githooks) on `pnpm install`.
