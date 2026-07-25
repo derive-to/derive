@@ -145,7 +145,7 @@ export function Settings() {
             {active === "integrations" && <IntegrationsSection />}
             {active === "github" && <GithubSection />}
             {active === "webhooks" && <WebhooksSection />}
-            {active === "agents" && <AgentsSection />}
+            {active === "agents" && <AgentsSection meId={me.id} />}
             {active === "automations" && <AutomationsSection />}
             {active === "domains" && <CustomDomainsSection />}
             {active === "reports" && (

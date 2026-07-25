@@ -839,10 +839,18 @@ export async function resolveModelEnv(cfg, client, sessionId = null) {
 
 async function bootHost(cfg, modeLabel) {
   const client = new DeriveClient(cfg.server, cfg.token)
-  // Preflight only — verifies SOME credential path exists (registrant plan or ambient)
-  // so misconfiguration fails at boot with a clear message, not at the first answer.
-  // The overlay is discarded: each session resolves its own initiator's credential.
-  await resolveModelEnv(cfg, client)
+  // Preflight only, and non-fatal. With per-initiator billing each session resolves and
+  // fails closed on its own (line ~707), so a host legitimately boots with no DEFAULT plan
+  // — owner-lend off, no workspace pool, no ambient token — and still serves askers who
+  // bring their own. Surface the gap in the log; don't block startup on it. The overlay is
+  // discarded regardless: each session resolves its own initiator's credential.
+  try {
+    await resolveModelEnv(cfg, client)
+  } catch (e) {
+    console.error(
+      `[runner] no default model plan at boot (${e.message}); sessions resolve per-initiator`,
+    )
+  }
   const info = await client.getContext(cfg.contextId)
   if (!info.manifest_md && !cfg.manifestFile) throw new Error("context has no readable manifest")
   const readManifest = () =>

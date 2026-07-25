@@ -18,12 +18,14 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
+import { Switch } from "@/components/ui/switch"
 import { agentsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { ModelPlanManager } from "./model-plan-manager"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
-export function AgentsSection() {
+export function AgentsSection({ meId }: { meId: string }) {
   const qc = useQueryClient()
   const { data: agents, isPending, isError, refetch } = useQuery(agentsQuery())
   const reload = () => qc.invalidateQueries({ queryKey: agentsQuery().queryKey })
@@ -67,10 +69,24 @@ export function AgentsSection() {
           {agents
             .filter((a) => !a.managed)
             .map((a) => (
-              <AgentRow key={a.id} agent={a} onDone={reload} />
+              <AgentRow key={a.id} agent={a} meId={meId} onDone={reload} />
             ))}
         </SettingsGroup>
       )}
+
+      {/* How agent runs get billed. A run bills the person who triggered it; if they have
+          no connected plan, it falls to the agent OWNER's plan (only for agents the owner
+          lent, above) and then to this shared pool. Empty pool = everyone brings their own. */}
+      <div className="mt-6 flex flex-col gap-3 border-t pt-6">
+        <div>
+          <div className="text-sm font-medium text-foreground">Workspace model plan pool</div>
+          <p className="mt-0.5 text-2xs text-muted-foreground">
+            A shared plan billed when a run's initiator has no plan of their own and the agent isn't
+            lent its owner's. Optional — leave it empty to require everyone to bring their own.
+          </p>
+        </div>
+        <ModelPlanManager scope="pool" />
+      </div>
     </SettingsSection>
   )
 }
@@ -168,7 +184,7 @@ function NewAgent({ onCreated }: { onCreated: () => void }) {
   )
 }
 
-function AgentRow({ agent, onDone }: { agent: Agent; onDone: () => void }) {
+function AgentRow({ agent, meId, onDone }: { agent: Agent; meId: string; onDone: () => void }) {
   const [confirming, setConfirming] = useState(false)
   const [rotated, setRotated] = useState<string | null>(null)
   const remove = useApiMutation({
@@ -182,6 +198,14 @@ function AgentRow({ agent, onDone }: { agent: Agent; onDone: () => void }) {
     mutationFn: () => api.rotateAgent(agent.id),
     success: `Token rotated for ${agent.name}`,
     onSuccess: (a) => setRotated(a.token),
+  })
+  // Only the agent's OWNER may lend their own plan to it (default off). Others don't see it.
+  const isOwner = agent.created_by === meId
+  const lend = useApiMutation<{ ok: true }, boolean>({
+    mutationFn: (enabled) => api.setAgentOwnerLend(agent.id, enabled),
+    success: (_r, enabled) =>
+      enabled ? `@${agent.name} may run on your plan` : `@${agent.name} won't use your plan`,
+    onSuccess: () => onDone(),
   })
   return (
     <div data-testid={`agent-row-${agent.id}`} className="flex flex-col py-3">
@@ -227,6 +251,21 @@ function AgentRow({ agent, onDone }: { agent: Agent; onDone: () => void }) {
           onConfirm={() => remove.mutate()}
         />
       </div>
+      {isOwner && (
+        <label
+          htmlFor={`agent-lend-${agent.id}`}
+          className="mt-2 flex items-center gap-2 pl-10 text-2xs text-muted-foreground"
+        >
+          <Switch
+            id={`agent-lend-${agent.id}`}
+            data-testid={`agent-lend-${agent.id}`}
+            checked={agent.owner_lend}
+            onCheckedChange={(v) => lend.mutate(v)}
+            disabled={lend.isPending}
+          />
+          Run on my plan when a request has no plan of its own
+        </label>
+      )}
       {rotated && (
         <div data-testid={`agent-rotated-${agent.id}`} className="mt-2">
           <StatusPanel

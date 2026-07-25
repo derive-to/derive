@@ -5789,6 +5789,10 @@ export interface components {
             hosted: boolean;
             /** @description Auto-minted for one context at creation — the context's Derive access, not a user-named persona. Hidden from the roster UI. */
             managed: boolean;
+            /** @description The user who registered the agent — who it publishes and bills on behalf of. */
+            created_by: string | null;
+            /** @description When true, this agent may bill its OWNER's own model plan as a fallback (initiator -> owner -> pool). Only the owner toggles it; default off. */
+            owner_lend: boolean;
             created_at: string;
         };
         ConnectedAgent: {

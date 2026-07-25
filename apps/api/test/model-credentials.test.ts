@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
-// Per-user model-plan credentials. A member connects their OWN plan token (encrypted at
-// rest); the executor fetches it via an agent bearer — scoped to the agent's registrant, so
-// one user's token never reaches another user's runs. Isolation is the point of these tests.
+// Model-plan credentials + the chain the executor bills against:
+//   initiator (asker/clicker)  ->  owner (only if THIS agent is lent)  ->  workspace pool  ->  null
+// A member connects their OWN plan token (encrypted at rest). The owner fallback is OFF by
+// default — it applies only to agents the owner has explicitly lent — so isolation AND the
+// default-closed gate are what these tests pin down.
 describe("model credentials", () => {
   const owner: TestUser = { id: "u_mc_own", email: "mcown@derive.test", name: "Owner" }
   const other: TestUser = { id: "u_mc_oth", email: "mcoth@derive.test", name: "Other" }
@@ -18,6 +20,14 @@ describe("model credentials", () => {
   }
   const connect = (email: string, body: object) =>
     app.request("/v1/me/model-credentials", jsonAs(as(email), body))
+  const lend = (email: string, agentId: string, enabled: boolean) =>
+    app.request(`/v1/workspace/owner-lend/${agentId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...as(email) },
+      body: JSON.stringify({ enabled }),
+    })
+  const agentCred = (token: string, provider = "codex") =>
+    app.request(`/v1/agent/model-credential?provider=${provider}`, { headers: bearer(token) })
 
   it("connect stores an encrypted secret; list returns hints only, never the token", async () => {
     const token = "sk-ant-oat01-SUPERSECRETVALUE9999"
@@ -34,67 +44,44 @@ describe("model credentials", () => {
     expect(JSON.stringify(list)).not.toContain(token)
   })
 
-  it("the agent surface returns the DECRYPTED credential of the agent's own registrant", async () => {
-    await connect(owner.email, {
-      provider: "codex",
-      kind: "api_key",
-      token: "owner-plan-fixture-value",
-    })
+  it("owner-lend is OFF by default: a no-initiator fetch is null even though the owner has a plan", async () => {
+    await connect(owner.email, { provider: "codex", kind: "api_key", token: "owner-plan-fixture" })
     const agent = await mintAgent(owner.email, "Owner Runner")
-    const got = await (
-      await app.request("/v1/agent/model-credential?provider=codex", {
-        headers: bearer(agent.token),
-      })
-    ).json()
-    // Decrypted round-trip: the runner gets the real value to inject.
-    expect(got.credential).toEqual({ kind: "api_key", value: "owner-plan-fixture-value" })
+    const got = await (await agentCred(agent.token)).json()
+    // The owner has a plan, but this agent isn't lent — fail closed, don't silently bill them.
+    expect(got.credential).toBeNull()
   })
 
-  it("ISOLATION: the endpoint resolves ONLY the calling agent's registrant + provider", async () => {
-    // Owner connects codex, but NOT claude-code. Their own agent gets the codex token and
-    // null for claude-code — the lookup is keyed (org, registrant, provider), so it can only
-    // ever return this agent-owner's own row. Cross-USER keying (one user's row is never
+  it("once the owner lends THIS agent, the fetch returns the owner's decrypted plan (source owner)", async () => {
+    await connect(owner.email, { provider: "codex", kind: "api_key", token: "owner-plan-lent" })
+    const agent = await mintAgent(owner.email, "Lent Runner")
+    const on = await lend(owner.email, agent.id, true)
+    expect(on.status).toBe(200)
+    const got = await (await agentCred(agent.token)).json()
+    expect(got.credential).toEqual({ kind: "api_key", value: "owner-plan-lent" })
+    expect(got.source).toBe("owner")
+    // Un-lending closes it again — the gate is live, not a one-way latch.
+    await lend(owner.email, agent.id, false)
+    expect((await (await agentCred(agent.token)).json()).credential).toBeNull()
+  })
+
+  it("ISOLATION: a lent agent resolves ONLY its owner's row, and only the asked provider", async () => {
+    // Owner connects codex, but NOT claude-code. Cross-USER keying (one user's row is never
     // another's) is proven exhaustively in the db store-contract (u1 vs u2).
     await connect(owner.email, { provider: "codex", kind: "api_key", token: "sk-owner-only" })
     const agent = await mintAgent(owner.email, "Owner Runner 2")
-    const codexGot = await (
-      await app.request("/v1/agent/model-credential?provider=codex", {
-        headers: bearer(agent.token),
-      })
-    ).json()
-    expect(codexGot.credential?.value).toBe("sk-owner-only")
-    const claudeGot = await (
-      await app.request("/v1/agent/model-credential?provider=claude-code", {
-        headers: bearer(agent.token),
-      })
-    ).json()
-    expect(claudeGot.credential).toBeNull()
+    await lend(owner.email, agent.id, true)
+    expect((await (await agentCred(agent.token, "codex")).json()).credential?.value).toBe(
+      "sk-owner-only",
+    )
+    // Even lent, an unconnected provider is null — never another provider's row.
+    expect((await (await agentCred(agent.token, "claude-code")).json()).credential).toBeNull()
   })
 
-  it("a missing provider connection is null (fail-closed at the runner), not a leak", async () => {
-    const agent = await mintAgent(owner.email, "Runner 2")
-    const got = await (
-      await app.request("/v1/agent/model-credential?provider=claude-code", {
-        headers: bearer(agent.token),
-      })
-    ).json()
-    expect(got.credential).toBeNull()
-  })
-
-  it("disconnect removes it; the agent then gets null", async () => {
-    await connect(owner.email, { provider: "codex", kind: "oauth", token: "sk-to-delete" })
-    const del = await app.request("/v1/me/model-credentials/codex", {
-      method: "DELETE",
-      headers: as(owner.email),
-    })
-    expect(del.status).toBe(204)
-    const agent = await mintAgent(owner.email, "Runner 3")
-    const got = await (
-      await app.request("/v1/agent/model-credential?provider=codex", {
-        headers: bearer(agent.token),
-      })
-    ).json()
-    expect(got.credential).toBeNull()
+  it("only the agent's OWNER may lend; a non-admin member is refused", async () => {
+    const agent = await mintAgent(owner.email, "Guarded Runner")
+    const res = await lend(other.email, agent.id, true)
+    expect([401, 403]).toContain(res.status)
   })
 
   it("the agent surface requires an agent bearer", async () => {
@@ -103,10 +90,90 @@ describe("model credentials", () => {
   })
 })
 
+// The workspace POOL (a sentinel-user credential row) is the org's shared plan, billed only
+// when nobody more specific is on the hook. And owner-lend OUTRANKS the pool: a deliberate
+// per-agent grant is honored before the shared wallet.
+describe("model credentials: workspace pool + owner-lend precedence", () => {
+  const owner: TestUser = { id: "u_mcp_own", email: "mcpown@derive.test", name: "Owner" }
+  const editor: TestUser = { id: "u_mcp_ed", email: "mcped@derive.test", name: "Editor" }
+  const { app } = makeAuthedApp("model-creds-pool", [owner, editor], "editor", {
+    deps: { encryptionKey: "test-enc-secret" },
+  })
+  const mintAgent = async (name: string) =>
+    (await (await app.request("/v1/agents", jsonAs(as(owner.email), { name }))).json()) as {
+      id: string
+      token: string
+    }
+  const connectPool = (email: string, body: object) =>
+    app.request("/v1/workspace/model-credentials", jsonAs(as(email), body))
+  const lend = (agentId: string, enabled: boolean) =>
+    app.request(`/v1/workspace/owner-lend/${agentId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      body: JSON.stringify({ enabled }),
+    })
+  const agentCred = (token: string) =>
+    app.request("/v1/agent/model-credential?provider=codex", { headers: bearer(token) })
+
+  it("a non-admin cannot connect the workspace pool", async () => {
+    const res = await connectPool(editor.email, {
+      provider: "codex",
+      kind: "api_key",
+      token: "sk-pool-nope",
+    })
+    expect([401, 403]).toContain(res.status)
+  })
+
+  it("the pool bills a run when nobody is lent (source pool)", async () => {
+    const res = await connectPool(owner.email, {
+      provider: "codex",
+      kind: "api_key",
+      token: "sk-workspace-pool",
+    })
+    expect(res.status).toBe(201)
+    const agent = await mintAgent("Pool Runner")
+    const got = await (await agentCred(agent.token)).json()
+    expect(got.credential).toEqual({ kind: "api_key", value: "sk-workspace-pool" })
+    expect(got.source).toBe("pool")
+  })
+
+  it("owner-lend OUTRANKS the pool: a lent agent bills the owner, not the pool", async () => {
+    await app.request(
+      "/v1/me/model-credentials",
+      jsonAs(as(owner.email), {
+        provider: "codex",
+        kind: "api_key",
+        token: "sk-owner-over-pool",
+      }),
+    )
+    const agent = await mintAgent("Precedence Runner")
+    await lend(agent.id, true)
+    const got = await (await agentCred(agent.token)).json()
+    expect(got.credential?.value).toBe("sk-owner-over-pool")
+    expect(got.source).toBe("owner")
+  })
+
+  it("the pool is hints-only on GET and removable; deleting it re-closes the fallback", async () => {
+    const list = await (
+      await app.request("/v1/workspace/model-credentials", { headers: as(owner.email) })
+    ).json()
+    expect(list.credentials.some((c: { provider: string }) => c.provider === "codex")).toBe(true)
+    expect(JSON.stringify(list)).not.toContain("sk-workspace-pool")
+    const del = await app.request("/v1/workspace/model-credentials/codex", {
+      method: "DELETE",
+      headers: as(owner.email),
+    })
+    expect(del.status).toBe(204)
+    // Pool gone and nobody lent → a fresh agent is fail-closed.
+    const agent = await mintAgent("Post-Delete Runner")
+    expect((await (await agentCred(agent.token)).json()).credential).toBeNull()
+  })
+})
+
 // The initiator chain: a session-keyed fetch bills the run's ASKER first — their question,
-// their tokens — and only falls back to the agent's registrant when the asker has no plan
-// (the interim chain until the workspace pool lands). Session ids resolve ONLY within the
-// calling agent's own context: anything else is a 404, so foreign ids neither leak nor bill.
+// their tokens. Only when the asker has no plan does it consider the owner (and only if the
+// agent is lent). Session ids resolve ONLY within the calling agent's own context: anything
+// else is a 404, so foreign ids neither leak nor bill.
 describe("model credentials: session-keyed initiator resolution", () => {
   const owner: TestUser = { id: "u_mcs_own", email: "mcsown@derive.test", name: "Owner" }
   const asker: TestUser = { id: "u_mcs_ask", email: "mcsask@derive.test", name: "Asker" }
@@ -116,6 +183,7 @@ describe("model credentials: session-keyed initiator resolution", () => {
   const connect = (email: string, body: object) =>
     app.request("/v1/me/model-credentials", jsonAs(as(email), body))
 
+  let agentId: string
   let agentToken: string
   let sessionId: string
 
@@ -125,6 +193,7 @@ describe("model credentials: session-keyed initiator resolution", () => {
     const ag = await (
       await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Shared Analyst" }))
     ).json()
+    agentId = ag.id
     agentToken = ag.token
     const manifest = await (await publishAs(app, "# Shared manifest", {}, as(owner.email))).json()
     const ctx = await (
@@ -152,7 +221,7 @@ describe("model credentials: session-keyed initiator resolution", () => {
     await connect(owner.email, {
       provider: "claude-code",
       kind: "api_key",
-      token: "sk-registrant-plan",
+      token: "sk-owner-plan",
     })
     await connect(asker.email, {
       provider: "claude-code",
@@ -161,7 +230,7 @@ describe("model credentials: session-keyed initiator resolution", () => {
     })
   })
 
-  it("a session-keyed fetch returns the ASKER's plan, not the registrant's", async () => {
+  it("a session-keyed fetch returns the ASKER's plan, not the owner's", async () => {
     const got = await (
       await app.request(`/v1/agent/model-credential?provider=claude-code&session=${sessionId}`, {
         headers: bearer(agentToken),
@@ -171,7 +240,7 @@ describe("model credentials: session-keyed initiator resolution", () => {
     expect(got.source).toBe("asker")
   })
 
-  it("an asker with no plan falls back to the registrant (interim, until the pool)", async () => {
+  it("an asker with no plan is null by default (owner not lent, no pool) — fail closed", async () => {
     await app.request("/v1/me/model-credentials/claude-code", {
       method: "DELETE",
       headers: as(asker.email),
@@ -181,8 +250,22 @@ describe("model credentials: session-keyed initiator resolution", () => {
         headers: bearer(agentToken),
       })
     ).json()
-    expect(got.credential).toEqual({ kind: "api_key", value: "sk-registrant-plan" })
-    expect(got.source).toBe("registrant")
+    expect(got.credential).toBeNull()
+  })
+
+  it("an asker with no plan uses the OWNER's plan once the agent is lent (source owner)", async () => {
+    await app.request(`/v1/workspace/owner-lend/${agentId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      body: JSON.stringify({ enabled: true }),
+    })
+    const got = await (
+      await app.request(`/v1/agent/model-credential?provider=claude-code&session=${sessionId}`, {
+        headers: bearer(agentToken),
+      })
+    ).json()
+    expect(got.credential).toEqual({ kind: "api_key", value: "sk-owner-plan" })
+    expect(got.source).toBe("owner")
   })
 
   it("ISOLATION: a session outside the calling agent's context is a 404, not a bill", async () => {
@@ -197,7 +280,7 @@ describe("model credentials: session-keyed initiator resolution", () => {
     expect(res.status).toBe(404)
   })
 
-  it("an unknown session id is a 404, never a silent registrant fallback", async () => {
+  it("an unknown session id is a 404, never a silent owner fallback", async () => {
     const res = await app.request(
       "/v1/agent/model-credential?provider=claude-code&session=ses_nope",
       { headers: bearer(agentToken) },
@@ -207,8 +290,8 @@ describe("model credentials: session-keyed initiator resolution", () => {
 })
 
 // The automation lane of the same chain: ?run= resolves the run's initiated_by (the person
-// who clicked Run now) before the registrant; a clock/event run (null initiator) falls
-// straight through. Run ids resolve only for the agent the run belongs to — 404 otherwise.
+// who clicked Run now) before the owner tier; a clock/event run (null initiator) falls
+// straight through to owner/pool. Run ids resolve only for the agent the run belongs to.
 describe("model credentials: run-keyed initiator resolution", () => {
   const owner: TestUser = { id: "u_mcr_own", email: "mcrown@derive.test", name: "Owner" }
   const clicker: TestUser = { id: "u_mcr_clk", email: "mcrclk@derive.test", name: "Clicker" }
@@ -218,6 +301,7 @@ describe("model credentials: run-keyed initiator resolution", () => {
   const connect = (email: string, body: object) =>
     app.request("/v1/me/model-credentials", jsonAs(as(email), body))
 
+  let agentId: string
   let agentToken: string
   let runId: string
 
@@ -227,6 +311,7 @@ describe("model credentials: run-keyed initiator resolution", () => {
     const ag = await (
       await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Automation Runner" }))
     ).json()
+    agentId = ag.id
     agentToken = ag.token
     const auto = await (
       await app.request(
@@ -249,7 +334,7 @@ describe("model credentials: run-keyed initiator resolution", () => {
     await connect(owner.email, {
       provider: "claude-code",
       kind: "api_key",
-      token: "sk-registrant-plan",
+      token: "sk-owner-plan",
     })
     await connect(clicker.email, {
       provider: "claude-code",
@@ -258,7 +343,7 @@ describe("model credentials: run-keyed initiator resolution", () => {
     })
   })
 
-  it("a run-keyed fetch bills the CLICKER (initiated_by), not the registrant", async () => {
+  it("a run-keyed fetch bills the CLICKER (initiated_by), not the owner", async () => {
     const got = await (
       await app.request(`/v1/agent/model-credential?provider=claude-code&run=${runId}`, {
         headers: bearer(agentToken),
@@ -268,7 +353,7 @@ describe("model credentials: run-keyed initiator resolution", () => {
     expect(got.source).toBe("initiator")
   })
 
-  it("an initiator with no plan falls back to the registrant", async () => {
+  it("an initiator with no plan is null by default (agent not lent, no pool)", async () => {
     await app.request("/v1/me/model-credentials/claude-code", {
       method: "DELETE",
       headers: as(clicker.email),
@@ -278,8 +363,22 @@ describe("model credentials: run-keyed initiator resolution", () => {
         headers: bearer(agentToken),
       })
     ).json()
-    expect(got.credential).toEqual({ kind: "api_key", value: "sk-registrant-plan" })
-    expect(got.source).toBe("registrant")
+    expect(got.credential).toBeNull()
+  })
+
+  it("an initiator with no plan uses the OWNER's plan once the agent is lent", async () => {
+    await app.request(`/v1/workspace/owner-lend/${agentId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      body: JSON.stringify({ enabled: true }),
+    })
+    const got = await (
+      await app.request(`/v1/agent/model-credential?provider=claude-code&run=${runId}`, {
+        headers: bearer(agentToken),
+      })
+    ).json()
+    expect(got.credential).toEqual({ kind: "api_key", value: "sk-owner-plan" })
+    expect(got.source).toBe("owner")
   })
 
   it("ISOLATION: another agent's run id is a 404, not a bill", async () => {
@@ -292,7 +391,7 @@ describe("model credentials: run-keyed initiator resolution", () => {
     expect(res.status).toBe(404)
   })
 
-  it("an unknown run id is a 404, never a silent registrant fallback", async () => {
+  it("an unknown run id is a 404, never a silent owner fallback", async () => {
     const res = await app.request("/v1/agent/model-credential?provider=claude-code&run=run_nope", {
       headers: bearer(agentToken),
     })

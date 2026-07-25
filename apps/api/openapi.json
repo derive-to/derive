@@ -1020,6 +1020,15 @@
             "type": "boolean",
             "description": "Auto-minted for one context at creation — the context's Derive access, not a user-named persona. Hidden from the roster UI."
           },
+          "created_by": {
+            "type": "string",
+            "nullable": true,
+            "description": "The user who registered the agent — who it publishes and bills on behalf of."
+          },
+          "owner_lend": {
+            "type": "boolean",
+            "description": "When true, this agent may bill its OWNER's own model plan as a fallback (initiator -> owner -> pool). Only the owner toggles it; default off."
+          },
           "created_at": {
             "type": "string"
           }
@@ -1030,6 +1039,8 @@
           "role",
           "hosted",
           "managed",
+          "created_by",
+          "owner_lend",
           "created_at"
         ]
       },

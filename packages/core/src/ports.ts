@@ -2114,6 +2114,12 @@ export interface OrgSettings {
    *  the generated brand profile. Absent until set. Mirrored on a profile (user layer);
    *  resolved profile-over-workspace. */
   brandprint?: Brandprint
+  /** Per-agent owner-lend allow-list: agent ids whose OWNER (created_by) has opted that
+   *  agent in to bill the owner's OWN connected model plan when a run's initiator has no
+   *  plan of their own. Default absent = off. Only the agent's owner toggles membership;
+   *  the credential resolver falls to the owner's plan for a listed agent, then the
+   *  workspace pool, then fail-closed. */
+  ownerLendAgents?: string[]
 }
 
 /** How a workspace/profile likes its stuff built: a pointer to a "conventions"
