@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -102,9 +102,17 @@ describe("credentialEnv", () => {
     expect(claudeCode.credentialEnv("oauth", "tok")).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "tok" })
     expect(claudeCode.credentialEnv("api_key", "sk")).toEqual({ ANTHROPIC_API_KEY: "sk" })
   })
-  it("codex maps api_key→OPENAI_API_KEY; a plan (oauth) login is file-based, so null for now", () => {
+  it("codex maps api_key→OPENAI_API_KEY (env); other kinds have no env mapping", () => {
     expect(codex.credentialEnv("api_key", "sk")).toEqual({ OPENAI_API_KEY: "sk" })
+    expect(codex.credentialEnv("login", "blob")).toBeNull()
     expect(codex.credentialEnv("oauth", "tok")).toBeNull()
+  })
+  it("codex maps a plan LOGIN to an auth.json file in CODEX_HOME; other kinds have no file", () => {
+    expect(codex.credentialFiles("login", "BLOB")).toEqual({
+      homeEnv: "CODEX_HOME",
+      files: { "auth.json": "BLOB" },
+    })
+    expect(codex.credentialFiles("api_key", "sk")).toBeNull()
   })
 })
 
@@ -127,7 +135,7 @@ describe("resolveModelEnv — per-initiator overlay, no shared fallback", () => 
   it("returns the initiator's plan as an OVERLAY — process.env is never mutated", async () => {
     clean()
     process.env.CLAUDE_CODE_OAUTH_TOKEN = "host-value-should-survive"
-    const env = await resolveModelEnv(cfg(), client({ kind: "oauth", value: "ASKER-A" }))
+    const { env } = await resolveModelEnv(cfg(), client({ kind: "oauth", value: "ASKER-A" }))
     expect(env).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "ASKER-A" })
     // The overlay is separate from process.env, so the NEXT session starts clean.
     expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("host-value-should-survive")
@@ -182,14 +190,32 @@ describe("resolveModelEnv — per-initiator overlay, no shared fallback", () => 
     clean()
   })
 
-  it("stripModelTokens removes every inherited model-auth var, keeps the rest", () => {
+  it("stripModelTokens removes every inherited model-auth var (incl CODEX_HOME), keeps the rest", () => {
     const stripped = stripModelTokens({
       PATH: "/usr/bin",
       CLAUDE_CODE_OAUTH_TOKEN: "a",
       ANTHROPIC_API_KEY: "b",
       OPENAI_API_KEY: "c",
+      CODEX_HOME: "/home/x/.codex",
     })
     expect(stripped).toEqual({ PATH: "/usr/bin" })
+  })
+
+  it("a Codex plan LOGIN is written to a private per-run CODEX_HOME, then cleaned up", async () => {
+    clean()
+    const authJson = '{"tokens":{"access_token":"a","refresh_token":"r"}}'
+    const { env, cleanup } = await resolveModelEnv(
+      cfg({ providerName: "codex" }),
+      client({ kind: "login", value: authJson }),
+    )
+    // The overlay points Codex at the private dir, nothing else.
+    expect(Object.keys(env)).toEqual(["CODEX_HOME"])
+    const authPath = join(env.CODEX_HOME, "auth.json")
+    expect(readFileSync(authPath, "utf8")).toBe(authJson)
+    // Cleanup removes the dir so the login never lingers between runs.
+    await cleanup()
+    expect(existsSync(env.CODEX_HOME)).toBe(false)
+    clean()
   })
 })
 

@@ -169,7 +169,7 @@ export interface AutomationTrigger {
 /** A connected model-plan credential, as the settings UI sees it — never the secret. */
 export interface ModelCredentialHint {
   provider: "claude-code" | "codex"
-  kind: "oauth" | "api_key"
+  kind: "oauth" | "api_key" | "login"
   hint: string
   updated_at: string
 }
@@ -779,7 +779,7 @@ export const api = {
     f("/v1/me/model-credentials", opts()).then(j),
   connectModelCredential: (input: {
     provider: "claude-code" | "codex"
-    kind: "oauth" | "api_key"
+    kind: "oauth" | "api_key" | "login"
     token: string
   }): Promise<{ ok: true; provider: string; hint: string }> =>
     f("/v1/me/model-credentials", opts(input)).then(j),
@@ -794,7 +794,7 @@ export const api = {
     f("/v1/workspace/model-credentials", opts()).then(j),
   connectPoolCredential: (input: {
     provider: "claude-code" | "codex"
-    kind: "oauth" | "api_key"
+    kind: "oauth" | "api_key" | "login"
     token: string
   }): Promise<{ ok: true; provider: string; hint: string }> =>
     f("/v1/workspace/model-credentials", opts(input)).then(j),

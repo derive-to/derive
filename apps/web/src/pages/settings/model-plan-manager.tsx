@@ -15,26 +15,51 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 import { modelCredentialsQuery, poolCredentialsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 
 type Provider = "claude-code" | "codex"
+type Kind = "oauth" | "api_key" | "login"
 type Scope = "personal" | "pool"
 
-const PROVIDERS: { id: Provider; label: string; how: string }[] = [
+type KindSpec = { id: Kind; label: string; how: string; multiline?: boolean }
+type ProviderCfg = { id: Provider; label: string; kinds: [KindSpec, ...KindSpec[]] }
+// Each provider offers its own credential kinds. A PLAN (subscription) is the headline for
+// both: Claude via a setup-token (env var), Codex via a login file. API keys are the fallback.
+// Non-empty tuples so the [0] defaults below are always defined.
+const PROVIDERS: [ProviderCfg, ...ProviderCfg[]] = [
   {
     id: "claude-code",
     label: "Claude",
-    how: "Run `claude setup-token` on any machine (it opens a browser) and paste the token it prints.",
+    kinds: [
+      {
+        id: "oauth",
+        label: "Plan (subscription)",
+        how: "Run `claude setup-token` on any machine (it opens a browser) and paste the token it prints.",
+      },
+      { id: "api_key", label: "API key", how: "Paste an Anthropic API key (sk-ant-…)." },
+    ],
   },
   {
     id: "codex",
     label: "Codex",
-    how: "Paste an OpenAI API key. (A ChatGPT-plan login is coming; API keys work today.)",
+    kinds: [
+      {
+        id: "login",
+        label: "Plan (subscription)",
+        multiline: true,
+        how: "Run `codex login` on any machine, then paste the contents of ~/.codex/auth.json here.",
+      },
+      { id: "api_key", label: "API key", how: "Paste an OpenAI API key (sk-…)." },
+    ],
   },
 ]
 const providerLabel = (id: string) => PROVIDERS.find((p) => p.id === id)?.label ?? id
+const kindLabel = (provider: string, kind: string) =>
+  PROVIDERS.find((p) => p.id === provider)?.kinds.find((k) => k.id === kind)?.label ??
+  (kind === "api_key" ? "API key" : "Plan")
 
 // The connect form + connected list for a set of model-plan credentials, shared between the
 // PERSONAL surface (/v1/me — your own plan) and the workspace POOL (/v1/workspace — the
@@ -109,18 +134,23 @@ function ConnectForm({
   prefix,
   onConnected,
 }: {
-  connect: (input: {
-    provider: Provider
-    kind: "oauth" | "api_key"
-    token: string
-  }) => Promise<unknown>
+  connect: (input: { provider: Provider; kind: Kind; token: string }) => Promise<unknown>
   prefix: string
   onConnected: () => void
 }) {
   const [provider, setProvider] = useState<Provider>("claude-code")
-  const [kind, setKind] = useState<"oauth" | "api_key">("oauth")
+  const providerCfg = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0]
+  const [kind, setKind] = useState<Kind>(providerCfg.kinds[0].id)
   const [token, setToken] = useState("")
-  const how = PROVIDERS.find((p) => p.id === provider)?.how ?? ""
+  const kindCfg = providerCfg.kinds.find((k) => k.id === kind) ?? providerCfg.kinds[0]
+
+  // Switching provider resets the kind to that provider's first (its plan) and clears input,
+  // so you never submit a Codex login under the Claude provider.
+  const pickProvider = (v: Provider) => {
+    setProvider(v)
+    setKind((PROVIDERS.find((p) => p.id === v) ?? PROVIDERS[0]).kinds[0].id)
+    setToken("")
+  }
 
   const connect = useApiMutation({
     mutationFn: () => connectFn({ provider, kind, token: token.trim() }),
@@ -135,7 +165,7 @@ function ConnectForm({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap gap-2">
-        <Select value={provider} onValueChange={(v) => setProvider(v as Provider)}>
+        <Select value={provider} onValueChange={(v) => pickProvider(v as Provider)}>
           <SelectTrigger data-testid={`${prefix}-provider`} aria-label="Provider" className="w-40">
             <SelectValue />
           </SelectTrigger>
@@ -147,7 +177,13 @@ function ConnectForm({
             ))}
           </SelectContent>
         </Select>
-        <Select value={kind} onValueChange={(v) => setKind(v as "oauth" | "api_key")}>
+        <Select
+          value={kind}
+          onValueChange={(v) => {
+            setKind(v as Kind)
+            setToken("")
+          }}
+        >
           <SelectTrigger
             data-testid={`${prefix}-kind`}
             aria-label="Credential type"
@@ -156,21 +192,36 @@ function ConnectForm({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="oauth">Plan token</SelectItem>
-            <SelectItem value="api_key">API key</SelectItem>
+            {providerCfg.kinds.map((k) => (
+              <SelectItem key={k.id} value={k.id}>
+                {k.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
-      <Input
-        data-testid={`${prefix}-token`}
-        type="password"
-        aria-label="Plan token or API key"
-        placeholder="Paste your token"
-        value={token}
-        onChange={(e) => setToken(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && ready && connect.mutate()}
-      />
-      <p className="text-2xs text-muted-foreground">{how}</p>
+      {kindCfg.multiline ? (
+        <Textarea
+          data-testid={`${prefix}-token`}
+          aria-label="Plan login (auth.json)"
+          placeholder="Paste the contents of ~/.codex/auth.json"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          rows={4}
+          className="font-mono text-2xs"
+        />
+      ) : (
+        <Input
+          data-testid={`${prefix}-token`}
+          type="password"
+          aria-label="Plan token or API key"
+          placeholder="Paste your token"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && ready && connect.mutate()}
+        />
+      )}
+      <p className="text-2xs text-muted-foreground">{kindCfg.how}</p>
       <div className="flex justify-end">
         <Button
           data-testid={`${prefix}-connect`}
@@ -212,7 +263,7 @@ function CredentialRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 font-medium text-foreground">
           {providerLabel(cred.provider)}
-          <Badge variant="outline">{cred.kind === "oauth" ? "Plan token" : "API key"}</Badge>
+          <Badge variant="outline">{kindLabel(cred.provider, cred.kind)}</Badge>
         </div>
         <div className="font-mono text-2xs text-muted-foreground">connected · ••••{cred.hint}</div>
       </div>

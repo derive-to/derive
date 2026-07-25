@@ -2163,7 +2163,10 @@ export interface ModelCredentialRecord {
   org_id: string
   user_id: string
   provider: string
-  kind: "oauth" | "api_key"
+  // oauth = an env-var plan token (Claude's setup-token). api_key = a provider API key.
+  // login = a file-delivered plan login blob (Codex's ~/.codex/auth.json), materialized into
+  // a private CODEX_HOME per run.
+  kind: "oauth" | "api_key" | "login"
   secret: string
   hint: string
   created_at: string

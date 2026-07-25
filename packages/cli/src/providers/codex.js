@@ -106,11 +106,18 @@ export const codex = {
   },
 
   /** Map an owner's credential to Codex's env. An API key rides OPENAI_API_KEY. A
-   *  ChatGPT-plan login is file-based (~/.codex/auth.json), not an env var, so it can't
-   *  be injected this way yet — returns null (the runner then fails closed with a clear
-   *  message); wiring per-run file auth is a follow-up. */
+   *  ChatGPT-plan login is file-based (see credentialFiles), so it returns null here. */
   credentialEnv(kind, value) {
     return kind === "api_key" ? { OPENAI_API_KEY: value } : null
+  },
+
+  /** A ChatGPT-plan login is delivered as a FILE: Codex reads `auth.json` from `$CODEX_HOME`
+   *  (default ~/.codex). The stored `login` credential IS that file's JSON, so the runner
+   *  writes it into a private per-run CODEX_HOME and points Codex at it. The official CLI then
+   *  authenticates on the subscription exactly as if you had run `codex login` there. Other
+   *  kinds are env-delivered (credentialEnv), so this returns null for them. */
+  credentialFiles(kind, value) {
+    return kind === "login" ? { homeEnv: "CODEX_HOME", files: { "auth.json": value } } : null
   },
 
   version(bin) {

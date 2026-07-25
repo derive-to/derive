@@ -56,8 +56,8 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
       c,
       z.object({
         provider: z.enum(PROVIDERS),
-        kind: z.enum(["oauth", "api_key"]),
-        token: z.string().min(1).max(4000),
+        kind: z.enum(["oauth", "api_key", "login"]),
+        token: z.string().min(1).max(16000),
       }),
     )
     if (b instanceof Response) return bail(b)
@@ -115,8 +115,8 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
       c,
       z.object({
         provider: z.enum(PROVIDERS),
-        kind: z.enum(["oauth", "api_key"]),
-        token: z.string().min(1).max(4000),
+        kind: z.enum(["oauth", "api_key", "login"]),
+        token: z.string().min(1).max(16000),
       }),
     )
     if (b instanceof Response) return bail(b)

@@ -172,6 +172,12 @@ export const claudeCode = {
     return kind === "oauth" ? { CLAUDE_CODE_OAUTH_TOKEN: value } : { ANTHROPIC_API_KEY: value }
   },
 
+  /** Claude's plan token is env-delivered (see credentialEnv), so there is no file to
+   *  materialize. Present for shape parity with file-delivered providers (Codex login). */
+  credentialFiles() {
+    return null
+  },
+
   /** Version probe for `derive runner doctor`. Resolves the version string, or
    *  null when the binary is missing / not spawnable. */
   version(bin) {

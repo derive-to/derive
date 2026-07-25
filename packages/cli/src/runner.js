@@ -17,7 +17,9 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, join, resolve, sep } from "node:path"
 import { claudeCode } from "./providers/claude-code.js"
 import { DEFAULT_PROVIDER, PROVIDERS, selectProvider } from "./providers/index.js"
@@ -704,26 +706,35 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
   // fail-closed resolve (nothing connected) fails THIS session like any other run failure;
   // thrown, it would leave the claim dangling and retry-loop.
   let modelEnv = null
+  let cleanupCred = noopCleanup
   if (!cfg.mock) {
     try {
-      modelEnv = await resolveModelEnv(cfg, client, session.id)
+      const resolved = await resolveModelEnv(cfg, client, session.id)
+      modelEnv = resolved.env
+      cleanupCred = resolved.cleanup
     } catch (err) {
       console.error(`[runner] session ${session.id} failed: ${err.message}`)
       await client.fail(session.id)
       return
     }
   }
-  const result = cfg.mock
-    ? { ok: true, answer: MOCK_ANSWER }
-    : await runAgent(selectProvider(cfg.providerName), {
-        bin: cfg.agentBin,
-        cwd: cfg.cwd,
-        model: cfg.model,
-        timeoutMs: cfg.timeoutMs,
-        systemPrompt: manifest,
-        prompt: buildPrompt(session.messages),
-        env: modelEnv ? { ...stripModelTokens(process.env), ...modelEnv } : undefined,
-      })
+  let result
+  try {
+    result = cfg.mock
+      ? { ok: true, answer: MOCK_ANSWER }
+      : await runAgent(selectProvider(cfg.providerName), {
+          bin: cfg.agentBin,
+          cwd: cfg.cwd,
+          model: cfg.model,
+          timeoutMs: cfg.timeoutMs,
+          systemPrompt: manifest,
+          prompt: buildPrompt(session.messages),
+          env: modelEnv ? { ...stripModelTokens(process.env), ...modelEnv } : undefined,
+        })
+  } finally {
+    // Remove any per-run credential files (a Codex login's auth.json) now the spawn is done.
+    await cleanupCred()
+  }
   if (!result.ok || !result.answer) {
     console.error(`[runner] session ${session.id} failed: ${result.error}`)
     await client.fail(session.id)
@@ -801,11 +812,17 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
 /** Boot the host state serve/once share: context info, repo corpus, skills,
  *  conventions. Everything here is per-boot truth on purpose (see the comments
  *  inline) — `once` inherits the same freshness contract as a serve restart. */
-// The model-auth env vars the runner OWNS. Only the resolved per-user credential may set
-// one, so any inherited value is STRIPPED before a spawn (see the session loop). This is
-// what makes a stray global token on the host un-billable: there is no ambient fallback,
-// and no leftover env can override the injected plan.
-const MODEL_TOKEN_ENV = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
+// The model-auth env the runner OWNS: the token vars plus CODEX_HOME (which points Codex at
+// a login's auth.json). Only the resolved per-user credential may set these, so any inherited
+// value is STRIPPED before a spawn (see the session loop). This is what makes a stray global
+// token OR login on the host un-billable: there is no ambient fallback, and no leftover env
+// can override the injected plan.
+const MODEL_TOKEN_ENV = [
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "CODEX_HOME",
+]
 
 /** A copy of `env` with every model-auth var removed, so the caller can layer ONLY the
  *  resolved credential on top. */
@@ -815,15 +832,20 @@ export function stripModelTokens(env) {
   return out
 }
 
-/** Resolve the model credential a run bills against, as a per-spawn ENV OVERLAY, never a
- *  process.env mutation, so one asker's plan token can't leak into the next asker's session
- *  on a shared context. Pass a session id to bill the run's INITIATOR; the server walks
+const noopCleanup = async () => {}
+
+/** Resolve the model credential a run bills against, as `{ env, cleanup }`: a per-spawn ENV
+ *  OVERLAY (never a process.env mutation, so one asker's plan can't leak into the next), plus
+ *  a `cleanup` to run AFTER the spawn. Most credentials are env-delivered (an API key, or an
+ *  env-var plan token like Claude's) and cleanup is a no-op. A Codex ChatGPT-plan login is
+ *  FILE-delivered: its `auth.json` is written 0600 into a private per-run CODEX_HOME and
+ *  cleanup removes it. Pass a session id to bill the run's INITIATOR; the server walks
  *  initiator, then owner (per-agent opt-in), then the workspace pool. There is NO
  *  shared/ambient fallback: if nothing resolves the run FAILS CLOSED, and a lookup error
- *  fails closed too (a run can't start without knowing whose plan pays). `reason`
- *  distinguishes an UNREADABLE stored token (reconnect) from nothing connected (connect). */
+ *  fails closed too. `reason` distinguishes an UNREADABLE stored token (reconnect) from
+ *  nothing connected (connect). */
 export async function resolveModelEnv(cfg, client, sessionId = null) {
-  if (cfg.mock) return null
+  if (cfg.mock) return { env: null, cleanup: noopCleanup }
   const provider = selectProvider(cfg.providerName)
   let res
   try {
@@ -839,12 +861,28 @@ export async function resolveModelEnv(cfg, client, sessionId = null) {
         ? `your connected ${cfg.providerName} plan couldn't be read (it may pre-date a key change). Reconnect it at ${cfg.server} (Settings → Model plans)`
         : `no model plan connected for this run's initiator. Connect one at ${cfg.server} (Settings → Model plans)`,
     )
+  // Env-delivered credential: an API key, or an env-var plan token like Claude's.
   const env = provider.credentialEnv?.(res.credential.kind, res.credential.value)
-  if (!env)
-    throw new Error(
-      `the connected ${cfg.providerName} credential (${res.credential.kind}) can't be injected. Connect an API key, or use a provider that supports it`,
-    )
-  return env
+  if (env) return { env, cleanup: noopCleanup }
+  // File-delivered credential: a Codex ChatGPT-plan login lands as auth.json in a private
+  // per-run CODEX_HOME dir, written 0600 and removed once the spawn is done.
+  const spec = provider.credentialFiles?.(res.credential.kind, res.credential.value)
+  if (spec) {
+    const dir = mkdtempSync(join(tmpdir(), "derive-cred-"))
+    for (const [name, content] of Object.entries(spec.files))
+      writeFileSync(join(dir, name), content, { mode: 0o600 })
+    return {
+      env: { [spec.homeEnv]: dir },
+      cleanup: async () => {
+        try {
+          rmSync(dir, { recursive: true, force: true })
+        } catch {}
+      },
+    }
+  }
+  throw new Error(
+    `the connected ${cfg.providerName} credential (${res.credential.kind}) can't be injected. Connect an API key, or use a provider that supports it`,
+  )
 }
 
 async function bootHost(cfg, modeLabel) {
@@ -855,7 +893,8 @@ async function bootHost(cfg, modeLabel) {
   // the gap in the log; don't block startup on it. The overlay is discarded regardless: each
   // session resolves its own initiator's credential.
   try {
-    await resolveModelEnv(cfg, client)
+    const preflight = await resolveModelEnv(cfg, client)
+    await preflight.cleanup()
   } catch (e) {
     console.error(
       `[runner] no default model plan at boot (${e.message}); sessions resolve per-initiator`,
