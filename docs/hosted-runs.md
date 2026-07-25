@@ -160,6 +160,23 @@ curl "http://localhost:8787/__scheduled"
 Each `/__scheduled` hit runs one full dispatch pass: materialize → reclaim → boot a container per
 due run. `wrangler tail` shows the boots.
 
+### Turning it on for real (Cloudflare)
+
+1. Uncomment the four blocks in `apps/api/wrangler.toml` (DO binding, migration `v5`,
+   `[[containers]]`, and the two `[[queues]]` blocks).
+2. `wrangler queues create derive-runs`
+3. Validate before you ship — this catches config and image errors without deploying:
+   `cd apps/api && pnpm build:web && npx wrangler deploy --dry-run`
+   Expect `env.RUN_CONTAINER (RunContainer)` and `env.RUN_QUEUE (derive-runs)` in the binding
+   list, and the container image to build.
+4. `wrangler deploy`. Hosted execution is still gated per workspace by
+   **Settings → hosted agents** (`hostedAgentsEnabled`), which is the operator's emergency
+   stop: turn it off and the next tick dispatches nothing, no redeploy needed.
+
+Two config details that only a dry run surfaces, both already fixed here: the image needs
+`image_build_context = "../.."` (the Dockerfile COPYs repo-root paths, but wrangler builds
+relative to `wrangler.toml`), and the instance type is `standard-1` (`standard` is deprecated).
+
 **What local can't tell you:** the container **runtime ceiling**. Local Docker has no per-instance
 limit, so a run that passes locally can still exceed the real one. That single assumption needs a
 real deploy (or the current Containers limits) to confirm — which is why the Node substrate,

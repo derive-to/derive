@@ -116,8 +116,12 @@ new_sqlite_classes = ["PreviewRenderer"]
 # # The SAME image the owner-operated runner uses: its entrypoint sees the per-run
 # # capability token in the env and takes the one-shot run lane automatically.
 # image = "../../deploy/runner.Dockerfile"
+# # The Dockerfile COPYs packages/cli and deploy/ — repo-root paths — but wrangler builds
+# # relative to THIS file by default, so the image fails to build without this. Caught by
+# # `wrangler deploy --dry-run` rather than by a failed production deploy.
+# image_build_context = "../.."
 # # A run is minutes of coding-agent work — size for the agent, not a web request.
-# instance_type = "standard"
+# instance_type = "standard-1"
 # max_instances = 20
 #
 # # The dispatch queue: a LATENCY nudge, not the source of truth. Postgres is the queue of

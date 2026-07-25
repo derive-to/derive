@@ -130,9 +130,28 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
   }
   // Budget is per workspace too, so resolve it once per org rather than per run.
   const budgetBlocked = new Map<string, boolean>()
+  // The workspace's MASTER SWITCH for hosted execution. An operator who turns hosted agents
+  // off expects every hosted run to stop — that promise has to be kept where runs actually
+  // start, which is here. Also the emergency stop: flip it off and the next tick dispatches
+  // nothing for that workspace, without touching config or redeploying.
+  const hostedOff = new Map<string, boolean>()
 
   const expMs = now.getTime() + RUN_TOKEN_TTL_MS
   for (const r of due) {
+    if (!hostedOff.has(r.org_id))
+      hostedOff.set(
+        r.org_id,
+        !(await deps.meta
+          .getOrgSettings(r.org_id)
+          .then((s) => s.hostedAgentsEnabled)
+          .catch(() => true)),
+      )
+    if (hostedOff.get(r.org_id)) {
+      // Left queued, not failed: turning the switch back on resumes the work rather than
+      // requiring anyone to recreate it.
+      out.deferred += 1
+      continue
+    }
     if ((inFlight.get(r.org_id) ?? 0) >= perOrg) {
       out.deferred += 1
       continue
@@ -187,6 +206,10 @@ export const dispatchRunNow = async (deps: DispatchDeps, runId: string): Promise
   try {
     const r = await deps.meta.getRun(runId)
     if (!r || r.status !== "queued") return false
+    // The master switch applies to the fast path too, or "Run now" would bypass the one
+    // control an operator reaches for to stop everything.
+    const settings = await deps.meta.getOrgSettings(r.org_id).catch(() => null)
+    if (settings && !settings.hostedAgentsEnabled) return false
     const now = deps.now?.() ?? new Date()
     await startOne(deps, r, now.getTime() + RUN_TOKEN_TTL_MS)
     return true

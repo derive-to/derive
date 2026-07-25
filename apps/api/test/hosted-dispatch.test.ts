@@ -345,6 +345,38 @@ describe("run retries", () => {
   })
 })
 
+describe("the workspace master switch", () => {
+  it("hostedAgentsEnabled=false stops every hosted run — the operator's emergency stop", async () => {
+    const auto = await mkAutomation({ trigger: { kind: "manual" }, instruction: "Should not run." })
+    const run = await runNow(auto.id)
+    // Flip the master switch the settings UI exposes.
+    const patched = await app.request("/v1/workspace/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      body: JSON.stringify({ hostedAgentsEnabled: false }),
+    })
+    expect(patched.status).toBeLessThan(300)
+
+    const { substrate, started } = fakeSubstrate()
+    const res = await dispatchPass(deps(substrate))
+    expect(res.started).toBe(0)
+    expect(started).toHaveLength(0)
+    // The fast path honors it too, or "Run now" would bypass the one control an operator
+    // reaches for to stop everything.
+    expect(await dispatchRunNow(deps(substrate), run.id)).toBe(false)
+    // Deferred, not failed: flipping the switch back on resumes the work.
+    expect((await meta.getRun(run.id))?.status).toBe("queued")
+
+    await app.request("/v1/workspace/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      body: JSON.stringify({ hostedAgentsEnabled: true }),
+    })
+    const after = await dispatchPass(deps(substrate))
+    expect(after.started).toBeGreaterThanOrEqual(1)
+  })
+})
+
 describe("run capability tokens", () => {
   it("round-trips its claim, and rejects a forged, tampered, or expired token", async () => {
     const now = Date.now()
