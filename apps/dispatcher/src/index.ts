@@ -1,5 +1,5 @@
 // The managed executor: a plain clock that drains OWNER-run contexts via `derive runner once`,
-// plus — when the hosted lane is configured — an internal HTTP surface (WP3) that runs SHARED
+// plus — when the hosted lane is configured — an internal HTTP surface that runs SHARED
 // hosted agents live. The Derive API, the model, and the answer contract live in the runner and
 // the hosted-agent harness; the dispatcher owns scheduling + process lifecycle only.
 //

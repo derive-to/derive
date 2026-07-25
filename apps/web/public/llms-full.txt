@@ -57,6 +57,44 @@ If this file and the live API disagree, trust the live API — fetched copies go
 The current capability surface is at `/.well-known/agent.json`, the agent skill at
 `/skill.md`, and the full spec at `/openapi.json` (reference UI at `/docs`).
 
+### Publish an anonymous draft (no account)
+
+```
+POST /v1/drafts
+Content-Type: multipart/form-data
+
+file    required  One .html/.md file, or a .zip site (index.html at the root)
+title   optional  Display title
+```
+
+No Authorization header. Response:
+
+```json
+{
+  "short_id":  "t8mnac05",
+  "draft_url":  "https://t8mnac05.derive.page/",
+  "claim_url":  "https://derive.to/claim/<token>",
+  "expires_at": "2026-07-28T03:23:03.539Z"
+}
+```
+
+The draft is live immediately on its own origin, view-by-link only (unlisted,
+noindex, never cached), and expires in 72 hours unless claimed. Report the draft
+URL, the expiry, and the claim URL to the user — the claim link is the only handle
+on an unclaimed draft. Client-supplied access fields are ignored on this route, and
+drafts cannot be revised: mint a new draft to iterate, or claim first.
+
+Claiming (a human flow, not an agent one): opening `claim_url` signs the user in
+and moves the draft into their workspace as a normal versioned artifact; the draft
+URL then 302s to the permanent artifact URL. Related endpoints:
+
+```
+GET  /v1/drafts/claim/:token   public: what this claim link is for (title, expiry, draft_url)
+POST /v1/drafts/claim          authed: {token} → claims into the caller's active workspace
+```
+
+Rate-limited tightly per IP; the general publish limits apply underneath.
+
 ### Publish a new artifact
 
 ```

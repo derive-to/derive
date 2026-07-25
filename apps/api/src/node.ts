@@ -20,6 +20,7 @@ import { workspacesBlockingDeletion } from "./lib/account"
 import { signupAttributionHook } from "./lib/attribution"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
+import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
 import { mountWeb } from "./lib/serve-web"
@@ -446,6 +447,15 @@ void maintain()
 pruneTimer = setInterval(maintain, 24 * 3600_000)
 pruneTimer.unref?.()
 
+// Expired anonymous drafts (the claim flow): swept hourly — the 24h maintenance
+// cadence is too coarse for a 72h TTL. The serve path already 410s an expired
+// draft, so this only reclaims rows; the mint route also sweeps opportunistically.
+const draftSweepTimer = setInterval(
+  () => void sweepExpiredDrafts(meta, search).catch(() => 0),
+  3600_000,
+)
+draftSweepTimer.unref?.()
+
 // Resume any GitHub sync left mid-flight: once on boot (a restart mid-sync) and on a
 // short interval (a self-heal backstop, mirroring the edge cron). The persisted
 // file-map makes resume idempotent, and the runner dedupes already-running loops, so
@@ -532,6 +542,7 @@ const shutdown = makeShutdown({
   clearTimers: () => {
     if (pruneTimer) clearInterval(pruneTimer)
     clearInterval(syncResumeTimer)
+    clearInterval(draftSweepTimer)
   },
   closeStores,
   log,

@@ -2242,7 +2242,7 @@ export function runStoreContract(
     })
   })
 
-  describe(`${label}: automations + runs (WP5/WP6)`, () => {
+  describe(`${label}: automations + runs`, () => {
     it("creates automations and lists them scoped to the workspace", async () => {
       const agentId = uuid()
       const a1 = await store.createAutomation({

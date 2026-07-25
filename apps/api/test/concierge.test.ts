@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
-// WP7 — the concierge seed: a new user's welcome artifact with a planted comment,
+// The concierge seed: a new user's welcome artifact with a planted comment,
 // so their first session can close the loop once. Idempotency is per-user, so
 // each scenario uses its own user to avoid cross-contaminating the seed.
 describe("concierge seed", () => {

@@ -18,7 +18,7 @@ import { bail, fail, readJson } from "../lib/http"
 import { RUN_MAX_RETRIES, retryDelayMs } from "../lib/run-lifecycle"
 import { materializeDueRuns } from "../lib/schedule"
 
-// WP5/WP6 — automations + runs, the generic agent-work primitive. An automation is a
+// Automations + runs — the generic agent-work primitive. An automation is a
 // standing job: WHO (agent), WHEN (trigger: manual | schedule | event), WHAT (free-form
 // instruction), on WHAT (refs). Every firing is a run; the run table is both the queue
 // (status=queued) and the ledger (terminal rows). A "living doc" is just an automation whose

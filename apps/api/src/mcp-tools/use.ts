@@ -30,7 +30,7 @@ export function registerUseTool(tc: ToolContext): void {
         "Use a context (a live agent wired to data + tools — discover them with find) ON YOUR " +
         "USER'S BEHALF (rate-limited): give it an INSTRUCTION and it works one session. GIVE: " +
         "`context` (id or name) + `instruction` — 'with this context, do this' (a question OR a " +
-        "task; always name the target, e.g. 'for Airbnb'). FOLLOW UP: `session_id` + `instruction`. " +
+        "task; always name the target, e.g. 'for Acme'). FOLLOW UP: `session_id` + `instruction`. " +
         "CHECK/RESUME: `session_id` alone. The call waits up to `wait` seconds (default 25) for the " +
         "result; real runs take minutes and STREAM, so a still-working response is NORMAL — re-call " +
         "with the returned session_id until it settles. RUN a context you are the agent for: " +
@@ -51,7 +51,7 @@ export function registerUseTool(tc: ToolContext): void {
           .max(20_000)
           .optional()
           .describe(
-            "'With this context, do this' (Markdown) — a question OR a task, always naming the target (e.g. 'for Airbnb'). With `context` it opens a session; with `session_id` it is a follow-up turn. Omit it to just check a session (or, if you RUN the context, to pull your queued work).",
+            "'With this context, do this' (Markdown) — a question OR a task, always naming the target (e.g. 'for Acme'). With `context` it opens a session; with `session_id` it is a follow-up turn. Omit it to just check a session (or, if you RUN the context, to pull your queued work).",
           ),
         session_id: z
           .string()

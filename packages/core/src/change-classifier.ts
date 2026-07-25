@@ -1,7 +1,7 @@
 import type { ChangeKind } from "./autonomy"
 import { diffLines } from "./diff"
 
-// The freshness-vs-structural classifier: the WP4→WP2 bridge. It answers the
+// The freshness-vs-structural classifier. It answers the
 // one question the autonomy gate needs about a proposed revision — is this a
 // freshness refresh (dates, counts, statuses updated in place, the things a
 // living declaration names) or a structural edit (sections, list shape, or copy

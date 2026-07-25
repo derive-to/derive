@@ -56,6 +56,9 @@ export const artifact = pgTable("artifact", {
   // Set on every new version; null until first versioned (coalesces to created_at).
   updated_at: text("updated_at"),
   removed_at: text("removed_at"),
+  // Expiring anonymous draft (the claim flow): ISO instant after which the draft is
+  // gone — served 410 and swept. Null for every ordinary artifact; cleared on claim.
+  expires_at: text("expires_at"),
   source_path: text("source_path"),
   // The CURRENT (last) author, denormalized from the latest version for the list view +
   // author filtering. For a GitHub-synced artifact these mirror the last commit's author.
@@ -172,7 +175,7 @@ export const renderJob = pgTable("render_job", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
-// An automation (WP5): a standing agent job (agent + trigger + instruction + refs). The
+// An automation: a standing agent job (agent + trigger + instruction + refs). The
 // definition only; every firing is a `run`. See schema.ts for the full contract.
 export const automation = pgTable("automation", {
   id: text("id").primaryKey(),
@@ -186,7 +189,7 @@ export const automation = pgTable("automation", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
-// A run (WP5/WP6): one execution — the queue and the ledger in one table. See schema.ts.
+// A run: one execution — the queue and the ledger in one table. See schema.ts.
 export const run = pgTable("run", {
   id: text("id").primaryKey(),
   org_id: text("org_id").notNull(),
@@ -614,6 +617,10 @@ export const domain = pgTable("domain", {
   status: text("status").$type<DomainStatus>().notNull().default("active"),
   cf_hostname_id: text("cf_hostname_id"),
   verification: text("verification"),
+  // When set, the host answers 302 → this absolute URL instead of serving content.
+  // Written when a draft is claimed (the derive.page URL forwards to the artifact's
+  // permanent home); reusable for any future host rename.
+  redirect_to: text("redirect_to"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 export const proposal = pgTable("proposal", {

@@ -47,7 +47,7 @@ export interface HostedAgentClient {
     rev: RevisionInput,
     opts: { title: string; requestReview: boolean; privateDraft: boolean },
   ): Promise<PublishResult>
-  /** Append a run to the ledger (WP6). Best-effort — a failed record must never
+  /** Append a run to the ledger. Best-effort — a failed record must never
    *  fail the run it describes. org_id + agent_id are derived server-side from
    *  the bearer, so only the outcome fields travel. This is the ONE run surface the
    *  hosted lane still uses (the @mention draft path); claim/finish/tool execution moved

@@ -232,7 +232,7 @@ crons = ["* * * * *"]
 [assets]
 directory = "../web/dist/client"
 binding = "ASSETS"
-run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/blob/*", "/oauth/*", "/settings/github/*", "/settings/slack/*", "/artifacts/*", "/users/*", "/healthz", "/mcp", "/openapi.json", "/docs", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration", "/skill.md", "/.well-known/agent.json", "/", "/pricing"]
+run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/blob/*", "/oauth/*", "/.well-known/skills/index.json", "/.well-known/skills/derive/SKILL.md", "/settings/github/*", "/settings/slack/*", "/artifacts/*", "/users/*", "/assets/*", "/site/*", "/brand/*", "/healthz", "/mcp", "/openapi.json", "/docs", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration", "/skill.md", "/.well-known/agent.json", "/", "/pricing"]
 not_found_handling = "single-page-application"
 
 # Public hosts: the derive.to apex is canonical, app.derive.to an alias. Cloudflare
@@ -248,12 +248,33 @@ custom_domain = true
 pattern = "app.derive.to"
 custom_domain = true
 
-# baseUrl falls back to the request origin when unset. Secured by Better Auth; set
-# DERIVE_AUTH_SECRET via `wrangler secret put`. Cross-instance realtime fan-out uses
-# the ArtifactRoom Durable Object (one room per channel).
+# The usercontent domain (derive.page): customer pages only, never the app. The apex
+# is a custom domain (auto DNS + cert) that app.ts 301s to derive.to — once the PSL
+# entry lands the apex is cookie-dead, so it must never serve the SPA. The wildcard
+# can't be a custom domain, so it's a zone route over a manually-managed DNS record
+# (`*.derive.page` AAAA 100::, proxied). A Public Suffix List entry for the base domain is planned.
+[[routes]]
+pattern = "derive.page"
+custom_domain = true
+
+[[routes]]
+pattern = "*.derive.page/*"
+zone_name = "derive.page"
+
+# Secured by Better Auth; set DERIVE_AUTH_SECRET via `wrangler secret put`.
+# Cross-instance realtime fan-out uses the ArtifactRoom Durable Object (one room
+# per channel).
 [vars]
-# DERIVE_SUPERADMIN_EMAILS (operator allow-list) is optional; BASE_URL optional;
+# DERIVE_SUPERADMIN_EMAILS (operator allow-list) is optional;
 # DERIVE_AUTH_SECRET is a secret (`wrangler secret put`). Workspaces are always multi.
+#
+# BASE_URL pins the app origin. It is REQUIRED once DERIVE_SUBDOMAIN_BASE is set:
+# with the per-request-origin fallback, a request on derive.page (or any subdomain)
+# makes appHostForSub equal its own host, so app.ts's domain mode — the apex 301,
+# the unknown-subdomain 404, vanity serving — never engages. Same-origin requests
+# on other hosts (workers.dev smoke tests) stay trusted via auth-config's
+# same-origin rescue; only generated links now always point at derive.to.
+BASE_URL = "https://derive.to"
 #
 # Optional Slack app (all three are secrets; set them to enable Slack, else it stays off):
 #   wrangler secret put SLACK_CLIENT_ID
@@ -267,3 +288,10 @@ custom_domain = true
 # extracts the bare address; the display-name form is kept for parity with the Resend (Node)
 # transport, which reads the same EMAIL_FROM. Pairs with the [[send_email]] binding above.
 EMAIL_FROM = "Derive <notifications@send.derive.to>"
+# Origin split (A4): artifact bytes serve from the usercontent domain, never the
+# cookie origin. raw.derive.page rides the wildcard route above; app.ts serves only
+# /raw/* + /healthz on this host and 302s /raw/* on derive.to over to it.
+DERIVE_SANDBOX_URL = "https://raw.derive.page"
+# Domain mode (C1): vanity subdomains `<label>.derive.page` (label claims are gated
+# by routes/domains.ts; `raw` is reserved for the sandbox host above).
+DERIVE_SUBDOMAIN_BASE = "derive.page"

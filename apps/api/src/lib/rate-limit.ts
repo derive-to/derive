@@ -62,6 +62,10 @@ export interface RateLimiters {
   /** MCP `ask` — each ask triggers a model run on a context owner's runner, so a
    *  looping agent is the realistic flood. Keyed by the acting human's id. */
   ask: Limiter
+  /** Anonymous draft publishes (POST /v1/drafts) — the one unauthenticated write
+   *  that creates durable state, so it gets its own tight long-window cap on top
+   *  of the general publish limiter. Keyed by IP (there is no principal). */
+  draftPublish: Limiter
 }
 
 /**
@@ -89,6 +93,9 @@ export function inMemoryRateLimiters(
     // 10 asks per minute per acting human: a human-paced agent never sees it; a
     // runaway ask loop does — each ask is a model run on someone's runner.
     ask: inMemoryLimiter(60_000, opts.askRate ?? 10),
+    // 12 anonymous drafts per hour per IP: an agent iterating on a page never sees
+    // it; a bulk-hosting abuser does. The general publish limiter still applies.
+    draftPublish: inMemoryLimiter(3_600_000, 12),
   }
 }
 

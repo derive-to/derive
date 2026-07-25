@@ -2,7 +2,7 @@ import { newId, publish } from "@derive/core"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
 
-// WP7 — the concierge. A new user's first session should close the loop once:
+// The concierge. A new user's first session should close the loop once:
 // they land on a seeded welcome artifact that already carries a planted comment,
 // they (or the workspace's fallback agent) address it, and v2 appears at the
 // same URL. This endpoint seeds that artifact + comment. The web welcome flow

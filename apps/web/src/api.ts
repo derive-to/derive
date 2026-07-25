@@ -118,6 +118,16 @@ export type InviteResult = components["schemas"]["InviteResult"]
 export type InvitePreview = components["schemas"]["InvitePreview"]
 export type ArtifactInvite = components["schemas"]["ArtifactInvite"]
 export type ArtifactInvitePreview = components["schemas"]["ArtifactInvitePreview"]
+/** What the claim page shows before an anonymous draft is claimed. Hand-declared:
+ *  the draft-claim routes aren't in the OpenAPI spec. */
+export interface DraftClaimPreview {
+  short_id: string
+  title: string | null
+  kind: string
+  expires_at: string
+  /** The live expiring page on the usercontent domain; null if no host is bound. */
+  draft_url: string | null
+}
 /** PUT members result: shared directly (existing account) or invited by email. */
 export type ShareResult = components["schemas"]["ShareResult"]
 /** Per-workspace integration switches. Generated from the OpenAPI spec. */
@@ -676,6 +686,14 @@ export const api = {
     f(`/v1/artifacts/${id}/members/${userId}`, { method: "DELETE", credentials: "include" }).then(
       () => undefined,
     ),
+
+  // The draft-claim page (/claim/$token): an agent published an anonymous expiring
+  // draft and handed the human a claim link. Preview is public — the token itself
+  // is the proof of standing; claiming moves the draft into the active workspace.
+  previewDraftClaim: (token: string): Promise<DraftClaimPreview> =>
+    f(`/v1/drafts/claim/${encodeURIComponent(token)}`, opts()).then(j),
+  claimDraft: (token: string): Promise<{ short_id: string; url: string; org_id: string }> =>
+    f("/v1/drafts/claim", opts({ token })).then(j),
 
   // Per-artifact vanity subdomains (`base` null when off) + the workspace's custom
   // domains shown read-only as the artifact's URL on each.

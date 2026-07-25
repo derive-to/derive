@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { as, bearer, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
-// WP5/WP6 — automations + runs, the generic agent-work primitive. An owner defines an
+// Automations + runs — the generic agent-work primitive. An owner defines an
 // automation (agent + trigger + instruction); "run now" enqueues a run; the agent claims
 // the queued run, finishes it, and the workspace ledger lists it. A "living doc refresh" is
 // just an automation with a doc ref, run on demand — the same path a schedule/webhook takes.

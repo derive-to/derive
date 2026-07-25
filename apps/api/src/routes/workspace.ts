@@ -866,7 +866,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
     },
   )
 
-  // The agent activity view (WP6): the workspace's recent runs, newest first — the ledger
+  // The agent activity view: the workspace's recent runs, newest first — the ledger
   // half of the run table. Admin-only: it exposes what every agent did, why, and what it
   // cost. A plain route (not in the OpenAPI spec); the web activity page consumes it directly.
   app.get("/v1/workspace/runs", async (c) => {

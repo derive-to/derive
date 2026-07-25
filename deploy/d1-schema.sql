@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS artifact (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT,
   removed_at TEXT,
+  expires_at TEXT,
   source_path TEXT,
   author_name TEXT,
   author_login TEXT,
@@ -467,6 +468,7 @@ CREATE TABLE IF NOT EXISTS domain (
   status TEXT NOT NULL DEFAULT 'active',
   cf_hostname_id TEXT,
   verification TEXT,
+  redirect_to TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
 );

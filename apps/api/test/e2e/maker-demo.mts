@@ -113,7 +113,7 @@ const main = async () => {
   log(`context ${cxId} wired to runner ${runnerAgentId}`)
 
   // GIVE an instruction, then PULL it as the runner.
-  const give = await call(ASKER, "use", { context: cxId, instruction: "Build the walkthrough for Airbnb.", wait: 0, workspace: orgId })
+  const give = await call(ASKER, "use", { context: cxId, instruction: "Build the walkthrough for Harborstay.", wait: 0, workspace: orgId })
   const sid = give.json?.session_id as string
   const pull = await call(runnerToken, "use", { context: cxId })
   // biome-ignore lint/suspicious/noExplicitAny: JSON payload
@@ -124,16 +124,16 @@ const main = async () => {
 
   // Bind a "building…" placeholder on the first tick (stable result_url), then fill the
   // SAME artifact in to the full page and settle.
-  const building = await call(ASKER, "publish", { title: "Sift for Airbnb — Live Walkthrough", content: '<meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:40px"><h1>Sift for Airbnb</h1><p>building…</p></body>' })
+  const building = await call(ASKER, "publish", { title: "Sift for Harborstay — Live Walkthrough", content: '<meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px system-ui;padding:40px"><h1>Sift for Harborstay</h1><p>building…</p></body>' })
   const R = building.json?.short_id as string
-  await call(runnerToken, "use", { session_id: sid, answer: "Sampling conversations for Airbnb…", progress: true, result_artifact_id: R })
+  await call(runnerToken, "use", { session_id: sid, answer: "Sampling conversations for Harborstay…", progress: true, result_artifact_id: R })
   await call(ASKER, "publish", { short_id: R, content: HTML })
-  const done = await call(runnerToken, "use", { session_id: sid, answer: "Done — the Airbnb walkthrough is live.", state: "answered", answers: askerMsgId, result_artifact_id: R })
+  const done = await call(runnerToken, "use", { session_id: sid, answer: "Done — the Harborstay walkthrough is live.", state: "answered", answers: askerMsgId, result_artifact_id: R })
   log(`result artifact ${R} filled in; session settled -> ${done.json?.state}`)
 
   // Read it back to prove the round-trip, and write the rendered HTML out.
   const back = await call(ASKER, "read", { short_id: R, format: "html" })
-  const roundTrips = /Sift for Airbnb/.test(back.text ?? "") && /Drafted reply/.test(back.text ?? "")
+  const roundTrips = /Sift for Harborstay/.test(back.text ?? "") && /Drafted reply/.test(back.text ?? "")
   const out = join(dir, "walkthrough-result.html")
   writeFileSync(out, HTML)
   log(`round-trip read ok=${roundTrips}`)
