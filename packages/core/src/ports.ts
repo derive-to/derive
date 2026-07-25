@@ -1025,10 +1025,22 @@ export interface AgentStore {
    *  race safety; null when the run isn't claimable (missing, foreign, or already claimed —
    *  a double-booted substrate loses this race and exits clean). */
   claimRunById(id: string, agentId: string, now: string): Promise<RunRecord | null>
+  /** Send a RUNNING run back to the queue for a later retry, scoped to the claiming agent.
+   *  The transient-failure counterpart to finishRun: instead of a terminal row the run becomes
+   *  `queued` again with `scheduled_for` in the future (the backoff) and its attempt count in
+   *  meta. Returns the updated row, or null when the run isn't this agent's or isn't running. */
+  requeueRun(
+    id: string,
+    agentId: string,
+    fields: { scheduledFor: string; meta?: string | null },
+  ): Promise<RunRecord | null>
   /** The reclaim sweep: runs stuck `running` since before `cutoffIso` (their substrate died)
    *  go back to `queued` for re-dispatch, with an attempt count kept in meta; a run past
    *  `maxAttempts` is finished failed (outcome "lost") instead of looping forever. */
-  reclaimStaleRuns(cutoffIso: string, maxAttempts?: number): Promise<{ requeued: number; failed: number }>
+  reclaimStaleRuns(
+    cutoffIso: string,
+    maxAttempts?: number,
+  ): Promise<{ requeued: number; failed: number }>
   /** Every enabled automation across ALL workspaces (capped) — the hosted tick scans these
    *  to materialize due schedule runs. Fine at self-host scale; revisit if it ever shows up. */
   listEnabledAutomations(limit?: number): Promise<AutomationRecord[]>

@@ -36,3 +36,12 @@ if (!(RUN_TIMEOUT_MS < RUN_TOKEN_TTL_MS && RUN_TOKEN_TTL_MS < RUN_LEASE_MS))
 
 /** How many times a run may be reclaimed before it is given up as `lost`. */
 export const RUN_MAX_ATTEMPTS = 3
+
+/** How many times a run may be RETRIED after a transient failure before it stays failed.
+ *  Deliberately small: every attempt spends the owner's model plan, so a run that keeps
+ *  failing must stop costing money rather than grind forever. */
+export const RUN_MAX_RETRIES = 2
+
+/** Backoff before retry N (1-indexed): a minute, then five. Long enough for a provider blip
+ *  or a rate limit to clear, short enough that a recovered run is still timely. */
+export const retryDelayMs = (attempt: number): number => (attempt <= 1 ? 60_000 : 5 * 60_000)

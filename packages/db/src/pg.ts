@@ -2580,6 +2580,25 @@ export class PgMetaStore implements MetaStore {
       .returning()
     return rows[0] ?? null
   }
+  async requeueRun(
+    id: string,
+    agentId: string,
+    fields: { scheduledFor: string; meta?: string | null },
+  ): Promise<RunRecord | null> {
+    // Strict running → queued, only for the claiming agent: the status guard stops a duplicate
+    // or late retry request from resurrecting a run that already settled.
+    const rows = await this.db
+      .update(run)
+      .set({
+        status: "queued",
+        started_at: null,
+        scheduled_for: fields.scheduledFor,
+        ...(fields.meta === undefined ? {} : { meta: fields.meta }),
+      })
+      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
+      .returning()
+    return rows[0] ?? null
+  }
   async reclaimStaleRuns(
     cutoffIso: string,
     maxAttempts = 3,

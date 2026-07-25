@@ -13,6 +13,7 @@ import { brokerFor, toolsForRun } from "../lib/broker"
 import { overBudget } from "../lib/budget"
 import { mintToken, safeEqual, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { RUN_MAX_RETRIES, retryDelayMs } from "../lib/run-lifecycle"
 import { materializeDueRuns } from "../lib/schedule"
 
 // WP5/WP6 — automations + runs, the generic agent-work primitive. An automation is a
@@ -23,6 +24,17 @@ import { materializeDueRuns } from "../lib/schedule"
 // tick or a webhook uses. Plain routes (agent-facing + admin), not the OpenAPI web surface.
 
 const isoNow = () => new Date().toISOString()
+
+/** How many times this run has already been retried, from its meta blob (a JSON attribute, not
+ *  a column). Malformed meta reads as zero — a bad blob must never grant unlimited retries. */
+const retryCountOf = (raw: string | null): number => {
+  try {
+    const m = raw ? JSON.parse(raw) : null
+    return typeof m?.retries === "number" && m.retries > 0 ? m.retries : 0
+  } catch {
+    return 0
+  }
+}
 
 // Fire-URL limits: one payload is capped, and a coalesced run's accumulated payloads are
 // capped too, so a burst can't grow a single run's meta blob without bound.
@@ -441,7 +453,25 @@ export const automationRoutes = (ctx: AppContext) => {
       }),
     )
     if (b instanceof Response) return bail(b)
-    const rec = await meta.finishRun(c.req.param("id"), agent.id, {
+    const runId = c.req.param("id")
+    // RETRY, not resurrection. A run that failed for a TRANSIENT reason (the executor says
+    // `retryable`: a provider 5xx/429, a timeout, a failed spawn) goes back to the queue with a
+    // backoff instead of settling. A deterministic failure — no revision block, a rejected
+    // write, an empty instruction — is terminal: retrying it would fail identically while
+    // spending the owner's model plan again. The cap is small for the same reason.
+    if (b.status === "failed" && b.meta?.retryable === true) {
+      const prior = await meta.getRun(runId)
+      const retries = retryCountOf(prior?.meta ?? null)
+      if (retries < RUN_MAX_RETRIES) {
+        const attempt = retries + 1
+        const requeued = await meta.requeueRun(runId, agent.id, {
+          scheduledFor: new Date(Date.now() + retryDelayMs(attempt)).toISOString(),
+          meta: JSON.stringify({ ...b.meta, retries: attempt, last_error: b.meta.why ?? null }),
+        })
+        if (requeued) return c.json({ id: requeued.id, status: requeued.status, retry: attempt })
+      }
+    }
+    const rec = await meta.finishRun(runId, agent.id, {
       status: b.status,
       finishedAt: isoNow(),
       costMicroUsd: b.cost_micro_usd ?? null,

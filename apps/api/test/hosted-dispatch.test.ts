@@ -2,7 +2,7 @@ import { newId } from "@derive/core"
 import { beforeEach, describe, expect, it } from "vitest"
 import { dispatchPass, dispatchRunNow, type Substrate } from "../src/lib/dispatch"
 import { signRunToken, verifyRunToken } from "../src/lib/run-token"
-import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
+import { as, bearer, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 // HOSTED DISPATCH, tested with NO container, NO wrangler, and NO network. The substrate is the
 // only platform-specific piece, so a fake one lets the whole correctness story — materialize,
@@ -250,6 +250,98 @@ describe("hosted dispatch — production guards", () => {
       (await meta.listRuns("default", 50)).find((r) => r.status === "queued")?.id ?? "",
     )
     expect(still?.status).toBe("queued")
+  })
+})
+
+describe("run retries", () => {
+  /** Claim a run as its agent, then report a failure the way a real executor would — over the
+   *  real endpoint, as the AGENT bearer (a user session is not an executor). */
+  const failRun = async (
+    runId: string,
+    agentId: string,
+    token: string,
+    metaBody: Record<string, unknown>,
+  ) => {
+    await meta.claimRunById(runId, agentId, new Date().toISOString())
+    return app.request(
+      `/v1/agent/runs/${runId}/finish`,
+      jsonAs(bearer(token), { status: "failed", meta: metaBody }),
+    )
+  }
+
+  it("a TRANSIENT failure goes back to the queue with a backoff, not to the ledger", async () => {
+    const auto = await mkAutomation({ trigger: { kind: "manual" }, instruction: "Flaky source." })
+    const run = await runNow(auto.id)
+    const rec = await meta.getRun(run.id)
+    // The executor says the provider blipped — worth another attempt.
+    await failRun(run.id, rec?.agent_id ?? "", auto.agent_token, {
+      outcome: "failed",
+      why: "exit 1: API Error: 529 Overloaded",
+      retryable: true,
+    })
+    const after = await meta.getRun(run.id)
+    expect(after?.status).toBe("queued")
+    // Scheduled into the future: the backoff, so the retry doesn't hammer a struggling provider.
+    expect(Date.parse(after?.scheduled_for ?? "")).toBeGreaterThan(Date.now())
+    expect(after?.meta).toContain("retries")
+  })
+
+  it("a DETERMINISTIC failure is terminal — no paying twice for the same answer", async () => {
+    const auto = await mkAutomation({ trigger: { kind: "manual" }, instruction: "Bad prompt." })
+    const run = await runNow(auto.id)
+    const rec = await meta.getRun(run.id)
+    await failRun(run.id, rec?.agent_id ?? "", auto.agent_token, {
+      outcome: "failed",
+      why: "no <revision> block in result",
+      retryable: false,
+    })
+    expect((await meta.getRun(run.id))?.status).toBe("failed")
+  })
+
+  it("stops retrying at the cap so a permanently-broken run stops costing money", async () => {
+    const auto = await mkAutomation({ trigger: { kind: "manual" }, instruction: "Always fails." })
+    const run = await runNow(auto.id)
+    const agentId = (await meta.getRun(run.id))?.agent_id ?? ""
+    const transient = { outcome: "failed", why: "timed out", retryable: true }
+    // Two retries are allowed; the third failure must settle it.
+    await failRun(run.id, agentId, auto.agent_token, transient)
+    expect((await meta.getRun(run.id))?.status).toBe("queued")
+    await failRun(run.id, agentId, auto.agent_token, transient)
+    expect((await meta.getRun(run.id))?.status).toBe("queued")
+    await failRun(run.id, agentId, auto.agent_token, transient)
+    const final = await meta.getRun(run.id)
+    expect(final?.status).toBe("failed")
+  })
+
+  it("the activity view explains a run's state without anyone reading logs", async () => {
+    const auto = await mkAutomation({ trigger: { kind: "manual" }, instruction: "Explain me." })
+    const run = await runNow(auto.id)
+    const agentId = (await meta.getRun(run.id))?.agent_id ?? ""
+    await failRun(run.id, agentId, auto.agent_token, {
+      outcome: "failed",
+      why: "timed out",
+      retryable: true,
+    })
+
+    const res = await app.request("/v1/workspace/runs", { headers: as(owner.email) })
+    const { runs } = (await res.json()) as {
+      runs: {
+        id: string
+        timeline: {
+          phase: string
+          retries: number
+          last_error: string | null
+          waiting_until: string | null
+        }
+      }[]
+    }
+    const row = runs.find((r) => r.id === run.id)
+    // Queued again, one attempt spent, WHY it failed, and when it will next be tried — the
+    // four things an operator asks when an automation "isn't doing anything".
+    expect(row?.timeline.phase).toBe("queued")
+    expect(row?.timeline.retries).toBe(1)
+    expect(row?.timeline.last_error).toContain("timed out")
+    expect(row?.timeline.waiting_until).toBeTruthy()
   })
 })
 

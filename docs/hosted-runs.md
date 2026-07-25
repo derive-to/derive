@@ -47,6 +47,31 @@ All three live in `lib/run-lifecycle.ts`, which throws at import if the order is
   deployment's capacity or fan out unbounded model spend. Also deferred, not failed.
 - A **global per-pass limit** (default 10) is the outer burst valve.
 
+### Retries
+
+Two different failures, two different answers:
+
+- **The executor died** (container evicted, box rebooted, process killed) — nobody reported
+  anything. The *reclaim sweep* notices the expired lease and requeues, up to `RUN_MAX_ATTEMPTS`,
+  then gives up as `lost`.
+- **The executor reported a failure** — it lived long enough to say so, and it says *whether the
+  failure is worth another attempt*. A provider 5xx/429, a timeout, a failed spawn, or a failed
+  write is `retryable: true`; a clean run that produced no `<revision>` block is not, because a
+  retry would fail identically while spending the owner's model plan again. A retryable failure
+  requeues with a backoff (1 min, then 5) up to `RUN_MAX_RETRIES`; anything else is terminal.
+
+The executor knows *why* it failed; the server owns the *policy* (how many, how long). Retry
+counts live in the run's meta blob, so they survive re-dispatch and show up in the timeline.
+
+### The run timeline
+
+`GET /v1/workspace/runs` returns each run with a derived `timeline` (nothing extra is stored):
+`phase`, `waiting_until` (a queued run that isn't due yet — a schedule or a retry backoff),
+`queued_ms` / `ran_ms`, `retries`, `last_error`, `outcome`, and `writes`. Settings → Automations
+renders the parts an operator asks about — retries spent, when it will next be tried, and what
+went wrong last time — and stays silent for the ordinary first-try success. This is what makes
+"my automation isn't doing anything" answerable without reading server logs.
+
 ### The credential
 
 A hosted run authenticates with a `dkrun_` **capability token**: signed, scoped to exactly one

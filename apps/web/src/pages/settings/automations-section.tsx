@@ -250,9 +250,29 @@ function Activity() {
               </span>
             </div>
             <RunWrites meta={r.meta} />
+            <RunTimeline timeline={r.timeline} />
           </li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+/** Why a run is where it is: retries spent, when it will next be tried, and what went wrong
+ *  last time. Renders nothing for the ordinary case (a first-try run that just worked), so the
+ *  activity list stays quiet until there is something an operator would actually want to know. */
+function RunTimeline({ timeline }: { timeline?: Run["timeline"] }) {
+  if (!timeline) return null
+  const { retries, waiting_until, last_error } = timeline
+  const waiting = waiting_until && Date.parse(waiting_until) > Date.now() ? waiting_until : null
+  if (retries === 0 && !waiting && !last_error) return null
+  return (
+    <div className="flex flex-wrap items-center gap-2 pl-1 text-2xs text-muted-foreground">
+      {retries > 0 && (
+        <Badge variant="outline">{retries === 1 ? "1 retry" : `${retries} retries`}</Badge>
+      )}
+      {waiting && <span>next try {ago(waiting)}</span>}
+      {last_error && <span className="min-w-0 truncate italic">{last_error}</span>}
     </div>
   )
 }

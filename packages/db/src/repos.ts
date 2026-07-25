@@ -2642,13 +2642,35 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(sql`coalesce(${run.scheduled_for}, '') desc`)
       .limit(1)
       .get()) ?? null
-  const claimRunById = async (id: string, agentId: string, now: string): Promise<RunRecord | null> =>
+  const claimRunById = async (
+    id: string,
+    agentId: string,
+    now: string,
+  ): Promise<RunRecord | null> =>
     // The capability-token claim: exactly this run, queued → running. The status guard in the
     // WHERE is the race safety — a double-booted substrate's second update matches zero rows.
     (await db
       .update(run)
       .set({ status: "running", started_at: now })
       .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "queued")))
+      .returning()
+      .get()) ?? null
+  const requeueRun = async (
+    id: string,
+    agentId: string,
+    fields: { scheduledFor: string; meta?: string | null },
+  ): Promise<RunRecord | null> =>
+    // Strict running → queued, only for the claiming agent: the status guard stops a duplicate
+    // or late retry request from resurrecting a run that already settled.
+    (await db
+      .update(run)
+      .set({
+        status: "queued",
+        started_at: null,
+        scheduled_for: fields.scheduledFor,
+        ...(fields.meta === undefined ? {} : { meta: fields.meta }),
+      })
+      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
       .returning()
       .get()) ?? null
   const reclaimStaleRuns = async (
@@ -3594,6 +3616,7 @@ export function makeRepos(db: SqliteDb) {
     getAgent,
     claimDueRuns,
     claimRunById,
+    requeueRun,
     reclaimStaleRuns,
     listEnabledAutomations,
     listDueQueuedRuns,

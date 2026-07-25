@@ -775,9 +775,17 @@ async function runStructured(provider, opts) {
   }
 
   if (parsed.value) return { ok: true, value: parsed.value }
-  if (r.timedOut) return { ok: false, error: "timed out" }
+  // Transient vs deterministic — the EXECUTOR knows which, the server owns the policy (how
+  // many retries, what backoff). A timeout or a provider/spawn failure may well succeed on a
+  // second attempt; a clean run that simply never produced the block will fail identically, so
+  // saying so keeps a retry from spending the owner's plan twice for the same answer.
+  if (r.timedOut) return { ok: false, error: "timed out", retryable: true }
   if (r.code !== 0 || r.isError)
-    return { ok: false, error: `exit ${r.code}: ${why(r).slice(0, 500)}` }
+    return {
+      ok: false,
+      error: `exit ${r.code}: ${why(r).slice(0, 500)}`,
+      retryable: provider.retryable(r),
+    }
 
   if (r.sessionId) {
     console.log(`[runner] no block; nudging (resume ${r.sessionId.slice(0, 8)})`)
@@ -797,7 +805,8 @@ async function runStructured(provider, opts) {
     const v = salvage(raw)
     if (v) return { ok: true, value: v }
   }
-  return { ok: false, error: parsed.error }
+  // A clean exit with no parseable block after a nudge: deterministic, not worth paying for again.
+  return { ok: false, error: parsed.error, retryable: false }
 }
 
 /** The answer lane: a session's reply. Appends the <answer> contract; salvages an unstructured
@@ -1095,8 +1104,14 @@ export async function serveRun(client, run, manifest, cfg) {
       .catch((err) => console.error(`[runner] run ${run.id} finish failed: ${err.message}`))
   // meta rides as an OBJECT: the finish endpoint validates a record and stringifies it
   // server-side, so a pre-stringified blob is a 400 that silently loses the run's outcome.
-  const failRun = (why) =>
-    finish({ status: "failed", meta: { outcome: "failed", why: (why ?? "").slice(0, 200) } })
+  // `retryable` is the executor's honest read of WHY it failed; the server owns the policy
+  // (how many retries, what backoff). Default false: never pay for a second attempt unless
+  // this run has a real reason to think it would go differently.
+  const failRun = (why, retryable = false) =>
+    finish({
+      status: "failed",
+      meta: { outcome: "failed", why: (why ?? "").slice(0, 200), retryable },
+    })
 
   // Whose plan pays for this run: its initiator (registrant fallback), a per-spawn overlay like a
   // session's. A fail-closed resolve finishes the run failed, never thrown (a throw dangles it).
@@ -1143,7 +1158,7 @@ export async function serveRun(client, run, manifest, cfg) {
 
   if (!result.ok || !result.revision) {
     console.error(`[runner] run ${run.id} failed: ${result.error}`)
-    await failRun(result.error)
+    await failRun(result.error, result.retryable === true)
     return
   }
 
@@ -1181,8 +1196,11 @@ export async function serveRun(client, run, manifest, cfg) {
       write = { short_id: res.short_id, decision, created: true }
     }
   } catch (err) {
+    // A failed WRITE is worth retrying: the expensive part (the model run) already succeeded,
+    // and a 5xx or network blip on publish is exactly the transient case. A permanent refusal
+    // (403) will simply fail again and stop at the cap.
     console.error(`[runner] run ${run.id} write failed: ${err.message}`)
-    await failRun(err.message)
+    await failRun(err.message, true)
     return
   }
 

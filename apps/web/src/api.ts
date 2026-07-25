@@ -206,6 +206,20 @@ export interface Run {
   meta: string | null
   created_at: string
   finished_at: string | null
+  /** Derived server-side (never stored): where this run is and why. Lets the activity view
+   *  answer "nothing is happening — is it broken?" without anyone opening server logs. */
+  timeline?: {
+    phase: Run["status"]
+    /** Set when a queued run isn't due yet: a schedule, or a retry backoff. */
+    waiting_until: string | null
+    queued_ms: number | null
+    ran_ms: number | null
+    /** Attempts already spent (0 = first try); each one costs the initiator's model plan. */
+    retries: number
+    last_error: string | null
+    outcome: string | null
+    writes: unknown[]
+  }
 }
 /** An askable agent setup: a registered agent wired to a manifest artifact.
  *  Generated from the OpenAPI spec. */
