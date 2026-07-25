@@ -2,7 +2,7 @@
 #   fly deploy --config deploy/fly.toml
 # Self-hosting your own instance? Change `app` to yours (or run `fly launch`,
 # which rewrites it) and make the volume name below match yours.
-app = "derive-api-lively-hill-7367"
+app = "your-derive-app" # must be globally unique — `fly launch` picks one for you
 primary_region = "iad"
 
 [build]

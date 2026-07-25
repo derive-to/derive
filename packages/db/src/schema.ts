@@ -201,8 +201,8 @@ export const renderJob = sqliteTable("render_job", {
   created_at: text("created_at").notNull().default(now),
 })
 
-// The run ledger (WP6): one row per hosted/owner agent invocation — the durable
-// An automation (WP5): a standing agent job — WHO (agent), WHEN (trigger, open-ended
+// The run ledger: one row per hosted/owner agent invocation — the durable
+// An automation: a standing agent job — WHO (agent), WHEN (trigger, open-ended
 // JSON), WHAT (free-form instruction), on WHAT (refs). The definition only; every firing
 // is a `run`. A "living doc" is just an automation whose instruction keeps a doc current.
 export const automation = sqliteTable("automation", {
@@ -221,7 +221,7 @@ export const automation = sqliteTable("automation", {
   created_at: text("created_at").notNull().default(now),
 })
 
-// A run (WP5/WP6): one execution of an automation (or an ad-hoc one-off). The queue and
+// A run: one execution of an automation (or an ad-hoc one-off). The queue and
 // the ledger in ONE table (pg-boss's model): a `queued` row is pending work, a terminal
 // row is history. A worker claims the oldest due queued run under a row lock, runs it, and
 // finishes it. Cost is snapshotted at finish (micro-USD int); everything else lives in the

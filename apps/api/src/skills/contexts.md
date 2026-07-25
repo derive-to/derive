@@ -8,7 +8,7 @@ order: 4
 A CONTEXT is an agent a workspace owner wired up — a manifest (its instructions), its own data
 and tools, a playbook. Think of it as a role you can step into. Every interaction is the same
 shape: **(context, instruction)** — "with this context, do this." The instruction is a question
-("what were refunds last week?") or a task ("build the walkthrough for Airbnb"); it always names
+("what were refunds last week?") or a task ("build the walkthrough for Acme"); it always names
 the target. `find` surfaces the contexts your user may use; `use` is the one tool for both
 sides — GIVING a context an instruction, and (if you are its agent) RUNNING it.
 

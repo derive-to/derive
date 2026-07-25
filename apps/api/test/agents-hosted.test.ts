@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
-// WP1 of the hosted-agents plan: the `hosted` flag on agent records, the
+// Hosted agents, first slice: the `hosted` flag on agent records, the
 // Admin-only toggle, and the workspace agent settings (master switch,
 // killswitch, auto opt-in, default agent). Hosting changes where an agent
 // runs — these tests pin that it changes nothing about identity or caps.

@@ -191,7 +191,7 @@ describe("the ack: comment react over MCP", () => {
       path: null,
       anchor: null,
       body_md: "(a), and note it in 5.2",
-      author: "Anir",
+      author: "Maya",
       author_id: "u_o",
     })
     const ack = await call(app, token, "comment", {

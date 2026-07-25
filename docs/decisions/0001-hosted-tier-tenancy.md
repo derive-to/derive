@@ -1,6 +1,6 @@
 # ADR 0001 — Hosted tier: shared Postgres, central auth, DOs as utility compute
 
-**Status:** accepted (Slack thread, 2026-07-02 — rob / anir / mert)
+**Status:** accepted (2026-07-02)
 
 ## Decision
 
@@ -21,16 +21,17 @@ The hosted (cloud) tier runs as:
 
 ## Rejected alternative: per-workspace Durable Object databases
 
-Proposal (mert): each workspace gets its own DO with a private SQLite database;
+Proposal: each workspace gets its own DO with a private SQLite database;
 a central "control" D1 holds users/sessions/memberships and routes each request
-to the right workspace DO. A complete reference implementation exists in
-Nemonic (control D1 + `WorkspaceDO`, fail-closed router, lazy additive-only
-per-DO migrations, hand-rolled daily snapshots to R2).
+to the right workspace DO. A complete reference implementation existed in
+an earlier internal system (control D1 + a per-workspace DO, fail-closed router,
+lazy additive-only per-DO migrations, hand-rolled daily snapshots to R2).
 
 Why not for Derive:
 
-- **Tenancy shape.** Nemonic's tenant boundary comes free from Slack (one team =
-  one workspace; users live in exactly one DO; no global identity). Derive is the
+- **Tenancy shape.** That system's tenant boundary came free from its
+  Slack-shaped domain (one team = one workspace; users live in exactly one DO;
+  no global identity). Derive is the
   inverse: users belong to multiple workspaces, everyone gets a personal
   workspace at signup, and the core surfaces are global — anonymous `/artifacts/:ref`
   links, `/users/` profiles, cross-workspace shares, eventually search. Each of those
@@ -40,7 +41,7 @@ Why not for Derive:
   rollout that must tolerate every historical schema version; support, billing
   metering, analytics, and one-off data fixes are single SQL queries instead of
   fan-outs or bespoke fleet tooling; managed Postgres gives point-in-time
-  recovery out of the box (DO-SQLite has none — Nemonic had to build its own
+  recovery out of the box (DO-SQLite has none — the earlier system had to build its own
   snapshot/restore).
 - **Isolation was metadata-only anyway:** blobs stay in one shared R2 bucket in
   either design.
@@ -48,8 +49,8 @@ Why not for Derive:
   traffic is agent/CI publishing concentrated on a single workspace — the
   heaviest (paying) tenant hits the per-DO ceiling first.
 
-What we adopted from the proposal: the workspace-bound token model (Nemonic's
-PAT semantics), which structurally prevents an agent publishing to the wrong
+What we adopted from the proposal: the workspace-bound token model
+(per-workspace PAT semantics), which structurally prevents an agent publishing to the wrong
 workspace — the failure actually observed while dogfooding.
 
 ## Revisit triggers
@@ -68,7 +69,7 @@ these is concrete, not before:
 Nothing is thrown away if we shard later: central auth + memberships + routing
 is exactly the control plane that architecture requires.
 
-## Follow-ups (tracked as issues)
+## Follow-ups
 
 1. ~~Wire Postgres into the Workers entry.~~ Done 2026-07-02: Hyperdrive → Neon
    via `lib/edge-pg.ts`, live at derive.to; DEPLOY.md "Cloudflare Scale" documents

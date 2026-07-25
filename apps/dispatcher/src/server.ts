@@ -29,7 +29,7 @@ export function parseDrain(body: unknown): DrainRequest | string {
   }
 }
 
-// WP3: the agent host's internal HTTP surface. The API reaches it over a shared
+// The agent host's internal HTTP surface. The API reaches it over a shared
 // secret to run a shared-lane hosted agent live (Draft with your agent, an
 // @mention reply). Internal-only: never exposed publicly, so the secret is the
 // whole auth story. Health is unauthenticated for liveness probes.

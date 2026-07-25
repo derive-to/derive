@@ -207,7 +207,7 @@ custom_domain = true
 # is a custom domain (auto DNS + cert) that app.ts 301s to derive.to — once the PSL
 # entry lands the apex is cookie-dead, so it must never serve the SPA. The wildcard
 # can't be a custom domain, so it's a zone route over a manually-managed DNS record
-# (`*.derive.page` AAAA 100::, proxied). PSL tracking: artifact g9o2njps.
+# (`*.derive.page` AAAA 100::, proxied). A Public Suffix List entry for the base domain is planned.
 [[routes]]
 pattern = "derive.page"
 custom_domain = true

@@ -173,7 +173,7 @@ export const renderJob = pgTable("render_job", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
-// An automation (WP5): a standing agent job (agent + trigger + instruction + refs). The
+// An automation: a standing agent job (agent + trigger + instruction + refs). The
 // definition only; every firing is a `run`. See schema.ts for the full contract.
 export const automation = pgTable("automation", {
   id: text("id").primaryKey(),
@@ -186,7 +186,7 @@ export const automation = pgTable("automation", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
-// A run (WP5/WP6): one execution — the queue and the ledger in one table. See schema.ts.
+// A run: one execution — the queue and the ledger in one table. See schema.ts.
 export const run = pgTable("run", {
   id: text("id").primaryKey(),
   org_id: text("org_id").notNull(),
