@@ -193,6 +193,16 @@ export class DeriveClient {
     return { credential: r.credential ?? null, reason: r.reason ?? "none" }
   }
 
+  /** Persist a refreshed credential blob back to the SAME row this run resolved to (the CLI
+   *  rotated a single-use login in place). The server updates only the run's own row. */
+  async updateModelCredential(provider, sessionId, token) {
+    const q = `provider=${encodeURIComponent(provider)}${sessionId ? `&session=${encodeURIComponent(sessionId)}` : ""}`
+    await this.call(`/v1/agent/model-credential?${q}`, {
+      method: "PUT",
+      body: JSON.stringify({ token }),
+    })
+  }
+
   /** Post an answer. `answers` names the asker message it addresses — if a
    *  follow-up landed mid-run, the server keeps the session open for re-serve
    *  instead of settling it over the unseen follow-up. */
@@ -869,11 +879,32 @@ export async function resolveModelEnv(cfg, client, sessionId = null) {
   const spec = provider.credentialFiles?.(res.credential.kind, res.credential.value)
   if (spec) {
     const dir = mkdtempSync(join(tmpdir(), "derive-cred-"))
-    for (const [name, content] of Object.entries(spec.files))
-      writeFileSync(join(dir, name), content, { mode: 0o600 })
+    // The file whose seed content IS the stored blob is the one the CLI refreshes in place
+    // (Codex rotates its single-use login and writes it back to auth.json). Track it so cleanup
+    // can persist the rotated token; otherwise the next run seeds a token the CLI already burned.
+    let primaryPath = null
+    for (const [name, content] of Object.entries(spec.files)) {
+      const p = join(dir, name)
+      writeFileSync(p, content, { mode: 0o600 })
+      if (content === res.credential.value) primaryPath = p
+    }
+    const seed = res.credential.value
     return {
       env: { [spec.homeEnv]: dir },
       cleanup: async () => {
+        // Persist a refreshed login before discarding the dir (the sanctioned "run and persist
+        // the updated auth.json" pattern). Best-effort: a failed persist never fails the run.
+        try {
+          if (primaryPath) {
+            const after = readFileSync(primaryPath, "utf8")
+            if (after && after !== seed)
+              await client.updateModelCredential(cfg.providerName, sessionId, after)
+          }
+        } catch (e) {
+          console.error(
+            `[runner] couldn't persist refreshed ${cfg.providerName} login: ${e.message}`,
+          )
+        }
         try {
           rmSync(dir, { recursive: true, force: true })
         } catch {}

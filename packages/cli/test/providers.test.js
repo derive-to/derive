@@ -125,10 +125,14 @@ describe("resolveModelEnv — per-initiator overlay, no shared fallback", () => 
   // The server returns { credential, reason }. Fake it: a credential implies reason "none".
   const client = (credential, { throws = false, reason = "none" } = {}) => ({
     calls: [],
+    persisted: [],
     async modelCredential(provider, sessionId = null) {
       this.calls.push({ provider, sessionId })
       if (throws) throw new Error("404")
       return { credential, reason: credential ? "none" : reason }
+    },
+    async updateModelCredential(provider, sessionId, token) {
+      this.persisted.push({ provider, sessionId, token })
     },
   })
 
@@ -201,20 +205,32 @@ describe("resolveModelEnv — per-initiator overlay, no shared fallback", () => 
     expect(stripped).toEqual({ PATH: "/usr/bin" })
   })
 
-  it("a Codex plan LOGIN is written to a private per-run CODEX_HOME, then cleaned up", async () => {
+  it("a Codex plan LOGIN is written to a private per-run CODEX_HOME; a refresh persists, then cleanup", async () => {
     clean()
-    const authJson = '{"tokens":{"access_token":"a","refresh_token":"r"}}'
-    const { env, cleanup } = await resolveModelEnv(
-      cfg({ providerName: "codex" }),
-      client({ kind: "login", value: authJson }),
-    )
+    const authJson = '{"tokens":{"access_token":"a","refresh_token":"r"},"last_refresh":"t0"}'
+    const c = client({ kind: "login", value: authJson })
+    const { env, cleanup } = await resolveModelEnv(cfg({ providerName: "codex" }), c, "ses_1")
     // The overlay points Codex at the private dir, nothing else.
     expect(Object.keys(env)).toEqual(["CODEX_HOME"])
     const authPath = join(env.CODEX_HOME, "auth.json")
     expect(readFileSync(authPath, "utf8")).toBe(authJson)
-    // Cleanup removes the dir so the login never lingers between runs.
+    // Simulate Codex rotating the single-use token in place during the run.
+    const refreshed = '{"tokens":{"access_token":"a2","refresh_token":"r2"},"last_refresh":"t1"}'
+    writeFileSync(authPath, refreshed)
     await cleanup()
+    // The rotated blob is persisted (so the next run doesn't seed a burned token)...
+    expect(c.persisted).toEqual([{ provider: "codex", sessionId: "ses_1", token: refreshed }])
+    // ...and the dir is gone.
     expect(existsSync(env.CODEX_HOME)).toBe(false)
+    clean()
+  })
+
+  it("an UNCHANGED login is not persisted (no needless write)", async () => {
+    clean()
+    const c = client({ kind: "login", value: '{"tokens":{"x":1}}' })
+    const { cleanup } = await resolveModelEnv(cfg({ providerName: "codex" }), c, "ses_2")
+    await cleanup()
+    expect(c.persisted).toEqual([])
     clean()
   })
 })

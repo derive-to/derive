@@ -455,3 +455,58 @@ describe("model credentials: pool isolation + unreadable secrets", () => {
     expect(body.reason).toBe("unreadable")
   })
 })
+
+// Refresh persistence: the executor PUTs a refreshed blob back to the SAME row a run resolved
+// to, so a rotated single-use login (Codex) stays valid across runs. Same 404 isolation as the
+// read: a foreign session/run id never writes a cross-row.
+describe("model credentials: refresh persistence (PUT)", () => {
+  const owner: TestUser = { id: "u_mcr2_own", email: "mcr2own@derive.test", name: "Owner" }
+  const { app } = makeAuthedApp("model-creds-refresh", [owner], "editor", {
+    deps: { encryptionKey: "test-enc-secret" },
+  })
+  const mintAgent = async (name: string) =>
+    (await (await app.request("/v1/agents", jsonAs(as(owner.email), { name }))).json()) as {
+      id: string
+      token: string
+    }
+  const readCred = (agentToken: string) =>
+    app.request("/v1/agent/model-credential?provider=codex", { headers: bearer(agentToken) })
+  const putCred = (token: string, agentToken: string, q = "") =>
+    app.request(`/v1/agent/model-credential?provider=codex${q}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...bearer(agentToken) },
+      body: JSON.stringify({ token }),
+    })
+
+  it("persists a refreshed login back to the resolved (pool) row; next read returns it", async () => {
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request(
+      "/v1/workspace/model-credentials",
+      jsonAs(as(owner.email), { provider: "codex", kind: "login", token: '{"tokens":{"v":1}}' }),
+    )
+    const agent = await mintAgent("Refresher")
+    const before = await (await readCred(agent.token)).json()
+    expect(before.credential).toEqual({ kind: "login", value: '{"tokens":{"v":1}}' })
+    // The run rotated the token in place; persist the refreshed blob.
+    expect((await putCred('{"tokens":{"v":2}}', agent.token)).status).toBe(200)
+    const after = await (await readCred(agent.token)).json()
+    expect(after.credential.value).toBe('{"tokens":{"v":2}}')
+  })
+
+  it("a PUT with a foreign session id is a 404, never a cross-row write", async () => {
+    const agent = await mintAgent("Refresher 2")
+    const res = await putCred("x", agent.token, "&session=ses_nope")
+    expect(res.status).toBe(404)
+  })
+
+  it("a PUT that resolves to no row is a 404 no-op (nothing to persist)", async () => {
+    // No claude-code credential exists anywhere, so there is no row to update.
+    const agent = await mintAgent("Refresher 3")
+    const res = await app.request("/v1/agent/model-credential?provider=claude-code", {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...bearer(agent.token) },
+      body: JSON.stringify({ token: "x" }),
+    })
+    expect(res.status).toBe(404)
+  })
+})

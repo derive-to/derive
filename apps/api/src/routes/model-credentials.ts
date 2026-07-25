@@ -1,6 +1,6 @@
 import { newId } from "@derive/core"
 import { z } from "@hono/zod-openapi"
-import { Hono } from "hono"
+import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
 import { decryptSecret, encryptSecret } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
@@ -177,85 +177,103 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
     return c.json({ ok: true, agentId, enabled: b.enabled })
   })
 
-  // The executor fetches the credential a run bills against, decrypted. Priority:
-  //   1. INITIATOR — the session's asker (`?session=`) or the run's `initiated_by`
-  //      (`?run=`, the person who clicked Run now). "Bill mine first."
-  //   2. OWNER — the agent's registrant (`created_by`), but ONLY when this agent is on the
-  //      owner's lend-list (org_settings.ownerLendAgents); default off.
-  //   3. WORKSPACE POOL — the org's shared plan (the sentinel-user credential row).
-  //   4. none — `{ credential: null, reason }`; the runner fails the run closed rather than
-  //      falling back to a shared token. `reason` is "unreadable" when a row existed but its
-  //      secret couldn't be decrypted (a rotated DERIVE_AUTH_SECRET, a corrupt blob) so the
-  //      runner can say RECONNECT, else "none" (connect one).
-  // A clock/event run has no initiator (`initiated_by` null) and resolves straight to the
-  // owner/pool tiers; the boot preflight (no session/run) resolves the same tail. Isolation
-  // is structural: a session/run id resolves only when it belongs to THIS agent (404
-  // otherwise, so foreign ids don't leak), and only the resolved principal's row is read. A
-  // credential whose secret won't decrypt is treated as absent (fall through), never a 500.
-  app.get("/v1/agent/model-credential", async (c) => {
-    const agent = await agentFor(c)
-    if (!agent) return fail(c, 401, "agent token required")
-    const provider = c.req.query("provider") ?? "claude-code"
-    const key = deps.encryptionKey
-    if (!key) return c.json({ credential: null, reason: "none" })
-    // Decrypt a resolved row into the response, or null when its stored secret can't be read
-    // — then we fall through to the next tier and remember we saw an unreadable one.
-    // decryptSecret FAILS OPEN (returns the blob unchanged) on a wrong key / corrupt secret,
-    // so a `v1.` blob that comes back identical never decrypted: treat it as unreadable rather
-    // than inject ciphertext as a token. (A legacy plaintext secret has no `v1.` prefix.)
-    let sawUnreadable = false
-    const present = (cred: { kind: string; secret: string }, source: string) => {
-      const value = decryptSecret(cred.secret, key)
-      if (cred.secret.startsWith("v1.") && value === cred.secret) {
-        sawUnreadable = true
-        return null
-      }
-      return c.json({ credential: { kind: cred.kind, value }, source })
-    }
+  // The ordered credential candidates a run bills against — {userId, source} for each tier
+  // that applies, in priority order: INITIATOR (session asker / run `initiated_by`), then the
+  // agent OWNER (only when this agent is on org_settings.ownerLendAgents; default off), then
+  // the WORKSPACE POOL (a sentinel-user row). Returns a Response (404) when a passed
+  // session/run id doesn't belong to THIS agent, so foreign ids never leak or bill. Shared by
+  // the read (GET) and the refreshed-token write (PUT) so both target the same rows.
+  const credentialCandidates = async (
+    c: Context,
+    agent: { id: string; org_id: string; created_by: string | null },
+  ) => {
+    const out: { userId: string; source: string }[] = []
     const sessionId = c.req.query("session")
     if (sessionId) {
       const s = await meta.getSession(sessionId)
       const sctx = s ? await meta.getContext(s.context_id) : null
       if (!s || !sctx || sctx.agent_id !== agent.id || s.org_id !== agent.org_id)
         return fail(c, 404, "unknown session")
-      const asker = await meta.getModelCredential(agent.org_id, s.asker_id, provider)
-      if (asker) {
-        const r = present(asker, "asker")
-        if (r) return r
-      }
+      out.push({ userId: s.asker_id, source: "asker" })
     }
     const runId = c.req.query("run")
     if (runId) {
       const r = await meta.getRun(runId)
       if (!r || r.agent_id !== agent.id || r.org_id !== agent.org_id)
         return fail(c, 404, "unknown run")
-      if (r.initiated_by) {
-        const initiator = await meta.getModelCredential(agent.org_id, r.initiated_by, provider)
-        if (initiator) {
-          const rr = present(initiator, "initiator")
-          if (rr) return rr
-        }
-      }
+      if (r.initiated_by) out.push({ userId: r.initiated_by, source: "initiator" })
     }
-    // Owner tier — only when this agent is on its owner's lend-list (per-agent, default off).
-    const owner = agent.created_by
-    if (owner) {
+    if (agent.created_by) {
       const settings = await meta.getOrgSettings(agent.org_id)
-      if (settings.ownerLendAgents?.includes(agent.id)) {
-        const cred = await meta.getModelCredential(agent.org_id, owner, provider)
-        if (cred) {
-          const r = present(cred, "owner")
-          if (r) return r
-        }
-      }
+      if (settings.ownerLendAgents?.includes(agent.id))
+        out.push({ userId: agent.created_by, source: "owner" })
     }
-    // Workspace pool tier — the org's shared plan, if one is connected.
-    const pool = await meta.getModelCredential(agent.org_id, POOL_USER, provider)
-    if (pool) {
-      const r = present(pool, "pool")
-      if (r) return r
+    out.push({ userId: POOL_USER, source: "pool" })
+    return out
+  }
+
+  // A `v1.` secret that decrypts to itself never decrypted (decryptSecret FAILS OPEN on a
+  // wrong key / corrupt blob): treat it as unreadable rather than inject ciphertext as a token.
+  const unreadable = (cred: { secret: string }, value: string) =>
+    cred.secret.startsWith("v1.") && value === cred.secret
+
+  // The executor fetches the credential a run bills against, decrypted — the FIRST readable
+  // candidate tier. `reason` distinguishes an UNREADABLE stored secret (reconnect) from
+  // nothing connected (connect). A credential whose secret won't decrypt is treated as absent,
+  // never a 500.
+  app.get("/v1/agent/model-credential", async (c) => {
+    const agent = await agentFor(c)
+    if (!agent) return fail(c, 401, "agent token required")
+    const provider = c.req.query("provider") ?? "claude-code"
+    const key = deps.encryptionKey
+    if (!key) return c.json({ credential: null, reason: "none" })
+    const candidates = await credentialCandidates(c, agent)
+    if (candidates instanceof Response) return candidates
+    let sawUnreadable = false
+    for (const { userId, source } of candidates) {
+      const cred = await meta.getModelCredential(agent.org_id, userId, provider)
+      if (!cred) continue
+      const value = decryptSecret(cred.secret, key)
+      if (unreadable(cred, value)) {
+        sawUnreadable = true
+        continue
+      }
+      return c.json({ credential: { kind: cred.kind, value }, source })
     }
     return c.json({ credential: null, reason: sawUnreadable ? "unreadable" : "none" })
+  })
+
+  // The executor PERSISTS a refreshed credential blob back to the SAME row a run resolved to
+  // (the first readable tier). Codex rotates its login's single-use refresh token in place and
+  // writes it to auth.json during a run; the runner reads that back and PUTs it here so the
+  // stored token stays valid for the next run (the sanctioned "run and persist the updated
+  // auth.json" pattern, not a reimplemented refresh). Only the resolved principal's row is
+  // touched — same 404 isolation as the read. The runner calls this in a finally, so a refresh
+  // that landed before a run failed is still saved.
+  app.put("/v1/agent/model-credential", async (c) => {
+    const agent = await agentFor(c)
+    if (!agent) return fail(c, 401, "agent token required")
+    const provider = c.req.query("provider") ?? "claude-code"
+    const key = deps.encryptionKey
+    if (!key) return fail(c, 503, "secret encryption is not configured")
+    const b = await readJson(c, z.object({ token: z.string().min(1).max(16000) }))
+    if (b instanceof Response) return bail(b)
+    const candidates = await credentialCandidates(c, agent)
+    if (candidates instanceof Response) return candidates
+    const token = b.token.trim()
+    for (const { userId } of candidates) {
+      const cred = await meta.getModelCredential(agent.org_id, userId, provider)
+      if (!cred) continue
+      // Update the readable row the run actually used (skip an unreadable one, matching read).
+      if (unreadable(cred, decryptSecret(cred.secret, key))) continue
+      await meta.setModelCredential({
+        ...cred,
+        secret: encryptSecret(token, key),
+        updated_at: isoNow(),
+      })
+      return c.json({ ok: true })
+    }
+    return c.json({ ok: false, reason: "no credential to update" }, 404)
   })
 
   return app
