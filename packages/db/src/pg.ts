@@ -2913,6 +2913,9 @@ export class PgMetaStore implements MetaStore {
     await this.db.delete(follow).where(eq(follow.user_id, userId))
     await this.db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId))
     await this.db.delete(notification).where(eq(notification.user_id, userId))
+    // Encrypted plan tokens must not linger after the account is gone; the workspace pool's
+    // sentinel-user row is keyed differently, so it is never in scope.
+    await this.db.delete(modelCredential).where(eq(modelCredential.user_id, userId))
     await this.db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId))
     await this.db.update(version).set({ author_id: null }).where(eq(version.author_id, userId))
     await this.db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId))

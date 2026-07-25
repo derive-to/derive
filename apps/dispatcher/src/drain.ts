@@ -45,8 +45,10 @@ export function runDrain(
     const child = spawnImpl(cfg.runnerBin, drainArgs(cfg, ctx), {
       cwd,
       // The runner reads its contract from env; the dispatcher supplies only the
-      // per-context token. Model credentials (ANTHROPIC_API_KEY / OAuth token)
-      // and RUNNER_* knobs pass through from the dispatcher's own env untouched.
+      // per-context token (RUNNER_* knobs pass through). Model credentials are NOT taken
+      // from this env: the runner fetches the run's per-user plan from Derive and strips any
+      // inherited model token before the spawn, so a global ANTHROPIC_API_KEY / OAuth token
+      // set here would simply be ignored.
       env: { ...process.env, DERIVE_TOKEN: token, DERIVE_CONTEXT: ctx.id },
       stdio: ["ignore", "pipe", "pipe"],
     })

@@ -29,23 +29,28 @@ pointers.
 
 **Providers.** The runner is agent-CLI-agnostic (`RUNNER_PROVIDER` / `--provider`,
 default `claude-code`; add one in `packages/cli/src/providers/`). Each provider's
-own CLI owns its auth from the inherited env — no token is ever reimplemented:
+own CLI owns its auth, but the runner supplies the token per run: it fetches the
+run's per-user plan from Derive and injects it into that one spawn as the env var
+the CLI reads. Any inherited model token is stripped first, and there is no
+shared/ambient fallback, so a stray global token on the host is never billed.
 
-| Provider | Binary | Credential (either) |
+| Provider | Binary | Env the CLI reads |
 | --- | --- | --- |
 | `claude-code` | `claude` | `ANTHROPIC_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN` (a Pro/Max plan) |
 | `codex` (experimental) | `codex` | `OPENAI_API_KEY`, or a `codex login` (ChatGPT plan) |
 
 A subscription/plan token works because the runner drives the provider's real
-CLI, which consumes the token exactly as licensed — the sanctioned path, not a
-reimplemented client.
+CLI, which consumes the token exactly as licensed. Each member connects their own
+plan in Derive (Settings, Model plans); the runner resolves whose plan pays for
+each run (the initiator's, then a lent owner's, then a workspace pool, else the
+run fails closed) and no token is ever reimplemented.
 
 ## Two lanes
 
 The dispatcher runs both halves of the executor split:
 
 - **Owner-run drain lane** (pg-boss cron → `derive runner once`): serves contexts
-  whose agent runs on the run's initiator's credential (the asker's for a session, the clicker's for Run now), falling back to the owner's. Always on.
+  whose agent runs on the run's initiator's credential (the asker's for a session, the clicker's for Run now), then a lent owner's, then a workspace pool, else the run fails closed. Always on.
 - **Shared hosted lane** (`POST /internal/invoke`, behind `DISPATCHER_HOST_SECRET`):
   runs a Derive-hosted agent (the `@derive/hosted-agent` Mastra harness) live for a
   single task. The API calls it for "Draft with your agent" and @mention replies.
@@ -72,10 +77,11 @@ because every drain empties the whole session queue.
 ## Run it
 
 ```bash
-# Local (needs a Postgres and the CLI on PATH):
+# Local (needs a Postgres and the CLI on PATH). Model auth is NOT set here: each
+# member connects their own plan in Derive, and the runner injects it per run.
 DATABASE_URL=postgres://localhost/dispatcher \
 DISPATCHER_CONTEXTS='[{"id":"ctx_x","token_env":"CTX_X_TOKEN"}]' \
-CTX_X_TOKEN=dk_agt_... ANTHROPIC_API_KEY=sk-... \
+CTX_X_TOKEN=dk_agt_... \
 pnpm --filter @derive/dispatcher start
 
 # Containers: see deploy/dispatcher.compose.example.yml

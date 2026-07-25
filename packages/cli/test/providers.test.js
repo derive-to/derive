@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest"
 import { claudeCode } from "../src/providers/claude-code.js"
 import { codex } from "../src/providers/codex.js"
 import { DEFAULT_PROVIDER, PROVIDERS, selectProvider } from "../src/providers/index.js"
-import { loadRunnerConfig, resolveModelEnv, runAgent } from "../src/runner.js"
+import { loadRunnerConfig, resolveModelEnv, runAgent, stripModelTokens } from "../src/runner.js"
 
 describe("provider registry", () => {
   it("defaults to claude-code, resolves known names, and throws on an unknown one", () => {
@@ -108,58 +108,69 @@ describe("credentialEnv", () => {
   })
 })
 
-describe("resolveModelEnv — per-initiator overlay + fail-closed", () => {
+describe("resolveModelEnv — per-initiator overlay, no shared fallback", () => {
   const CRED_ENV = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
   const clean = () => {
     for (const k of CRED_ENV) delete process.env[k]
   }
   const cfg = (over = {}) => ({ providerName: "claude-code", server: "https://derive.to", ...over })
-  const client = (credential, throws = false) => ({
+  // The server returns { credential, reason }. Fake it: a credential implies reason "none".
+  const client = (credential, { throws = false, reason = "none" } = {}) => ({
     calls: [],
     async modelCredential(provider, sessionId = null) {
       this.calls.push({ provider, sessionId })
       if (throws) throw new Error("404")
-      return credential
+      return { credential, reason: credential ? "none" : reason }
     },
   })
 
   it("returns the initiator's plan as an OVERLAY — process.env is never mutated", async () => {
     clean()
-    process.env.CLAUDE_CODE_OAUTH_TOKEN = "ambient-should-survive"
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = "host-value-should-survive"
     const env = await resolveModelEnv(cfg(), client({ kind: "oauth", value: "ASKER-A" }))
     expect(env).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "ASKER-A" })
-    // The isolation property itself: the parent env still holds the ambient value,
-    // so the NEXT session (a different asker) starts from clean ground.
-    expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("ambient-should-survive")
+    // The overlay is separate from process.env, so the NEXT session starts clean.
+    expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("host-value-should-survive")
     clean()
   })
 
   it("passes the session id through, so the server can resolve the ASKER's plan", async () => {
     clean()
-    process.env.ANTHROPIC_API_KEY = "ambient"
-    const c = client(null)
+    const c = client({ kind: "oauth", value: "x" })
     await resolveModelEnv(cfg(), c, "ses_123")
     expect(c.calls).toEqual([{ provider: "claude-code", sessionId: "ses_123" }])
     clean()
   })
 
-  it("FAILS CLOSED when the initiator has no plan and no ambient token is set", async () => {
+  it("FAILS CLOSED when nothing resolves — connect-your-plan message", async () => {
     clean()
     await expect(resolveModelEnv(cfg(), client(null))).rejects.toThrow(/no model plan connected/)
     clean()
   })
 
-  it("falls back to an ambient token (self-host's single plan) — null overlay", async () => {
+  it("a stray HOST token is NOT a fallback: still fails closed when nothing resolves", async () => {
     clean()
-    process.env.ANTHROPIC_API_KEY = "self-host-key"
-    await expect(resolveModelEnv(cfg(), client(null))).resolves.toBeNull()
+    // Even with a global token in the env, an unconnected initiator fails closed —
+    // there is no ambient path anymore.
+    process.env.ANTHROPIC_API_KEY = "stray-host-key"
+    await expect(resolveModelEnv(cfg(), client(null))).rejects.toThrow(/no model plan connected/)
     clean()
   })
 
-  it("a lookup error degrades to the ambient path rather than crashing the run", async () => {
+  it("an UNREADABLE stored token tells the user to reconnect, not to connect", async () => {
     clean()
-    process.env.CLAUDE_CODE_OAUTH_TOKEN = "ambient"
-    await expect(resolveModelEnv(cfg(), client(null, true))).resolves.toBeNull()
+    await expect(resolveModelEnv(cfg(), client(null, { reason: "unreadable" }))).rejects.toThrow(
+      /reconnect/i,
+    )
+    clean()
+  })
+
+  it("a lookup error fails the run closed (a run can't start without a plan)", async () => {
+    clean()
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = "stray-host-key"
+    await expect(resolveModelEnv(cfg(), client(null, { throws: true }))).rejects.toThrow(
+      /couldn't reach the model-plan endpoint/,
+    )
     clean()
   })
 
@@ -169,6 +180,16 @@ describe("resolveModelEnv — per-initiator overlay + fail-closed", () => {
       resolveModelEnv(cfg({ providerName: "codex" }), client({ kind: "oauth", value: "x" })),
     ).rejects.toThrow(/can't be injected/)
     clean()
+  })
+
+  it("stripModelTokens removes every inherited model-auth var, keeps the rest", () => {
+    const stripped = stripModelTokens({
+      PATH: "/usr/bin",
+      CLAUDE_CODE_OAUTH_TOKEN: "a",
+      ANTHROPIC_API_KEY: "b",
+      OPENAI_API_KEY: "c",
+    })
+    expect(stripped).toEqual({ PATH: "/usr/bin" })
   })
 })
 

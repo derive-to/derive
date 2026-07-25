@@ -1,4 +1,6 @@
+import { newId } from "@derive/core"
 import { describe, expect, it } from "vitest"
+import { encryptSecret } from "../src/lib/crypto"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // Model-plan credentials + the chain the executor bills against:
@@ -396,5 +398,60 @@ describe("model credentials: run-keyed initiator resolution", () => {
       headers: bearer(agentToken),
     })
     expect(res.status).toBe(404)
+  })
+})
+
+// Robustness of the resolver's read path: a workspace-pool row keyed on the sentinel user
+// never surfaces in a personal list, and a stored secret that can't be decrypted (a rotated
+// DERIVE_AUTH_SECRET, a corrupt blob) is treated as absent — null with reason "unreadable",
+// never a 500. Both are edges the account-safety story leans on.
+describe("model credentials: pool isolation + unreadable secrets", () => {
+  const owner: TestUser = { id: "u_mcx_own", email: "mcxown@derive.test", name: "Owner" }
+  const { app, meta } = makeAuthedApp("model-creds-x", [owner], "editor", {
+    deps: { encryptionKey: "test-enc-secret" },
+  })
+  const mintAgent = async (name: string) =>
+    (await (await app.request("/v1/agents", jsonAs(as(owner.email), { name }))).json()) as {
+      id: string
+      token: string
+    }
+
+  it("the workspace pool never leaks into a personal list", async () => {
+    await app.request("/v1/me", { headers: as(owner.email) })
+    // Connect ONLY the pool (the sentinel-user row), nothing personal.
+    const res = await app.request(
+      "/v1/workspace/model-credentials",
+      jsonAs(as(owner.email), { provider: "codex", kind: "api_key", token: "sk-pool-only-7777" }),
+    )
+    expect(res.status).toBe(201)
+    const mine = await (
+      await app.request("/v1/me/model-credentials", { headers: as(owner.email) })
+    ).json()
+    // The admin's OWN list is empty: the pool row is keyed on the sentinel user, not them.
+    expect(mine.credentials).toHaveLength(0)
+  })
+
+  it("an unreadable stored secret is null + reason 'unreadable', never a 500", async () => {
+    // Simulate a key rotation: a v1 blob encrypted under a DIFFERENT key can't be read here.
+    const now = new Date().toISOString()
+    await meta.setModelCredential({
+      id: newId("mcr"),
+      org_id: "default",
+      user_id: "__workspace_pool__",
+      provider: "claude-code",
+      kind: "oauth",
+      secret: encryptSecret("stale-token", "a-different-key"),
+      hint: "9999",
+      created_at: now,
+      updated_at: now,
+    })
+    const agent = await mintAgent("Reader")
+    const res = await app.request("/v1/agent/model-credential?provider=claude-code", {
+      headers: bearer(agent.token),
+    })
+    expect(res.status).toBe(200) // NOT a 500
+    const body = await res.json()
+    expect(body.credential).toBeNull()
+    expect(body.reason).toBe("unreadable")
   })
 })

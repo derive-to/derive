@@ -2964,6 +2964,10 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(follow).where(eq(follow.user_id, userId)).run()
     await db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId)).run()
     await db.delete(notification).where(eq(notification.user_id, userId)).run()
+    // Their connected model-plan credentials — encrypted plan tokens must not linger after
+    // the account is gone. Keyed on a real user id, so the workspace pool's sentinel row is
+    // never in scope.
+    await db.delete(modelCredential).where(eq(modelCredential.user_id, userId)).run()
     // Authorship is anonymized (nullable), so others' artifacts/threads survive intact.
     await db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId)).run()
     await db.update(version).set({ author_id: null }).where(eq(version.author_id, userId)).run()

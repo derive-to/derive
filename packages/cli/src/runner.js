@@ -181,13 +181,14 @@ export class DeriveClient {
     return r.sessions
   }
 
-  /** The owner's connected model credential for a provider (decrypted), or null. The
-   *  server scopes it to THIS agent's registrant, so a runner only ever sees its own
-   *  owner's plan token. */
+  /** The model credential a run bills against (decrypted), plus a `reason` when there is
+   *  none: "unreadable" = a row existed but its secret wouldn't decrypt (reconnect), "none"
+   *  = nothing connected. The server scopes it to THIS agent's own context, so a runner only
+   *  ever sees a credential a run of its own is entitled to. */
   async modelCredential(provider, sessionId = null) {
     const q = `provider=${encodeURIComponent(provider)}${sessionId ? `&session=${encodeURIComponent(sessionId)}` : ""}`
     const r = await this.call(`/v1/agent/model-credential?${q}`)
-    return r.credential ?? null
+    return { credential: r.credential ?? null, reason: r.reason ?? "none" }
   }
 
   /** Post an answer. `answers` names the asker message it addresses — if a
@@ -696,11 +697,12 @@ const MOCK_ANSWER = {
 export async function serveSession(client, session, manifest, cfg, repoMeta = [], skillMeta = []) {
   const asked = session.messages.at(-1)?.body_md?.slice(0, 80) ?? "?"
   console.log(`[runner] session ${session.id}: "${asked}"`)
-  // Whose plan pays for THIS answer: the session's asker (the server resolves it,
-  // falling back to the registrant), composed as a per-spawn overlay so nothing
-  // sticks to process.env between sessions with different askers. A fail-closed
-  // resolve (no plan, no ambient) fails THIS session server-side like any other
-  // run failure — thrown, it would leave the claim dangling and retry-loop.
+  // Whose plan pays for THIS answer: the server resolves it (initiator, then owner-lend,
+  // then the workspace pool), returned as a per-spawn overlay layered over an env whose
+  // inherited model tokens are STRIPPED, so nothing sticks to process.env between sessions
+  // with different askers and no stray host token can override the injected plan. A
+  // fail-closed resolve (nothing connected) fails THIS session like any other run failure;
+  // thrown, it would leave the claim dangling and retry-loop.
   let modelEnv = null
   if (!cfg.mock) {
     try {
@@ -720,7 +722,7 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
         timeoutMs: cfg.timeoutMs,
         systemPrompt: manifest,
         prompt: buildPrompt(session.messages),
-        env: modelEnv ? { ...process.env, ...modelEnv } : undefined,
+        env: modelEnv ? { ...stripModelTokens(process.env), ...modelEnv } : undefined,
       })
   if (!result.ok || !result.answer) {
     console.error(`[runner] session ${session.id} failed: ${result.error}`)
@@ -799,51 +801,59 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
 /** Boot the host state serve/once share: context info, repo corpus, skills,
  *  conventions. Everything here is per-boot truth on purpose (see the comments
  *  inline) — `once` inherits the same freshness contract as a serve restart. */
-/** Resolve the model credential a run authenticates with, as a per-spawn ENV OVERLAY —
- *  never a process.env mutation, so one asker's plan token can't leak into the next
- *  asker's session on a shared context. Pass a session id to bill the run's INITIATOR:
- *  the server resolves the session's asker first and falls back to the agent's
- *  registrant (interim until the workspace pool lands). Precedence:
- *    1. the initiator's connected plan (fetched, decrypted, provider-mapped) — overlay it;
- *    2. no connection but an ambient token is set (self-host's single global plan) — null
- *       overlay, the spawn inherits process.env;
- *    3. neither — FAIL CLOSED with a connect-your-plan message (never a shared fallback).
- *  A lookup error (older/self-host server without the endpoint) degrades to the ambient path. */
+// The model-auth env vars the runner OWNS. Only the resolved per-user credential may set
+// one, so any inherited value is STRIPPED before a spawn (see the session loop). This is
+// what makes a stray global token on the host un-billable: there is no ambient fallback,
+// and no leftover env can override the injected plan.
+const MODEL_TOKEN_ENV = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
+
+/** A copy of `env` with every model-auth var removed, so the caller can layer ONLY the
+ *  resolved credential on top. */
+export function stripModelTokens(env) {
+  const out = { ...env }
+  for (const k of MODEL_TOKEN_ENV) delete out[k]
+  return out
+}
+
+/** Resolve the model credential a run bills against, as a per-spawn ENV OVERLAY, never a
+ *  process.env mutation, so one asker's plan token can't leak into the next asker's session
+ *  on a shared context. Pass a session id to bill the run's INITIATOR; the server walks
+ *  initiator, then owner (per-agent opt-in), then the workspace pool. There is NO
+ *  shared/ambient fallback: if nothing resolves the run FAILS CLOSED, and a lookup error
+ *  fails closed too (a run can't start without knowing whose plan pays). `reason`
+ *  distinguishes an UNREADABLE stored token (reconnect) from nothing connected (connect). */
 export async function resolveModelEnv(cfg, client, sessionId = null) {
   if (cfg.mock) return null
   const provider = selectProvider(cfg.providerName)
-  let cred = null
+  let res
   try {
-    cred = await client.modelCredential(cfg.providerName, sessionId)
+    res = await client.modelCredential(cfg.providerName, sessionId)
   } catch (e) {
-    console.error(`[runner] model-credential lookup failed (${e.message}); using ambient env`)
-    return null
-  }
-  if (cred) {
-    const env = provider.credentialEnv?.(cred.kind, cred.value)
-    if (!env)
-      throw new Error(
-        `the connected ${cfg.providerName} credential (${cred.kind}) can't be injected — connect an API key, or use a provider that supports it`,
-      )
-    return env
-  }
-  const ambient = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"].some(
-    (k) => process.env[k],
-  )
-  if (!ambient)
     throw new Error(
-      `no model plan connected for this run's initiator — connect one at ${cfg.server} (Settings → Model plans)`,
+      `couldn't reach the model-plan endpoint (${e.message}); a run can't start without a connected plan. Connect one at ${cfg.server} (Settings → Model plans)`,
     )
-  return null
+  }
+  if (!res.credential)
+    throw new Error(
+      res.reason === "unreadable"
+        ? `your connected ${cfg.providerName} plan couldn't be read (it may pre-date a key change). Reconnect it at ${cfg.server} (Settings → Model plans)`
+        : `no model plan connected for this run's initiator. Connect one at ${cfg.server} (Settings → Model plans)`,
+    )
+  const env = provider.credentialEnv?.(res.credential.kind, res.credential.value)
+  if (!env)
+    throw new Error(
+      `the connected ${cfg.providerName} credential (${res.credential.kind}) can't be injected. Connect an API key, or use a provider that supports it`,
+    )
+  return env
 }
 
 async function bootHost(cfg, modeLabel) {
   const client = new DeriveClient(cfg.server, cfg.token)
   // Preflight only, and non-fatal. With per-initiator billing each session resolves and
   // fails closed on its own (line ~707), so a host legitimately boots with no DEFAULT plan
-  // — owner-lend off, no workspace pool, no ambient token — and still serves askers who
-  // bring their own. Surface the gap in the log; don't block startup on it. The overlay is
-  // discarded regardless: each session resolves its own initiator's credential.
+  // (owner-lend off, no workspace pool) and still serves askers who bring their own. Surface
+  // the gap in the log; don't block startup on it. The overlay is discarded regardless: each
+  // session resolves its own initiator's credential.
   try {
     await resolveModelEnv(cfg, client)
   } catch (e) {

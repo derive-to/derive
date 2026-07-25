@@ -183,25 +183,35 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
   //   2. OWNER — the agent's registrant (`created_by`), but ONLY when this agent is on the
   //      owner's lend-list (org_settings.ownerLendAgents); default off.
   //   3. WORKSPACE POOL — the org's shared plan (the sentinel-user credential row).
-  //   4. none — `{ credential: null }`; the runner fails the run closed with a "connect
-  //      your plan" message rather than falling back to a shared token.
+  //   4. none — `{ credential: null, reason }`; the runner fails the run closed rather than
+  //      falling back to a shared token. `reason` is "unreadable" when a row existed but its
+  //      secret couldn't be decrypted (a rotated DERIVE_AUTH_SECRET, a corrupt blob) so the
+  //      runner can say RECONNECT, else "none" (connect one).
   // A clock/event run has no initiator (`initiated_by` null) and resolves straight to the
   // owner/pool tiers; the boot preflight (no session/run) resolves the same tail. Isolation
   // is structural: a session/run id resolves only when it belongs to THIS agent (404
-  // otherwise, so foreign ids don't leak), and only the resolved principal's row is read.
+  // otherwise, so foreign ids don't leak), and only the resolved principal's row is read. A
+  // credential whose secret won't decrypt is treated as absent (fall through), never a 500.
   app.get("/v1/agent/model-credential", async (c) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
     const provider = c.req.query("provider") ?? "claude-code"
-    if (!deps.encryptionKey) return c.json({ credential: null })
-    const present = (cred: { kind: string; secret: string }, source: string) =>
-      c.json({
-        credential: {
-          kind: cred.kind,
-          value: decryptSecret(cred.secret, deps.encryptionKey as string),
-        },
-        source,
-      })
+    const key = deps.encryptionKey
+    if (!key) return c.json({ credential: null, reason: "none" })
+    // Decrypt a resolved row into the response, or null when its stored secret can't be read
+    // — then we fall through to the next tier and remember we saw an unreadable one.
+    // decryptSecret FAILS OPEN (returns the blob unchanged) on a wrong key / corrupt secret,
+    // so a `v1.` blob that comes back identical never decrypted: treat it as unreadable rather
+    // than inject ciphertext as a token. (A legacy plaintext secret has no `v1.` prefix.)
+    let sawUnreadable = false
+    const present = (cred: { kind: string; secret: string }, source: string) => {
+      const value = decryptSecret(cred.secret, key)
+      if (cred.secret.startsWith("v1.") && value === cred.secret) {
+        sawUnreadable = true
+        return null
+      }
+      return c.json({ credential: { kind: cred.kind, value }, source })
+    }
     const sessionId = c.req.query("session")
     if (sessionId) {
       const s = await meta.getSession(sessionId)
@@ -209,7 +219,10 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
       if (!s || !sctx || sctx.agent_id !== agent.id || s.org_id !== agent.org_id)
         return fail(c, 404, "unknown session")
       const asker = await meta.getModelCredential(agent.org_id, s.asker_id, provider)
-      if (asker) return present(asker, "asker")
+      if (asker) {
+        const r = present(asker, "asker")
+        if (r) return r
+      }
     }
     const runId = c.req.query("run")
     if (runId) {
@@ -218,7 +231,10 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
         return fail(c, 404, "unknown run")
       if (r.initiated_by) {
         const initiator = await meta.getModelCredential(agent.org_id, r.initiated_by, provider)
-        if (initiator) return present(initiator, "initiator")
+        if (initiator) {
+          const rr = present(initiator, "initiator")
+          if (rr) return rr
+        }
       }
     }
     // Owner tier — only when this agent is on its owner's lend-list (per-agent, default off).
@@ -227,13 +243,19 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
       const settings = await meta.getOrgSettings(agent.org_id)
       if (settings.ownerLendAgents?.includes(agent.id)) {
         const cred = await meta.getModelCredential(agent.org_id, owner, provider)
-        if (cred) return present(cred, "owner")
+        if (cred) {
+          const r = present(cred, "owner")
+          if (r) return r
+        }
       }
     }
     // Workspace pool tier — the org's shared plan, if one is connected.
     const pool = await meta.getModelCredential(agent.org_id, POOL_USER, provider)
-    if (pool) return present(pool, "pool")
-    return c.json({ credential: null })
+    if (pool) {
+      const r = present(pool, "pool")
+      if (r) return r
+    }
+    return c.json({ credential: null, reason: sawUnreadable ? "unreadable" : "none" })
   })
 
   return app
