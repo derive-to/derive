@@ -43,7 +43,23 @@ A subscription/plan token works because the runner drives the provider's real
 CLI, which consumes the token exactly as licensed. Each member connects their own
 plan in Derive (Settings, Model plans); the runner resolves whose plan pays for
 each run (the initiator's, then a lent owner's, then a workspace pool, else the
-run fails closed) and no token is ever reimplemented.
+run fails closed) and no token is ever reimplemented. The resolved credential is
+injected into a private per-run home (Codex: a fresh `CODEX_HOME` holding the
+login `auth.json`, 0600, removed after the run), and the runner strips every
+inherited model-auth var before the spawn, so nothing bills a stray host token.
+
+**Isolation invariant (deploy):** the runner image must carry NO host login
+(`~/.codex/auth.json`, `~/.claude/.credentials.json`) and NO baked model token or
+`*_BASE_URL`. The env strip is defense in depth; the clean image is the primary
+control, since a host login FILE can still be read via `$HOME` if present.
+
+**Codex plan-login concurrency limit:** a Codex `login` refresh token is
+single-use, and the CLI rotates it in place. The runner persists the rotated
+`auth.json` back after each run (bound to the exact tier + a compare-and-swap, so
+a stale write can't clobber a fresher token). SEQUENTIAL runs on one login are
+safe; two runs on the SAME shared login (a pool or owner-lent Codex plan) at once
+can race the rotation and one will need a reconnect. An API key has no such limit.
+Serializing concurrent use of one login is a planned hardening.
 
 ## Two lanes
 

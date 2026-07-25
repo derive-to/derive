@@ -123,16 +123,20 @@ describe("resolveModelEnv — per-initiator overlay, no shared fallback", () => 
   }
   const cfg = (over = {}) => ({ providerName: "claude-code", server: "https://derive.to", ...over })
   // The server returns { credential, reason }. Fake it: a credential implies reason "none".
-  const client = (credential, { throws = false, reason = "none" } = {}) => ({
+  const client = (credential, { throws = false, reason = "none", source = "pool" } = {}) => ({
     calls: [],
     persisted: [],
     async modelCredential(provider, sessionId = null) {
       this.calls.push({ provider, sessionId })
       if (throws) throw new Error("404")
-      return { credential, reason: credential ? "none" : reason }
+      return {
+        credential,
+        reason: credential ? "none" : reason,
+        source: credential ? source : null,
+      }
     },
-    async updateModelCredential(provider, sessionId, token) {
-      this.persisted.push({ provider, sessionId, token })
+    async updateModelCredential(provider, sessionId, token, src, prevSha256) {
+      this.persisted.push({ provider, sessionId, token, source: src, prevSha256 })
     },
   })
 
@@ -218,8 +222,16 @@ describe("resolveModelEnv — per-initiator overlay, no shared fallback", () => 
     const refreshed = '{"tokens":{"access_token":"a2","refresh_token":"r2"},"last_refresh":"t1"}'
     writeFileSync(authPath, refreshed)
     await cleanup()
-    // The rotated blob is persisted (so the next run doesn't seed a burned token)...
-    expect(c.persisted).toEqual([{ provider: "codex", sessionId: "ses_1", token: refreshed }])
+    // The rotated blob is persisted, bound to the tier it read (source) and CAS-guarded by the
+    // seed hash, so the next run doesn't seed a burned token...
+    expect(c.persisted).toHaveLength(1)
+    expect(c.persisted[0]).toMatchObject({
+      provider: "codex",
+      sessionId: "ses_1",
+      token: refreshed,
+      source: "pool",
+    })
+    expect(c.persisted[0].prevSha256).toMatch(/^[0-9a-f]{64}$/)
     // ...and the dir is gone.
     expect(existsSync(env.CODEX_HOME)).toBe(false)
     clean()
@@ -229,6 +241,17 @@ describe("resolveModelEnv — per-initiator overlay, no shared fallback", () => 
     clean()
     const c = client({ kind: "login", value: '{"tokens":{"x":1}}' })
     const { cleanup } = await resolveModelEnv(cfg({ providerName: "codex" }), c, "ses_2")
+    await cleanup()
+    expect(c.persisted).toEqual([])
+    clean()
+  })
+
+  it("a GARBAGE (non-JSON) auth.json after a run is NOT persisted", async () => {
+    clean()
+    const c = client({ kind: "login", value: '{"tokens":{"x":1}}' })
+    const { env, cleanup } = await resolveModelEnv(cfg({ providerName: "codex" }), c, "ses_g")
+    // A crashed CLI leaves a truncated file — must never be persisted over the good token.
+    writeFileSync(join(env.CODEX_HOME, "auth.json"), "not json {truncated")
     await cleanup()
     expect(c.persisted).toEqual([])
     clean()

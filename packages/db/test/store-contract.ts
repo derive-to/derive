@@ -2263,6 +2263,38 @@ export function runStoreContract(
         "enc-pool",
       )
     })
+
+    it("removeMembership + deleteWorkspace purge model_credential (incl. the pool sentinel)", async () => {
+      const org = `org_ws_${uuid()}`
+      const member = `member_${uuid()}`
+      const now = "2026-07-24T00:00:00.000Z"
+      const cred = (userId: string, secret: string) => ({
+        id: uuid(),
+        org_id: org,
+        user_id: userId,
+        provider: "codex",
+        kind: "login" as const,
+        secret,
+        hint: secret.slice(-4),
+        created_at: now,
+        updated_at: now,
+      })
+      await store.setWorkspace(org, "WS")
+      await store.setMembership({ id: uuid(), org_id: org, user_id: member, role: "editor" })
+      await store.setModelCredential(cred(member, "enc-member"))
+      await store.setModelCredential(cred("__workspace_pool__", "enc-pool"))
+
+      // Removing a member drops only their credential; the pool row stays.
+      await store.removeMembership(org, member)
+      expect(await store.getModelCredential(org, member, "codex")).toBeNull()
+      expect((await store.getModelCredential(org, "__workspace_pool__", "codex"))?.secret).toBe(
+        "enc-pool",
+      )
+
+      // Deleting the workspace clears the pool sentinel too — nothing orphaned.
+      await store.deleteWorkspace(org)
+      expect(await store.getModelCredential(org, "__workspace_pool__", "codex")).toBeNull()
+    })
   })
 
   describe(`${label}: automations + runs (WP5/WP6)`, () => {

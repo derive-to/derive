@@ -990,6 +990,11 @@ export class PgMetaStore implements MetaStore {
     await this.db
       .delete(membership)
       .where(and(eq(membership.org_id, orgId), eq(membership.user_id, userId)))
+    // A removed member's connected plan must stop being billable here — otherwise a lent
+    // agent would keep charging their token after they've lost workspace access.
+    await this.db
+      .delete(modelCredential)
+      .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
   }
   async getWorkspace(orgId: string): Promise<WorkspaceRecord | null> {
     const rows = await this.db.select().from(workspace).where(eq(workspace.id, orgId))
@@ -1005,6 +1010,10 @@ export class PgMetaStore implements MetaStore {
   }
   async deleteWorkspace(orgId: string): Promise<void> {
     await this.db.delete(membership).where(eq(membership.org_id, orgId))
+    // Every connected plan for this org, INCLUDING the workspace-pool sentinel row, so no
+    // encrypted token is orphaned (the pool row would otherwise have no API path left to
+    // delete once memberships are gone). One predicate covers members and the pool.
+    await this.db.delete(modelCredential).where(eq(modelCredential.org_id, orgId))
     await this.db.delete(workspace).where(eq(workspace.id, orgId))
   }
   listWorkspaces(userId: string): Promise<(WorkspaceRecord & { role: Role })[]> {

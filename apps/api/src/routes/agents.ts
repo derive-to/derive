@@ -214,9 +214,17 @@ export const agentRoutes = (ctx: AppContext) => {
     async (c) => {
       const org = await requireWorkspace(c, "manage")
       if (org instanceof Response) return bail(org)
+      const id = c.req.param("id")
       // Scope the delete to the caller's workspace: deleteAgent is keyed by
       // (id, org) so an Admin can't delete another workspace's agent by id.
-      await meta.deleteAgent(c.req.param("id"), org)
+      await meta.deleteAgent(id, org)
+      // Drop it from the owner-lend list so stale ids don't accumulate in org settings.
+      const settings = await meta.getOrgSettings(org)
+      if (settings.ownerLendAgents?.includes(id))
+        await meta.setOrgSettings(org, {
+          ...settings,
+          ownerLendAgents: settings.ownerLendAgents.filter((a) => a !== id),
+        })
       return c.body(null, 204)
     },
   )

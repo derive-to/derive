@@ -1,6 +1,6 @@
 import { newId } from "@derive/core"
 import { describe, expect, it } from "vitest"
-import { encryptSecret } from "../src/lib/crypto"
+import { encryptSecret, sha256 } from "../src/lib/crypto"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // Model-plan credentials + the chain the executor bills against:
@@ -456,57 +456,111 @@ describe("model credentials: pool isolation + unreadable secrets", () => {
   })
 })
 
-// Refresh persistence: the executor PUTs a refreshed blob back to the SAME row a run resolved
-// to, so a rotated single-use login (Codex) stays valid across runs. Same 404 isolation as the
-// read: a foreign session/run id never writes a cross-row.
+// Refresh persistence: the executor PUTs a rotated login back to the EXACT row a run resolved
+// to. The write is hardened: it must be bound to a run belonging to the agent, name the tier
+// via `source`, target only a `login` kind, pass a compare-and-swap of the seed hash, and
+// carry a well-formed blob. A bare bearer must NOT be able to overwrite the shared pool.
 describe("model credentials: refresh persistence (PUT)", () => {
   const owner: TestUser = { id: "u_mcr2_own", email: "mcr2own@derive.test", name: "Owner" }
   const { app } = makeAuthedApp("model-creds-refresh", [owner], "editor", {
     deps: { encryptionKey: "test-enc-secret" },
   })
-  const mintAgent = async (name: string) =>
-    (await (await app.request("/v1/agents", jsonAs(as(owner.email), { name }))).json()) as {
-      id: string
-      token: string
-    }
-  const readCred = (agentToken: string) =>
-    app.request("/v1/agent/model-credential?provider=codex", { headers: bearer(agentToken) })
-  const putCred = (token: string, agentToken: string, q = "") =>
+  const T1 = '{"tokens":{"v":1}}'
+  let agentToken: string
+  let runId: string
+
+  const put = (body: object, q = `&run=${runId}`) =>
     app.request(`/v1/agent/model-credential?provider=codex${q}`, {
       method: "PUT",
       headers: { "content-type": "application/json", ...bearer(agentToken) },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify(body),
+    })
+  const getViaRun = () =>
+    app.request(`/v1/agent/model-credential?provider=codex&run=${runId}`, {
+      headers: bearer(agentToken),
     })
 
-  it("persists a refreshed login back to the resolved (pool) row; next read returns it", async () => {
+  it("setup: an automation run with no initiator plan resolves to the pool login", async () => {
     await app.request("/v1/me", { headers: as(owner.email) })
+    const ag = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Auto" }))
+    ).json()
+    agentToken = ag.token
+    const auto = await (
+      await app.request(
+        "/v1/automations",
+        jsonAs(as(owner.email), { agentId: ag.id, trigger: { kind: "manual" }, instruction: "x" }),
+      )
+    ).json()
+    const run = await (
+      await app.request(`/v1/automations/${auto.id}/run`, {
+        method: "POST",
+        headers: as(owner.email),
+      })
+    ).json()
+    runId = run.id
+    // The initiator (owner) has NO personal codex plan; connect only a POOL login.
     await app.request(
       "/v1/workspace/model-credentials",
-      jsonAs(as(owner.email), { provider: "codex", kind: "login", token: '{"tokens":{"v":1}}' }),
+      jsonAs(as(owner.email), { provider: "codex", kind: "login", token: T1 }),
     )
-    const agent = await mintAgent("Refresher")
-    const before = await (await readCred(agent.token)).json()
-    expect(before.credential).toEqual({ kind: "login", value: '{"tokens":{"v":1}}' })
-    // The run rotated the token in place; persist the refreshed blob.
-    expect((await putCred('{"tokens":{"v":2}}', agent.token)).status).toBe(200)
-    const after = await (await readCred(agent.token)).json()
-    expect(after.credential.value).toBe('{"tokens":{"v":2}}')
+    const got = await (await getViaRun()).json()
+    expect(got).toMatchObject({ credential: { kind: "login", value: T1 }, source: "pool" })
   })
 
-  it("a PUT with a foreign session id is a 404, never a cross-row write", async () => {
-    const agent = await mintAgent("Refresher 2")
-    const res = await putCred("x", agent.token, "&session=ses_nope")
-    expect(res.status).toBe(404)
+  it("persists a refreshed login to the pool row (source + CAS); next read returns it", async () => {
+    const T2 = '{"tokens":{"v":2}}'
+    const res = await put({ token: T2, source: "pool", prev_sha256: sha256(T1) })
+    expect(res.status).toBe(200)
+    expect((await (await getViaRun()).json()).credential.value).toBe(T2)
   })
 
-  it("a PUT that resolves to no row is a 404 no-op (nothing to persist)", async () => {
-    // No claude-code credential exists anywhere, so there is no row to update.
-    const agent = await mintAgent("Refresher 3")
-    const res = await app.request("/v1/agent/model-credential?provider=claude-code", {
+  it("a contextless PUT (no session/run) is rejected — cannot touch the pool", async () => {
+    const res = await app.request("/v1/agent/model-credential?provider=codex", {
       method: "PUT",
-      headers: { "content-type": "application/json", ...bearer(agent.token) },
-      body: JSON.stringify({ token: "x" }),
+      headers: { "content-type": "application/json", ...bearer(agentToken) },
+      body: JSON.stringify({
+        token: '{"tokens":{"v":9}}',
+        source: "pool",
+        prev_sha256: sha256("x"),
+      }),
     })
+    expect(res.status).toBe(400)
+  })
+
+  it("a stale compare-and-swap (wrong prev_sha256) is rejected — 409", async () => {
+    // The stored value is now T2, so quoting T1's hash is a stale write.
+    const res = await put({ token: '{"tokens":{"v":3}}', source: "pool", prev_sha256: sha256(T1) })
+    expect(res.status).toBe(409)
+  })
+
+  it("a garbage (non-JSON) blob is rejected even with a valid CAS — 400", async () => {
+    const res = await put({
+      token: "not json",
+      source: "pool",
+      prev_sha256: sha256('{"tokens":{"v":2}}'),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it("refuses to clobber a non-login (api_key) row — 409", async () => {
+    await app.request(
+      "/v1/workspace/model-credentials",
+      jsonAs(as(owner.email), { provider: "codex", kind: "api_key", token: "sk-pool-key" }),
+    )
+    const res = await put({
+      token: '{"tokens":{"v":4}}',
+      source: "pool",
+      prev_sha256: sha256("sk-pool-key"),
+    })
+    expect(res.status).toBe(409)
+  })
+
+  it("a foreign run id is a 404, never a cross-row write", async () => {
+    const res = await put(
+      { token: '{"tokens":{"v":5}}', source: "pool", prev_sha256: sha256("x") },
+      "&run=run_nope",
+    )
     expect(res.status).toBe(404)
   })
 })

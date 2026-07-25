@@ -9,6 +9,7 @@
 // Ported from packages/runner (TS) into the published CLI so `derive runner
 // serve` works from a bare npx on any machine — one package, no build step.
 import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
 import {
   existsSync,
   mkdirSync,
@@ -190,16 +191,22 @@ export class DeriveClient {
   async modelCredential(provider, sessionId = null) {
     const q = `provider=${encodeURIComponent(provider)}${sessionId ? `&session=${encodeURIComponent(sessionId)}` : ""}`
     const r = await this.call(`/v1/agent/model-credential?${q}`)
-    return { credential: r.credential ?? null, reason: r.reason ?? "none" }
+    return {
+      credential: r.credential ?? null,
+      reason: r.reason ?? "none",
+      source: r.source ?? null,
+    }
   }
 
-  /** Persist a refreshed credential blob back to the SAME row this run resolved to (the CLI
-   *  rotated a single-use login in place). The server updates only the run's own row. */
-  async updateModelCredential(provider, sessionId, token) {
+  /** Persist a refreshed login blob back to the EXACT row this run resolved to (the CLI
+   *  rotated a single-use login in place). Bound to the run's session and the tier it read
+   *  (`source`), with a compare-and-swap (`prevSha256` = sha256 of the blob the run started
+   *  with) so a stale/concurrent write can't clobber a fresher token. */
+  async updateModelCredential(provider, sessionId, token, source, prevSha256) {
     const q = `provider=${encodeURIComponent(provider)}${sessionId ? `&session=${encodeURIComponent(sessionId)}` : ""}`
     await this.call(`/v1/agent/model-credential?${q}`, {
       method: "PUT",
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({ token, source, prev_sha256: prevSha256 }),
     })
   }
 
@@ -822,15 +829,21 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
 /** Boot the host state serve/once share: context info, repo corpus, skills,
  *  conventions. Everything here is per-boot truth on purpose (see the comments
  *  inline) — `once` inherits the same freshness contract as a serve restart. */
-// The model-auth env the runner OWNS: the token vars plus CODEX_HOME (which points Codex at
-// a login's auth.json). Only the resolved per-user credential may set these, so any inherited
-// value is STRIPPED before a spawn (see the session loop). This is what makes a stray global
-// token OR login on the host un-billable: there is no ambient fallback, and no leftover env
-// can override the injected plan.
+// The model-auth env the runner OWNS: every token var the provider CLIs read, CODEX_HOME
+// (which points Codex at a login's auth.json), and the base-URL vars (a host value could
+// silently redirect the injected token to a proxy). Only the resolved per-user credential may
+// set these, so any inherited value is STRIPPED before a spawn (see the session loop). This is
+// what makes a stray global token OR login on the host un-billable and un-exfiltratable: there
+// is no ambient fallback, and no leftover env can override or redirect the injected plan.
+// (Defense in depth on top of the deploy invariant that the runner image carries no host
+// `~/.codex` / `~/.claude` login and no baked model token.)
 const MODEL_TOKEN_ENV = [
   "CLAUDE_CODE_OAUTH_TOKEN",
   "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
   "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
   "CODEX_HOME",
 ]
 
@@ -843,6 +856,17 @@ export function stripModelTokens(env) {
 }
 
 const noopCleanup = async () => {}
+const sha256Hex = (s) => createHash("sha256").update(s).digest("hex")
+// A well-formed, non-empty JSON object — the shape a refreshed login (auth.json) must have.
+// Guards against persisting a truncated/garbage file a crashed CLI can leave behind.
+const isJsonObject = (s) => {
+  try {
+    const v = JSON.parse(s)
+    return !!v && typeof v === "object" && Object.keys(v).length > 0
+  } catch {
+    return false
+  }
+}
 
 /** Resolve the model credential a run bills against, as `{ env, cleanup }`: a per-spawn ENV
  *  OVERLAY (never a process.env mutation, so one asker's plan can't leak into the next), plus
@@ -878,27 +902,46 @@ export async function resolveModelEnv(cfg, client, sessionId = null) {
   // per-run CODEX_HOME dir, written 0600 and removed once the spawn is done.
   const spec = provider.credentialFiles?.(res.credential.kind, res.credential.value)
   if (spec) {
-    const dir = mkdtempSync(join(tmpdir(), "derive-cred-"))
+    const seed = res.credential.value
+    const source = res.source
     // The file whose seed content IS the stored blob is the one the CLI refreshes in place
     // (Codex rotates its single-use login and writes it back to auth.json). Track it so cleanup
     // can persist the rotated token; otherwise the next run seeds a token the CLI already burned.
+    let dir
     let primaryPath = null
-    for (const [name, content] of Object.entries(spec.files)) {
-      const p = join(dir, name)
-      writeFileSync(p, content, { mode: 0o600 })
-      if (content === res.credential.value) primaryPath = p
+    try {
+      dir = mkdtempSync(join(tmpdir(), "derive-cred-"))
+      for (const [name, content] of Object.entries(spec.files)) {
+        const p = join(dir, name)
+        writeFileSync(p, content, { mode: 0o600 })
+        if (content === seed) primaryPath = p
+      }
+    } catch (e) {
+      // Never leave a half-written 0600 blob behind if materialization fails partway.
+      if (dir)
+        try {
+          rmSync(dir, { recursive: true, force: true })
+        } catch {}
+      throw e
     }
-    const seed = res.credential.value
     return {
       env: { [spec.homeEnv]: dir },
       cleanup: async () => {
         // Persist a refreshed login before discarding the dir (the sanctioned "run and persist
-        // the updated auth.json" pattern). Best-effort: a failed persist never fails the run.
+        // the updated auth.json" pattern), bound to the exact tier the run read (`source`) and
+        // CAS-guarded server-side (`sha256(seed)`). Only a real, well-formed change is sent — a
+        // crashed CLI can leave garbage. Best-effort: a failed persist never fails the run.
         try {
           if (primaryPath) {
             const after = readFileSync(primaryPath, "utf8")
-            if (after && after !== seed)
-              await client.updateModelCredential(cfg.providerName, sessionId, after)
+            if (after && after !== seed && isJsonObject(after))
+              await client.updateModelCredential(
+                cfg.providerName,
+                sessionId,
+                after,
+                source,
+                sha256Hex(seed),
+              )
           }
         } catch (e) {
           console.error(

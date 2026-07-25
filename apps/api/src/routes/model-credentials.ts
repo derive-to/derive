@@ -2,7 +2,7 @@ import { newId } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
-import { decryptSecret, encryptSecret } from "../lib/crypto"
+import { decryptSecret, encryptSecret, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 
 // Model-plan credentials. Every team member connects their OWN Claude/Codex plan token (or
@@ -243,37 +243,63 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
     return c.json({ credential: null, reason: sawUnreadable ? "unreadable" : "none" })
   })
 
-  // The executor PERSISTS a refreshed credential blob back to the SAME row a run resolved to
-  // (the first readable tier). Codex rotates its login's single-use refresh token in place and
-  // writes it to auth.json during a run; the runner reads that back and PUTs it here so the
-  // stored token stays valid for the next run (the sanctioned "run and persist the updated
-  // auth.json" pattern, not a reimplemented refresh). Only the resolved principal's row is
-  // touched — same 404 isolation as the read. The runner calls this in a finally, so a refresh
-  // that landed before a run failed is still saved.
+  // The executor PERSISTS a refreshed login blob back to the EXACT row a run resolved to.
+  // Codex rotates its login's single-use token in place and writes it to auth.json during a
+  // run; the runner reads that back and PUTs it here so the stored token stays valid for the
+  // next run (the sanctioned "run and persist the updated auth.json" pattern, not a
+  // reimplemented refresh). Hardened four ways, because a runtime bearer must never be able to
+  // rewrite a management-owned secret:
+  //   - BOUND TO A RUN: a `?session=`/`?run=` that belongs to THIS agent is required, so a
+  //     contextless bearer can't reach the owner/pool tiers and overwrite them.
+  //   - EXACT TIER: `source` names the tier the run read; we write only that row, never a
+  //     re-resolved "first readable" (which could drift to another principal mid-run).
+  //   - LOGIN ONLY: only the self-rotating `login` kind is refreshable; an api_key/oauth
+  //     secret is never clobbered.
+  //   - COMPARE-AND-SWAP: we overwrite only if the stored secret still hashes to what the run
+  //     started with (`prev_sha256`), so a concurrent/stale write or a mid-run row replacement
+  //     is rejected. The blob must also parse as a non-empty object (a crashed CLI can leave
+  //     garbage).
   app.put("/v1/agent/model-credential", async (c) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
     const provider = c.req.query("provider") ?? "claude-code"
     const key = deps.encryptionKey
     if (!key) return fail(c, 503, "secret encryption is not configured")
-    const b = await readJson(c, z.object({ token: z.string().min(1).max(16000) }))
+    if (!c.req.query("session") && !c.req.query("run"))
+      return fail(c, 400, "a session or run is required to persist a refresh")
+    const b = await readJson(
+      c,
+      z.object({
+        token: z.string().min(1).max(16000),
+        source: z.enum(["asker", "initiator", "owner", "pool"]),
+        prev_sha256: z.string().min(1).max(64),
+      }),
+    )
     if (b instanceof Response) return bail(b)
     const candidates = await credentialCandidates(c, agent)
     if (candidates instanceof Response) return candidates
+    const target = candidates.find((x) => x.source === b.source)
+    if (!target) return fail(c, 404, "unknown credential tier")
+    const cred = await meta.getModelCredential(agent.org_id, target.userId, provider)
+    if (!cred) return c.json({ ok: false, reason: "no credential to update" }, 404)
+    if (cred.kind !== "login") return fail(c, 409, "only login credentials are refreshable")
+    const current = decryptSecret(cred.secret, key)
+    if (unreadable(cred, current) || sha256(current) !== b.prev_sha256)
+      return c.json({ ok: false, reason: "credential changed" }, 409)
     const token = b.token.trim()
-    for (const { userId } of candidates) {
-      const cred = await meta.getModelCredential(agent.org_id, userId, provider)
-      if (!cred) continue
-      // Update the readable row the run actually used (skip an unreadable one, matching read).
-      if (unreadable(cred, decryptSecret(cred.secret, key))) continue
-      await meta.setModelCredential({
-        ...cred,
-        secret: encryptSecret(token, key),
-        updated_at: isoNow(),
-      })
-      return c.json({ ok: true })
+    try {
+      const parsed = JSON.parse(token)
+      if (!parsed || typeof parsed !== "object" || Object.keys(parsed).length === 0)
+        return fail(c, 400, "not a valid login blob")
+    } catch {
+      return fail(c, 400, "not a valid login blob")
     }
-    return c.json({ ok: false, reason: "no credential to update" }, 404)
+    await meta.setModelCredential({
+      ...cred,
+      secret: encryptSecret(token, key),
+      updated_at: isoNow(),
+    })
+    return c.json({ ok: true })
   })
 
   return app
