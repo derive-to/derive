@@ -14,6 +14,21 @@ Self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier
 - HTML (.html): the page itself, sandboxed in an opaque origin with CSP
 - HTML deck: HTML with <section class="slide"> elements, gets nav + present mode automatically via the derive-deck postMessage protocol
 
+## Anonymous drafts — publish with no account
+
+The zero-setup path. One HTTP call, no credentials, live in about a second:
+
+```
+POST /v1/drafts    multipart: file (one .html/.md, or a .zip site), optional title
+```
+
+Returns `draft_url` (live immediately at `<id>.derive.page`), `claim_url`, and
+`expires_at` (72h). Report all three to the user: the draft expires unless they open
+the claim link (sign in, one click) to keep it as a permanent versioned artifact —
+the draft URL then redirects to the permanent home. The secret URL is the only
+access (view-by-link, unlisted, noindex): don't put secrets in a draft. Drafts can't
+be revised — mint a new one, or claim first and revise through the MCP.
+
 ## Key API endpoints
 
 All requests use `Authorization: Bearer $DERIVE_TOKEN` (static agent token from Settings > Agents).
