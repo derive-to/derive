@@ -125,6 +125,9 @@ export interface ArtifactRecord {
   updated_at: string | null
   /** A takedown tombstone: when set, the content is gone (410) but the record stays. */
   removed_at: string | null
+  /** Expiring anonymous draft (the claim flow): ISO instant after which the draft is
+   *  served 410 and swept. Null for every ordinary artifact; cleared on claim. */
+  expires_at: string | null
   /** For a GitHub-synced artifact: its path within the repo (e.g. "docs/plans/foo.md").
    *  The structural "location" — drives the folder/tree view — kept distinct from the
    *  human `title`. Null for artifacts not mirrored from a repo. */
@@ -273,6 +276,8 @@ export interface NewArtifact {
   password_hash?: string | null
   kind: ArtifactKind
   spa: 0 | 1
+  /** Expiring anonymous draft: ISO expiry instant. Omit for ordinary artifacts. */
+  expires_at?: string | null
 }
 
 /** Which surface created a version: the web app, the MCP publish tool, the HTTP API
@@ -761,13 +766,24 @@ export interface IntegrationStore {
   getArtifactDomains(artifactId: string): Promise<DomainRecord[]>
   /** A workspace's own custom domains (artifact_id null), for the settings UI. */
   getWorkspaceDomains(orgId: string): Promise<DomainRecord[]>
-  /** Update a custom domain's validation status + the records to display. */
+  /** Update a custom domain's validation status + the records to display — or, on a
+   *  draft claim, unbind the artifact and turn the host into a 302 (`artifact_id:
+   *  null` + `redirect_to`). */
   updateDomain(
     host: string,
-    fields: { status?: DomainStatus; verification?: string | null },
+    fields: {
+      status?: DomainStatus
+      verification?: string | null
+      artifact_id?: string | null
+      redirect_to?: string | null
+    },
   ): Promise<DomainRecord | null>
   /** Release a hostname, scoped to its owning workspace. */
   deleteDomain(host: string, orgId: string): Promise<void>
+  /** Set or clear an artifact's draft expiry (cleared on claim). */
+  setArtifactExpiry(artifactId: string, expiresAt: string | null): Promise<void>
+  /** Expired drafts due for the sweep: artifacts whose expires_at is past `nowIso`. */
+  listExpiredArtifacts(nowIso: string, limit: number): Promise<ArtifactRecord[]>
 }
 
 export interface ReviewStore {
@@ -1977,6 +1993,9 @@ export interface DomainRecord {
   cf_hostname_id: string | null
   /** JSON-encoded DNS records the customer must add to validate (custom, while pending). */
   verification: string | null
+  /** When set, the host answers 302 → this absolute URL instead of serving content
+   *  (a claimed draft's derive.page URL forwarding to its permanent home). */
+  redirect_to: string | null
   created_at: string
 }
 export interface NewDomain {

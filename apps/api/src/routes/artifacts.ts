@@ -41,7 +41,9 @@ import { afterPublish } from "../lib/after-publish"
 import { authorProfile, resolveHandles, resolveUserBylines } from "../lib/author"
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
 import { cleanPath, manifestOf } from "../lib/bundle"
+import { signClaimToken, verifyClaimToken } from "../lib/claim-token"
 import { hashPassword, signState, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
+import { DRAFT_TTL_MS, DRAFTS_ORG_ID, sweepExpiredDrafts } from "../lib/drafts"
 import {
   EditConflictError,
   type MaterializedEdits,
@@ -476,8 +478,21 @@ export const artifactRoutes = (ctx: AppContext) => {
   const handlePublish = async (
     c: Context,
     shortId?: string,
-    tokenAuth?: { org: string; user: { id: string; name: string | null } },
+    tokenAuth?: {
+      org: string
+      // null = the anonymous draft mint (POST /v1/drafts): no principal exists, so
+      // the artifact is created ownerless — author "anonymous", author_id null, no
+      // member row (the same supported state deleteUserData leaves behind). Only
+      // ever null together with `draft`, and only for a CREATE.
+      user: { id: string; name: string | null } | null
+      // Present on the draft path: forces the draft access shape (link-viewable,
+      // nothing else — the URL is the whole product until it's claimed) and stamps
+      // the expiry. Client-supplied access fields are ignored: an anonymous caller
+      // must not be able to list a draft anywhere or lock it with a password.
+      draft?: { expiresAt: string }
+    },
   ) => {
+    const tokenUser = tokenAuth ? tokenAuth.user : null
     // Republishing a version needs publish rights on that artifact; creating a
     // new one needs publish rights at the workspace level.
     let existing: ArtifactRecord | null = null
@@ -495,8 +510,12 @@ export const artifactRoutes = (ctx: AppContext) => {
       // SAME standing for the bound user, live (revocation-safe). Checking only the
       // seat here would let a workspace editor with a mere viewer share overwrite a
       // private doc — an escalation the authed API forbids.
+      // An anonymous (userless) token can only CREATE — there is no standing to
+      // revise anything, so a userless revise fails closed here.
       const publishOk = tokenAuth
-        ? await authorizeUserStanding(tokenAuth.user.id, "publish", existing)
+        ? tokenUser
+          ? await authorizeUserStanding(tokenUser.id, "publish", existing)
+          : false
         : await authorize(c, "publish", existing)
       if (!publishOk) return fail(c, 403, "forbidden")
       // A GitHub-synced artifact is read-only in Derive: GitHub is the source of
@@ -630,24 +649,35 @@ export const artifactRoutes = (ctx: AppContext) => {
       // drove it and get the artifact URL back in the curl response), so — like a
       // session publish, and unlike the agent `publish` tool — it has no agent
       // principal and fires no "your agent published X" bell to onBehalf.
-      const actor = tokenAuth ? tokenAuth.user : await actingUser(c)
-      const human = tokenAuth ? tokenAuth.user : await actingHuman(c)
-      const onBehalf = tokenAuth ? tokenAuth.user.id : await privateOwnerId(c)
+      const actor = tokenAuth ? tokenUser : await actingUser(c)
+      const human = tokenAuth ? tokenUser : await actingHuman(c)
+      const onBehalf = tokenAuth ? (tokenUser?.id ?? null) : await privateOwnerId(c)
       const agentPrincipal = tokenAuth ? null : await agentFor(c)
       // Access is set-on-create: a republish never re-stamps it (publish() only adds a
       // version). On a NEW artifact each field resolves independently — explicit request
       // field > legacy `visibility` mapping > the workspace default (factory default is
       // the "team draft": workspace_access=member, link_role=none, listed=none). One
       // org-settings read covers all three defaults.
-      const settings = !shortId ? await meta.getOrgSettings(org) : null
+      // A draft's access shape is fixed, never client-resolved: the URL is the only
+      // grant (link-viewer), it surfaces nowhere, and the holding workspace's members
+      // get nothing. Cross-origin serving on the usercontent host REQUIRES the viewer
+      // link (the actor there is anonymous), so this is the product shape, not a default.
+      const draft = tokenAuth?.draft
+      const settings = !shortId && !draft ? await meta.getOrgSettings(org) : null
       const resolvedWorkspaceAccess = !shortId
-        ? (workspaceAccess ?? legacy?.workspace_access ?? settings?.defaultWorkspaceAccess)
+        ? draft
+          ? "none"
+          : (workspaceAccess ?? legacy?.workspace_access ?? settings?.defaultWorkspaceAccess)
         : undefined
       const resolvedLinkRole = !shortId
-        ? (linkRole ?? legacy?.link_role ?? settings?.defaultLinkRole)
+        ? draft
+          ? "viewer"
+          : (linkRole ?? legacy?.link_role ?? settings?.defaultLinkRole)
         : undefined
       const resolvedListed = !shortId
-        ? (listed ?? legacy?.listed ?? settings?.defaultListed)
+        ? draft
+          ? "none"
+          : (listed ?? legacy?.listed ?? settings?.defaultListed)
         : undefined
       // The only cross-field invariants are the two listing preconditions: a doc can't
       // be listed somewhere it grants no access to. Explicit contradictions are rejected,
@@ -659,7 +689,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // A password locks the world link; a lock with no link is meaningless, so it only
       // takes when link_role != none.
       const passwordHash =
-        resolvedLinkRole && resolvedLinkRole !== "none" && password
+        resolvedLinkRole && resolvedLinkRole !== "none" && password && !draft
           ? hashPassword(password)
           : undefined
       const { artifact, version } = await publish(
@@ -683,19 +713,20 @@ export const artifactRoutes = (ctx: AppContext) => {
           // uses their name and never the client `author` field — otherwise a caller
           // could stamp an arbitrary byline whenever that user's stored name is null.
           author: tokenAuth
-            ? (tokenAuth.user.name ?? undefined)
+            ? (tokenUser?.name ?? undefined)
             : (human?.name ?? actor?.name ?? str(body["author"])),
           authorId: onBehalf,
           // The surface stamp: a stage_publish token IS the MCP flow's upload leg, an
           // agent principal (OAuth bearer / dk_agt_ token, incl. the CLI) is the API,
           // and a plain session publish is the web app.
-          source: tokenAuth ? "mcp" : agentPrincipal ? "api" : "web",
+          source: tokenAuth ? (draft ? "api" : "mcp") : agentPrincipal ? "api" : "web",
           name: str(body["name"]),
           orgId: org,
           workspaceAccess: resolvedWorkspaceAccess,
           passwordHash,
           linkRole: resolvedLinkRole,
           listed: resolvedListed,
+          expiresAt: draft?.expiresAt,
         },
         shortId,
       )
@@ -941,6 +972,153 @@ export const artifactRoutes = (ctx: AppContext) => {
   app.post("/v1/artifacts/:shortId/versions/t/:token", (c) =>
     tokenPublish(c, c.req.param("shortId")),
   )
+
+  // ---- Anonymous drafts: publish before signup (the claim flow) ------------
+  // The account-less front door: any agent POSTs a file with no credentials and
+  // gets back a live expiring page on the usercontent domain plus a claim URL.
+  // The agent finishes the user's request FIRST; signing up happens after, on
+  // the claim page, where the loop (versions, comments, review) lights up.
+  //
+  // A draft is an ordinary artifact with no owner, held in DRAFTS_ORG_ID with an
+  // expires_at (see lib/drafts.ts). It is link-viewable and nothing else — the
+  // secret URL is the whole grant — and it serves ONLY on the usercontent host,
+  // never the app origin.
+
+  // authz-exempt: anonymous draft mint — anonymous is the point; the draftPublish
+  // IP cap + the publish limiter (ip-keyed for an actorless caller) + the
+  // ANON_WRITE_ALLOW entry in app.ts bound it.
+  app.post("/v1/drafts", async (c) => {
+    // Both halves of the product need config: the usercontent host to serve on,
+    // and the signing secret for the claim capability. Absent either, be honest.
+    if (!deps.subdomainBase || !deps.encryptionKey)
+      return fail(c, 501, "anonymous drafts need DERIVE_SUBDOMAIN_BASE and DERIVE_AUTH_SECRET")
+    // Idempotent upsert: the holding workspace exists from the first mint onward.
+    await meta.setWorkspace(DRAFTS_ORG_ID, "Anonymous drafts")
+    const expiresAt = new Date(Date.now() + DRAFT_TTL_MS).toISOString()
+    const res = await handlePublish(c, undefined, {
+      org: DRAFTS_ORG_ID,
+      user: null,
+      draft: { expiresAt },
+    })
+    if (res.status !== 201) return res
+    const created = (await res.json()) as { short_id: string; title: string | null }
+    const artifact = await meta.getByShortId(created.short_id)
+    if (!artifact) return fail(c, 500, "draft vanished after publish")
+    // The draft's home: <short_id>.<base>. The short id is random and fresh, so a
+    // host collision means only that an earlier row leaked — mint-and-move-on is
+    // not needed; fall back to the tokened raw URL shape rather than failing the
+    // publish that already succeeded.
+    const host = `${artifact.short_id}.${deps.subdomainBase}`.toLowerCase()
+    const bound = await meta.setDomain({
+      host,
+      artifact_id: artifact.id,
+      org_id: DRAFTS_ORG_ID,
+      kind: "subdomain",
+      status: "active",
+    })
+    const draftUrl = bound
+      ? `https://${host}/`
+      : `${deps.sandboxOrigin ?? deps.baseUrl}/raw/${artifact.short_id}/v/1/index.html`
+    const claimToken = await signClaimToken(deps.encryptionKey, artifact.id, Date.parse(expiresAt))
+    // Opportunistic sweep, the OAuth-reaper pattern: each mint reaps earlier
+    // expired drafts, best-effort and off the response path. This is the ONLY
+    // sweep the (cron-less-for-pg) edge tier gets; Node also runs an hourly
+    // timer, and the serve path 410s expired drafts regardless.
+    await background(sweepExpiredDrafts(meta, search))
+    return c.json(
+      {
+        short_id: artifact.short_id,
+        title: created.title,
+        draft_url: draftUrl,
+        // The conversion handle: opening this signed URL (sign in, pick a
+        // workspace) moves the draft into that workspace for good.
+        claim_url: `${deps.baseUrl}/claim/${claimToken}`,
+        expires_at: expiresAt,
+      },
+      201,
+    )
+  })
+
+  // The claim page's read: what am I about to claim? Public — the token itself is
+  // the proof of standing, exactly like the mint that produced it.
+  app.get("/v1/drafts/claim/:token", async (c) => {
+    if (!deps.encryptionKey) return fail(c, 501, "drafts are not configured")
+    const v = await verifyClaimToken(deps.encryptionKey, c.req.param("token"), Date.now())
+    if (!v) return fail(c, 404, "invalid or expired claim link")
+    const a = await meta.getArtifactById(v.artifactId)
+    if (!a) return fail(c, 410, "this draft expired and was removed")
+    if (a.org_id !== DRAFTS_ORG_ID || !a.expires_at)
+      return fail(c, 410, "this draft was already claimed")
+    if (a.expires_at <= new Date().toISOString()) return fail(c, 410, "this draft expired")
+    const bound = (await meta.getArtifactDomains(a.id))[0]
+    return c.json({
+      short_id: a.short_id,
+      title: a.title,
+      kind: a.kind,
+      expires_at: a.expires_at,
+      draft_url: bound ? `https://${bound.host}/` : null,
+    })
+  })
+
+  // Spend the claim: move the draft into the signed-in caller's active workspace.
+  // Requires a principal (not in ANON_WRITE_ALLOW — the global anonymous-write
+  // lockdown already refuses this route to anonymous callers before it runs).
+  app.post("/v1/drafts/claim", async (c) => {
+    if (!deps.encryptionKey) return fail(c, 501, "drafts are not configured")
+    const me = await currentUser(c)
+    if (!me) return fail(c, 401, "sign in to claim a draft")
+    const b = await readJson(c, z.object({ token: z.string().max(2048) }))
+    if (b instanceof Response) return b
+    const v = await verifyClaimToken(deps.encryptionKey, b.token, Date.now())
+    if (!v) return fail(c, 404, "invalid or expired claim link")
+    const a = await meta.getArtifactById(v.artifactId)
+    if (!a) return fail(c, 410, "this draft expired and was removed")
+    // Single-use by state: once claimed the draft has left the holding workspace,
+    // so a replayed token finds nothing to spend. Two racing claims on the same
+    // secret link can interleave; the loser's move is overwritten — bounded to
+    // holders of the same claim URL, which is the capability anyway.
+    if (a.org_id !== DRAFTS_ORG_ID || !a.expires_at)
+      return fail(c, 410, "this draft was already claimed")
+    if (a.expires_at <= new Date().toISOString()) return fail(c, 410, "this draft expired")
+    const org = await activeWorkspace(c)
+    if (!(await workspaceCan(c, "publish")))
+      return fail(c, 403, "you need publish rights in this workspace to claim a draft")
+    const url = artifactUrl(deps.baseUrl, a)
+    // Order matters: the host must be unbound before the org move (the move path
+    // refuses to relocate a domain-bound artifact), and the signpost keeps the
+    // shared draft URL alive as a 302 to the artifact's permanent home.
+    for (const d of await meta.getArtifactDomains(a.id))
+      await meta.updateDomain(d.host, { artifact_id: null, redirect_to: url })
+    await meta.moveArtifactOrg(a.id, org)
+    await meta.setArtifactExpiry(a.id, null)
+    // The claimed artifact lands as the workspace's own default (the team draft),
+    // shedding the draft's link-viewable shape — sharing wider stays a human act.
+    const settings = await meta.getOrgSettings(org)
+    await meta.setAccess(
+      a.id,
+      settings.defaultWorkspaceAccess,
+      settings.defaultListed,
+      settings.defaultLinkRole,
+      null,
+    )
+    await meta.setArtifactMember({
+      id: newId("am"),
+      artifact_id: a.id,
+      user_id: me.id,
+      role: "owner",
+    })
+    // moveArtifactOrg re-scopes the FTS row; the dense vector lives outside the DB,
+    // so re-embed under the new org (same recipe as the move route). Best-effort.
+    if (search) {
+      try {
+        const ver = await meta.getVersion(a.id, a.current_version)
+        if (ver) await indexArtifactVersion(meta, blobs, { ...a, org_id: org }, ver, search)
+      } catch (err) {
+        log.error("dense re-index after claim failed", { artifact: a.id, err: String(err) })
+      }
+    }
+    return c.json({ short_id: a.short_id, url, org_id: org })
+  })
 
   // Registered BEFORE GET /v1/artifacts/{shortId} below: Hono's router matches
   // routes in REGISTRATION order, not by static-vs-param specificity, so

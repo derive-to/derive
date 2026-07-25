@@ -282,6 +282,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           // Rides the comment binding, namespaced — same order of magnitude of
           // legitimate use, but its count must not share the comment budget.
           ask: nativeLimiter(env.RL_COMMENT, 60, "ask"),
+          // Anonymous draft mints ride RL_STRICT (tight), namespaced from the other
+          // strict surfaces. The 60s native window is tighter-per-minute than the
+          // in-process hourly cap; both bound the same abuse.
+          draftPublish: nativeLimiter(env.RL_STRICT, 60, "draft-publish"),
         },
         // Deliver freshly enqueued events now: poke the outbox DO so its alarm fires,
         // riding waitUntil so the subrequest isn't cancelled when the response is sent.
