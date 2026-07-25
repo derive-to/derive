@@ -19,7 +19,6 @@ export type ManagedContext = {
 }
 
 export type DispatcherConfig = {
-  databaseUrl: string
   server: string
   runnerBin: string
   dataDir: string
@@ -32,8 +31,8 @@ export type DispatcherConfig = {
   httpPort: number
 }
 
-// Per-minute: the pull cadence until the webhook kick lands. pg-boss cron is
-// minute-granular, which is exactly the latency the plan accepts for v1.
+// Per-minute: the pull cadence until the webhook kick lands. Minute granularity is
+// exactly the latency the plan accepts for v1.
 const CRON_DEFAULT = "* * * * *"
 
 const positiveMs = (raw: string | undefined, fallback: number): number => {
@@ -66,8 +65,8 @@ const parseContext = (c: unknown, i: number): ManagedContext => {
 }
 
 export function loadDispatcherConfig(env: NodeJS.ProcessEnv = process.env): DispatcherConfig {
-  const databaseUrl = env.DATABASE_URL ?? ""
-  if (!databaseUrl) throw new Error("DATABASE_URL is required (pg-boss keeps its jobs in Postgres)")
+  // No DATABASE_URL: the schedule is an in-process clock now, and the only queue of record is
+  // Derive's own run/session tables behind the API. This process holds no state worth persisting.
   const raw =
     env.DISPATCHER_CONTEXTS ??
     (env.DISPATCHER_CONTEXTS_FILE ? readFileSync(env.DISPATCHER_CONTEXTS_FILE, "utf8") : "")
@@ -86,13 +85,12 @@ export function loadDispatcherConfig(env: NodeJS.ProcessEnv = process.env): Disp
   const dupe = contexts.find((c, i) => contexts.findIndex((d) => d.id === c.id) !== i)
   if (dupe) throw new Error(`context "${dupe.id}" appears twice in the registry`)
   return {
-    databaseUrl,
     // Cloud default, like every other piece of the CLI family.
     server: (env.DERIVE_SERVER ?? "https://derive.to").replace(/\/+$/, ""),
     runnerBin: env.DISPATCHER_RUNNER_BIN ?? "derive",
     dataDir: env.DISPATCHER_DATA_DIR ?? "/data",
     // Runner default timeout (10 min) plus a boot margin; the drain is killed
-    // past this, and pg-boss's retry takes it from there.
+    // past this, and the next scheduled tick picks the work back up.
     drainTimeoutMs: positiveMs(env.DISPATCHER_DRAIN_TIMEOUT_MS, 660_000),
     contexts,
     hostSecret: env.DISPATCHER_HOST_SECRET?.trim() || null,

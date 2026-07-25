@@ -1,20 +1,26 @@
 # @derive/dispatcher
 
-The managed executor from the built-in agent plan: **pg-boss pointed at the
-public runner contract**. One small process, one Postgres, no orchestrator
-built in-house.
+The managed executor from the built-in agent plan: **a clock pointed at the
+public runner contract**. One small process, no database, no orchestrator built
+in-house.
 
-Every managed context gets a pg-boss queue (`drain:<ctx_id>`, singleton policy)
-and a cron schedule. Each tick runs `derive runner once <ctx>`: claim, drain
-the context's open sessions, exit. The dispatcher owns process lifecycle only —
-the Derive API, the model, and the answer contract all live in the runner. If
+Every managed context gets a cron schedule. Each tick runs `derive runner once
+<ctx>`: claim, drain the context's open sessions, exit. A tick that lands while
+the previous drain is still running is dropped (not queued behind it), because a
+drain reads the whole queue every time — so a missed tick costs latency, never
+work, and the next tick is the retry. The dispatcher owns process lifecycle only
+— the Derive API, the model, and the answer contract all live in the runner. If
 this process ever needs a private API the public contract lacks, that is a bug.
+
+> This used to run pg-boss. It was removed: the clock is a cron evaluation, "one
+> drain at a time" is an in-flight flag, and the retry is the next tick — so the
+> job system only added a Postgres dependency and a second queue-of-record beside
+> Derive's own run table.
 
 ## Configuration (environment only)
 
 | Var | Meaning |
 | --- | --- |
-| `DATABASE_URL` | Postgres for pg-boss's job state. Required. |
 | `DISPATCHER_CONTEXTS` | Inline JSON registry (or `DISPATCHER_CONTEXTS_FILE`, a path). Required. |
 | `DERIVE_SERVER` | Defaults to `https://derive.to`. |
 | `DISPATCHER_RUNNER_BIN` | Defaults to `derive` (the CLI on PATH). |
@@ -44,7 +50,7 @@ reimplemented client.
 
 The dispatcher runs both halves of the executor split:
 
-- **Owner-run drain lane** (pg-boss cron → `derive runner once`): serves contexts
+- **Owner-run drain lane** (cron → `derive runner once`): serves contexts
   whose agent runs on the run's initiator's credential (the asker's for a session, the clicker's for Run now), falling back to the owner's. Always on.
 - **Shared hosted lane** (`POST /internal/invoke`, behind `DISPATCHER_HOST_SECRET`):
   runs a Derive-hosted agent (the `@derive/hosted-agent` Mastra harness) live for a

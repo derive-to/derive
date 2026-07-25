@@ -45,8 +45,10 @@ describe("loadDispatcherConfig", () => {
     ).toThrow(/never holds secrets/)
   })
 
-  it("requires DATABASE_URL, a registry, a token source, and a 5-field cron", () => {
-    expect(() => loadDispatcherConfig({ DISPATCHER_CONTEXTS: ctx() })).toThrow(/DATABASE_URL/)
+  it("requires a registry, a token source, and a 5-field cron — but NOT a database", () => {
+    // No DATABASE_URL: the schedule is an in-process clock now (pg-boss is gone), and the only
+    // queue of record is Derive's own tables behind the API. This process persists nothing.
+    expect(() => loadDispatcherConfig({ DISPATCHER_CONTEXTS: ctx() })).not.toThrow()
     expect(() => loadDispatcherConfig({ ...BASE })).toThrow(/DISPATCHER_CONTEXTS/)
     expect(() =>
       loadDispatcherConfig({ ...BASE, DISPATCHER_CONTEXTS: JSON.stringify([{ id: "c" }]) }),

@@ -29,7 +29,7 @@ const TAIL_MAX = 4_000
 type SpawnImpl = (cmd: string, args: string[], opts: object) => ChildProcess
 
 /** Run one drain to completion. Never throws on a bad exit — the caller decides
- *  what a failure means (pg-boss retry semantics live there, not here). The
+ *  what a failure means (the schedule's next tick is the retry, not here). The
  *  per-context cwd persists between drains so repo clones and materialized
  *  skills carry over instead of re-fetching every minute. */
 export function runDrain(

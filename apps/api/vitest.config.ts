@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url"
 import { defineConfig } from "vitest/config"
 
 // Coverage gate on the API — the core logic, ~60% of the suite. The thresholds
@@ -15,6 +16,17 @@ import { defineConfig } from "vitest/config"
 // suite now reports ~82% lines / 75% stmts / 68% branches. Floor sits just under
 // that so a regression fails but normal noise doesn't.
 export default defineConfig({
+  resolve: {
+    alias: {
+      // `cloudflare:workers` only resolves inside workerd. The Workers entry statically
+      // exports its DO classes (wrangler requires it) and one extends Container from
+      // @cloudflare/containers, which imports it — so a Node-side test of worker.ts would
+      // die on an import unrelated to what it asserts. See the stub for the full note.
+      "cloudflare:workers": fileURLToPath(
+        new URL("./test/stubs/cloudflare-workers.ts", import.meta.url),
+      ),
+    },
+  },
   test: {
     coverage: {
       provider: "v8",

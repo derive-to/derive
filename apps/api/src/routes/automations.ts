@@ -71,8 +71,7 @@ const TRIGGER = z.object({
 })
 
 export const automationRoutes = (ctx: AppContext) => {
-  const { meta, agentFor, agentRunScope, privateOwnerId, requireUser, requireWorkspace, deps } =
-    ctx
+  const { meta, agentFor, agentRunScope, privateOwnerId, requireUser, requireWorkspace, deps } = ctx
   const app = new Hono()
 
   // ---- Owner surface: define / list / delete ---------------------------------
@@ -154,7 +153,9 @@ export const automationRoutes = (ctx: AppContext) => {
         {
           ...present(rec),
           ...(agentToken ? { agent_token: agentToken } : {}),
-          ...(fireSecret ? { fire_secret: fireSecret, fire_url: `/v1/automations/${rec.id}/fire` } : {}),
+          ...(fireSecret
+            ? { fire_secret: fireSecret, fire_url: `/v1/automations/${rec.id}/fire` }
+            : {}),
         },
         201,
       )

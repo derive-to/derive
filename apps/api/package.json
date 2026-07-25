@@ -31,6 +31,7 @@
   "dependencies": {
     "@better-auth/oauth-provider": "1.6.19",
     "@better-auth/passkey": "1.6.19",
+    "@cloudflare/containers": "^0.3.7",
     "@cloudflare/puppeteer": "^1.0.0",
     "@derive/broker": "workspace:*",
     "@derive/core": "workspace:*",
@@ -43,8 +44,8 @@
     "@modelcontextprotocol/sdk": "^1.25.1",
     "@scalar/hono-api-reference": "^0.11.9",
     "better-auth": "^1.6.22",
-    "croner": "^10.0.1",
     "better-sqlite3": "^12.11.1",
+    "croner": "^10.0.1",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.6.0",
     "hono-rate-limiter": "^0.5.3",

@@ -268,7 +268,10 @@ export class DeriveClient {
   }
   /** Live revision: a new version with a review round. */
   publishVersion(shortId, rev) {
-    return this._postForm(`/v1/artifacts/${shortId}/versions`, revisionForm(rev, { request_review: "true" }))
+    return this._postForm(
+      `/v1/artifacts/${shortId}/versions`,
+      revisionForm(rev, { request_review: "true" }),
+    )
   }
   /** Proposed revision: a proposal a human approves. */
   proposeRevision(shortId, rev) {
@@ -1059,7 +1062,9 @@ function buildRunPrompt(run, before) {
   else lines.push("There is no existing target — CREATE a new artifact with your revision.")
   const tags = tagLabels(run.targets)
   if (tags.length)
-    lines.push(`Anything you write is tagged automatically: ${tags.join(", ")}. Don't add tags yourself.`)
+    lines.push(
+      `Anything you write is tagged automatically: ${tags.join(", ")}. Don't add tags yourself.`,
+    )
   if (run.tools?.length) {
     const list = run.tools.map((t) => `- ${t.def.name}: ${t.def.description}`).join("\n")
     lines.push(
@@ -1071,7 +1076,11 @@ function buildRunPrompt(run, before) {
 
 /** The ledger outcome for a write decision (mirrors the hosted lane's outcomeOf). */
 const outcomeFor = (decision) =>
-  decision === "live_publish_with_review" ? "published" : decision === "proposal" ? "proposed" : "shadow"
+  decision === "live_publish_with_review"
+    ? "published"
+    : decision === "proposal"
+      ? "proposed"
+      : "shadow"
 
 /** Execute one claimed run: resolve the initiator's model plan, build the prompt (instruction +
  *  target + tools), run the model with the run contract + tool shim, parse the <revision>, run the
@@ -1147,7 +1156,12 @@ export async function serveRun(client, run, manifest, cfg) {
     confidence: rev.confidence,
     flags: run.flags ?? {},
   })
-  const revInput = { content: rev.content, filename: rev.filename, message: rev.message, addTags: tagLabels(run.targets) }
+  const revInput = {
+    content: rev.content,
+    filename: rev.filename,
+    message: rev.message,
+    addTags: tagLabels(run.targets),
+  }
 
   let write = null
   try {

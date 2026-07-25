@@ -25,10 +25,12 @@ import { bindingEmbedder, EMBED_DIMENSIONS, type WorkersAiLike } from "./embedde
 import { workspacesBlockingDeletion } from "./lib/account"
 import { signupAttributionHook } from "./lib/attribution"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
+import { dispatchPass } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
+import { containerSubstrateFromEnv } from "./lib/substrate-container"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
 import { PgvectorSearchIndex } from "./search-pgvector"
 import { enqueueChannelDelivery } from "./webhooks"
@@ -39,6 +41,9 @@ export { PreviewRenderer } from "./preview-do"
 // — re-exported so the Workers runtime can instantiate them (see wrangler.toml
 // `durable_objects.bindings`).
 export { ArtifactRoom } from "./realtime-do"
+// EXPERIMENTAL hosted runs: one automation run per container instance, then it exits.
+// Declared in wrangler.toml [[containers]] + its DO binding; unbound = hosted runs off.
+export { RunContainer } from "./run-container"
 export { RepoSyncRunner } from "./sync-runner-do"
 export { WebhookOutbox } from "./webhook-do"
 
@@ -97,6 +102,10 @@ export interface Env {
   PREVIEW_RENDERER?: DurableObjectNamespace
   // Cloudflare Browser Rendering binding. Unbound ⇒ preview rendering is disabled.
   BROWSER?: BrowserWorker
+  // EXPERIMENTAL hosted runs: the Containers binding that executes ONE automation run per
+  // instance (scale to zero between runs). Declared in wrangler.toml `[[containers]]`.
+  // Unbound (the default) ⇒ hosted execution is off and runs wait for a polling runner.
+  RUN_CONTAINER?: unknown
   // Native per-colo rate-limit bindings (limit + 60s window declared in wrangler.toml
   // [[ratelimits]]). The edge counts against these instead of an in-process Map so a cap
   // holds across isolates within a location. RL_STRICT is shared by the two tight 3/60
@@ -350,5 +359,32 @@ export default {
   scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): void {
     ctx.waitUntil(pokeOutbox(env))
     ctx.waitUntil(pokePreviewRenderer(env))
+    // EXPERIMENTAL hosted runs: the same minute tick also drives automation execution when a
+    // container binding is configured — materialize due schedules, reclaim dead runs, and boot
+    // one scale-to-zero container per due run. Unbound (the default) = a no-op, so runs stay
+    // queued for a polling runner and an un-opted deployment behaves exactly as before.
+    ctx.waitUntil(hostedRunTick(env))
   },
+}
+
+/** One hosted-dispatch pass on the edge, inside a request-scoped DB context (a binding
+ *  captured outside one goes stale — see lib/request-d1.ts). No-op unless RUN_CONTAINER is
+ *  bound and the auth secret is set: hosted execution is opt-in, and a half-configured
+ *  deployment must leave runs queued rather than fail its cron. */
+async function hostedRunTick(env: Env): Promise<void> {
+  const substrate = containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
+  const secret = env.DERIVE_AUTH_SECRET
+  if (!substrate || !secret) return
+  const pass = async (): Promise<void> => {
+    await dispatchPass({
+      meta: env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1),
+      substrate,
+      server: env.BASE_URL ?? "",
+      secret,
+    })
+  }
+  await (env.HYPERDRIVE
+    ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), pass)
+    : requestD1.run(env.DB, pass)
+  ).catch(() => undefined)
 }

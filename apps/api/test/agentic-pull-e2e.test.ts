@@ -90,7 +90,10 @@ describe("agentic pull — a scheduled/triggered artifact pulls from a mock sour
     const conn = (await (await post("/v1/connections", { toolkit: "stripe" })).json()) as {
       id: string
     }
-    const doc = await publish("Revenue Snapshot", "# Revenue Snapshot\n\nMRR: unknown\nUpdated: never")
+    const doc = await publish(
+      "Revenue Snapshot",
+      "# Revenue Snapshot\n\nMRR: unknown\nUpdated: never",
+    )
 
     // An automation bound to that source, targeting the doc for a LIVE update. Omitting agentId
     // auto-mints a managed editor agent; its token (returned once) is what the runner claims with.

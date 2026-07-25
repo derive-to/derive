@@ -19,11 +19,13 @@ import { loadLocalEmbedder } from "./embedder-local"
 import { workspacesBlockingDeletion } from "./lib/account"
 import { signupAttributionHook } from "./lib/attribution"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
+import { dispatchPass } from "./lib/dispatch"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
 import { mountWeb } from "./lib/serve-web"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
+import { nodeSubstrate } from "./lib/substrate-node"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { createNodeSyncRunner } from "./node-sync"
@@ -431,6 +433,27 @@ pruneTimer.unref?.()
 void syncRunner.resumeStalled()
 const syncResumeTimer = setInterval(() => void syncRunner.resumeStalled(), 60_000)
 syncResumeTimer.unref?.()
+
+// EXPERIMENTAL hosted runs (DERIVE_HOSTED_RUNS=true, default off): this API process becomes
+// the executor host. A minutely tick materializes due schedules, reclaims runs whose executor
+// died, and starts each due run as a `derive runner run` child process on this box — so an
+// automation updates its artifact with no separate machine and no polling runner. Off by
+// default because it spawns processes and spends the owner's model plan; a deployment opts in
+// deliberately. When off, runs stay queued for a polling `derive runner` (unchanged behavior).
+let hostedRunsTimer: ReturnType<typeof setInterval> | undefined
+if (cfg.hostedRuns) {
+  const hostedDeps = {
+    meta,
+    substrate: nodeSubstrate({ bin: cfg.runnerBin }),
+    server: cfg.baseUrl,
+    secret: authSecret,
+  }
+  const hostedTick = () => void dispatchPass(hostedDeps).catch(() => undefined)
+  hostedTick() // catch up on boot, like every other worker here
+  hostedRunsTimer = setInterval(hostedTick, 60_000)
+  hostedRunsTimer.unref?.()
+  log.info("hosted runs ENABLED (experimental)", { substrate: "node-child", bin: cfg.runnerBin })
+}
 
 // One-time cleanup of pre-existing owner self-views (the route no longer records
 // them). Pre-multi-workspace rows were rekeyed from "local" onto defaultOrg above,
