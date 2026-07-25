@@ -2642,6 +2642,76 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(sql`coalesce(${run.scheduled_for}, '') desc`)
       .limit(1)
       .get()) ?? null
+  const claimRunById = async (id: string, agentId: string, now: string): Promise<RunRecord | null> =>
+    // The capability-token claim: exactly this run, queued → running. The status guard in the
+    // WHERE is the race safety — a double-booted substrate's second update matches zero rows.
+    (await db
+      .update(run)
+      .set({ status: "running", started_at: now })
+      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "queued")))
+      .returning()
+      .get()) ?? null
+  const reclaimStaleRuns = async (
+    cutoffIso: string,
+    maxAttempts = 3,
+  ): Promise<{ requeued: number; failed: number }> => {
+    // Substrate died mid-run: running since before the cutoff. Requeue with an attempt count
+    // in meta (JSON attribute, not a column); give up as failed/lost past maxAttempts.
+    const stale = (await db
+      .select()
+      .from(run)
+      .where(and(eq(run.status, "running"), lte(run.started_at, cutoffIso)))
+      .limit(100)
+      .all()) as RunRecord[]
+    let requeued = 0
+    let failed = 0
+    for (const r of stale) {
+      let meta: Record<string, unknown> = {}
+      try {
+        meta = r.meta ? JSON.parse(r.meta) : {}
+      } catch {}
+      const attempts = (typeof meta.attempts === "number" ? meta.attempts : 0) + 1
+      if (attempts >= maxAttempts) {
+        await db
+          .update(run)
+          .set({
+            status: "failed",
+            finished_at: cutoffIso,
+            meta: JSON.stringify({ ...meta, attempts, outcome: "lost" }),
+          })
+          .where(and(eq(run.id, r.id), eq(run.status, "running")))
+        failed += 1
+      } else {
+        await db
+          .update(run)
+          .set({
+            status: "queued",
+            started_at: null,
+            meta: JSON.stringify({ ...meta, attempts }),
+          })
+          .where(and(eq(run.id, r.id), eq(run.status, "running")))
+        requeued += 1
+      }
+    }
+    return { requeued, failed }
+  }
+  const listEnabledAutomations = async (limit = 500): Promise<AutomationRecord[]> =>
+    (await db
+      .select()
+      .from(automation)
+      .where(eq(automation.enabled, 1))
+      .limit(limit)
+      .all()) as AutomationRecord[]
+  const listDueQueuedRuns = async (now: string, limit = 50): Promise<RunRecord[]> =>
+    (await db
+      .select()
+      .from(run)
+      .where(
+        and(eq(run.status, "queued"), or(isNull(run.scheduled_for), lte(run.scheduled_for, now))),
+      )
+      .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
+      .limit(limit)
+      .all()) as RunRecord[]
   const findCoalescibleRun = async (
     automationId: string,
     cutoffIso: string,
@@ -2766,6 +2836,8 @@ export function makeRepos(db: SqliteDb) {
       .get()) ?? null
   const getAgentByToken = async (token: string): Promise<AgentRecord | null> =>
     (await db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
+  const getAgent = async (id: string): Promise<AgentRecord | null> =>
+    (await db.select().from(agent).where(eq(agent.id, id)).get()) ?? null
   // Introspect a Better Auth oidc-provider access token (its own tables, same DB).
   // Quoted camelCase identifiers resolve on better-sqlite3 + D1; the token is bound,
   // not interpolated. Joined to the app row for the granting client's display name.
@@ -3519,7 +3591,12 @@ export function makeRepos(db: SqliteDb) {
     deleteAutomation,
     createRun,
     getRun,
+    getAgent,
     claimDueRuns,
+    claimRunById,
+    reclaimStaleRuns,
+    listEnabledAutomations,
+    listDueQueuedRuns,
     finishRun,
     listRuns,
     latestRunForAutomation,

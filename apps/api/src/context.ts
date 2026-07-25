@@ -37,6 +37,7 @@ import {
   type RateLimiters,
   rateLimited,
 } from "./lib/rate-limit"
+import { isRunToken, verifyRunToken } from "./lib/run-token"
 import { enqueueSlackChannelEvent } from "./lib/slack-comments"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
@@ -436,11 +437,43 @@ export function buildContext(deps: AppDeps) {
     Context,
     { ownerId: string; scopeRole: Role; clientId: string; boundWorkspaces: string[] }
   >()
+  // A run CAPABILITY token's scope: the one run id the bearer may claim/settle/pull for.
+  // Set only when agentFor resolved a dkrun_ token; the run endpoints read it to pin the
+  // principal to exactly its run (a leaked token can't touch any other run).
+  const runScopeCache = new WeakMap<Context, string>()
   const agentFor = async (c: Context): Promise<AgentRecord | null> => {
     if (agentCache.has(c)) return agentCache.get(c) ?? null
     const b = bearer(c)
     let a: AgentRecord | null = null
     let owner: string | null = null
+    if (b && isRunToken(b) && deps.encryptionKey) {
+      // A per-run capability token (unattended execution): signed + expiring, minted at
+      // dispatch, never stored. It resolves to the SAME agent principal a registered token
+      // would — the write path needs no special cases — with the run scope pinned above.
+      // Fail-closed at every step: bad signature/expiry, a foreign or terminal run, or a
+      // mismatched agent all resolve to anonymous.
+      const claim = await verifyRunToken(deps.encryptionKey, b, Date.now())
+      if (claim) {
+        const r = await meta.getRun(claim.runId)
+        const live =
+          r &&
+          r.agent_id === claim.agentId &&
+          r.org_id === claim.orgId &&
+          (r.status === "queued" || r.status === "running")
+        if (live) {
+          const ag = await meta.getAgent(claim.agentId)
+          if (ag && ag.org_id === claim.orgId) {
+            a = ag
+            owner = ag.created_by ?? null
+            runScopeCache.set(c, claim.runId)
+          }
+        }
+      }
+      agentCache.set(c, a)
+      onBehalfOfCache.set(c, owner)
+      if (a) c.set("actorId", a.id)
+      return a
+    }
     if (b && !(deps.token && safeEqual(b, deps.token))) {
       // Either a registered agent token (stored hashed) — acting on behalf of the
       // user who registered it (created_by; null for pre-column agents) — or an
@@ -947,6 +980,9 @@ export function buildContext(deps: AppDeps) {
     background,
     currentUser,
     agentFor,
+    // The run id a dkrun_ capability bearer is pinned to (null for every other principal).
+    // Run endpoints use it to constrain claim/tool/finish to exactly that run.
+    agentRunScope: (c: Context): string | null => runScopeCache.get(c) ?? null,
     resolvePrincipal,
     actingUser,
     actingHuman,

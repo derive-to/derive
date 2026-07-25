@@ -306,6 +306,18 @@ const CONFIG_VARS: ConfigVar[] = [
     doc: "Render artifact preview screenshots on this Node deploy (needs a Playwright Chromium —\nbundled in the Docker image; on a bare Node host run\n`pnpm --filter @derive/api exec playwright install chromium`). Unset = previews off.",
     example: "true",
   },
+  {
+    name: "DERIVE_HOSTED_RUNS",
+    group: "advanced",
+    doc: "EXPERIMENTAL — hosted automation runs on this Node deploy: the API process materializes\ndue schedules and executes each run by spawning the derive CLI\n(`derive runner run <capability token>`) as a child process on this box. Needs the CLI\nplus a coding agent (claude/codex) installed, and a connected model plan (or an ambient\nANTHROPIC_API_KEY / OPENAI_API_KEY). Unset = off; queued runs then wait for a polling\n`derive runner`.",
+    example: "true",
+  },
+  {
+    name: "DERIVE_RUNNER_BIN",
+    group: "advanced",
+    doc: "Path to the derive CLI the hosted-runs worker spawns (read only when\nDERIVE_HOSTED_RUNS is on). Unset = `derive` on PATH.",
+    example: "/usr/local/bin/derive",
+  },
 ]
 
 // ---- Capabilities (features gated on config) ------------------------------

@@ -1014,10 +1014,27 @@ export interface AgentStore {
   createRun(r: NewRun): Promise<RunRecord>
   /** One run by id — the model-credential endpoint resolves a run's initiator through this. */
   getRun(id: string): Promise<RunRecord | null>
+  /** One agent by id — resolves a run capability token to its agent principal. */
+  getAgent(id: string): Promise<AgentRecord | null>
   /** Atomically claim due queued runs for one agent: status "queued" with scheduled_for ≤
    *  now, flipped to "running" (started_at = now) under a row lock so concurrent executors
    *  never double-run one. Returns the claimed rows, oldest-scheduled first. */
   claimDueRuns(agentId: string, now: string, limit?: number): Promise<RunRecord[]>
+  /** Claim EXACTLY one run by id for one agent (the capability-token path: a dispatched
+   *  substrate executes its one run, never a batch). Same queued→running flip under the same
+   *  race safety; null when the run isn't claimable (missing, foreign, or already claimed —
+   *  a double-booted substrate loses this race and exits clean). */
+  claimRunById(id: string, agentId: string, now: string): Promise<RunRecord | null>
+  /** The reclaim sweep: runs stuck `running` since before `cutoffIso` (their substrate died)
+   *  go back to `queued` for re-dispatch, with an attempt count kept in meta; a run past
+   *  `maxAttempts` is finished failed (outcome "lost") instead of looping forever. */
+  reclaimStaleRuns(cutoffIso: string, maxAttempts?: number): Promise<{ requeued: number; failed: number }>
+  /** Every enabled automation across ALL workspaces (capped) — the hosted tick scans these
+   *  to materialize due schedule runs. Fine at self-host scale; revisit if it ever shows up. */
+  listEnabledAutomations(limit?: number): Promise<AutomationRecord[]>
+  /** Queued runs due now across ALL workspaces (capped), oldest first — the hosted tick's
+   *  dispatch scan. Read-only: dispatch does NOT claim; the booted substrate claims. */
+  listDueQueuedRuns(now: string, limit?: number): Promise<RunRecord[]>
   /** Terminate a run: set the terminal status, finished_at, and (optional) cost + meta.
    *  Scoped to (id, agent) so only the claiming agent settles it. */
   finishRun(

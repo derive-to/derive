@@ -72,6 +72,13 @@ export interface Config {
    *  hosts run `pnpm --filter @derive/api exec playwright install chromium`).
    *  Default false — no rendering on self-host unless explicitly enabled. */
   previews: boolean
+  /** EXPERIMENTAL: hosted automation runs on this Node deploy — the API process
+   *  materializes due schedules and executes each run by spawning the derive CLI as a
+   *  child process (`derive runner run <capability token>`). Default false: queued
+   *  runs wait for a polling `derive runner` instead. */
+  hostedRuns: boolean
+  /** The derive CLI the hosted-runs worker spawns; default `derive` on PATH. */
+  runnerBin: string
   /** From-address for notification emails (e.g. "Derive <notifications@derive.to>").
    *  Unset ⇒ email notifications are logged, not sent (the zero-config default). */
   emailFrom?: string
@@ -169,6 +176,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // can run + host a deployment, so this is a list, not a single owner.
     superAdmins: superAdminsFromEnv(env),
     previews: env.DERIVE_PREVIEWS === "true",
+    hostedRuns: env.DERIVE_HOSTED_RUNS === "true",
+    runnerBin: env.DERIVE_RUNNER_BIN || "derive",
     analytics: env.DERIVE_ANALYTICS !== "false",
     rateLimit: env.DERIVE_RATE_LIMIT !== "false",
     sandboxOrigin: env.DERIVE_SANDBOX_URL,

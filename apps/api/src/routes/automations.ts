@@ -71,7 +71,8 @@ const TRIGGER = z.object({
 })
 
 export const automationRoutes = (ctx: AppContext) => {
-  const { meta, agentFor, privateOwnerId, requireUser, requireWorkspace, deps } = ctx
+  const { meta, agentFor, agentRunScope, privateOwnerId, requireUser, requireWorkspace, deps } =
+    ctx
   const app = new Hono()
 
   // ---- Owner surface: define / list / delete ---------------------------------
@@ -325,14 +326,28 @@ export const automationRoutes = (ctx: AppContext) => {
     if (!agent) return fail(c, 401, "agent token required")
     const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20))
     // The runs-lane heartbeat (twin of the session queue's runner_seen_at): throttled
-    // to ~minutely, best-effort — liveness display must never fail a claim.
+    // to ~minutely, best-effort — liveness display must never fail a claim. Both claim
+    // shapes beat, so an automation executed by hosted dispatch reads as live too.
     if (!agent.runs_seen_at || Date.now() - new Date(agent.runs_seen_at).getTime() > 60_000)
       await meta.touchAgentRunsSeen(agent.id, isoNow()).catch(() => {})
-    // The schedule tick: turn any DUE cron automations of this agent into queued runs BEFORE
-    // claiming, so the runner's poll is the only thing that drives scheduling — no separate
-    // service. Best-effort (a bad cron is skipped), and never blocks the claim on failure.
-    await materializeDueRuns(meta, agent, new Date()).catch(() => 0)
-    const claimed = await meta.claimDueRuns(agent.id, isoNow(), limit)
+    // Two claim shapes, one contract. A run-scoped capability bearer (hosted dispatch) claims
+    // EXACTLY its run — no batch, no schedule tick, and the SKIP-LOCKED flip means a
+    // double-booted substrate loses the race and gets an empty claim. A standing agent bearer
+    // (a polling runner) materializes its due schedule runs first — the poll IS the tick —
+    // then claims the oldest due batch.
+    const scope = agentRunScope(c)
+    let claimed: Awaited<ReturnType<typeof meta.claimDueRuns>>
+    if (scope) {
+      const one = await meta.claimRunById(scope, agent.id, isoNow())
+      claimed = one ? [one] : []
+    } else {
+      // Best-effort (a bad cron is skipped), and never blocks the claim on failure. The
+      // reclaim sweep rides along: runs whose substrate died (running past the 30-minute
+      // lease) go back to queued, so a polling runner self-heals the queue as it drains it.
+      await materializeDueRuns(meta, agent, new Date()).catch(() => 0)
+      await meta.reclaimStaleRuns(new Date(Date.now() - 30 * 60_000).toISOString()).catch(() => 0)
+      claimed = await meta.claimDueRuns(agent.id, isoNow(), limit)
+    }
     // Resolve each claimed run's automation DIRECTLY by id, in ONE batched query — never
     // via a capped org-wide list (which silently loses instructions past its limit), and
     // never a per-id loop (the no-N+1 rule).
@@ -402,10 +417,13 @@ export const automationRoutes = (ctx: AppContext) => {
     return c.json({ runs })
   })
 
-  // Finish a claimed run: terminal status + cost + result meta. Only the claiming agent.
+  // Finish a claimed run: terminal status + cost + result meta. Only the claiming agent, and
+  // a run-scoped capability bearer can settle ONLY its own run.
   app.post("/v1/agent/runs/:id/finish", async (c) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
+    const scope = agentRunScope(c)
+    if (scope && scope !== c.req.param("id")) return fail(c, 404, "not found")
     const b = await readJson(
       c,
       z.object({
@@ -433,6 +451,9 @@ export const automationRoutes = (ctx: AppContext) => {
   app.post("/v1/agent/runs/:id/tool", async (c) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
+    // A run-scoped capability bearer pulls ONLY through its own run's tools.
+    const scope = agentRunScope(c)
+    if (scope && scope !== c.req.param("id")) return fail(c, 404, "not found")
     const run = await meta.getRun(c.req.param("id"))
     if (!run || run.agent_id !== agent.id || run.org_id !== agent.org_id)
       return fail(c, 404, "not found")

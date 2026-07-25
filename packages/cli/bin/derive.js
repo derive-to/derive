@@ -32,7 +32,8 @@
 //   derive context push|dev                ship a context dir as its manifest / tune it live
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createInterface } from "node:readline"
 import { fileURLToPath } from "node:url"
@@ -749,18 +750,49 @@ if (cmd === "doctor") {
 // loads a context's own secrets (KEY=VALUE) before anything reads them.
 if (cmd === "runner") {
   const sub = positional.shift()
-  if (!["serve", "once", "doctor", "install"].includes(sub ?? "")) {
+  if (!["serve", "once", "run", "doctor", "install"].includes(sub ?? "")) {
     console.error(`usage:
   derive runner serve  [ctx_id] [--server url] [--token t | --token-file f] [--env-file f]
                        [--cwd dir] [--claude-bin path] [--model m] [--poll ms] [--timeout ms] [--mock]
-  derive runner once   [same flags]        drain the queue once and exit — for schedulers (cron, pg-boss, Actions)
+  derive runner once   [same flags]        drain the queue once and exit — for schedulers (cron, Actions)
+  derive runner run    [token] [--server url] [--cwd dir] [--model m] [--timeout ms] [--mock]
+                                           execute ONE dispatched automation run (per-run capability
+                                           token; the hosted substrate entrypoint) and exit
   derive runner doctor [same flags]        preflight: server, token+context, manifest, cwd, claude, gh, python3
   derive runner install [same flags]       print a launchd/systemd unit for this config`)
     process.exit(1)
   }
-  const { doctor, loadRunnerConfig, once, renderServiceUnit, serve } = await import(
+  const { doctor, loadRunnerConfig, once, renderServiceUnit, runOnce, serve } = await import(
     "../src/runner.js"
   )
+  if (sub === "run") {
+    // The hosted one-shot: no context, no poll loop. The bearer is a per-run capability token
+    // (dkrun_…) minted at dispatch; partial config because there is no context id to require.
+    if (positional[0]) flags.token = positional[0]
+    let rcfg
+    try {
+      rcfg = loadRunnerConfig(process.env, flags, { partial: true })
+    } catch (e) {
+      console.error(`error: ${e.message}`)
+      process.exit(1)
+    }
+    if (!rcfg.token || !rcfg.server) {
+      console.error(
+        "error: runner run needs a capability token (positional/--token/DERIVE_TOKEN) and a server (--server/DERIVE_SERVER)",
+      )
+      process.exit(1)
+    }
+    // A fresh scratch cwd per run unless the substrate mounts one: hosted runs must never
+    // share a working directory across runs.
+    if (!flags.cwd) rcfg = { ...rcfg, cwd: mkdtempSync(join(tmpdir(), "derive-run-")) }
+    try {
+      const counts = await runOnce(rcfg)
+      process.exit(counts.failed > 0 ? 1 : 0)
+    } catch (e) {
+      console.error(`error: ${e.message}`)
+      process.exit(1)
+    }
+  }
   if (positional[0]) flags.context = positional[0]
   let rcfg
   try {

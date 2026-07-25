@@ -2570,6 +2570,68 @@ export class PgMetaStore implements MetaStore {
       .where(inArray(run.id, due))
       .returning()
   }
+  async claimRunById(id: string, agentId: string, now: string): Promise<RunRecord | null> {
+    // The capability-token claim: exactly this run, queued → running. The status guard in the
+    // WHERE is the race safety — a double-booted substrate's second update matches zero rows.
+    const rows = await this.db
+      .update(run)
+      .set({ status: "running", started_at: now })
+      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "queued")))
+      .returning()
+    return rows[0] ?? null
+  }
+  async reclaimStaleRuns(
+    cutoffIso: string,
+    maxAttempts = 3,
+  ): Promise<{ requeued: number; failed: number }> {
+    // Substrate died mid-run: running since before the cutoff. Requeue with an attempt count
+    // in meta (JSON attribute, not a column); give up as failed/lost past maxAttempts.
+    const stale: RunRecord[] = await this.db
+      .select()
+      .from(run)
+      .where(and(eq(run.status, "running"), lte(run.started_at, cutoffIso)))
+      .limit(100)
+    let requeued = 0
+    let failed = 0
+    for (const r of stale) {
+      let meta: Record<string, unknown> = {}
+      try {
+        meta = r.meta ? JSON.parse(r.meta) : {}
+      } catch {}
+      const attempts = (typeof meta.attempts === "number" ? meta.attempts : 0) + 1
+      if (attempts >= maxAttempts) {
+        await this.db
+          .update(run)
+          .set({
+            status: "failed",
+            finished_at: cutoffIso,
+            meta: JSON.stringify({ ...meta, attempts, outcome: "lost" }),
+          })
+          .where(and(eq(run.id, r.id), eq(run.status, "running")))
+        failed += 1
+      } else {
+        await this.db
+          .update(run)
+          .set({ status: "queued", started_at: null, meta: JSON.stringify({ ...meta, attempts }) })
+          .where(and(eq(run.id, r.id), eq(run.status, "running")))
+        requeued += 1
+      }
+    }
+    return { requeued, failed }
+  }
+  async listEnabledAutomations(limit = 500): Promise<AutomationRecord[]> {
+    return this.db.select().from(automation).where(eq(automation.enabled, 1)).limit(limit)
+  }
+  async listDueQueuedRuns(now: string, limit = 50): Promise<RunRecord[]> {
+    return this.db
+      .select()
+      .from(run)
+      .where(
+        and(eq(run.status, "queued"), or(isNull(run.scheduled_for), lte(run.scheduled_for, now))),
+      )
+      .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
+      .limit(limit)
+  }
   async finishRun(
     id: string,
     agentId: string,
@@ -2739,6 +2801,10 @@ export class PgMetaStore implements MetaStore {
   }
   async getAgentByToken(token: string): Promise<AgentRecord | null> {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))
+    return rows[0] ?? null
+  }
+  async getAgent(id: string): Promise<AgentRecord | null> {
+    const rows = await this.db.select().from(agent).where(eq(agent.id, id))
     return rows[0] ?? null
   }
   async getOAuthGrant(tokenHash: string): Promise<OAuthGrant | null> {

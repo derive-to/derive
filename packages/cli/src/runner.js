@@ -182,12 +182,15 @@ export class DeriveClient {
     return r.sessions
   }
 
-  /** The owner's connected model credential for a provider (decrypted), or null. The
-   *  server scopes it to THIS agent's registrant, so a runner only ever sees its own
-   *  owner's plan token. */
-  async modelCredential(provider, sessionId = null) {
-    const q = `provider=${encodeURIComponent(provider)}${sessionId ? `&session=${encodeURIComponent(sessionId)}` : ""}`
-    const r = await this.call(`/v1/agent/model-credential?${q}`)
+  /** The connected model credential a run BILLS (decrypted), or null. Scope names the initiator:
+   *  `{ session }` for the ask loop, `{ run }` for the automation lane — the server resolves that
+   *  person's plan (initiated_by), falling back to the agent's registrant. A runner only ever
+   *  sees a credential that belongs to its own agent's chain. */
+  async modelCredential(provider, scope = {}) {
+    const parts = [`provider=${encodeURIComponent(provider)}`]
+    if (scope.session) parts.push(`session=${encodeURIComponent(scope.session)}`)
+    if (scope.run) parts.push(`run=${encodeURIComponent(scope.run)}`)
+    const r = await this.call(`/v1/agent/model-credential?${parts.join("&")}`)
     return r.credential ?? null
   }
 
@@ -866,7 +869,7 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
   let modelEnv = null
   if (!cfg.mock) {
     try {
-      modelEnv = await resolveModelEnv(cfg, client, session.id)
+      modelEnv = await resolveModelEnv(cfg, client, { session: session.id })
     } catch (err) {
       console.error(`[runner] session ${session.id} failed: ${err.message}`)
       await client.fail(session.id)
@@ -971,12 +974,12 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
  *       overlay, the spawn inherits process.env;
  *    3. neither — FAIL CLOSED with a connect-your-plan message (never a shared fallback).
  *  A lookup error (older/self-host server without the endpoint) degrades to the ambient path. */
-export async function resolveModelEnv(cfg, client, sessionId = null) {
+export async function resolveModelEnv(cfg, client, scope = {}) {
   if (cfg.mock) return null
   const provider = selectProvider(cfg.providerName)
   let cred = null
   try {
-    cred = await client.modelCredential(cfg.providerName, sessionId)
+    cred = await client.modelCredential(cfg.providerName, scope)
   } catch (e) {
     console.error(`[runner] model-credential lookup failed (${e.message}); using ambient env`)
     return null
@@ -1081,15 +1084,17 @@ export async function serveRun(client, run, manifest, cfg) {
     client
       .finishRun(run.id, fields)
       .catch((err) => console.error(`[runner] run ${run.id} finish failed: ${err.message}`))
+  // meta rides as an OBJECT: the finish endpoint validates a record and stringifies it
+  // server-side, so a pre-stringified blob is a 400 that silently loses the run's outcome.
   const failRun = (why) =>
-    finish({ status: "failed", meta: JSON.stringify({ outcome: "failed", why: (why ?? "").slice(0, 200) }) })
+    finish({ status: "failed", meta: { outcome: "failed", why: (why ?? "").slice(0, 200) } })
 
   // Whose plan pays for this run: its initiator (registrant fallback), a per-spawn overlay like a
   // session's. A fail-closed resolve finishes the run failed, never thrown (a throw dangles it).
   let modelEnv = null
   if (!cfg.mock) {
     try {
-      modelEnv = await resolveModelEnv(cfg, client, null)
+      modelEnv = await resolveModelEnv(cfg, client, { run: run.id })
     } catch (err) {
       console.error(`[runner] run ${run.id} failed: ${err.message}`)
       await failRun(err.message)
@@ -1170,13 +1175,44 @@ export async function serveRun(client, run, manifest, cfg) {
   const outcome = outcomeFor(decision)
   await finish({
     status: "succeeded",
-    meta: JSON.stringify({
+    meta: {
       outcome,
       writes: write ? [write] : [],
       artifact_short_id: write?.short_id ?? null,
-    }),
+    },
   })
   console.log(`[runner] run ${run.id} ${outcome}${write ? ` (${write.short_id})` : ""}`)
+}
+
+// The system prompt for a run with no context manifest (the hosted dispatch path — an
+// automation's managed agent has no ask surface). Deliberately minimal: the automation's
+// INSTRUCTION is the task; this only sets the register.
+const RUN_MANIFEST = `You are this workspace's automation agent. You maintain Derive artifacts on
+triggers: follow the run instruction exactly, keep the target accurate and current, and never
+invent content the instruction or the sources don't support.`
+
+/** The one-shot hosted entry (`derive runner run <token>`): claim whatever the bearer may claim
+ *  — a per-run capability token claims EXACTLY its run; a double-booted substrate loses the
+ *  claim race, gets an empty batch, and exits clean — execute it, and return the counts. No
+ *  context, no poll loop: the substrate boots, this runs once, the process exits. */
+export async function runOnce(cfg) {
+  const client = new DeriveClient(cfg.server, cfg.token)
+  const runs = await client.claimRuns()
+  const counts = { served: 0, failed: 0 }
+  if (runs.length === 0) {
+    console.log("[runner] nothing to run (already claimed, or the token's run is settled)")
+    return counts
+  }
+  for (const run of runs) {
+    try {
+      await serveRun(client, run, RUN_MANIFEST, cfg)
+      counts.served += 1
+    } catch (err) {
+      counts.failed += 1
+      console.error(`[runner] run ${run.id}: ${err.message}`)
+    }
+  }
+  return counts
 }
 
 async function bootHost(cfg, modeLabel) {
