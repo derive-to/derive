@@ -83,18 +83,33 @@ export function AgentsSection({ meId }: { meId: string }) {
         </SettingsGroup>
       )}
 
-      {/* How agent runs get billed. A run bills the person who triggered it; if they have
-          no connected plan, it falls to the agent OWNER's plan (only for agents the owner
-          lent, above) and then to this shared pool. Empty pool = everyone brings their own. */}
-      <div className="mt-6 flex flex-col gap-3 border-t pt-6">
-        <div>
-          <div className="text-sm font-medium text-foreground">Workspace model plan pool</div>
-          <p className="mt-0.5 text-2xs text-muted-foreground">
-            A shared plan billed when a run's initiator has no plan of their own and the agent isn't
-            lent its owner's. Optional — leave it empty to require everyone to bring their own.
-          </p>
+      {/* How agent runs get billed, in order: the person who triggered the run (their own
+          plan, below), then the agent OWNER's plan (only for agents lent above), then the
+          shared workspace pool. Both plan surfaces live here so it's one place to reason
+          about; your own plan also lives under Account → Model plans. */}
+      <div className="mt-6 flex flex-col gap-5 border-t pt-6">
+        <div className="flex flex-col gap-3">
+          <div>
+            <div className="text-sm font-medium text-foreground">Your plan</div>
+            <p className="mt-0.5 text-2xs text-muted-foreground">
+              Runs you start bill your own connected plan first. Same plan as Account → Model plans;
+              connect it here or there.
+            </p>
+          </div>
+          <ModelPlanManager scope="personal" />
         </div>
-        <ModelPlanManager scope="pool" />
+
+        <div className="flex flex-col gap-3">
+          <div>
+            <div className="text-sm font-medium text-foreground">Workspace model plan pool</div>
+            <p className="mt-0.5 text-2xs text-muted-foreground">
+              A shared plan billed when a run's initiator has no plan of their own and the agent
+              isn't lent its owner's. Optional — leave it empty to require everyone to bring their
+              own.
+            </p>
+          </div>
+          <ModelPlanManager scope="pool" />
+        </div>
       </div>
     </SettingsSection>
   )
