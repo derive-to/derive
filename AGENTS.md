@@ -5,10 +5,19 @@ rules that matter are machine-enforced, so a mistake fails the build instead of
 shipping. Before you call a change done:
 
 ```bash
-pnpm run ci        # biome + the design-token / frontend / test-id checks
-pnpm typecheck     # tsgo across the workspace
-pnpm test          # vitest (embedded SQLite) — includes the authz-coverage guard
+pnpm verify        # the whole gate — exactly what CI's `check` job runs
 ```
+
+which is these three, and you can run them one at a time while iterating:
+
+```bash
+pnpm run ci        # biome + the design-token / frontend / test-id / dead-code checks
+pnpm typecheck     # tsgo across the workspace
+pnpm test:coverage # vitest (embedded SQLite) + the per-package coverage ratchet
+```
+
+Run `pnpm verify` before you push, not a shorter approximation of it. `pnpm test`
+skips the coverage ratchet, so it can pass on a change that CI then fails.
 
 A green gate is the bar. Don't work around a guardrail — fix the code it points at,
 or use the rule's documented escape hatch (an inline comment such as `authz-exempt:`,
