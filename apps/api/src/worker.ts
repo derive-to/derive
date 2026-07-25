@@ -25,7 +25,7 @@ import { bindingEmbedder, EMBED_DIMENSIONS, type WorkersAiLike } from "./embedde
 import { workspacesBlockingDeletion } from "./lib/account"
 import { signupAttributionHook } from "./lib/attribution"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
-import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
+import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
 import { nativeLimiter } from "./lib/rate-limit"
@@ -382,47 +382,43 @@ export default {
   // claimed or settled, and the cron sweep re-dispatches anything still queued. Messages are
   // acked either way — a retry would only re-enter the same idempotent path a minute early.
   async queue(batch: { messages: { body: unknown }[] }, env: Env): Promise<void> {
-    const substrate = containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
-    const secret = env.DERIVE_AUTH_SECRET
-    if (!substrate || !secret) return
     const ids = batch.messages
       .map((m) => (m.body as { runId?: unknown })?.runId)
       .filter((id): id is string => typeof id === "string" && id.length > 0)
     if (ids.length === 0) return
-    const nudge = async (): Promise<void> => {
-      const deps = {
-        meta: env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1),
-        substrate,
-        server: env.BASE_URL ?? "",
-        secret,
-      }
+    await withHostedDispatch(env, async (deps) => {
       for (const runId of ids) await dispatchRunNow(deps, runId)
-    }
-    await (env.HYPERDRIVE
-      ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), nudge)
-      : requestD1.run(env.DB, nudge)
-    ).catch(() => undefined)
+    })
   },
 }
 
-/** One hosted-dispatch pass on the edge, inside a request-scoped DB context (a binding
- *  captured outside one goes stale — see lib/request-d1.ts). No-op unless RUN_CONTAINER is
- *  bound and the auth secret is set: hosted execution is opt-in, and a half-configured
- *  deployment must leave runs queued rather than fail its cron. */
-async function hostedRunTick(env: Env): Promise<void> {
+/** Run something with hosted-dispatch deps, inside a request-scoped DB context (a binding
+ *  captured outside one goes stale — see lib/request-d1.ts). The single place the edge decides
+ *  whether hosted execution is configured at all: no container binding or no auth secret means
+ *  hosted runs are OFF, and both entry points (the cron sweep and the queue nudge) must degrade
+ *  to a no-op rather than fail, leaving runs queued for a polling runner. */
+async function withHostedDispatch(
+  env: Env,
+  fn: (deps: DispatchDeps) => Promise<void>,
+): Promise<void> {
   const substrate = containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
   const secret = env.DERIVE_AUTH_SECRET
   if (!substrate || !secret) return
-  const pass = async (): Promise<void> => {
-    await dispatchPass({
+  const scoped = () =>
+    fn({
       meta: env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1),
       substrate,
       server: env.BASE_URL ?? "",
       secret,
     })
-  }
   await (env.HYPERDRIVE
-    ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), pass)
-    : requestD1.run(env.DB, pass)
+    ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)
+    : requestD1.run(env.DB, scoped)
   ).catch(() => undefined)
 }
+
+/** The cron sweep: materialize due schedules, reclaim dead runs, dispatch what is due. */
+const hostedRunTick = (env: Env): Promise<void> =>
+  withHostedDispatch(env, async (deps) => {
+    await dispatchPass(deps)
+  })

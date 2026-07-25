@@ -4,6 +4,8 @@ import {
   type AutomationTrigger,
   newId,
   normalizeSelectors,
+  parseRunMeta,
+  runCounter,
 } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
@@ -24,17 +26,6 @@ import { materializeDueRuns } from "../lib/schedule"
 // tick or a webhook uses. Plain routes (agent-facing + admin), not the OpenAPI web surface.
 
 const isoNow = () => new Date().toISOString()
-
-/** How many times this run has already been retried, from its meta blob (a JSON attribute, not
- *  a column). Malformed meta reads as zero — a bad blob must never grant unlimited retries. */
-const retryCountOf = (raw: string | null): number => {
-  try {
-    const m = raw ? JSON.parse(raw) : null
-    return typeof m?.retries === "number" && m.retries > 0 ? m.retries : 0
-  } catch {
-    return 0
-  }
-}
 
 // Fire-URL limits: one payload is capped, and a coalesced run's accumulated payloads are
 // capped too, so a burst can't grow a single run's meta blob without bound.
@@ -461,7 +452,7 @@ export const automationRoutes = (ctx: AppContext) => {
     // spending the owner's model plan again. The cap is small for the same reason.
     if (b.status === "failed" && b.meta?.retryable === true) {
       const prior = await meta.getRun(runId)
-      const retries = retryCountOf(prior?.meta ?? null)
+      const retries = runCounter(parseRunMeta(prior?.meta), "retries")
       if (retries < RUN_MAX_RETRIES) {
         const attempt = retries + 1
         const requeued = await meta.requeueRun(runId, agent.id, {

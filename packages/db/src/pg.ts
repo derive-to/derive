@@ -105,7 +105,7 @@ import type {
   WorkspaceAccess,
   WorkspaceRecord,
 } from "@derive/core"
-import { GLOBAL_FOLLOW_ORG, maxRole } from "@derive/core"
+import { GLOBAL_FOLLOW_ORG, maxRole, mergeRunMeta, parseRunMeta, runCounter } from "@derive/core"
 import {
   and,
   asc,
@@ -2613,28 +2613,25 @@ export class PgMetaStore implements MetaStore {
     let requeued = 0
     let failed = 0
     for (const r of stale) {
-      let meta: Record<string, unknown> = {}
-      try {
-        meta = r.meta ? JSON.parse(r.meta) : {}
-      } catch {}
-      const attempts = (typeof meta.attempts === "number" ? meta.attempts : 0) + 1
-      if (attempts >= maxAttempts) {
-        await this.db
-          .update(run)
-          .set({
-            status: "failed",
-            finished_at: cutoffIso,
-            meta: JSON.stringify({ ...meta, attempts, outcome: "lost" }),
-          })
-          .where(and(eq(run.id, r.id), eq(run.status, "running")))
-        failed += 1
-      } else {
-        await this.db
-          .update(run)
-          .set({ status: "queued", started_at: null, meta: JSON.stringify({ ...meta, attempts }) })
-          .where(and(eq(run.id, r.id), eq(run.status, "running")))
-        requeued += 1
-      }
+      const attempts = runCounter(parseRunMeta(r.meta), "attempts") + 1
+      // Past the cap the run is given up as `lost`; otherwise it goes back to the queue with
+      // the count carried forward. Both merge into the existing blob so the previous attempt's
+      // outcome survives. Re-guarded on `running` so a run that settled meanwhile is untouched.
+      const settled = attempts >= maxAttempts
+      await this.db
+        .update(run)
+        .set(
+          settled
+            ? {
+                status: "failed",
+                finished_at: cutoffIso,
+                meta: mergeRunMeta(r.meta, { attempts, outcome: "lost" }),
+              }
+            : { status: "queued", started_at: null, meta: mergeRunMeta(r.meta, { attempts }) },
+        )
+        .where(and(eq(run.id, r.id), eq(run.status, "running")))
+      if (settled) failed += 1
+      else requeued += 1
     }
     return { requeued, failed }
   }

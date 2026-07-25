@@ -189,7 +189,14 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
 }
 
 /** How many of a workspace's runs are currently executing (claimed and not yet finished, within
- *  the lease — anything older is a corpse the reclaim sweep owns, not live work). */
+ *  the lease — anything older is a corpse the reclaim sweep owns, not live work).
+ *
+ *  Approximate by construction: it counts within the workspace's 100 most recent runs, so a
+ *  workspace that creates more than 100 runs between a claim and its finish could under-count
+ *  and briefly exceed the cap. That is the safe direction for a FAIRNESS control (it never
+ *  wrongly starves a workspace), the budget guard is the real spend ceiling, and a dedicated
+ *  COUNT query is the fix if this ever matters at volume — deliberately not added yet, since
+ *  every store method has to be written and kept in parity twice. */
 const countInFlight = async (meta: MetaStore, orgId: string, now: Date): Promise<number> => {
   const since = new Date(now.getTime() - RUN_LEASE_MS).toISOString()
   const recent = await meta.listRuns(orgId, 100).catch(() => [])

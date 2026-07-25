@@ -1,4 +1,11 @@
-import { newId, type Role, type RunRecord } from "@derive/core"
+import {
+  newId,
+  parseRunMeta,
+  type Role,
+  type RunRecord,
+  runCounter,
+  runMetaString,
+} from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
@@ -20,16 +27,13 @@ import { enqueueChannelDelivery } from "../webhooks"
  *  how many attempts it has cost, and — when it is still queued — WHY it hasn't started yet.
  *  All derived from the row and its meta blob; nothing new is stored. */
 const withTimeline = (r: RunRecord) => {
-  let meta: Record<string, unknown> = {}
-  try {
-    meta = r.meta ? JSON.parse(r.meta) : {}
-  } catch {
-    // A malformed blob must degrade to "no detail", never break the activity view.
-  }
+  // Parsed through the shared reader, so "what a malformed blob means" is decided once (in
+  // core) rather than re-guessed by every consumer of these bytes.
+  const meta = parseRunMeta(r.meta)
   const started = r.started_at ? Date.parse(r.started_at) : null
   const finished = r.finished_at ? Date.parse(r.finished_at) : null
   const scheduled = r.scheduled_for ? Date.parse(r.scheduled_for) : null
-  const retries = typeof meta.retries === "number" ? meta.retries : 0
+  const retries = runCounter(meta, "retries")
   return {
     ...r,
     timeline: {
@@ -45,14 +49,9 @@ const withTimeline = (r: RunRecord) => {
       /** Attempts already spent (0 = first try). Each one costs the initiator's model plan. */
       retries,
       /** What went wrong last time, for a run that is retrying or gave up. */
-      last_error:
-        typeof meta.last_error === "string"
-          ? meta.last_error
-          : typeof meta.why === "string"
-            ? meta.why
-            : null,
+      last_error: runMetaString(meta, "last_error") ?? runMetaString(meta, "why"),
       /** How the work landed: published | proposed | shadow | answered | cancelled | lost. */
-      outcome: typeof meta.outcome === "string" ? meta.outcome : null,
+      outcome: runMetaString(meta, "outcome"),
       /** The artifacts this run wrote, in order. */
       writes: Array.isArray(meta.writes) ? meta.writes : [],
     },
