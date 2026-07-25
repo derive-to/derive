@@ -1,5 +1,6 @@
 import { log } from "../log"
 import type { Substrate } from "./dispatch"
+import { RUN_TIMEOUT_MS } from "./run-lifecycle"
 
 // The CLOUDFLARE CONTAINER substrate: hosted execution for the Workers deployment (derive.to,
 // and any self-host on Cloudflare). One run = one container instance that boots, executes
@@ -59,7 +60,7 @@ export const containerSubstrate = (opts: ContainerSubstrateOpts): Substrate => (
       DERIVE_TOKEN: token,
       DERIVE_SERVER: server,
       DERIVE_CONTEXT: "",
-      DERIVE_RUN_TIMEOUT_MS: String(opts.timeoutMs ?? 15 * 60_000),
+      DERIVE_RUN_TIMEOUT_MS: String(opts.timeoutMs ?? RUN_TIMEOUT_MS),
     }
     if (typeof inst.startRun === "function") {
       await inst.startRun(envVars)

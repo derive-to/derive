@@ -381,6 +381,13 @@ export const CAPABILITIES: Capability[] = [
     detail:
       "Dense/semantic workspace search: embeddings (a local ONNX model, or Cloudflare Workers AI over REST) stored in pgvector in your Postgres and fused with lexical FTS. Set DERIVE_EMBED_PROVIDER=local|workersai. Also requires DATABASE_URL (Postgres) — with embedded SQLite it stays lexical-only, so the reported status reflects the running datastore.",
   },
+  {
+    id: "hostedRuns",
+    label: "Hosted automation runs (experimental)",
+    requires: ["DERIVE_HOSTED_RUNS"],
+    detail:
+      "EXPERIMENTAL. This process executes due automation runs itself — materializing schedules, reclaiming runs whose executor died, and spawning `derive runner run` per run — so an automation updates its artifact with no polling runner and no extra machine. Needs the derive CLI plus a coding agent (claude/codex) installed, and a connected model plan (or an ambient ANTHROPIC_API_KEY / OPENAI_API_KEY) for whoever the run bills. Off ⇒ runs stay queued for a polling `derive runner`.",
+  },
 ]
 
 // ---- Derivations ----------------------------------------------------------

@@ -24,10 +24,33 @@ story — no locks, no leader election, no second queue.
 The queue of record is Postgres (or SQLite on a small self-host): the `run` table already holds
 status, the claim, and the ledger. There is no job system.
 
+### The lifecycle clock (a safety invariant)
+
+    RUN_TIMEOUT_MS  <  RUN_TOKEN_TTL_MS  <  RUN_LEASE_MS
+         15m                 20m                25m
+
+Reclaiming a run mints a **second** executor for it. The claim is status-guarded, but a *write*
+is an ordinary agent write and the claim does not gate it — so if the first executor's token were
+still valid at reclaim time, two processes could write the same artifact. The lease therefore
+outlasts the **token**, not merely the timeout. The token in turn outlasts the timeout, so a run
+that uses its full budget can still write its own result instead of 401ing at the finish line.
+All three live in `lib/run-lifecycle.ts`, which throws at import if the order is ever broken, and
+`test/run-lifecycle.test.ts` states why each gap exists.
+
+### Cost and fairness
+
+- **Monthly model budget is enforced at dispatch**, not only at the enqueue routes. A schedule
+  creates runs with no human in the loop, so without this a cron automation would spend past the
+  owner's cap forever. Over budget ⇒ the run is *deferred* (left queued), never failed: raising
+  the cap or the next month releases it with nobody re-creating the work.
+- **Per-workspace in-flight cap** (default 3) so one workspace's burst can't consume the
+  deployment's capacity or fan out unbounded model spend. Also deferred, not failed.
+- A **global per-pass limit** (default 10) is the outer burst valve.
+
 ### The credential
 
 A hosted run authenticates with a `dkrun_` **capability token**: signed, scoped to exactly one
-`(run, agent, workspace)`, expiring in 45 minutes. It resolves to the same agent principal a
+`(run, agent, workspace)`, expiring on the lifecycle clock above. It resolves to the same agent principal a
 registered token would, so the write path is unchanged — but claim/tool/finish additionally pin
 it to *its* run, so a leaked token can touch nothing else. Nothing standing is stored anywhere.
 
@@ -60,8 +83,10 @@ pnpm --filter @derive/api test hosted-dispatch
 ```
 
 Covers: boot-exactly-once, the token's scope, no double dispatch of a claimed run, reclaim of a
-dead executor, giving up as `lost`, schedule materialization + idempotency, the run-now nudge,
-and a substrate outage leaving the run safely queued.
+dead executor, giving up as `lost`, schedule materialization + idempotency, the run-now nudge, a
+substrate outage leaving the run safely queued, the per-workspace in-flight cap, and the monthly
+budget holding runs back. Token forgery/tamper/expiry and the lifecycle invariant are in
+`test/run-lifecycle.test.ts` and the token suite.
 
 The end-to-end pull (real runner, real API over a socket, scripted agent) is:
 

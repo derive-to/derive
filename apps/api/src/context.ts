@@ -210,6 +210,13 @@ export interface AppDeps {
   /** Wake the preview worker after enqueuing (Workers: poke the PreviewRenderer DO). */
   pokePreviews?: () => void
   /**
+   * EXPERIMENTAL hosted runs: start a freshly-created run NOW instead of waiting for the next
+   * tick, so "Run now" and a fire-URL feel immediate. Best-effort and fire-and-forget by
+   * design — the tick is the guarantee, this is only the latency. Unset (the default, and on
+   * every deployment with hosted runs off) ⇒ the run waits to be claimed, unchanged.
+   */
+  pokeRun?: (runId: string) => void
+  /**
    * The marketing site (the front door). When set, `/` serves the marketing page
    * to signed-out visitors (signed-in ones keep the SPA) and `/pricing` serves the
    * pricing page. Each provider returns the page HTML — read from the web build's

@@ -13,14 +13,16 @@
  * with a `dkrun_` prefix so bearer resolution can route it without trial verification.
  */
 import { signCapabilityToken, verifyCapabilityToken } from "./capability-token"
+import { RUN_TOKEN_TTL_MS } from "./run-lifecycle"
 
 const DOMAIN = "derive-run-token:"
 const PREFIX = "dkrun_"
 
-/** How long a dispatched run's token stays valid: generous enough for a queued boot plus a
- *  minutes-long agent run; short enough that a leak is bounded. Re-dispatch (the reclaim sweep)
- *  mints a FRESH token, so expiry is per attempt, never a stuck run's dead end. */
-export const RUN_TOKEN_TTL_MS = 45 * 60 * 1000
+// The TTL belongs to the run lifecycle clock (run-lifecycle.ts), not to this file: it must
+// EXCEED the run timeout so an honest run can still write its result, and fall SHORT of the
+// reclaim lease so a requeued run's previous executor is provably powerless before a second
+// one starts. Re-exported here for the token's callers.
+export { RUN_TOKEN_TTL_MS }
 
 export const isRunToken = (bearer: string): boolean => bearer.startsWith(PREFIX)
 

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process"
 import { log } from "../log"
 import type { Substrate } from "./dispatch"
+import { RUN_TIMEOUT_MS } from "./run-lifecycle"
 
 // The NODE substrate: hosted execution for a self-host that already runs the API on a box.
 // One run = one detached `derive runner run <token>` child process on this machine. No
@@ -48,7 +49,7 @@ export const nodeSubstrate = (opts: NodeSubstrateOpts): Substrate => ({
     }
     child.stdout?.on("data", keep)
     child.stderr?.on("data", keep)
-    const timer = setTimeout(() => child.kill("SIGTERM"), opts.timeoutMs ?? 15 * 60_000)
+    const timer = setTimeout(() => child.kill("SIGTERM"), opts.timeoutMs ?? RUN_TIMEOUT_MS)
     if (typeof timer.unref === "function") timer.unref()
     child.on("error", (err) => {
       clearTimeout(timer)

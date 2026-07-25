@@ -260,6 +260,10 @@ export const automationRoutes = (ctx: AppContext) => {
       initiated_by: me.id,
       scheduled_for: isoNow(),
     })
+    // Hosted runs: start it NOW rather than at the next tick, so "Run now" feels immediate.
+    // Fire-and-forget — the tick is the guarantee, this is only the latency (and it is a no-op
+    // on every deployment with hosted execution off).
+    deps.pokeRun?.(rec.id)
     return c.json({ id: rec.id, status: rec.status }, 201)
   })
 
@@ -313,6 +317,9 @@ export const automationRoutes = (ctx: AppContext) => {
       scheduled_for: new Date(now).toISOString(),
       meta: JSON.stringify({ payloads: [payload] }),
     })
+    // Same immediate start for an external trigger (CI, a zap, curl): a fire URL that takes a
+    // minute to visibly do anything reads as broken.
+    deps.pokeRun?.(rec.id)
     return c.json({ id: rec.id, status: rec.status, coalesced: false }, 202)
   })
 

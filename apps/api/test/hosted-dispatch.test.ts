@@ -202,6 +202,57 @@ describe("hosted dispatch — the platform-agnostic core", () => {
   })
 })
 
+describe("hosted dispatch — production guards", () => {
+  it("caps how many runs one workspace may have in flight at once", async () => {
+    const auto = await mkAutomation({
+      trigger: { kind: "manual" },
+      instruction: "Burst me.",
+    })
+    // Five queued runs, a cap of two: only two start, the rest are DEFERRED (still queued for a
+    // later tick) — never failed, because the work is still wanted.
+    for (let i = 0; i < 5; i += 1) await runNow(auto.id)
+    const { substrate, started } = fakeSubstrate()
+    const res = await dispatchPass({ ...deps(substrate), perOrgLimit: 2 })
+    expect(res.started).toBe(2)
+    expect(res.deferred).toBe(3)
+    expect(started).toHaveLength(2)
+
+    // Nothing was lost: the deferred runs are still queued and start on later passes as the
+    // in-flight ones settle.
+    const queued = (await meta.listRuns("default", 50)).filter((r) => r.status === "queued")
+    expect(queued.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it("holds runs back when the workspace is over its monthly model budget", async () => {
+    const auto = await mkAutomation({
+      trigger: { kind: "manual" },
+      instruction: "Spend nothing.",
+    })
+    await runNow(auto.id)
+    const { substrate, started } = fakeSubstrate()
+
+    // A schedule creates runs with no human in the loop, so the budget MUST be enforced at
+    // dispatch, not only at the enqueue routes — otherwise a cron automation spends past the
+    // owner's cap forever. Simulate "over budget" at the store boundary: a plan with a monthly
+    // cap, and spend already past it.
+    const overBudgetMeta = Object.create(meta) as typeof meta
+    overBudgetMeta.resolvePlan = async () =>
+      ({ limits: JSON.stringify({ monthlyMicroUsd: 1_000 }) }) as never
+    overBudgetMeta.sumRunCostSince = async () => 5_000
+    const res = await dispatchPass({ ...deps(substrate), meta: overBudgetMeta })
+    expect(res.started).toBe(0)
+    expect(res.deferred).toBeGreaterThanOrEqual(1)
+    expect(started).toHaveLength(0)
+
+    // Deferred, never failed: the run is still queued, so raising the cap (or next month)
+    // releases it without anyone re-creating the work.
+    const still = await meta.getRun(
+      (await meta.listRuns("default", 50)).find((r) => r.status === "queued")?.id ?? "",
+    )
+    expect(still?.status).toBe("queued")
+  })
+})
+
 describe("run capability tokens", () => {
   it("round-trips its claim, and rejects a forged, tampered, or expired token", async () => {
     const now = Date.now()
