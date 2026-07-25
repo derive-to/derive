@@ -39,6 +39,29 @@ export const agentDiscoveryRoutes = (_ctx: AppContext) => {
     }),
   )
 
+  // The Agent Skills Discovery convention (vercel-labs/skills-handler): an index
+  // naming each skill this domain serves, plus the skill files under
+  // /.well-known/skills/<name>/. Hermes and other skill-source crawlers consume
+  // exactly this shape; here.now serves the same. One skill, one file — the served
+  // copy is self-contained, so `files` is just the SKILL.md.
+  const SKILL_DESCRIPTION = (() => {
+    const m = AGENT_SKILL_MD.match(/^description: ([\s\S]*?)\n(?=\w+:|---)/m)
+    return (m?.[1] ?? "Publish and revise artifacts on Derive.").replace(/\n\s+/g, " ").trim()
+  })()
+  app.get("/.well-known/skills/index.json", (c) =>
+    c.json(
+      { skills: [{ name: "derive", description: SKILL_DESCRIPTION, files: ["SKILL.md"] }] },
+      200,
+      { "Cache-Control": CACHE },
+    ),
+  )
+  app.get("/.well-known/skills/derive/SKILL.md", (c) =>
+    c.body(AGENT_SKILL_MD, 200, {
+      "Content-Type": "text/markdown; charset=utf-8",
+      "Cache-Control": CACHE,
+    }),
+  )
+
   app.get("/.well-known/agent.json", (c: Context) => {
     const base = new URL(c.req.url).origin
     return c.json(

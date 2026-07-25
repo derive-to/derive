@@ -58,6 +58,7 @@ export default defineConfig({
         "/blob",
         "/healthz",
         "/oauth",
+        "/.well-known/skills",
         "/mcp",
         "/openapi.json",
         "/docs",
