@@ -29,9 +29,9 @@ export function registerAutomateTool(tc: ToolContext): void {
     "automate",
     {
       description:
-        "Create, list, or fire standing automations — a scheduled use(context, instruction). `create` needs a trigger ({kind: manual|schedule|event, cron?, tz?, on:'webhook'?}) + an instruction; optional refs (target artifacts, each may set mode publish|propose), context_id (the run materializes that context's manifest + skills and acts as its agent), connection_ids (bound sources). A webhook trigger returns fire_url + fire_secret ONCE. `run_now` enqueues immediately. Owner grants only.",
+        "Standing automations — a scheduled use(context, instruction). `create`: trigger ({kind: manual|schedule|event, cron?, tz?, on:'webhook'?}) + instruction; optional refs (targets, mode publish|propose), context_id (run materializes that context's manifest + skills, acts as its agent), connection_ids (bound sources). Webhook triggers return fire_url + fire_secret ONCE. `run_now` enqueues now. `record` files a run you executed LOCALLY (automation_id, wrote:[short_ids], outcome, note) into the same ledger. `list` shows them. Owner grants only.",
       inputSchema: {
-        action: z.enum(["create", "list", "run_now"]),
+        action: z.enum(["create", "list", "run_now", "record"]),
         trigger: TRIGGER.optional(),
         instruction: z.string().min(1).max(4000).optional(),
         refs: z
@@ -51,6 +51,10 @@ export function registerAutomateTool(tc: ToolContext): void {
         context_id: z.string().max(64).optional(),
         connection_ids: z.array(z.string().max(64)).max(20).optional(),
         automation_id: z.string().max(64).optional(),
+        // `record` only — what a LOCALLY executed run did, so it lands in the same ledger.
+        wrote: z.array(z.string().max(64)).max(20).optional(),
+        outcome: z.enum(["published", "proposed", "answered", "shadow", "failed"]).optional(),
+        note: z.string().max(500).optional(),
       },
     },
     async (input) => {
@@ -89,6 +93,47 @@ export function registerAutomateTool(tc: ToolContext): void {
         })
         ctx.deps.pokeRun?.(rec.id)
         return json({ run_id: rec.id, status: rec.status })
+      }
+
+      if (input.action === "record") {
+        // The ledger half of "one QA history, wherever it ran". An agent on someone's laptop
+        // (with a browser, local tools, whatever the hosted box lacks) does the work, publishes
+        // through the normal gate, then files the receipt here — same run table, same timeline,
+        // same automation attribution as a hosted run. `lane: "local"` is stamped so the two are
+        // distinguishable in hindsight rather than silently conflated.
+        let automationId = input.automation_id ?? null
+        if (automationId) {
+          const owner = await meta.getAutomation(automationId)
+          // Ledger hygiene, mirroring the REST route: an unknown or foreign id is dropped and
+          // the run still records, rather than failing work that already happened.
+          if (!owner || owner.org_id !== org) automationId = null
+        }
+        const now = new Date().toISOString()
+        const rec = await meta.createRun({
+          id: newId("run"),
+          org_id: org,
+          agent_id: agent.id,
+          automation_id: automationId,
+          reason: "local",
+          initiated_by: tc.ownerId ?? null,
+          status: input.outcome === "failed" ? "failed" : "succeeded",
+          started_at: now,
+          finished_at: now,
+          meta: JSON.stringify({
+            lane: "local",
+            ...(input.outcome ? { outcome: input.outcome } : {}),
+            ...(input.note ? { why: input.note } : {}),
+            writes: (input.wrote ?? []).map((short_id) => ({ short_id })),
+          }),
+        })
+        return json({
+          run_id: rec.id,
+          automation_id: automationId,
+          recorded: true,
+          ...(input.automation_id && !automationId
+            ? { note: "automation_id was not in this workspace — recorded unattributed" }
+            : {}),
+        })
       }
 
       // create

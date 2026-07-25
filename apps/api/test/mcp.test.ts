@@ -2967,3 +2967,73 @@ describe("checkpoint tool (lineage layers)", () => {
     expect(toolText(r)).toContain("publish")
   })
 })
+
+// One QA history, wherever the work ran. A local agent (with a browser and tools the hosted
+// box lacks) does the work and files the receipt through `automate record`; a hosted run files
+// its own. Both land in the same run table, the same timeline, attributed to the same
+// automation — which is the whole point of letting the executor be swappable.
+describe("automate record — local work lands in the same ledger", () => {
+  it("records a locally-executed run against its automation, with its writes", async () => {
+    const { app, token, meta } = appWithGrant(
+      "automate-record",
+      "openid derive:read derive:publish derive:manage",
+    )
+    await rpc(app, token, initBody)
+
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "automate", {
+          action: "create",
+          trigger: { kind: "manual" },
+          instruction: "Nightly QA of staging.",
+        }),
+      ),
+    ) as { id: string }
+    expect(created.id).toBeTruthy()
+
+    // The local agent reports what it actually did.
+    const recorded = JSON.parse(
+      toolText(
+        await call(app, token, "automate", {
+          action: "record",
+          automation_id: created.id,
+          wrote: ["qa1rep0rt"],
+          outcome: "proposed",
+          note: "browser suite, 12/12 pass",
+        }),
+      ),
+    ) as { run_id: string; automation_id: string | null; recorded: boolean }
+    expect(recorded.recorded).toBe(true)
+    expect(recorded.automation_id).toBe(created.id)
+
+    // It IS a run: same table, terminal, attributed, with the writes and the local lane marked
+    // so a reader can tell where it executed rather than being quietly misled.
+    const run = await meta.getRun(recorded.run_id)
+    expect(run?.status).toBe("succeeded")
+    expect(run?.automation_id).toBe(created.id)
+    expect(run?.meta).toContain("qa1rep0rt")
+    expect(run?.meta).toContain('"lane":"local"')
+    expect(run?.meta).toContain("proposed")
+  })
+
+  it("a foreign automation id records unattributed rather than losing the work", async () => {
+    const { app, token, meta } = appWithGrant(
+      "automate-record-foreign",
+      "openid derive:read derive:publish derive:manage",
+    )
+    await rpc(app, token, initBody)
+    const out = JSON.parse(
+      toolText(
+        await call(app, token, "automate", {
+          action: "record",
+          automation_id: "auto_not_mine",
+          outcome: "answered",
+        }),
+      ),
+    ) as { run_id: string; automation_id: string | null; note?: string }
+    expect(out.automation_id).toBeNull()
+    expect(out.note).toContain("unattributed")
+    // The run still exists — work that happened is never dropped over a bad reference.
+    expect((await meta.getRun(out.run_id))?.status).toBe("succeeded")
+  })
+})
