@@ -25,7 +25,7 @@ import { bindingEmbedder, EMBED_DIMENSIONS, type WorkersAiLike } from "./embedde
 import { workspacesBlockingDeletion } from "./lib/account"
 import { signupAttributionHook } from "./lib/attribution"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
-import { dispatchPass } from "./lib/dispatch"
+import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
 import { nativeLimiter } from "./lib/rate-limit"
@@ -106,6 +106,10 @@ export interface Env {
   // instance (scale to zero between runs). Declared in wrangler.toml `[[containers]]`.
   // Unbound (the default) ⇒ hosted execution is off and runs wait for a polling runner.
   RUN_CONTAINER?: unknown
+  // The run-dispatch QUEUE: the latency nudge, never the source of truth. Postgres is the
+  // queue of record, so a dropped message costs seconds (the cron sweep re-dispatches),
+  // not work. Unbound ⇒ "Run now" simply waits for the next cron tick, as before.
+  RUN_QUEUE?: { send: (body: unknown) => Promise<void> }
   // Native per-colo rate-limit bindings (limit + 60s window declared in wrangler.toml
   // [[ratelimits]]). The edge counts against these instead of an in-process Map so a cap
   // holds across isolates within a location. RL_STRICT is shared by the two tight 3/60
@@ -304,6 +308,12 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // renderPreviews is false so no jobs are enqueued.
         renderPreviews: !!env.BROWSER,
         pokePreviews: () => void edgeWaitUntil(pokePreviewRenderer(env)),
+        // Hosted runs: nudge the dispatch queue so an interactive run starts in seconds
+        // instead of on the next minute's cron. Best-effort by construction — the sweep is
+        // the guarantee — and a no-op when the queue isn't bound (hosted execution off).
+        pokeRun: (runId: string) => {
+          if (env.RUN_QUEUE) void edgeWaitUntil(env.RUN_QUEUE.send({ runId }).catch(() => {}))
+        },
         sandboxOrigin: env.DERIVE_SANDBOX_URL,
         // Read the SPA shell from static assets so /artifacts/:ref can carry unfurl meta.
         // Cached per isolate; null on any miss leaves the shell untouched.
@@ -364,6 +374,34 @@ export default {
     // one scale-to-zero container per due run. Unbound (the default) = a no-op, so runs stay
     // queued for a polling runner and an un-opted deployment behaves exactly as before.
     ctx.waitUntil(hostedRunTick(env))
+  },
+
+  // The dispatch queue's consumer: one message = "this run was just created, start it now".
+  // Purely a latency path. Postgres remains the queue of record, so a message that is lost,
+  // duplicated, or arrives late costs nothing: dispatchRunNow no-ops on a run that is already
+  // claimed or settled, and the cron sweep re-dispatches anything still queued. Messages are
+  // acked either way — a retry would only re-enter the same idempotent path a minute early.
+  async queue(batch: { messages: { body: unknown }[] }, env: Env): Promise<void> {
+    const substrate = containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
+    const secret = env.DERIVE_AUTH_SECRET
+    if (!substrate || !secret) return
+    const ids = batch.messages
+      .map((m) => (m.body as { runId?: unknown })?.runId)
+      .filter((id): id is string => typeof id === "string" && id.length > 0)
+    if (ids.length === 0) return
+    const nudge = async (): Promise<void> => {
+      const deps = {
+        meta: env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1),
+        substrate,
+        server: env.BASE_URL ?? "",
+        secret,
+      }
+      for (const runId of ids) await dispatchRunNow(deps, runId)
+    }
+    await (env.HYPERDRIVE
+      ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), nudge)
+      : requestD1.run(env.DB, nudge)
+    ).catch(() => undefined)
   },
 }
 

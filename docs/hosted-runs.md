@@ -94,6 +94,19 @@ model plan is the run initiator's own, fetched at run time.
 Both substrates boot the **same image/CLI**: the entrypoint sees a `dkrun_` token and takes the
 one-shot `derive runner run` lane automatically.
 
+### How a run gets started (two paths, one guarantee)
+
+- **The sweep** — every minute. Workers cron on Cloudflare, an interval on Node. This is the
+  *guarantee*: anything queued gets picked up within a tick, no matter what else failed.
+- **The nudge** — immediately on run creation, so "Run now" and fire-URLs don't wait a minute.
+  On Node it is an in-process call; on Cloudflare it is a **Queue** message (`RUN_QUEUE` →
+  `derive-runs`), configured alongside the containers block and equally optional.
+
+The nudge is a *latency* path only. Postgres remains the queue of record, so a message that is
+lost, duplicated, or late costs seconds rather than work: two nudges just boot two executors, and
+the status-guarded claim means one wins and the other exits clean. Unbind the queue and everything
+still works, one tick slower.
+
 ---
 
 ## Testing it locally

@@ -1187,7 +1187,11 @@ export async function serveRun(client, run, manifest, cfg) {
         decision === "live_publish_with_review"
           ? await client.publishVersion(target.id, revInput)
           : await client.proposeRevision(target.id, revInput)
-      write = { short_id: res.short_id, decision, created: false }
+      // The artifact is the one we were TOLD to revise — never re-read from the response. The
+      // two write endpoints answer with different shapes (a proposal returns its own id and no
+      // short_id), so trusting the response dropped the artifact from the ledger on the propose
+      // path, and with it the link the activity view renders. We already know the target.
+      write = { short_id: target.id, decision, created: false, proposal_id: res.id ?? undefined }
     } else {
       const res = await client.createRevision(revInput, {
         title: firstLine(rev.content) || "Untitled",

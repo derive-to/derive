@@ -362,3 +362,38 @@ describe("run capability tokens", () => {
     expect(await verifyRunToken(SECRET, "dk_agt_whatever", now)).toBeNull()
   })
 })
+
+describe("the dispatch queue is a latency nudge, never the source of truth", () => {
+  it("a duplicate or late nudge is harmless — the executor's claim is the exclusion", async () => {
+    const auto = await mkAutomation({
+      trigger: { kind: "manual" },
+      instruction: "Nudge me twice.",
+    })
+    const run = await runNow(auto.id)
+    const { substrate, started } = fakeSubstrate()
+
+    // Two nudges for the same run (a duplicated queue message, or a nudge racing the tick).
+    expect(await dispatchRunNow(deps(substrate), run.id)).toBe(true)
+    expect(await dispatchRunNow(deps(substrate), run.id)).toBe(true)
+    // Both boot an executor — and that is FINE: whichever claims first wins the
+    // status-guarded flip, the other finds nothing and exits. Nothing is written twice.
+    expect(started).toHaveLength(2)
+    const agentId = (await meta.getRun(run.id))?.agent_id ?? ""
+    const now = new Date().toISOString()
+    expect(await meta.claimRunById(run.id, agentId, now)).toBeTruthy()
+    expect(await meta.claimRunById(run.id, agentId, now)).toBeNull()
+  })
+
+  it("a nudge for an already-settled run does nothing (a late message costs nothing)", async () => {
+    const auto = await mkAutomation({ trigger: { kind: "manual" }, instruction: "Too late." })
+    const run = await runNow(auto.id)
+    const agentId = (await meta.getRun(run.id))?.agent_id ?? ""
+    const now = new Date().toISOString()
+    await meta.claimRunById(run.id, agentId, now)
+    await meta.finishRun(run.id, agentId, { status: "succeeded", finishedAt: now })
+
+    const { substrate, started } = fakeSubstrate()
+    expect(await dispatchRunNow(deps(substrate), run.id)).toBe(false)
+    expect(started).toHaveLength(0)
+  })
+})
