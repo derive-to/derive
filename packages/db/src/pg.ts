@@ -111,6 +111,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  lt,
   lte,
   ne,
   notExists,
@@ -1866,10 +1867,29 @@ export class PgMetaStore implements MetaStore {
   }
   async updateDomain(
     host: string,
-    fields: { status?: DomainStatus; verification?: string | null },
+    fields: {
+      status?: DomainStatus
+      verification?: string | null
+      artifact_id?: string | null
+      redirect_to?: string | null
+    },
   ): Promise<DomainRecord | null> {
     const rows = await this.db.update(domain).set(fields).where(eq(domain.host, host)).returning()
     return rows[0] ?? null
+  }
+
+  async setArtifactExpiry(artifactId: string, expiresAt: string | null): Promise<void> {
+    await this.db.update(artifact).set({ expires_at: expiresAt }).where(eq(artifact.id, artifactId))
+  }
+
+  // expires_at is ISO-8601 text (the schema-wide convention), so lexical lt() IS
+  // chronological order.
+  async listExpiredArtifacts(nowIso: string, limit: number): Promise<ArtifactRecord[]> {
+    return this.db
+      .select()
+      .from(artifact)
+      .where(and(isNotNull(artifact.expires_at), lt(artifact.expires_at, nowIso)))
+      .limit(limit)
   }
   async deleteDomain(host: string, orgId: string): Promise<void> {
     await this.db.delete(domain).where(and(eq(domain.host, host), eq(domain.org_id, orgId)))

@@ -75,6 +75,9 @@ export const artifact = sqliteTable("artifact", {
   // existing DBs (SQLite forbids a non-constant default there).
   updated_at: text("updated_at"),
   removed_at: text("removed_at"),
+  // Expiring anonymous draft (the claim flow): ISO instant after which the draft is
+  // gone — served 410 and swept. Null for every ordinary artifact; cleared on claim.
+  expires_at: text("expires_at"),
   source_path: text("source_path"),
   // The CURRENT (last) author, denormalized from the latest version row for the list
   // view + author filtering. For a GitHub-synced artifact these mirror the last commit's
@@ -719,6 +722,10 @@ export const domain = sqliteTable("domain", {
   // records to show while pending. Null for subdomains.
   cf_hostname_id: text("cf_hostname_id"),
   verification: text("verification"),
+  // When set, the host answers 302 → this absolute URL instead of serving content.
+  // Written when a draft is claimed (the derive.page URL forwards to the artifact's
+  // permanent home); reusable for any future host rename.
+  redirect_to: text("redirect_to"),
   created_at: text("created_at").notNull().default(now),
 })
 

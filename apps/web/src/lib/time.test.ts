@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { ago } from "./time"
+import { ago, until } from "./time"
 
 // `ago` reads Date.now(), so pin the clock and feed ISO timestamps at known offsets.
 const NOW = new Date("2026-06-14T12:00:00.000Z")
@@ -26,5 +26,26 @@ describe("ago", () => {
     vi.useFakeTimers()
     vi.setSystemTime(NOW)
     expect(ago(new Date(NOW.getTime() + 60_000).toISOString())).toBe("just now")
+  })
+})
+
+describe("until", () => {
+  afterEach(() => vi.useRealTimers())
+
+  const at = (ms: number) => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    return until(new Date(NOW.getTime() + ms).toISOString())
+  }
+
+  it("renders each bucket", () => {
+    expect(at(30_000)).toBe("under a minute")
+    expect(at(5 * 60_000)).toBe("5m")
+    expect(at(3 * 3600_000)).toBe("3h")
+    expect(at(2 * 86400_000)).toBe("2d")
+  })
+
+  it("clamps a past deadline to 'under a minute' (no negative)", () => {
+    expect(at(-60_000)).toBe("under a minute")
   })
 })

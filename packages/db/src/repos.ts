@@ -2074,7 +2074,12 @@ export function makeRepos(db: SqliteDb) {
       .all()
   const updateDomain = async (
     host: string,
-    fields: { status?: DomainStatus; verification?: string | null },
+    fields: {
+      status?: DomainStatus
+      verification?: string | null
+      artifact_id?: string | null
+      redirect_to?: string | null
+    },
   ): Promise<DomainRecord | null> =>
     ((await db.update(domain).set(fields).where(eq(domain.host, host)).returning().get()) as
       | DomainRecord
@@ -2085,6 +2090,22 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(domain.host, host), eq(domain.org_id, orgId)))
       .run()
   }
+  const setArtifactExpiry = async (artifactId: string, expiresAt: string | null): Promise<void> => {
+    await db
+      .update(artifact)
+      .set({ expires_at: expiresAt })
+      .where(eq(artifact.id, artifactId))
+      .run()
+  }
+  // expires_at is ISO-8601 text (the schema-wide convention), so lexical lt() IS
+  // chronological order.
+  const listExpiredArtifacts = async (nowIso: string, limit: number): Promise<ArtifactRecord[]> =>
+    db
+      .select()
+      .from(artifact)
+      .where(and(isNotNull(artifact.expires_at), lt(artifact.expires_at, nowIso)))
+      .limit(limit)
+      .all()
 
   // ---- Reviews: proposals ------------------------------------------------
   const createProposal = async (p: NewProposal): Promise<ProposalRecord> =>
@@ -3325,6 +3346,8 @@ export function makeRepos(db: SqliteDb) {
     getArtifactDomains,
     getWorkspaceDomains,
     updateDomain,
+    setArtifactExpiry,
+    listExpiredArtifacts,
     deleteDomain,
     createProposal,
     createReviewRound,
