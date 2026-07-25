@@ -29,23 +29,44 @@ pointers.
 
 **Providers.** The runner is agent-CLI-agnostic (`RUNNER_PROVIDER` / `--provider`,
 default `claude-code`; add one in `packages/cli/src/providers/`). Each provider's
-own CLI owns its auth from the inherited env — no token is ever reimplemented:
+own CLI owns its auth, but the runner supplies the token per run: it fetches the
+run's per-user plan from Derive and injects it into that one spawn as the env var
+the CLI reads. Any inherited model token is stripped first, and there is no
+shared/ambient fallback, so a stray global token on the host is never billed.
 
-| Provider | Binary | Credential (either) |
+| Provider | Binary | Env the CLI reads |
 | --- | --- | --- |
 | `claude-code` | `claude` | `ANTHROPIC_API_KEY`, or `CLAUDE_CODE_OAUTH_TOKEN` (a Pro/Max plan) |
 | `codex` (experimental) | `codex` | `OPENAI_API_KEY`, or a `codex login` (ChatGPT plan) |
 
 A subscription/plan token works because the runner drives the provider's real
-CLI, which consumes the token exactly as licensed — the sanctioned path, not a
-reimplemented client.
+CLI, which consumes the token exactly as licensed. Each member connects their own
+plan in Derive (Settings, Model plans); the runner resolves whose plan pays for
+each run (the initiator's, then a lent owner's, then a workspace pool, else the
+run fails closed) and no token is ever reimplemented. The resolved credential is
+injected into a private per-run home (Codex: a fresh `CODEX_HOME` holding the
+login `auth.json`, 0600, removed after the run), and the runner strips every
+inherited model-auth var before the spawn, so nothing bills a stray host token.
+
+**Isolation invariant (deploy):** the runner image must carry NO host login
+(`~/.codex/auth.json`, `~/.claude/.credentials.json`) and NO baked model token or
+`*_BASE_URL`. The env strip is defense in depth; the clean image is the primary
+control, since a host login FILE can still be read via `$HOME` if present.
+
+**Codex plan-login concurrency limit:** a Codex `login` refresh token is
+single-use, and the CLI rotates it in place. The runner persists the rotated
+`auth.json` back after each run (bound to the exact tier + a compare-and-swap, so
+a stale write can't clobber a fresher token). SEQUENTIAL runs on one login are
+safe; two runs on the SAME shared login (a pool or owner-lent Codex plan) at once
+can race the rotation and one will need a reconnect. An API key has no such limit.
+Serializing concurrent use of one login is a planned hardening.
 
 ## Two lanes
 
 The dispatcher runs both halves of the executor split:
 
 - **Owner-run drain lane** (pg-boss cron → `derive runner once`): serves contexts
-  whose agent runs on the run's initiator's credential (the asker's for a session, the clicker's for Run now), falling back to the owner's. Always on.
+  whose agent runs on the run's initiator's credential (the asker's for a session, the clicker's for Run now), then a lent owner's, then a workspace pool, else the run fails closed. Always on.
 - **Shared hosted lane** (`POST /internal/invoke`, behind `DISPATCHER_HOST_SECRET`):
   runs a Derive-hosted agent (the `@derive/hosted-agent` Mastra harness) live for a
   single task. The API calls it for "Draft with your agent" and @mention replies.
@@ -72,10 +93,11 @@ because every drain empties the whole session queue.
 ## Run it
 
 ```bash
-# Local (needs a Postgres and the CLI on PATH):
+# Local (needs a Postgres and the CLI on PATH). Model auth is NOT set here: each
+# member connects their own plan in Derive, and the runner injects it per run.
 DATABASE_URL=postgres://localhost/dispatcher \
 DISPATCHER_CONTEXTS='[{"id":"ctx_x","token_env":"CTX_X_TOKEN"}]' \
-CTX_X_TOKEN=dk_agt_... ANTHROPIC_API_KEY=sk-... \
+CTX_X_TOKEN=dk_agt_... \
 pnpm --filter @derive/dispatcher start
 
 # Containers: see deploy/dispatcher.compose.example.yml

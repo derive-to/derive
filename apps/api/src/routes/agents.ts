@@ -14,12 +14,14 @@ export const agentRoutes = (ctx: AppContext) => {
   const { meta, agentFor, privateOwnerId, requireUser, requireWorkspace } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
-  const agentJson = (a: AgentRecord) => ({
+  const agentJson = (a: AgentRecord, ownerLend = false) => ({
     id: a.id,
     name: a.name,
     role: a.role,
     hosted: a.hosted === 1,
     managed: a.managed === 1,
+    created_by: a.created_by,
+    owner_lend: ownerLend,
     created_at: a.created_at,
   })
 
@@ -42,6 +44,15 @@ export const agentRoutes = (ctx: AppContext) => {
         .boolean()
         .describe(
           "Auto-minted for one context at creation — the context's Derive access, not a user-named persona. Hidden from the roster UI.",
+        ),
+      created_by: z
+        .string()
+        .nullable()
+        .describe("The user who registered the agent — who it publishes and bills on behalf of."),
+      owner_lend: z
+        .boolean()
+        .describe(
+          "When true, this agent may bill its OWNER's own model plan as a fallback (initiator -> owner -> pool). Only the owner toggles it; default off.",
         ),
       created_at: z.string(),
     })
@@ -76,7 +87,8 @@ export const agentRoutes = (ctx: AppContext) => {
       const org = await requireWorkspace(c, "manage")
       if (org instanceof Response) return bail(org)
       const agents = await meta.listAgents(org)
-      return c.json({ agents: agents.map(agentJson) })
+      const lent = new Set((await meta.getOrgSettings(org)).ownerLendAgents ?? [])
+      return c.json({ agents: agents.map((a) => agentJson(a, lent.has(a.id))) })
     },
   )
 
@@ -202,9 +214,17 @@ export const agentRoutes = (ctx: AppContext) => {
     async (c) => {
       const org = await requireWorkspace(c, "manage")
       if (org instanceof Response) return bail(org)
+      const id = c.req.param("id")
       // Scope the delete to the caller's workspace: deleteAgent is keyed by
       // (id, org) so an Admin can't delete another workspace's agent by id.
-      await meta.deleteAgent(c.req.param("id"), org)
+      await meta.deleteAgent(id, org)
+      // Drop it from the owner-lend list so stale ids don't accumulate in org settings.
+      const settings = await meta.getOrgSettings(org)
+      if (settings.ownerLendAgents?.includes(id))
+        await meta.setOrgSettings(org, {
+          ...settings,
+          ownerLendAgents: settings.ownerLendAgents.filter((a) => a !== id),
+        })
       return c.body(null, 204)
     },
   )

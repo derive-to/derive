@@ -9,6 +9,7 @@
 // Ported from packages/runner (TS) into the published CLI so `derive runner
 // serve` works from a bare npx on any machine — one package, no build step.
 import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
 import {
   existsSync,
   mkdirSync,
@@ -17,7 +18,9 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, join, resolve, sep } from "node:path"
 import { claudeCode } from "./providers/claude-code.js"
 import { DEFAULT_PROVIDER, PROVIDERS, selectProvider } from "./providers/index.js"
@@ -181,13 +184,30 @@ export class DeriveClient {
     return r.sessions
   }
 
-  /** The owner's connected model credential for a provider (decrypted), or null. The
-   *  server scopes it to THIS agent's registrant, so a runner only ever sees its own
-   *  owner's plan token. */
+  /** The model credential a run bills against (decrypted), plus a `reason` when there is
+   *  none: "unreadable" = a row existed but its secret wouldn't decrypt (reconnect), "none"
+   *  = nothing connected. The server scopes it to THIS agent's own context, so a runner only
+   *  ever sees a credential a run of its own is entitled to. */
   async modelCredential(provider, sessionId = null) {
     const q = `provider=${encodeURIComponent(provider)}${sessionId ? `&session=${encodeURIComponent(sessionId)}` : ""}`
     const r = await this.call(`/v1/agent/model-credential?${q}`)
-    return r.credential ?? null
+    return {
+      credential: r.credential ?? null,
+      reason: r.reason ?? "none",
+      source: r.source ?? null,
+    }
+  }
+
+  /** Persist a refreshed login blob back to the EXACT row this run resolved to (the CLI
+   *  rotated a single-use login in place). Bound to the run's session and the tier it read
+   *  (`source`), with a compare-and-swap (`prevSha256` = sha256 of the blob the run started
+   *  with) so a stale/concurrent write can't clobber a fresher token. */
+  async updateModelCredential(provider, sessionId, token, source, prevSha256) {
+    const q = `provider=${encodeURIComponent(provider)}${sessionId ? `&session=${encodeURIComponent(sessionId)}` : ""}`
+    await this.call(`/v1/agent/model-credential?${q}`, {
+      method: "PUT",
+      body: JSON.stringify({ token, source, prev_sha256: prevSha256 }),
+    })
   }
 
   /** Post an answer. `answers` names the asker message it addresses — if a
@@ -696,32 +716,42 @@ const MOCK_ANSWER = {
 export async function serveSession(client, session, manifest, cfg, repoMeta = [], skillMeta = []) {
   const asked = session.messages.at(-1)?.body_md?.slice(0, 80) ?? "?"
   console.log(`[runner] session ${session.id}: "${asked}"`)
-  // Whose plan pays for THIS answer: the session's asker (the server resolves it,
-  // falling back to the registrant), composed as a per-spawn overlay so nothing
-  // sticks to process.env between sessions with different askers. A fail-closed
-  // resolve (no plan, no ambient) fails THIS session server-side like any other
-  // run failure — thrown, it would leave the claim dangling and retry-loop.
+  // Whose plan pays for THIS answer: the server resolves it (initiator, then owner-lend,
+  // then the workspace pool), returned as a per-spawn overlay layered over an env whose
+  // inherited model tokens are STRIPPED, so nothing sticks to process.env between sessions
+  // with different askers and no stray host token can override the injected plan. A
+  // fail-closed resolve (nothing connected) fails THIS session like any other run failure;
+  // thrown, it would leave the claim dangling and retry-loop.
   let modelEnv = null
+  let cleanupCred = noopCleanup
   if (!cfg.mock) {
     try {
-      modelEnv = await resolveModelEnv(cfg, client, session.id)
+      const resolved = await resolveModelEnv(cfg, client, session.id)
+      modelEnv = resolved.env
+      cleanupCred = resolved.cleanup
     } catch (err) {
       console.error(`[runner] session ${session.id} failed: ${err.message}`)
       await client.fail(session.id)
       return
     }
   }
-  const result = cfg.mock
-    ? { ok: true, answer: MOCK_ANSWER }
-    : await runAgent(selectProvider(cfg.providerName), {
-        bin: cfg.agentBin,
-        cwd: cfg.cwd,
-        model: cfg.model,
-        timeoutMs: cfg.timeoutMs,
-        systemPrompt: manifest,
-        prompt: buildPrompt(session.messages),
-        env: modelEnv ? { ...process.env, ...modelEnv } : undefined,
-      })
+  let result
+  try {
+    result = cfg.mock
+      ? { ok: true, answer: MOCK_ANSWER }
+      : await runAgent(selectProvider(cfg.providerName), {
+          bin: cfg.agentBin,
+          cwd: cfg.cwd,
+          model: cfg.model,
+          timeoutMs: cfg.timeoutMs,
+          systemPrompt: manifest,
+          prompt: buildPrompt(session.messages),
+          env: modelEnv ? { ...stripModelTokens(process.env), ...modelEnv } : undefined,
+        })
+  } finally {
+    // Remove any per-run credential files (a Codex login's auth.json) now the spawn is done.
+    await cleanupCred()
+  }
   if (!result.ok || !result.answer) {
     console.error(`[runner] session ${session.id} failed: ${result.error}`)
     await client.fail(session.id)
@@ -799,50 +829,151 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
 /** Boot the host state serve/once share: context info, repo corpus, skills,
  *  conventions. Everything here is per-boot truth on purpose (see the comments
  *  inline) — `once` inherits the same freshness contract as a serve restart. */
-/** Resolve the model credential a run authenticates with, as a per-spawn ENV OVERLAY —
- *  never a process.env mutation, so one asker's plan token can't leak into the next
- *  asker's session on a shared context. Pass a session id to bill the run's INITIATOR:
- *  the server resolves the session's asker first and falls back to the agent's
- *  registrant (interim until the workspace pool lands). Precedence:
- *    1. the initiator's connected plan (fetched, decrypted, provider-mapped) — overlay it;
- *    2. no connection but an ambient token is set (self-host's single global plan) — null
- *       overlay, the spawn inherits process.env;
- *    3. neither — FAIL CLOSED with a connect-your-plan message (never a shared fallback).
- *  A lookup error (older/self-host server without the endpoint) degrades to the ambient path. */
-export async function resolveModelEnv(cfg, client, sessionId = null) {
-  if (cfg.mock) return null
-  const provider = selectProvider(cfg.providerName)
-  let cred = null
+// The model-auth env the runner OWNS: every token var the provider CLIs read, CODEX_HOME
+// (which points Codex at a login's auth.json), and the base-URL vars (a host value could
+// silently redirect the injected token to a proxy). Only the resolved per-user credential may
+// set these, so any inherited value is STRIPPED before a spawn (see the session loop). This is
+// what makes a stray global token OR login on the host un-billable and un-exfiltratable: there
+// is no ambient fallback, and no leftover env can override or redirect the injected plan.
+// (Defense in depth on top of the deploy invariant that the runner image carries no host
+// `~/.codex` / `~/.claude` login and no baked model token.)
+const MODEL_TOKEN_ENV = [
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "CODEX_HOME",
+]
+
+/** A copy of `env` with every model-auth var removed, so the caller can layer ONLY the
+ *  resolved credential on top. */
+export function stripModelTokens(env) {
+  const out = { ...env }
+  for (const k of MODEL_TOKEN_ENV) delete out[k]
+  return out
+}
+
+const noopCleanup = async () => {}
+const sha256Hex = (s) => createHash("sha256").update(s).digest("hex")
+// A well-formed, non-empty JSON object — the shape a refreshed login (auth.json) must have.
+// Guards against persisting a truncated/garbage file a crashed CLI can leave behind.
+const isJsonObject = (s) => {
   try {
-    cred = await client.modelCredential(cfg.providerName, sessionId)
+    const v = JSON.parse(s)
+    return !!v && typeof v === "object" && Object.keys(v).length > 0
+  } catch {
+    return false
+  }
+}
+
+/** Resolve the model credential a run bills against, as `{ env, cleanup }`: a per-spawn ENV
+ *  OVERLAY (never a process.env mutation, so one asker's plan can't leak into the next), plus
+ *  a `cleanup` to run AFTER the spawn. Most credentials are env-delivered (an API key, or an
+ *  env-var plan token like Claude's) and cleanup is a no-op. A Codex ChatGPT-plan login is
+ *  FILE-delivered: its `auth.json` is written 0600 into a private per-run CODEX_HOME and
+ *  cleanup removes it. Pass a session id to bill the run's INITIATOR; the server walks
+ *  initiator, then owner (per-agent opt-in), then the workspace pool. There is NO
+ *  shared/ambient fallback: if nothing resolves the run FAILS CLOSED, and a lookup error
+ *  fails closed too. `reason` distinguishes an UNREADABLE stored token (reconnect) from
+ *  nothing connected (connect). */
+export async function resolveModelEnv(cfg, client, sessionId = null) {
+  if (cfg.mock) return { env: null, cleanup: noopCleanup }
+  const provider = selectProvider(cfg.providerName)
+  let res
+  try {
+    res = await client.modelCredential(cfg.providerName, sessionId)
   } catch (e) {
-    console.error(`[runner] model-credential lookup failed (${e.message}); using ambient env`)
-    return null
-  }
-  if (cred) {
-    const env = provider.credentialEnv?.(cred.kind, cred.value)
-    if (!env)
-      throw new Error(
-        `the connected ${cfg.providerName} credential (${cred.kind}) can't be injected — connect an API key, or use a provider that supports it`,
-      )
-    return env
-  }
-  const ambient = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"].some(
-    (k) => process.env[k],
-  )
-  if (!ambient)
     throw new Error(
-      `no model plan connected for this run's initiator — connect one at ${cfg.server} (Settings → Model plans)`,
+      `couldn't reach the model-plan endpoint (${e.message}); a run can't start without a connected plan. Connect one at ${cfg.server} (Settings → Model plans)`,
     )
-  return null
+  }
+  if (!res.credential)
+    throw new Error(
+      res.reason === "unreadable"
+        ? `your connected ${cfg.providerName} plan couldn't be read (it may pre-date a key change). Reconnect it at ${cfg.server} (Settings → Model plans)`
+        : `no model plan connected for this run's initiator. Connect one at ${cfg.server} (Settings → Model plans)`,
+    )
+  // Env-delivered credential: an API key, or an env-var plan token like Claude's.
+  const env = provider.credentialEnv?.(res.credential.kind, res.credential.value)
+  if (env) return { env, cleanup: noopCleanup }
+  // File-delivered credential: a Codex ChatGPT-plan login lands as auth.json in a private
+  // per-run CODEX_HOME dir, written 0600 and removed once the spawn is done.
+  const spec = provider.credentialFiles?.(res.credential.kind, res.credential.value)
+  if (spec) {
+    const seed = res.credential.value
+    const source = res.source
+    // The file whose seed content IS the stored blob is the one the CLI refreshes in place
+    // (Codex rotates its single-use login and writes it back to auth.json). Track it so cleanup
+    // can persist the rotated token; otherwise the next run seeds a token the CLI already burned.
+    let dir
+    let primaryPath = null
+    try {
+      dir = mkdtempSync(join(tmpdir(), "derive-cred-"))
+      for (const [name, content] of Object.entries(spec.files)) {
+        const p = join(dir, name)
+        writeFileSync(p, content, { mode: 0o600 })
+        if (content === seed) primaryPath = p
+      }
+    } catch (e) {
+      // Never leave a half-written 0600 blob behind if materialization fails partway.
+      if (dir)
+        try {
+          rmSync(dir, { recursive: true, force: true })
+        } catch {}
+      throw e
+    }
+    return {
+      env: { [spec.homeEnv]: dir },
+      cleanup: async () => {
+        // Persist a refreshed login before discarding the dir (the sanctioned "run and persist
+        // the updated auth.json" pattern), bound to the exact tier the run read (`source`) and
+        // CAS-guarded server-side (`sha256(seed)`). Only a real, well-formed change is sent — a
+        // crashed CLI can leave garbage. Best-effort: a failed persist never fails the run.
+        try {
+          if (primaryPath) {
+            const after = readFileSync(primaryPath, "utf8")
+            if (after && after !== seed && isJsonObject(after))
+              await client.updateModelCredential(
+                cfg.providerName,
+                sessionId,
+                after,
+                source,
+                sha256Hex(seed),
+              )
+          }
+        } catch (e) {
+          console.error(
+            `[runner] couldn't persist refreshed ${cfg.providerName} login: ${e.message}`,
+          )
+        }
+        try {
+          rmSync(dir, { recursive: true, force: true })
+        } catch {}
+      },
+    }
+  }
+  throw new Error(
+    `the connected ${cfg.providerName} credential (${res.credential.kind}) can't be injected. Connect an API key, or use a provider that supports it`,
+  )
 }
 
 async function bootHost(cfg, modeLabel) {
   const client = new DeriveClient(cfg.server, cfg.token)
-  // Preflight only — verifies SOME credential path exists (registrant plan or ambient)
-  // so misconfiguration fails at boot with a clear message, not at the first answer.
-  // The overlay is discarded: each session resolves its own initiator's credential.
-  await resolveModelEnv(cfg, client)
+  // Preflight only, and non-fatal. With per-initiator billing each session resolves and
+  // fails closed on its own (line ~707), so a host legitimately boots with no DEFAULT plan
+  // (owner-lend off, no workspace pool) and still serves askers who bring their own. Surface
+  // the gap in the log; don't block startup on it. The overlay is discarded regardless: each
+  // session resolves its own initiator's credential.
+  try {
+    const preflight = await resolveModelEnv(cfg, client)
+    await preflight.cleanup()
+  } catch (e) {
+    console.error(
+      `[runner] no default model plan at boot (${e.message}); sessions resolve per-initiator`,
+    )
+  }
   const info = await client.getContext(cfg.contextId)
   if (!info.manifest_md && !cfg.manifestFile) throw new Error("context has no readable manifest")
   const readManifest = () =>

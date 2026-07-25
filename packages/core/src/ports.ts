@@ -2133,6 +2133,12 @@ export interface OrgSettings {
    *  the generated brand profile. Absent until set. Mirrored on a profile (user layer);
    *  resolved profile-over-workspace. */
   brandprint?: Brandprint
+  /** Per-agent owner-lend allow-list: agent ids whose OWNER (created_by) has opted that
+   *  agent in to bill the owner's OWN connected model plan when a run's initiator has no
+   *  plan of their own. Default absent = off. Only the agent's owner toggles membership;
+   *  the credential resolver falls to the owner's plan for a listed agent, then the
+   *  workspace pool, then fail-closed. */
+  ownerLendAgents?: string[]
 }
 
 /** How a workspace/profile likes its stuff built: a pointer to a "conventions"
@@ -2176,7 +2182,10 @@ export interface ModelCredentialRecord {
   org_id: string
   user_id: string
   provider: string
-  kind: "oauth" | "api_key"
+  // oauth = an env-var plan token (Claude's setup-token). api_key = a provider API key.
+  // login = a file-delivered plan login blob (Codex's ~/.codex/auth.json), materialized into
+  // a private CODEX_HOME per run.
+  kind: "oauth" | "api_key" | "login"
   secret: string
   hint: string
   created_at: string

@@ -991,6 +991,11 @@ export class PgMetaStore implements MetaStore {
     await this.db
       .delete(membership)
       .where(and(eq(membership.org_id, orgId), eq(membership.user_id, userId)))
+    // A removed member's connected plan must stop being billable here — otherwise a lent
+    // agent would keep charging their token after they've lost workspace access.
+    await this.db
+      .delete(modelCredential)
+      .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
   }
   async getWorkspace(orgId: string): Promise<WorkspaceRecord | null> {
     const rows = await this.db.select().from(workspace).where(eq(workspace.id, orgId))
@@ -1006,6 +1011,10 @@ export class PgMetaStore implements MetaStore {
   }
   async deleteWorkspace(orgId: string): Promise<void> {
     await this.db.delete(membership).where(eq(membership.org_id, orgId))
+    // Every connected plan for this org, INCLUDING the workspace-pool sentinel row, so no
+    // encrypted token is orphaned (the pool row would otherwise have no API path left to
+    // delete once memberships are gone). One predicate covers members and the pool.
+    await this.db.delete(modelCredential).where(eq(modelCredential.org_id, orgId))
     await this.db.delete(workspace).where(eq(workspace.id, orgId))
   }
   listWorkspaces(userId: string): Promise<(WorkspaceRecord & { role: Role })[]> {
@@ -2933,6 +2942,9 @@ export class PgMetaStore implements MetaStore {
     await this.db.delete(follow).where(eq(follow.user_id, userId))
     await this.db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId))
     await this.db.delete(notification).where(eq(notification.user_id, userId))
+    // Encrypted plan tokens must not linger after the account is gone; the workspace pool's
+    // sentinel-user row is keyed differently, so it is never in scope.
+    await this.db.delete(modelCredential).where(eq(modelCredential.user_id, userId))
     await this.db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId))
     await this.db.update(version).set({ author_id: null }).where(eq(version.author_id, userId))
     await this.db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId))
