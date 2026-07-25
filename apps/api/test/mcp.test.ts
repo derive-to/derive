@@ -184,6 +184,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     // catch_up absorbs check_requests as its no-short_id queue; use replaces ask;
     // setup_brandprint folds into publish (derive://brandprint/profile).
     expect(names.sort()).toEqual([
+      "automate",
       "catch_up",
       "checkpoint",
       "comment",
