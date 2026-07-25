@@ -16,9 +16,18 @@ import { STATIC_NAMESPACE_PREFIXES } from "./static-namespaces"
  *  · prefixes match the path and any subpath (`/v1`, `/v1/artifacts`, …)
  *  · exact paths match only themselves (`/healthz`)
  */
-// /.well-known/skills is a PREFIX (index.json + per-skill files), unlike the other
-// exact well-knowns: the Agent Skills Discovery crawlers fetch several paths under it.
+// /.well-known/skills is a PREFIX for path-ownership purposes (Node fallback + the
+// dev proxy), but its worker-first rules are the two EXACT files below: observed in
+// prod, Cloudflare run_worker_first matches exact dotted paths ("/.well-known/x")
+// and dotless globs ("/oauth/*") but NOT a glob under a dot-directory
+// ("/.well-known/skills/*" never routed; assets kept the request and served the
+// shell). The endpoint surface is exactly these two files, so enumerating them
+// loses nothing — adding a skill later means adding its path here.
 const API_PREFIXES = ["/v1", "/api", "/raw", "/blob", "/oauth", "/.well-known/skills"] as const
+const WELL_KNOWN_SKILLS_EXACT = [
+  "/.well-known/skills/index.json",
+  "/.well-known/skills/derive/SKILL.md",
+] as const
 // Exact server-owned paths. The OAuth 2.0 discovery docs (RFC 8414 / RFC 9728) the
 // Worker must answer with JSON, else SPA not_found_handling shadows them. `/mcp` is
 // EXACT, not a prefix: the MCP Streamable-HTTP endpoint is hit at exactly /mcp with
@@ -80,7 +89,10 @@ export const isApiPath = (path: string): boolean =>
  *  server-rendered page prefixes + the static namespaces (all → `/*`), plus the
  *  exact paths as-is. */
 export const workerFirstGlobs = (): string[] => [
-  ...API_PREFIXES.map((p) => `${p}/*`),
+  // The dotted-glob exception (see WELL_KNOWN_SKILLS_EXACT above): every prefix
+  // except /.well-known/skills becomes a glob; that one is enumerated exactly.
+  ...API_PREFIXES.filter((p) => p !== "/.well-known/skills").map((p) => `${p}/*`),
+  ...WELL_KNOWN_SKILLS_EXACT,
   ...SERVER_PAGE_PREFIXES.map((p) => `${p}/*`),
   ...STATIC_NAMESPACE_PREFIXES.map((p) => `${p}/*`),
   ...API_EXACT,
