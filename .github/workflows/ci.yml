@@ -33,9 +33,20 @@ concurrency:
 # makes them free.
 #
 # So: two lanes, anchored by the two suites that cannot share one, with the small
-# work packed onto whichever lane is otherwise lighter. Keep them BALANCED — a
-# 60s lane beside a 300s lane is 60s of wasted capacity, and moving work onto the
-# longer lane costs wall-clock directly.
+# work packed onto whichever lane is otherwise lighter.
+#
+# ONE JOB was measured rather than argued about, since packing everything onto a
+# single bigger machine is the obvious alternative. At the same TOTAL cores it is
+# a wash — one 16-vCPU job came in at 129s against 125s for two 8-vCPU lanes. At
+# the same MACHINE SIZE two lanes win by roughly 2x, because the two suites
+# overlap on two boxes and can never overlap on one. Since billing is per
+# core-minute the first comparison is the fair one, so the tie is broken on what
+# else two lanes buy: a failure in one still lets the other report, either can be
+# re-run alone, and there is headroom to scale each independently.
+#
+# The lanes are NOT currently balanced (lane A ~87s, lane B ~125s) and cannot be
+# balanced by moving steps: the Postgres step alone is longer than everything
+# lane A does. The lever is that lane's worker count — see the step below.
 #
 # The cost of packing, stated honestly: a lane stops at its first failure, so a
 # red test now hides that gitleaks would also have failed. That is a fair trade
@@ -152,7 +163,18 @@ jobs:
               - 'deploy/runner-entrypoint.sh'
       - uses: ./.github/actions/setup
 
+      # More workers than cores, deliberately. This lane is the critical path —
+      # the Postgres step alone runs longer than everything lane A does — and it
+      # is I/O-bound: each worker spends most of its time waiting on the single
+      # Postgres container rather than computing. Measured on a 16-vCPU box,
+      # taking workers 8 → 16 moved this step 84s → 40s, better than 2x. The gain
+      # tracked the WORKER count rather than the core count, which is why it is
+      # worth claiming here without buying cores. The bound that matters is
+      # connections, not cores: 16 workers hold ~160 (node-postgres max=10 each)
+      # against the container's max_connections=400.
       - name: Test against Postgres
+        env:
+          DERIVE_PG_WORKERS: 16
         run: pnpm test:pg
 
       - name: Test against Cloudflare D1 (workerd)
