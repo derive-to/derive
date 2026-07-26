@@ -2768,11 +2768,15 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(run.created_at))
       .limit(limit)
   }
-  async latestRunForAutomation(automationId: string): Promise<RunRecord | null> {
+  async latestRunForAutomation(automationId: string, reason?: string): Promise<RunRecord | null> {
     const rows = await this.db
       .select()
       .from(run)
-      .where(eq(run.automation_id, automationId))
+      .where(
+        reason
+          ? and(eq(run.automation_id, automationId), eq(run.reason, reason))
+          : eq(run.automation_id, automationId),
+      )
       .orderBy(sql`coalesce(${run.scheduled_for}, '') desc`)
       .limit(1)
     return rows[0] ?? null

@@ -37,9 +37,16 @@ const materializeFor = async (
     const prev = previousOccurrence(trigger.cron, trigger.tz, now)
     if (!prev) continue
     const prevIso = prev.toISOString()
-    // Already materialized this window? The newest run's scheduled_for at or after this
-    // occurrence means the tick already fired for it — skip (idempotent within the window).
-    const latest = await meta.latestRunForAutomation(a.id)
+    // Already materialized this window? The newest SCHEDULE run's scheduled_for at or after
+    // this occurrence means the tick already fired for it — skip (idempotent within the
+    // window).
+    //
+    // Scoped to reason="schedule" deliberately. Every other kind of firing also stamps a
+    // scheduled_for — Run now and a webhook fire stamp `now`, and a retry stamps now+backoff,
+    // which is in the FUTURE — so an unscoped read let any of them masquerade as "this window
+    // is done" and silently swallow the occurrence. One click of Run now at 10:05 meant the
+    // 10:00 hourly run never existed, with nothing logged and nothing to notice.
+    const latest = await meta.latestRunForAutomation(a.id, "schedule")
     if (latest?.scheduled_for && latest.scheduled_for >= prevIso) continue
     await meta.createRun({
       id: newId("run"),

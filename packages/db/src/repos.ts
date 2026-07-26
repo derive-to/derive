@@ -2723,11 +2723,18 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(desc(run.created_at))
       .limit(limit)
       .all()
-  const latestRunForAutomation = async (automationId: string): Promise<RunRecord | null> =>
+  const latestRunForAutomation = async (
+    automationId: string,
+    reason?: string,
+  ): Promise<RunRecord | null> =>
     (await db
       .select()
       .from(run)
-      .where(eq(run.automation_id, automationId))
+      .where(
+        reason
+          ? and(eq(run.automation_id, automationId), eq(run.reason, reason))
+          : eq(run.automation_id, automationId),
+      )
       .orderBy(sql`coalesce(${run.scheduled_for}, '') desc`)
       .limit(1)
       .get()) ?? null

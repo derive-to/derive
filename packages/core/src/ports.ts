@@ -1090,8 +1090,14 @@ export interface AgentStore {
   listRuns(orgId: string, limit?: number): Promise<RunRecord[]>
   /** The newest run for an automation by scheduled_for (any status), or null. The schedule tick
    *  reads it to decide whether the current cron occurrence has already been materialized — so a
-   *  runner polling several times inside one cron window enqueues exactly one run. */
-  latestRunForAutomation(automationId: string): Promise<RunRecord | null>
+   *  runner polling several times inside one cron window enqueues exactly one run.
+   *
+   *  `reason` narrows to one kind of firing, and the tick MUST pass "schedule". Without it any
+   *  other run poisons the dedupe, because they all write a scheduled_for: a Run now and a fire
+   *  stamp `now`, and a retry stamps now+backoff, which is in the FUTURE. Each therefore reads
+   *  as "this window is already materialized" and silently swallows the cron occurrence — one
+   *  click of Run now at 10:05 makes the 10:00 hourly run never exist. */
+  latestRunForAutomation(automationId: string, reason?: string): Promise<RunRecord | null>
   /** The newest still-queued run for an automation whose scheduled_for ≤ cutoff — the
    *  coalescing target when a burst of webhook fires arrives close together. Null when none
    *  is open, so the caller enqueues a fresh run. */
