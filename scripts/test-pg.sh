@@ -31,10 +31,18 @@ echo "→ starting ephemeral Postgres ($IMAGE)…"
 # could want: if the machine dies mid-run the answer is to run the suite again,
 # not to recover its data. Meanwhile the suite is DDL-heavy — every test file
 # replays the full schema into its own namespace — and DDL is exactly what fsync
-# punishes, which is why this lane sat at 328% CPU on a 14-core box: waiting on
-# disk, not computing.
+# punishes.
 #   fsync/synchronous_commit/full_page_writes — stop waiting on the disk at all
 #   autovacuum                                — nothing lives long enough to need it
+#
+# How much this buys depends ENTIRELY on how expensive fsync is on the host, and
+# the gap is wide enough to mislead: on macOS Docker, where container writes cross
+# a virtualization layer, it took the suite 55.6s -> 26.4s (2.1x, CPU 328% -> 684%
+# — it had been waiting on disk rather than computing). On the Linux CI runner
+# with a local disk, where fsync is already cheap, the same change gives 70s ->
+# 59s. Both are real; only the second one is the number CI actually gets. Measure
+# there before believing a local A/B of anything I/O-bound.
+#
 # NEVER copy these to a real database.
 docker run -d --rm --name "$NAME" \
   -e POSTGRES_PASSWORD="$PASSWORD" -e POSTGRES_DB="$DB" \
