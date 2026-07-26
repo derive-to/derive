@@ -86,6 +86,11 @@ export const workspaceRoutes = (ctx: AppContext) => {
       defaultListed: z
         .enum(["none", "workspace", "public"])
         .describe("Listing a new publish lands with: none (default), workspace, or public."),
+      whiteLabel: z
+        .boolean()
+        .describe(
+          "Hide the Made-with-Derive marks on public artifacts and embeds, and honor the bare ?chrome=none embed.",
+        ),
       hostedAgentsEnabled: z
         .boolean()
         .describe("Master switch for Derive-hosted agent runs; off silences every hosted run."),
@@ -598,6 +603,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
             defaultWorkspaceAccess: z.enum(["none", "member"]),
             defaultLinkRole: z.enum(["none", "viewer", "commenter", "editor"]),
             defaultListed: z.enum(["none", "workspace", "public"]),
+            whiteLabel: z.boolean(),
             hostedAgentsEnabled: z.boolean(),
             agentKillswitch: z.boolean(),
             agentAutoEnabled: z.boolean(),

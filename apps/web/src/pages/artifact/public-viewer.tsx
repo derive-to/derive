@@ -111,20 +111,23 @@ export function PublicViewer({
       <div className="relative flex min-h-0 flex-1 flex-col">{children}</div>
 
       {/* A quiet, permanent brand mark (the "Made in Framer" idiom — attribution +
-          a soft nudge, never a wall). A real link now: the click lands in product
-          (signup → publish), stamped as the badge surface. */}
-      <footer className="flex shrink-0 items-center justify-center border-t border-border-soft py-1.5 font-mono text-2xs text-muted-foreground">
-        <Link
-          to="/login"
-          search={{ signup: true, return_to: "/new" }}
-          onClick={() => stampSrc("badge", art.short_id)}
-          data-testid="public-made-with"
-          className="flex items-center gap-1.5 rounded-md outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        >
-          <Logo size={12} />
-          Made with Derive
-        </Link>
-      </footer>
+          a soft nudge, never a wall). A real link: the click lands in product
+          (signup → publish), stamped as the badge surface. White-label workspaces
+          (art.badge === false) drop the strip entirely — that's what they pay for. */}
+      {art.badge !== false && (
+        <footer className="flex shrink-0 items-center justify-center border-t border-border-soft py-1.5 font-mono text-2xs text-muted-foreground">
+          <Link
+            to="/login"
+            search={{ signup: true, return_to: "/new" }}
+            onClick={() => stampSrc("badge", art.short_id)}
+            data-testid="public-made-with"
+            className="flex items-center gap-1.5 rounded-md outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
+            <Logo size={12} />
+            Made with Derive
+          </Link>
+        </footer>
+      )}
     </div>
   )
 }

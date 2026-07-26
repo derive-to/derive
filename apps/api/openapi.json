@@ -222,6 +222,10 @@
             "type": "boolean",
             "description": "true when the world link is password-locked (the password is never returned)."
           },
+          "badge": {
+            "type": "boolean",
+            "description": "Show the Made-with-Derive mark on this artifact's public surfaces (false = white-label workspace)."
+          },
           "org_id": {
             "type": "string",
             "description": "The artifact's workspace id; drives move-to-workspace."
@@ -863,6 +867,10 @@
             ],
             "description": "Listing a new publish lands with: none (default), workspace, or public."
           },
+          "whiteLabel": {
+            "type": "boolean",
+            "description": "Hide the Made-with-Derive marks on public artifacts and embeds, and honor the bare ?chrome=none embed."
+          },
           "hostedAgentsEnabled": {
             "type": "boolean",
             "description": "Master switch for Derive-hosted agent runs; off silences every hosted run."
@@ -905,6 +913,7 @@
           "defaultWorkspaceAccess",
           "defaultLinkRole",
           "defaultListed",
+          "whiteLabel",
           "hostedAgentsEnabled",
           "agentKillswitch",
           "agentAutoEnabled"

@@ -22,6 +22,7 @@ import {
   SelectMenuItem,
   SelectMenuTrigger,
 } from "@/components/ui/select-menu"
+import { Switch } from "@/components/ui/switch"
 import { reloadAfterWorkspaceChange } from "@/lib/persist"
 import { workspaceQuery, workspaceSettingsQuery, workspacesQuery } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
@@ -368,6 +369,18 @@ function SharingDefaults() {
             <SelectMenuItem value="public">Public directory</SelectMenuItem>
           </SelectMenuContent>
         </SelectMenu>
+      </SettingRow>
+      <SettingRow
+        htmlFor="toggle-white-label"
+        label="White-label shared pages"
+        description="Hide the Made-with-Derive mark on public artifacts and embeds, and allow the bare embed (?chrome=none). A Team-plan feature once billing arrives; free during the beta."
+      >
+        <Switch
+          id="toggle-white-label"
+          data-testid="toggle-white-label"
+          checked={settings.whiteLabel}
+          onCheckedChange={(next) => set("whiteLabel", next)}
+        />
       </SettingRow>
     </SettingsGroup>
   )

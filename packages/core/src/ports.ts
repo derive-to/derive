@@ -2119,6 +2119,10 @@ export interface OrgSettings {
   defaultWorkspaceAccess: WorkspaceAccess
   defaultLinkRole: LinkRole
   defaultListed: Listed
+  /** White-label shared surfaces: hide the Made-with-Derive marks (public-viewer
+   *  footer, embed plaque) and honor the bare `?chrome=none` embed. The Team-tier
+   *  affordance; free workspaces keep the badge and the bare embed is ignored. */
+  whiteLabel: boolean
   /** Master switch for Derive-hosted agent runs in this workspace. Off silences every
    *  hosted run (the managed executor skips the workspace); owner-run agents are
    *  unaffected. */
@@ -2167,6 +2171,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   defaultWorkspaceAccess: "member",
   defaultLinkRole: "none",
   defaultListed: "none",
+  whiteLabel: false,
   // Hosting on by default: it does nothing until an agent is flagged hosted, and
   // the run-time safety lives in the autonomy gate (killswitch defaults off but
   // every write still lands as a proposal until a workspace opts into auto).
