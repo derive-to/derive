@@ -130,6 +130,12 @@ export const Artifact = z
       .boolean()
       .optional()
       .describe("true when the world link is password-locked (the password is never returned)."),
+    badge: z
+      .boolean()
+      .optional()
+      .describe(
+        "Show the Made-with-Derive mark on this artifact's public surfaces (false = white-label workspace).",
+      ),
     org_id: z
       .string()
       .optional()

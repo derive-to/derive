@@ -20,6 +20,8 @@ describe("workspace integration settings", () => {
       defaultWorkspaceAccess: "member",
       defaultLinkRole: "none",
       defaultListed: "none",
+      // Branding stays on until a workspace white-labels (the Team affordance).
+      whiteLabel: false,
       // Hosted-agent controls: hosting available, no autonomy until opted in.
       hostedAgentsEnabled: true,
       agentKillswitch: false,

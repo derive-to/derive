@@ -204,8 +204,13 @@ export const embedRoutes = (ctx: AppContext) => {
     if (!artifact) return c.body(embedShell(null), 200, headers)
     const info = await infoFor(artifact)
     const src = `${rawBase}/raw/${artifact.short_id}/v/${artifact.current_version}/`
+    // White-label workspaces lose the plaque and may go fully bare (?chrome=none);
+    // for everyone else the bare frame is ignored — the mark is the free tier's rent.
+    const { whiteLabel } = await meta.getOrgSettings(artifact.org_id)
     const shell =
-      c.req.query("chrome") === "none" ? bareShell({ info, src }) : embedShell({ info, src })
+      whiteLabel && c.req.query("chrome") === "none"
+        ? bareShell({ info, src })
+        : embedShell({ info, src, plaque: !whiteLabel })
     return c.body(shell, 200, headers)
   })
 
@@ -274,7 +279,7 @@ export const embedRoutes = (ctx: AppContext) => {
  * viewer's light/dark scheme with the app's own tokens; the plaque is frosted so it
  * holds over any artifact content. `null` = a private/unavailable placeholder.
  */
-const embedShell = (data: { info: UnfurlInfo; src: string } | null): string => {
+const embedShell = (data: { info: UnfurlInfo; src: string; plaque?: boolean } | null): string => {
   const css =
     ":root{color-scheme:light dark;--canvas:#0a0b0d;--frame:#23252b;--chip:#101216;--tx:#969aa2;--ink:#f3f4f6}" +
     "@media (prefers-color-scheme: light){:root{--canvas:#f7f8fa;--frame:#e5e7eb;--chip:#ffffff;--tx:#5c616b;--ink:#14161a}}" +
@@ -328,8 +333,11 @@ const embedShell = (data: { info: UnfurlInfo; src: string } | null): string => {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v5"/><path d="M12 7.7h.01"/></svg>'
   const tip =
     "<b>Derive</b> is the home for AI artifacts: publish from any agent, review together, and own the result at a permanent versioned URL."
+  // White-label (plaque:false) keeps the framed shell, just without the mark.
+  const plaqueHtml = (d: { info: UnfurlInfo }) =>
+    `<div class="p"><a class="b" href="${escapeHtml(`${d.info.pageUrl}?ref=embed&src=embed_badge`)}" target="_blank" rel="noopener" title="View on Derive">${mark}Made on Derive</a><button type="button" class="i" aria-label="What is Derive?" aria-describedby="dtip">${infoIcon}</button><span class="tip" id="dtip" role="tooltip">${tip}</span></div>`
   const body = data
-    ? `<div class="c"><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe><div class="p"><a class="b" href="${escapeHtml(`${data.info.pageUrl}?ref=embed&src=embed_badge`)}" target="_blank" rel="noopener" title="View on Derive">${mark}Made on Derive</a><button type="button" class="i" aria-label="What is Derive?" aria-describedby="dtip">${infoIcon}</button><span class="tip" id="dtip" role="tooltip">${tip}</span></div></div>`
+    ? `<div class="c"><iframe src="${escapeHtml(data.src)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" title="${escapeHtml(data.info.title)}"></iframe>${data.plaque !== false ? plaqueHtml(data) : ""}</div>`
     : `<div class="empty">This artifact is private or no longer available.<br>Open it on Derive to request access.</div>`
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${data ? escapeHtml(data.info.title) : "Derive"}</title><style>${css}</style></head><body>${body}</body></html>`
 }

@@ -1411,6 +1411,10 @@ export const artifactRoutes = (ctx: AppContext) => {
         }),
         sessions: groupSessions(versions, versionWindowMs),
         my_role: myRole,
+        // Show the Made-with-Derive mark on this artifact's public surfaces? False
+        // only for white-label workspaces; the viewer reads this single boolean so
+        // workspace settings never travel to anonymous clients.
+        badge: !(await meta.getOrgSettings(artifact.org_id)).whiteLabel,
         // The artifact's current workspace — the move dialog needs this to exclude
         // it from the destination picker.
         org_id: artifact.org_id,

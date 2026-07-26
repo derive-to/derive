@@ -5500,6 +5500,8 @@ export interface components {
             listed?: "none" | "workspace" | "public";
             /** @description true when the world link is password-locked (the password is never returned). */
             password_protected?: boolean;
+            /** @description Show the Made-with-Derive mark on this artifact's public surfaces (false = white-label workspace). */
+            badge?: boolean;
             /** @description The artifact's workspace id; drives move-to-workspace. */
             org_id?: string;
             /** @description Signed, short-lived token for fetching raw content; detail responses only. */
@@ -5737,6 +5739,8 @@ export interface components {
              * @enum {string}
              */
             defaultListed: "none" | "workspace" | "public";
+            /** @description Hide the Made-with-Derive marks on public artifacts and embeds, and honor the bare ?chrome=none embed. */
+            whiteLabel: boolean;
             /** @description Master switch for Derive-hosted agent runs; off silences every hosted run. */
             hostedAgentsEnabled: boolean;
             /** @description When true, every hosted agent write demotes to a proposal, instantly. */
