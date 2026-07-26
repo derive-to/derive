@@ -34,9 +34,16 @@ export interface NodeSubstrateOpts {
 // doesn't happen. (The container substrate passes four variables and was always right; this
 // path is what drifted.)
 //
-// So: the few variables a process needs to run at all, plus the runner's own RUNNER_* knobs
-// (model, poll interval, timeout, provider, cwd — configuration, not secrets), plus the
-// pinned per-run identity. NODE_OPTIONS is deliberately absent: it can inject code.
+// So: the few variables a process needs to run at all, plus the runner's own configuration
+// (which agent binary, which model, timeouts — settings, not secrets), plus the pinned per-run
+// identity. NODE_OPTIONS is deliberately absent: it can inject code.
+//
+// The *_BIN entries are load-bearing and were missed on the first cut of this allowlist. The
+// runner resolves its coding agent through AGENT_BIN / CLAUDE_BIN / CODEX_BIN, so withholding
+// them does not fail loudly — it falls back to `claude` on PATH, and a deployment that had
+// pointed at an explicit binary finds hosted runs quietly executing with the wrong one or none
+// at all. Anything the runner legitimately reads from its environment has to be here; the list
+// it reads is small and greppable (`env.[A-Z_]+` in packages/cli/src).
 const OS_PASSTHROUGH = [
   "PATH",
   "HOME",
@@ -53,6 +60,10 @@ const OS_PASSTHROUGH = [
   "HTTP_PROXY",
   "HTTPS_PROXY",
   "NO_PROXY",
+  // How the runner finds its coding agent. Configuration, not credentials.
+  "AGENT_BIN",
+  "CLAUDE_BIN",
+  "CODEX_BIN",
 ]
 
 const childEnv = (pinned: Record<string, string>): NodeJS.ProcessEnv => {
