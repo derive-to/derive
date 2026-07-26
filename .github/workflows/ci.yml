@@ -166,12 +166,18 @@ jobs:
       # More workers than cores, deliberately. This lane is the critical path —
       # the Postgres step alone runs longer than everything lane A does — and it
       # is I/O-bound: each worker spends most of its time waiting on the single
-      # Postgres container rather than computing. Measured on a 16-vCPU box,
-      # taking workers 8 → 16 moved this step 84s → 40s, better than 2x. The gain
-      # tracked the WORKER count rather than the core count, which is why it is
-      # worth claiming here without buying cores. The bound that matters is
-      # connections, not cores: 16 workers hold ~160 (node-postgres max=10 each)
-      # against the container's max_connections=400.
+      # Postgres container rather than computing, so throughput keeps climbing
+      # past one worker per core.
+      #
+      # Measured, and worth stating exactly because the two effects are easy to
+      # conflate: 84s with 8 workers on 8 vCPU, 70s with 16 workers on 8 vCPU
+      # (this setting, -17%), and 40s with 16 workers on 16 vCPU. So oversubscribing
+      # workers is real but roughly half the story; the rest of that 40s was cores.
+      # Raising this further has little left to give — the container itself becomes
+      # the constraint.
+      #
+      # The bound that matters is connections, not cores: 16 workers hold ~160
+      # (node-postgres max=10 each) against the container's max_connections=400.
       - name: Test against Postgres
         env:
           DERIVE_PG_WORKERS: 16
