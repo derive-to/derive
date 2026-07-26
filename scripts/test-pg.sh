@@ -25,10 +25,31 @@ echo "→ starting ephemeral Postgres ($IMAGE)…"
 # A generous max_connections covers many Pools at once — under file parallelism
 # several files' isolated-schema stores are live concurrently (pools are lazy, so
 # real usage sits well below this ceiling).
+#
+# Durability is turned OFF on purpose. This container is created for one test run
+# and deleted on exit (the trap above), so there is nothing whose survival anyone
+# could want: if the machine dies mid-run the answer is to run the suite again,
+# not to recover its data. Meanwhile the suite is DDL-heavy — every test file
+# replays the full schema into its own namespace — and DDL is exactly what fsync
+# punishes.
+#   fsync/synchronous_commit/full_page_writes — stop waiting on the disk at all
+#   autovacuum                                — nothing lives long enough to need it
+#
+# How much this buys depends ENTIRELY on how expensive fsync is on the host, and
+# the gap is wide enough to mislead: on macOS Docker, where container writes cross
+# a virtualization layer, it took the suite 55.6s -> 26.4s (2.1x, CPU 328% -> 684%
+# — it had been waiting on disk rather than computing). On the Linux CI runner
+# with a local disk, where fsync is already cheap, the same change gives 70s ->
+# 59s. Both are real; only the second one is the number CI actually gets. Measure
+# there before believing a local A/B of anything I/O-bound.
+#
+# NEVER copy these to a real database.
 docker run -d --rm --name "$NAME" \
   -e POSTGRES_PASSWORD="$PASSWORD" -e POSTGRES_DB="$DB" \
   -p 127.0.0.1::5432 \
-  "$IMAGE" -c max_connections=400 >/dev/null
+  "$IMAGE" -c max_connections=400 \
+  -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+  -c autovacuum=off >/dev/null
 
 PORT="$(docker port "$NAME" 5432/tcp | head -1 | sed 's/.*://')"
 URL="postgres://postgres:${PASSWORD}@127.0.0.1:${PORT}/${DB}"
@@ -57,11 +78,19 @@ cd "$ROOT/apps/api"
 #
 # File parallelism is ON (previously --no-file-parallelism): helpers.ts keys each
 # schema on VITEST_POOL_ID, so concurrent files land in distinct schemas and can't
-# collide. --maxWorkers=4 bounds the live per-store pools (node-postgres default
-# max=10) so their connections stay well under max_connections. Note vitest does
-# NOT clamp an explicit maxWorkers to core count, so this runs 4 forks even on a
-# 2-vCPU box — fine here because pg tests are I/O-bound (waiting on Postgres).
-pnpm exec vitest run --maxWorkers=4 --testTimeout=15000 "$@"
+# collide.
+#
+# Workers track the core count rather than a fixed 4. The bound that matters here
+# is CONNECTIONS, not cores: each worker holds a store pool (node-postgres default
+# max=10) and the container above starts with max_connections=400, so the ceiling
+# of 16 puts the worst case near 160 — comfortably inside it. A hardcoded 4 was
+# wrong in both directions at once: it oversubscribed the old 2-vCPU runner, and
+# it would leave most of a larger one idle, even though this lane is I/O-bound on
+# Postgres and keeps scaling past one worker per core.
+WORKERS="${DERIVE_PG_WORKERS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+[ "$WORKERS" -gt 16 ] && WORKERS=16
+echo "→ ${WORKERS} vitest workers"
+pnpm exec vitest run --maxWorkers="$WORKERS" --testTimeout=15000 "$@"
 
 # Also run @derive/db's store contract against the same Postgres — the only place
 # pg.ts (the hosted-tier driver) is covered + gated by the db package's own suite.

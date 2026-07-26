@@ -208,7 +208,17 @@ export function runStoreContract(
   })
 
   describe(`${label}: listArtifacts sort modes`, () => {
-    const tick = () => new Promise((r) => setTimeout(r, 2))
+    // Space the creations far enough apart to land on DISTINCT created_at values.
+    // This was 2ms, which is under the timer granularity of some virtualized
+    // hosts: on a 16-vCPU CI runner two rows inserted 2ms apart came back with the
+    // SAME timestamp, so `created` fell through to its `id` tiebreak — and since
+    // ids are random uuids, the expected order then held or didn't by luck.
+    // Nothing was wrong with the store; that tiebreak is exactly what keeps
+    // production ordering deterministic under a tie. The test simply needs
+    // distinct instants, and created_at is stamped by the store's own SQL default,
+    // so wall-clock spacing is the only lever available. 25ms clears any plausible
+    // tick and costs 75ms across the whole test.
+    const tick = () => new Promise((r) => setTimeout(r, 25))
 
     it("orders by each mode (title sort case-insensitive + null-safe) and paginates the keyset", async () => {
       const org = `org_sort_${uuid()}`

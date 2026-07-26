@@ -216,12 +216,14 @@ comment.
 - Open one focused PR per change; fill in the PR template. A green gate is required.
 - Prose style: no em-dashes; use colons, periods, or parentheses.
 
-A note on CI runners: workflows in this repo run on Blacksmith runners
-(`runs-on: blacksmith-*`), which are only available in the upstream repository. A PR
-you open against this repo runs CI normally (a maintainer approves the first run for
+A note on CI runners: workflows in this repo run on Ubicloud runners
+(`runs-on: ubicloud-standard-*`), which are only available in the upstream repository. A
+PR you open against this repo runs CI normally (a maintainer approves the first run for
 new contributors), but pushes to your own fork will show those jobs queued forever:
 that's expected, not a broken setup. Run the gate locally with `pnpm verify` instead —
-it is the same three steps CI's `check` job runs.
+the same three steps, in the same order, as CI's `check` job. Or, in a fork you
+control, swap the labels for `ubuntu-latest`, which is the only coupling to the
+provider.
 
 ## Tests
 
