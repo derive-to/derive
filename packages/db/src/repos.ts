@@ -2780,7 +2780,7 @@ export function makeRepos(db: SqliteDb) {
       const attempts = runCounter(parseRunMeta(r.meta), "attempts") + 1
       // Past the cap the run is given up as `lost`; otherwise it goes back to the queue with
       // the count carried forward. Both merge into the existing blob so the previous attempt's
-      // outcome survives. Re-guarded on `running` so a run that settled meanwhile is untouched.
+      // outcome survives.
       const settled = attempts >= maxAttempts
       await db
         .update(run)
@@ -2793,7 +2793,22 @@ export function makeRepos(db: SqliteDb) {
               }
             : { status: "queued", started_at: null, meta: mergeRunMeta(r.meta, { attempts }) },
         )
-        .where(and(eq(run.id, r.id), eq(run.status, "running")))
+        // FENCED on started_at, not just on status. This SELECT-then-UPDATE is the one
+        // non-transactional sequence here, and two sweeps run concurrently as a matter of
+        // course: the dispatch tick sweeps every 60s while EVERY polling agent claim sweeps
+        // globally. Guarding on status alone cannot tell "still the same stale execution"
+        // from "a different execution claimed it since I read it", so sweep B could requeue
+        // a run that executor E2 had just claimed — leaving E2 live with a valid token while
+        // E3 was dispatched for the same run, and both able to write the artifact. Pinning
+        // started_at to the value read means a re-claimed run no longer matches, and the
+        // late sweep updates nothing.
+        .where(
+          and(
+            eq(run.id, r.id),
+            eq(run.status, "running"),
+            r.started_at === null ? isNull(run.started_at) : eq(run.started_at, r.started_at),
+          ),
+        )
       if (settled) failed += 1
       else requeued += 1
     }

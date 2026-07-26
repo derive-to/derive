@@ -168,7 +168,12 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
         !(await deps.meta
           .getOrgSettings(r.org_id)
           .then((s) => s.hostedAgentsEnabled)
-          .catch(() => true)),
+          // Fail CLOSED. This used to resolve `true` (hosted enabled) on a settings read
+          // error, which meant a database blip could start hosted runs in a workspace that
+          // had deliberately switched them off. An emergency stop that an error can defeat
+          // is not an emergency stop. Deferring costs a tick; the alternative costs money
+          // and writes to someone's documents.
+          .catch(() => false)),
       )
     if (hostedOff.get(r.org_id)) {
       // Left queued, not failed: turning the switch back on resumes the work rather than
@@ -234,6 +239,15 @@ const dispatchSessions = async (
   hostedOff: Map<string, boolean>,
 ): Promise<number> => {
   let started = 0
+  // The ask lane spends the same money and writes the same artifacts as the run lane, so it
+  // gets the same ceilings. It previously checked only the kill switch: no budget, no per-org
+  // cap, and no regard for the context's own max_concurrency — which the polling queue does
+  // enforce, and which the hosted claim endpoint refuses standing bearers precisely to
+  // protect. Ten open sessions on a max_concurrency=1 context booted ten executors.
+  const inFlight = new Map<string, number>()
+  const budgetBlocked = new Map<string, boolean>()
+  const perOrg = deps.perOrgLimit ?? 3
+  const perContext = new Map<string, number>()
   try {
     const due = await deps.meta.listDueOpenSessions(now.toISOString(), deps.limit ?? 10)
     for (const s of due) {
@@ -243,15 +257,34 @@ const dispatchSessions = async (
           !(await deps.meta
             .getOrgSettings(s.org_id)
             .then((x) => x.hostedAgentsEnabled)
-            .catch(() => true)),
+            // Fail CLOSED: a settings read that throws must not be a way to run hosted work
+            // in a workspace that may have switched it off. The kill switch is only a kill
+            // switch if an error can't defeat it.
+            .catch(() => false)),
         )
       if (hostedOff.get(s.org_id)) continue
       // A session's acting agent lives on its CONTEXT (sessions carry no agent column).
       const cx = await deps.meta.getContext(s.context_id)
       if (!cx) continue
+
+      if (!budgetBlocked.has(s.org_id))
+        budgetBlocked.set(s.org_id, await overBudget(deps.meta, s.org_id, s.asker_id ?? null))
+      if (budgetBlocked.get(s.org_id)) continue
+
+      if (!inFlight.has(s.org_id))
+        inFlight.set(s.org_id, await countInFlight(deps.meta, s.org_id, now))
+      if ((inFlight.get(s.org_id) ?? 0) >= perOrg) continue
+
+      // The context's OWN concurrency ceiling, the same one the polling queue applies.
+      const cap = Math.max(1, cx.max_concurrency ?? 1)
+      const usedHere = perContext.get(cx.id) ?? 0
+      if (usedHere >= cap) continue
+
       try {
         await startOne(deps, "session", { id: s.id, agentId: cx.agent_id, orgId: s.org_id }, expMs)
         started += 1
+        inFlight.set(s.org_id, (inFlight.get(s.org_id) ?? 0) + 1)
+        perContext.set(cx.id, usedHere + 1)
       } catch (e) {
         log.warn("hosted dispatch: session start failed", {
           session: s.id,
@@ -291,10 +324,21 @@ export const dispatchRunNow = async (deps: DispatchDeps, runId: string): Promise
     const r = await deps.meta.getRun(runId)
     if (r?.status !== "queued") return false
     // The master switch applies to the fast path too, or "Run now" would bypass the one
-    // control an operator reaches for to stop everything.
+    // control an operator reaches for to stop everything. Fail CLOSED on a settings error —
+    // the tick will pick the run up if the read was a blip, so refusing costs a minute while
+    // proceeding could spend money a workspace had switched off.
     const settings = await deps.meta.getOrgSettings(r.org_id).catch(() => null)
-    if (settings && !settings.hostedAgentsEnabled) return false
+    if (!settings || !settings.hostedAgentsEnabled) return false
     const now = deps.now?.() ?? new Date()
+    // The SAME ceilings the tick applies. Without these the nudge was an unbounded spend
+    // path: it is wired to every run creation (Run now, and every webhook fire), so a caller
+    // firing every few seconds booted an executor per fire — past the per-org cap and past
+    // the monthly budget, because the only checks that saw them were on the tick path this
+    // one skips. Coalescing does not bound it either, since findCoalescibleRun only matches
+    // runs that are still queued. Refusing here is not a loss: the run stays queued and the
+    // tick dispatches it when there is room.
+    if (await overBudget(deps.meta, r.org_id, r.initiated_by)) return false
+    if ((await countInFlight(deps.meta, r.org_id, now)) >= (deps.perOrgLimit ?? 3)) return false
     await startOne(
       deps,
       "run",

@@ -478,4 +478,69 @@ describe("hosted ASKS — a question runs on the same executor as a schedule", (
     const res = await app.request("/v1/agent/sessions/claim", jsonAs(as(owner.email), {}))
     expect([401, 403]).toContain(res.status)
   })
+
+  it("a session token is refused on the RUN lane — no claim, no finish, no tools", async () => {
+    // The mirror of the case above, and the one that was missing. The run lane reads "no run
+    // scope" as "a standing polling runner" — the only bearer entitled to claim a BATCH, tick
+    // the schedule and sweep the queue. A session token ALSO has no run scope, so it used to
+    // inherit every one of those powers: a credential minted for one question could claim
+    // this agent's automation runs, execute their bound source tools, and settle them.
+    //
+    // The two kinds are cryptographically distinct, which stops a session token verifying as
+    // a run. It does not stop the wrong kind being ACCEPTED where kind was never checked,
+    // which is what happened — so this asserts the endpoints, not the crypto.
+    const brief = await publishAs(app, "# B", { title: "Escalation Brief" }, as(owner.email))
+    const briefJson = (await brief.json()) as { short_id: string }
+    const ctx = (await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), { name: "Escalation Ctx", manifest_short_id: briefJson.short_id }),
+      )
+    ).json()) as { id: string }
+    const { session } = (await (
+      await app.request(
+        `/v1/contexts/${ctx.id}/sessions`,
+        jsonAs(as(owner.email), { body_md: "one innocent question" }),
+      )
+    ).json()) as { session: { id: string } }
+
+    // A queued run on the SAME agent — the prize a session token must not be able to reach.
+    const auto = await mkAutomation({
+      trigger: { kind: "manual" },
+      instruction: "refresh the numbers",
+      context_id: ctx.id,
+    })
+    const victim = await runNow(auto.id)
+
+    const { substrate, started } = fakeSubstrate()
+    await dispatchPass(deps(substrate))
+    const sessToken = started.find((s) => s.runId === session.id)?.token ?? ""
+    expect(sessToken.startsWith("dksess_")).toBe(true)
+
+    // Claim: must not fall through to the standing-runner batch branch.
+    expect((await app.request("/v1/agent/runs/claim", { headers: bearer(sessToken) })).status).toBe(
+      403,
+    )
+    // Finish: must not settle another executor's run as done.
+    expect(
+      (
+        await app.request(
+          `/v1/agent/runs/${victim.id}/finish`,
+          jsonAs(bearer(sessToken), { status: "succeeded" }),
+        )
+      ).status,
+    ).toBe(403)
+    // Tools: must not execute the run's bound third-party connections.
+    expect(
+      (
+        await app.request(
+          `/v1/agent/runs/${victim.id}/tool`,
+          jsonAs(bearer(sessToken), { name: "stripe.read", args: {} }),
+        )
+      ).status,
+    ).toBe(403)
+
+    // And the run is untouched — still queued for the executor it belongs to.
+    expect((await meta.getRun(victim.id))?.status).toBe("queued")
+  })
 })

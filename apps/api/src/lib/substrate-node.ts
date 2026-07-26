@@ -22,6 +22,49 @@ export interface NodeSubstrateOpts {
   spawnImpl?: typeof spawn
 }
 
+// The child's environment is built by ALLOWLIST, never by copying process.env.
+//
+// This process is the API. Its environment holds DERIVE_AUTH_SECRET — the key that signs
+// capability tokens and encrypts stored plans — plus DATABASE_URL and whatever else the
+// deployment configures. The child is a coding agent running with
+// --dangerously-skip-permissions and a shell, on text that can come from a source pull, so
+// anything readable in its environment should be assumed published. Handing it the API's
+// env would let one poisoned document mint tokens for any agent in any workspace and
+// decrypt every stored credential — which is precisely what the header above promises
+// doesn't happen. (The container substrate passes four variables and was always right; this
+// path is what drifted.)
+//
+// So: the few variables a process needs to run at all, plus the runner's own RUNNER_* knobs
+// (model, poll interval, timeout, provider, cwd — configuration, not secrets), plus the
+// pinned per-run identity. NODE_OPTIONS is deliberately absent: it can inject code.
+const OS_PASSTHROUGH = [
+  "PATH",
+  "HOME",
+  "SHELL",
+  "USER",
+  "LOGNAME",
+  "LANG",
+  "LC_ALL",
+  "TZ",
+  "TMPDIR",
+  "TERM",
+  "NODE_EXTRA_CA_CERTS",
+  "SSL_CERT_FILE",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+]
+
+const childEnv = (pinned: Record<string, string>): NodeJS.ProcessEnv => {
+  const out: NodeJS.ProcessEnv = {}
+  for (const k of OS_PASSTHROUGH) {
+    const v = process.env[k]
+    if (v !== undefined) out[k] = v
+  }
+  for (const [k, v] of Object.entries(process.env)) if (k.startsWith("RUNNER_")) out[k] = v
+  return { ...out, ...pinned }
+}
+
 /** Spawn `derive runner run` per run, detached, with the token in the ENV (never argv — argv
  *  is world-readable in `ps`, and this token can write artifacts). */
 export const nodeSubstrate = (opts: NodeSubstrateOpts): Substrate => ({
@@ -29,14 +72,12 @@ export const nodeSubstrate = (opts: NodeSubstrateOpts): Substrate => ({
   async start({ runId, token, server }) {
     const spawnFn = opts.spawnImpl ?? spawn
     const child = spawnFn(opts.bin, ["runner", "run"], {
-      // Inherit the ambient env (a self-host's global model key lives there), then pin this
-      // run's identity. DERIVE_CONTEXT is cleared: this is the context-less run lane.
-      env: {
-        ...process.env,
+      // DERIVE_CONTEXT is cleared: this is the context-less run lane.
+      env: childEnv({
         DERIVE_TOKEN: token,
         DERIVE_SERVER: server,
         DERIVE_CONTEXT: "",
-      },
+      }),
       stdio: ["ignore", "pipe", "pipe"],
       // Detached so a slow run isn't tied to an API restart; the reclaim sweep is the
       // backstop if the box goes down mid-run.

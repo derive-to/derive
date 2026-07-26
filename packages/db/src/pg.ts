@@ -2694,7 +2694,7 @@ export class PgMetaStore implements MetaStore {
       const attempts = runCounter(parseRunMeta(r.meta), "attempts") + 1
       // Past the cap the run is given up as `lost`; otherwise it goes back to the queue with
       // the count carried forward. Both merge into the existing blob so the previous attempt's
-      // outcome survives. Re-guarded on `running` so a run that settled meanwhile is untouched.
+      // outcome survives.
       const settled = attempts >= maxAttempts
       await this.db
         .update(run)
@@ -2707,7 +2707,16 @@ export class PgMetaStore implements MetaStore {
               }
             : { status: "queued", started_at: null, meta: mergeRunMeta(r.meta, { attempts }) },
         )
-        .where(and(eq(run.id, r.id), eq(run.status, "running")))
+        // FENCED on started_at — see the twin in repos.ts for the full reasoning. Guarding on
+        // status alone lets a second, concurrent sweep requeue a run that was re-claimed
+        // between this sweep's SELECT and its UPDATE, putting two live executors on one run.
+        .where(
+          and(
+            eq(run.id, r.id),
+            eq(run.status, "running"),
+            r.started_at === null ? isNull(run.started_at) : eq(run.started_at, r.started_at),
+          ),
+        )
       if (settled) failed += 1
       else requeued += 1
     }

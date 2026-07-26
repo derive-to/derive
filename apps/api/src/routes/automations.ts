@@ -2,13 +2,14 @@ import { randomUUID } from "node:crypto"
 import {
   type AutomationRecord,
   type AutomationTrigger,
+  mergeRunMeta,
   newId,
   normalizeSelectors,
   parseRunMeta,
   runCounter,
 } from "@derive/core"
 import { z } from "@hono/zod-openapi"
-import { Hono } from "hono"
+import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
 import { parseConnectionIds, parseRefs, parseTrigger } from "../lib/automation"
 import { brokerFor, toolsForRun } from "../lib/broker"
@@ -74,8 +75,30 @@ const TRIGGER = z.object({
 })
 
 export const automationRoutes = (ctx: AppContext) => {
-  const { meta, agentFor, agentRunScope, privateOwnerId, requireUser, requireWorkspace, deps } = ctx
+  const {
+    meta,
+    agentFor,
+    agentRunScope,
+    agentSessionScope,
+    privateOwnerId,
+    requireUser,
+    requireWorkspace,
+    deps,
+  } = ctx
   const app = new Hono()
+
+  // The run lane reads "no run scope" as "a standing polling runner", which is the only
+  // thing entitled to claim a BATCH, tick the schedule and sweep the queue. A session
+  // capability token also has no run scope — so without this guard it inherited every one
+  // of those powers, and a credential minted for a single question could claim this agent's
+  // automation runs, execute their bound source tools, and settle them as succeeded.
+  //
+  // The two kinds are cryptographically distinct (separate signing domains), but that only
+  // stops a token verifying as the wrong kind. It does not stop the wrong kind being
+  // ACCEPTED somewhere kind was never checked, which is what happened here. The session lane
+  // has always had the mirror of this (routes/contexts.ts refuses a standing bearer); the run
+  // lane never got it. Check kind explicitly, at the door, on every run-lane endpoint.
+  const isSessionBearer = (c: Context): boolean => agentSessionScope(c) !== null
 
   // ---- Owner surface: define / list / delete ---------------------------------
   app.post("/v1/automations", async (c) => {
@@ -361,6 +384,7 @@ export const automationRoutes = (ctx: AppContext) => {
     // double-booted substrate loses the race and gets an empty claim. A standing agent bearer
     // (a polling runner) materializes its due schedule runs first — the poll IS the tick —
     // then claims the oldest due batch.
+    if (isSessionBearer(c)) return fail(c, 403, "a session token cannot claim runs")
     const scope = agentRunScope(c)
     let claimed: Awaited<ReturnType<typeof meta.claimDueRuns>>
     if (scope) {
@@ -451,6 +475,7 @@ export const automationRoutes = (ctx: AppContext) => {
   app.post("/v1/agent/runs/:id/finish", async (c) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
+    if (isSessionBearer(c)) return fail(c, 403, "a session token cannot act on a run")
     const scope = agentRunScope(c)
     if (scope && scope !== c.req.param("id")) return fail(c, 404, "not found")
     const b = await readJson(
@@ -475,7 +500,17 @@ export const automationRoutes = (ctx: AppContext) => {
         const attempt = retries + 1
         const requeued = await meta.requeueRun(runId, agent.id, {
           scheduledFor: new Date(Date.now() + retryDelayMs(attempt)).toISOString(),
-          meta: JSON.stringify({ ...b.meta, retries: attempt, last_error: b.meta.why ?? null }),
+          // MERGE onto the run's existing meta, never replace it — the rule run-meta.ts
+          // states and reclaimStaleRuns already follows. Replacing dropped two things that
+          // live there: the fire-URL `payloads` (so a retried webhook run executed with no
+          // input at all), and the `attempts` counter written by the reclaim sweep (so the
+          // retry cap and the attempt cap stopped composing, allowing far more executions
+          // than either was set to permit).
+          meta: mergeRunMeta(prior?.meta, {
+            ...b.meta,
+            retries: attempt,
+            last_error: b.meta.why ?? null,
+          }),
         })
         if (requeued) return c.json({ id: requeued.id, status: requeued.status, retry: attempt })
       }
@@ -499,6 +534,7 @@ export const automationRoutes = (ctx: AppContext) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
     // A run-scoped capability bearer pulls ONLY through its own run's tools.
+    if (isSessionBearer(c)) return fail(c, 403, "a session token cannot act on a run")
     const scope = agentRunScope(c)
     if (scope && scope !== c.req.param("id")) return fail(c, 404, "not found")
     const run = await meta.getRun(c.req.param("id"))

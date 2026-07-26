@@ -16,6 +16,7 @@ import type { AppContext } from "../context"
 import { resolveActorBrandprint } from "../lib/brandprint"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { RUN_LEASE_MS } from "../lib/run-lifecycle"
 import { log } from "../log"
 
 /**
@@ -1083,7 +1084,25 @@ export const contextRoutes = (ctx: AppContext) => {
     const s = await meta.getSession(scope)
     const x = s ? await meta.getContext(s.context_id) : null
     if (!s || !x || x.agent_id !== agent.id) return fail(c, 404, "not found")
-    const claimed = await meta.claimSessionById(scope, agent.id, leaseFor(x))
+    // The HOSTED lease comes from the run lifecycle clock, NOT from leaseFor(context).
+    //
+    // A polling runner holds a standing token that never expires, so a short lease there is
+    // survivable: re-serving early costs a duplicate answer, which that lane knowingly accepts
+    // (see the note on leaseFor). A hosted executor is different — it holds a capability token
+    // minted for RUN_TOKEN_TTL_MS, and a lease SHORTER than that token is exactly the
+    // double-write window run-lifecycle.ts exists to close. At the context default the lease
+    // was 11 minutes against a 20-minute token, so at T+11 dispatch minted a second executor
+    // while the first could still write for 9 minutes: two published artifacts for one ask,
+    // billed twice, one of them orphaned.
+    //
+    // RUN_LEASE_MS is the same 25 minutes the run lane uses, satisfying the same ordering —
+    // timeout 15m < token 20m < lease 25m — so a replaced executor is provably tokenless
+    // before its replacement is served.
+    const claimed = await meta.claimSessionById(
+      scope,
+      agent.id,
+      new Date(Date.now() + RUN_LEASE_MS).toISOString(),
+    )
     // Lost the race (a duplicate dispatch, or the asker closed it): nothing to serve, and the
     // executor exits clean rather than double-answering.
     if (!claimed) return c.json({ session: null })
