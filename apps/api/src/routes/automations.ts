@@ -463,6 +463,13 @@ export const automationRoutes = (ctx: AppContext) => {
           targets: parseRefs(a.refs),
           // The run's source tools (name/description/params + broker ref), least-privilege.
           tools,
+          // What fired it, when something sent a body. /fire stores each webhook payload on
+          // the run (coalescing a burst into one run of many payloads), and this is where they
+          // reach the executor. Without it the fire-URL path was write-only: payloads were
+          // validated, capped, coalesced and CAS-appended, and then no consumer ever read
+          // them, so a webhook-triggered run executed as though a clock had started it. Empty
+          // for schedule and manual runs.
+          payloads: parseRunMeta(r.meta).payloads ?? [],
           flags,
         }
       }),

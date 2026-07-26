@@ -73,6 +73,21 @@ describe("automations: fire URL (webhook kick)", () => {
     expect(JSON.parse(row?.meta ?? "{}").payloads).toEqual([{ release: "v2.4.0" }])
   })
 
+  it("the payload reaches the EXECUTOR, not just the run row", async () => {
+    // The seam nothing covered, and which was broken the whole time: payloads were validated,
+    // capped, coalesced and CAS-appended onto the run, and then the claim response never
+    // returned them — so a webhook-triggered run executed with no idea what had fired it.
+    // Asserting the row proves storage; only this proves DELIVERY.
+    const { agent, body } = await createWebhookAutomation()
+    await fire(body.id as string, body.fire_secret as string, JSON.stringify({ release: "v9" }))
+    const claim = await app.request("/v1/agent/runs/claim", { headers: bearer(agent.token) })
+    expect(claim.status).toBe(200)
+    const { runs } = (await claim.json()) as {
+      runs: { automation_id: string; payloads: unknown[] }[]
+    }
+    expect(runs.find((r) => r.automation_id === body.id)?.payloads).toEqual([{ release: "v9" }])
+  })
+
   it("a burst coalesces: many fires fold into one run carrying every payload", async () => {
     const { body } = await createWebhookAutomation()
     const ids = new Set<string>()
