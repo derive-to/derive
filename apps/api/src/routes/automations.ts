@@ -522,11 +522,18 @@ export const automationRoutes = (ctx: AppContext) => {
         if (requeued) return c.json({ id: requeued.id, status: requeued.status, retry: attempt })
       }
     }
+    // MERGE, like every other writer of run.meta (run-meta.ts states the rule; the reclaim
+    // sweep and the retry path above both follow it). Replacing here erased the run's own
+    // history at the moment it settled: the `attempts` the reclaim sweep had recorded, so a
+    // run that failed twice and then succeeded reported zero retries in the timeline built to
+    // answer exactly that question — and the `payloads` of a webhook-triggered run, so the
+    // ledger no longer showed what it had acted on. Found by the dispatch simulation.
+    const settling = await meta.getRun(runId)
     const rec = await meta.finishRun(runId, agent.id, {
       status: b.status,
       finishedAt: isoNow(),
       costMicroUsd: b.cost_micro_usd ?? null,
-      meta: b.meta ? JSON.stringify(b.meta) : null,
+      meta: b.meta ? mergeRunMeta(settling?.meta, b.meta) : (settling?.meta ?? null),
     })
     return rec ? c.json({ id: rec.id, status: rec.status }) : fail(c, 404, "not found")
   })
