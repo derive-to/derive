@@ -1,7 +1,12 @@
 import type { MetaStore, RunRecord } from "@derive/core"
 import { log } from "../log"
 import { overBudget } from "./budget"
-import { RUN_LEASE_MS, RUN_MAX_ATTEMPTS, RUN_TOKEN_TTL_MS } from "./run-lifecycle"
+import {
+  RUN_LEASE_MS,
+  RUN_MAX_ATTEMPTS,
+  RUN_TOKEN_TTL_MS,
+  SESSION_MAX_AGE_MS,
+} from "./run-lifecycle"
 import { signWorkToken } from "./run-token"
 import { materializeAllDueRuns } from "./schedule"
 
@@ -251,6 +256,20 @@ const dispatchSessions = async (
   try {
     const due = await deps.meta.listDueOpenSessions(now.toISOString(), deps.limit ?? 10)
     for (const s of due) {
+      // GIVE UP on an ask that has been unsettled too long. Without this a session whose
+      // executor keeps dying is re-dispatched on every lease lapse forever, each round paying
+      // for a full agent run — the ask lane's version of a retry loop, and the one place where
+      // hosted execution could spend without any ceiling at all, since the monthly budget is
+      // not yet enforced (lib/budget.ts). Terminal, so it stops being scanned.
+      if (now.getTime() - Date.parse(s.created_at) > SESSION_MAX_AGE_MS) {
+        await deps.meta.setSessionState(s.id, "failed").catch(() => null)
+        log.warn("hosted dispatch: ask abandoned, unsettled past the horizon", {
+          session: s.id,
+          org: s.org_id,
+          created_at: s.created_at,
+        })
+        continue
+      }
       if (!hostedOff.has(s.org_id))
         hostedOff.set(
           s.org_id,

@@ -656,3 +656,5 @@ CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at)
 CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61 remove_diacritics 0');
 
 CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session (context_id, asker_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working');
+
+CREATE UNIQUE INDEX IF NOT EXISTS run_schedule_occurrence ON run (automation_id, scheduled_for) WHERE reason = 'schedule' AND automation_id IS NOT NULL AND scheduled_for IS NOT NULL;

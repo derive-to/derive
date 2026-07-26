@@ -1,6 +1,7 @@
 import { newId } from "@derive/core"
 import { beforeEach, describe, expect, it } from "vitest"
 import { dispatchPass, dispatchRunNow, type Substrate } from "../src/lib/dispatch"
+import { SESSION_MAX_AGE_MS } from "../src/lib/run-lifecycle"
 import { signRunToken, verifyRunToken } from "../src/lib/run-token"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
@@ -542,5 +543,41 @@ describe("hosted ASKS — a question runs on the same executor as a schedule", (
 
     // And the run is untouched — still queued for the executor it belongs to.
     expect((await meta.getRun(victim.id))?.status).toBe("queued")
+  })
+})
+
+describe("the ask lane gives up rather than paying forever", () => {
+  it("abandons a session that never settles, instead of re-dispatching it every lapse", async () => {
+    // A session whose executor keeps dying is re-served on every lease lapse. Runs are bounded
+    // by RUN_MAX_ATTEMPTS via their meta counter; sessions have no such column, so without a
+    // horizon this is an unbounded spend loop — a full agent run per lapse, forever — and the
+    // monthly budget cannot stop it because nothing writes the meter it reads.
+    const brief = await publishAs(app, "# B", { title: "Horizon Brief" }, as(owner.email))
+    const briefJson = (await brief.json()) as { short_id: string }
+    const ctx = (await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), { name: "Horizon Ctx", manifest_short_id: briefJson.short_id }),
+      )
+    ).json()) as { id: string }
+    const { session } = (await (
+      await app.request(
+        `/v1/contexts/${ctx.id}/sessions`,
+        jsonAs(as(owner.email), { body_md: "a question nobody ever answers" }),
+      )
+    ).json()) as { session: { id: string } }
+
+    // Move the CLOCK past the horizon rather than ageing the row — dispatch takes an injected
+    // clock precisely so time-dependent behaviour is testable without a store method that
+    // exists only for tests.
+    const { substrate, started } = fakeSubstrate()
+    await dispatchPass({
+      ...deps(substrate),
+      now: () => new Date(Date.now() + SESSION_MAX_AGE_MS + 60_000),
+    })
+
+    // Not booted, and terminal — so it stops being scanned rather than coming back next tick.
+    expect(started.some((s) => s.runId === session.id)).toBe(false)
+    expect((await meta.getSession(session.id))?.state).toBe("failed")
   })
 })

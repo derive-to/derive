@@ -883,6 +883,16 @@ const CONTEXT_SESSION_DEDUPE_UNIQUE_PG =
   `CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session ` +
   `(context_id, asker_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working')`
 
+// One run per automation per cron occurrence — the Postgres twin of run_schedule_occurrence
+// in schema.ts. That comment carries the reasoning: the tick's dedupe is a read-then-write, so
+// two ticks racing can both materialize the same occurrence, and this makes losing that race
+// harmless rather than expensive. Scoped to reason='schedule' because manual runs, webhook
+// fires and retries legitimately share a timestamp.
+const RUN_SCHEDULE_OCCURRENCE_UNIQUE_PG =
+  `CREATE UNIQUE INDEX IF NOT EXISTS run_schedule_occurrence ON run ` +
+  `(automation_id, scheduled_for) WHERE reason = 'schedule' AND automation_id IS NOT NULL ` +
+  `AND scheduled_for IS NOT NULL`
+
 export const buildPgSchemaStatements = (): string[] => {
   const { creates, alters } = generateDdl(TABLES, getTableConfig, {
     ifNotExists: true,
@@ -894,9 +904,10 @@ export const buildPgSchemaStatements = (): string[] => {
     ...PERF_INDEXES,
     ...ARTIFACT_SEARCH_PG,
     ...alters,
-    // After the alters: the partial index depends on dedupe_key, which the alters
-    // add on a populated DB.
+    // After the alters: partial indexes reference columns the alters add on a populated DB
+    // (dedupe_key), and the PG boot has no per-statement try/catch, so ordering is load-bearing.
     CONTEXT_SESSION_DEDUPE_UNIQUE_PG,
+    RUN_SCHEDULE_OCCURRENCE_UNIQUE_PG,
   ]
 }
 

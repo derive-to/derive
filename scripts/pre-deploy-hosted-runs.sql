@@ -58,6 +58,26 @@ WHERE r.status = 'running'
 ORDER BY r.started_at;
 
 \echo ''
+\echo '== 2b. BLOCKING: duplicate schedule occurrences =='
+-- This deploy adds a partial unique index, run_schedule_occurrence, on
+-- (automation_id, scheduled_for) WHERE reason = 'schedule'. If any duplicates already exist,
+-- CREATE UNIQUE INDEX FAILS — and the Postgres schema step has no per-statement try/catch, so
+-- that failure stops the deploy with the schema half-applied.
+--
+-- Any rows here must be settled BEFORE deploying: keep the newest run of each pair and delete
+-- the rest, or give the duplicates a different reason. Empty is the expected result — the tick
+-- deduped by reading first, so duplicates only exist if two ticks genuinely raced.
+SELECT automation_id,
+       scheduled_for,
+       count(*) AS duplicate_runs,
+       array_agg(id ORDER BY created_at) AS run_ids
+FROM run
+WHERE reason = 'schedule' AND automation_id IS NOT NULL AND scheduled_for IS NOT NULL
+GROUP BY automation_id, scheduled_for
+HAVING count(*) > 1
+ORDER BY count(*) DESC;
+
+\echo ''
 \echo '== 3. Blast-radius summary =='
 SELECT
   (SELECT count(*) FROM automation a
@@ -76,6 +96,7 @@ SELECT
     WHERE settings::json ->> 'hostedAgentsEnabled' = 'false')                  AS opted_out_of_hosted_dispatch;
 
 \echo ''
+\echo 'If (2b) is NON-EMPTY, do not deploy: the new unique index will fail and stop the deploy.'
 \echo 'If (1) and (2) are both empty, deploying changes no existing behaviour.'
 \echo 'If (1) is non-empty, those automations begin running: confirm that is wanted,'
 \echo 'or disable them (enabled = 0) before deploy and re-enable deliberately.'

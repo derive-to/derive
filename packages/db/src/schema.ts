@@ -1076,12 +1076,32 @@ const CONTEXT_SESSION_DEDUPE_UNIQUE =
   `CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session ` +
   `(context_id, asker_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working')`
 
+// One run per automation per cron occurrence — as a CONSTRAINT rather than a convention.
+//
+// The schedule tick dedupes by reading the newest schedule run and comparing its scheduled_for
+// (lib/schedule.ts). That is a read-then-write, so two ticks racing — the every-minute cron,
+// plus every polling agent's claim, plus a second API replica — can both decide an occurrence
+// is unmaterialized and both create it. Two runs for one occurrence means two executors, two
+// model bills, and two versions of the same artifact. The read-then-write stays and still does
+// the work; this makes LOSING that race harmless rather than expensive, because the loser's
+// INSERT simply fails.
+//
+// Scoped to reason='schedule' deliberately: manual runs, webhook fires and retries all stamp
+// scheduled_for as well (with `now`, or now+backoff), so an unscoped constraint would reject a
+// second Run now in the same instant — which is legitimate. Partial and expression-scoped, so
+// drizzle's uniqueIndex cannot express it: raw DDL, exactly like the session dedupe above.
+const RUN_SCHEDULE_OCCURRENCE_UNIQUE =
+  `CREATE UNIQUE INDEX IF NOT EXISTS run_schedule_occurrence ON run ` +
+  `(automation_id, scheduled_for) WHERE reason = 'schedule' AND automation_id IS NOT NULL ` +
+  `AND scheduled_for IS NOT NULL`
+
 export const SCHEMA_STATEMENTS: string[] = [
   ...ddl.creates,
   ...placeholderTables(SQLITE_TIMESTAMP_DEFAULT),
   ...PERF_INDEXES,
   ARTIFACT_SEARCH_FTS5,
   CONTEXT_SESSION_DEDUPE_UNIQUE,
+  RUN_SCHEDULE_OCCURRENCE_UNIQUE,
 ]
 
 /**

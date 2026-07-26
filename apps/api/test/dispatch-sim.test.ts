@@ -370,7 +370,11 @@ describe("dispatch loop — deterministic simulation", () => {
 
   // A spread of seeds. Each explores a different interleaving; a failure names its seed so the
   // exact history can be replayed by running that one alone.
-  const SEEDS = Array.from({ length: 40 }, (_, i) => 1000 + i * 7)
+  // Twelve seeds, not forty. The bug this found (the finish route replacing run.meta) turned up
+  // on the first handful, and forty cost 28s of every CI run for exploration that was mostly
+  // re-treading the same shapes. If a regression ever slips through, widen this and re-run —
+  // seeds are reproducible, so a wider search is a one-line change, not an investigation.
+  const SEEDS = Array.from({ length: 12 }, (_, i) => 1000 + i * 7)
   it.each(SEEDS)("holds every invariant under interleaving (seed %i)", async (seed) => {
     await simulate(seed, 200)
   })

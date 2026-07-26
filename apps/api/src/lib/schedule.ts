@@ -48,15 +48,28 @@ const materializeFor = async (
     // 10:00 hourly run never existed, with nothing logged and nothing to notice.
     const latest = await meta.latestRunForAutomation(a.id, "schedule")
     if (latest?.scheduled_for && latest.scheduled_for >= prevIso) continue
-    await meta.createRun({
-      id: newId("run"),
-      org_id: a.org_id,
-      automation_id: a.id,
-      agent_id: a.agent_id,
-      reason: "schedule",
-      scheduled_for: prevIso,
-    })
-    created += 1
+    // The read above is a dedupe, not a lock: two ticks can both reach here for the same
+    // occurrence (the cron, every polling agent's claim, a second replica). A partial unique
+    // index on (automation_id, scheduled_for) WHERE reason='schedule' makes the second INSERT
+    // fail instead of creating a duplicate run — so a rejection here means "somebody else
+    // already materialized this occurrence", which is success, not an error.
+    //
+    // Caught per automation so one collision cannot abandon the rest of the pass: this loop
+    // walks every enabled automation in the deployment, and throwing out of it would silently
+    // stop every automation after the one that collided.
+    try {
+      await meta.createRun({
+        id: newId("run"),
+        org_id: a.org_id,
+        automation_id: a.id,
+        agent_id: a.agent_id,
+        reason: "schedule",
+        scheduled_for: prevIso,
+      })
+      created += 1
+    } catch {
+      // Lost the race. The occurrence exists; nothing to do and nothing to report.
+    }
   }
   return created
 }
