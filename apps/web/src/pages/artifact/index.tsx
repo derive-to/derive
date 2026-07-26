@@ -25,7 +25,7 @@ import { ArtifactTopBar } from "./artifact-top-bar"
 import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
 import { FloatingControl } from "./floating-control"
-import { canCommentWithRole, shouldPromptSignInToComment } from "./lib/comment-access"
+import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
@@ -49,8 +49,8 @@ const HistoryDrawer = lazy(() =>
   import("./insights-history").then((m) => ({ default: m.HistoryDrawer })),
 )
 
-// The floating pill over the document (comments toggle / sign-in prompt) — one
-// recipe on the Button primitive so both call sites can't drift apart.
+// The floating pill over the document (the signed-in comments toggle). The anon
+// counterpart lives in PublicViewer on the same FloatingControl recipe.
 function DocFab({
   title,
   testId,
@@ -491,10 +491,9 @@ export function Artifact() {
   const isAnon = !me
   // Commenting needs commenter+ (matches the API's `comment` gate). A signed-in viewer
   // reading via a view-only link sees comments but gets no write affordance. An
-  // anonymous visitor never qualifies — on a comment-enabled link they get a "sign in
-  // to comment" prompt instead (auth is the gate; see the access matrix).
+  // anonymous visitor never qualifies — PublicViewer carries their sign-in-to-comment
+  // nudge (auth is the gate; see the access matrix).
   const canComment = canCommentWithRole(art.my_role)
-  const promptSignInToComment = shouldPromptSignInToComment(isAnon, art.link_role, !!art.removed)
 
   // Sort threads into pinned (anchored & present in this live doc), general
   // (unanchored / orphaned / off-slide), and resolved — pure, from the frame's
@@ -777,24 +776,6 @@ export function Artifact() {
                 {openCount > 0
                   ? `${openCount} comment${openCount === 1 ? "" : "s"}`
                   : "Show comments"}
-              </DocFab>
-            )}
-            {/* Anonymous visitor on a comment-enabled link: commenting forces auth (anon
-                stays view-only). Offer sign-in, returning here afterward. */}
-            {promptSignInToComment && (
-              <DocFab
-                title="Sign in to comment"
-                testId="sign-in-to-comment"
-                onClick={() =>
-                  nav({
-                    to: "/login",
-                    search: {
-                      return_to: `/artifacts/${refFor({ short_id: shortId, title: art.title })}`,
-                    },
-                  })
-                }
-              >
-                Sign in to comment
               </DocFab>
             )}
             {/* Focus mode: the one way back (the header is hidden). Esc also exits. */}

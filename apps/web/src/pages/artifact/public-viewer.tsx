@@ -1,11 +1,15 @@
 import { Link } from "@tanstack/react-router"
-import type { ReactNode } from "react"
+import { X } from "lucide-react"
+import { type ReactNode, useState } from "react"
 import type { Artifact, Viewer } from "@/api"
+import { Icon } from "@/components/icons"
 import { Logo } from "@/components/shared/logo"
 import { Button } from "@/components/ui/button"
 import { artifactTypeLabel } from "@/lib/artifact"
 import { stampSrc } from "@/lib/src-stamp"
 import { ago } from "@/lib/time"
+import { FloatingControl } from "./floating-control"
+import { commentNudgeCopy, shouldPromptSignInToComment } from "./lib/comment-access"
 import { Presence } from "./rail-deck"
 
 // The public / viral viewer — the chrome-light experience an anonymous visitor
@@ -35,6 +39,14 @@ export function PublicViewer({
 }) {
   const author = art.author
   const authorName = author?.name ?? author?.login ?? null
+
+  // The comment nudge: only on a link that grants commenting — signing in on a
+  // view-only link unlocks nothing, so prompting there would be a bait-and-switch.
+  // Comment BODIES stay signed-in-only (collaboration, not content); the pill
+  // carries just the open-thread count the API sends.
+  const nudge = shouldPromptSignInToComment(art.link_role, !!art.removed)
+  const copy = commentNudgeCopy(art.open_comment_count)
+  const [nudgeOpen, setNudgeOpen] = useState(false)
 
   return (
     <div data-artifact-view className="flex min-h-0 flex-1 flex-col bg-background">
@@ -108,7 +120,62 @@ export function PublicViewer({
       </header>
 
       {/* The render is the hero — it owns the rest of the height. */}
-      <div className="relative flex min-h-0 flex-1 flex-col">{children}</div>
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {children}
+        {/* The nudge pill — the signed-in comments FAB's grammar, pointed at auth.
+            Clicking opens the panel rather than bouncing straight to /login: the
+            panel names what's behind the wall before asking for the sign-in. */}
+        {nudge && !nudgeOpen && (
+          <FloatingControl
+            size="lg"
+            title="Show comments"
+            data-testid="public-comments-pill"
+            onClick={() => setNudgeOpen(true)}
+            className="absolute right-4.5 bottom-4.5 tabular-nums"
+          >
+            <Icon name="comments" size={16} />
+            {copy.pill}
+          </FloatingControl>
+        )}
+        {/* The anon comments panel: the signed-in panel's shell (Comments header,
+            same width) with the sign-in CTA where the threads would be. It OVERLAYS
+            the render's right edge on every form factor — never docks — so toggling
+            it can't resize the sandboxed iframe and reflow the author's page. The
+            CTA stamps `comment_wall` so the funnel scores this surface, and returns
+            the visitor here to the conversation they came for — not to /new. */}
+        {nudge && nudgeOpen && (
+          <aside
+            data-testid="public-comments-panel"
+            className="absolute inset-y-0 right-0 z-10 flex w-[340px] max-w-[85vw] flex-col border-l border-border bg-background shadow-[var(--shadow)]"
+          >
+            <div className="flex shrink-0 items-center gap-1 border-b border-border-soft py-2 pr-2 pl-3.5">
+              <span className="flex-1 text-sm font-medium text-foreground">Comments</span>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Close comments"
+                data-testid="public-comments-close"
+                onClick={() => setNudgeOpen(false)}
+              >
+                <X className="size-4" aria-hidden />
+              </Button>
+            </div>
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+              <Icon name="comments" size={24} className="text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">{copy.heading}</p>
+              <Button asChild variant="default" size="sm" data-testid="public-sign-in-to-comment">
+                <Link
+                  to="/login"
+                  search={{ return_to: returnTo }}
+                  onClick={() => stampSrc("comment_wall", art.short_id)}
+                >
+                  {copy.cta}
+                </Link>
+              </Button>
+            </div>
+          </aside>
+        )}
+      </div>
 
       {/* A quiet, permanent brand mark (the "Made in Framer" idiom — attribution +
           a soft nudge, never a wall). A real link: the click lands in product
