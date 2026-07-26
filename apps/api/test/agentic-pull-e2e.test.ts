@@ -47,7 +47,7 @@ const post = (path: string, body: object) => app.request(path, jsonAs(as(owner.e
 await post("/v1/me/model-credentials", {
   provider: "claude-code",
   kind: "api_key",
-  token: "e2e-plan-fixture",
+  token: "e2e-plan-fixture", // gitleaks:allow — a fixture string, never a real credential
 })
 
 const publish = async (title: string, content: string) => {

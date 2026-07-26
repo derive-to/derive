@@ -5,7 +5,7 @@ rules that matter are machine-enforced, so a mistake fails the build instead of
 shipping. Before you call a change done:
 
 ```bash
-pnpm verify        # the whole gate — exactly what CI's `check` job runs
+pnpm verify        # exactly what CI's `check` job runs, in the same order
 ```
 
 which is these three, and you can run them one at a time while iterating:
@@ -18,6 +18,13 @@ pnpm test:coverage # vitest (embedded SQLite) + the per-package coverage ratchet
 
 Run `pnpm verify` before you push, not a shorter approximation of it. `pnpm test`
 skips the coverage ratchet, so it can pass on a change that CI then fails.
+
+`check` is the big gate but not the only one: CI also runs a gitleaks secret scan,
+the Postgres and D1 store contracts against real engines, and the bundle and runner
+image builds. Those need services or a network, so they stay in CI — a green
+`pnpm verify` means the check job will pass, not that every job will. A test fixture
+that reads like a credential is the usual way the secret scan bites; mark it with an
+inline `gitleaks:allow` and say why.
 
 A green gate is the bar. Don't work around a guardrail — fix the code it points at,
 or use the rule's documented escape hatch (an inline comment such as `authz-exempt:`,
