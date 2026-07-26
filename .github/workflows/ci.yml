@@ -70,9 +70,27 @@ jobs:
   # vitest.config.ts, and since `deploy` needs this job, a coverage regression
   # blocks the ship.
   check:
-    runs-on: ubicloud-standard-8
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubicloud-standard-16
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
+        id: filter
+        with:
+          filters: |
+            web:
+              - 'apps/web/**'
+              - 'packages/**'
+              - 'pnpm-lock.yaml'
+              - 'package.json'
+            docker:
+              - 'packages/cli/**'
+              - 'pnpm-lock.yaml'
+              - 'deploy/runner.Dockerfile'
+              - 'deploy/runner.Dockerfile.dockerignore'
+              - 'deploy/runner-entrypoint.sh'
       - uses: ./.github/actions/setup
 
       - name: Lint + format + guardrails (biome + custom checks)
@@ -112,45 +130,6 @@ jobs:
         run: |
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz | tar -xz gitleaks
           ./gitleaks detect --no-git --source . --redact --no-banner
-
-  # LANE B — everything that needs a real engine or produces an artifact.
-  #
-  # Postgres: the SAME apps/api suite against a real Postgres (ephemeral Docker
-  # container, via scripts/test-pg.sh) so the hosted-tier driver is covered by the
-  # full behavioral suite. D1: the SAME @derive/db store contract against a real
-  # Cloudflare D1 inside workerd via Miniflare — the default (Node) lane can't
-  # host the D1 driver, so this is the only place src/d1.ts runs, and the edge
-  # tier runs on it.
-  #
-  # The two builds ride along, gated on the paths that can affect them. They used
-  # to be separate jobs fed by a separate path-filter job, which meant three VMs
-  # and a serial hop before either could start; as steps they cost only the
-  # seconds they actually run, and skip to nothing otherwise.
-  db:
-    runs-on: ubicloud-standard-8
-    # paths-filter lists a PR's changed files via the GitHub API, which needs
-    # pull-requests:read (the workflow default is contents:read only).
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
-        id: filter
-        with:
-          filters: |
-            web:
-              - 'apps/web/**'
-              - 'packages/**'
-              - 'pnpm-lock.yaml'
-              - 'package.json'
-            docker:
-              - 'packages/cli/**'
-              - 'pnpm-lock.yaml'
-              - 'deploy/runner.Dockerfile'
-              - 'deploy/runner.Dockerfile.dockerignore'
-              - 'deploy/runner-entrypoint.sh'
-      - uses: ./.github/actions/setup
 
       - name: Test against Postgres
         run: pnpm test:pg
@@ -195,7 +174,7 @@ jobs:
   # else; the step scoping is what keeps them away from package code.
   deploy:
     if: github.repository == 'derive-to/derive' && github.event_name == 'push' # never PRs, never forks
-    needs: [check, db]
+    needs: [check]
     runs-on: ubicloud-standard-4
     # A running deploy is never cancelled — a schema applied for a worker that
     # then didn't ship is the state to avoid. Queued runs are NOT ordered:
