@@ -303,10 +303,14 @@ const dispatchSessions = async (
  *
  *  Approximate by construction: it counts within the workspace's 100 most recent runs, so a
  *  workspace that creates more than 100 runs between a claim and its finish could under-count
- *  and briefly exceed the cap. That is the safe direction for a FAIRNESS control (it never
- *  wrongly starves a workspace), the budget guard is the real spend ceiling, and a dedicated
- *  COUNT query is the fix if this ever matters at volume — deliberately not added yet, since
- *  every store method has to be written and kept in parity twice. */
+ *  and briefly exceed the cap. A dedicated COUNT query is the fix if this ever matters at
+ *  volume — deliberately not added yet, since every store method has to be written and kept in
+ *  parity twice.
+ *
+ *  Note this is currently the TIGHTEST real limit on hosted spend, which it was not designed to
+ *  be: the monthly budget is wired at every call site but enforces nothing until the executor
+ *  reports cost (see lib/budget.ts). So "approximate is fine, the budget is the real ceiling"
+ *  is not true today, and under-counting here is under-counting the only thing counting. */
 const countInFlight = async (meta: MetaStore, orgId: string, now: Date): Promise<number> => {
   const since = new Date(now.getTime() - RUN_LEASE_MS).toISOString()
   const recent = await meta.listRuns(orgId, 100).catch(() => [])
