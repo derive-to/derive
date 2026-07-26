@@ -57,11 +57,19 @@ cd "$ROOT/apps/api"
 #
 # File parallelism is ON (previously --no-file-parallelism): helpers.ts keys each
 # schema on VITEST_POOL_ID, so concurrent files land in distinct schemas and can't
-# collide. --maxWorkers=4 bounds the live per-store pools (node-postgres default
-# max=10) so their connections stay well under max_connections. Note vitest does
-# NOT clamp an explicit maxWorkers to core count, so this runs 4 forks even on a
-# 2-vCPU box — fine here because pg tests are I/O-bound (waiting on Postgres).
-pnpm exec vitest run --maxWorkers=4 --testTimeout=15000 "$@"
+# collide.
+#
+# Workers track the core count rather than a fixed 4. The bound that matters here
+# is CONNECTIONS, not cores: each worker holds a store pool (node-postgres default
+# max=10) and the container above starts with max_connections=400, so the ceiling
+# of 16 puts the worst case near 160 — comfortably inside it. A hardcoded 4 was
+# wrong in both directions at once: it oversubscribed the old 2-vCPU runner, and
+# it would leave most of a larger one idle, even though this lane is I/O-bound on
+# Postgres and keeps scaling past one worker per core.
+WORKERS="${DERIVE_PG_WORKERS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+[ "$WORKERS" -gt 16 ] && WORKERS=16
+echo "→ ${WORKERS} vitest workers"
+pnpm exec vitest run --maxWorkers="$WORKERS" --testTimeout=15000 "$@"
 
 # Also run @derive/db's store contract against the same Postgres — the only place
 # pg.ts (the hosted-tier driver) is covered + gated by the db package's own suite.
