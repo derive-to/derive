@@ -71,6 +71,9 @@ export interface PublishInput {
    *  lets a caller embed the artifact's own id in its first version's content
    *  (the lineage resume block). 409 if already taken. */
   mintShortId?: string
+  /** Expiring anonymous draft (create only): ISO instant after which the draft is
+   *  served 410 and swept. Omit for every ordinary publish. */
+  expiresAt?: string
 }
 
 export interface PublishResult {
@@ -297,6 +300,7 @@ export async function publish(
     password_hash: input.passwordHash ?? null,
     kind,
     spa: input.spa ? 1 : 0,
+    expires_at: input.expiresAt ?? null,
   })
   const version = await meta.addVersion(artifact.id, {
     id: newId("v"),

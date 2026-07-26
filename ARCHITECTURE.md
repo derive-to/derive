@@ -57,6 +57,9 @@ the bundled SPA when present.
 - **Origin isolation (A4):** artifact bytes (`/raw/*`) can be served from a separate
   registrable domain so untrusted HTML never shares the app's cookie origin; the
   iframe `sandbox` attribute is the single-origin fallback.
+- **Domain mode (C1):** hosts registered in the `domain` table (vanity subdomains,
+  per-artifact drafts, workspace custom domains) serve artifact bytes at their own
+  origin — only bytes and the anchor client, never the app, auth, or API.
 
 ## packages/db — the adapters
 

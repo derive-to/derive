@@ -54,6 +54,9 @@ export const artifact = pgTable("artifact", {
   // Set on every new version; null until first versioned (coalesces to created_at).
   updated_at: text("updated_at"),
   removed_at: text("removed_at"),
+  // Expiring anonymous draft (the claim flow): ISO instant after which the draft is
+  // gone — served 410 and swept. Null for every ordinary artifact; cleared on claim.
+  expires_at: text("expires_at"),
   // First non-author view (the activation moment; see schema.ts).
   first_foreign_view_at: text("first_foreign_view_at"),
   source_path: text("source_path"),
@@ -172,7 +175,7 @@ export const renderJob = pgTable("render_job", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
-// An automation (WP5): a standing agent job (agent + trigger + instruction + refs). The
+// An automation: a standing agent job (agent + trigger + instruction + refs). The
 // definition only; every firing is a `run`. See schema.ts for the full contract.
 export const automation = pgTable("automation", {
   id: text("id").primaryKey(),
@@ -185,13 +188,15 @@ export const automation = pgTable("automation", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
-// A run (WP5/WP6): one execution — the queue and the ledger in one table. See schema.ts.
+// A run: one execution — the queue and the ledger in one table. See schema.ts.
 export const run = pgTable("run", {
   id: text("id").primaryKey(),
   org_id: text("org_id").notNull(),
   automation_id: text("automation_id"),
   agent_id: text("agent_id").notNull(),
   reason: text("reason").notNull(),
+  // The initiating person (wallet key) — null for clock/event runs. See RunRecord.
+  initiated_by: text("initiated_by"),
   status: text("status").$type<RunStatus>().notNull(),
   scheduled_for: text("scheduled_for"),
   started_at: text("started_at"),
@@ -261,6 +266,12 @@ export const agent = pgTable(
     created_by: text("created_by"),
     // Served by Derive's managed executor when 1 (see schema.ts).
     hosted: integer("hosted").notNull().default(0).$type<0 | 1>(),
+    // 1 = auto-minted for one context at creation (never user-named): the context's
+    // Derive access, not a persona. The UI hides managed agents from the roster.
+    managed: integer("managed").notNull().default(0).$type<0 | 1>(),
+    // The runs-lane liveness mark (twin of context.runner_seen_at): stamped when the
+    // agent's bearer polls the run claim endpoint. Null = no executor has ever polled.
+    runs_seen_at: text("runs_seen_at"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [
@@ -507,6 +518,23 @@ export const userNotificationPref = pgTable(
   },
   (t) => [uniqueIndex("user_notification_pref_key").on(t.org_id, t.user_id)],
 )
+// Per-user model-plan credential (Claude/Codex plan token or API key), encrypted at rest
+// and scoped (org, user, provider). Used only for that user's own runs — see schema.ts.
+export const modelCredential = pgTable(
+  "model_credential",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id").notNull(),
+    provider: text("provider").notNull(),
+    kind: text("kind").$type<"oauth" | "api_key" | "login">().notNull(),
+    secret: text("secret").notNull(),
+    hint: text("hint").notNull().default(""),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    updated_at: text("updated_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("model_credential_key").on(t.org_id, t.user_id, t.provider)],
+)
 export const slackThreadLink = pgTable(
   "slack_thread_link",
   {
@@ -563,6 +591,10 @@ export const domain = pgTable("domain", {
   status: text("status").$type<DomainStatus>().notNull().default("active"),
   cf_hostname_id: text("cf_hostname_id"),
   verification: text("verification"),
+  // When set, the host answers 302 → this absolute URL instead of serving content.
+  // Written when a draft is claimed (the derive.page URL forwards to the artifact's
+  // permanent home); reusable for any future host rename.
+  redirect_to: text("redirect_to"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 export const proposal = pgTable("proposal", {
@@ -793,6 +825,7 @@ const TABLES = [
   report,
   auditLog,
   asset,
+  modelCredential,
 ]
 
 /** Build the Postgres boot DDL: generated table/index CREATEs + placeholder tables

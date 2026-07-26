@@ -2,7 +2,8 @@
 
 Use the hosted remote MCP unless the user explicitly names a self-hosted instance. It
 uses OAuth, refreshes access without pasted secrets, and exposes the complete tool and
-skill surface.
+skill surface. (For a one-off "publish this" with no setup at all, the anonymous draft
+flow in SKILL.md needs no connection.)
 
 ## Claude Code
 

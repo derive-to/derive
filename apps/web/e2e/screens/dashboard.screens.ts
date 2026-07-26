@@ -4,10 +4,9 @@ import { join } from "node:path"
 import { type Page, test } from "@playwright/test"
 import { signUp } from "../helpers"
 
-// Visual-QA capture harness for the real, auth-walled dashboard — derive's answer
-// to Nemonic's scripts/screenshot.mjs, but riding the existing e2e server auto-boot
-// (playwright.config.ts webServer) and the signUp helper instead of a wrangler
-// /__dev/seed endpoint. It signs up a fresh isolated user, seeds a realistic
+// Visual-QA capture harness for the real, auth-walled dashboard, riding the
+// existing e2e server auto-boot (playwright.config.ts webServer) and the signUp
+// helper. It signs up a fresh isolated user, seeds a realistic
 // workspace of self-contained HTML + markdown artifacts (so the card thumbnails —
 // which are LIVE /raw iframes, not pre-baked PNGs — actually render), then captures
 // the library, favorites, and an artifact across dark/light × desktop/mobile.

@@ -256,7 +256,7 @@ pnpm deploy                                 # build:web → app schema → auth 
 ```
 
 **Every deploy is just `pnpm deploy`.** It runs `build:web`, then `deploy:schema`
-(`scripts/apply-d1-schema.mjs`, the app schema), then `migrate-auth-d1.ts --apply` (the
+(`apps/api/scripts/apply-d1-schema.mjs`, the app schema), then `migrate-auth-d1.ts --apply` (the
 Better Auth schema), then `wrangler deploy`. Both schema steps bring D1 fully current
 before the new Worker goes live, so a deploy can never ship code against a stale schema.
 No one-shot setup SQL is needed: the two steps create the whole schema on a brand-new DB
@@ -286,7 +286,7 @@ is no CORS or cross-site cookie config. `[assets]` in `wrangler.toml` points at
 `run_worker_first` routes `/v1`, `/api`, `/raw`, `/a/*`, and `/healthz` to the worker
 while every other path serves a static file or the SPA shell. `pnpm build:web` builds
 apps/web and preps the output (writes `index.html`, drops the Pages-only `_redirects`
-catch-all that otherwise hijacks `/assets/*`); see `scripts/prep-edge-assets.mjs`.
+catch-all that otherwise hijacks `/assets/*`); see `apps/api/scripts/prep-edge-assets.mjs`.
 
 ### Semantic search (optional)
 

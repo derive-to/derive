@@ -29,6 +29,7 @@ import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
+import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
 import { PgvectorSearchIndex } from "./search-pgvector"
 import { enqueueChannelDelivery } from "./webhooks"
@@ -282,6 +283,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           // Rides the comment binding, namespaced — same order of magnitude of
           // legitimate use, but its count must not share the comment budget.
           ask: nativeLimiter(env.RL_COMMENT, 60, "ask"),
+          // Anonymous draft mints ride RL_STRICT (3/60s), namespaced from the other
+          // strict surfaces. Native periods cap at 60s, so the in-process tier's
+          // hour-long window can't be expressed here; the burst cap is the bound.
+          draftPublish: nativeLimiter(env.RL_STRICT, 60, "draft-publish"),
         },
         // Deliver freshly enqueued events now: poke the outbox DO so its alarm fires,
         // riding waitUntil so the subrequest isn't cancelled when the response is sent.
@@ -329,8 +334,35 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
   })
 }
 
+// Should this request skip the app entirely and go back to Cloudflare Static
+// Assets? True for a static-namespace path on anything that is NOT a vanity host
+// — the app host, its app.* alias, workers.dev, and custom domains all keep the
+// platform's asset serving exactly as it was before these paths were worker-first.
+// A `<label>.<base>` host is the one case that must reach the app: its bundle's
+// own /assets files live in domain mode, not the web build. (Custom domains still
+// have the shadow for these three prefixes — identifying them needs a DB lookup
+// this pre-binding hook can't afford; vanity hosts are the live product surface.)
+const staticNamespacePassthrough = (req: Request, env: Env): boolean => {
+  const path = new URL(req.url).pathname
+  if (!STATIC_NAMESPACE_PREFIXES.some((p) => path.startsWith(`${p}/`))) return false
+  const sub = subdomainBaseFromEnv(env)
+  if (!sub) return true
+  const host = (req.headers.get("host") ?? new URL(req.url).host).toLowerCase().split(":")[0] ?? ""
+  return host !== sub && !host.endsWith(`.${sub}`)
+}
+
 export default {
   fetch(req: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> {
+    // The static namespaces (/assets, /site, /brand) are worker-first solely so
+    // vanity/draft hosts can reach domain mode (Static Assets routing is host-blind
+    // — see serve-web.ts STATIC_NAMESPACE_PREFIXES). Everything that is NOT a
+    // vanity host gets the platform's asset serving back verbatim, before any DB
+    // binding — the app host, its app.* alias, workers.dev, and every custom
+    // domain behave exactly as they did when these paths never hit the Worker.
+    // URL-string fetch (the siteFetch precedent) sidesteps the workers-types/DOM
+    // Request dualism; assets are GET/HEAD-only so nothing else is intercepted.
+    if ((req.method === "GET" || req.method === "HEAD") && staticNamespacePassthrough(req, env))
+      return env.ASSETS.fetch(req.url) as unknown as Promise<Response>
     // Postgres tier: bind a request-scoped pool (see edge-pg.ts) for livePgPool to
     // resolve. Never end()ed here — `background()` fan-out (context.ts) keeps
     // querying it on waitUntil after the response, so an eager end() would cut

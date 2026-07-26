@@ -47,6 +47,13 @@ export const serveContent = async (
    *  serve the document exactly as authored. Never applied to markdown-rendered output,
    *  which is already responsive. */
   reflow = true,
+  /** Append the anchor client (selection → comment, hover chips, live cursors).
+   *  It only functions embedded in the app viewer — it talks to the host via
+   *  parent.postMessage — so standalone serving (vanity/draft hosts, which are
+   *  never iframed by the app) passes false: on a top-level page the client's
+   *  hover UI renders but can deliver nothing. Default on for the raw routes,
+   *  whose pages the viewer embeds. */
+  anchors = true,
 ) => {
   const headers = { ...RAW_HEADERS, "Cache-Control": cacheControl }
   const tx = (doc: string) => (transformHtml ? transformHtml(doc) : Promise.resolve(doc))
@@ -59,10 +66,10 @@ export const serveContent = async (
   // other read.
   const wantsMarks = ["1", "true"].includes(c.req.query("marks") ?? "")
   const marks = wantsMarks ? MARKS_SCRIPT : ""
+  const anchorClient = anchors ? SELECTION_SCRIPT : ""
   // Produce the final HTML body for a document: cross-doc rewrite + auto-reflow, then append
   // the anchor client (for comment anchoring + live cursors) and, when asked, the marks overlay.
-  const htmlBody = async (doc: string): Promise<string> =>
-    rf(await tx(doc)) + SELECTION_SCRIPT + marks
+  const htmlBody = async (doc: string): Promise<string> => rf(await tx(doc)) + anchorClient + marks
   let path = rawPath
   if (isBundleContentType(content.content_type)) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -84,7 +91,7 @@ export const serveContent = async (
       const rewritten = rewriteAbsoluteUrls(new TextDecoder().decode(data), prefix.slice(0, -1))
       // Bundle pages get the anchor client too — comments stick everywhere.
       const out = entry.type.startsWith("text/html")
-        ? rf(rewritten) + SELECTION_SCRIPT + marks
+        ? rf(rewritten) + anchorClient + marks
         : rewritten
       return c.body(out, 200, { ...headers, "Content-Type": entry.type })
     }

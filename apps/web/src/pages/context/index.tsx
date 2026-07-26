@@ -15,13 +15,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { toast } from "@/components/ui/sonner"
 import { agentsQuery, contextsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { ContextRowsSkeleton } from "./context-skeleton"
 
-// The contexts directory: the workspace's askable agent setups. Creation wires an
-// existing agent (Settings → Agents) to a manifest artifact by its short id — the
+// The contexts directory: the workspace's askable agent setups. Creation pairs a
+// manifest artifact (by short id) with agent access the server auto-mints — or,
+// optionally, an existing service agent — the
 // two halves already exist as first-class objects; a context is just the joint.
 export function Contexts() {
   useDocumentTitle("Contexts")
@@ -42,12 +44,10 @@ export function Contexts() {
         </p>
       </div>
 
-      {agents && agents.length > 0 && (
-        <NewContext
-          agents={agents.map((a) => ({ id: a.id, name: a.name }))}
-          onCreated={() => qc.invalidateQueries({ queryKey: contextsQuery().queryKey })}
-        />
-      )}
+      <NewContext
+        agents={(agents ?? []).filter((a) => !a.managed).map((a) => ({ id: a.id, name: a.name }))}
+        onCreated={() => qc.invalidateQueries({ queryKey: contextsQuery().queryKey })}
+      />
 
       {isPending ? (
         <ContextRowsSkeleton />
@@ -71,7 +71,7 @@ export function Contexts() {
         <EmptyState
           icon={<Icon name="context" />}
           title="No contexts yet"
-          description="Register an agent in Settings, publish a manifest, then wire them together here."
+          description="Publish a manifest, then create a context from it here — it gets its own agent access automatically."
         />
       ) : (
         <ul className="flex flex-col gap-2">
@@ -103,69 +103,136 @@ function NewContext({
   onCreated: () => void
 }) {
   const [name, setName] = useState("")
-  const [agentId, setAgentId] = useState(agents[0]?.id ?? "")
+  // "" = auto-mint (the default; nobody picks an agent). A non-empty id = run as
+  // an existing service agent — an opt-in the roster's presence (admins) reveals.
+  const [agentId, setAgentId] = useState("")
   const [manifest, setManifest] = useState("")
+  // The minted agent's bearer, shown exactly once; navigation waits for Done so
+  // the only display of the token is never lost to an instant redirect.
+  const [minted, setMinted] = useState<{ contextId: string; name: string; token: string } | null>(
+    null,
+  )
   const nav = useNavigate()
 
   const create = useApiMutation({
     mutationFn: () =>
       api.createContext({
         name: name.trim(),
-        agent_id: agentId,
+        ...(agentId ? { agent_id: agentId } : {}),
         manifest_short_id: manifest.trim(),
       }),
     success: "Context created",
     onSuccess: (ctx) => {
+      const created = name.trim()
       setName("")
       setManifest("")
       onCreated()
+      if (ctx.agent_token) {
+        setMinted({ contextId: ctx.id, name: created, token: ctx.agent_token })
+        return
+      }
       // Carry the user straight into the console they just made — asking the first
       // question is the point, not admiring a new row in the directory.
       nav({ to: "/contexts/$id", params: { id: ctx.id } })
     },
   })
   const submit = () => {
-    if (name.trim() && agentId && manifest.trim()) create.mutate()
+    if (name.trim() && manifest.trim()) create.mutate()
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3">
-      <Input
-        data-testid="context-create-name"
-        aria-label="Context name"
-        placeholder="Name (e.g. Analytics)"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        className="min-w-40 flex-1"
-      />
-      <Select value={agentId} onValueChange={setAgentId}>
-        <SelectTrigger data-testid="context-create-agent" aria-label="Agent" className="w-40">
-          <SelectValue placeholder="Agent" />
-        </SelectTrigger>
-        <SelectContent>
-          {agents.map((a) => (
-            <SelectItem key={a.id} value={a.id}>
-              {a.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Input
-        data-testid="context-create-manifest"
-        aria-label="Manifest short id"
-        placeholder="Manifest short id"
-        value={manifest}
-        onChange={(e) => setManifest(e.target.value)}
-        className="w-44 font-mono"
-      />
-      <Button
-        data-testid="context-create-submit"
-        onClick={submit}
-        loading={create.isPending}
-        disabled={create.isPending || !name.trim() || !agentId || !manifest.trim()}
-      >
-        Create
-      </Button>
+    <div className="flex flex-col gap-3 rounded-xl border bg-card p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          data-testid="context-create-name"
+          aria-label="Context name"
+          placeholder="Name (e.g. Analytics)"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="min-w-40 flex-1"
+        />
+        <Input
+          data-testid="context-create-manifest"
+          aria-label="Manifest short id"
+          placeholder="Manifest short id"
+          value={manifest}
+          onChange={(e) => setManifest(e.target.value)}
+          className="w-44 font-mono"
+        />
+        {/* Only admins can even load the roster; everyone else auto-mints. */}
+        {agents.length > 0 && (
+          <Select value={agentId} onValueChange={(v) => setAgentId(v === "auto" ? "" : v)}>
+            <SelectTrigger data-testid="context-create-agent" aria-label="Agent" className="w-44">
+              <SelectValue placeholder="Its own agent" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Its own agent (default)</SelectItem>
+              {agents.map((a) => (
+                <SelectItem key={a.id} value={a.id}>
+                  {a.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <Button
+          data-testid="context-create-submit"
+          onClick={submit}
+          loading={create.isPending}
+          disabled={create.isPending || !name.trim() || !manifest.trim()}
+        >
+          Create
+        </Button>
+      </div>
+      {/* Shown exactly once, warning tone — same contract as agent registration. */}
+      {minted && (
+        <div data-testid="context-agent-token">
+          <StatusPanel
+            tone="warning"
+            layout="inline"
+            title={`Runner token for ${minted.name} — copy it now, it won't be shown again.`}
+            description={
+              <div className="flex flex-col gap-1.5">
+                <code className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground">
+                  {minted.token}
+                </code>
+                <span className="text-2xs text-muted-foreground">
+                  Save it where the runner reads it (e.g.{" "}
+                  <code className="font-mono">.derive/agent-token</code>), then{" "}
+                  <code className="font-mono">derive runner serve</code> answers this context.
+                </span>
+              </div>
+            }
+            action={
+              <div className="flex items-center gap-2">
+                <Button
+                  data-testid="context-agent-token-copy"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(minted.token)
+                    toast.success("Token copied")
+                  }}
+                >
+                  Copy
+                </Button>
+                <Button
+                  data-testid="context-agent-token-done"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    const id = minted.contextId
+                    setMinted(null)
+                    nav({ to: "/contexts/$id", params: { id } })
+                  }}
+                >
+                  Done
+                </Button>
+              </div>
+            }
+          />
+        </div>
+      )}
     </div>
   )
 }

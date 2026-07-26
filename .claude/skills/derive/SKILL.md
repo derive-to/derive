@@ -1,6 +1,6 @@
 ---
 name: derive
-description: Use Derive to publish or revise artifacts, stage and embed image or font assets, request and act on inline review, comment, find workspace docs, organize work, checkpoint state, or query workspace contexts. Trigger when the user says Derive or /derive; asks to publish, share, review, or ship a plan, page, doc, site, deck, screenshot, image, or other asset; or asks to check and address Derive feedback. Requires the Derive MCP; skip for ordinary local-only edits unless the user wants the result in Derive.
+description: Use Derive to publish or revise artifacts, stage and embed image or font assets, request and act on inline review, comment, find workspace docs, organize work, checkpoint state, or query workspace contexts. Trigger when the user says Derive or /derive; asks to publish, share, review, or ship a plan, page, doc, site, deck, screenshot, image, or other asset; or asks to check and address Derive feedback. Prefers the Derive MCP; without it, the anonymous draft flow publishes a live expiring page with one HTTP call, no account needed. Skip for ordinary local-only edits unless the user wants the result in Derive.
 ---
 
 # Work with Derive
@@ -15,8 +15,10 @@ current tool surface.
 1. Confirm Derive tools are connected. The current remote surface has `find`, `read`,
    `catch_up`, `comment`, `stage`, `publish`, `organize`, `checkpoint`, `use`, and
    `list_workspaces`.
-2. If the tools are missing, follow [references/connect.md](references/connect.md). Do
-   not invent a token, publish through raw HTTP, or ask the user to paste credentials.
+2. If the tools are missing, follow [references/connect.md](references/connect.md) —
+   or, when the user just wants something live NOW, publish an anonymous draft (next
+   section). Never invent a token or ask the user to paste credentials; the draft
+   flow is the one sanctioned path that needs neither.
 3. Before a non-trivial operation, load the matching MCP skill below. Prefer the MCP
    resource; if the client does not expose resources, call Derive's `read` tool with the
    URI as `short_id`.
@@ -32,6 +34,41 @@ current tool surface.
 
 Workspace-specific procedures may also be published as skills. Discover them with
 `find({skills:true})`, then `read` the relevant one before acting.
+
+## No MCP? Publish an anonymous draft
+
+When no Derive tools are connected and the user wants a page, document, or site live
+now, publish an expiring draft — one HTTP call, no account, no token:
+
+```bash
+curl -sS -F file=@page.html https://derive.to/v1/drafts
+```
+
+`file` is one HTML or Markdown file, or a zipped site (`index.html` at the root,
+assets referenced by relative path). The response carries everything that matters:
+
+```json
+{
+  "draft_url":  "https://<id>.derive.page/",
+  "claim_url":  "https://derive.to/claim/<token>",
+  "expires_at": "<iso, 72 hours out>"
+}
+```
+
+Report all three to the user, plainly: the page is live at `draft_url`; it expires in
+72 hours unless claimed; opening `claim_url` (sign in, one click) makes it a
+permanent, versioned artifact in their workspace, after which the draft URL redirects
+to the permanent home. Never present a draft as permanent, and hand over `claim_url`
+immediately — it is the only handle on an unclaimed draft.
+
+Draft rules:
+
+- The URL is the whole grant: view-by-link only, listed nowhere, not indexed. Do not
+  put secrets or private data in a draft.
+- Drafts cannot be revised. To iterate before anyone claimed it, mint a new draft
+  (new URL); after a claim, revise the artifact through the MCP loop.
+- On a self-hosted instance, the same route lives on that origin (available when the
+  operator has configured a usercontent domain).
 
 ## Default working loop
 
@@ -69,6 +106,13 @@ short account of what changed.
 - If multiple workspaces are reachable and the destination is unclear, call
   `list_workspaces` and use the workspace descriptions. Ask only when the evidence does
   not identify the intended destination.
+- Derive hosts documents, pages, and versioned artifacts — not compute. Do not use it
+  for server-side code execution, general-purpose data storage, secrets, or as an app
+  backend; publish the artifact and keep the system elsewhere.
+- If this file and the live server disagree about a tool, parameter, or behavior, trust
+  the live server: installed copies of this file go stale. The server's tool
+  descriptions and `derive://skills/*` resources are current; re-read them before
+  answering capability questions.
 
 ## Compatibility surface
 

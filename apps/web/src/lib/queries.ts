@@ -203,6 +203,16 @@ export const peopleQuery = (query: string) =>
     placeholderData: keepPreviousData,
   })
 
+// Doc search for the automation-target picker: title search over the workspace's
+// artifacts, small page, previous results held while typing so the list never
+// flashes empty mid-keystroke.
+export const targetPickerQuery = (q: string) =>
+  queryOptions({
+    queryKey: ["artifacts", "target-picker", q] as const,
+    queryFn: () => api.listArtifacts({ q: q.trim() || undefined, limit: 8 }),
+    placeholderData: keepPreviousData,
+  })
+
 // Full workspace search for the /search results page — the same hybrid (lexical + dense/semantic)
 // endpoint the ⌘K palette uses, but a deeper page (default 30 vs the palette's 6). Gated to ≥2
 // chars (the server also requires a query); keepPreviousData holds the list across refinements so
@@ -353,10 +363,28 @@ export const automationsQuery = () =>
     queryFn: () => api.listAutomations().then((r) => r.automations),
   })
 
+// The caller's own connected model-plan credentials (hints only). Personal, so keyed plainly.
+export const modelCredentialsQuery = () =>
+  queryOptions({
+    queryKey: ["model-credentials"] as const,
+    queryFn: () => api.listModelCredentials().then((r) => r.credentials),
+  })
+
+// The workspace's shared model-plan pool (hints only, admin surface).
+export const poolCredentialsQuery = () =>
+  queryOptions({
+    queryKey: ["pool-model-credentials"] as const,
+    queryFn: () => api.listPoolCredentials().then((r) => r.credentials),
+  })
+
 export const runsQuery = () =>
   queryOptions({
     queryKey: ["runs"] as const,
     queryFn: () => api.listRuns().then((r) => r.runs),
+    // The ledger changes out-of-band (the executor writes runs the tab never saw),
+    // so revalidate whenever the Automations view mounts — never strand a cached page
+    // that predates the latest runs.
+    refetchOnMount: "always",
   })
 
 // The agents an artifact viewer may address (the "ask an agent to revise" flow). Read

@@ -13,6 +13,7 @@ import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
 import { log } from "./log"
 import { mountMcp } from "./mcp"
+import { agentDiscoveryRoutes } from "./routes/agent-discovery"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
 import { artifactRoutes } from "./routes/artifacts"
@@ -31,6 +32,7 @@ import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
 import { githubAppRoutes } from "./routes/github-app"
 import { marketingRoutes } from "./routes/marketing"
+import { modelCredentialRoutes } from "./routes/model-credentials"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
 import { oauthRoutes } from "./routes/oauth"
@@ -196,6 +198,13 @@ export function createApp(deps: AppDeps): Hono {
     ) => {
       if (!(await ctx.authorize(c, "read", a))) return c.text("not found", 404)
       if (a.removed_at) return c.text(TOMBSTONE, 410)
+      // Expiring draft (the claim flow): gone the moment its TTL passes — the sweep
+      // is the janitor, this is the fence. Live drafts must never be CDN-cacheable:
+      // their link_role is viewer (cross-origin serving requires it), which would
+      // otherwise earn a year-long immutable cache — an expired-then-swept draft
+      // could outlive itself at the edge.
+      if (a.expires_at && a.expires_at <= new Date().toISOString())
+        return c.text("this draft expired — it was never claimed", 410)
       const version = await ctx.meta.getVersion(a.id, n)
       if (!version) return c.text("not found", 404)
       return serveContent(
@@ -205,13 +214,25 @@ export function createApp(deps: AppDeps): Hono {
         a.title,
         prefix,
         rawPath,
-        cacheControlFor(a.link_role, !!a.password_hash),
+        a.expires_at ? "no-store" : cacheControlFor(a.link_role, !!a.password_hash),
+        undefined, // onMismatch: the raw route owns content-type self-healing
+        undefined, // transformHtml
+        true, // reflow
+        // No anchor client: these hosts are top-level pages, never embedded by the
+        // app viewer, so its hover/selection comment UI would render but reach no
+        // host — a "Comment" chip that can't comment.
+        false,
       )
     }
     app.use("*", async (c, next) => {
       const host = (c.req.header("host") ?? new URL(c.req.url).host).toLowerCase().split(":")[0]
       if (!host || host === appHostForSub || (sandboxHost && host === sandboxHost.toLowerCase()))
         return next()
+      // The subdomain base's apex (and www) never serve content: once the base is on
+      // the Public Suffix List the apex is cookie-dead, so it can only ever bounce
+      // visitors to the app origin.
+      if (subBase && (host === subBase || host === `www.${subBase}`) && host !== appHostForSub)
+        return c.redirect(deps.baseUrl, 301)
       const isSub = !!subBase && host !== subBase && host.endsWith(`.${subBase}`)
       if (!isSub && !customEnabled) return next()
       // The served HTML references /raw/derive-client.js; let raw + health through.
@@ -220,6 +241,12 @@ export function createApp(deps: AppDeps): Hono {
       // Unknown subdomain → 404 (clearly ours); unknown/pending custom host → fall
       // through so an unregistered host pointed at us never serves stale content.
       if (record?.status !== "active") return isSub ? c.text("not found", 404) : next()
+      // A claimed draft's old host: unbound from the artifact and left as a signpost
+      // to the artifact's permanent home. no-store because the target can change.
+      if (record.redirect_to) {
+        c.header("Cache-Control", "no-store")
+        return c.redirect(record.redirect_to, 302)
+      }
       if (record.artifact_id) {
         // Artifact-bound host (subdomain today): serve that one artifact at the root.
         const a = await ctx.meta.getArtifactById(record.artifact_id)
@@ -270,6 +297,10 @@ export function createApp(deps: AppDeps): Hono {
     // Anonymous OAuth client registration (open DCR) gets a tighter per-IP cap on
     // top, so no single source can flood the client table.
     app.use("/api/auth/oauth2/register", ipRateLimit(rateLimiters.oauthRegister))
+    // Anonymous draft mints: the one unauthenticated write that creates durable
+    // state. Registered before the general write limiter so the tighter cap 429s
+    // first (same ordering rationale as authEmail above).
+    app.use("/v1/drafts", ipRateLimit(rateLimiters.draftPublish))
     const writeLimiter = ipRateLimit(rateLimiters.write)
     app.use("/v1/*", (c, next) =>
       c.req.method === "GET" || c.req.method === "HEAD" ? next() : writeLimiter(c, next),
@@ -361,6 +392,7 @@ export function createApp(deps: AppDeps): Hono {
     /^\/v1\/slack\/commands$/, // Slack slash command (/derive) — signing-secret signature is the gate
     /^\/v1\/assets\/t\/[^/]+$/, // MCP-minted upload URL — the signed expiring token is the gate
     /^\/v1\/artifacts\/t\/[^/]+$/, // MCP-minted publish URL (create) — signed token is the gate
+    /^\/v1\/drafts$/, // anonymous draft mint (the claim flow) — anonymous is the point; draftPublish IP cap + publish limiter are the gate
     /^\/v1\/artifacts\/[^/]+\/versions\/t\/[^/]+$/, // MCP-minted publish URL (revise) — signed token is the gate
   ]
   app.use("/v1/*", async (c, next) => {
@@ -392,6 +424,7 @@ export function createApp(deps: AppDeps): Hono {
     proposalRoutes,
     reviewRoutes,
     automationRoutes,
+    modelCredentialRoutes,
     conciergeRoutes,
     reworkRoutes,
     commentRoutes,
@@ -409,6 +442,7 @@ export function createApp(deps: AppDeps): Hono {
     systemRoutes,
     betaRoutes,
     marketingRoutes,
+    agentDiscoveryRoutes,
   ])
     app.route("/", routes(ctx))
 

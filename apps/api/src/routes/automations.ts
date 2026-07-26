@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import {
   type AutomationRecord,
   type AutomationTrigger,
@@ -8,9 +9,10 @@ import {
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
+import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 
-// WP5/WP6 — automations + runs, the generic agent-work primitive. An automation is a
+// Automations + runs — the generic agent-work primitive. An automation is a
 // standing job: WHO (agent), WHEN (trigger: manual | schedule | event), WHAT (free-form
 // instruction), on WHAT (refs). Every firing is a run; the run table is both the queue
 // (status=queued) and the ledger (terminal rows). A "living doc" is just an automation whose
@@ -61,9 +63,15 @@ const REF = z.union([
   z.object({ kind: z.literal("tag"), tag: z.string().min(1).max(128), mode: MODE }),
 ])
 const REFS = z.array(REF).max(100)
+const TRIGGER = z.object({
+  kind: z.enum(["manual", "schedule", "event"]),
+  cron: z.string().optional(),
+  tz: z.string().optional(),
+  on: z.string().optional(),
+})
 
 export const automationRoutes = (ctx: AppContext) => {
-  const { meta, agentFor, requireUser, requireWorkspace } = ctx
+  const { meta, agentFor, privateOwnerId, requireUser, requireWorkspace } = ctx
   const app = new Hono()
 
   // ---- Owner surface: define / list / delete ---------------------------------
@@ -73,40 +81,120 @@ export const automationRoutes = (ctx: AppContext) => {
     const b = await readJson(
       c,
       z.object({
-        agentId: z.string(),
-        trigger: z.object({
-          kind: z.enum(["manual", "schedule", "event"]),
-          cron: z.string().optional(),
-          tz: z.string().optional(),
-          on: z.string().optional(),
-        }),
+        // Omit to auto-mint a MANAGED agent for this automation — its own Derive
+        // access, no roster persona, nothing to pick. Pass an id to run as an
+        // existing (service) agent instead. Mirrors context creation (#525).
+        agentId: z.string().optional(),
+        trigger: TRIGGER,
         instruction: z.string().min(1).max(4000),
         refs: REFS.optional(),
         enabled: z.boolean().default(true),
       }),
     )
     if (b instanceof Response) return bail(b)
-    // The agent must belong to this workspace — never an id from another tenant.
-    const agents = await meta.listAgents(org)
-    if (!agents.some((a) => a.id === b.agentId))
-      return bail(fail(c, 400, "agent must be in this workspace"))
-    const rec = await meta.createAutomation({
-      id: newId("auto"),
-      org_id: org,
+    if (b.agentId) {
+      // The agent must belong to this workspace — never an id from another tenant.
+      const agents = await meta.listAgents(org)
+      if (!agents.some((a) => a.id === b.agentId))
+        return bail(fail(c, 400, "agent must be in this workspace"))
+    }
+    let agentId = b.agentId ?? null
+    let agentToken: string | null = null
+    if (!agentId) {
+      agentToken = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
+      // Automations have no name; derive one from the instruction so the (hidden)
+      // roster row is still recognizable. Names are unique per workspace — a
+      // collision suffixes instead of failing the create.
+      const base = b.instruction.trim().slice(0, 40).trim() || "Automation"
+      const owner = (await privateOwnerId(c)) ?? null
+      const mint = (name: string) =>
+        meta.createAgent({
+          id: newId("ag"),
+          org_id: org,
+          name,
+          token: sha256(agentToken as string),
+          role: "editor",
+          created_by: owner,
+          managed: 1,
+        })
+      const minted = await mint(base).catch(() => mint(`${base} ${randomUUID().slice(0, 4)}`))
+      agentId = minted.id
+    }
+    try {
+      const rec = await meta.createAutomation({
+        id: newId("auto"),
+        org_id: org,
+        agent_id: agentId,
+        trigger: JSON.stringify(b.trigger satisfies AutomationTrigger),
+        instruction: b.instruction,
+        // Stored CANONICAL (bare strings become artifact selectors) so readers never re-guess.
+        refs: b.refs ? JSON.stringify(normalizeSelectors(b.refs)) : null,
+        enabled: b.enabled ? 1 : 0,
+      })
+      return c.json({ ...present(rec), ...(agentToken ? { agent_token: agentToken } : {}) }, 201)
+    } catch (e) {
+      // A failed create after an auto-mint must not strand an orphaned managed
+      // agent (and its live token) — unwind the mint with the create.
+      if (agentToken && agentId) await meta.deleteAgent(agentId, org).catch(() => {})
+      throw e
+    }
+  })
+
+  // Edit in place: instruction, trigger, refs (write modes ride IN them), the agent,
+  // and enabled (pause/resume). Same manage gate as create; org-scoped update so a
+  // shared short id can never cross tenants. Pausing composes with the existing
+  // guards: run-now 400s and stale queued runs cancel at claim.
+  app.patch("/v1/automations/:id", async (c) => {
+    const org = await requireWorkspace(c, "manage")
+    if (org instanceof Response) return org
+    const a = await meta.getAutomation(c.req.param("id"))
+    if (!a || a.org_id !== org) return fail(c, 404, "not found")
+    const b = await readJson(
+      c,
+      z.object({
+        agentId: z.string().optional(),
+        trigger: TRIGGER.optional(),
+        instruction: z.string().min(1).max(4000).optional(),
+        refs: REFS.nullable().optional(),
+        enabled: z.boolean().optional(),
+      }),
+    )
+    if (b instanceof Response) return bail(b)
+    if (b.agentId !== undefined) {
+      const agents = await meta.listAgents(org)
+      if (!agents.some((ag) => ag.id === b.agentId))
+        return bail(fail(c, 400, "agent must be in this workspace"))
+    }
+    const rec = await meta.updateAutomation(a.id, org, {
       agent_id: b.agentId,
-      trigger: JSON.stringify(b.trigger satisfies AutomationTrigger),
+      trigger: b.trigger ? JSON.stringify(b.trigger satisfies AutomationTrigger) : undefined,
       instruction: b.instruction,
-      // Stored CANONICAL (bare strings become artifact selectors) so readers never re-guess.
-      refs: b.refs ? JSON.stringify(normalizeSelectors(b.refs)) : null,
-      enabled: b.enabled ? 1 : 0,
+      refs:
+        b.refs === undefined
+          ? undefined
+          : b.refs === null
+            ? null
+            : JSON.stringify(normalizeSelectors(b.refs)),
+      enabled: b.enabled === undefined ? undefined : b.enabled ? 1 : 0,
     })
-    return c.json(present(rec), 201)
+    if (!rec) return fail(c, 404, "not found")
+    return c.json(present(rec))
   })
 
   app.get("/v1/automations", async (c) => {
     const org = await requireWorkspace(c, "read")
     if (org instanceof Response) return org
-    return c.json({ automations: (await meta.listAutomations(org)).map(present) })
+    // Each row carries its agent's runs-lane liveness so the UI can say, honestly,
+    // whether ANYTHING executes this automation — null = no executor has ever polled.
+    // One batched roster read (no-N+1), joined in memory.
+    const [autos, agents] = await Promise.all([meta.listAutomations(org), meta.listAgents(org)])
+    const seen = new Map(agents.map((a) => [a.id, a.runs_seen_at]))
+    return c.json({
+      automations: autos.map((a) => ({
+        ...present(a),
+        executor_seen_at: seen.get(a.agent_id) ?? null,
+      })),
+    })
   })
 
   app.delete("/v1/automations/:id", async (c) => {
@@ -138,6 +226,9 @@ export const automationRoutes = (ctx: AppContext) => {
       automation_id: a.id,
       agent_id: a.agent_id,
       reason: `manual:${me.id}`,
+      // First-class, not parsed out of `reason`: the clicker's plan bills this run
+      // (the wallet follows the initiator). Schedule/event enqueues leave it null.
+      initiated_by: me.id,
       scheduled_for: isoNow(),
     })
     return c.json({ id: rec.id, status: rec.status }, 201)
@@ -153,6 +244,10 @@ export const automationRoutes = (ctx: AppContext) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
     const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20))
+    // The runs-lane heartbeat (twin of the session queue's runner_seen_at): throttled
+    // to ~minutely, best-effort — liveness display must never fail a claim.
+    if (!agent.runs_seen_at || Date.now() - new Date(agent.runs_seen_at).getTime() > 60_000)
+      await meta.touchAgentRunsSeen(agent.id, isoNow()).catch(() => {})
     const claimed = await meta.claimDueRuns(agent.id, isoNow(), limit)
     // Resolve each claimed run's automation DIRECTLY by id, in ONE batched query — never
     // via a capped org-wide list (which silently loses instructions past its limit), and
@@ -192,6 +287,10 @@ export const automationRoutes = (ctx: AppContext) => {
       runs: runnable.map(({ r, a }) => ({
         id: r.id,
         reason: r.reason,
+        // The wallet key: whose plan this run bills (null = clock/event → registrant
+        // today, the workspace pool once it lands). The executor passes it back on
+        // the model-credential fetch via ?run=.
+        initiated_by: r.initiated_by,
         automation_id: r.automation_id,
         instruction: a.instruction,
         // Canonical selectors: artifact = revise it, collection = file new work there,

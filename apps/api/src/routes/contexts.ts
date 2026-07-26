@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import {
   type ContextAskerRecord,
   type ContextRecord,
@@ -13,6 +14,7 @@ import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { resolveActorBrandprint } from "../lib/brandprint"
+import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { log } from "../log"
 
@@ -297,11 +299,16 @@ export const contextRoutes = (ctx: AppContext) => {
       method: "post",
       path: "/v1/contexts",
       tags: ["Contexts"],
-      summary: "Create a context (wire an agent to a manifest artifact).",
+      summary: "Create a context (wire an agent to a manifest artifact, or auto-mint one).",
       responses: {
         201: {
-          description: "The created context.",
-          content: { "application/json": { schema: ContextInfo } },
+          description:
+            "The created context. When no agent_id was given, agent_token carries the auto-minted agent's bearer — shown only here.",
+          content: {
+            "application/json": {
+              schema: ContextInfo.extend({ agent_token: z.string().optional() }),
+            },
+          },
         },
       },
     }),
@@ -320,27 +327,66 @@ export const contextRoutes = (ctx: AppContext) => {
         c,
         z.object({
           name: z.string().trim().min(1).max(80),
-          agent_id: z.string(),
+          // Omit to auto-mint a MANAGED agent for this context — the context's own
+          // Derive access, no roster persona, nothing to pick. Pass an id to run as
+          // an existing (service) agent instead.
+          agent_id: z.string().optional(),
           manifest_short_id: z.string(),
         }),
       )
       if (b instanceof Response) return bail(b)
-      const agents = await meta.listAgents(org)
-      if (!agents.some((a) => a.id === b.agent_id)) return bail(fail(c, 404, "no such agent"))
+      if (b.agent_id) {
+        const agents = await meta.listAgents(org)
+        if (!agents.some((a) => a.id === b.agent_id)) return bail(fail(c, 404, "no such agent"))
+      }
       const manifest = await meta.getByShortId(b.manifest_short_id)
       if (!manifest || manifest.org_id !== org || !(await authorize(c, "share", manifest)))
         return bail(fail(c, 404, "no such artifact"))
+      // Auto-mint under the context-create gate (publish), deliberately below the
+      // roster's manage gate: the minted agent is managed:1, caps at editor, and
+      // acts on behalf of the CREATOR (created_by = owner) — the derived-cap rule
+      // (min of registrant standing and agent role) means it can never exceed what
+      // the creator already holds, so no privilege is conferred that `publish`
+      // didn't already carry. This is what kills the "pick an agent" step.
+      let agentId = b.agent_id ?? null
+      let agentToken: string | null = null
+      if (!agentId) {
+        agentToken = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
+        const mint = (name: string) =>
+          meta.createAgent({
+            id: newId("ag"),
+            org_id: org,
+            name,
+            token: sha256(agentToken as string),
+            role: "editor",
+            created_by: owner,
+            managed: 1,
+          })
+        // Agent names are unique per workspace; a context named like an existing
+        // agent ("Analytics") must not 409 the whole create — suffix and move on.
+        const minted = await mint(b.name).catch(() => mint(`${b.name} ${randomUUID().slice(0, 4)}`))
+        agentId = minted.id
+      }
       try {
         const created = await meta.createContext({
           id: newId("ctx"),
           org_id: org,
           name: b.name,
-          agent_id: b.agent_id,
+          agent_id: agentId,
           manifest_artifact_id: manifest.id,
           created_by: owner,
         })
-        return c.json(contextJson(created, manifest.short_id), 201)
+        return c.json(
+          {
+            ...contextJson(created, manifest.short_id),
+            ...(agentToken ? { agent_token: agentToken } : {}),
+          },
+          201,
+        )
       } catch {
+        // A name-collision 409 after an auto-mint must not strand an orphaned
+        // managed agent (and its live token) — unwind the mint with the create.
+        if (agentToken && agentId) await meta.deleteAgent(agentId, org).catch(() => {})
         return bail(fail(c, 409, "a context with that name already exists"))
       }
     },

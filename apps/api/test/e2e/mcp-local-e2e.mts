@@ -342,7 +342,7 @@ const main = async () => {
   // 20a. GIVE: the asker hands the context an instruction (names the target). wait:0 so we
   //      drive the runner by hand rather than blocking on it.
   console.log("\n[contexts] GIVE an instruction")
-  const give = await call("use", { context: cxId, instruction: "Build the walkthrough for Airbnb.", wait: 0 }, askerToken)
+  const give = await call("use", { context: cxId, instruction: "Build the walkthrough for Harborstay.", wait: 0 }, askerToken)
   const sid = give.json?.session_id as string | undefined
   ok(!give.isError && !!sid, `give opened a session (${sid})`)
   ok(give.json?.state === "open", `session starts open (was ${give.json?.state})`)
@@ -363,15 +363,15 @@ const main = async () => {
   ok(mine?.state === "working", `pulled session is now working (was ${mine?.state})`)
   // biome-ignore lint/suspicious/noExplicitAny: test convenience over the transcript
   const askerMsg = ((mine?.messages as any[]) ?? []).find((m) => m.author === "asker")
-  ok(!!askerMsg && /Airbnb/.test(askerMsg?.body_md ?? ""), "the pulled transcript carries the instruction (names Airbnb)")
+  ok(!!askerMsg && /Harborstay/.test(askerMsg?.body_md ?? ""), "the pulled transcript carries the instruction (names Harborstay)")
 
   // 20d. A living result page is published (via the grant, per the seeding note above);
   //      the runner BINDS it to the session and REPORTS progress against it.
   console.log("\n[contexts] REPORT progress + bind a result page")
-  const building = await call("publish", { title: "Airbnb Walkthrough (building)", content: "<h1>building…</h1>" })
+  const building = await call("publish", { title: "Harborstay Walkthrough (building)", content: "<h1>building…</h1>" })
   const resultShortId = (building.json?.short_id as string) || (building.json?.artifact as { short_id?: string })?.short_id
   ok(!!resultShortId, `published the building result page (${resultShortId})`)
-  const prog = await call("use", { session_id: sid, answer: "Running the skill chain for Airbnb…", progress: true, result_artifact_id: resultShortId }, runnerToken)
+  const prog = await call("use", { session_id: sid, answer: "Running the skill chain for Harborstay…", progress: true, result_artifact_id: resultShortId }, runnerToken)
   ok(!prog.isError && prog.json?.state === "working", "progress tick keeps the session working")
   ok(typeof prog.json?.result_url === "string" && (prog.json?.result_url as string).includes(resultShortId ?? "\0"), "report returns a result_url for the bound page")
 
@@ -384,7 +384,7 @@ const main = async () => {
   // 20f. REPORT the final answer (settles). `answers` = the instruction message id, the
   //      guard against clobbering a mid-run follow-up.
   console.log("\n[contexts] REPORT the final answer (settles)")
-  const done = await call("use", { session_id: sid, answer: "Done — the Airbnb walkthrough is live.", state: "answered", answers: askerMsg?.id, result_artifact_id: resultShortId }, runnerToken)
+  const done = await call("use", { session_id: sid, answer: "Done — the Harborstay walkthrough is live.", state: "answered", answers: askerMsg?.id, result_artifact_id: resultShortId }, runnerToken)
   ok(!done.isError && done.json?.state === "answered", "final report settles the session to answered")
 
   // 20g. The asker collects the settled answer + the result link.
