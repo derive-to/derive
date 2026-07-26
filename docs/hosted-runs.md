@@ -39,10 +39,13 @@ All three live in `lib/run-lifecycle.ts`, which throws at import if the order is
 
 ### Cost and fairness
 
-- **Monthly model budget is enforced at dispatch**, not only at the enqueue routes. A schedule
-  creates runs with no human in the loop, so without this a cron automation would spend past the
-  owner's cap forever. Over budget ⇒ the run is *deferred* (left queued), never failed: raising
-  the cap or the next month releases it with nobody re-creating the work.
+- **Monthly model budget — wired at every call site, but NOT YET A CEILING.** The check runs at
+  the enqueue routes and at dispatch, and over budget *defers* the run (left queued, never
+  failed) so raising the cap or the next month releases it with nobody re-creating the work.
+  What it compares against is `run.cost_micro_usd`, and the executor never reports cost — so
+  the sum is always zero and the check always passes. Until the runner reports cost, treat
+  hosted spend as bounded by the concurrency and retry caps below, not by money, and do not
+  tell a workspace it has a monthly cap.
 - **Per-workspace in-flight cap** (default 3) so one workspace's burst can't consume the
   deployment's capacity or fan out unbounded model spend. Also deferred, not failed.
 - A **global per-pass limit** (default 10) is the outer burst valve.
@@ -169,9 +172,13 @@ due run. `wrangler tail` shows the boots.
    `cd apps/api && pnpm build:web && npx wrangler deploy --dry-run`
    Expect `env.RUN_CONTAINER (RunContainer)` and `env.RUN_QUEUE (derive-runs)` in the binding
    list, and the container image to build.
-4. `wrangler deploy`. Hosted execution is still gated per workspace by
-   **Settings → hosted agents** (`hostedAgentsEnabled`), which is the operator's emergency
-   stop: turn it off and the next tick dispatches nothing, no redeploy needed.
+4. `wrangler deploy`. Hosted execution is still gated per workspace by `hostedAgentsEnabled`
+   in org settings: set it false and the next tick dispatches nothing for that workspace, no
+   redeploy needed. Two caveats worth knowing before you rely on it as an emergency stop.
+   **There is no UI** — it is `PATCH /v1/workspace/settings`, one workspace at a time, so it
+   is not the lever to reach for if you need to stop *everything* (that is unsetting
+   `DERIVE_HOSTED_RUNS` and restarting, or removing the wrangler blocks and redeploying). And
+   it **defaults to on**, so a workspace that has never touched settings is opted in.
 
 Two config details that only a dry run surfaces, both already fixed here: the image needs
 `image_build_context = "../.."` (the Dockerfile COPYs repo-root paths, but wrangler builds

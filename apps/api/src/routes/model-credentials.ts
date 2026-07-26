@@ -25,7 +25,8 @@ const isoNow = () => new Date().toISOString()
 const POOL_USER = "__workspace_pool__"
 
 export const modelCredentialRoutes = (ctx: AppContext) => {
-  const { meta, deps, agentFor, requireUser, requireWorkspace } = ctx
+  const { meta, deps, agentFor, agentRunScope, agentSessionScope, requireUser, requireWorkspace } =
+    ctx
   const app = new Hono()
 
   // List the caller's own connected credentials — HINTS only, never the secret.
@@ -188,6 +189,21 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
     agent: { id: string; org_id: string; created_by: string | null },
   ) => {
     const out: { userId: string; source: string }[] = []
+    // PIN TO THE BEARER'S OWN WORK FIRST. Belonging to the same agent is not enough: one
+    // agent serves many sessions from many askers and many runs from many initiators, so
+    // "same agent" let an executor name someone ELSE's session and be handed that person's
+    // decrypted plan token — and, through the PUT below, overwrite their stored login (the
+    // compare-and-swap is satisfied by the value it just read). A capability bearer may only
+    // ever ask about the one item its token names.
+    const runScope = agentRunScope(c)
+    const sessScope = agentSessionScope(c)
+    if (runScope && c.req.query("session")) return fail(c, 403, "run token: pass ?run= only")
+    if (sessScope && c.req.query("run")) return fail(c, 403, "session token: pass ?session= only")
+    if (runScope && c.req.query("run") && c.req.query("run") !== runScope)
+      return fail(c, 403, "a run token may only resolve its own run")
+    if (sessScope && c.req.query("session") && c.req.query("session") !== sessScope)
+      return fail(c, 403, "a session token may only resolve its own session")
+
     const sessionId = c.req.query("session")
     if (sessionId) {
       const s = await meta.getSession(sessionId)
