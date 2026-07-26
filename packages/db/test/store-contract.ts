@@ -1260,6 +1260,31 @@ export function runStoreContract(
       expect(await store.pruneViewsByViewers(["amy"])).toBeGreaterThanOrEqual(1)
       expect(await store.pruneViews("2999-01-01T00:00:00.000Z")).toBeGreaterThanOrEqual(1)
     })
+
+    it("stamps first_foreign_view_at on the first view only (the activation moment)", async () => {
+      const a = await store.createArtifact(newArtifact())
+      expect((await store.getByShortId(a.short_id))?.first_foreign_view_at).toBeNull()
+
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: "visitor1",
+        viewer_kind: "anon",
+      })
+      const stamped = (await store.getByShortId(a.short_id))?.first_foreign_view_at
+      expect(stamped).toBeTruthy()
+
+      // A later view never moves the stamp — activation happened once.
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: "visitor2",
+        viewer_kind: "user",
+      })
+      expect((await store.getByShortId(a.short_id))?.first_foreign_view_at).toBe(stamped)
+    })
   })
 
   describe(`${label}: webhooks + outbox`, () => {

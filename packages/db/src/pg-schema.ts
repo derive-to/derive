@@ -57,6 +57,8 @@ export const artifact = pgTable("artifact", {
   // Expiring anonymous draft (the claim flow): ISO instant after which the draft is
   // gone — served 410 and swept. Null for every ordinary artifact; cleared on claim.
   expires_at: text("expires_at"),
+  // First non-author view (the activation moment; see schema.ts).
+  first_foreign_view_at: text("first_foreign_view_at"),
   source_path: text("source_path"),
   // The CURRENT (last) author, denormalized from the latest version for the list view +
   // author filtering. For a GitHub-synced artifact these mirror the last commit's author.

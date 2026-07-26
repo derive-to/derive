@@ -39,6 +39,11 @@ export function createD1Store(d1: D1Database): MetaStore {
       await db.run(
         sql`INSERT INTO view (id, artifact_id, version, viewer, viewer_kind) VALUES (${v.id}, ${v.artifact_id}, ${v.version}, ${v.viewer}, ${v.viewer_kind})`,
       )
+      // Activation stamp: first non-author view only (the route already excluded
+      // owner self-views). WHERE IS NULL keeps it a one-time write.
+      await db.run(
+        sql`UPDATE artifact SET first_foreign_view_at = ${new Date().toISOString()} WHERE id = ${v.artifact_id} AND first_foreign_view_at IS NULL`,
+      )
     },
     viewedSince: async (
       artifactId: string,
