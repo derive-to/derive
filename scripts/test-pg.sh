@@ -25,10 +25,23 @@ echo "→ starting ephemeral Postgres ($IMAGE)…"
 # A generous max_connections covers many Pools at once — under file parallelism
 # several files' isolated-schema stores are live concurrently (pools are lazy, so
 # real usage sits well below this ceiling).
+#
+# Durability is turned OFF on purpose. This container is created for one test run
+# and deleted on exit (the trap above), so there is nothing whose survival anyone
+# could want: if the machine dies mid-run the answer is to run the suite again,
+# not to recover its data. Meanwhile the suite is DDL-heavy — every test file
+# replays the full schema into its own namespace — and DDL is exactly what fsync
+# punishes, which is why this lane sat at 328% CPU on a 14-core box: waiting on
+# disk, not computing.
+#   fsync/synchronous_commit/full_page_writes — stop waiting on the disk at all
+#   autovacuum                                — nothing lives long enough to need it
+# NEVER copy these to a real database.
 docker run -d --rm --name "$NAME" \
   -e POSTGRES_PASSWORD="$PASSWORD" -e POSTGRES_DB="$DB" \
   -p 127.0.0.1::5432 \
-  "$IMAGE" -c max_connections=400 >/dev/null
+  "$IMAGE" -c max_connections=400 \
+  -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+  -c autovacuum=off >/dev/null
 
 PORT="$(docker port "$NAME" 5432/tcp | head -1 | sed 's/.*://')"
 URL="postgres://postgres:${PASSWORD}@127.0.0.1:${PORT}/${DB}"
