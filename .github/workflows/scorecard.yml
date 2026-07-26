@@ -17,7 +17,7 @@ permissions: read-all
 jobs:
   analysis:
     if: github.repository == 'derive-to/derive' && github.event.repository.private == false
-    runs-on: ubicloud-standard-4
+    runs-on: ubicloud-standard-4-arm
     permissions:
       security-events: write # upload SARIF to code scanning
       id-token: write # publish results to the OpenSSF REST API

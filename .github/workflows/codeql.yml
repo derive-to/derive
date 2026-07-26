@@ -18,7 +18,7 @@ permissions: {}
 jobs:
   analyze:
     if: github.repository == 'derive-to/derive' && github.event.repository.private == false
-    runs-on: ubicloud-standard-4
+    runs-on: ubicloud-standard-4-arm
     permissions:
       security-events: write # upload analysis results
       contents: read

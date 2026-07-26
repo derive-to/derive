@@ -25,11 +25,11 @@ concurrency:
 # same length?
 #
 # There used to be five jobs. Exactly one of those splits paid for itself — the
-# SQLite suite and the Postgres suite are ~210s each, so they must run beside
-# each other or a PR waits seven minutes. The rest (a path-filter job, a bundle
-# job, a supply-chain job) were split for conditional execution and tidy
-# reporting, and each one bought a VM boot, a checkout and a ~28s install to do
-# 15-40s of work. Folding them onto a lane that was going to be running anyway
+# SQLite suite and the Postgres suite were ~210s each on the old runners, so they
+# must run beside each other or a PR waits seven minutes. The rest (a path-filter
+# job, a bundle job, a supply-chain job) were split for conditional execution and
+# tidy reporting, and each one bought a VM boot, a checkout and a ~28s install to
+# do 15-40s of work. Folding them onto a lane that was going to be running anyway
 # makes them free.
 #
 # So: two lanes, anchored by the two suites that cannot share one, with the small
@@ -44,15 +44,17 @@ concurrency:
 # else two lanes buy: a failure in one still lets the other report, either can be
 # re-run alone, and there is headroom to scale each independently.
 #
-# The lanes are NOT currently balanced (lane A ~87s, lane B ~125s) and cannot be
-# balanced by moving steps: the Postgres step alone is longer than everything
-# lane A does. The lever is that lane's worker count — see the step below.
+# The lanes now land within ~10s of each other (A ~85s, B ~94s), which is where
+# this wants to stay. They could not be balanced by moving steps — the Postgres
+# step alone runs longer than everything lane A does — so both levers were applied
+# to that step instead: its worker count, and turning off durability on a database
+# that gets deleted at the end of the run. See the step and scripts/test-pg.sh.
 #
 # The cost of packing, stated honestly: a lane stops at its first failure, so a
 # red test now hides that gitleaks would also have failed. That is a fair trade
 # for one machine instead of five, and the failing step names itself.
 #
-# RUNNERS — Ubicloud x64, and two things changed at once, both deliberate.
+# RUNNERS — Ubicloud arm64, sized 8 vCPU for the two lanes.
 #
 # SIZE. Every job used to run on 2 vCPU while the suite is ~200 CPU-seconds of
 # embarrassingly parallel work (measured: 176s user + 40s system, 615% CPU across
@@ -60,13 +62,17 @@ concurrency:
 # and `check` was spending 212s in tests alone. Cores were the whole lever;
 # nothing about the test code was the problem.
 #
-# ARCH. One architecture for every job, which is why the old x64/arm split and
-# its caveats are gone: gitleaks needs no arch-specific asset, the runner image
-# builds amd64 natively instead of under emulation, and there is no longer a
-# class of "passes on the arm jobs, breaks on the x64 one" failure. The toolchain
-# is arm-native and arm is cheaper per minute, so ubicloud-standard-*-arm is a
-# live follow-up — worth doing once these labels have proven themselves, so that
-# a queued job is never ambiguous.
+# ARCH. One architecture for every job — now arm64, which is cheaper per minute
+# and what this toolchain (biome, esbuild, vite, vitest, tsgo) is native on. The
+# point is that it is ONE: the old split existed only because two steps pinned
+# themselves to x64, and both were fixed rather than worked around. gitleaks now
+# picks its asset from `uname -m` instead of hardcoding, and the runner image is
+# arch-clean (see the note on that step for why building arm64 is honest here,
+# and the single condition under which it would stop being).
+#
+# This landed as its own change AFTER the x64 move had a green run, deliberately:
+# provider and architecture moving together would have made a queued job or a
+# broken step ambiguous about which one caused it.
 #
 # THE ESCAPE HATCH, which this repo has needed before: Ubicloud's integration
 # vanished on 2026-07-02 and every job sat queued forever. The runs-on label is
@@ -81,7 +87,7 @@ jobs:
   # vitest.config.ts, and since `deploy` needs this job, a coverage regression
   # blocks the ship.
   check:
-    runs-on: ubicloud-standard-8
+    runs-on: ubicloud-standard-8-arm
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
@@ -119,9 +125,16 @@ jobs:
           fi
           exit 1
 
+      # Asset picked from the machine rather than hardcoded, so this step stops
+      # being a reason the runners can't change architecture — which is exactly
+      # what it was before.
       - name: Secret scan (gitleaks)
         run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz | tar -xz gitleaks
+          case "$(uname -m)" in
+            aarch64|arm64) arch=arm64 ;;
+            *)             arch=x64   ;;
+          esac
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_${arch}.tar.gz" | tar -xz gitleaks
           ./gitleaks detect --no-git --source . --redact --no-banner
 
   # LANE B — everything that needs a real engine or produces an artifact.
@@ -138,7 +151,7 @@ jobs:
   # and a serial hop before either could start; as steps they cost only the
   # seconds they actually run, and skip to nothing otherwise.
   db:
-    runs-on: ubicloud-standard-8
+    runs-on: ubicloud-standard-8-arm
     # paths-filter lists a PR's changed files via the GitHub API, which needs
     # pull-requests:read (the workflow default is contents:read only).
     permissions:
@@ -198,6 +211,18 @@ jobs:
       # The runner image builds from packages/cli — this catches a CLI change that
       # breaks the container (deps, bin layout) before someone finds out on a box.
       # Build-only; no registry push.
+      #
+      # On an arm runner this now builds arm64 while production runs amd64, which
+      # is a real difference and worth being explicit about. It is acceptable here
+      # because nothing in this image is arch-specific: node:24-slim is multi-arch,
+      # the Dockerfile already resolves the gh apt repo through
+      # `dpkg --print-architecture`, uv's installer detects its own target, and the
+      # CLI's only dependency is fflate (pure JS — no native modules to compile).
+      # The failures this step exists to catch — a missing dep, a moved bin, a
+      # broken entrypoint — are all arch-independent. Building amd64 here instead
+      # would mean qemu emulation and minutes, to guard a risk that would have to
+      # arrive as a new native dependency. If one is ever added, build this step
+      # with --platform linux/amd64 or move it back to an x64 lane.
       - name: Build runner image + start check
         if: steps.filter.outputs.docker == 'true'
         # No token/context on purpose: a healthy image exits 1 with the house
@@ -224,7 +249,7 @@ jobs:
   deploy:
     if: github.repository == 'derive-to/derive' && github.event_name == 'push' # never PRs, never forks
     needs: [check, db]
-    runs-on: ubicloud-standard-4
+    runs-on: ubicloud-standard-4-arm
     # A running deploy is never cancelled — a schema applied for a worker that
     # then didn't ship is the state to avoid. Queued runs are NOT ordered:
     # GitHub keeps only the newest pending run per group, so intermediate green
