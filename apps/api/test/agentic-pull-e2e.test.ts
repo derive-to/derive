@@ -38,6 +38,18 @@ const base = await new Promise<string>((resolve) => {
 afterAll(() => server.close())
 
 const post = (path: string, body: object) => app.request(path, jsonAs(as(owner.email), body))
+
+// A run bills a real plan or it does not start: resolveModelEnv fails closed, with no ambient
+// fallback, so an unconnected workspace can neither spend a stray host token nor quietly run on
+// one. These runs are initiated by the owner, so the owner's plan is what they resolve to — and
+// connecting it here is setup, not a workaround: it is the same step a person does once before
+// their first automation ever fires.
+await post("/v1/me/model-credentials", {
+  provider: "claude-code",
+  kind: "api_key",
+  token: "e2e-plan-fixture",
+})
+
 const publish = async (title: string, content: string) => {
   const res = await publishAs(app, content, { title }, as(owner.email))
   return (await res.json()) as { short_id: string }
