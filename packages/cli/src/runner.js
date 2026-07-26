@@ -390,9 +390,36 @@ export const repoSlug = (url) => {
     .replace(/[^A-Za-z0-9._-]/g, "-")
 }
 
+// Git's environment variables outrank BOTH `-C` and the process cwd: if GIT_DIR is
+// set, every command below targets that repository no matter what directory it was
+// pointed at. Anything git itself invokes inherits them — hooks, `rebase --exec`,
+// `bisect run` — so a runner started from one would fetch, check out and detach
+// HEAD inside the surrounding repo instead of its own clone under `repos/`. Strip
+// them once, here, since every git call in this file goes through this helper.
+const GIT_ENV_VARS = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_PREFIX",
+  "GIT_COMMON_DIR",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+]
+
+/** process.env minus the variables that would retarget git at another repository. */
+export const gitSafeEnv = (env = process.env) => {
+  const clean = { ...env }
+  for (const k of GIT_ENV_VARS) delete clean[k]
+  return clean
+}
+
 const git = (args, timeout = 300_000) =>
   new Promise((resolve) => {
-    const p = spawn("git", args, { stdio: ["ignore", "pipe", "pipe"], timeout })
+    const p = spawn("git", args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout,
+      env: gitSafeEnv(),
+    })
     let out = ""
     let err = ""
     p.stdout.on("data", (b) => {

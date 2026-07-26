@@ -16,6 +16,7 @@ import {
   buildPrompt,
   checkWritable,
   doctor,
+  gitSafeEnv,
   loadRunnerConfig,
   OUTPUT_CONTRACT,
   once,
@@ -250,14 +251,35 @@ brandprint: off
     expect(block).toContain("UNAVAILABLE")
   })
 
+  it("strips the git variables that would retarget a clone at another repo", () => {
+    // Not a style preference. GIT_DIR outranks both `-C` and the cwd, and git exports
+    // it into everything it invokes — hooks, `rebase --exec`, `bisect run`. A runner
+    // booted from one of those would fetch and detach HEAD inside the surrounding
+    // repository instead of its own clone. This helper is the single place that is
+    // prevented, so it is the single place worth pinning.
+    const clean = gitSafeEnv({
+      PATH: "/usr/bin",
+      GIT_DIR: "/somewhere/.git",
+      GIT_WORK_TREE: "/somewhere",
+      GIT_INDEX_FILE: "/somewhere/.git/index",
+      GIT_PREFIX: "sub/",
+      GIT_COMMON_DIR: "/somewhere/.git",
+      GIT_OBJECT_DIRECTORY: "/somewhere/.git/objects",
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: "/other/objects",
+    })
+    expect(Object.keys(clean).filter((k) => k.startsWith("GIT_"))).toEqual([])
+    // Everything else survives: private-repo auth rides the host's own environment.
+    expect(clean.PATH).toBe("/usr/bin")
+  })
+
   it("syncRepos clones at boot and follows the tip on the next boot", async () => {
     const src = mkdtempSync(join(tmpdir(), "runner-repo-src-"))
     const cwd = mkdtempSync(join(tmpdir(), "runner-repo-cwd-"))
-    // `cwd` alone does not pin git: an ambient GIT_DIR (which git exports into its
-    // own hooks, so `pnpm test` from a pre-push runs with one set) outranks it, and
-    // these commands would land in the surrounding repo instead of the fixture.
-    const { GIT_DIR: _d, GIT_WORK_TREE: _w, GIT_INDEX_FILE: _i, ...cleanEnv } = process.env
-    const sh = (cmd) => execSync(cmd, { cwd: src, stdio: "pipe", env: cleanEnv })
+    // `cwd` alone does not pin git: an ambient GIT_DIR outranks it, and these
+    // commands would then build the fixture inside the SURROUNDING repository —
+    // `git commit` there, on a real branch. Same scrub the runner applies to its
+    // own git calls, via the same helper, so the two cannot drift apart.
+    const sh = (cmd) => execSync(cmd, { cwd: src, stdio: "pipe", env: gitSafeEnv() })
     sh("git init -q -b main && git config user.email t@t && git config user.name t")
     writeFileSync(join(src, "notes.md"), "v1")
     sh("git add . && git commit -qm one")
