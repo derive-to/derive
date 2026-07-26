@@ -40,6 +40,18 @@ describe("unfurl + embed", () => {
     expect(body.html).toContain(`/v1/embed/deck-${short}`)
   })
 
+  it("the embed plaque's back-link carries the embed_badge source tag", async () => {
+    const short = await idOf(
+      await upload("e.md", "# Hi", { visibility: "public", title: "Tagged" }),
+    )
+    const res = await app.request(`/v1/embed/${short}`)
+    expect(res.status).toBe(200)
+    const shell = await res.text()
+    // The plaque lands the viewer on the artifact page — a worker-first path, so
+    // the capture middleware stamps the arrival with this surface.
+    expect(shell).toContain("src=embed_badge")
+  })
+
   it("oembed rejects a non-artifact url and a missing url", async () => {
     expect((await app.request("/v1/oembed")).status).toBe(400)
     const bad = await app.request(

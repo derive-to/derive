@@ -18,7 +18,10 @@ export default defineConfig({
   test: {
     coverage: {
       provider: "v8",
-      include: ["src/**"],
+      // TypeScript only: src/skills/*.md (the MCP skill sources) live under src,
+      // and the v8 provider's uncovered-file sweep PARSE_ERRORs trying to read
+      // markdown as JS — which exits 1 even with every test green.
+      include: ["src/**/*.ts"],
       reporter: ["text-summary"],
       // Ratchet floors, set just under the current numbers (78.9/70.1/79.0/83.2)
       // with headroom for noise. A drop fails `check`, and deploy needs check, so
