@@ -9,6 +9,7 @@
     "ignoreUnknown": true,
     "includes": [
       "**",
+      "!.claude/worktrees",
       "!**/routeTree.gen.ts",
       "!**/*.gen.ts",
       "!**/openapi.json",

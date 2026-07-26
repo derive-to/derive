@@ -363,6 +363,20 @@ export const automationsQuery = () =>
     queryFn: () => api.listAutomations().then((r) => r.automations),
   })
 
+// The caller's own connected model-plan credentials (hints only). Personal, so keyed plainly.
+export const modelCredentialsQuery = () =>
+  queryOptions({
+    queryKey: ["model-credentials"] as const,
+    queryFn: () => api.listModelCredentials().then((r) => r.credentials),
+  })
+
+// The workspace's shared model-plan pool (hints only, admin surface).
+export const poolCredentialsQuery = () =>
+  queryOptions({
+    queryKey: ["pool-model-credentials"] as const,
+    queryFn: () => api.listPoolCredentials().then((r) => r.credentials),
+  })
+
 export const runsQuery = () =>
   queryOptions({
     queryKey: ["runs"] as const,

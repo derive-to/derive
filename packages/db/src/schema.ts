@@ -75,6 +75,9 @@ export const artifact = sqliteTable("artifact", {
   // existing DBs (SQLite forbids a non-constant default there).
   updated_at: text("updated_at"),
   removed_at: text("removed_at"),
+  // Expiring anonymous draft (the claim flow): ISO instant after which the draft is
+  // gone — served 410 and swept. Null for every ordinary artifact; cleared on claim.
+  expires_at: text("expires_at"),
   source_path: text("source_path"),
   // The CURRENT (last) author, denormalized from the latest version row for the list
   // view + author filtering. For a GitHub-synced artifact these mirror the last commit's
@@ -198,8 +201,8 @@ export const renderJob = sqliteTable("render_job", {
   created_at: text("created_at").notNull().default(now),
 })
 
-// The run ledger (WP6): one row per hosted/owner agent invocation — the durable
-// An automation (WP5): a standing agent job — WHO (agent), WHEN (trigger, open-ended
+// The run ledger: one row per hosted/owner agent invocation — the durable
+// An automation: a standing agent job — WHO (agent), WHEN (trigger, open-ended
 // JSON), WHAT (free-form instruction), on WHAT (refs). The definition only; every firing
 // is a `run`. A "living doc" is just an automation whose instruction keeps a doc current.
 export const automation = sqliteTable("automation", {
@@ -218,7 +221,7 @@ export const automation = sqliteTable("automation", {
   created_at: text("created_at").notNull().default(now),
 })
 
-// A run (WP5/WP6): one execution of an automation (or an ad-hoc one-off). The queue and
+// A run: one execution of an automation (or an ad-hoc one-off). The queue and
 // the ledger in ONE table (pg-boss's model): a `queued` row is pending work, a terminal
 // row is history. A worker claims the oldest due queued run under a row lock, runs it, and
 // finishes it. Cost is snapshotted at finish (micro-USD int); everything else lives in the
@@ -229,6 +232,8 @@ export const run = sqliteTable("run", {
   automation_id: text("automation_id"),
   agent_id: text("agent_id").notNull(),
   reason: text("reason").notNull(),
+  // The initiating person (wallet key) — null for clock/event runs. See RunRecord.
+  initiated_by: text("initiated_by"),
   status: text("status").$type<RunStatus>().notNull(),
   scheduled_for: text("scheduled_for"),
   started_at: text("started_at"),
@@ -303,6 +308,12 @@ export const agent = sqliteTable(
     // Served by Derive's managed executor when 1. Hosting changes WHERE the
     // agent runs — never its principal, role cap, or attribution.
     hosted: integer("hosted").notNull().default(0).$type<0 | 1>(),
+    // 1 = auto-minted for one context at creation (never user-named): the context's
+    // Derive access, not a persona. The UI hides managed agents from the roster.
+    managed: integer("managed").notNull().default(0).$type<0 | 1>(),
+    // The runs-lane liveness mark (twin of context.runner_seen_at): stamped when the
+    // agent's bearer polls the run claim endpoint. Null = no executor has ever polled.
+    runs_seen_at: text("runs_seen_at"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [
@@ -614,6 +625,27 @@ export const userNotificationPref = sqliteTable(
   (t) => [uniqueIndex("user_notification_pref_key").on(t.org_id, t.user_id)],
 )
 
+// A team member's OWN model-plan credential — their Claude/Codex plan token (or an API
+// key) — encrypted at rest (AES-GCM, lib/crypto, keyed by DERIVE_AUTH_SECRET), scoped
+// (org, user, provider) and used ONLY for that user's own agent runs. Never a shared
+// token: this is what replaces the single global model-credential env for hosted runs.
+// `secret` is the encrypted blob; `hint` is a safe label (e.g. last 4) for the UI.
+export const modelCredential = sqliteTable(
+  "model_credential",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id").notNull(),
+    provider: text("provider").notNull(),
+    kind: text("kind").$type<"oauth" | "api_key" | "login">().notNull(),
+    secret: text("secret").notNull(),
+    hint: text("hint").notNull().default(""),
+    created_at: text("created_at").notNull().default(now),
+    updated_at: text("updated_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("model_credential_key").on(t.org_id, t.user_id, t.provider)],
+)
+
 // Derive comment thread ↔ the Slack message Derive posted for it (for two-way threading).
 export const slackThreadLink = sqliteTable(
   "slack_thread_link",
@@ -690,6 +722,10 @@ export const domain = sqliteTable("domain", {
   // records to show while pending. Null for subdomains.
   cf_hostname_id: text("cf_hostname_id"),
   verification: text("verification"),
+  // When set, the host answers 302 → this absolute URL instead of serving content.
+  // Written when a draft is claimed (the derive.page URL forwards to the artifact's
+  // permanent home); reusable for any future host rename.
+  redirect_to: text("redirect_to"),
   created_at: text("created_at").notNull().default(now),
 })
 
@@ -943,6 +979,7 @@ const TABLES = [
   folder,
   repoSource,
   orgSettings,
+  modelCredential,
   slackInstall,
   slackThreadLink,
   slackUserLink,

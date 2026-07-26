@@ -41,7 +41,7 @@
     "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "@scalar/hono-api-reference": "^0.11.9",
-    "better-auth": "^1.6.19",
+    "better-auth": "^1.6.22",
     "better-sqlite3": "^12.11.1",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.6.0",

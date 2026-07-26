@@ -118,6 +118,16 @@ export type InviteResult = components["schemas"]["InviteResult"]
 export type InvitePreview = components["schemas"]["InvitePreview"]
 export type ArtifactInvite = components["schemas"]["ArtifactInvite"]
 export type ArtifactInvitePreview = components["schemas"]["ArtifactInvitePreview"]
+/** What the claim page shows before an anonymous draft is claimed. Hand-declared:
+ *  the draft-claim routes aren't in the OpenAPI spec. */
+export interface DraftClaimPreview {
+  short_id: string
+  title: string | null
+  kind: string
+  expires_at: string
+  /** The live expiring page on the usercontent domain; null if no host is bound. */
+  draft_url: string | null
+}
 /** PUT members result: shared directly (existing account) or invited by email. */
 export type ShareResult = components["schemas"]["ShareResult"]
 /** Per-workspace integration switches. Generated from the OpenAPI spec. */
@@ -166,6 +176,13 @@ export interface AutomationTrigger {
   tz?: string
   on?: string
 }
+/** A connected model-plan credential, as the settings UI sees it — never the secret. */
+export interface ModelCredentialHint {
+  provider: "claude-code" | "codex"
+  kind: "oauth" | "api_key" | "login"
+  hint: string
+  updated_at: string
+}
 /** A ref is a selector — one generic way to point at a set of artifacts: a specific
  *  doc (revise it), a collection (file new work into it), or a tag (stamped on every
  *  write the run makes). The API accepts a bare short-id string as artifact shorthand
@@ -184,6 +201,9 @@ export interface Automation {
   refs: AutomationRef[]
   enabled: boolean
   created_at: string
+  /** When this automation's agent last polled the run claim endpoint (list responses
+   *  only). Null = no executor has ever polled — the automation is inert. */
+  executor_seen_at?: string | null
 }
 /** One execution — the queue (queued/running) and the ledger (succeeded/failed) in one row. */
 export interface Run {
@@ -642,6 +662,14 @@ export const api = {
       () => undefined,
     ),
 
+  // The draft-claim page (/claim/$token): an agent published an anonymous expiring
+  // draft and handed the human a claim link. Preview is public — the token itself
+  // is the proof of standing; claiming moves the draft into the active workspace.
+  previewDraftClaim: (token: string): Promise<DraftClaimPreview> =>
+    f(`/v1/drafts/claim/${encodeURIComponent(token)}`, opts()).then(j),
+  claimDraft: (token: string): Promise<{ short_id: string; url: string; org_id: string }> =>
+    f("/v1/drafts/claim", opts({ token })).then(j),
+
   // Per-artifact vanity subdomains (`base` null when off) + the workspace's custom
   // domains shown read-only as the artifact's URL on each.
   listDomains: (
@@ -729,19 +757,25 @@ export const api = {
   listAgents: (): Promise<{ agents: Agent[] }> => f("/v1/agents", opts()).then(j),
   createAgent: (name: string, role?: Role): Promise<Agent & { token: string }> =>
     f("/v1/agents", opts({ name, role })).then(j),
+  // Rotation is a credential event, never an identity event: the old bearer dies at
+  // once; id, role, hosting, and attribution are untouched. Token shown only here.
+  rotateAgent: (id: string): Promise<Agent & { token: string }> =>
+    f(`/v1/agents/${id}/rotate`, opts({})).then(j),
   deleteAgent: (id: string): Promise<void> =>
     f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
 
   // Automations + runs (the standing-agent-work surface; see routes/automations.ts).
   listAutomations: (): Promise<{ automations: Automation[] }> =>
     f("/v1/automations", opts()).then(j),
+  // agentId omitted → the server auto-mints a MANAGED agent for this automation and
+  // returns its bearer as agent_token, exactly once on this response.
   createAutomation: (input: {
-    agentId: string
+    agentId?: string
     trigger: AutomationTrigger
     instruction: string
     /** Bare strings are artifact shorthand; the server stores canonical selectors. */
     refs?: (string | AutomationRef)[]
-  }): Promise<Automation> => f("/v1/automations", opts(input)).then(j),
+  }): Promise<Automation & { agent_token?: string }> => f("/v1/automations", opts(input)).then(j),
   updateAutomation: (
     id: string,
     input: {
@@ -758,14 +792,49 @@ export const api = {
     f(`/v1/automations/${id}/run`, opts({})).then(j),
   listRuns: (): Promise<{ runs: Run[] }> => f("/v1/workspace/runs", opts()).then(j),
 
+  // Per-user model-plan credentials (the caller's own; see routes/model-credentials.ts).
+  listModelCredentials: (): Promise<{ credentials: ModelCredentialHint[] }> =>
+    f("/v1/me/model-credentials", opts()).then(j),
+  connectModelCredential: (input: {
+    provider: "claude-code" | "codex"
+    kind: "oauth" | "api_key" | "login"
+    token: string
+  }): Promise<{ ok: true; provider: string; hint: string }> =>
+    f("/v1/me/model-credentials", opts(input)).then(j),
+  disconnectModelCredential: (provider: string): Promise<void> =>
+    f(`/v1/me/model-credentials/${provider}`, { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
+
+  // The workspace's SHARED model-plan pool (admin only) — the fallback billed when a run's
+  // initiator has no plan and the agent isn't owner-lent. Same hints-only discipline.
+  listPoolCredentials: (): Promise<{ credentials: ModelCredentialHint[] }> =>
+    f("/v1/workspace/model-credentials", opts()).then(j),
+  connectPoolCredential: (input: {
+    provider: "claude-code" | "codex"
+    kind: "oauth" | "api_key" | "login"
+    token: string
+  }): Promise<{ ok: true; provider: string; hint: string }> =>
+    f("/v1/workspace/model-credentials", opts(input)).then(j),
+  disconnectPoolCredential: (provider: string): Promise<void> =>
+    f(`/v1/workspace/model-credentials/${provider}`, {
+      method: "DELETE",
+      credentials: "include",
+    }).then(() => undefined),
+  // Toggle whether an agent may fall back to its OWNER's plan (only the owner may set it).
+  setAgentOwnerLend: (agentId: string, enabled: boolean): Promise<{ ok: true }> =>
+    f(`/v1/workspace/owner-lend/${agentId}`, { ...opts({ enabled }), method: "PUT" }).then(j),
+
   // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
   listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
   getContext: (id: string): Promise<ContextInfo> => f(`/v1/contexts/${id}`, opts()).then(j),
+  // agent_id omitted → the server auto-mints a MANAGED agent for this context and
+  // returns its bearer as agent_token, exactly once on this response.
   createContext: (input: {
     name: string
-    agent_id: string
+    agent_id?: string
     manifest_short_id: string
-  }): Promise<ContextInfo> => f("/v1/contexts", opts(input)).then(j),
+  }): Promise<ContextInfo & { agent_token?: string }> => f("/v1/contexts", opts(input)).then(j),
   askContext: (
     id: string,
     body_md: string,

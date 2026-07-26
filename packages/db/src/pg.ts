@@ -32,6 +32,7 @@ import type {
   Listed,
   MembershipRecord,
   MetaStore,
+  ModelCredentialRecord,
   NewAgent,
   NewAgentMention,
   NewArtifact,
@@ -110,6 +111,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  lt,
   lte,
   ne,
   notExists,
@@ -145,6 +147,7 @@ import {
   githubInstallation,
   invitation,
   membership,
+  modelCredential,
   notification,
   oauthClientWorkspace,
   orgSettings,
@@ -988,6 +991,11 @@ export class PgMetaStore implements MetaStore {
     await this.db
       .delete(membership)
       .where(and(eq(membership.org_id, orgId), eq(membership.user_id, userId)))
+    // A removed member's connected plan must stop being billable here — otherwise a lent
+    // agent would keep charging their token after they've lost workspace access.
+    await this.db
+      .delete(modelCredential)
+      .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
   }
   async getWorkspace(orgId: string): Promise<WorkspaceRecord | null> {
     const rows = await this.db.select().from(workspace).where(eq(workspace.id, orgId))
@@ -1003,6 +1011,10 @@ export class PgMetaStore implements MetaStore {
   }
   async deleteWorkspace(orgId: string): Promise<void> {
     await this.db.delete(membership).where(eq(membership.org_id, orgId))
+    // Every connected plan for this org, INCLUDING the workspace-pool sentinel row, so no
+    // encrypted token is orphaned (the pool row would otherwise have no API path left to
+    // delete once memberships are gone). One predicate covers members and the pool.
+    await this.db.delete(modelCredential).where(eq(modelCredential.org_id, orgId))
     await this.db.delete(workspace).where(eq(workspace.id, orgId))
   }
   listWorkspaces(userId: string): Promise<(WorkspaceRecord & { role: Role })[]> {
@@ -1695,6 +1707,49 @@ export class PgMetaStore implements MetaStore {
   async deleteSlackInstall(orgId: string): Promise<void> {
     await this.db.delete(slackInstall).where(eq(slackInstall.org_id, orgId))
   }
+  async getModelCredential(
+    orgId: string,
+    userId: string,
+    provider: string,
+  ): Promise<ModelCredentialRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(modelCredential)
+      .where(
+        and(
+          eq(modelCredential.org_id, orgId),
+          eq(modelCredential.user_id, userId),
+          eq(modelCredential.provider, provider),
+        ),
+      )
+    return rows[0] ?? null
+  }
+  async setModelCredential(c: ModelCredentialRecord): Promise<void> {
+    await this.db
+      .insert(modelCredential)
+      .values(c)
+      .onConflictDoUpdate({
+        target: [modelCredential.org_id, modelCredential.user_id, modelCredential.provider],
+        set: { secret: c.secret, kind: c.kind, hint: c.hint, updated_at: c.updated_at },
+      })
+  }
+  async deleteModelCredential(orgId: string, userId: string, provider: string): Promise<void> {
+    await this.db
+      .delete(modelCredential)
+      .where(
+        and(
+          eq(modelCredential.org_id, orgId),
+          eq(modelCredential.user_id, userId),
+          eq(modelCredential.provider, provider),
+        ),
+      )
+  }
+  async listModelCredentials(orgId: string, userId: string): Promise<ModelCredentialRecord[]> {
+    return this.db
+      .select()
+      .from(modelCredential)
+      .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
+  }
   async getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null> {
     const rows = await this.db
       .select()
@@ -1821,10 +1876,29 @@ export class PgMetaStore implements MetaStore {
   }
   async updateDomain(
     host: string,
-    fields: { status?: DomainStatus; verification?: string | null },
+    fields: {
+      status?: DomainStatus
+      verification?: string | null
+      artifact_id?: string | null
+      redirect_to?: string | null
+    },
   ): Promise<DomainRecord | null> {
     const rows = await this.db.update(domain).set(fields).where(eq(domain.host, host)).returning()
     return rows[0] ?? null
+  }
+
+  async setArtifactExpiry(artifactId: string, expiresAt: string | null): Promise<void> {
+    await this.db.update(artifact).set({ expires_at: expiresAt }).where(eq(artifact.id, artifactId))
+  }
+
+  // expires_at is ISO-8601 text (the schema-wide convention), so lexical lt() IS
+  // chronological order.
+  async listExpiredArtifacts(nowIso: string, limit: number): Promise<ArtifactRecord[]> {
+    return this.db
+      .select()
+      .from(artifact)
+      .where(and(isNotNull(artifact.expires_at), lt(artifact.expires_at, nowIso)))
+      .limit(limit)
   }
   async deleteDomain(host: string, orgId: string): Promise<void> {
     await this.db.delete(domain).where(and(eq(domain.host, host), eq(domain.org_id, orgId)))
@@ -2400,6 +2474,21 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.insert(agent).values(a).returning()
     return one(rows)
   }
+  async touchAgentRunsSeen(id: string, at: string): Promise<void> {
+    await this.db.update(agent).set({ runs_seen_at: at }).where(eq(agent.id, id))
+  }
+  async rotateAgentToken(
+    id: string,
+    orgId: string,
+    tokenHash: string,
+  ): Promise<AgentRecord | null> {
+    const rows = await this.db
+      .update(agent)
+      .set({ token: tokenHash })
+      .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
+      .returning()
+    return (rows[0] as AgentRecord | undefined) ?? null
+  }
   listAgents(orgId: string): Promise<AgentRecord[]> {
     return this.db.select().from(agent).where(eq(agent.org_id, orgId))
   }
@@ -2468,6 +2557,10 @@ export class PgMetaStore implements MetaStore {
       .values({ ...r, status: r.status ?? "queued" })
       .returning()
     return one(rows)
+  }
+  async getRun(id: string): Promise<RunRecord | null> {
+    const rows = await this.db.select().from(run).where(eq(run.id, id)).limit(1)
+    return (rows[0] as RunRecord | undefined) ?? null
   }
   claimDueRuns(agentId: string, now: string, limit = 20): Promise<RunRecord[]> {
     // The oldest queued runs due now for this agent, flipped to running under a row lock
@@ -2849,6 +2942,9 @@ export class PgMetaStore implements MetaStore {
     await this.db.delete(follow).where(eq(follow.user_id, userId))
     await this.db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId))
     await this.db.delete(notification).where(eq(notification.user_id, userId))
+    // Encrypted plan tokens must not linger after the account is gone; the workspace pool's
+    // sentinel-user row is keyed differently, so it is never in scope.
+    await this.db.delete(modelCredential).where(eq(modelCredential.user_id, userId))
     await this.db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId))
     await this.db.update(version).set({ author_id: null }).where(eq(version.author_id, userId))
     await this.db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId))

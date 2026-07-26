@@ -208,7 +208,17 @@ export function runStoreContract(
   })
 
   describe(`${label}: listArtifacts sort modes`, () => {
-    const tick = () => new Promise((r) => setTimeout(r, 2))
+    // Space the creations far enough apart to land on DISTINCT created_at values.
+    // This was 2ms, which is under the timer granularity of some virtualized
+    // hosts: on a 16-vCPU CI runner two rows inserted 2ms apart came back with the
+    // SAME timestamp, so `created` fell through to its `id` tiebreak — and since
+    // ids are random uuids, the expected order then held or didn't by luck.
+    // Nothing was wrong with the store; that tiebreak is exactly what keeps
+    // production ordering deterministic under a tie. The test simply needs
+    // distinct instants, and created_at is stamped by the store's own SQL default,
+    // so wall-clock spacing is the only lever available. 25ms clears any plausible
+    // tick and costs 75ms across the whole test.
+    const tick = () => new Promise((r) => setTimeout(r, 25))
 
     it("orders by each mode (title sort case-insensitive + null-safe) and paginates the keyset", async () => {
       const org = `org_sort_${uuid()}`
@@ -1473,6 +1483,40 @@ export function runStoreContract(
       await store.deleteAgent(agent.id, ORG)
       expect(await store.getAgentByToken(token)).toBeNull()
     })
+
+    it("rotates a token (org-scoped) and round-trips the managed flag", async () => {
+      const t1 = `tok_${uuid()}`
+      const agent = await store.createAgent({
+        id: uuid(),
+        org_id: ORG,
+        name: "ctx access",
+        token: t1,
+        role: "editor",
+        managed: 1,
+      })
+      // managed round-trips; an unmarked agent defaults to 0.
+      expect(agent.managed).toBe(1)
+      const plain = await store.createAgent({
+        id: uuid(),
+        org_id: ORG,
+        name: "persona",
+        token: `tok_${uuid()}`,
+        role: "editor",
+      })
+      expect(plain.managed).toBe(0)
+      // Rotation: the old hash dies, the new one resolves, identity is untouched.
+      const t2 = `tok_${uuid()}`
+      const rotated = await store.rotateAgentToken(agent.id, ORG, t2)
+      expect(rotated).toMatchObject({ id: agent.id, name: "ctx access", managed: 1 })
+      expect(await store.getAgentByToken(t1)).toBeNull()
+      expect(await store.getAgentByToken(t2)).toMatchObject({ id: agent.id })
+      // Org-scoped: a foreign org rotates nothing.
+      expect(await store.rotateAgentToken(agent.id, "org_other", `tok_${uuid()}`)).toBeNull()
+      // Runs-lane liveness: null until an executor polls; the stamp round-trips.
+      expect(rotated?.runs_seen_at).toBeNull()
+      await store.touchAgentRunsSeen(agent.id, "2026-07-24T12:00:00.000Z")
+      expect((await store.getAgentByToken(t2))?.runs_seen_at).toBe("2026-07-24T12:00:00.000Z")
+    })
   })
 
   describe(`${label}: contexts + sessions`, () => {
@@ -2188,6 +2232,22 @@ export function runStoreContract(
         kind: "user",
         target: other,
       })
+      // The leaver's connected plan token, plus a workspace-pool row and another member's.
+      const credNow = "2026-07-24T00:00:00.000Z"
+      const mkCred = (userId: string, secret: string) => ({
+        id: uuid(),
+        org_id: org,
+        user_id: userId,
+        provider: "codex",
+        kind: "oauth" as const,
+        secret,
+        hint: secret.slice(-4),
+        created_at: credNow,
+        updated_at: credNow,
+      })
+      await store.setModelCredential(mkCred(leaver, "enc-leaver"))
+      await store.setModelCredential(mkCred(other, "enc-other"))
+      await store.setModelCredential(mkCred("__workspace_pool__", "enc-pool"))
 
       await store.deleteUserData(leaver)
 
@@ -2205,10 +2265,49 @@ export function runStoreContract(
       // artifacts still exist (content is never hard-deleted).
       expect((await store.getArtifactById(mine.id))?.author_id ?? null).toBeNull()
       expect((await store.getArtifactById(theirs.id))?.author_id).toBe(other)
+      // Their connected plan token is PURGED; the workspace-pool row (sentinel user) and
+      // other members' plans survive untouched.
+      expect(await store.getModelCredential(org, leaver, "codex")).toBeNull()
+      expect((await store.getModelCredential(org, other, "codex"))?.secret).toBe("enc-other")
+      expect((await store.getModelCredential(org, "__workspace_pool__", "codex"))?.secret).toBe(
+        "enc-pool",
+      )
+    })
+
+    it("removeMembership + deleteWorkspace purge model_credential (incl. the pool sentinel)", async () => {
+      const org = `org_ws_${uuid()}`
+      const member = `member_${uuid()}`
+      const now = "2026-07-24T00:00:00.000Z"
+      const cred = (userId: string, secret: string) => ({
+        id: uuid(),
+        org_id: org,
+        user_id: userId,
+        provider: "codex",
+        kind: "login" as const,
+        secret,
+        hint: secret.slice(-4),
+        created_at: now,
+        updated_at: now,
+      })
+      await store.setWorkspace(org, "WS")
+      await store.setMembership({ id: uuid(), org_id: org, user_id: member, role: "editor" })
+      await store.setModelCredential(cred(member, "enc-member"))
+      await store.setModelCredential(cred("__workspace_pool__", "enc-pool"))
+
+      // Removing a member drops only their credential; the pool row stays.
+      await store.removeMembership(org, member)
+      expect(await store.getModelCredential(org, member, "codex")).toBeNull()
+      expect((await store.getModelCredential(org, "__workspace_pool__", "codex"))?.secret).toBe(
+        "enc-pool",
+      )
+
+      // Deleting the workspace clears the pool sentinel too — nothing orphaned.
+      await store.deleteWorkspace(org)
+      expect(await store.getModelCredential(org, "__workspace_pool__", "codex")).toBeNull()
     })
   })
 
-  describe(`${label}: automations + runs (WP5/WP6)`, () => {
+  describe(`${label}: automations + runs`, () => {
     it("creates automations and lists them scoped to the workspace", async () => {
       const agentId = uuid()
       const a1 = await store.createAutomation({
@@ -2272,6 +2371,46 @@ export function runStoreContract(
       expect(got.map((x) => x.id).sort()).toEqual([a.id, b.id].sort())
     })
 
+    it("model credentials: upsert, get, list per user, delete — all scoped (org, user, provider)", async () => {
+      const now = "2026-07-24T00:00:00.000Z"
+      const cred = (userId: string, provider: string, secret: string) => ({
+        id: uuid(),
+        org_id: ORG,
+        user_id: userId,
+        provider,
+        kind: "oauth" as const,
+        secret,
+        hint: secret.slice(-4),
+        created_at: now,
+        updated_at: now,
+      })
+      await store.setModelCredential(cred("u1", "codex", "enc-A"))
+      await store.setModelCredential(cred("u1", "claude-code", "enc-B"))
+      await store.setModelCredential(cred("u2", "codex", "enc-C"))
+
+      // Get is keyed (org, user, provider) — never leaks across users.
+      expect((await store.getModelCredential(ORG, "u1", "codex"))?.secret).toBe("enc-A")
+      expect((await store.getModelCredential(ORG, "u2", "codex"))?.secret).toBe("enc-C")
+      expect(await store.getModelCredential(ORG, "u1", "gemini")).toBeNull()
+
+      // Upsert replaces the secret for the same key, not a second row.
+      await store.setModelCredential(cred("u1", "codex", "enc-A2"))
+      expect((await store.getModelCredential(ORG, "u1", "codex"))?.secret).toBe("enc-A2")
+
+      // List returns only that user's rows.
+      const u1 = await store.listModelCredentials(ORG, "u1")
+      expect(u1.map((c) => c.provider).sort()).toEqual(["claude-code", "codex"])
+      expect((await store.listModelCredentials(ORG, "u2")).map((c) => c.provider)).toEqual([
+        "codex",
+      ])
+
+      // Delete is scoped: removing u1/codex leaves u1/claude-code and u2/codex.
+      await store.deleteModelCredential(ORG, "u1", "codex")
+      expect(await store.getModelCredential(ORG, "u1", "codex")).toBeNull()
+      expect((await store.getModelCredential(ORG, "u1", "claude-code"))?.secret).toBe("enc-B")
+      expect((await store.getModelCredential(ORG, "u2", "codex"))?.secret).toBe("enc-C")
+    })
+
     it("queue + ledger: enqueue → claim (running) → finish; a second claim gets nothing", async () => {
       const agentId = uuid()
       // A queued run due in the past.
@@ -2280,17 +2419,24 @@ export function runStoreContract(
         org_id: ORG,
         agent_id: agentId,
         reason: "manual:u1",
+        // First-class wallet key, round-tripped — never parsed out of `reason`.
+        initiated_by: "u1",
         scheduled_for: "2000-01-01T00:00:00.000Z",
       })
       expect(queued.status).toBe("queued")
-      // A future run is NOT due yet.
-      await store.createRun({
+      expect(queued.initiated_by).toBe("u1")
+      // getRun round-trips it; a clock run (no initiator) stays null; unknown id is null.
+      expect((await store.getRun(queued.id))?.initiated_by).toBe("u1")
+      expect(await store.getRun(uuid())).toBeNull()
+      // A future run is NOT due yet — and a clock run carries no initiator.
+      const clockRun = await store.createRun({
         id: uuid(),
         org_id: ORG,
         agent_id: agentId,
         reason: "schedule",
         scheduled_for: "2999-01-01T00:00:00.000Z",
       })
+      expect(clockRun.initiated_by).toBeNull()
 
       const now = "2100-01-01T00:00:00.000Z"
       const claimed = await store.claimDueRuns(agentId, now)

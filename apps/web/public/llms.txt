@@ -14,6 +14,21 @@ Self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier
 - HTML (.html): the page itself, sandboxed in an opaque origin with CSP
 - HTML deck: HTML with <section class="slide"> elements, gets nav + present mode automatically via the derive-deck postMessage protocol
 
+## Anonymous drafts — publish with no account
+
+The zero-setup path. One HTTP call, no credentials, live in about a second:
+
+```
+POST /v1/drafts    multipart: file (one .html/.md, or a .zip site), optional title
+```
+
+Returns `draft_url` (live immediately at `<id>.derive.page`), `claim_url`, and
+`expires_at` (72h). Report all three to the user: the draft expires unless they open
+the claim link (sign in, one click) to keep it as a permanent versioned artifact —
+the draft URL then redirects to the permanent home. The secret URL is the only
+access (view-by-link, unlisted, noindex): don't put secrets in a draft. Drafts can't
+be revised — mint a new one, or claim first and revise through the MCP.
+
 ## Key API endpoints
 
 All requests use `Authorization: Bearer $DERIVE_TOKEN` (static agent token from Settings > Agents).
@@ -29,7 +44,15 @@ GET    /v1/artifacts/:id/diff?from=1&to=2      line diff between versions
 GET    /raw/:id/v/:n/index.html                permanent artifact URL (immutable, cacheable)
 ```
 
-Visibility options: public, link, org, password.
+Access on create (three independent fields; omitted fields use the workspace default —
+the factory default is the "team draft"):
+
+- workspace_access: none | member — do workspace members reach it (each at their seat role)
+- link_role: none | viewer | commenter | editor — what merely holding the URL confers on anyone
+- listed: none | workspace | public — where it surfaces for discovery (no access of its own)
+
+Plus password (locks the world link; only meaningful with link_role != none). The legacy
+`visibility` param (public | link | org | password) is still accepted and mapped.
 
 ## MCP server
 
@@ -73,8 +96,22 @@ The stdio server also exposes derive://guide.
 
 Key env vars: BASE_URL, DERIVE_AUTH_SECRET (openssl rand -hex 32), DERIVE_TOKEN
 
+## Agent discovery
+
+- /skill.md — the Derive agent skill, self-contained (when to use it, the tool surface, the loop)
+- /.well-known/agent.json — machine-readable capability manifest for this instance
+- /openapi.json — the OpenAPI spec; /docs — its reference UI
+- /llms-full.txt — the long-form version of this file
+
+## Scope and drift
+
+- Derive hosts documents, pages, and versioned artifacts — not compute. Do not use it for
+  server-side code execution, general-purpose data storage, secrets, or app backends.
+- If this file and the live API disagree, trust the live API: fetched copies go stale.
+  Re-read /skill.md or /docs before answering capability questions.
+
 ## Links
 
 - GitHub: https://github.com/derive-to/derive
 - Deploy guide: DEPLOY.md in the repo
-- MCP skill: packages/mcp/SKILL.md (also served as derive://guide)
+- MCP skill: packages/mcp/SKILL.md (also served at /skill.md and as derive://guide)

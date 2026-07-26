@@ -30,6 +30,7 @@ import type {
   ListArtifactsOpts,
   Listed,
   MembershipRecord,
+  ModelCredentialRecord,
   NewAgent,
   NewAgentMention,
   NewArtifact,
@@ -144,6 +145,7 @@ import {
   githubInstallation,
   invitation,
   membership,
+  modelCredential,
   notification,
   oauthClientWorkspace,
   orgSettings,
@@ -1124,6 +1126,12 @@ export function makeRepos(db: SqliteDb) {
       .delete(membership)
       .where(and(eq(membership.org_id, orgId), eq(membership.user_id, userId)))
       .run()
+    // A removed member's connected plan must stop being billable here — otherwise a lent
+    // agent would keep charging their token after they've lost workspace access.
+    await db
+      .delete(modelCredential)
+      .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
+      .run()
   }
   const getWorkspace = async (orgId: string): Promise<WorkspaceRecord | null> =>
     (await db.select().from(workspace).where(eq(workspace.id, orgId)).get()) ?? null
@@ -1136,6 +1144,10 @@ export function makeRepos(db: SqliteDb) {
       .get()) as WorkspaceRecord
   const deleteWorkspace = async (orgId: string): Promise<void> => {
     await db.delete(membership).where(eq(membership.org_id, orgId)).run()
+    // Every connected plan for this org, INCLUDING the workspace-pool sentinel row, so no
+    // encrypted token is orphaned (the pool row would otherwise have no API path left to
+    // delete once memberships are gone). One predicate covers members and the pool.
+    await db.delete(modelCredential).where(eq(modelCredential.org_id, orgId)).run()
     await db.delete(workspace).where(eq(workspace.id, orgId)).run()
   }
   const listWorkspaces = async (userId: string): Promise<(WorkspaceRecord & { role: Role })[]> =>
@@ -1895,6 +1907,53 @@ export function makeRepos(db: SqliteDb) {
   const deleteSlackInstall = async (orgId: string): Promise<void> => {
     await db.delete(slackInstall).where(eq(slackInstall.org_id, orgId)).run()
   }
+
+  // ---- Per-user model-plan credentials ------------------------------------
+  const modelCredWhere = (orgId: string, userId: string, provider: string) =>
+    and(
+      eq(modelCredential.org_id, orgId),
+      eq(modelCredential.user_id, userId),
+      eq(modelCredential.provider, provider),
+    )
+  const getModelCredential = async (
+    orgId: string,
+    userId: string,
+    provider: string,
+  ): Promise<ModelCredentialRecord | null> =>
+    (await db
+      .select()
+      .from(modelCredential)
+      .where(modelCredWhere(orgId, userId, provider))
+      .get()) ?? null
+  const setModelCredential = async (c: ModelCredentialRecord): Promise<void> => {
+    await db
+      .insert(modelCredential)
+      .values(c)
+      .onConflictDoUpdate({
+        target: [modelCredential.org_id, modelCredential.user_id, modelCredential.provider],
+        set: { secret: c.secret, kind: c.kind, hint: c.hint, updated_at: c.updated_at },
+      })
+      .run()
+  }
+  const deleteModelCredential = async (
+    orgId: string,
+    userId: string,
+    provider: string,
+  ): Promise<void> => {
+    await db
+      .delete(modelCredential)
+      .where(modelCredWhere(orgId, userId, provider))
+      .run()
+  }
+  const listModelCredentials = async (
+    orgId: string,
+    userId: string,
+  ): Promise<ModelCredentialRecord[]> =>
+    db
+      .select()
+      .from(modelCredential)
+      .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
+      .all()
   const getSlackThreadLinkByThread = async (
     threadId: string,
   ): Promise<SlackThreadLinkRecord | null> =>
@@ -2025,7 +2084,12 @@ export function makeRepos(db: SqliteDb) {
       .all()
   const updateDomain = async (
     host: string,
-    fields: { status?: DomainStatus; verification?: string | null },
+    fields: {
+      status?: DomainStatus
+      verification?: string | null
+      artifact_id?: string | null
+      redirect_to?: string | null
+    },
   ): Promise<DomainRecord | null> =>
     ((await db.update(domain).set(fields).where(eq(domain.host, host)).returning().get()) as
       | DomainRecord
@@ -2036,6 +2100,22 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(domain.host, host), eq(domain.org_id, orgId)))
       .run()
   }
+  const setArtifactExpiry = async (artifactId: string, expiresAt: string | null): Promise<void> => {
+    await db
+      .update(artifact)
+      .set({ expires_at: expiresAt })
+      .where(eq(artifact.id, artifactId))
+      .run()
+  }
+  // expires_at is ISO-8601 text (the schema-wide convention), so lexical lt() IS
+  // chronological order.
+  const listExpiredArtifacts = async (nowIso: string, limit: number): Promise<ArtifactRecord[]> =>
+    db
+      .select()
+      .from(artifact)
+      .where(and(isNotNull(artifact.expires_at), lt(artifact.expires_at, nowIso)))
+      .limit(limit)
+      .all()
 
   // ---- Reviews: proposals ------------------------------------------------
   const createProposal = async (p: NewProposal): Promise<ProposalRecord> =>
@@ -2429,6 +2509,20 @@ export function makeRepos(db: SqliteDb) {
   // ---- Agents + pull inbox -----------------------------------------------
   const createAgent = async (a: NewAgent): Promise<AgentRecord> =>
     (await db.insert(agent).values(a).returning().get()) as AgentRecord
+  const touchAgentRunsSeen = async (id: string, at: string): Promise<void> => {
+    await db.update(agent).set({ runs_seen_at: at }).where(eq(agent.id, id)).run()
+  }
+  const rotateAgentToken = async (
+    id: string,
+    orgId: string,
+    tokenHash: string,
+  ): Promise<AgentRecord | null> =>
+    ((await db
+      .update(agent)
+      .set({ token: tokenHash })
+      .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
+      .returning()
+      .get()) as AgentRecord | undefined) ?? null
   const listAgents = async (orgId: string): Promise<AgentRecord[]> =>
     db.select().from(agent).where(eq(agent.org_id, orgId)).all()
   const setAgentHosted = async (
@@ -2501,6 +2595,8 @@ export function makeRepos(db: SqliteDb) {
       .values({ ...r, status: r.status ?? "queued" })
       .returning()
       .get()) as RunRecord
+  const getRun = async (id: string): Promise<RunRecord | null> =>
+    ((await db.select().from(run).where(eq(run.id, id)).get()) as RunRecord | undefined) ?? null
   const claimDueRuns = async (agentId: string, now: string, limit = 20): Promise<RunRecord[]> => {
     // The oldest queued runs due now for this agent, flipped to running under a row lock so
     // two executors never claim the same run. A null scheduled_for means "as soon as possible";
@@ -2899,6 +2995,10 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(follow).where(eq(follow.user_id, userId)).run()
     await db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId)).run()
     await db.delete(notification).where(eq(notification.user_id, userId)).run()
+    // Their connected model-plan credentials — encrypted plan tokens must not linger after
+    // the account is gone. Keyed on a real user id, so the workspace pool's sentinel row is
+    // never in scope.
+    await db.delete(modelCredential).where(eq(modelCredential.user_id, userId)).run()
     // Authorship is anonymized (nullable), so others' artifacts/threads survive intact.
     await db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId)).run()
     await db.update(version).set({ author_id: null }).where(eq(version.author_id, userId)).run()
@@ -3238,6 +3338,10 @@ export function makeRepos(db: SqliteDb) {
     getSlackInstall,
     setSlackInstall,
     deleteSlackInstall,
+    getModelCredential,
+    setModelCredential,
+    deleteModelCredential,
+    listModelCredentials,
     getSlackThreadLinkByThread,
     getSlackThreadLinkByTs,
     setSlackThreadLink,
@@ -3256,6 +3360,8 @@ export function makeRepos(db: SqliteDb) {
     getArtifactDomains,
     getWorkspaceDomains,
     updateDomain,
+    setArtifactExpiry,
+    listExpiredArtifacts,
     deleteDomain,
     createProposal,
     createReviewRound,
@@ -3295,6 +3401,8 @@ export function makeRepos(db: SqliteDb) {
     unreadNotificationCount,
     markNotificationsRead,
     createAgent,
+    rotateAgentToken,
+    touchAgentRunsSeen,
     listAgents,
     setAgentHosted,
     createAutomation,
@@ -3304,6 +3412,7 @@ export function makeRepos(db: SqliteDb) {
     updateAutomation,
     deleteAutomation,
     createRun,
+    getRun,
     claimDueRuns,
     finishRun,
     listRuns,
