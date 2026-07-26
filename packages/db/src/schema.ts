@@ -675,7 +675,7 @@ export const modelCredential = sqliteTable(
     org_id: text("org_id").notNull(),
     user_id: text("user_id").notNull(),
     provider: text("provider").notNull(),
-    kind: text("kind").$type<"oauth" | "api_key">().notNull(),
+    kind: text("kind").$type<"oauth" | "api_key" | "login">().notNull(),
     secret: text("secret").notNull(),
     hint: text("hint").notNull().default(""),
     created_at: text("created_at").notNull().default(now),

@@ -420,6 +420,9 @@ describe("artifact file channel", () => {
       },
       answer: async (id, body, meta, state) => calls.answered.push({ id, body, meta, state }),
       fail: async (id) => calls.failed.push(id),
+      // The non-mock serve path resolves the run's plan first; the fake `claude` ignores the
+      // token, so any credential lets the artifact channel run end to end.
+      modelCredential: async () => ({ credential: { kind: "oauth", value: "t" }, reason: "none" }),
     }
     const session = () => ({
       id: "ses_1",

@@ -18,15 +18,20 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
-import { agentsQuery } from "@/lib/queries"
+import { Switch } from "@/components/ui/switch"
+import { agentsQuery, modelCredentialsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { ModelPlanManager } from "./model-plan-manager"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
-export function AgentsSection() {
+export function AgentsSection({ meId }: { meId: string }) {
   const qc = useQueryClient()
   const { data: agents, isPending, isError, refetch } = useQuery(agentsQuery())
   const reload = () => qc.invalidateQueries({ queryKey: agentsQuery().queryKey })
+  // The per-agent lend toggle is inert until YOU have a plan connected, so gate it on that.
+  const { data: myPlans } = useQuery(modelCredentialsQuery())
+  const hasPersonalPlan = (myPlans?.length ?? 0) > 0
 
   return (
     <SettingsSection
@@ -67,10 +72,45 @@ export function AgentsSection() {
           {agents
             .filter((a) => !a.managed)
             .map((a) => (
-              <AgentRow key={a.id} agent={a} onDone={reload} />
+              <AgentRow
+                key={a.id}
+                agent={a}
+                meId={meId}
+                hasPersonalPlan={hasPersonalPlan}
+                onDone={reload}
+              />
             ))}
         </SettingsGroup>
       )}
+
+      {/* How agent runs get billed, in order: the person who triggered the run (their own
+          plan, below), then the agent OWNER's plan (only for agents lent above), then the
+          shared workspace pool. Both plan surfaces live here so it's one place to reason
+          about; your own plan also lives under Account → Model plans. */}
+      <div className="mt-6 flex flex-col gap-5 border-t pt-6">
+        <div className="flex flex-col gap-3">
+          <div>
+            <div className="text-sm font-medium text-foreground">Your plan</div>
+            <p className="mt-0.5 text-2xs text-muted-foreground">
+              Runs you start bill your own connected plan first. Same plan as Account → Model plans;
+              connect it here or there.
+            </p>
+          </div>
+          <ModelPlanManager scope="personal" />
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <div>
+            <div className="text-sm font-medium text-foreground">Workspace model plan pool</div>
+            <p className="mt-0.5 text-2xs text-muted-foreground">
+              A shared plan billed when a run's initiator has no plan of their own and the agent
+              isn't lent its owner's. Optional — leave it empty to require everyone to bring their
+              own.
+            </p>
+          </div>
+          <ModelPlanManager scope="pool" />
+        </div>
+      </div>
     </SettingsSection>
   )
 }
@@ -168,7 +208,17 @@ function NewAgent({ onCreated }: { onCreated: () => void }) {
   )
 }
 
-function AgentRow({ agent, onDone }: { agent: Agent; onDone: () => void }) {
+function AgentRow({
+  agent,
+  meId,
+  hasPersonalPlan,
+  onDone,
+}: {
+  agent: Agent
+  meId: string
+  hasPersonalPlan: boolean
+  onDone: () => void
+}) {
   const [confirming, setConfirming] = useState(false)
   const [rotated, setRotated] = useState<string | null>(null)
   const remove = useApiMutation({
@@ -182,6 +232,14 @@ function AgentRow({ agent, onDone }: { agent: Agent; onDone: () => void }) {
     mutationFn: () => api.rotateAgent(agent.id),
     success: `Token rotated for ${agent.name}`,
     onSuccess: (a) => setRotated(a.token),
+  })
+  // Only the agent's OWNER may lend their own plan to it (default off). Others don't see it.
+  const isOwner = agent.created_by === meId
+  const lend = useApiMutation<{ ok: true }, boolean>({
+    mutationFn: (enabled) => api.setAgentOwnerLend(agent.id, enabled),
+    success: (_r, enabled) =>
+      enabled ? `@${agent.name} may run on your plan` : `@${agent.name} won't use your plan`,
+    onSuccess: () => onDone(),
   })
   return (
     <div data-testid={`agent-row-${agent.id}`} className="flex flex-col py-3">
@@ -227,6 +285,23 @@ function AgentRow({ agent, onDone }: { agent: Agent; onDone: () => void }) {
           onConfirm={() => remove.mutate()}
         />
       </div>
+      {isOwner && (
+        <label
+          htmlFor={`agent-lend-${agent.id}`}
+          className="mt-2 flex items-center gap-2 pl-10 text-2xs text-muted-foreground"
+        >
+          <Switch
+            id={`agent-lend-${agent.id}`}
+            data-testid={`agent-lend-${agent.id}`}
+            checked={agent.owner_lend}
+            onCheckedChange={(v) => lend.mutate(v)}
+            disabled={lend.isPending || !hasPersonalPlan}
+          />
+          {hasPersonalPlan
+            ? "Fall back to my plan when a run has none of its own"
+            : "Connect your plan under Account → Model plans to lend it here"}
+        </label>
+      )}
       {rotated && (
         <div data-testid={`agent-rotated-${agent.id}`} className="mt-2">
           <StatusPanel

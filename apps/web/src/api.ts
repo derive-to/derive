@@ -179,7 +179,7 @@ export interface AutomationTrigger {
 /** A connected model-plan credential, as the settings UI sees it — never the secret. */
 export interface ModelCredentialHint {
   provider: "claude-code" | "codex"
-  kind: "oauth" | "api_key"
+  kind: "oauth" | "api_key" | "login"
   hint: string
   updated_at: string
 }
@@ -822,7 +822,7 @@ export const api = {
     f("/v1/me/model-credentials", opts()).then(j),
   connectModelCredential: (input: {
     provider: "claude-code" | "codex"
-    kind: "oauth" | "api_key"
+    kind: "oauth" | "api_key" | "login"
     token: string
   }): Promise<{ ok: true; provider: string; hint: string }> =>
     f("/v1/me/model-credentials", opts(input)).then(j),
@@ -830,6 +830,25 @@ export const api = {
     f(`/v1/me/model-credentials/${provider}`, { method: "DELETE", credentials: "include" }).then(
       () => undefined,
     ),
+
+  // The workspace's SHARED model-plan pool (admin only) — the fallback billed when a run's
+  // initiator has no plan and the agent isn't owner-lent. Same hints-only discipline.
+  listPoolCredentials: (): Promise<{ credentials: ModelCredentialHint[] }> =>
+    f("/v1/workspace/model-credentials", opts()).then(j),
+  connectPoolCredential: (input: {
+    provider: "claude-code" | "codex"
+    kind: "oauth" | "api_key" | "login"
+    token: string
+  }): Promise<{ ok: true; provider: string; hint: string }> =>
+    f("/v1/workspace/model-credentials", opts(input)).then(j),
+  disconnectPoolCredential: (provider: string): Promise<void> =>
+    f(`/v1/workspace/model-credentials/${provider}`, {
+      method: "DELETE",
+      credentials: "include",
+    }).then(() => undefined),
+  // Toggle whether an agent may fall back to its OWNER's plan (only the owner may set it).
+  setAgentOwnerLend: (agentId: string, enabled: boolean): Promise<{ ok: true }> =>
+    f(`/v1/workspace/owner-lend/${agentId}`, { ...opts({ enabled }), method: "PUT" }).then(j),
 
   // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
   listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),

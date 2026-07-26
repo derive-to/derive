@@ -2222,6 +2222,22 @@ export function runStoreContract(
         kind: "user",
         target: other,
       })
+      // The leaver's connected plan token, plus a workspace-pool row and another member's.
+      const credNow = "2026-07-24T00:00:00.000Z"
+      const mkCred = (userId: string, secret: string) => ({
+        id: uuid(),
+        org_id: org,
+        user_id: userId,
+        provider: "codex",
+        kind: "oauth" as const,
+        secret,
+        hint: secret.slice(-4),
+        created_at: credNow,
+        updated_at: credNow,
+      })
+      await store.setModelCredential(mkCred(leaver, "enc-leaver"))
+      await store.setModelCredential(mkCred(other, "enc-other"))
+      await store.setModelCredential(mkCred("__workspace_pool__", "enc-pool"))
 
       await store.deleteUserData(leaver)
 
@@ -2239,6 +2255,45 @@ export function runStoreContract(
       // artifacts still exist (content is never hard-deleted).
       expect((await store.getArtifactById(mine.id))?.author_id ?? null).toBeNull()
       expect((await store.getArtifactById(theirs.id))?.author_id).toBe(other)
+      // Their connected plan token is PURGED; the workspace-pool row (sentinel user) and
+      // other members' plans survive untouched.
+      expect(await store.getModelCredential(org, leaver, "codex")).toBeNull()
+      expect((await store.getModelCredential(org, other, "codex"))?.secret).toBe("enc-other")
+      expect((await store.getModelCredential(org, "__workspace_pool__", "codex"))?.secret).toBe(
+        "enc-pool",
+      )
+    })
+
+    it("removeMembership + deleteWorkspace purge model_credential (incl. the pool sentinel)", async () => {
+      const org = `org_ws_${uuid()}`
+      const member = `member_${uuid()}`
+      const now = "2026-07-24T00:00:00.000Z"
+      const cred = (userId: string, secret: string) => ({
+        id: uuid(),
+        org_id: org,
+        user_id: userId,
+        provider: "codex",
+        kind: "login" as const,
+        secret,
+        hint: secret.slice(-4),
+        created_at: now,
+        updated_at: now,
+      })
+      await store.setWorkspace(org, "WS")
+      await store.setMembership({ id: uuid(), org_id: org, user_id: member, role: "editor" })
+      await store.setModelCredential(cred(member, "enc-member"))
+      await store.setModelCredential(cred("__workspace_pool__", "enc-pool"))
+
+      // Removing a member drops only their credential; the pool row stays.
+      await store.removeMembership(org, member)
+      expect(await store.getModelCredential(org, member, "codex")).toBeNull()
+      expect((await store.getModelCredential(org, "__workspace_pool__", "codex"))?.secret).toBe(
+        "enc-pool",
+      )
+
+      // Deleting the workspace clears the pool sentinel too — nothing orphaned.
+      await store.deleteWorkspace(org)
+      expect(await store.getModelCredential(org, "__workspace_pool__", "codex")).toBeNull()
     })
   })
 
