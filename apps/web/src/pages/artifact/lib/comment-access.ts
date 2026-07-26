@@ -15,9 +15,21 @@ export const canCommentWithRole = (role: Role | null | undefined): boolean =>
  *  actually grants comment or more (so signing in would lift them past viewer) and
  *  the artifact is live. If an anonymous visitor can SEE the doc at all, the link's
  *  audience already admitted them, so only the role matters here. Anonymous never
- *  comments directly: auth is the gate. */
+ *  comments directly: auth is the gate. (Callers are anon by construction — the
+ *  prompt renders in PublicViewer, which only mounts for anonymous visitors.) */
 export const shouldPromptSignInToComment = (
-  isAnon: boolean,
   linkRole: LinkRole | undefined,
   removed: boolean,
-): boolean => isAnon && (linkRole === "commenter" || linkRole === "editor") && !removed
+): boolean => (linkRole === "commenter" || linkRole === "editor") && !removed
+
+/** The nudge's three strings, from the detail response's open-thread count: the
+ *  floating pill, the panel heading, and the sign-in CTA. With threads open the
+ *  copy sells the conversation ("9 comments · Sign in to join"); empty (or count
+ *  withheld) it invites the first one. Pure so the wording is pinned by tests. */
+export const commentNudgeCopy = (
+  count: number | undefined,
+): { pill: string; heading: string; cta: string } => {
+  if (!count) return { pill: "Comments", heading: "No comments yet", cta: "Sign in to comment" }
+  const n = `${count} comment${count === 1 ? "" : "s"}`
+  return { pill: n, heading: n, cta: "Sign in to join" }
+}

@@ -1415,6 +1415,19 @@ export const artifactRoutes = (ctx: AppContext) => {
         // only for white-label workspaces; the viewer reads this single boolean so
         // workspace settings never travel to anonymous clients.
         badge: !(await meta.getOrgSettings(artifact.org_id)).whiteLabel,
+        // Open-thread count for the public viewer's sign-in-to-comment pill. Anon
+        // never sees comment bodies (collaboration, not content — see comments.ts),
+        // so the count is the one bit that crosses; it crosses only where the pill
+        // can fire (a link that grants commenting) so view-only links leak nothing.
+        // Gate on the RAW link_role: anon's effective role is always clamped to
+        // viewer — the whole point of the pill is what signing in would unlock.
+        ...(actor.kind === "anon" &&
+        (artifact.link_role === "commenter" || artifact.link_role === "editor")
+          ? {
+              open_comment_count:
+                (await meta.commentSignals([artifact.id], null))[artifact.id]?.open_threads ?? 0,
+            }
+          : {}),
         // The artifact's current workspace — the move dialog needs this to exclude
         // it from the destination picker.
         org_id: artifact.org_id,

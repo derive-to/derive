@@ -5502,6 +5502,8 @@ export interface components {
             password_protected?: boolean;
             /** @description Show the Made-with-Derive mark on this artifact's public surfaces (false = white-label workspace). */
             badge?: boolean;
+            /** @description Open-thread count for the sign-in-to-comment pill; present only for anonymous callers on a link that grants commenting. */
+            open_comment_count?: number;
             /** @description The artifact's workspace id; drives move-to-workspace. */
             org_id?: string;
             /** @description Signed, short-lived token for fetching raw content; detail responses only. */

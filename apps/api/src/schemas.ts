@@ -136,6 +136,12 @@ export const Artifact = z
       .describe(
         "Show the Made-with-Derive mark on this artifact's public surfaces (false = white-label workspace).",
       ),
+    open_comment_count: z
+      .number()
+      .optional()
+      .describe(
+        "Open-thread count for the sign-in-to-comment pill; present only for anonymous callers on a link that grants commenting.",
+      ),
     org_id: z
       .string()
       .optional()
