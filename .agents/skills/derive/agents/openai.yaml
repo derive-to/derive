@@ -1,0 +1,16 @@
+interface:
+  display_name: "Derive"
+  short_description: "Publish, stage assets, review, and revise in Derive"
+  brand_color: "#6B46FF"
+  default_prompt: "Use $derive to publish this work and run the human review loop."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "derive"
+      description: "Derive remote MCP for artifacts, asset staging, review, and workspace tools"
+      transport: "streamable_http"
+      url: "https://derive.to/mcp"
+
+policy:
+  allow_implicit_invocation: true

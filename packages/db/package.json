@@ -1,0 +1,45 @@
+{
+  "name": "@derive/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "FSL-1.1-ALv2",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/derive-to/derive.git",
+    "directory": "packages/db"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./sqlite": "./src/sqlite.ts",
+    "./pg": "./src/pg.ts",
+    "./pgvector": "./src/pgvector.ts",
+    "./d1": "./src/d1.ts",
+    "./schema": "./src/schema.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "typecheck:tsc": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage --passWithNoTests",
+    "test:pg": "vitest run --config vitest.pg.config.ts --coverage test/pg-store.test.ts test/pg-schema-conformance.test.ts test/pgvector.test.ts",
+    "test:d1": "vitest run --config vitest.d1.config.ts test/d1-store.test.ts",
+    "gen:d1-schema": "vitest run test/d1-schema.test.ts -u"
+  },
+  "dependencies": {
+    "@derive/core": "workspace:*",
+    "better-sqlite3": "^12.11.1",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.15",
+    "@cloudflare/workers-types": "^4.20260615.1",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^25.9.3",
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.31.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}

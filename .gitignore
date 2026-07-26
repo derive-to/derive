@@ -1,0 +1,36 @@
+node_modules/
+data/
+dist/
+*.log
+.DS_Store
+.wrangler/
+.tanstack/
+
+# Local env files (secrets) — the committed template is .env.example
+.env
+.env.*
+!.env.example
+
+# e2e (Playwright)
+.e2e-data/
+test-results/
+playwright-report/
+
+# ad-hoc local data dirs
+.data-*
+**/.data-*
+
+# Local dev/test API data (sqlite DB + blobs)
+apps/api/.ab-data/
+apps/api/.e2e-data/
+
+.local-run-data/
+apps/api/.local-run-data/
+RUNNER.md
+
+# Local scratch DB from manual verification runs
+apps/api/.verify-data/
+
+# Claude Code session worktrees (live checkouts of other sessions' branches —
+# never repo content, and their nested configs break root tooling if scanned)
+.claude/worktrees/

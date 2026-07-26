@@ -1,0 +1,179 @@
+import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react"
+import { Icon } from "@/components/icons"
+import { Spinner } from "@/components/shared/spinner"
+import { StatusPanel } from "@/components/shared/status-panel"
+import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
+
+// How long we wait for the sandboxed render to fire `load` before calling it a
+// failed boot. A cache-warm artifact paints in well under a second; this only
+// catches a genuinely stuck/broken render so the viewer never stares at a blank
+// white frame (NN/g #1 — visibility of system status; the render's own failure
+// must be legible, not indistinguishable from "still loading").
+const BOOT_TIMEOUT_MS = 15_000
+
+/**
+ * The render stage — the artifact is the hero. The sandboxed iframe fills the stage
+ * edge-to-edge (research: "the render is the hero; the iframe fills the panel
+ * edge-to-edge, zero internal padding"), framed by the workbench header above it and
+ * clipped to the content card's rounded corners (the shell's SidebarInset is
+ * `overflow-hidden rounded-xl`). NO mat gap: an artifact carries its own background,
+ * which can be any color, so a gap would frame a dark artifact in an awkward light
+ * border. Boot + failure are explicit states rendered inside so geometry never jumps.
+ *
+ * The frame/wrapper refs are owned by the page (the postMessage bridge + fullscreen
+ * drive them) and passed in. `overlays` (deck bar, cursor layer) mount inside.
+ */
+export function RenderStage({
+  rawSrc,
+  title,
+  version,
+  frameRef,
+  wrapRef,
+  onFrameLoad,
+  banner,
+  overlays,
+  className,
+}: {
+  rawSrc: string
+  title: string
+  /** The shown version — when it steps UP (a new version published in place), a
+   *  soft "Updated" badge flashes over the render (research: auto-swap + soft cue). */
+  version?: number
+  frameRef: RefObject<HTMLIFrameElement | null>
+  /** The fullscreen/present target — the render surface itself. */
+  wrapRef: RefObject<HTMLDivElement | null>
+  /** Called on the iframe's own `load` (the page's bridge handshakes off it). */
+  onFrameLoad?: () => void
+  /** A strip above the render (the past-version banner). */
+  banner?: ReactNode
+  /** Absolutely-positioned children inside the render (deck bar, cursor overlay). */
+  overlays?: ReactNode
+  className?: string
+}) {
+  // Boot/failure state is per-source: a new rawSrc (version swap, retry) resets it.
+  const [phase, setPhase] = useState<"booting" | "ready" | "failed">("booting")
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    setPhase("booting")
+  }, [])
+
+  // Arm the stuck-boot timeout while booting; clear it the moment the frame loads.
+  useEffect(() => {
+    if (phase !== "booting") return
+    const t = setTimeout(() => setPhase("failed"), BOOT_TIMEOUT_MS)
+    return () => clearTimeout(t)
+  }, [phase])
+
+  const handleLoad = () => {
+    setPhase("ready")
+    onFrameLoad?.()
+  }
+  const retry = () => {
+    setPhase("booting")
+    setAttempt((n) => n + 1)
+  }
+
+  // "Updated" cue: when the shown version steps up (a peer published a new version
+  // and the render auto-swapped in place), flash a soft, non-blocking badge instead
+  // of jolting the viewer (research: soft cue, never a modal). Skips the initial
+  // mount and any backward navigation (viewing an earlier version).
+  const prevVersion = useRef<number | undefined>(undefined)
+  const [updatedTo, setUpdatedTo] = useState<number | null>(null)
+  useEffect(() => {
+    if (version == null) return
+    const prev = prevVersion.current
+    prevVersion.current = version
+    if (prev == null || version <= prev) return
+    setUpdatedTo(version)
+    const t = setTimeout(() => setUpdatedTo(null), 3500)
+    return () => clearTimeout(t)
+  }, [version])
+
+  return (
+    <div className={cn("relative flex min-h-0 flex-1 flex-col", className)}>
+      {banner}
+      {/* The render fills edge-to-edge; the content card's rounded overflow-hidden
+          clips it, and the header above carries its top edge. bg-background (the app
+          canvas, NEVER bg-white) is the backdrop the boot state paints on — so a dark
+          artifact never flashes a white rectangle before it takes over. */}
+      <div
+        ref={wrapRef}
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      >
+        <iframe
+          key={attempt}
+          ref={frameRef}
+          onLoad={handleLoad}
+          title={title}
+          src={rawSrc}
+          allow="fullscreen"
+          // touch-action: pan-y lets the outer page scroll instead of the iframe
+          // trapping the gesture on a phone (research's scroll-trap fix); the frame
+          // opts into its own pan only inside an explicit zoom mode. The iframe keeps
+          // its own bg-white (the right default for a transparent HTML doc) but starts
+          // hidden and cross-fades in on load, so the white→content swap resolves
+          // gently over the neutral canvas instead of hard-flashing.
+          sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+          className={cn(
+            "min-h-0 flex-1 touch-pan-y border-0 bg-white opacity-0 transition-opacity duration-200",
+            phase === "ready" && "opacity-100",
+          )}
+        />
+
+        {/* Boot — a calm centered spinner over the white canvas until the render's
+            own `load` fires. Announced politely; not a full skeleton because the
+            artifact's shape is unknowable. */}
+        {phase === "booting" && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="absolute inset-0 grid place-items-center bg-background"
+          >
+            <div className="flex flex-col items-center gap-3">
+              {/* Decorative: the wrapping div is the live region (aria-live) with the
+                  visible label, so the spinner must not announce a second time. */}
+              <Spinner size="lg" role="presentation" aria-label={undefined} />
+              <span className="font-mono text-2xs text-muted-foreground">Loading preview…</span>
+            </div>
+          </div>
+        )}
+
+        {/* Failure — an explicit terminal state with Retry, never a blank frame. */}
+        {phase === "failed" && (
+          <div className="absolute inset-0 grid place-items-center bg-background p-6">
+            <StatusPanel
+              tone="danger"
+              icon={<Icon name="removed" strokeWidth={1.75} />}
+              title="Preview didn’t load"
+              description="The render took too long or failed to start. This is usually temporary."
+              className="max-w-sm"
+              action={
+                <Button variant="outline" data-testid="render-retry" onClick={retry}>
+                  Try again
+                </Button>
+              }
+            />
+          </div>
+        )}
+
+        {/* Soft "updated in place" cue after a new version auto-swaps in. Announced
+            politely so a screen-reader viewer hears the swap too — matching the boot
+            state's live region (the render's own status must be legible, not silent). */}
+        {updatedTo != null && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center"
+          >
+            <span className="animate-in fade-in slide-in-from-top-1 rounded-full bg-card px-3 py-1 font-mono text-2xs text-muted-foreground shadow-[var(--shadow)] ring-1 ring-foreground/10">
+              Updated · v{updatedTo}
+            </span>
+          </div>
+        )}
+
+        {overlays}
+      </div>
+    </div>
+  )
+}

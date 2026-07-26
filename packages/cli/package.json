@@ -1,0 +1,58 @@
+{
+  "name": "@derive-to/cli",
+  "version": "0.4.0",
+  "type": "module",
+  "description": "CLI for Derive — init a project, publish versioned artifacts, and run the publish → review → revise loop from the terminal.",
+  "keywords": [
+    "derive",
+    "artifacts",
+    "publish",
+    "cli"
+  ],
+  "license": "FSL-1.1-ALv2",
+  "homepage": "https://derive.to",
+  "bugs": {
+    "url": "https://github.com/derive-to/derive/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/derive-to/derive.git",
+    "directory": "packages/cli"
+  },
+  "bin": {
+    "derive": "./bin/derive.js"
+  },
+  "exports": {
+    "./config": {
+      "types": "./src/config.d.ts",
+      "default": "./src/config.js"
+    },
+    "./publish": {
+      "types": "./src/publish.d.ts",
+      "default": "./src/publish.js"
+    }
+  },
+  "files": [
+    "bin",
+    "src",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "typecheck": "echo 'plain js cli'",
+    "typecheck:tsc": "echo 'plain js cli'",
+    "test": "vitest run",
+    "test:coverage": "vitest run"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.9"
+  }
+}

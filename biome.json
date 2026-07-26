@@ -1,0 +1,172 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.0/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "ignoreUnknown": true,
+    "includes": [
+      "**",
+      "!.claude/worktrees",
+      "!**/routeTree.gen.ts",
+      "!**/*.gen.ts",
+      "!**/openapi.json",
+      "!apps/api/test/e2e",
+      "!**/api-types.ts",
+      "!**/dist",
+      "!**/.output",
+      "!**/.vinxi",
+      "!data",
+      "!docs",
+      "!**/public/brand",
+      "!**/public/site",
+      "!pnpm-lock.yaml"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "lineEnding": "lf"
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "asNeeded",
+      "trailingCommas": "all",
+      "arrowParentheses": "always"
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    },
+    "formatter": {
+      "enabled": false
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "style": {
+        "noNonNullAssertion": "error"
+      },
+      "complexity": {
+        "useLiteralKeys": "off"
+      },
+      "correctness": {
+        "useExhaustiveDependencies": "error"
+      },
+      "suspicious": {
+        "noArrayIndexKey": "warn",
+        "noExplicitAny": "error",
+        "noFocusedTests": "error"
+      },
+      "a11y": {
+        "useButtonType": "error",
+        "useKeyWithClickEvents": "error",
+        "noStaticElementInteractions": "error",
+        "useValidAnchor": "error",
+        "noAutofocus": "error",
+        "useIframeTitle": "error",
+        "noSvgWithoutTitle": "error",
+        "noRedundantRoles": "off",
+        "noLabelWithoutControl": {
+          "level": "error",
+          "options": {
+            "inputComponents": ["Input", "Textarea", "Checkbox", "Switch", "RadioGroupItem"]
+          }
+        }
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["apps/web/src/components/ui/**"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "useSemanticElements": "off",
+            "useKeyWithClickEvents": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/web/src/**", "!apps/web/src/components/ui/sonner.tsx"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["sonner"],
+                    "message": "Import toast/Toaster from @/components/ui/sonner — the configured house layer (error toasts linger 8s)."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/api/**", "packages/core/**", "packages/db/**", "packages/storage/**"],
+      "linter": {
+        "rules": {
+          "suspicious": { "noConsole": "error" },
+          "nursery": { "noFloatingPromises": "error" }
+        }
+      }
+    },
+    {
+      "includes": [
+        "apps/api/src/log.ts",
+        "apps/api/src/node.ts",
+        "apps/api/scripts/**",
+        "**/*.test.ts"
+      ],
+      "linter": { "rules": { "suspicious": { "noConsole": "off" } } }
+    },
+    {
+      "includes": ["apps/api/src/routes/**", "apps/api/src/lib/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "drizzle-orm",
+                      "drizzle-orm/**",
+                      "@derive/db/*",
+                      "better-sqlite3",
+                      "pg"
+                    ],
+                    "message": "Routes and lib reach the database through the MetaStore port on the request context (ctx.meta), never a DB driver or query builder. Add a method to the store, don't import a driver here."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "assist": {
+    "enabled": true,
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  }
+}

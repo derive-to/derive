@@ -1,0 +1,18 @@
+diff --git a/dist/typescript/ast-nodes.js b/dist/typescript/ast-nodes.js
+index 5c58b3f2c75923fc81a7c8ccd3364cd644e775a3..92092f3817cb12a758811b7a5456b4ff038ec26c 100644
+--- a/dist/typescript/ast-nodes.js
++++ b/dist/typescript/ast-nodes.js
+@@ -5,7 +5,12 @@ import { timerify } from '../util/Performance.js';
+ import { EMPTY_TAGS } from './visitors/jsdoc.js';
+ const defaultParseOptions = {
+     sourceType: 'unambiguous',
+-    experimentalRawTransfer: rawTransferSupported(),
++    // PATCHED (derive): force the standard parser instead of oxc-parser's raw transfer.
++    // Raw transfer allocates a 6 GiB ArrayBuffer per parse (oxc-parser common.js), which fails
++    // under memory limits — OOMing knip locally and producing non-deterministic partial analysis
++    // in CI (phantom "unused dependency" findings). The standard path is slower but reliable and
++    // deterministic. See patches/knip@6.16.1.patch.
++    experimentalRawTransfer: false,
+ };
+ const parseFile = (filePath, sourceText) => {
+     const ext = extname(filePath);

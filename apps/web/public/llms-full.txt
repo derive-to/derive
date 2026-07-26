@@ -1,0 +1,354 @@
+# Derive — full reference for LLMs
+
+> Publish AI-built artifacts — HTML pages, Markdown docs, slide decks — with a permanent URL, version history, and threaded comments anchored to the text.
+
+Derive gives agent-built content a durable home: a real URL on your domain, every revision versioned and addressable, comments anchored to exact text (W3C TextQuoteSelector) that survive rewrites, and a propose -> review -> approve loop so humans stay in control.
+
+Self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at derive.to.
+
+---
+
+## Artifact types
+
+| Type | File | Renders as |
+|---|---|---|
+| Markdown | .md | Rendered prose: headings, lists, tables, fenced code, task lists, GFM |
+| HTML | .html | The page itself, sandboxed in an opaque origin with CSP: sandbox |
+| HTML deck | .html | Navigable slide deck with nav bar and present mode |
+
+### HTML deck protocol
+
+Slides are `<section class="slide">` elements. Derive detects the protocol and wires up the nav bar automatically. The deck and host communicate via postMessage:
+
+```js
+// Deck -> host: report current position
+parent.postMessage({ source: 'derive-deck', type: 'state', i: 0, total: 8 }, '*')
+
+// Host -> deck: navigate
+parent.postMessage({ source: 'derive-host', type: 'deck', action: 'next' }, '*')
+parent.postMessage({ source: 'derive-host', type: 'deck', action: 'prev' }, '*')
+parent.postMessage({ source: 'derive-host', type: 'deck', action: 'goto', n: 2 }, '*')
+```
+
+### Anchor client protocol
+
+Derive injects `/raw/derive-client.js` into every served artifact. It handles text selection -> comment composer and scroll-to-anchor. It communicates with the host via postMessage:
+
+```js
+// Client -> host: user selected text
+{ source: 'derive', type: 'selection', text, anchor: { exact, prefix, suffix } }
+
+// Host -> client: scroll to anchor
+{ source: 'derive-host', type: 'focus-anchor', anchor: { exact, prefix, suffix }, bias: 0.28 }
+
+// Host -> client: highlight anchor
+{ source: 'derive-host', type: 'mark-anchor', id, anchor, active }
+```
+
+---
+
+## REST API
+
+Base URL: `https://derive.to` (or your self-hosted instance).
+Auth: `Authorization: Bearer $DERIVE_TOKEN` for write operations. Artifacts whose link
+role grants viewer or better are readable without auth.
+
+If this file and the live API disagree, trust the live API — fetched copies go stale.
+The current capability surface is at `/.well-known/agent.json`, the agent skill at
+`/skill.md`, and the full spec at `/openapi.json` (reference UI at `/docs`).
+
+### Publish an anonymous draft (no account)
+
+```
+POST /v1/drafts
+Content-Type: multipart/form-data
+
+file    required  One .html/.md file, or a .zip site (index.html at the root)
+title   optional  Display title
+```
+
+No Authorization header. Response:
+
+```json
+{
+  "short_id":  "t8mnac05",
+  "draft_url":  "https://t8mnac05.derive.page/",
+  "claim_url":  "https://derive.to/claim/<token>",
+  "expires_at": "2026-07-28T03:23:03.539Z"
+}
+```
+
+The draft is live immediately on its own origin, view-by-link only (unlisted,
+noindex, never cached), and expires in 72 hours unless claimed. Report the draft
+URL, the expiry, and the claim URL to the user — the claim link is the only handle
+on an unclaimed draft. Client-supplied access fields are ignored on this route, and
+drafts cannot be revised: mint a new draft to iterate, or claim first.
+
+Claiming (a human flow, not an agent one): opening `claim_url` signs the user in
+and moves the draft into their workspace as a normal versioned artifact; the draft
+URL then 302s to the permanent artifact URL. Related endpoints:
+
+```
+GET  /v1/drafts/claim/:token   public: what this claim link is for (title, expiry, draft_url)
+POST /v1/drafts/claim          authed: {token} → claims into the caller's active workspace
+```
+
+Rate-limited tightly per IP; the general publish limits apply underneath.
+
+### Publish a new artifact
+
+```
+POST /v1/artifacts
+Content-Type: multipart/form-data
+
+file         required  File blob (name determines type: .md or .html)
+title        optional  Display title (defaults to filename)
+slug         optional  URL slug
+message      optional  Version message
+workspace_access  optional  none | member — do workspace members reach it (at their seat role)
+link_role         optional  none | viewer | commenter | editor — what holding the URL confers on anyone
+listed            optional  none | workspace | public — where it surfaces for discovery
+password          optional  Locks the world link (only meaningful with link_role != none)
+visibility        optional  LEGACY public | link | org | password — still accepted, mapped to the fields above
+spa               optional  true/1 for single-page apps (disables sandbox)
+
+Omitted access fields use the workspace default; the factory default is the "team
+draft": workspace_access=member, link_role=none, listed=none. Two invariants are
+rejected, not coerced: listed=workspace requires workspace_access=member, and
+listed=public requires link_role != none.
+```
+
+Response:
+
+```json
+{
+  "short_id": "nk0dsral",
+  "url": "https://derive.to/artifacts/my-page-nk0dsral",
+  "title": "My page",
+  "kind": "file",
+  "current_version": 1,
+  "versions": [{ "n": 1, "created_at": "...", "message": null }]
+}
+```
+
+### Publish a new version
+
+```
+POST /v1/artifacts/:short_id/versions
+Content-Type: multipart/form-data
+
+file       required  New content
+message    optional  Version message
+resolves   optional  Comma-separated comment IDs to close as part of this publish
+```
+
+### Propose a candidate version (requires human approval)
+
+```
+POST /v1/artifacts/:short_id/proposals
+Content-Type: multipart/form-data
+
+file       required  Proposed content
+message    optional  Rationale shown to the reviewer
+addresses  optional  Comma-separated thread IDs this proposal resolves
+```
+
+Response includes `preview_url` for the reviewer to inspect before approving.
+
+### Read artifact metadata
+
+```
+GET /v1/artifacts/:short_id
+```
+
+Returns full metadata: title, kind, workspace_access, link_role, listed, current_version, versions array, open_proposals count, tags, my_role.
+
+### Read artifact source
+
+```
+GET /v1/artifacts/:short_id/content
+GET /v1/artifacts/:short_id/content?v=2
+```
+
+Returns raw source. Headers include `X-Derive-Version` and `X-Derive-Kind`.
+
+### Version diff
+
+```
+GET /v1/artifacts/:short_id/diff?from=1&to=2
+```
+
+Returns line-level diff operations: `{ op: "add" | "del" | "ctx", text }[]`.
+
+### Restore a past version
+
+```
+POST /v1/artifacts/:short_id/restore
+Content-Type: application/json
+
+{ "version": 1 }
+```
+
+Creates a new version pointing to the old blob. History is never rewritten.
+
+### Comments
+
+```
+GET  /v1/artifacts/:short_id/comments            list threads (state: open | resolved)
+POST /v1/artifacts/:short_id/comments            new thread
+POST /v1/artifacts/:short_id/comments/:id/reply  reply in thread
+POST /v1/artifacts/:short_id/comments/:id/resolve toggle thread state
+```
+
+New thread body:
+```json
+{
+  "body_md": "This section is unclear.",
+  "quote": "exact text from the artifact to anchor the comment"
+}
+```
+
+### Permanent artifact URL
+
+```
+GET /raw/:short_id/v/:n/index.html
+```
+
+Immutable, cacheable, served with `Content-Security-Policy: sandbox`. These URLs never change.
+
+---
+
+## MCP server
+
+Prefer the remote OAuth server at `https://derive.to/mcp` (or `<instance>/mcp`). The local
+compatibility server is `npx -y @derive-to/mcp` and shares the machine's `derive login`.
+
+### Tools
+
+The remote `/mcp` server has the complete ten-tool surface.
+
+| Tool | Description |
+|---|---|
+| `find` | Browse or search artifacts and discover askable workspace contexts |
+| `read` | Read an artifact's content by short id; bundles take a `section` (page path), any read takes a `version` for history |
+| `catch_up` | Read an artifact's review/change state, or the registered agent's queued work when called without a short id |
+| `comment` | Leave feedback, reply (`reply_to` a thread id), anchor to a `quote`, and/or resolve/reopen (`set_state`) |
+| `stage` | Upload large documents or bundles out of band; for an image/font, mint an asset upload URL, POST raw bytes, then use the returned permanent URL or bundle ref in `publish` |
+| `publish` | Create or revise with `edits`, `content`, or `files`; `addresses` resolves threads and `request_review` opens a round |
+| `organize` | Manage tags and collections |
+| `checkpoint` | Save compact, resumable working state |
+| `use` | Ask a workspace context or resume its session |
+| `list_workspaces` | Inspect and route across granted workspaces |
+
+The stdio compatibility server exposes `list_workspaces`, `list_artifacts`, `search`,
+`read`, `catch_up`, `comment`, `organize`, and `publish`. It does not stage uploads,
+query contexts, or checkpoint state.
+
+### Resource
+
+Remote: `derive://skills/publishing`, `/assets`, `/loop`, `/contexts`, `/checkpoint`, and `/organize`.
+Stdio: `derive://guide`, `/guide/connect`, and `/guide/compatibility`.
+
+### Claude Code project config
+
+```json
+{
+  "mcpServers": {
+    "derive": {
+      "type": "http",
+      "url": "https://derive.to/mcp"
+    }
+  }
+}
+```
+
+---
+
+## Comment anchoring
+
+Comments are anchored using W3C Web Annotation TextQuoteSelector: `{ exact, prefix, suffix }`.
+The anchor client re-matches on each render using the exact text with surrounding context as
+disambiguation. Anchors survive rewrites when the quoted text stays recognizable. When the
+exact text is gone, the comment shows "text changed" rather than attaching to the wrong place.
+
+---
+
+## Deployment tiers
+
+| Tier | Runtime | Metadata | Blobs | Realtime |
+|---|---|---|---|---|
+| Lite | Single container | SQLite | Local disk | In-process |
+| Node Basic | Container(s) | Postgres | S3/R2 | In-process |
+| Node Scale | Containers | Postgres | S3/R2 | Per-instance |
+| Cloudflare Basic | Workers + DO | D1 | R2 | Durable Objects |
+| Cloudflare Scale | Workers + DO | Postgres | R2 | Durable Objects |
+
+### Lite (single container)
+
+```bash
+docker compose -f deploy/compose.yml up -d
+# opens at http://localhost:8080
+```
+
+### Node Basic
+
+Set `DATABASE_URL` (Postgres) and `OBJECT_STORE_URL` (S3/R2). Container becomes stateless.
+
+R2: `s3://<key>:<secret>@<account>.r2.cloudflarestorage.com/<bucket>?region=auto`
+S3: `s3://<key>:<secret>@s3.<region>.amazonaws.com/<bucket>?region=<region>`
+
+### Node Scale
+
+Run multiple stateless containers behind a load balancer for throughput. Realtime (SSE/presence) is per-instance and does not fan out across containers yet — for cross-instance realtime, use a Cloudflare tier (Durable Objects). A shared Node backplane (e.g. Redis) is planned but not yet built.
+
+### Cloudflare Basic
+
+```bash
+cd apps/api
+wrangler d1 create derive                                        # put database_id in wrangler.toml
+wrangler d1 execute derive --remote --file=../../deploy/d1-schema.sql
+pnpm exec tsx gen-auth-schema.ts > /tmp/auth-schema.sql
+wrangler d1 execute derive --remote --file=/tmp/auth-schema.sql
+wrangler r2 bucket create derive-blobs
+pnpm build:web && wrangler deploy
+wrangler secret put DERIVE_AUTH_SECRET
+```
+
+### Cloudflare Scale
+
+Same as Cloudflare Basic but with `wrangler secret put DATABASE_URL` (Postgres). The Worker uses Postgres instead of D1; Durable Objects stay on the edge.
+
+---
+
+## Environment variables
+
+| Var | Default | Purpose |
+|---|---|---|
+| `BASE_URL` | request origin | Public URL for cookies and share links |
+| `DERIVE_AUTH_SECRET` | generated | Session signing key — always set in prod |
+| `PORT` | 8080 | Listen port (Node) |
+| `DATA_DIR` | /data | SQLite + blob dir (Lite) |
+| `DATABASE_URL` | (SQLite) | Postgres connection |
+| `OBJECT_STORE_URL` | (local disk) | S3/R2 blob URL || `DERIVE_WEB_ORIGIN` | (none) | SPA origin for CORS (split CDN deploy) |
+| `DERIVE_CROSS_SITE` | false | SameSite=None cookies for cross-origin SPA |
+| `DERIVE_TOKEN` | (none) | Static bearer for CI/agents |
+| `DERIVE_WEB_DIR` | (auto) | Override bundled SPA path |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | (none) | Google sign-in |
+| `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_PROVIDER_ID` | (none) | Enterprise SSO |
+
+---
+
+## Health endpoints
+
+```
+GET /healthz  -> 200 { ok: true }
+GET /readyz   -> 200 { ok: true }
+```
+
+---
+
+## Getting a DERIVE_TOKEN for direct API calls
+
+Settings > Agents > New Agent. Name it, copy the `dk_agt_...` token (shown once).
+Use as `Authorization: Bearer $DERIVE_TOKEN` in direct API requests. Remote MCP clients
+should use OAuth instead of a pasted static token.

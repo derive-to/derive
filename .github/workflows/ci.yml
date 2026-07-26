@@ -1,0 +1,292 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Manual escape hatch: lets CI be dispatched by API when GitHub drops a
+  # push/pull_request event (it happens; runs are never retro-created).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel a PR's in-flight run when a newer push supersedes it. Keyed on the PR's
+# head ref so sibling branches never cancel each other; on push-to-main
+# github.head_ref is empty, so the run_id fallback gives every main commit its
+# own uncancellable run (and its own deploy).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # Which areas a change touches — lets the peripheral build jobs (bundle,
+  # runner-image) skip when a PR can't affect them. The core gates
+  # (check/pg/d1/security) always run. No branch protection on this repo,
+  # so a skipped job can't wedge a required check — it just reports success.
+  changes:
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    # paths-filter lists a PR's changed files via the GitHub API, which needs
+    # pull-requests:read (the workflow default is contents:read only).
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      web: ${{ steps.filter.outputs.web }}
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
+        id: filter
+        with:
+          filters: |
+            web:
+              - 'apps/web/**'
+              - 'packages/**'
+              - 'pnpm-lock.yaml'
+              - 'package.json'
+            docker:
+              - 'packages/cli/**'
+              - 'pnpm-lock.yaml'
+              - 'deploy/runner.Dockerfile'
+              - 'deploy/runner.Dockerfile.dockerignore'
+              - 'deploy/runner-entrypoint.sh'
+
+  # Blacksmith 2-vCPU arm64 — same machine class as the GitHub-hosted
+  # ubuntu-24.04-arm these jobs were on, ~75% cheaper with 3,000 free min/month.
+  # GitHub's included free minutes never applied to its hosted ARM SKU (the
+  # billing API shows the free-pool discount on x64 only), so hosted ARM billed
+  # from minute one. The toolchain (biome, esbuild, vite, vitest, tsgo) is
+  # arm-native. Ubicloud lesson (integration vanished 2026-07-02, jobs queued
+  # forever): the runs-on label is the ONLY coupling — if blacksmith-* jobs ever
+  # sit queued, flip these back to ubuntu-24.04-arm and CI runs unchanged.
+  # deploy/security/runner-image stay GitHub-hosted x64: they fit in the free
+  # x64 pool, and deploy keeps prod secrets off third-party metal.
+  check:
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+
+      - name: Lint + format + guardrails (biome + custom checks)
+        run: pnpm run ci
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Runs every package's suite once WITH coverage. Thresholds live in each
+      # vitest.config.ts (ratchet floors) — a regression fails here, and since
+      # deploy needs `check`, it blocks the ship. Replaces the old separate,
+      # redundant `coverage` job (which re-ran the whole suite a third time).
+      - name: Test + coverage gate
+        run: pnpm test:coverage
+
+  # Two database lanes, one job. Postgres: the SAME apps/api suite against a real
+  # Postgres (ephemeral Docker container, via scripts/test-pg.sh) so the
+  # hosted-tier driver is covered by the full behavioral suite. D1: the SAME
+  # @derive/db store contract against a real Cloudflare D1 inside workerd via
+  # Miniflare (`pnpm test:d1`) — the default (Node) lane can't host the D1
+  # driver, so this is the only place src/d1.ts runs; the edge tier runs on it.
+  # D1's ~45s rides the pg runner (combined still shorter than `check`, so the
+  # critical path doesn't move) instead of paying its own checkout + install.
+  db:
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+
+      - name: Test against Postgres
+        run: pnpm test:pg
+
+      - name: Test against Cloudflare D1 (workerd)
+        run: pnpm --filter @derive/db test:d1
+
+  # Bundle budget: build the web client and fail if the gzipped JS blows past the
+  # budget (see scripts/check-bundle.mjs), so phosphor / radix / cmdk weight can't
+  # regress silently. Skipped when a PR touches nothing that reaches the web bundle.
+  bundle:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+      - name: Build web client
+        run: pnpm --filter @derive/web build
+      - name: Bundle budget
+        run: pnpm lint:bundle
+
+  # The runner image builds from packages/cli — this catches a CLI change that
+  # breaks the container (deps, bin layout) before someone finds out on a box.
+  # Build-only, non-gating like coverage/bundle; no registry push. Docker build
+  # ships to amd64 infra, so this one job stays on an x64 runner. Skipped unless a
+  # PR touches the CLI or the runner image's build inputs.
+  runner-image:
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Build runner image
+        run: docker build -f deploy/runner.Dockerfile -t derive-runner:ci .
+      - name: Runner starts and reports config errors cleanly
+        # No token/context on purpose: a healthy image exits 1 with the house
+        # one-liner, not a stack trace — proves node, the CLI, and its deps wired.
+        run: |
+          out=$(docker run --rm derive-runner:ci serve 2>&1) && exit 1 || true
+          echo "$out" | grep -q "error: a context id and an agent token are required"
+
+  # CD: ship main to the hosted tier (Workers + Hyperdrive/Neon, derive.to) once
+  # check/db + security pass. Schemas (D1 + Postgres) land BEFORE the worker
+  # flips, so a new version never serves against stale DDL. Coverage now GATES:
+  # it's folded into `check` (thresholds per vitest.config.ts), so a regression
+  # fails check and blocks the deploy — a deliberate reversal of the old "ratchets
+  # shouldn't block a prod fix" rule (escape hatch: lower the threshold in the same
+  # PR). `bundle` stays non-gating. The laptop path
+  # (`pnpm --filter @derive/api deploy`) remains for manual deploys; this job is
+  # the production path. Stays on an x64 runner — the production deploy path is not
+  # the place to also debut a runner-arch change.
+  # Secrets — step-scoped, never job-wide (install/build run arbitrary package
+  # code that must not see them): CLOUDFLARE_API_TOKEN (account-scoped; the D1
+  # schema step needs D1 edit, which a workers-only token lacks),
+  # CLOUDFLARE_ACCOUNT_ID, DATABASE_URL (direct Neon — Hyperdrive is only the
+  # worker's data path).
+  deploy:
+    if: github.repository == 'derive-to/derive' && github.event_name == 'push' # never PRs, never forks
+    needs: [check, db, security]
+    runs-on: ubuntu-latest
+    # A running deploy is never cancelled — a schema applied for a worker that
+    # then didn't ship is the state to avoid. Queued runs are NOT ordered:
+    # GitHub keeps only the newest pending run per group, so intermediate green
+    # commits skip their deploy (latest wins), and the freshness check below
+    # stops a late-running older commit from rolling prod back.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # Job queue order is arrival, not commit order: a slow run for an older
+      # commit can start after a newer commit already shipped. Ship only when
+      # this commit is still main's head.
+      - name: Skip when superseded by a newer commit
+        id: head
+        run: |
+          git fetch --quiet origin main
+          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+            echo "superseded by $(git rev-parse --short origin/main); skipping"
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: ./.github/actions/setup
+        if: steps.head.outputs.stale != 'true'
+
+      - name: Build web client
+        if: steps.head.outputs.stale != 'true'
+        run: pnpm --filter @derive/api build:web
+
+      # wrangler.toml ships with all-zero placeholder D1/Hyperdrive ids so the
+      # public tree carries no production identifiers (self-hosters put their own
+      # there). The hosted ids live in repo secrets and are substituted here,
+      # before any wrangler command reads the config.
+      - name: Inject production binding ids
+        if: steps.head.outputs.stale != 'true'
+        env:
+          D1_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
+          HD_ID: ${{ secrets.CLOUDFLARE_HYPERDRIVE_ID }}
+        run: |
+          : "${D1_ID:?CLOUDFLARE_D1_DATABASE_ID secret is unset — refusing to deploy against the placeholder id}"
+          : "${HD_ID:?CLOUDFLARE_HYPERDRIVE_ID secret is unset — refusing to deploy against the placeholder id}"
+          sed -i \
+            -e "s/^database_id = \"00000000-0000-0000-0000-000000000000\"$/database_id = \"$D1_ID\"/" \
+            -e "s/^id = \"00000000000000000000000000000000\"$/id = \"$HD_ID\"/" \
+            apps/api/wrangler.toml
+          grep -q "^database_id = \"$D1_ID\"$" apps/api/wrangler.toml || { echo "D1 id injection failed" >&2; exit 1; }
+          grep -q "^id = \"$HD_ID\"$" apps/api/wrangler.toml || { echo "Hyperdrive id injection failed" >&2; exit 1; }
+
+      - name: Apply schemas (D1 + Postgres)
+        if: steps.head.outputs.stale != 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        # apply-pg-schema exits 0 without DATABASE_URL (a feature for D1-only
+        # self-hosters, a silent schema skip here) — so assert the secret first.
+        run: |
+          : "${DATABASE_URL:?DATABASE_URL secret is unset — refusing to deploy without the pg schema step}"
+          pnpm --filter @derive/api deploy:schema
+          pnpm --filter @derive/api exec tsx migrate-auth-d1.ts --apply
+          pnpm --filter @derive/api deploy:pg-schema
+
+      - name: Deploy worker
+        if: steps.head.outputs.stale != 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm --filter @derive/api exec wrangler deploy
+
+      # Retried, and includes a DB-backed route so the Hyperdrive→Neon path is
+      # exercised, not just the worker's static response. Version-blind (healthz
+      # doesn't echo a build id yet), so treat it as a smoke, not a proof.
+      - name: Verify prod
+        if: steps.head.outputs.stale != 'true'
+        run: |
+          # Healthy = the worker answers AND the database path answers. The listing
+          # is auth-gated (401 for a tokenless probe), so assert "not a 5xx/timeout"
+          # rather than success — a dead Postgres path shows up as 500 here while
+          # /healthz stays green (it doesn't touch the DB; the July 4 outage proved
+          # both properties).
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            db=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://derive.to/v1/artifacts || echo 000)
+            if curl -sf --max-time 15 https://derive.to/healthz > /dev/null &&
+               [ "$db" -ge 200 ] && [ "$db" -lt 500 ]; then
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "prod not healthy after deploy (last /v1/artifacts status: $db)" >&2
+          exit 1
+
+      # e2e smoke is manual-only (see e2e-smoke.yml; it ran per-PR until
+      # 2026-07-14). Its post-deploy auto-dispatch stays off — a post-ship prod
+      # check is separate from the PR gate; trigger it manually with
+      # `gh workflow run e2e-smoke.yml --ref main` if wanted.
+
+  # Supply-chain: a known-vulnerable production dependency, or a committed secret,
+  # fails the build. Reads the lockfile + working tree, so no install is needed.
+  # Stays on x64: it curls the linux_x64 gitleaks binary, so an arm runner would
+  # need a different asset for a trivial (~16s) job — not worth the arch swap.
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+        with:
+          install: "false"
+
+      # pnpm audits via npm's legacy audit endpoint, which npm RETIRED (returns 410 as of
+      # 2026-07-15) — and pnpm (v10 and v11) hasn't migrated to the bulk-advisories endpoint.
+      # So the endpoint being unreachable is now infra, not a finding: treat that specific
+      # failure as non-fatal (a warning) while STILL failing on a real high advisory, so the
+      # gate keeps working the moment pnpm/npm restore it. gitleaks below is the other gate.
+      # Durable fix: migrate this to OSV-Scanner (no npm-endpoint dependency).
+      - name: Audit production dependencies
+        run: |
+          set +e
+          out=$(pnpm audit --prod --audit-level=high 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          [ "$code" -eq 0 ] && exit 0
+          if echo "$out" | grep -q "ERR_PNPM_AUDIT_BAD_RESPONSE"; then
+            echo "::warning::pnpm audit endpoint unavailable (npm retired the legacy endpoint pnpm uses) — treating as non-fatal. Migrate to OSV-Scanner."
+            exit 0
+          fi
+          exit 1
+
+      - name: Secret scan (gitleaks)
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz | tar -xz gitleaks
+          ./gitleaks detect --no-git --source . --redact --no-banner

@@ -1,0 +1,11 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Supply-chain cooldown (pnpm ≥10.16): refuse to *resolve* a dependency version
+# published less than this many minutes ago (24h), so a compromised just-published
+# release (typosquat / account takeover) can't land in the lockfile before the
+# ecosystem catches and yanks it. Applies at resolution time (pnpm add / update /
+# non-frozen install); CI's --frozen-lockfile installs exact lockfile versions and
+# is unaffected. Raise for a longer quarantine.
+minimumReleaseAge: 1440

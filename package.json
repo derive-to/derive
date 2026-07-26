@@ -1,0 +1,91 @@
+{
+  "name": "derive.to",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Manage and share AI artifacts. Self-hostable, CLI-first, with permanent versioned URLs.",
+  "license": "FSL-1.1-ALv2",
+  "homepage": "https://derive.to",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/derive-to/derive.git"
+  },
+  "bugs": {
+    "url": "https://github.com/derive-to/derive/issues"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.26.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ],
+    "overrides": {
+      "adm-zip": ">=0.6.0",
+      "esbuild": ">=0.25.0",
+      "fast-uri": ">=3.1.3",
+      "drizzle-orm": "0.45.2",
+      "js-yaml": "^4.3.0",
+      "sharp": ">=0.35.0",
+      "shell-quote": ">=1.9.0",
+      "undici": "^7.28.0",
+      "ws": "^8.21.0",
+      "postcss": ">=8.5.18",
+      "brace-expansion@>=3.0.0 <5.0.8": ">=5.0.8"
+    },
+    "patchedDependencies": {
+      "@better-auth/oauth-provider@1.6.19": "patches/@better-auth__oauth-provider@1.6.19.patch",
+      "knip@6.16.1": "patches/knip@6.16.1.patch"
+    }
+  },
+  "scripts": {
+    "dev": "pnpm --filter @derive/api dev",
+    "dev:web": "pnpm --filter @derive/web dev",
+    "dev:all": "pnpm --parallel --filter \"./apps/*\" dev",
+    "start": "pnpm --filter @derive/api start",
+    "typecheck": "pnpm -r typecheck",
+    "typecheck:tsc": "pnpm -r typecheck:tsc",
+    "test": "pnpm -r test",
+    "test:coverage": "pnpm -r test:coverage",
+    "test:pg": "bash scripts/test-pg.sh",
+    "lint": "biome lint",
+    "lint:tokens": "node scripts/check-design-tokens.mjs",
+    "lint:frontend": "node scripts/check-frontend.mjs",
+    "lint:mutations": "node scripts/check-mutations.mjs",
+    "lint:reload": "node scripts/check-workspace-reload.mjs",
+    "lint:surfaces": "node scripts/check-surfaces.mjs",
+    "lint:testids": "node scripts/check-testids.mjs",
+    "lint:api": "node scripts/check-api.mjs",
+    "lint:schema": "node scripts/check-schema.mjs",
+    "lint:filesize": "node scripts/check-file-size.mjs",
+    "lint:bundle": "node scripts/check-bundle.mjs",
+    "lint:anchor-client": "node scripts/check-anchor-client.mjs",
+    "lint:deadcode": "knip",
+    "build:anchor-client": "node scripts/build-anchor-client.mjs",
+    "format": "biome format --write",
+    "check": "biome check",
+    "check:fix": "biome check --write",
+    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:mutations && pnpm lint:reload && pnpm lint:surfaces && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:deadcode && pnpm lint:boundaries && pnpm lint:env && pnpm lint:api-types && pnpm lint:agent-skill && pnpm lint:agent-package-files && pnpm lint:skills",
+    "verify": "pnpm run ci && pnpm typecheck && pnpm test:coverage",
+    "precommit": "pnpm run ci",
+    "prepare": "git config core.hooksPath .githooks || true",
+    "lint:hyperdrive": "node scripts/check-hyperdrive-no-pool.mjs",
+    "lint:boundaries": "depcruise --config .dependency-cruiser.mjs packages apps",
+    "lint:env": "node scripts/check-env.mjs",
+    "lint:api-types": "node scripts/check-api-types.mjs",
+    "sync:agent-skill": "node scripts/sync-derive-agent-skill.mjs",
+    "lint:agent-skill": "node scripts/sync-derive-agent-skill.mjs --check",
+    "lint:agent-package-files": "node scripts/check-agent-package-files.mjs",
+    "lint:skills": "node scripts/gen-skills.mjs --check",
+    "gen:skills": "node scripts/gen-skills.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.0",
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "@vitest/coverage-v8": "^4.1.9",
+    "dependency-cruiser": "^18.0.0",
+    "esbuild": "0.28.1",
+    "knip": "^6.16.1",
+    "typescript": "^6.0.3"
+  }
+}
