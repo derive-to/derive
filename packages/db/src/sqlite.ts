@@ -240,6 +240,13 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
           `INSERT INTO view (id, artifact_id, version, viewer, viewer_kind) VALUES (?,?,?,?,?)`,
         )
         .run(v.id, v.artifact_id, v.version, v.viewer, v.viewer_kind)
+      // Activation stamp: first non-author view only (the route already excluded
+      // owner self-views). WHERE IS NULL keeps it a one-time write.
+      raw
+        .prepare(
+          `UPDATE artifact SET first_foreign_view_at = ? WHERE id = ? AND first_foreign_view_at IS NULL`,
+        )
+        .run(new Date().toISOString(), v.artifact_id)
     },
     viewedSince: async (artifactId, viewer, version, sinceIso): Promise<boolean> => {
       const row = raw

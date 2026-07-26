@@ -748,6 +748,12 @@ export class PgMetaStore implements MetaStore {
       `INSERT INTO view (id, artifact_id, version, viewer, viewer_kind) VALUES ($1,$2,$3,$4,$5)`,
       [v.id, v.artifact_id, v.version, v.viewer, v.viewer_kind],
     )
+    // Activation stamp: first non-author view only (the route already excluded
+    // owner self-views). WHERE IS NULL keeps it a one-time write.
+    await this.pool.query(
+      `UPDATE artifact SET first_foreign_view_at = $1 WHERE id = $2 AND first_foreign_view_at IS NULL`,
+      [new Date().toISOString(), v.artifact_id],
+    )
   }
 
   async viewedSince(
