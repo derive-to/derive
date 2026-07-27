@@ -11,15 +11,16 @@ import { runnerDispatch } from "./use-runner"
 // roster, re-checked per call via canUserAskContext) is the ONLY gate, so an agent can
 // reach exactly what its human can, and nothing more. Discovery is `find` (contexts ride
 // the browse/search results); a connection with no known human is refused at call time.
-// Management (create/rewire/delete) deliberately has no MCP path. (askableContexts /
-// runnerOnline live in mcp-tool-context / mcp-util — shared with find's context rows.)
+// Management lives on `automate` (create_context), owner grants only; rewire/delete
+// deliberately stay REST. (askableContexts / runnerOnline live in mcp-tool-context /
+// mcp-util — shared with find's context rows.)
 
 const NO_HUMAN =
   "Using a context opens a session on a human's behalf, and this connection has no acting human. " +
   "Reconnect with an OAuth login (or a token registered by a user) to use one."
 
 export function registerUseTool(tc: ToolContext): void {
-  const { server, ctx, actingFor, registered, askableContexts, inGrant, resolveWs, wsArg } = tc
+  const { server, ctx, actingFor, askableContexts, inGrant, resolveWs, wsArg } = tc
 
   // (Listing the askable contexts now lives in `find` — they ride the browse/search rows.)
 
@@ -33,10 +34,10 @@ export function registerUseTool(tc: ToolContext): void {
         "task; always name the target, e.g. 'for Acme'). FOLLOW UP: `session_id` + `instruction`. " +
         "CHECK/RESUME: `session_id` alone. The call waits up to `wait` seconds (default 25) for the " +
         "result; real runs take minutes and STREAM, so a still-working response is NORMAL — re-call " +
-        "with the returned session_id until it settles. RUN a context you are the agent for: " +
-        "`use({context})` with no instruction PULLS your queued work; `use({session_id, answer})` " +
-        "reports back (+ `progress` / `state` / `result_artifact_id`). For the modes and the runner " +
-        "loop, read derive://skills/contexts.",
+        "with the returned session_id until it settles. RUN a context you serve: `use({context})` " +
+        "with no instruction PULLS queued work; " +
+        "`use({session_id, answer})` reports back (+ `progress` / `state` / `result_artifact_id`). " +
+        "For the modes and the runner loop, read derive://skills/contexts.",
       inputSchema: {
         context: z
           .string()
@@ -126,11 +127,13 @@ export function registerUseTool(tc: ToolContext): void {
       answers,
       workspace,
     }) => {
-      // RUN MODE — a registered agent acting on a context it is the AGENT FOR needs no
-      // acting human (it acts as itself): runnerDispatch handles REPORT/PULL and returns a
-      // result, or null when this isn't a runner op, so it falls through to the give path
-      // below and the human surface is unchanged. (See mcp-tools/use-runner.ts.)
-      if (registered) {
+      // RUN MODE — dispatched by ownership: a registered agent on a context it is the
+      // AGENT FOR (needs no acting human — it acts as itself), or OWNER-RUN, a grant
+      // whose human holds the owner seat in the context's workspace. runnerDispatch
+      // handles REPORT/PULL and returns a result, or null when this isn't a runner op,
+      // so it falls through to the give path below and every other grant's surface is
+      // unchanged. (See mcp-tools/use-runner.ts.)
+      {
         const ran = await runnerDispatch(tc, {
           context,
           instruction,
@@ -140,6 +143,7 @@ export function registerUseTool(tc: ToolContext): void {
           state,
           result_artifact_id,
           answers,
+          workspace,
         })
         if (ran) return ran
       }

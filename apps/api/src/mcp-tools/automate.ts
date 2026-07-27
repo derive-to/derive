@@ -1,4 +1,4 @@
-import { type AutomationTrigger, newId, normalizeSelectors } from "@derive/core"
+import { type AutomationTrigger, newId, normalizeSelectors, roleAllows } from "@derive/core"
 import { z } from "zod"
 import { mintToken, sha256 } from "../lib/crypto"
 import type { ToolContext } from "../mcp-tool-context"
@@ -6,8 +6,8 @@ import { json } from "../mcp-util"
 
 // The AUTOMATE tool: stand up and drive standing instructions over MCP — the setup surface for
 // both driving scenarios (keep-an-artifact-fresh, and the context-bound QA runner). One tool,
-// three actions, same discipline as `use`: an agent should be able to publish skills, create a
-// context, and wire the automations in a single conversation, no UI and no curl.
+// same discipline as `use`: an agent publishes skills, creates a context (create_context), and
+// wires the automations in a single conversation, no UI and no curl.
 //
 // Mirrors the REST create route's semantics (routes/automations.ts) deliberately: a bound
 // context decides the acting agent; no context ⇒ a managed agent auto-mints (its token is NOT
@@ -29,9 +29,9 @@ export function registerAutomateTool(tc: ToolContext): void {
     "automate",
     {
       description:
-        "Standing automations — a scheduled use(context, instruction). `create`: trigger ({kind: manual|schedule|event, cron?, tz?, on:'webhook'?}) + instruction; optional refs (targets, mode publish|propose), context_id (run materializes that context's manifest + skills, acts as its agent), connection_ids (bound sources). Webhook triggers return fire_url + fire_secret ONCE. `run_now` enqueues now. `record` files a run you executed LOCALLY (automation_id, wrote:[short_ids], outcome, note) into the same ledger. `list` shows them. Owner grants only.",
+        "Standing automations — a scheduled use(context, instruction). `create`: trigger ({kind: manual|schedule|event, cron?, tz?, on:'webhook'?}) + instruction; optional refs (targets, mode publish|propose), context_id (the run acts as that context's agent), connection_ids (bound sources). Webhook triggers return fire_url + fire_secret ONCE. `run_now` enqueues now. `record` files a run you executed LOCALLY (automation_id, wrote:[short_ids], outcome, note) into the same ledger. `list` shows them. `create_context` (name + manifest_short_id, + max_run_ms?/max_concurrency?) wires a context — no token returned; owners run it via use. Owner grants only.",
       inputSchema: {
-        action: z.enum(["create", "list", "run_now", "record"]),
+        action: z.enum(["create", "list", "run_now", "record", "create_context"]),
         trigger: TRIGGER.optional(),
         instruction: z.string().min(1).max(4000).optional(),
         refs: z
@@ -55,6 +55,16 @@ export function registerAutomateTool(tc: ToolContext): void {
         wrote: z.array(z.string().max(64)).max(20).optional(),
         outcome: z.enum(["published", "proposed", "answered", "shadow", "failed"]).optional(),
         note: z.string().max(500).optional(),
+        // `create_context` only — wire a new context to a manifest artifact.
+        name: z.string().trim().min(1).max(80).optional(),
+        manifest_short_id: z.string().max(64).optional(),
+        max_run_ms: z
+          .number()
+          .int()
+          .min(30_000)
+          .max(6 * 60 * 60_000)
+          .optional(),
+        max_concurrency: z.number().int().min(1).max(10).optional(),
       },
     },
     async (input) => {
@@ -93,6 +103,62 @@ export function registerAutomateTool(tc: ToolContext): void {
         })
         ctx.deps.pokeRun?.(rec.id)
         return json({ run_id: rec.id, status: rec.status })
+      }
+
+      if (input.action === "create_context") {
+        // Mirrors the REST create route (routes/contexts.ts) minus the secret: the manifest
+        // must be a workspace artifact the caller can SHARE (creating a context exposes its
+        // identity to askers), the agent auto-mints managed (REST parity: name collisions
+        // suffix, a create failure unwinds the mint), and the dk_agt_ token is NOT returned
+        // — an MCP transcript is a bad place for a standing secret. The creating owner runs
+        // the context directly (owner-run `use`); a dedicated runner gets a token via REST.
+        if (!input.name || !input.manifest_short_id)
+          return json({ error: "create_context needs name + manifest_short_id" })
+        if (!tc.ownerId) return json({ error: "create_context needs a grant with a known user" })
+        const reached = await tc.reach(input.manifest_short_id)
+        if (!reached || "error" in reached || reached.a.org_id !== org)
+          return json({ error: "no such manifest artifact in this workspace" })
+        if (!roleAllows(reached.role, "share"))
+          return json({ error: "creating a context needs share standing on the manifest" })
+        const mint = (name: string) =>
+          meta.createAgent({
+            id: newId("ag"),
+            org_id: org,
+            name,
+            token: sha256(mintToken("dk_agt")),
+            role: "editor",
+            created_by: tc.ownerId,
+            managed: 1,
+          })
+        const minted = await mint(input.name).catch(() =>
+          mint(`${input.name} ${newId("x").slice(-4)}`),
+        )
+        try {
+          const created = await meta.createContext({
+            id: newId("ctx"),
+            org_id: org,
+            name: input.name,
+            agent_id: minted.id,
+            manifest_artifact_id: reached.a.id,
+            created_by: tc.ownerId,
+            max_run_ms: input.max_run_ms ?? null,
+            ...(input.max_concurrency ? { max_concurrency: input.max_concurrency } : {}),
+          })
+          return json({
+            context_id: created.id,
+            name: created.name,
+            agent_id: minted.id,
+            ask_policy: created.ask_policy,
+            note:
+              "No token is returned over MCP. You (an owner) run this context directly: " +
+              "use({context}) pulls its queued work. A dedicated runner's token comes from " +
+              "REST agent rotate.",
+          })
+        } catch {
+          // A name-collision after the auto-mint must not strand an orphaned managed agent.
+          await meta.deleteAgent(minted.id, org).catch(() => {})
+          return json({ error: "a context with that name already exists" })
+        }
       }
 
       if (input.action === "record") {
