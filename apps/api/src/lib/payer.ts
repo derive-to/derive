@@ -83,6 +83,33 @@ export const findPayer = async (
   return null
 }
 
+/**
+ * Can ANY tier pay for work this agent would run? The enqueue-side question, in one call.
+ *
+ * Resolves the agent itself so no caller has to remember to pass `created_by` — the field the
+ * owner-lend tier depends on, and the easiest thing to omit at a new call site. Forgetting it
+ * fails OPEN in the worst way: the tier silently disappears, so a workspace that had lent its
+ * plan gets told nothing can pay.
+ *
+ * Only for work that will EXECUTE. Paths that merely record a run which already happened
+ * elsewhere (`automate record`, POST /v1/agent/runs) must NOT ask this — that work ran on
+ * someone else's machine at their expense, and refusing to file the receipt would lose history
+ * for exactly the BYO users who cost us nothing.
+ */
+export const canPayForAgent = async (
+  meta: MetaStore,
+  input: { orgId: string; agentId: string; initiator: Payer | null },
+): Promise<boolean> => {
+  const agent = await meta.getAgent(input.agentId)
+  const payer = await findPayer(meta, {
+    orgId: input.orgId,
+    agentId: input.agentId,
+    agentCreatedBy: agent?.created_by ?? null,
+    initiator: input.initiator,
+  })
+  return payer !== null
+}
+
 /** What to tell someone whose work cannot be paid for. Names every option that would fix it,
  *  because "no model plan connected" alone does not say whose, or what would count. */
 export const NO_PAYER_MESSAGE =

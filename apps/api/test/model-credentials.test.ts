@@ -12,8 +12,12 @@ describe("model credentials", () => {
   const owner: TestUser = { id: "u_mc_own", email: "mcown@derive.test", name: "Owner" }
   const other: TestUser = { id: "u_mc_oth", email: "mcoth@derive.test", name: "Other" }
   // A configured encryption key is what makes the connect endpoint work at all.
+  // noPlan: these tests assert exactly WHICH tier resolves, so the workspace has to start with
+  // no credentials at all — the fixture's default pool plan would satisfy a chain that is
+  // meant to come up empty, and the assertion would pass for the wrong reason.
   const { app } = makeAuthedApp("model-creds", [owner, other], "editor", {
     deps: { encryptionKey: "test-enc-secret" },
+    noPlan: true,
   })
 
   const mintAgent = async (email: string, name: string) => {
@@ -181,6 +185,7 @@ describe("model credentials: session-keyed initiator resolution", () => {
   const asker: TestUser = { id: "u_mcs_ask", email: "mcsask@derive.test", name: "Asker" }
   const { app } = makeAuthedApp("model-creds-sessions", [owner, asker], "editor", {
     deps: { encryptionKey: "test-enc-secret" },
+    noPlan: true, // "an asker with no plan is null" needs a genuinely empty chain
   })
   const connect = (email: string, body: object) =>
     app.request("/v1/me/model-credentials", jsonAs(as(email), body))
@@ -212,14 +217,11 @@ describe("model credentials: session-keyed initiator resolution", () => {
       `/v1/contexts/${ctx.id}/askers`,
       jsonAs(as(owner.email), { email: asker.email }),
     )
-    const asked = await (
-      await app.request(
-        `/v1/contexts/${ctx.id}/sessions`,
-        jsonAs(as(asker.email), { body_md: "whose plan pays?" }),
-      )
-    ).json()
-    sessionId = asked.session?.id
-    expect(sessionId).toBeTruthy()
+    // Plans connect BEFORE the ask. Opening a session now runs the payer preflight, and an
+    // asker with nothing connected is refused at the door — which is the whole point of the
+    // preflight, and would make this setup unable to produce a session to resolve against.
+    // The individual cases below still delete a plan to assert the empty-chain behaviour;
+    // that operates on the already-open session, exactly as it did before.
     await connect(owner.email, {
       provider: "claude-code",
       kind: "api_key",
@@ -230,6 +232,14 @@ describe("model credentials: session-keyed initiator resolution", () => {
       kind: "api_key",
       token: "sk-asker-plan",
     })
+    const asked = await (
+      await app.request(
+        `/v1/contexts/${ctx.id}/sessions`,
+        jsonAs(as(asker.email), { body_md: "whose plan pays?" }),
+      )
+    ).json()
+    sessionId = asked.session?.id
+    expect(sessionId).toBeTruthy()
   })
 
   it("a session-keyed fetch returns the ASKER's plan, not the owner's", async () => {
@@ -299,6 +309,7 @@ describe("model credentials: run-keyed initiator resolution", () => {
   const clicker: TestUser = { id: "u_mcr_clk", email: "mcrclk@derive.test", name: "Clicker" }
   const { app } = makeAuthedApp("model-creds-runs", [owner, clicker], "editor", {
     deps: { encryptionKey: "test-enc-secret" },
+    noPlan: true, // "an initiator with no plan is null" needs a genuinely empty chain
   })
   const connect = (email: string, body: object) =>
     app.request("/v1/me/model-credentials", jsonAs(as(email), body))
@@ -325,14 +336,9 @@ describe("model credentials: run-keyed initiator resolution", () => {
         }),
       )
     ).json()
-    const run = await (
-      await app.request(`/v1/automations/${auto.id}/run`, {
-        method: "POST",
-        headers: as(clicker.email),
-      })
-    ).json()
-    runId = run.id
-    expect(runId).toBeTruthy()
+    // Plans connect BEFORE Run now, for the same reason as the session setup above: the
+    // preflight refuses to queue a run the clicker cannot pay for, so there would be no run
+    // to resolve against. The cases below still delete a plan to assert the empty chain.
     await connect(owner.email, {
       provider: "claude-code",
       kind: "api_key",
@@ -343,6 +349,14 @@ describe("model credentials: run-keyed initiator resolution", () => {
       kind: "api_key",
       token: "sk-clicker-plan",
     })
+    const run = await (
+      await app.request(`/v1/automations/${auto.id}/run`, {
+        method: "POST",
+        headers: as(clicker.email),
+      })
+    ).json()
+    runId = run.id
+    expect(runId).toBeTruthy()
   })
 
   it("a run-keyed fetch bills the CLICKER (initiated_by), not the owner", async () => {

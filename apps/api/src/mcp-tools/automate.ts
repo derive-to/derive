@@ -1,6 +1,7 @@
 import { type AutomationTrigger, newId, normalizeSelectors } from "@derive/core"
 import { z } from "zod"
 import { mintToken, sha256 } from "../lib/crypto"
+import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import type { ToolContext } from "../mcp-tool-context"
 import { json } from "../mcp-util"
 
@@ -82,6 +83,18 @@ export function registerAutomateTool(tc: ToolContext): void {
         const a = await meta.getAutomation(input.automation_id)
         if (!a || a.org_id !== org) return json({ error: "no such automation" })
         if (a.enabled !== 1) return json({ error: "automation is disabled" })
+        // PAYER guard, same as the REST "Run now" (routes/automations.ts). An agent driving
+        // this over MCP is the caller least able to see a failure afterwards — it queues and
+        // moves on — so refusing here, in the tool result it is already reading, is the only
+        // feedback that reliably lands.
+        if (
+          !(await canPayForAgent(meta, {
+            orgId: org,
+            agentId: a.agent_id,
+            initiator: tc.ownerId ? { userId: tc.ownerId, source: "initiator" } : null,
+          }))
+        )
+          return json({ error: NO_PAYER_MESSAGE })
         const rec = await meta.createRun({
           id: newId("run"),
           org_id: org,

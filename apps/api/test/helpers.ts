@@ -10,6 +10,7 @@ import { Pool } from "pg"
 import { afterAll } from "vitest"
 import { type AppDeps, createApp } from "../src/app"
 import { DEFAULT_WORKSPACE_NAME } from "../src/lib/http"
+import { POOL_USER } from "../src/lib/payer"
 
 export const dir = mkdtempSync(join(tmpdir(), "derive-test-"))
 
@@ -260,11 +261,38 @@ const fakeAuth = (users: TestUser[]): AppDeps["auth"] =>
     },
   }) as unknown as AppDeps["auth"]
 
+/**
+ * Give a workspace a POOL model plan, so work in it can be paid for.
+ *
+ * Every enqueue lane now refuses to queue work nothing can pay for (src/lib/payer.ts). That is
+ * right in production and pure noise in a test about retry backoff or webhook coalescing, so
+ * makeAuthedApp connects one by DEFAULT and the tests that are ABOUT the payer opt out with
+ * `{ noPlan: true }`.
+ *
+ * Written straight to the store rather than through the route: the route encrypts, while the
+ * payer chain only asks whether a credential EXISTS. Keeping this dumb means a change to how
+ * secrets are stored can never quietly make every fixture unpayable.
+ */
+export const connectPoolPlan = async (meta: MetaStore, orgId = "default") => {
+  const now = new Date().toISOString()
+  await meta.setModelCredential({
+    id: `mc_pool_${orgId}`,
+    org_id: orgId,
+    user_id: POOL_USER,
+    provider: "claude-code",
+    kind: "api_key",
+    secret: "sk-test-pool",
+    hint: "test",
+    created_at: now,
+    updated_at: now,
+  })
+}
+
 export const makeAuthedApp = (
   name: string,
   users: TestUser[],
   defaultRole?: AppDeps["defaultRole"],
-  opts?: { isolated?: boolean; deps?: Partial<AppDeps> },
+  opts?: { isolated?: boolean; deps?: Partial<AppDeps>; noPlan?: boolean },
 ) => {
   // Seed a shared "default" workspace so the user list collaborates (the single-
   // mode default before always-multi): users[0] is the Admin/owner, the rest take
@@ -278,6 +306,10 @@ export const makeAuthedApp = (
           role: i === 0 ? "owner" : (defaultRole ?? "editor"),
         }))
   const m = makeStore(name, users, team)
+  // Fire-and-forget: makeAuthedApp is called at describe-body time (synchronous), and every
+  // request that could consult the payer goes through `app.request`, which is awaited well
+  // after this settles. Tests about the payer pass noPlan and assert the refusal.
+  if (!opts?.noPlan) void connectPoolPlan(m, "default")
   const app = createApp({
     meta: m,
     blobs: new FsBlobStore(join(dir, "blobs")),

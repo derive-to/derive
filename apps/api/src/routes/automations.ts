@@ -16,7 +16,7 @@ import { brokerFor, toolsForRun } from "../lib/broker"
 import { overBudget } from "../lib/budget"
 import { mintToken, safeEqual, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
-import { findPayer, NO_PAYER_MESSAGE } from "../lib/payer"
+import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_MAX_RETRIES, retryDelayMs } from "../lib/run-lifecycle"
 import { materializeDueRuns } from "../lib/schedule"
 
@@ -106,15 +106,12 @@ export const automationRoutes = (ctx: AppContext) => {
    *  then fails from inside an executor that had to boot to find out. The chain (initiator →
    *  owner-lend → workspace pool) is the same one the executor resolves later — see lib/payer.ts,
    *  which exists so the two cannot drift. */
-  const canPay = async (a: AutomationRecord, initiatorId: string | null): Promise<boolean> => {
-    const ag = await meta.getAgent(a.agent_id)
-    return !!(await findPayer(meta, {
+  const canPay = (a: AutomationRecord, initiatorId: string | null): Promise<boolean> =>
+    canPayForAgent(meta, {
       orgId: a.org_id,
       agentId: a.agent_id,
-      agentCreatedBy: ag?.created_by ?? null,
       initiator: initiatorId ? { userId: initiatorId, source: "initiator" } : null,
-    }))
-  }
+    })
 
   // ---- Owner surface: define / list / delete ---------------------------------
   app.post("/v1/automations", async (c) => {

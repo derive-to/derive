@@ -16,6 +16,7 @@ import type { AppContext } from "../context"
 import { resolveActorBrandprint } from "../lib/brandprint"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
 import { log } from "../log"
 
@@ -711,6 +712,21 @@ export const contextRoutes = (ctx: AppContext) => {
         const inflight = await meta.findInflightSession(x.id, me.id, b.dedupe_key)
         if (inflight) return joined(inflight)
       }
+      // PAYER guard on the ask lane. A session's chain starts at the ASKER (the person typing
+      // the question bills for the answer), then owner-lend, then the workspace pool — the
+      // same order routes/model-credentials.ts resolves for an in-flight session.
+      //
+      // Placed AFTER the dedupe join deliberately: joining an already-open session creates no
+      // new work, so it must keep working even in a workspace whose plan was disconnected
+      // after that session opened. Only the branch that OPENS one has to be able to pay.
+      if (
+        !(await canPayForAgent(meta, {
+          orgId: x.org_id,
+          agentId: x.agent_id,
+          initiator: { userId: me.id, source: "asker" },
+        }))
+      )
+        return bail(fail(c, 402, NO_PAYER_MESSAGE))
       let session: SessionRecord
       try {
         session = await meta.createSession({
