@@ -96,50 +96,52 @@ new_sqlite_classes = ["RepoSyncRunner"]
 tag = "v4"
 new_sqlite_classes = ["PreviewRenderer"]
 
-# EXPERIMENTAL — hosted automation runs. Uncomment these three blocks to let the
-# every-minute cron EXECUTE due automation runs in scale-to-zero containers (one run
-# per instance, then it exits): the tick materializes due schedules, reclaims runs
-# whose container died, mints a per-run capability token, and boots one container per
-# run. Leave them commented (the default) and runs stay queued for a polling
-# `derive runner`, exactly as before. Requires Containers on your Cloudflare account.
-#
-# [[durable_objects.bindings]]
-# name = "RUN_CONTAINER"
-# class_name = "RunContainer"
-#
-# [[migrations]]
-# tag = "v5"
-# new_sqlite_classes = ["RunContainer"]
-#
-# [[containers]]
-# class_name = "RunContainer"
-# # The SAME image the owner-operated runner uses: its entrypoint sees the per-run
-# # capability token in the env and takes the one-shot run lane automatically.
-# image = "../../deploy/runner.Dockerfile"
-# # The Dockerfile COPYs packages/cli and deploy/ — repo-root paths — but wrangler builds
-# # relative to THIS file by default, so the image fails to build without this. Caught by
-# # `wrangler deploy --dry-run` rather than by a failed production deploy.
-# image_build_context = "../.."
-# # A run is minutes of coding-agent work — size for the agent, not a web request.
-# instance_type = "standard-1"
-# max_instances = 20
-#
-# # The dispatch queue: a LATENCY nudge, not the source of truth. Postgres is the queue of
-# # record, so a lost or duplicated message costs seconds, never work — the cron sweep above
-# # re-dispatches anything still queued, and starting a run twice is a no-op (the executor's
-# # claim is status-guarded). Without this, "Run now" simply waits for the next minute's tick.
-# [[queues.producers]]
-# binding = "RUN_QUEUE"
-# queue = "derive-runs"
-#
-# [[queues.consumers]]
-# queue = "derive-runs"
-# # Small batches, short wait: this exists to cut latency, so holding messages defeats it.
-# max_batch_size = 10
-# max_batch_timeout = 5
-# # One retry, then drop: the sweep is the real backstop, and a message retried for minutes
-# # would just duplicate what the tick already picked up.
-# max_retries = 1
+# EXPERIMENTAL — hosted automation runs. These blocks let the every-minute cron
+# EXECUTE due automation runs in scale-to-zero containers (one run per instance, then
+# it exits): the tick materializes due schedules, reclaims runs whose container died,
+# mints a per-run capability token, and boots one container per run. Comment them out
+# (the shipped default until now) and runs stay queued for a polling `derive runner`,
+# exactly as before. Requires Containers on your Cloudflare account.
+
+[[durable_objects.bindings]]
+name = "RUN_CONTAINER"
+class_name = "RunContainer"
+
+[[migrations]]
+tag = "v5"
+new_sqlite_classes = ["RunContainer"]
+
+[[containers]]
+class_name = "RunContainer"
+# The SAME image the owner-operated runner uses: its entrypoint sees the per-run
+# capability token in the env and takes the one-shot run lane automatically.
+image = "../../deploy/runner.Dockerfile"
+# The Dockerfile COPYs packages/cli and deploy/ — repo-root paths — but wrangler builds
+# relative to THIS file by default, so the image fails to build without this. Caught by
+# `wrangler deploy --dry-run` rather than by a failed production deploy.
+image_build_context = "../.."
+# A run is minutes of coding-agent work — size for the agent, not a web request.
+instance_type = "standard-1"
+# First-run training wheels: two concurrent runs is enough to prove the lane end to
+# end while capping worst-case spend. Raise toward 20 once a real run has completed.
+max_instances = 2
+
+# The dispatch queue: a LATENCY nudge, not the source of truth. Postgres is the queue of
+# record, so a lost or duplicated message costs seconds, never work — the cron sweep above
+# re-dispatches anything still queued, and starting a run twice is a no-op (the executor's
+# claim is status-guarded). Without this, "Run now" simply waits for the next minute's tick.
+[[queues.producers]]
+binding = "RUN_QUEUE"
+queue = "derive-runs"
+
+[[queues.consumers]]
+queue = "derive-runs"
+# Small batches, short wait: this exists to cut latency, so holding messages defeats it.
+max_batch_size = 10
+max_batch_timeout = 5
+# One retry, then drop: the sweep is the real backstop, and a message retried for minutes
+# would just duplicate what the tick already picked up.
+max_retries = 1
 
 # Cloudflare Browser Rendering binding — required for the PreviewRenderer DO.
 # Leave commented if Browser Rendering is not enabled on your account; the worker
