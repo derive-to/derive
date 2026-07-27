@@ -22,14 +22,17 @@ export const shouldPromptSignInToComment = (
   removed: boolean,
 ): boolean => (linkRole === "commenter" || linkRole === "editor") && !removed
 
-/** The nudge's three strings, from the detail response's open-thread count: the
- *  floating pill, the panel heading, and the sign-in CTA. With threads open the
- *  copy sells the conversation ("9 comments · Sign in to join"); empty (or count
- *  withheld) it invites the first one. Pure so the wording is pinned by tests. */
+/** The nudge's strings, from the detail response's open-thread count: the floating
+ *  pill, the panel heading, and the sign-in CTA. With threads open the copy sells
+ *  the conversation ("9 comments · Join the conversation"). Empty (or count
+ *  withheld) drops the heading entirely — "Sign in to comment" over the drifting
+ *  backdrop, deliberately ambiguous about whether anything sits behind the wall,
+ *  rather than announcing there's nothing to see. Pure so the wording is pinned
+ *  by tests. */
 export const commentNudgeCopy = (
   count: number | undefined,
-): { pill: string; heading: string; cta: string } => {
-  if (!count) return { pill: "Comments", heading: "No comments yet", cta: "Sign in to comment" }
+): { pill: string; heading: string | null; cta: string } => {
+  if (!count) return { pill: "Comments", heading: null, cta: "Sign in to comment" }
   const n = `${count} comment${count === 1 ? "" : "s"}`
-  return { pill: n, heading: n, cta: "Sign in to join" }
+  return { pill: n, heading: n, cta: "Join the conversation" }
 }

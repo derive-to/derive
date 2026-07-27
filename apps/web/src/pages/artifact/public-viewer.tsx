@@ -8,9 +8,27 @@ import { Button } from "@/components/ui/button"
 import { artifactTypeLabel } from "@/lib/artifact"
 import { stampSrc } from "@/lib/src-stamp"
 import { ago } from "@/lib/time"
+import { cn } from "@/lib/utils"
 import { FloatingControl } from "./floating-control"
 import { commentNudgeCopy, shouldPromptSignInToComment } from "./lib/comment-access"
 import { Presence } from "./rail-deck"
+
+// Backdrop texture for the anon comments panel — the marketing site's "chats
+// scroll away" ocean, miniaturized to one column. Deliberately generic review
+// chatter (no names, no specifics): real comment bodies never reach anonymous
+// viewers, and these must read as decoration, not as a blurred peek at the thread.
+const GHOST_COMMENTS = [
+  "This section sings.",
+  "can we tighten the intro?",
+  "Ship it.",
+  "the chart carries this page",
+  "second look before Friday?",
+  "Approved",
+  "v4 fixed it",
+  "needs a number behind this claim",
+  "much better in this version",
+  "same note as last round, resolved",
+]
 
 // The public / viral viewer — the chrome-light experience an anonymous visitor
 // gets on a shared /artifacts/ link (the growth loop). The render is the whole page; a
@@ -160,18 +178,49 @@ export function PublicViewer({
                 <X className="size-4" aria-hidden />
               </Button>
             </div>
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-              <Icon name="comments" size={24} className="text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">{copy.heading}</p>
-              <Button asChild variant="default" size="sm" data-testid="public-sign-in-to-comment">
-                <Link
-                  to="/login"
-                  search={{ return_to: returnTo }}
-                  onClick={() => stampSrc("comment_wall", art.short_id)}
-                >
-                  {copy.cta}
-                </Link>
-              </Button>
+            <div className="relative flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden px-6 text-center">
+              {/* The drifting backdrop. The list renders 4x so one loop copy (2x)
+                  outruns any panel height; the mask fades both edges the way the
+                  marketing ocean does. Texture, never content — aria-hidden. */}
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-x-5 inset-y-0 [mask-image:linear-gradient(to_bottom,transparent,black_22%,black_78%,transparent)]"
+              >
+                <div className="flex animate-ghost-drift flex-col gap-5">
+                  {Array.from({ length: 4 }, () => GHOST_COMMENTS)
+                    .flat()
+                    .map((g, i) => (
+                      <span
+                        key={`${g}-${i}`}
+                        className={cn(
+                          "whitespace-nowrap font-mono text-2xs text-foreground",
+                          i % 3 === 1 && "self-end",
+                          i % 3 === 2 && "self-center",
+                          i % 2
+                            ? "opacity-10"
+                            : "rounded-lg border border-border-soft bg-card px-3 py-2 opacity-20",
+                        )}
+                      >
+                        {g}
+                      </span>
+                    ))}
+                </div>
+              </div>
+              {/* The crisp card among the ghosts — the marketing ocean's "kept"
+                  idiom: the chatter drifts, the invitation holds still. */}
+              <div className="relative flex flex-col items-center gap-3 rounded-2xl border border-border-soft bg-background/90 px-7 py-6 shadow-[var(--shadow)] backdrop-blur-[2px]">
+                <Icon name="comments" size={24} className="text-muted-foreground" />
+                {copy.heading && <p className="text-sm text-muted-foreground">{copy.heading}</p>}
+                <Button asChild variant="default" size="sm" data-testid="public-sign-in-to-comment">
+                  <Link
+                    to="/login"
+                    search={{ return_to: returnTo }}
+                    onClick={() => stampSrc("comment_wall", art.short_id)}
+                  >
+                    {copy.cta}
+                  </Link>
+                </Button>
+              </div>
             </div>
           </aside>
         )}
