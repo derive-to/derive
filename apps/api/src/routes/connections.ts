@@ -1,3 +1,4 @@
+import { McpBroker } from "@derive/broker"
 import { type ConnectionRecord, newId } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
@@ -43,13 +44,28 @@ export const connectionRoutes = (ctx: AppContext) => {
     const b = await readJson(
       c,
       z.object({
+        // A toolkit slug for a vendor broker ("gmail", "stripe"), OR — when `mcp_url` is given —
+        // the human label for an MCP server. The URL is a separate field because it is longer
+        // than a slug and shaped differently, and conflating them made the validation lie.
         toolkit: z.string().min(1).max(64),
         scopes_label: z.string().max(200).optional(),
+        /** Connect an MCP server directly: no vendor account, no OAuth round trip, and it works
+         *  in a workspace with no broker plan — which is every workspace today. */
+        mcp_url: z.string().url().max(2000).optional(),
       }),
     )
     if (b instanceof Response) return bail(b)
-    const broker = await brokerFor(meta, org, me.id, deps.encryptionKey)
-    const link = await broker.connect({ orgId: org, userId: me.id, toolkit: b.toolkit })
+    // An MCP connection routes on its own URL rather than the workspace's broker plan. Built
+    // per request (it holds only a session map, no credential), so nothing is cached across
+    // tenants.
+    const broker = b.mcp_url
+      ? new McpBroker()
+      : await brokerFor(meta, org, me.id, deps.encryptionKey)
+    const link = await broker.connect({
+      orgId: org,
+      userId: me.id,
+      toolkit: b.mcp_url ?? b.toolkit,
+    })
     const rec = await meta.createConnection({
       id: newId("conn"),
       org_id: org,

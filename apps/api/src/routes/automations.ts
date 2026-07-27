@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { brokerForRef } from "@derive/broker"
 import {
   type AutomationRecord,
   type AutomationTrigger,
@@ -606,7 +607,13 @@ export const automationRoutes = (ctx: AppContext) => {
     const match = allowed.find((t) => t.def.name === b.tool && (!b.ref || t.ref === b.ref))
     if (!match) return fail(c, 403, "tool not allowed for this run")
     try {
-      const result = await broker.execute({ ref: match.ref, tool: b.tool, args: b.args ?? {} })
+      // Same per-connection routing as toolsForRun: the REF decides the implementation, so an
+      // MCP tool listed on the claim executes through the MCP broker rather than the plan's.
+      const result = await brokerForRef(match.ref, broker).execute({
+        ref: match.ref,
+        tool: b.tool,
+        args: b.args ?? {},
+      })
       // TAINT, stamped BEFORE the result is handed over. This run has now read data from an
       // outside system, so it can no longer live-publish (see decideWrite): its writes become
       // proposals a human approves. Recorded here rather than trusted from the executor,

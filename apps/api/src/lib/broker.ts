@@ -1,5 +1,5 @@
 import type { BrokerToolDef, ToolBroker } from "@derive/broker"
-import { makeBroker } from "@derive/broker"
+import { brokerForRef, makeBroker } from "@derive/broker"
 import type { MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
 
@@ -27,7 +27,16 @@ export const toolsForRun = async (
   const active = conns.filter((cn) => cn.org_id === orgId && cn.status === "active")
   const out: RunTool[] = []
   for (const cn of active) {
-    for (const def of await broker.toolsFor([cn.broker_ref])) out.push({ def, ref: cn.broker_ref })
+    // Per-CONNECTION routing: an `mcp:` ref reaches the MCP broker whatever the workspace's
+    // broker plan is (it needs no vendor account at all), and everything else keeps using the
+    // plan's broker. One workspace can therefore mix the two, which a single global choice
+    // could not express.
+    const b = brokerForRef(cn.broker_ref, broker)
+    // One unreachable or hostile server must not take down the whole tool list: a run bound to
+    // three connections still gets the other two, and sees the failure as a missing tool rather
+    // than a failed claim.
+    const defs = await b.toolsFor([cn.broker_ref]).catch(() => [])
+    for (const def of defs) out.push({ def, ref: cn.broker_ref })
   }
   return out
 }
