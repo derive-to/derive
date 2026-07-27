@@ -34,3 +34,6 @@ apps/api/.verify-data/
 # Claude Code session worktrees (live checkouts of other sessions' branches —
 # never repo content, and their nested configs break root tooling if scanned)
 .claude/worktrees/
+
+# Local dev scratch data (screenshot/walkthrough runs)
+apps/api/.localdata/
