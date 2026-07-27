@@ -2,7 +2,7 @@ import { type ContextRecord, newId, type SessionRecord } from "@derive/core"
 import { z } from "zod"
 import type { ToolContext } from "../mcp-tool-context"
 import { ANSWER_MAX, clipSessionText, ENTRY_MAX, err, json, runnerOnline } from "../mcp-util"
-import { runnerDispatch } from "./use-runner"
+import { ownerRunsOrg, runnerDispatch } from "./use-runner"
 
 // USE A CONTEXT — query a workspace's live data agents ------------------------
 // Contexts are askable agent setups (a registered agent wired to a manifest, answering
@@ -219,11 +219,17 @@ export function registerUseTool(tc: ToolContext): void {
         const resultUrl = s.result_artifact_id
           ? `${base}/artifacts/${s.result_artifact_id}`
           : undefined
+        // A queue with no live runner is a dead end for most askers — but its OWNER can
+        // just serve it (owner-run), so steer them there instead of telling them to wait.
+        // Registered agents keep the wait text: their bare use({context}) pull only
+        // reaches contexts they are the agent for.
         const note =
           s.state === "open"
             ? runnerOnline(x)
               ? "Queued — re-call use with this session_id (+ wait) to collect the answer."
-              : "Queued, but the context's runner looks OFFLINE — it answers when it comes back. Re-call use with this session_id later."
+              : (await ownerRunsOrg(tc, x.org_id))
+                ? `Queued, and no runner is polling this context's queue — but you own this workspace, so you can serve it yourself: use({context: "${x.name}"}) with no instruction pulls the queued work (see derive://skills/contexts).`
+                : "Queued, but the context's runner looks OFFLINE — it answers when it comes back. Re-call use with this session_id later."
             : s.state === "working"
               ? "In progress — the runner is working. Re-call use with this session_id (+ wait) to keep watching; the result link fills in as it goes."
               : s.state === "escalated"

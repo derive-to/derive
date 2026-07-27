@@ -183,9 +183,11 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
   it("owner-run: give, pull, stream progress, settle — one grant end to end", async () => {
     const { app, meta } = ownerApp("own-loop")
     const { created } = await setupContext(app)
-    // Empty queue: a bare use({context}) is the runner pull, not a give error.
+    // Empty queue: a bare use({context}) is the runner pull, not a give error — and
+    // it says the queue is empty rather than returning a bare zero.
     const empty = await call(app, "tok_full", "use", { context: "QA" })
     expect(empty.claimed).toBe(0)
+    expect(empty.note).toContain("Nothing queued")
     // GIVE on the same grant (ask_policy invited admits the creator).
     const opened = await call(app, "tok_full", "use", {
       context: "QA",
@@ -230,6 +232,22 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
     for (const m of agentTurns) expect(m.author_id).toBe("u_admin")
     // The context's created agent never served: the claim + answers were owner-run.
     expect(agentTurns.some((m) => m.author_id === created.agent_id)).toBe(false)
+  })
+
+  it("a give on an unserved queue steers the owner to owner-run, not to waiting", async () => {
+    const { app } = ownerApp("own-steer")
+    await setupContext(app)
+    // No runner has ever polled: the owner who queued the work is told they can
+    // serve it themselves (a registered agent or non-owner keeps the wait text —
+    // covered in mcp-contexts' offline-note test).
+    const opened = await call(app, "tok_full", "use", {
+      context: "QA",
+      instruction: "Run the smoke suite.",
+      wait: 0,
+    })
+    expect(opened.state).toBe("open")
+    expect(opened.note).toContain("serve it yourself")
+    expect(opened.note).toContain('use({context: "QA"})')
   })
 
   it("non-owner grants fall through to the give path unchanged", async () => {

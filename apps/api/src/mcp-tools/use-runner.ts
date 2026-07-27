@@ -22,6 +22,21 @@ import { clipSessionText, ENTRY_MAX, err, json } from "../mcp-util"
 
 type ToolResult = ReturnType<typeof json> | ReturnType<typeof err>
 
+/** OWNER-RUN gate: does this connection's human hold the manage-grade (owner) seat in
+ *  `org`? Grants only — a registered agent runs by agent_id, never by seat. The default
+ *  workspace's role is already membership-capped; a roamed one re-caps from the grant's
+ *  scope against live membership, the same rule as resolveWs / the X-Derive-Workspace
+ *  re-home. Exactly the people who could rewire the context anyway. Shared with `use`'s
+ *  give path, which steers an owner to owner-run when a queue has no live runner. */
+export const ownerRunsOrg = async (tc: ToolContext, org: string): Promise<boolean> => {
+  const { ctx, agent, actingFor, ownerId, scopeForCap, registered, inGrant } = tc
+  if (registered || !actingFor) return false
+  if (org === agent.org_id) return roleAllows(agent.role, "manage")
+  if (!ownerId || !inGrant(org)) return false
+  const m = await ctx.meta.getMembership(org, ownerId)
+  return !!m && roleAllows(capRole(scopeForCap, m.role), "manage")
+}
+
 /** The runner (agent-you-run) half of `use`, dispatched by ownership. Returns a tool
  *  result when the call is a runner op (REPORT/PULL on a context this connection is the
  *  agent for), or null when it isn't — `use` then handles it as a normal asker call. */
@@ -39,22 +54,10 @@ export async function runnerDispatch(
     workspace?: string
   },
 ): Promise<ToolResult | null> {
-  const { ctx, agent, actingFor, ownerId, scopeForCap, registered, inGrant, resolveWs } = tc
+  const { ctx, agent, actingFor, registered, resolveWs } = tc
   const { context, instruction, session_id, answer, progress, state, result_artifact_id, answers } =
     args
 
-  // OWNER-RUN: does this connection's human hold the manage-grade (owner) seat in `org`?
-  // Grants only — a registered agent runs by agent_id, never by seat. The default
-  // workspace's role is already membership-capped; a roamed one re-caps from the grant's
-  // scope against live membership, the same rule as resolveWs / the X-Derive-Workspace
-  // re-home. Exactly the people who could rewire the context anyway.
-  const ownerRunsOrg = async (org: string): Promise<boolean> => {
-    if (registered || !actingFor) return false
-    if (org === agent.org_id) return roleAllows(agent.role, "manage")
-    if (!ownerId || !inGrant(org)) return false
-    const m = await ctx.meta.getMembership(org, ownerId)
-    return !!m && roleAllows(capRole(scopeForCap, m.role), "manage")
-  }
   // The agent turn's author: the registered agent, or the owner-run human — the
   // transcript says who actually did the work.
   const runnerId = registered ? agent.id : (actingFor?.id ?? agent.id)
@@ -117,7 +120,11 @@ export async function runnerDispatch(
         ? {
             note: "At the context's concurrency cap — answer an in-flight session before claiming more.",
           }
-        : {}),
+        : sessions.length === 0
+          ? {
+              note: "Nothing queued. Work arrives when someone gives this context an instruction — use({context, instruction}).",
+            }
+          : {}),
       sessions: sessions.map((s) => ({
         session_id: s.id,
         state: s.state,
@@ -210,7 +217,7 @@ export async function runnerDispatch(
   if (session_id && answer !== undefined) {
     const s = await ctx.meta.getSession(session_id)
     const x = s ? await ctx.meta.getContext(s.context_id) : null
-    if (s && x && (registered ? x.agent_id === agent.id : await ownerRunsOrg(x.org_id)))
+    if (s && x && (registered ? x.agent_id === agent.id : await ownerRunsOrg(tc, x.org_id)))
       return runnerAnswer(s, x, { body: answer, progress, state, result_artifact_id, answers })
   }
   // PULL your queued work: a context you run + NO instruction (a give always has one, so a

@@ -17,15 +17,25 @@ import {
 import { isSkillBundle, parseFrontmatter } from "./skill"
 
 /**
- * Does this content begin like a full HTML document? Used to classify a payload as
- * text/html even if it carries a .md name (a self-contained HTML report committed
- * as Markdown would otherwise render blank). Conservative on purpose — it must
- * START with the doctype/`<html>` marker, so ordinary Markdown that merely embeds
- * some inline HTML is NOT misclassified.
+ * Does this content read as an HTML page? Used to classify a payload as text/html
+ * even when it carries a .md name or no filename hint (a self-contained HTML report
+ * would otherwise render its CSS as visible text). The boundary that matters:
+ * ordinary Markdown must NEVER classify as HTML (the retype incident), so only
+ * unambiguous page openers count — the doctype/`<html>` markers plus the
+ * head/meta/style/title/body openers a headless designed page starts with, after
+ * skipping leading HTML comments (both designed pages and Markdown open with those,
+ * so a comment alone never decides). A leading `<div>`/`<p>`/custom tag stays
+ * NOT-HTML: that is exactly how HTML-flavored Markdown (a centered README)
+ * legitimately opens.
  */
 export const looksLikeHtmlDocument = (text: string): boolean => {
-  const head = text.replace(/^﻿/, "").trimStart().slice(0, 256).toLowerCase()
-  return head.startsWith("<!doctype html") || head.startsWith("<html")
+  let head = text.replace(/^﻿/, "").trimStart()
+  for (let i = 0; i < 8 && head.startsWith("<!--"); i++) {
+    const end = head.indexOf("-->")
+    if (end === -1) return false
+    head = head.slice(end + 3).trimStart()
+  }
+  return /^<(!doctype\s+html|html|head|body|meta|style|title)[\s/>]/i.test(head.slice(0, 64))
 }
 
 export interface PublishInput {
