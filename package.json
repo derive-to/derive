@@ -80,12 +80,12 @@
     "gen:skills": "node scripts/gen-skills.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.0",
+    "@biomejs/biome": "^2.5.5",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
-    "@vitest/coverage-v8": "^4.1.9",
-    "dependency-cruiser": "^18.0.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "dependency-cruiser": "^18.1.0",
     "esbuild": "0.28.1",
     "knip": "^6.16.1",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   }
 }
