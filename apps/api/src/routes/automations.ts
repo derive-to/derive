@@ -16,6 +16,7 @@ import { brokerFor, toolsForRun } from "../lib/broker"
 import { overBudget } from "../lib/budget"
 import { mintToken, safeEqual, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { findPayer, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_MAX_RETRIES, retryDelayMs } from "../lib/run-lifecycle"
 import { materializeDueRuns } from "../lib/schedule"
 
@@ -99,6 +100,21 @@ export const automationRoutes = (ctx: AppContext) => {
   // has always had the mirror of this (routes/contexts.ts refuses a standing bearer); the run
   // lane never got it. Check kind explicitly, at the door, on every run-lane endpoint.
   const isSessionBearer = (c: Context): boolean => agentSessionScope(c) !== null
+
+  /** Can anything pay for a run of this automation? Checked BEFORE queuing, so a workspace with
+   *  no connected plan gets a clear refusal instead of a run that is created, dispatched, and
+   *  then fails from inside an executor that had to boot to find out. The chain (initiator →
+   *  owner-lend → workspace pool) is the same one the executor resolves later — see lib/payer.ts,
+   *  which exists so the two cannot drift. */
+  const canPay = async (a: AutomationRecord, initiatorId: string | null): Promise<boolean> => {
+    const ag = await meta.getAgent(a.agent_id)
+    return !!(await findPayer(meta, {
+      orgId: a.org_id,
+      agentId: a.agent_id,
+      agentCreatedBy: ag?.created_by ?? null,
+      initiator: initiatorId ? { userId: initiatorId, source: "initiator" } : null,
+    }))
+  }
 
   // ---- Owner surface: define / list / delete ---------------------------------
   app.post("/v1/automations", async (c) => {
@@ -290,6 +306,11 @@ export const automationRoutes = (ctx: AppContext) => {
     if (a.enabled !== 1) return fail(c, 400, "automation is disabled")
     // Budget guard at enqueue (invariant 2): a run-now bills to the requester.
     if (await overBudget(meta, org, me.id)) return fail(c, 429, "monthly run budget reached")
+    // PAYER guard: never queue work nothing can pay for. Without it the run is created,
+    // dispatch boots an executor, and the executor discovers there is no plan — so the
+    // workspace pays container time to learn something knowable here, and the person who
+    // pressed the button gets a failed run in the ledger that never had a chance.
+    if (!(await canPay(a, me.id))) return fail(c, 402, NO_PAYER_MESSAGE)
     const rec = await meta.createRun({
       id: newId("run"),
       org_id: org,
@@ -327,6 +348,11 @@ export const automationRoutes = (ctx: AppContext) => {
     if (a.enabled !== 1) return fail(c, 400, "automation is disabled")
     // Budget guard at enqueue (invariant 2): a fire bills to the workspace pool (no user).
     if (await overBudget(meta, a.org_id, null)) return fail(c, 429, "monthly run budget reached")
+    // PAYER guard. A fire has no person behind it, so it can only reach the owner-lend and pool
+    // tiers — and a webhook that keeps firing into a workspace with no plan would otherwise
+    // queue a run every time, each one booting an executor to fail. Refusing here also tells
+    // the CALLER, which is the only party positioned to stop retrying.
+    if (!(await canPay(a, null))) return fail(c, 402, NO_PAYER_MESSAGE)
     // Read the body under a hard cap, then parse. An empty body fires with an empty payload.
     const raw = await c.req.text()
     if (raw.length > MAX_FIRE_BODY_BYTES) return fail(c, 413, "payload too large")

@@ -1,6 +1,8 @@
 import { type AutomationRecord, type MetaStore, newId } from "@derive/core"
 import { Cron } from "croner"
+import { log } from "../log"
 import { parseTrigger } from "./automation"
+import { findPayer } from "./payer"
 
 // The schedule tick: turning DUE cron automations into queued runs. Two callers, one rule:
 //   - a POLLING runner materializes ITS agent's schedules at claim time (the poll IS the tick);
@@ -31,6 +33,7 @@ const materializeFor = async (
   now: Date,
 ): Promise<number> => {
   let created = 0
+  let unpayable = 0
   for (const a of autos) {
     const trigger = parseTrigger(a.trigger)
     if (trigger.kind !== "schedule" || !trigger.cron) continue
@@ -57,6 +60,27 @@ const materializeFor = async (
     // Caught per automation so one collision cannot abandon the rest of the pass: this loop
     // walks every enabled automation in the deployment, and throwing out of it would silently
     // stop every automation after the one that collided.
+    // PAYER guard. A schedule is the one trigger with nobody watching: without this, an
+    // automation in a workspace that has connected no plan materializes a run on EVERY
+    // occurrence, forever, and each one boots an executor that discovers the same thing and
+    // fails. Refusing to materialize is the difference between a cron that is idle and a cron
+    // that bills container time every minute to produce a failure nobody reads.
+    //
+    // Checked HERE — after the dedupe, immediately before the insert — so a tick that
+    // materializes nothing costs no extra queries, whatever the size of the automation list.
+    const ag = await meta.getAgent(a.agent_id)
+    const payer = await findPayer(meta, {
+      orgId: a.org_id,
+      agentId: a.agent_id,
+      agentCreatedBy: ag?.created_by ?? null,
+      // A clock has no person behind it, so a scheduled run can only reach the owner-lend and
+      // pool tiers. That is also why it is the trigger most likely to have no payer at all.
+      initiator: null,
+    })
+    if (!payer) {
+      unpayable += 1
+      continue
+    }
     try {
       await meta.createRun({
         id: newId("run"),
@@ -71,6 +95,12 @@ const materializeFor = async (
       // Lost the race. The occurrence exists; nothing to do and nothing to report.
     }
   }
+  // Once per pass with a count, not once per automation per minute: a workspace that never
+  // connects a plan would otherwise fill the log with the same line forever. Silence would be
+  // worse — a schedule that quietly stops materializing is indistinguishable from one that is
+  // working, which is exactly the class of bug this codebase keeps finding.
+  if (unpayable > 0)
+    log.warn("schedule: skipped occurrences with no connected model plan", { unpayable })
   return created
 }
 
