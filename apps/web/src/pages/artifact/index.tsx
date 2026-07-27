@@ -106,7 +106,9 @@ export function Artifact() {
   const { data: art, isError: failed, error, refetch } = useQuery(artifactQuery(shortId))
   // The tab is named after the document, like the workbench header (title, else id).
   useDocumentTitle(art ? (art.title ?? shortId) : null)
-  const { data: comments = [] } = useQuery(commentsQuery(shortId))
+  // Comments are signed-in-only (the API 404s anon by design) — don't fire the
+  // query just to watch it fail on every public view.
+  const { data: comments = [] } = useQuery({ ...commentsQuery(shortId), enabled: !!me })
   // Agents this viewer can hand a revision to (the "ask an agent" flow). Empty for
   // an anon viewer (the query is authed) or a workspace with no agents — then the
   // affordance simply doesn't appear.

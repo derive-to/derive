@@ -31,16 +31,16 @@ describe("commentNudgeCopy (pill + panel wording)", () => {
     expect(commentNudgeCopy(9)).toEqual({
       pill: "9 comments",
       heading: "9 comments",
-      cta: "Sign in to join",
+      cta: "Join the conversation",
     })
     expect(commentNudgeCopy(1)).toEqual({
       pill: "1 comment",
       heading: "1 comment",
-      cta: "Sign in to join",
+      cta: "Join the conversation",
     })
   })
-  it("with none (or an absent count): a plain invitation to start", () => {
-    const empty = { pill: "Comments", heading: "No comments yet", cta: "Sign in to comment" }
+  it("with none (or an absent count): no heading — deliberately ambiguous", () => {
+    const empty = { pill: "Comments", heading: null, cta: "Sign in to comment" }
     expect(commentNudgeCopy(0)).toEqual(empty)
     expect(commentNudgeCopy(undefined)).toEqual(empty)
   })
