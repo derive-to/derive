@@ -3,6 +3,7 @@ import type {
   ArtifactKind,
   AuditAction,
   CommentState,
+  ConnectionStatus,
   DeliveryKind,
   DeliveryStatus,
   DomainKind,
@@ -11,6 +12,7 @@ import type {
   LinkRole,
   Listed,
   NotificationKind,
+  PlanKind,
   PreviewStatus,
   ProposalState,
   RenderJobStatus,
@@ -220,6 +222,13 @@ export const automation = sqliteTable("automation", {
   // How each write lands (publish vs propose) rides IN the refs blob per target —
   // policy is config, config evolves, and evolving config never gets a column.
   refs: text("refs"),
+  // JSON array of bound connection ids — the sources a run may read from (least privilege).
+  // Nullable + no default, so it ALTER ADDs cleanly on existing databases.
+  connection_ids: text("connection_ids"),
+  // The context this automation runs AS (nullable): its manifest + skills become the run's
+  // system prompt, making an automation literally a scheduled use(context, instruction).
+  // Unset = the bare run contract (an artifact-freshness job needs no methodology).
+  context_id: text("context_id"),
   enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
   created_at: text("created_at").notNull().default(now),
 })
@@ -243,6 +252,35 @@ export const run = sqliteTable("run", {
   finished_at: text("finished_at"),
   cost_micro_usd: integer("cost_micro_usd"),
   meta: text("meta"),
+  created_at: text("created_at").notNull().default(now),
+})
+
+// A bring-your-own plan (WO2): an owner attaches their own model or broker credential and
+// runs meter against it. user_id set = that person's personal plan; user_id null = the
+// workspace pool (the fallback). The secret is encrypted at rest; limits ride a JSON blob.
+export const plan = sqliteTable("plan", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  user_id: text("user_id"),
+  kind: text("kind").$type<PlanKind>().notNull(),
+  provider: text("provider").notNull(),
+  secret_enc: text("secret_enc").notNull(),
+  limits: text("limits"),
+  created_at: text("created_at").notNull().default(now),
+})
+
+// A per-user connected external account (WO3): the owner authorized the broker to act on their
+// Gmail/Stripe/etc. Always bound to one person; a hosted run sees the tools of its bound
+// connections only. broker_ref is the broker-side connected-account id.
+export const connection = sqliteTable("connection", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  user_id: text("user_id").notNull(),
+  broker: text("broker").notNull(),
+  toolkit: text("toolkit").notNull(),
+  broker_ref: text("broker_ref").notNull(),
+  scopes_label: text("scopes_label"),
+  status: text("status").$type<ConnectionStatus>().notNull().default("pending"),
   created_at: text("created_at").notNull().default(now),
 })
 
@@ -968,6 +1006,8 @@ const TABLES = [
   agentMention,
   automation,
   run,
+  plan,
+  connection,
   invitation,
   artifactInvite,
   betaSignup,
@@ -1039,12 +1079,32 @@ const CONTEXT_SESSION_DEDUPE_UNIQUE =
   `CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session ` +
   `(context_id, asker_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working')`
 
+// One run per automation per cron occurrence — as a CONSTRAINT rather than a convention.
+//
+// The schedule tick dedupes by reading the newest schedule run and comparing its scheduled_for
+// (lib/schedule.ts). That is a read-then-write, so two ticks racing — the every-minute cron,
+// plus every polling agent's claim, plus a second API replica — can both decide an occurrence
+// is unmaterialized and both create it. Two runs for one occurrence means two executors, two
+// model bills, and two versions of the same artifact. The read-then-write stays and still does
+// the work; this makes LOSING that race harmless rather than expensive, because the loser's
+// INSERT simply fails.
+//
+// Scoped to reason='schedule' deliberately: manual runs, webhook fires and retries all stamp
+// scheduled_for as well (with `now`, or now+backoff), so an unscoped constraint would reject a
+// second Run now in the same instant — which is legitimate. Partial and expression-scoped, so
+// drizzle's uniqueIndex cannot express it: raw DDL, exactly like the session dedupe above.
+const RUN_SCHEDULE_OCCURRENCE_UNIQUE =
+  `CREATE UNIQUE INDEX IF NOT EXISTS run_schedule_occurrence ON run ` +
+  `(automation_id, scheduled_for) WHERE reason = 'schedule' AND automation_id IS NOT NULL ` +
+  `AND scheduled_for IS NOT NULL`
+
 export const SCHEMA_STATEMENTS: string[] = [
   ...ddl.creates,
   ...placeholderTables(SQLITE_TIMESTAMP_DEFAULT),
   ...PERF_INDEXES,
   ARTIFACT_SEARCH_FTS5,
   CONTEXT_SESSION_DEDUPE_UNIQUE,
+  RUN_SCHEDULE_OCCURRENCE_UNIQUE,
 ]
 
 /**

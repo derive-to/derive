@@ -156,8 +156,10 @@ shipping. If something below surprises you, that's the guardrail doing its job:
 
 The custom checks (`lint:tokens`, `lint:frontend`, `lint:testids`, `lint:api`, `lint:schema`,
 `lint:hyperdrive`, `lint:boundaries`, `lint:env`, `lint:deadcode`) and Biome all run inside
-`pnpm run ci`, so the one gate command covers them; `pnpm typecheck` and `pnpm test` (which
-includes the authz-coverage test) complete it.
+`pnpm run ci`, so the one gate command covers them; `pnpm typecheck` and `pnpm test:coverage`
+(which includes the authz-coverage test and each package's coverage ratchet) complete it.
+`pnpm verify` runs all three in the same order as CI's `check` job — prefer it over running
+a subset, since `pnpm test` alone skips the ratchet and can pass where CI fails.
 
 ## Database migrations
 
@@ -218,9 +220,10 @@ A note on CI runners: workflows in this repo run on Ubicloud runners
 (`runs-on: ubicloud-standard-*`), which are only available in the upstream repository. A
 PR you open against this repo runs CI normally (a maintainer approves the first run for
 new contributors), but pushes to your own fork will show those jobs queued forever:
-that's expected, not a broken setup. Run the gate locally (`pnpm run ci`, `pnpm
-typecheck`, `pnpm test:coverage`) instead — or, in a fork you control, swap the labels
-for `ubuntu-latest`, which is the only coupling to the provider.
+that's expected, not a broken setup. Run the gate locally with `pnpm verify` instead —
+the same three steps, in the same order, as CI's `check` job. Or, in a fork you
+control, swap the labels for `ubuntu-latest`, which is the only coupling to the
+provider.
 
 ## Tests
 

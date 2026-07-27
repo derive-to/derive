@@ -13,6 +13,9 @@
     "packages/db": {
       "ignore": ["test/env.d.ts"],
       "ignoreDependencies": ["cloudflare"]
+    },
+    "packages/cli": {
+      "ignore": ["src/runner.d.ts"]
     }
   },
   "rules": {

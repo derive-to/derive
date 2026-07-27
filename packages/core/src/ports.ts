@@ -873,6 +873,16 @@ export interface ContextStore {
   /** How many sessions are currently `working` on a context — the per-context
    *  concurrency cap (the route claims min(limit, max_concurrency - working)). */
   countWorkingSessions(contextId: string): Promise<number>
+  /** Sessions awaiting an executor across ALL workspaces (capped, oldest first) — the hosted
+   *  tick's ask-lane scan, the twin of listDueQueuedRuns. Runnable means `open`, or `working`
+   *  with a lapsed lease (a dead executor's session self-heals). Read-only: dispatch never
+   *  claims, the booted executor does. */
+  listDueOpenSessions(now: string, limit?: number): Promise<SessionRecord[]>
+  /** Claim EXACTLY one session for one agent (the capability-token path: a dispatched substrate
+   *  serves its one session, never a batch). open|lapsed-working → `working` under the same
+   *  lease, so a double-booted substrate loses the race and exits clean. Null when it isn't
+   *  claimable (missing, foreign agent, or already live). */
+  claimSessionById(id: string, agentId: string, leaseUntil: string): Promise<SessionRecord | null>
   /** The newest still-live session (`open` or `working`) matching a dedupe key for a
    *  given asker on a context, or null — the ask idempotency join. Scoped to the asker so
    *  a shared key never joins one asker onto another's private session. */
@@ -1032,12 +1042,42 @@ export interface AgentStore {
   /** Enqueue or record a run. status defaults to "queued" (pending work); pass a terminal
    *  status to record an already-finished run straight into the ledger. */
   createRun(r: NewRun): Promise<RunRecord>
-  /** One run by id — the model-credential endpoint resolves a run's initiator through this. */
+  /** One run by id, or null. Resolves a run's initiator for the model-credential endpoint, its
+   *  automation for the tool endpoint, and its liveness when a capability token is presented. */
   getRun(id: string): Promise<RunRecord | null>
+  /** One agent by id — resolves a run capability token to its agent principal. */
+  getAgent(id: string): Promise<AgentRecord | null>
   /** Atomically claim due queued runs for one agent: status "queued" with scheduled_for ≤
    *  now, flipped to "running" (started_at = now) under a row lock so concurrent executors
    *  never double-run one. Returns the claimed rows, oldest-scheduled first. */
   claimDueRuns(agentId: string, now: string, limit?: number): Promise<RunRecord[]>
+  /** Claim EXACTLY one run by id for one agent (the capability-token path: a dispatched
+   *  substrate executes its one run, never a batch). Same queued→running flip under the same
+   *  race safety; null when the run isn't claimable (missing, foreign, or already claimed —
+   *  a double-booted substrate loses this race and exits clean). */
+  claimRunById(id: string, agentId: string, now: string): Promise<RunRecord | null>
+  /** Send a RUNNING run back to the queue for a later retry, scoped to the claiming agent.
+   *  The transient-failure counterpart to finishRun: instead of a terminal row the run becomes
+   *  `queued` again with `scheduled_for` in the future (the backoff) and its attempt count in
+   *  meta. Returns the updated row, or null when the run isn't this agent's or isn't running. */
+  requeueRun(
+    id: string,
+    agentId: string,
+    fields: { scheduledFor: string; meta?: string | null },
+  ): Promise<RunRecord | null>
+  /** The reclaim sweep: runs stuck `running` since before `cutoffIso` (their substrate died)
+   *  go back to `queued` for re-dispatch, with an attempt count kept in meta; a run past
+   *  `maxAttempts` is finished failed (outcome "lost") instead of looping forever. */
+  reclaimStaleRuns(
+    cutoffIso: string,
+    maxAttempts?: number,
+  ): Promise<{ requeued: number; failed: number }>
+  /** Every enabled automation across ALL workspaces (capped) — the hosted tick scans these
+   *  to materialize due schedule runs. Fine at self-host scale; revisit if it ever shows up. */
+  listEnabledAutomations(limit?: number): Promise<AutomationRecord[]>
+  /** Queued runs due now across ALL workspaces (capped), oldest first — the hosted tick's
+   *  dispatch scan. Read-only: dispatch does NOT claim; the booted substrate claims. */
+  listDueQueuedRuns(now: string, limit?: number): Promise<RunRecord[]>
   /** Terminate a run: set the terminal status, finished_at, and (optional) cost + meta.
    *  Scoped to (id, agent) so only the claiming agent settles it. */
   finishRun(
@@ -1052,6 +1092,58 @@ export interface AgentStore {
   ): Promise<RunRecord | null>
   /** The workspace's recent runs, newest first (the activity view / ledger). Default 50. */
   listRuns(orgId: string, limit?: number): Promise<RunRecord[]>
+  /** The newest run for an automation by scheduled_for (any status), or null. The schedule tick
+   *  reads it to decide whether the current cron occurrence has already been materialized — so a
+   *  runner polling several times inside one cron window enqueues exactly one run.
+   *
+   *  `reason` narrows to one kind of firing, and the tick MUST pass "schedule". Without it any
+   *  other run poisons the dedupe, because they all write a scheduled_for: a Run now and a fire
+   *  stamp `now`, and a retry stamps now+backoff, which is in the FUTURE. Each therefore reads
+   *  as "this window is already materialized" and silently swallows the cron occurrence — one
+   *  click of Run now at 10:05 makes the 10:00 hourly run never exist. */
+  latestRunForAutomation(automationId: string, reason?: string): Promise<RunRecord | null>
+  /** The newest still-queued run for an automation whose scheduled_for ≤ cutoff — the
+   *  coalescing target when a burst of webhook fires arrives close together. Null when none
+   *  is open, so the caller enqueues a fresh run. */
+  findCoalescibleRun(automationId: string, cutoffIso: string): Promise<RunRecord | null>
+  /** Append a payload into a STILL-QUEUED run's `meta.payloads[]`, guarded so it applies only
+   *  while the run is queued and its meta is unchanged since the read (optimistic concurrency).
+   *  Returns the updated row, or null if the run left the queue, was appended concurrently, or
+   *  would exceed maxMetaBytes — in every null case the caller enqueues a fresh run, so a
+   *  payload is never lost (at worst an extra run is created under contention). */
+  appendRunPayload(runId: string, payload: unknown, maxMetaBytes: number): Promise<RunRecord | null>
+  // ---- Plans (bring-your-own model + broker credentials) -----------------
+  /** Attach a plan. */
+  createPlan(p: NewPlan): Promise<PlanRecord>
+  /** One plan by id, or null. */
+  getPlan(id: string): Promise<PlanRecord | null>
+  /** A workspace's plans, newest first (personal + pool). */
+  listPlans(orgId: string): Promise<PlanRecord[]>
+  /** Remove a plan, org-scoped so a caller can't reach across tenants. */
+  deletePlan(id: string, orgId: string): Promise<void>
+  /** The effective plan for (org, user, kind): the user's personal plan if any, else the
+   *  workspace-pool plan (user_id null), else null. Money falls back; the caller treats null
+   *  as the loud-failure case (no meter available). */
+  resolvePlan(orgId: string, userId: string | null, kind: PlanKind): Promise<PlanRecord | null>
+  /** Sum of cost_micro_usd across the org's runs at/after an ISO cutoff — backs the budget
+   *  check at enqueue (spend this month vs a plan's monthlyMicroUsd limit). */
+  sumRunCostSince(orgId: string, sinceIso: string): Promise<number>
+  // ---- Connections (per-user connected external accounts) ----------------
+  /** Record a connected account. */
+  createConnection(cn: NewConnection): Promise<ConnectionRecord>
+  /** One connection by id, or null. */
+  getConnection(id: string): Promise<ConnectionRecord | null>
+  /** Batch-load connections by id in ONE query — backs the least-privilege toolsFor: a run
+   *  resolves ONLY its bound connection ids, never the workspace's whole list. Empty ⇒ []. */
+  getConnectionsByIds(ids: string[]): Promise<ConnectionRecord[]>
+  /** A workspace's connections, newest first; pass userId to scope to one person's. */
+  listConnections(orgId: string, userId?: string): Promise<ConnectionRecord[]>
+  /** Flip a connection's status (activate on authorize, revoke on teardown), org-scoped. */
+  setConnectionStatus(
+    id: string,
+    orgId: string,
+    status: ConnectionStatus,
+  ): Promise<ConnectionRecord | null>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>
   /** Resolve a live OAuth access token (by its stored hash) to its grant. */
@@ -1407,6 +1499,10 @@ export interface AutomationTrigger {
   tz?: string
   /** event: the event name (e.g. "comment.opened", "upstream.published", "webhook"). */
   on?: string
+  /** event/webhook: sha256 of the fire secret. The raw secret rides only the create
+   *  response that mints it; the fire endpoint verifies a presented bearer against this
+   *  hash. Never surfaced on read — redacted to a boolean when an automation is presented. */
+  secret_hash?: string
 }
 
 /** A standing agent job: WHAT to do (instruction), WHO does it (agent), and the rule for
@@ -1423,6 +1519,12 @@ export interface AutomationRecord {
   instruction: string
   /** Serialized inputs/targets (artifact ids, urls, arbitrary), or null. */
   refs: string | null
+  /** Serialized JSON array of bound connection ids — the SOURCES a run may read from. A run
+   *  gets the tools of these connections only (least privilege); null = no sources. */
+  connection_ids: string | null
+  /** The context this automation runs AS, or null. Bound, the run materializes that context's
+   *  manifest + skills — a scheduled use(context, instruction). */
+  context_id: string | null
   enabled: 0 | 1
   created_at: string
 }
@@ -1434,6 +1536,8 @@ export interface NewAutomation {
   trigger: string
   instruction: string
   refs?: string | null
+  connection_ids?: string | null
+  context_id?: string | null
   enabled?: 0 | 1
 }
 
@@ -1487,6 +1591,74 @@ export interface NewRun {
   finished_at?: string | null
   cost_micro_usd?: number | null
   meta?: string | null
+}
+
+/** What a plan pays for: the model (thinking) or the tool broker (hands). */
+export type PlanKind = "model" | "broker"
+
+/** A bring-your-own plan: an owner attaches their own model or broker credential, and runs
+ *  meter against it. `user_id` set = a person's personal plan; null = the workspace pool
+ *  (the fallback when a run's owner has no personal plan of that kind). The platform holds
+ *  the gate and the ledger, never the meter. */
+export interface PlanRecord {
+  id: string
+  org_id: string
+  /** Owner of a personal plan, or null for the workspace pool. */
+  user_id: string | null
+  kind: PlanKind
+  /** Provider slug, e.g. "anthropic" | "openai" | "composio". */
+  provider: string
+  /** The API key/secret, encrypted at rest. Never surfaced on read. */
+  secret_enc: string
+  /** Serialized limits (JSON), e.g. {"monthlyMicroUsd":N}, or null for unmetered. */
+  limits: string | null
+  created_at: string
+}
+
+export interface NewPlan {
+  id: string
+  org_id: string
+  user_id?: string | null
+  kind: PlanKind
+  provider: string
+  secret_enc: string
+  limits?: string | null
+}
+
+/** A connected external account's lifecycle. active once authorized; pending during the OAuth
+ *  round trip; revoked when torn down. */
+export type ConnectionStatus = "active" | "pending" | "revoked"
+
+/** A per-user connected external account (WO3): the owner authorized Derive's broker to act on
+ *  their Gmail/Stripe/GitHub/etc. Always bound to ONE person (identity never falls back), and
+ *  scoped least-privilege per toolkit. A hosted run sees the tools of its bound connections
+ *  only; the BYO path never touches these. */
+export interface ConnectionRecord {
+  id: string
+  org_id: string
+  /** The owner — always a specific person, never null. */
+  user_id: string
+  /** Broker provider slug: "local" | "composio". */
+  broker: string
+  /** Toolkit slug, e.g. "gmail" | "stripe" | "github". */
+  toolkit: string
+  /** Broker-side connected-account id. */
+  broker_ref: string
+  /** Human label of the granted scopes (display only), or null. */
+  scopes_label: string | null
+  status: ConnectionStatus
+  created_at: string
+}
+
+export interface NewConnection {
+  id: string
+  org_id: string
+  user_id: string
+  broker: string
+  toolkit: string
+  broker_ref: string
+  scopes_label?: string | null
+  status?: ConnectionStatus
 }
 
 export type AgentMentionState = "pending" | "done"

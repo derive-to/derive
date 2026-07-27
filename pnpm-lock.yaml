@@ -59,9 +59,15 @@ importers:
       '@better-auth/passkey':
         specifier: 1.6.19
         version: 1.6.19(@better-auth/core@1.6.22(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(@cloudflare/workers-types@4.20260615.1)(@opentelemetry/api@1.9.1)(better-call@1.3.7(zod@4.4.3))(jose@6.2.3)(kysely@0.29.2)(nanostores@1.3.0))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-auth@1.6.22(@cloudflare/workers-types@4.20260615.1)(@opentelemetry/api@1.9.1)(@tanstack/react-start@1.168.25(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)))(better-sqlite3@12.11.1)(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260615.1)(@opentelemetry/api@1.9.1)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@12.11.1)(gel@2.2.0)(kysely@0.29.2)(pg@8.21.0))(pg@8.21.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vitest@4.1.9))(better-call@1.3.7(zod@4.4.3))(nanostores@1.3.0)
+      '@cloudflare/containers':
+        specifier: ^0.3.7
+        version: 0.3.7
       '@cloudflare/puppeteer':
         specifier: ^1.0.0
         version: 1.1.0
+      '@derive/broker':
+        specifier: workspace:*
+        version: link:../../packages/broker
       '@derive/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -95,6 +101,9 @@ importers:
       better-sqlite3:
         specifier: ^12.11.1
         version: 12.11.1
+      croner:
+        specifier: ^10.0.1
+        version: 10.0.1
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(@cloudflare/workers-types@4.20260615.1)(@opentelemetry/api@1.9.1)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@12.11.1)(gel@2.2.0)(kysely@0.29.2)(pg@8.21.0)
@@ -123,9 +132,6 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^4.20260615.1
         version: 4.20260615.1
-      '@derive/hosted-agent':
-        specifier: workspace:*
-        version: link:../../packages/hosted-agent
       '@types/better-sqlite3':
         specifier: ^7.6.11
         version: 7.6.13
@@ -150,37 +156,6 @@ importers:
       wrangler:
         specifier: ^4.40.0
         version: 4.100.0(@cloudflare/workers-types@4.20260615.1)(@types/node@25.9.3)
-
-  apps/dispatcher:
-    dependencies:
-      '@derive/hosted-agent':
-        specifier: workspace:*
-        version: link:../../packages/hosted-agent
-      '@hono/node-server':
-        specifier: ^2.0.5
-        version: 2.0.5(hono@4.12.25)
-      '@mastra/core':
-        specifier: 1.51.0
-        version: 1.51.0(express@5.2.1)(zod@4.4.3)
-      hono:
-        specifier: ^4.6.0
-        version: 4.12.25
-      pg-boss:
-        specifier: ^10.3.2
-        version: 10.4.2
-      tsx:
-        specifier: ^4.19.0
-        version: 4.22.4
-    devDependencies:
-      '@types/node':
-        specifier: ^25.9.3
-        version: 25.9.3
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: ^4.1.9
-        version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.9.3)(@vitest/coverage-v8@4.1.9)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
 
   apps/web:
     dependencies:
@@ -347,6 +322,18 @@ importers:
       vite:
         specifier: ^8.0.16
         version: 8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
+      vitest:
+        specifier: ^4.1.9
+        version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.9.3)(@vitest/coverage-v8@4.1.9)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
+
+  packages/broker:
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.3
+        version: 25.9.3
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
       vitest:
         specifier: ^4.1.9
         version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.9.3)(@vitest/coverage-v8@4.1.9)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
@@ -864,6 +851,9 @@ packages:
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [win32]
+
+  '@cloudflare/containers@0.3.7':
+    resolution: {integrity: sha512-DM9dm3FnIBSyiSJ1FLavKwl/lk3oAmTaynCzZQ9pZR0ncRPquSxkxd8Nu2MFILxmDDsPkxKsSNEh9mHHMty4Fw==}
 
   '@cloudflare/kv-asset-handler@0.5.0':
     resolution: {integrity: sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg==}
@@ -4421,10 +4411,6 @@ packages:
   crelt@1.0.6:
     resolution: {integrity: sha512-VQ2MBenTq1fWZUH9DJNGti7kKv6EeAuYr3cLwxUWhIu1baTaXh4Ib5W2CqHVqib4/MqbYGJqiL3Zb8GJZr3l4g==}
 
-  cron-parser@4.9.0:
-    resolution: {integrity: sha512-p0SaNjrHOnQeR8/VnfGbmg9te2kfyYSQ7Sc/j/6DtPL3JQvKxmjO9TSjNFpujqV3vEYYBvNNvXSxzyksBWAx1Q==}
-    engines: {node: '>=12.0.0'}
-
   croner@10.0.1:
     resolution: {integrity: sha512-ixNtAJndqh173VQ4KodSdJEI6nuioBWI0V1ITNKhZZsO0pEMoDxz539T4FTTbSZ/xIOSuDnzxLVRqBVSvPNE2g==}
     engines: {node: '>=18.0'}
@@ -5593,10 +5579,6 @@ packages:
     peerDependencies:
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
-  luxon@3.7.2:
-    resolution: {integrity: sha512-vtEhXh/gNjI9Yg1u4jX/0YVPMvxzHuGgCm6tC5kZyb08yjGWGnqAjGJvcXbqQR2P3MyMEFnRbpcdFS6PBcLqew==}
-    engines: {node: '>=12'}
-
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
 
@@ -6063,10 +6045,6 @@ packages:
   pend@1.2.0:
     resolution: {integrity: sha512-F3asv42UuXchdzt+xXqfW1OGlVBe+mxa2mqI0pg5yAHZPvFmY3Y6drSf/GQ1A86WgWEN9Kzh/WrgKa6iGcHXLg==}
 
-  pg-boss@10.4.2:
-    resolution: {integrity: sha512-AttEWOtSzn53av8OnCMWEanwRBvjkZCE1y5nLrZnwvkkMnlZ5XpWDpZ7sKI/BYjvi2OVieMX37arD2ACgJ750w==}
-    engines: {node: '>=20'}
-
   pg-cloudflare@1.4.0:
     resolution: {integrity: sha512-Vo7z/6rrQYxpNRylp4Tlob2elzbh+N/MOQbxFVWCxS7oEx6jF53GTJFxK2WWpKuBRkmiin4Mt+xofFDjx09R0A==}
 
@@ -6503,10 +6481,6 @@ packages:
     resolution: {integrity: sha512-8I8TjW5KMOKsZQTvoxjuSIa7foAwPWGOts+6o7sgjz41/qMD9VQHEDxi6PBvK2l0MXUmqZyNpUK+T2tQaaElvw==}
     engines: {node: '>=10'}
 
-  serialize-error@8.1.0:
-    resolution: {integrity: sha512-3NnuWfM6vBYoy5gZFvHiYsVbafvI9vZv/+jlIigFn4oP4zjNPK3LhcY0xSCgeb1a5L8jO71Mit9LlNoi2UfDDQ==}
-    engines: {node: '>=10'}
-
   seroval-plugins@1.5.4:
     resolution: {integrity: sha512-S0xQPhUTefAhNvNWFg0c1J8qJArHt5KdtJ/cFAofo06KD1MVSeFWyl4iiu+ApDIuw0WhjpOfCdgConOfAnLgkw==}
     engines: {node: '>=10'}
@@ -6854,10 +6828,6 @@ packages:
 
   type-fest@0.13.1:
     resolution: {integrity: sha512-34R7HTnG0XIJcBSn5XhDd7nNFPRcXYRZrBB2O2jdKqYODldSzBAqzsWoZYYvduky73toYS/ESqxPvkDf/F0XMg==}
-    engines: {node: '>=10'}
-
-  type-fest@0.20.2:
-    resolution: {integrity: sha512-Ne+eE4r0/iWnpAxD852z3A+N0Bt5RN//NjJwRd2VFHEmrywxf5vsZlh4R6lixl6B+wz/8d+maTSAkN1FIkI3LQ==}
     engines: {node: '>=10'}
 
   type-fest@4.41.0:
@@ -7309,26 +7279,12 @@ snapshots:
       secure-json-parse: 2.7.0
       zod: 3.25.76
 
-  '@ai-sdk/provider-utils@2.2.8(zod@4.4.3)':
-    dependencies:
-      '@ai-sdk/provider': 1.1.3
-      nanoid: 3.3.16
-      secure-json-parse: 2.7.0
-      zod: 4.4.3
-
   '@ai-sdk/provider-utils@3.0.28(zod@3.25.76)':
     dependencies:
       '@ai-sdk/provider': 2.0.3
       '@standard-schema/spec': 1.1.0
       eventsource-parser: 3.1.0
       zod: 3.25.76
-
-  '@ai-sdk/provider-utils@3.0.28(zod@4.4.3)':
-    dependencies:
-      '@ai-sdk/provider': 2.0.3
-      '@standard-schema/spec': 1.1.0
-      eventsource-parser: 3.1.0
-      zod: 4.4.3
 
   '@ai-sdk/provider-utils@4.0.38(zod@3.25.76)':
     dependencies:
@@ -7337,13 +7293,6 @@ snapshots:
       eventsource-parser: 3.1.0
       zod: 3.25.76
 
-  '@ai-sdk/provider-utils@4.0.38(zod@4.4.3)':
-    dependencies:
-      '@ai-sdk/provider': 3.0.14
-      '@standard-schema/spec': 1.1.0
-      eventsource-parser: 3.1.0
-      zod: 4.4.3
-
   '@ai-sdk/provider-utils@5.0.7(zod@3.25.76)':
     dependencies:
       '@ai-sdk/provider': 4.0.3
@@ -7351,14 +7300,6 @@ snapshots:
       '@workflow/serde': 4.1.0
       eventsource-parser: 3.1.0
       zod: 3.25.76
-
-  '@ai-sdk/provider-utils@5.0.7(zod@4.4.3)':
-    dependencies:
-      '@ai-sdk/provider': 4.0.3
-      '@standard-schema/spec': 1.1.0
-      '@workflow/serde': 4.1.0
-      eventsource-parser: 3.1.0
-      zod: 4.4.3
 
   '@ai-sdk/provider@1.1.3':
     dependencies:
@@ -7382,13 +7323,6 @@ snapshots:
       '@ai-sdk/provider-utils': 2.2.8(zod@3.25.76)
       zod: 3.25.76
       zod-to-json-schema: 3.25.2(zod@3.25.76)
-
-  '@ai-sdk/ui-utils@1.2.11(zod@4.4.3)':
-    dependencies:
-      '@ai-sdk/provider': 1.1.3
-      '@ai-sdk/provider-utils': 2.2.8(zod@4.4.3)
-      zod: 4.4.3
-      zod-to-json-schema: 3.25.2(zod@4.4.3)
 
   '@alcalzone/ansi-tokenize@0.3.0':
     dependencies:
@@ -7733,6 +7667,8 @@ snapshots:
 
   '@biomejs/cli-win32-x64@2.5.0':
     optional: true
+
+  '@cloudflare/containers@0.3.7': {}
 
   '@cloudflare/kv-asset-handler@0.5.0': {}
 
@@ -8356,52 +8292,6 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@mastra/core@1.51.0(express@5.2.1)(zod@4.4.3)':
-    dependencies:
-      '@a2a-js/sdk': 0.3.14(express@5.2.1)
-      '@ai-sdk/provider-utils-v5': '@ai-sdk/provider-utils@3.0.28(zod@4.4.3)'
-      '@ai-sdk/provider-utils-v6': '@ai-sdk/provider-utils@4.0.38(zod@4.4.3)'
-      '@ai-sdk/provider-utils-v7': '@ai-sdk/provider-utils@5.0.7(zod@4.4.3)'
-      '@ai-sdk/provider-v5': '@ai-sdk/provider@2.0.3'
-      '@ai-sdk/provider-v6': '@ai-sdk/provider@3.0.14'
-      '@ai-sdk/provider-v7': '@ai-sdk/provider@4.0.3'
-      '@ai-sdk/ui-utils-v5': '@ai-sdk/ui-utils@1.2.11(zod@4.4.3)'
-      '@isaacs/ttlcache': 2.1.5
-      '@lukeed/uuid': 2.0.1
-      '@mastra/schema-compat': 1.3.4(zod@4.4.3)
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
-      '@sindresorhus/slugify': 2.2.1
-      '@standard-schema/spec': 1.1.0
-      ajv: 8.20.0
-      chat: 4.34.0(zod@4.4.3)
-      croner: 10.0.1
-      dotenv: 17.4.2
-      execa: 9.6.1
-      fastq: 1.20.1
-      gray-matter: 4.0.3
-      ignore: 7.0.5
-      jpeg-js: 0.4.4
-      json-schema: 0.4.0
-      lru-cache: 11.5.2
-      p-map: 7.0.6
-      p-retry: 7.1.1
-      picomatch: 4.0.4
-      posthog-node: 5.46.0
-      tokenx: 1.3.0
-      ws: 8.21.0
-      xxhash-wasm: 1.1.0
-      zod: 4.4.3
-    transitivePeerDependencies:
-      - '@bufbuild/protobuf'
-      - '@cfworker/json-schema'
-      - '@grpc/grpc-js'
-      - ai
-      - bufferutil
-      - express
-      - rxjs
-      - supports-color
-      - utf-8-validate
-
   '@mastra/schema-compat@1.3.4(zod@3.25.76)':
     dependencies:
       json-schema-to-zod: 2.8.1
@@ -8409,14 +8299,6 @@ snapshots:
       zod-from-json-schema: 0.5.6
       zod-from-json-schema-v3: zod-from-json-schema@0.0.5
       zod-to-json-schema: 3.25.2(zod@3.25.76)
-
-  '@mastra/schema-compat@1.3.4(zod@4.4.3)':
-    dependencies:
-      json-schema-to-zod: 2.8.1
-      zod: 4.4.3
-      zod-from-json-schema: 0.5.6
-      zod-from-json-schema-v3: zod-from-json-schema@0.0.5
-      zod-to-json-schema: 3.25.2(zod@4.4.3)
 
   '@modelcontextprotocol/sdk@1.29.0(zod@3.25.76)':
     dependencies:
@@ -10957,20 +10839,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  chat@4.34.0(zod@4.4.3):
-    dependencies:
-      '@workflow/serde': 4.1.0-beta.2
-      mdast-util-to-string: 4.0.0
-      remark-gfm: 4.0.1
-      remark-parse: 11.0.0
-      remark-stringify: 11.0.0
-      remend: 1.3.0
-      unified: 11.0.5
-    optionalDependencies:
-      zod: 4.4.3
-    transitivePeerDependencies:
-      - supports-color
-
   chokidar@5.0.0:
     dependencies:
       readdirp: 5.0.0
@@ -11112,10 +10980,6 @@ snapshots:
       typescript: 6.0.3
 
   crelt@1.0.6: {}
-
-  cron-parser@4.9.0:
-    dependencies:
-      luxon: 3.7.2
 
   croner@10.0.1: {}
 
@@ -12176,8 +12040,6 @@ snapshots:
     dependencies:
       react: 19.2.7
 
-  luxon@3.7.2: {}
-
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
@@ -12901,14 +12763,6 @@ snapshots:
 
   pend@1.2.0: {}
 
-  pg-boss@10.4.2:
-    dependencies:
-      cron-parser: 4.9.0
-      pg: 8.21.0
-      serialize-error: 8.1.0
-    transitivePeerDependencies:
-      - pg-native
-
   pg-cloudflare@1.4.0:
     optional: true
 
@@ -13498,10 +13352,6 @@ snapshots:
     dependencies:
       type-fest: 0.13.1
 
-  serialize-error@8.1.0:
-    dependencies:
-      type-fest: 0.20.2
-
   seroval-plugins@1.5.4(seroval@1.5.4):
     dependencies:
       seroval: 1.5.4
@@ -13908,8 +13758,6 @@ snapshots:
       prelude-ls: 1.2.1
 
   type-fest@0.13.1: {}
-
-  type-fest@0.20.2: {}
 
   type-fest@4.41.0: {}
 

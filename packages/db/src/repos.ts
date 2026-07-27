@@ -13,6 +13,8 @@ import type {
   CommentRecord,
   CommentSignals,
   CommentState,
+  ConnectionRecord,
+  ConnectionStatus,
   ContextAskerRecord,
   ContextRecord,
   DeliveryRecord,
@@ -42,6 +44,7 @@ import type {
   NewCollection,
   NewCollectionMember,
   NewComment,
+  NewConnection,
   NewContext,
   NewContextAsker,
   NewDelivery,
@@ -51,6 +54,7 @@ import type {
   NewInvitation,
   NewMembership,
   NewNotification,
+  NewPlan,
   NewProposal,
   NewRenderJob,
   NewReport,
@@ -66,6 +70,8 @@ import type {
   OAuthGrant,
   OAuthGrantSummary,
   OrgSettings,
+  PlanKind,
+  PlanRecord,
   PreviewStatus,
   ProposalRecord,
   ProposalState,
@@ -95,7 +101,15 @@ import type {
   WorkspaceAccess,
   WorkspaceRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS, GLOBAL_FOLLOW_ORG, maxRole, sortFields } from "@derive/core"
+import {
+  DEFAULT_ORG_SETTINGS,
+  GLOBAL_FOLLOW_ORG,
+  maxRole,
+  mergeRunMeta,
+  parseRunMeta,
+  runCounter,
+  sortFields,
+} from "@derive/core"
 import {
   and,
   asc,
@@ -105,6 +119,7 @@ import {
   eq,
   getTableColumns,
   gt,
+  gte,
   inArray,
   isNotNull,
   isNull,
@@ -135,6 +150,7 @@ import {
   collectionItem,
   collectionMember,
   comment,
+  connection,
   context,
   contextAsker,
   contextSession,
@@ -149,6 +165,7 @@ import {
   notification,
   oauthClientWorkspace,
   orgSettings,
+  plan,
   proposal,
   renderJob,
   report,
@@ -278,6 +295,8 @@ export const schema = {
   agentMention,
   automation,
   run,
+  plan,
+  connection,
   artifactInvite,
   invitation,
   betaSignup,
@@ -322,6 +341,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentMention: true,
   automation: true,
   run: true,
+  plan: true,
+  connection: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2351,6 +2372,56 @@ export function makeRepos(db: SqliteDb) {
   // Count only LIVE working sessions (lease not lapsed): a crashed run whose lease has
   // expired must NOT fill the concurrency cap, or the queue wedges — the lapsed-lease
   // reclaim lives in claimPendingSessions, which only runs when there is room.
+  const listDueOpenSessions = async (now: string, limit = 50): Promise<SessionRecord[]> =>
+    (await db
+      .select()
+      .from(contextSession)
+      .where(
+        or(
+          eq(contextSession.state, "open"),
+          // A `working` row whose lease lapsed (or never existed) is a dead executor's
+          // session — runnable again, exactly as claimPendingSessions treats it.
+          and(
+            eq(contextSession.state, "working"),
+            or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
+          ),
+        ),
+      )
+      .orderBy(contextSession.created_at)
+      .limit(limit)
+      .all()) as SessionRecord[]
+  const claimSessionById = async (
+    id: string,
+    agentId: string,
+    leaseUntil: string,
+  ): Promise<SessionRecord | null> => {
+    // The session belongs to a CONTEXT, and the context names the agent — so ownership is
+    // checked through it rather than on the row. A foreign agent claims nothing.
+    const s = await db.select().from(contextSession).where(eq(contextSession.id, id)).get()
+    if (!s) return null
+    const cx = await db.select().from(context).where(eq(context.id, s.context_id)).get()
+    if (!cx || cx.agent_id !== agentId) return null
+    const now = new Date().toISOString()
+    return (
+      (await db
+        .update(contextSession)
+        .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
+        .where(
+          and(
+            eq(contextSession.id, id),
+            or(
+              eq(contextSession.state, "open"),
+              and(
+                eq(contextSession.state, "working"),
+                or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
+              ),
+            ),
+          ),
+        )
+        .returning()
+        .get()) ?? null
+    )
+  }
   const countWorkingSessions = async (contextId: string): Promise<number> => {
     const now = new Date().toISOString()
     return (
@@ -2652,8 +2723,247 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(desc(run.created_at))
       .limit(limit)
       .all()
+  const latestRunForAutomation = async (
+    automationId: string,
+    reason?: string,
+  ): Promise<RunRecord | null> =>
+    (await db
+      .select()
+      .from(run)
+      .where(
+        reason
+          ? and(eq(run.automation_id, automationId), eq(run.reason, reason))
+          : eq(run.automation_id, automationId),
+      )
+      .orderBy(sql`coalesce(${run.scheduled_for}, '') desc`)
+      .limit(1)
+      .get()) ?? null
+  const claimRunById = async (
+    id: string,
+    agentId: string,
+    now: string,
+  ): Promise<RunRecord | null> =>
+    // The capability-token claim: exactly this run, queued → running. The status guard in the
+    // WHERE is the race safety — a double-booted substrate's second update matches zero rows.
+    (await db
+      .update(run)
+      .set({ status: "running", started_at: now })
+      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "queued")))
+      .returning()
+      .get()) ?? null
+  const requeueRun = async (
+    id: string,
+    agentId: string,
+    fields: { scheduledFor: string; meta?: string | null },
+  ): Promise<RunRecord | null> =>
+    // Strict running → queued, only for the claiming agent: the status guard stops a duplicate
+    // or late retry request from resurrecting a run that already settled.
+    (await db
+      .update(run)
+      .set({
+        status: "queued",
+        started_at: null,
+        scheduled_for: fields.scheduledFor,
+        ...(fields.meta === undefined ? {} : { meta: fields.meta }),
+      })
+      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
+      .returning()
+      .get()) ?? null
+  const reclaimStaleRuns = async (
+    cutoffIso: string,
+    maxAttempts = 3,
+  ): Promise<{ requeued: number; failed: number }> => {
+    // Substrate died mid-run: running since before the cutoff. Requeue with an attempt count
+    // in meta (JSON attribute, not a column); give up as failed/lost past maxAttempts.
+    const stale = (await db
+      .select()
+      .from(run)
+      .where(and(eq(run.status, "running"), lte(run.started_at, cutoffIso)))
+      .limit(100)
+      .all()) as RunRecord[]
+    let requeued = 0
+    let failed = 0
+    for (const r of stale) {
+      const attempts = runCounter(parseRunMeta(r.meta), "attempts") + 1
+      // Past the cap the run is given up as `lost`; otherwise it goes back to the queue with
+      // the count carried forward. Both merge into the existing blob so the previous attempt's
+      // outcome survives.
+      const settled = attempts >= maxAttempts
+      await db
+        .update(run)
+        .set(
+          settled
+            ? {
+                status: "failed",
+                finished_at: cutoffIso,
+                meta: mergeRunMeta(r.meta, { attempts, outcome: "lost" }),
+              }
+            : { status: "queued", started_at: null, meta: mergeRunMeta(r.meta, { attempts }) },
+        )
+        // FENCED on started_at, not just on status. This SELECT-then-UPDATE is the one
+        // non-transactional sequence here, and two sweeps run concurrently as a matter of
+        // course: the dispatch tick sweeps every 60s while EVERY polling agent claim sweeps
+        // globally. Guarding on status alone cannot tell "still the same stale execution"
+        // from "a different execution claimed it since I read it", so sweep B could requeue
+        // a run that executor E2 had just claimed — leaving E2 live with a valid token while
+        // E3 was dispatched for the same run, and both able to write the artifact. Pinning
+        // started_at to the value read means a re-claimed run no longer matches, and the
+        // late sweep updates nothing.
+        .where(
+          and(
+            eq(run.id, r.id),
+            eq(run.status, "running"),
+            r.started_at === null ? isNull(run.started_at) : eq(run.started_at, r.started_at),
+          ),
+        )
+      if (settled) failed += 1
+      else requeued += 1
+    }
+    return { requeued, failed }
+  }
+  const listEnabledAutomations = async (limit = 500): Promise<AutomationRecord[]> =>
+    (await db
+      .select()
+      .from(automation)
+      .where(eq(automation.enabled, 1))
+      .limit(limit)
+      .all()) as AutomationRecord[]
+  const listDueQueuedRuns = async (now: string, limit = 50): Promise<RunRecord[]> =>
+    (await db
+      .select()
+      .from(run)
+      .where(
+        and(eq(run.status, "queued"), or(isNull(run.scheduled_for), lte(run.scheduled_for, now))),
+      )
+      .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
+      .limit(limit)
+      .all()) as RunRecord[]
+  const findCoalescibleRun = async (
+    automationId: string,
+    cutoffIso: string,
+  ): Promise<RunRecord | null> =>
+    (await db
+      .select()
+      .from(run)
+      .where(
+        and(
+          eq(run.automation_id, automationId),
+          eq(run.status, "queued"),
+          lte(run.scheduled_for, cutoffIso),
+        ),
+      )
+      .orderBy(desc(run.created_at))
+      .limit(1)
+      .get()) ?? null
+  const appendRunPayload = async (
+    runId: string,
+    payload: unknown,
+    maxMetaBytes: number,
+  ): Promise<RunRecord | null> => {
+    // Read the current meta, then CAS on it: the UPDATE applies only while the run is still
+    // queued AND its meta is unchanged since the read. A concurrent claim (→ running) or a
+    // racing append both fall through to null, and the caller enqueues a fresh run — so a
+    // payload is never dropped, at worst an extra run is created under contention.
+    const row = await db
+      .select()
+      .from(run)
+      .where(and(eq(run.id, runId), eq(run.status, "queued")))
+      .get()
+    if (!row?.meta) return null
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(row.meta) as Record<string, unknown>
+    } catch {
+      return null
+    }
+    const payloads = Array.isArray(parsed.payloads) ? parsed.payloads : []
+    const nextMeta = JSON.stringify({ ...parsed, payloads: [...payloads, payload] })
+    if (nextMeta.length > maxMetaBytes) return null
+    return (
+      (await db
+        .update(run)
+        .set({ meta: nextMeta })
+        .where(and(eq(run.id, runId), eq(run.status, "queued"), eq(run.meta, row.meta)))
+        .returning()
+        .get()) ?? null
+    )
+  }
+  const createPlan = async (p: NewPlan): Promise<PlanRecord> =>
+    (await db.insert(plan).values(p).returning().get()) as PlanRecord
+  const getPlan = async (id: string): Promise<PlanRecord | null> =>
+    (await db.select().from(plan).where(eq(plan.id, id)).get()) ?? null
+  const listPlans = async (orgId: string): Promise<PlanRecord[]> =>
+    db.select().from(plan).where(eq(plan.org_id, orgId)).orderBy(desc(plan.created_at)).all()
+  const deletePlan = async (id: string, orgId: string): Promise<void> => {
+    await db
+      .delete(plan)
+      .where(and(eq(plan.id, id), eq(plan.org_id, orgId)))
+      .run()
+  }
+  const resolvePlan = async (
+    orgId: string,
+    userId: string | null,
+    kind: PlanKind,
+  ): Promise<PlanRecord | null> => {
+    // Money falls back: a personal plan first, then the workspace pool (user_id null).
+    if (userId) {
+      const personal = await db
+        .select()
+        .from(plan)
+        .where(and(eq(plan.org_id, orgId), eq(plan.user_id, userId), eq(plan.kind, kind)))
+        .orderBy(desc(plan.created_at))
+        .get()
+      if (personal) return personal
+    }
+    return (
+      (await db
+        .select()
+        .from(plan)
+        .where(and(eq(plan.org_id, orgId), isNull(plan.user_id), eq(plan.kind, kind)))
+        .orderBy(desc(plan.created_at))
+        .get()) ?? null
+    )
+  }
+  const sumRunCostSince = async (orgId: string, sinceIso: string): Promise<number> => {
+    const row = await db
+      .select({ total: sql<number>`coalesce(sum(${run.cost_micro_usd}), 0)` })
+      .from(run)
+      .where(and(eq(run.org_id, orgId), gte(run.created_at, sinceIso)))
+      .get()
+    return Number(row?.total ?? 0)
+  }
+  const createConnection = async (cn: NewConnection): Promise<ConnectionRecord> =>
+    (await db.insert(connection).values(cn).returning().get()) as ConnectionRecord
+  const getConnection = async (id: string): Promise<ConnectionRecord | null> =>
+    (await db.select().from(connection).where(eq(connection.id, id)).get()) ?? null
+  const getConnectionsByIds = async (ids: string[]): Promise<ConnectionRecord[]> =>
+    ids.length === 0 ? [] : db.select().from(connection).where(inArray(connection.id, ids)).all()
+  const listConnections = async (orgId: string, userId?: string): Promise<ConnectionRecord[]> =>
+    db
+      .select()
+      .from(connection)
+      .where(
+        userId
+          ? and(eq(connection.org_id, orgId), eq(connection.user_id, userId))
+          : eq(connection.org_id, orgId),
+      )
+      .orderBy(desc(connection.created_at))
+      .all()
+  const setConnectionStatus = async (
+    id: string,
+    orgId: string,
+    status: ConnectionStatus,
+  ): Promise<ConnectionRecord | null> =>
+    (await db
+      .update(connection)
+      .set({ status })
+      .where(and(eq(connection.id, id), eq(connection.org_id, orgId)))
+      .returning()
+      .get()) ?? null
   const getAgentByToken = async (token: string): Promise<AgentRecord | null> =>
     (await db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
+  const getAgent = async (id: string): Promise<AgentRecord | null> =>
+    (await db.select().from(agent).where(eq(agent.id, id)).get()) ?? null
   // Introspect a Better Auth oidc-provider access token (its own tables, same DB).
   // Quoted camelCase identifiers resolve on better-sqlite3 + D1; the token is bound,
   // not interpolated. Joined to the app row for the granting client's display name.
@@ -3384,6 +3694,8 @@ export function makeRepos(db: SqliteDb) {
     pendingSessions,
     claimPendingSessions,
     countWorkingSessions,
+    listDueOpenSessions,
+    claimSessionById,
     findInflightSession,
     setResultArtifact,
     renewSessionLease,
@@ -3413,9 +3725,29 @@ export function makeRepos(db: SqliteDb) {
     deleteAutomation,
     createRun,
     getRun,
+    getAgent,
     claimDueRuns,
+    claimRunById,
+    requeueRun,
+    reclaimStaleRuns,
+    listEnabledAutomations,
+    listDueQueuedRuns,
     finishRun,
     listRuns,
+    latestRunForAutomation,
+    findCoalescibleRun,
+    appendRunPayload,
+    createPlan,
+    getPlan,
+    listPlans,
+    deletePlan,
+    resolvePlan,
+    sumRunCostSince,
+    createConnection,
+    getConnection,
+    getConnectionsByIds,
+    listConnections,
+    setConnectionStatus,
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,

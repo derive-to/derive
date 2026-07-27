@@ -72,6 +72,7 @@ import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "./brandprint-referenc
 import type { AppContext } from "./context"
 import { resolveActorBrandprint } from "./lib/brandprint"
 import { makeToolContext, type ToolContextBase } from "./mcp-tool-context"
+import { registerAutomateTool } from "./mcp-tools/automate"
 import { registerCatchUpTool } from "./mcp-tools/catch-up"
 import { registerCheckpointTool } from "./mcp-tools/checkpoint"
 import { registerCommentTool } from "./mcp-tools/comment"
@@ -370,6 +371,7 @@ async function buildServer(
   registerPublishTool(tc)
   registerCheckpointTool(tc)
   registerUseTool(tc)
+  registerAutomateTool(tc)
 
   return server
 }

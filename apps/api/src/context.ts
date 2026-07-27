@@ -37,6 +37,7 @@ import {
   type RateLimiters,
   rateLimited,
 } from "./lib/rate-limit"
+import { verifyWorkToken, workTokenKind } from "./lib/run-token"
 import { enqueueSlackChannelEvent } from "./lib/slack-comments"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
@@ -208,6 +209,13 @@ export interface AppDeps {
   renderPreviews?: boolean
   /** Wake the preview worker after enqueuing (Workers: poke the PreviewRenderer DO). */
   pokePreviews?: () => void
+  /**
+   * EXPERIMENTAL hosted runs: start a freshly-created run NOW instead of waiting for the next
+   * tick, so "Run now" and a fire-URL feel immediate. Best-effort and fire-and-forget by
+   * design — the tick is the guarantee, this is only the latency. Unset (the default, and on
+   * every deployment with hosted runs off) ⇒ the run waits to be claimed, unchanged.
+   */
+  pokeRun?: (runId: string) => void
   /**
    * The marketing site (the front door). When set, `/` serves the marketing page
    * to signed-out visitors (signed-in ones keep the SPA) and `/pricing` serves the
@@ -436,11 +444,64 @@ export function buildContext(deps: AppDeps) {
     Context,
     { ownerId: string; scopeRole: Role; clientId: string; boundWorkspaces: string[] }
   >()
+  // A run CAPABILITY token's scope: the one run id the bearer may claim/settle/pull for.
+  // Set only when agentFor resolved a dkrun_ token; the run endpoints read it to pin the
+  // principal to exactly its run (a leaked token can't touch any other run).
+  const runScopeCache = new WeakMap<Context, string>()
+  // The same, for a session-scoped bearer (the ask lane's half of hosted execution).
+  const sessionScopeCache = new WeakMap<Context, string>()
   const agentFor = async (c: Context): Promise<AgentRecord | null> => {
     if (agentCache.has(c)) return agentCache.get(c) ?? null
     const b = bearer(c)
     let a: AgentRecord | null = null
     let owner: string | null = null
+    const workKind = b ? workTokenKind(b) : null
+    if (b && workKind && deps.encryptionKey) {
+      // A per-work capability token (unattended execution): signed + expiring, minted at
+      // dispatch, never stored. Both kinds resolve to the SAME agent principal a registered
+      // token would — the write path needs no special cases — with the work item pinned as
+      // this request's scope. Fail-closed at every step: bad signature/expiry, a foreign or
+      // already-settled item, or a mismatched agent all resolve to anonymous.
+      const claim = await verifyWorkToken(workKind, deps.encryptionKey, b, Date.now())
+      if (claim) {
+        // Still live? A settled run / session must not keep authorizing writes after the fact,
+        // even inside the token's remaining TTL.
+        let live = false
+        if (workKind === "run") {
+          const r = await meta.getRun(claim.id)
+          live = !!(
+            r &&
+            r.agent_id === claim.agentId &&
+            r.org_id === claim.orgId &&
+            (r.status === "queued" || r.status === "running")
+          )
+        } else {
+          const s = await meta.getSession(claim.id)
+          // A session's agent lives on its CONTEXT (sessions have no agent column).
+          const cx = s ? await meta.getContext(s.context_id) : null
+          live = !!(
+            s &&
+            cx &&
+            cx.agent_id === claim.agentId &&
+            s.org_id === claim.orgId &&
+            (s.state === "open" || s.state === "working")
+          )
+        }
+        if (live) {
+          const ag = await meta.getAgent(claim.agentId)
+          if (ag && ag.org_id === claim.orgId) {
+            a = ag
+            owner = ag.created_by ?? null
+            if (workKind === "run") runScopeCache.set(c, claim.id)
+            else sessionScopeCache.set(c, claim.id)
+          }
+        }
+      }
+      agentCache.set(c, a)
+      onBehalfOfCache.set(c, owner)
+      if (a) c.set("actorId", a.id)
+      return a
+    }
     if (b && !(deps.token && safeEqual(b, deps.token))) {
       // Either a registered agent token (stored hashed) — acting on behalf of the
       // user who registered it (created_by; null for pre-column agents) — or an
@@ -947,6 +1008,12 @@ export function buildContext(deps: AppDeps) {
     background,
     currentUser,
     agentFor,
+    // The run id a dkrun_ capability bearer is pinned to (null for every other principal).
+    // Run endpoints use it to constrain claim/tool/finish to exactly that run.
+    agentRunScope: (c: Context): string | null => runScopeCache.get(c) ?? null,
+    /** The session id a dksess_ capability bearer is pinned to (null for every other
+     *  principal) — the ask lane's twin of agentRunScope. */
+    agentSessionScope: (c: Context): string | null => sessionScopeCache.get(c) ?? null,
     resolvePrincipal,
     actingUser,
     actingHuman,

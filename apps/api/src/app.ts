@@ -24,6 +24,7 @@ import { blobRoutes } from "./routes/blob"
 import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
 import { conciergeRoutes } from "./routes/concierge"
+import { connectionRoutes } from "./routes/connections"
 import { contextRoutes } from "./routes/contexts"
 import { domainRoutes } from "./routes/domains"
 import { embedRoutes } from "./routes/embeds"
@@ -36,6 +37,7 @@ import { modelCredentialRoutes } from "./routes/model-credentials"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
 import { oauthRoutes } from "./routes/oauth"
+import { planRoutes } from "./routes/plans"
 import { proposalRoutes } from "./routes/proposals"
 import { rawRoutes } from "./routes/raw"
 import { realtimeRoutes } from "./routes/realtime"
@@ -387,6 +389,7 @@ export function createApp(deps: AppDeps): Hono {
     /^\/v1\/vitals$/, // anonymous Core Web Vitals beacon (telemetry, no state)
     /^\/v1\/beta\/signup$/, // marketing-site beta signup — anonymous is the point; IP-capped
     /^\/v1\/sync\/github\/webhook$/, // GitHub App webhook — HMAC signature is the gate
+    /^\/v1\/automations\/[^/]+\/fire$/, // automation fire URL — the per-automation secret is the gate
     /^\/v1\/slack\/events$/, // Slack Events API — signing-secret signature is the gate
     /^\/v1\/slack\/interactivity$/, // Slack Block Kit actions — signing-secret signature is the gate
     /^\/v1\/slack\/commands$/, // Slack slash command (/derive) — signing-secret signature is the gate
@@ -424,6 +427,8 @@ export function createApp(deps: AppDeps): Hono {
     proposalRoutes,
     reviewRoutes,
     automationRoutes,
+    planRoutes,
+    connectionRoutes,
     modelCredentialRoutes,
     conciergeRoutes,
     reworkRoutes,

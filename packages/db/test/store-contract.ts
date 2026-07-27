@@ -1,5 +1,5 @@
 import { randomUUID as uuid } from "node:crypto"
-import type { MetaStore, NewArtifact, NewVersion, SortMode } from "@derive/core"
+import type { MetaStore, NewArtifact, NewRun, NewVersion, SortMode } from "@derive/core"
 import { DEFAULT_ORG_SETTINGS } from "@derive/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
@@ -2679,6 +2679,320 @@ export function runStoreContract(
       expect(rec?.source_kind).toBe("hn-launch")
       expect(rec?.source_artifact).toBeNull()
       expect(rec?.referrer).toBeNull()
+    })
+  })
+
+  // The hosted-execution surface: the `run` table used as a queue of record. Every method here
+  // is one step of the same loop — a tick lists what is due, an executor claims exactly one item,
+  // a dead executor's work returns to the queue — and each one's safety IS its WHERE clause. A
+  // claim that forgot its status guard hands the same run to two substrates, which double-writes
+  // an artifact; a lease check that read `>` instead of `<` wedges the queue forever. Guards are
+  // exactly the thing that can drift between the SQLite and Postgres drivers while both still
+  // typecheck, so they belong here, in the contract both dialects must satisfy.
+  //
+  // The queue scans (listDueQueuedRuns, listEnabledAutomations, listDueOpenSessions) are global
+  // by design — a dispatch tick serves every workspace — so these assert on membership of a
+  // known id, never on a total, and the reclaim sweep uses ancient timestamps to fence itself
+  // off from rows the rest of this file leaves lying around.
+  describe(`${label}: hosted dispatch (runs, automations, sessions)`, () => {
+    // Agent names are unique per workspace, and this whole block shares one ORG.
+    const newAgent = () =>
+      store.createAgent({
+        id: uuid(),
+        org_id: ORG,
+        name: `runner_${uuid().slice(0, 8)}`,
+        token: `tok_${uuid()}`,
+        role: "editor",
+      })
+
+    const newAutomation = (agentId: string, enabled: 0 | 1 = 1) =>
+      store.createAutomation({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        trigger: JSON.stringify({ kind: "schedule", cron: "*/5 * * * *" }),
+        instruction: "refresh the weekly numbers",
+        enabled,
+      })
+
+    const newRun = (agentId: string, over: Partial<NewRun> = {}) =>
+      store.createRun({ id: uuid(), org_id: ORG, agent_id: agentId, reason: "schedule", ...over })
+
+    // A session hangs off a CONTEXT, and the context names the acting agent — so a session's
+    // ownership is only resolvable through it. These bind a known agent id to make that explicit.
+    const newBoundContext = async (agentId: string) => {
+      const manifest = await store.createArtifact(newArtifact({ kind: "bundle" }))
+      return store.createContext({
+        id: uuid(),
+        org_id: ORG,
+        name: `qa_${uuid().slice(0, 8)}`,
+        agent_id: agentId,
+        manifest_artifact_id: manifest.id,
+        created_by: "rob",
+      })
+    }
+
+    const sessionOn = (contextId: string) =>
+      store.createSession({
+        id: uuid(),
+        context_id: contextId,
+        org_id: ORG,
+        asker_id: "daniel",
+        context_version: 1,
+      })
+
+    it("lists enabled automations only — a paused one stops costing money", async () => {
+      const ag = await newAgent()
+      const on = await newAutomation(ag.id, 1)
+      const off = await newAutomation(ag.id, 0)
+      const ids = (await store.listEnabledAutomations(500)).map((a) => a.id)
+      expect(ids).toContain(on.id)
+      expect(ids).not.toContain(off.id)
+    })
+
+    it("lists queued runs that are due now, excluding future and already-claimed work", async () => {
+      const ag = await newAgent()
+      const now = new Date().toISOString()
+      const asap = await newRun(ag.id, { scheduled_for: null })
+      const due = await newRun(ag.id, {
+        scheduled_for: new Date(Date.now() - 60_000).toISOString(),
+      })
+      const later = await newRun(ag.id, {
+        scheduled_for: new Date(Date.now() + 3_600_000).toISOString(),
+      })
+      const claimed = await newRun(ag.id, { status: "running", started_at: now })
+      const ids = (await store.listDueQueuedRuns(now, 500)).map((r) => r.id)
+      // A null schedule means "as soon as possible", not "never".
+      expect(ids).toEqual(expect.arrayContaining([asap.id, due.id]))
+      expect(ids).not.toContain(later.id)
+      expect(ids).not.toContain(claimed.id)
+    })
+
+    it("claims a run exactly once, and only for the agent it belongs to", async () => {
+      const ag = await newAgent()
+      const stranger = await newAgent()
+      const r = await newRun(ag.id)
+      const now = new Date().toISOString()
+      expect(await store.claimRunById(r.id, stranger.id, now)).toBeNull()
+      expect(await store.claimRunById(r.id, ag.id, now)).toMatchObject({
+        id: r.id,
+        status: "running",
+        started_at: now,
+      })
+      // The whole point of the status guard: a second substrate booted on the same run updates
+      // zero rows and learns it lost, instead of writing the artifact a second time.
+      expect(await store.claimRunById(r.id, ag.id, now)).toBeNull()
+    })
+
+    it("requeues a claimed run for a later attempt, and refuses one that is not running", async () => {
+      const ag = await newAgent()
+      const r = await newRun(ag.id)
+      const now = new Date().toISOString()
+      // Still queued: a late or duplicate retry request must not resurrect a settled run.
+      expect(await store.requeueRun(r.id, ag.id, { scheduledFor: now })).toBeNull()
+      await store.claimRunById(r.id, ag.id, now)
+      const at = new Date(Date.now() + 60_000).toISOString()
+      const back = await store.requeueRun(r.id, ag.id, {
+        scheduledFor: at,
+        meta: JSON.stringify({ attempts: 1 }),
+      })
+      expect(back).toMatchObject({ status: "queued", started_at: null, scheduled_for: at })
+      expect(JSON.parse(back?.meta ?? "{}")).toMatchObject({ attempts: 1 })
+    })
+
+    it("reclaims a dead executor's runs, counting attempts and giving up past the cap", async () => {
+      const ag = await newAgent()
+      // Timestamps far in the past so this sweep's global scan sees only these two rows.
+      const ancient = "2000-01-01T00:00:00.000Z"
+      const cutoff = "2000-01-02T00:00:00.000Z"
+      const retried = await newRun(ag.id, { status: "running", started_at: ancient })
+      const doomed = await newRun(ag.id, {
+        status: "running",
+        started_at: ancient,
+        meta: JSON.stringify({ attempts: 2, outcome: "published" }),
+      })
+      expect(await store.reclaimStaleRuns(cutoff, 3)).toEqual({ requeued: 1, failed: 1 })
+
+      const back = await store.getRun(retried.id)
+      expect(back).toMatchObject({ status: "queued", started_at: null })
+      expect(JSON.parse(back?.meta ?? "{}")).toMatchObject({ attempts: 1 })
+      // Past the cap it is given up as `lost` — and the merge keeps the prior attempt's record
+      // rather than replacing the blob, so the history survives the retry.
+      const dead = await store.getRun(doomed.id)
+      expect(dead).toMatchObject({ status: "failed", finished_at: cutoff })
+      expect(JSON.parse(dead?.meta ?? "{}")).toMatchObject({ attempts: 3, outcome: "lost" })
+    })
+
+    it("resolves an automation's most recent run by schedule time", async () => {
+      const ag = await newAgent()
+      const auto = await newAutomation(ag.id)
+      await newRun(ag.id, {
+        automation_id: auto.id,
+        scheduled_for: "2026-01-01T00:00:00.000Z",
+        status: "succeeded",
+      })
+      const newest = await newRun(ag.id, {
+        automation_id: auto.id,
+        scheduled_for: "2026-06-01T00:00:00.000Z",
+        status: "succeeded",
+      })
+      expect(await store.latestRunForAutomation(auto.id)).toMatchObject({ id: newest.id })
+      expect(await store.latestRunForAutomation(uuid())).toBeNull()
+
+      // Narrowed by reason, which is what the schedule tick reads. Every kind of firing
+      // stamps a scheduled_for — a manual run stamps now, a retry stamps now+backoff, which
+      // is in the FUTURE — so an unscoped read lets one of them masquerade as "this cron
+      // window is already materialized" and silently swallow the occurrence. This run is the
+      // newest of all, and must NOT be what the tick sees.
+      const manual = await newRun(ag.id, {
+        automation_id: auto.id,
+        reason: "manual:u_someone",
+        scheduled_for: "2027-01-01T00:00:00.000Z",
+      })
+      expect(await store.latestRunForAutomation(auto.id)).toMatchObject({ id: manual.id })
+      expect(await store.latestRunForAutomation(auto.id, "schedule")).toMatchObject({
+        id: newest.id,
+      })
+    })
+
+    it("coalesces an event onto a pending run only inside the debounce window", async () => {
+      const ag = await newAgent()
+      const auto = await newAutomation(ag.id)
+      const soon = new Date(Date.now() + 30_000).toISOString()
+      const pending = await newRun(ag.id, { automation_id: auto.id, scheduled_for: soon })
+      expect(await store.findCoalescibleRun(auto.id, soon)).toMatchObject({ id: pending.id })
+      // Scheduled beyond the window: there is nothing to join, so the caller enqueues afresh.
+      const before = new Date(Date.now() - 60_000).toISOString()
+      expect(await store.findCoalescibleRun(auto.id, before)).toBeNull()
+    })
+
+    it("appends event payloads to a queued run, and refuses once it is claimed", async () => {
+      const ag = await newAgent()
+      const r = await newRun(ag.id, { meta: JSON.stringify({ payloads: [] }) })
+      const one = await store.appendRunPayload(r.id, { ping: 1 }, 10_000)
+      expect(JSON.parse(one?.meta ?? "{}").payloads).toEqual([{ ping: 1 }])
+      expect(
+        JSON.parse((await store.appendRunPayload(r.id, { ping: 2 }, 10_000))?.meta ?? "{}"),
+      ).toMatchObject({ payloads: [{ ping: 1 }, { ping: 2 }] })
+      // Over budget the payload is dropped whole — a truncated JSON blob is worse than a
+      // missing one, and the caller's fallback (enqueue a fresh run) loses nothing.
+      expect(await store.appendRunPayload(r.id, { big: "x".repeat(500) }, 200)).toBeNull()
+      // Claimed: it is already executing, so there is no pending run left to join.
+      await store.claimRunById(r.id, ag.id, new Date().toISOString())
+      expect(await store.appendRunPayload(r.id, { ping: 3 }, 10_000)).toBeNull()
+
+      // No meta at all, and unparseable meta, are both "nothing to append to".
+      const bare = await newRun(ag.id)
+      expect(await store.appendRunPayload(bare.id, { ping: 1 }, 10_000)).toBeNull()
+      const broken = await newRun(ag.id, { meta: "{not json" })
+      expect(await store.appendRunPayload(broken.id, { ping: 1 }, 10_000)).toBeNull()
+      expect(await store.appendRunPayload(uuid(), { ping: 1 }, 10_000)).toBeNull()
+    })
+
+    it("resolves an agent by id (the capability token's subject)", async () => {
+      const ag = await newAgent()
+      expect(await store.getAgent(ag.id)).toMatchObject({ id: ag.id, name: ag.name })
+      expect(await store.getAgent(uuid())).toBeNull()
+    })
+
+    it("hands out a runnable session once, and withholds one under a live lease", async () => {
+      const agentId = uuid()
+      const ctx = await newBoundContext(agentId)
+      const s = await sessionOn(ctx.id)
+      expect(
+        (await store.listDueOpenSessions(new Date().toISOString(), 500)).map((x) => x.id),
+      ).toContain(s.id)
+
+      const live = new Date(Date.now() + 600_000).toISOString()
+      expect(await store.claimSessionById(s.id, agentId, live)).toMatchObject({ state: "working" })
+      // A live lease means a healthy executor holds it: it leaves the runnable set entirely,
+      // and a second claim gets nothing.
+      expect(
+        (await store.listDueOpenSessions(new Date().toISOString(), 500)).map((x) => x.id),
+      ).not.toContain(s.id)
+      expect(await store.claimSessionById(s.id, agentId, live)).toBeNull()
+    })
+
+    it("reclaims a session whose lease lapsed, and never hands one to a foreign agent", async () => {
+      const agentId = uuid()
+      const ctx = await newBoundContext(agentId)
+      const s = await sessionOn(ctx.id)
+      const lapsed = new Date(Date.now() - 60_000).toISOString()
+      expect(await store.claimSessionById(s.id, agentId, lapsed)).toMatchObject({
+        state: "working",
+      })
+      // The executor died holding it. A lapsed lease must return it to the runnable set, or the
+      // ask queue wedges behind a process that no longer exists.
+      const now = new Date().toISOString()
+      expect((await store.listDueOpenSessions(now, 500)).map((x) => x.id)).toContain(s.id)
+      // Ownership is checked through the context that names the agent, never on the session row.
+      expect(await store.claimSessionById(s.id, uuid(), now)).toBeNull()
+      expect(
+        await store.claimSessionById(s.id, agentId, new Date(Date.now() + 600_000).toISOString()),
+      ).toMatchObject({ state: "working" })
+      expect(await store.claimSessionById(uuid(), agentId, now)).toBeNull()
+    })
+
+    it("resolves a plan personal-first, then the workspace pool", async () => {
+      const pool = await store.createPlan({
+        id: uuid(),
+        org_id: ORG,
+        user_id: null,
+        kind: "model",
+        provider: "anthropic",
+        secret_enc: "enc_pool",
+      })
+      expect(await store.resolvePlan(ORG, "u_amy", "model")).toMatchObject({ id: pool.id })
+      const mine = await store.createPlan({
+        id: uuid(),
+        org_id: ORG,
+        user_id: "u_amy",
+        kind: "model",
+        provider: "anthropic",
+        secret_enc: "enc_amy",
+      })
+      // Whoever initiated the run pays for it: their own plan outranks the shared pool.
+      expect(await store.resolvePlan(ORG, "u_amy", "model")).toMatchObject({ id: mine.id })
+      // A clock-fired run has no person behind it, so it can only reach the pool.
+      expect(await store.resolvePlan(ORG, null, "model")).toMatchObject({ id: pool.id })
+      // Hands and thinking are billed separately: a model plan never pays for a broker.
+      expect(await store.resolvePlan(ORG, "u_amy", "broker")).toBeNull()
+
+      expect(await store.getPlan(mine.id)).toMatchObject({ provider: "anthropic" })
+      expect((await store.listPlans(ORG)).map((p) => p.id)).toEqual(
+        expect.arrayContaining([pool.id, mine.id]),
+      )
+      await store.deletePlan(mine.id, ORG)
+      expect(await store.getPlan(mine.id)).toBeNull()
+      // Detached, the run falls back to the pool rather than failing to resolve.
+      expect(await store.resolvePlan(ORG, "u_amy", "model")).toMatchObject({ id: pool.id })
+    })
+
+    it("keeps plans inside their workspace — resolve, list, and delete are all org-scoped", async () => {
+      // Every assertion above lives in ONE workspace, so all three org filters could be
+      // deleted from the driver and the suite would still pass. A plan is a payment
+      // credential; "another tenant can spend it" has to be a test, not a code comment.
+      const other = `org_plan_${uuid()}`
+      const theirs = await store.createPlan({
+        id: uuid(),
+        org_id: other,
+        user_id: "u_amy",
+        kind: "model",
+        provider: "anthropic",
+        secret_enc: "enc_theirs",
+      })
+
+      // Same user, same kind, different workspace: must not resolve across the boundary.
+      const hereForAmy = await store.resolvePlan(ORG, "u_amy", "model")
+      expect(hereForAmy?.id).not.toBe(theirs.id)
+      expect((await store.listPlans(ORG)).map((p) => p.id)).not.toContain(theirs.id)
+
+      // A delete naming the wrong workspace must not take effect.
+      await store.deletePlan(theirs.id, ORG)
+      expect(await store.getPlan(theirs.id)).toMatchObject({ id: theirs.id })
+      // …and the rightful workspace can still remove it.
+      await store.deletePlan(theirs.id, other)
+      expect(await store.getPlan(theirs.id)).toBeNull()
     })
   })
 }

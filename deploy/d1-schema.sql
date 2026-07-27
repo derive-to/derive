@@ -191,6 +191,8 @@ CREATE TABLE IF NOT EXISTS automation (
   trigger TEXT NOT NULL,
   instruction TEXT NOT NULL,
   refs TEXT,
+  connection_ids TEXT,
+  context_id TEXT,
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -208,6 +210,29 @@ CREATE TABLE IF NOT EXISTS run (
   finished_at TEXT,
   cost_micro_usd INTEGER,
   meta TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS plan (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  user_id TEXT,
+  kind TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  secret_enc TEXT NOT NULL,
+  limits TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS connection (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  broker TEXT NOT NULL,
+  toolkit TEXT NOT NULL,
+  broker_ref TEXT NOT NULL,
+  scopes_label TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
@@ -632,3 +657,5 @@ CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at)
 CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61 remove_diacritics 0');
 
 CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session (context_id, asker_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working');
+
+CREATE UNIQUE INDEX IF NOT EXISTS run_schedule_occurrence ON run (automation_id, scheduled_for) WHERE reason = 'schedule' AND automation_id IS NOT NULL AND scheduled_for IS NOT NULL;

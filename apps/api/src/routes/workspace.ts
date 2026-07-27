@@ -1,4 +1,11 @@
-import { newId, type Role } from "@derive/core"
+import {
+  newId,
+  parseRunMeta,
+  type Role,
+  type RunRecord,
+  runCounter,
+  runMetaString,
+} from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
@@ -15,6 +22,41 @@ import {
 import { resolveUserRef } from "../lib/resolve-user"
 import { ArtifactMember, BrandprintSchema, roleEnum } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
+
+/** A run, plus the timeline an operator actually needs: where it is, how long each phase took,
+ *  how many attempts it has cost, and — when it is still queued — WHY it hasn't started yet.
+ *  All derived from the row and its meta blob; nothing new is stored. */
+const withTimeline = (r: RunRecord) => {
+  // Parsed through the shared reader, so "what a malformed blob means" is decided once (in
+  // core) rather than re-guessed by every consumer of these bytes.
+  const meta = parseRunMeta(r.meta)
+  const started = r.started_at ? Date.parse(r.started_at) : null
+  const finished = r.finished_at ? Date.parse(r.finished_at) : null
+  const scheduled = r.scheduled_for ? Date.parse(r.scheduled_for) : null
+  const retries = runCounter(meta, "retries")
+  return {
+    ...r,
+    timeline: {
+      /** Queued → waiting on its scheduled time, or on a free slot / budget headroom. */
+      phase: r.status,
+      /** For a queued run: it isn't due yet (a schedule, or a retry backoff). The commonest
+       *  "why is nothing happening" answer, and one logs alone can't give. */
+      waiting_until:
+        r.status === "queued" && scheduled && scheduled > Date.now() ? r.scheduled_for : null,
+      /** How long it sat before an executor claimed it, and how long the work itself took. */
+      queued_ms: started ? started - Date.parse(r.created_at) : null,
+      ran_ms: started && finished ? finished - started : null,
+      /** Attempts already spent (0 = first try). Each one costs the initiator's model plan. */
+      retries,
+      /** What went wrong last time, for a run that is retrying or gave up. */
+      last_error: runMetaString(meta, "last_error") ?? runMetaString(meta, "why"),
+      /** How the work landed: published | proposed | shadow | answered | cancelled | lost. */
+      outcome: runMetaString(meta, "outcome"),
+      /** The artifacts this run wrote, in order. */
+      writes: Array.isArray(meta.writes) ? meta.writes : [],
+    },
+  }
+}
 
 /** The workspace itself: name + members (Admin-managed), plus multi-workspace
  *  list / create / switch. A workspace always keeps at least one Admin. The Workspace /
@@ -837,7 +879,13 @@ export const workspaceRoutes = (ctx: AppContext) => {
     const org = await requireWorkspace(c, "manage")
     if (org instanceof Response) return org
     const limit = Math.min(200, Math.max(1, Number(c.req.query("limit")) || 50))
-    return c.json({ runs: await meta.listRuns(org, limit) })
+    const runs = await meta.listRuns(org, limit)
+    // The run TIMELINE, derived rather than stored: the row already carries every timestamp and
+    // the meta blob carries the outcome, the writes, the retry count, and the last error.
+    // Surfacing it here lets an operator answer "why hasn't this run started, and what happened
+    // to it" without reading server logs — the difference between a hosted executor being
+    // correct and being operable.
+    return c.json({ runs: runs.map(withTimeline) })
   })
 
   return app

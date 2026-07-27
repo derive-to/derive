@@ -13,6 +13,8 @@ import type {
   CommentRecord,
   CommentSignals,
   CommentState,
+  ConnectionRecord,
+  ConnectionStatus,
   ContextAskerRecord,
   ContextRecord,
   DeliveryRecord,
@@ -44,6 +46,7 @@ import type {
   NewCollection,
   NewCollectionMember,
   NewComment,
+  NewConnection,
   NewContext,
   NewContextAsker,
   NewDelivery,
@@ -53,6 +56,7 @@ import type {
   NewInvitation,
   NewMembership,
   NewNotification,
+  NewPlan,
   NewProposal,
   NewRenderJob,
   NewReport,
@@ -69,6 +73,8 @@ import type {
   OAuthGrant,
   OAuthGrantSummary,
   OrgSettings,
+  PlanKind,
+  PlanRecord,
   PreviewStatus,
   ProposalRecord,
   ProposalState,
@@ -99,7 +105,7 @@ import type {
   WorkspaceAccess,
   WorkspaceRecord,
 } from "@derive/core"
-import { GLOBAL_FOLLOW_ORG, maxRole } from "@derive/core"
+import { GLOBAL_FOLLOW_ORG, maxRole, mergeRunMeta, parseRunMeta, runCounter } from "@derive/core"
 import {
   and,
   asc,
@@ -108,6 +114,7 @@ import {
   eq,
   getTableColumns,
   gt,
+  gte,
   inArray,
   isNotNull,
   isNull,
@@ -137,6 +144,7 @@ import {
   collectionItem,
   collectionMember,
   comment,
+  connection,
   context,
   contextAsker,
   contextSession,
@@ -152,6 +160,7 @@ import {
   oauthClientWorkspace,
   orgSettings,
   PG_SCHEMA_STATEMENTS,
+  plan,
   proposal,
   renderJob,
   report,
@@ -205,6 +214,8 @@ export const schema = {
   agentMention,
   automation,
   run,
+  plan,
+  connection,
   artifactInvite,
   invitation,
   betaSignup,
@@ -249,6 +260,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentMention: true,
   automation: true,
   run: true,
+  plan: true,
+  connection: true,
   invitation: true,
   artifactInvite: true,
   betaSignup: true,
@@ -2158,6 +2171,55 @@ export class PgMetaStore implements MetaStore {
   // Only LIVE working sessions (lease not lapsed) fill the concurrency cap — else a
   // crashed run wedges the queue (the lapsed-lease reclaim is in claimPendingSessions,
   // which only runs when there is room). Mirrors the sqlite/d1 layer.
+  async listDueOpenSessions(now: string, limit = 50): Promise<SessionRecord[]> {
+    return this.db
+      .select()
+      .from(contextSession)
+      .where(
+        or(
+          eq(contextSession.state, "open"),
+          // A `working` row whose lease lapsed (or never existed) is a dead executor's
+          // session — runnable again, exactly as claimPendingSessions treats it.
+          and(
+            eq(contextSession.state, "working"),
+            or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
+          ),
+        ),
+      )
+      .orderBy(contextSession.created_at)
+      .limit(limit)
+  }
+  async claimSessionById(
+    id: string,
+    agentId: string,
+    leaseUntil: string,
+  ): Promise<SessionRecord | null> {
+    // The session belongs to a CONTEXT, and the context names the agent — so ownership is
+    // checked through it rather than on the row. A foreign agent claims nothing.
+    const sRows = await this.db.select().from(contextSession).where(eq(contextSession.id, id))
+    const s = sRows[0]
+    if (!s) return null
+    const cRows = await this.db.select().from(context).where(eq(context.id, s.context_id))
+    if (cRows[0]?.agent_id !== agentId) return null
+    const now = new Date().toISOString()
+    const rows = await this.db
+      .update(contextSession)
+      .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
+      .where(
+        and(
+          eq(contextSession.id, id),
+          or(
+            eq(contextSession.state, "open"),
+            and(
+              eq(contextSession.state, "working"),
+              or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
+            ),
+          ),
+        ),
+      )
+      .returning()
+    return rows[0] ?? null
+  }
   async countWorkingSessions(contextId: string): Promise<number> {
     const now = new Date().toISOString()
     const rows = await this.db
@@ -2592,6 +2654,93 @@ export class PgMetaStore implements MetaStore {
       .where(inArray(run.id, due))
       .returning()
   }
+  async claimRunById(id: string, agentId: string, now: string): Promise<RunRecord | null> {
+    // The capability-token claim: exactly this run, queued → running. The status guard in the
+    // WHERE is the race safety — a double-booted substrate's second update matches zero rows.
+    const rows = await this.db
+      .update(run)
+      .set({ status: "running", started_at: now })
+      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "queued")))
+      .returning()
+    return rows[0] ?? null
+  }
+  async requeueRun(
+    id: string,
+    agentId: string,
+    fields: { scheduledFor: string; meta?: string | null },
+  ): Promise<RunRecord | null> {
+    // Strict running → queued, only for the claiming agent: the status guard stops a duplicate
+    // or late retry request from resurrecting a run that already settled.
+    const rows = await this.db
+      .update(run)
+      .set({
+        status: "queued",
+        started_at: null,
+        scheduled_for: fields.scheduledFor,
+        ...(fields.meta === undefined ? {} : { meta: fields.meta }),
+      })
+      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
+      .returning()
+    return rows[0] ?? null
+  }
+  async reclaimStaleRuns(
+    cutoffIso: string,
+    maxAttempts = 3,
+  ): Promise<{ requeued: number; failed: number }> {
+    // Substrate died mid-run: running since before the cutoff. Requeue with an attempt count
+    // in meta (JSON attribute, not a column); give up as failed/lost past maxAttempts.
+    const stale: RunRecord[] = await this.db
+      .select()
+      .from(run)
+      .where(and(eq(run.status, "running"), lte(run.started_at, cutoffIso)))
+      .limit(100)
+    let requeued = 0
+    let failed = 0
+    for (const r of stale) {
+      const attempts = runCounter(parseRunMeta(r.meta), "attempts") + 1
+      // Past the cap the run is given up as `lost`; otherwise it goes back to the queue with
+      // the count carried forward. Both merge into the existing blob so the previous attempt's
+      // outcome survives.
+      const settled = attempts >= maxAttempts
+      await this.db
+        .update(run)
+        .set(
+          settled
+            ? {
+                status: "failed",
+                finished_at: cutoffIso,
+                meta: mergeRunMeta(r.meta, { attempts, outcome: "lost" }),
+              }
+            : { status: "queued", started_at: null, meta: mergeRunMeta(r.meta, { attempts }) },
+        )
+        // FENCED on started_at — see the twin in repos.ts for the full reasoning. Guarding on
+        // status alone lets a second, concurrent sweep requeue a run that was re-claimed
+        // between this sweep's SELECT and its UPDATE, putting two live executors on one run.
+        .where(
+          and(
+            eq(run.id, r.id),
+            eq(run.status, "running"),
+            r.started_at === null ? isNull(run.started_at) : eq(run.started_at, r.started_at),
+          ),
+        )
+      if (settled) failed += 1
+      else requeued += 1
+    }
+    return { requeued, failed }
+  }
+  async listEnabledAutomations(limit = 500): Promise<AutomationRecord[]> {
+    return this.db.select().from(automation).where(eq(automation.enabled, 1)).limit(limit)
+  }
+  async listDueQueuedRuns(now: string, limit = 50): Promise<RunRecord[]> {
+    return this.db
+      .select()
+      .from(run)
+      .where(
+        and(eq(run.status, "queued"), or(isNull(run.scheduled_for), lte(run.scheduled_for, now))),
+      )
+      .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
+      .limit(limit)
+  }
   async finishRun(
     id: string,
     agentId: string,
@@ -2625,8 +2774,150 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(run.created_at))
       .limit(limit)
   }
+  async latestRunForAutomation(automationId: string, reason?: string): Promise<RunRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(run)
+      .where(
+        reason
+          ? and(eq(run.automation_id, automationId), eq(run.reason, reason))
+          : eq(run.automation_id, automationId),
+      )
+      .orderBy(sql`coalesce(${run.scheduled_for}, '') desc`)
+      .limit(1)
+    return rows[0] ?? null
+  }
+  async findCoalescibleRun(automationId: string, cutoffIso: string): Promise<RunRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(run)
+      .where(
+        and(
+          eq(run.automation_id, automationId),
+          eq(run.status, "queued"),
+          lte(run.scheduled_for, cutoffIso),
+        ),
+      )
+      .orderBy(desc(run.created_at))
+      .limit(1)
+    return rows[0] ?? null
+  }
+  async appendRunPayload(
+    runId: string,
+    payload: unknown,
+    maxMetaBytes: number,
+  ): Promise<RunRecord | null> {
+    // Read the current meta, then CAS on it: the UPDATE applies only while the run is still
+    // queued AND its meta is unchanged since the read. A concurrent claim (→ running) or a
+    // racing append both fall through to null, and the caller enqueues a fresh run — so a
+    // payload is never dropped, at worst an extra run is created under contention.
+    const rows = await this.db
+      .select()
+      .from(run)
+      .where(and(eq(run.id, runId), eq(run.status, "queued")))
+    const row = rows[0]
+    if (!row?.meta) return null
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(row.meta) as Record<string, unknown>
+    } catch {
+      return null
+    }
+    const payloads = Array.isArray(parsed.payloads) ? parsed.payloads : []
+    const nextMeta = JSON.stringify({ ...parsed, payloads: [...payloads, payload] })
+    if (nextMeta.length > maxMetaBytes) return null
+    const updated = await this.db
+      .update(run)
+      .set({ meta: nextMeta })
+      .where(and(eq(run.id, runId), eq(run.status, "queued"), eq(run.meta, row.meta)))
+      .returning()
+    return updated[0] ?? null
+  }
+  async createPlan(p: NewPlan): Promise<PlanRecord> {
+    const rows = await this.db.insert(plan).values(p).returning()
+    return one(rows)
+  }
+  async getPlan(id: string): Promise<PlanRecord | null> {
+    const rows = await this.db.select().from(plan).where(eq(plan.id, id))
+    return rows[0] ?? null
+  }
+  listPlans(orgId: string): Promise<PlanRecord[]> {
+    return this.db.select().from(plan).where(eq(plan.org_id, orgId)).orderBy(desc(plan.created_at))
+  }
+  async deletePlan(id: string, orgId: string): Promise<void> {
+    await this.db.delete(plan).where(and(eq(plan.id, id), eq(plan.org_id, orgId)))
+  }
+  async resolvePlan(
+    orgId: string,
+    userId: string | null,
+    kind: PlanKind,
+  ): Promise<PlanRecord | null> {
+    // Money falls back: a personal plan first, then the workspace pool (user_id null).
+    if (userId) {
+      const personal = await this.db
+        .select()
+        .from(plan)
+        .where(and(eq(plan.org_id, orgId), eq(plan.user_id, userId), eq(plan.kind, kind)))
+        .orderBy(desc(plan.created_at))
+        .limit(1)
+      if (personal[0]) return personal[0]
+    }
+    const pool = await this.db
+      .select()
+      .from(plan)
+      .where(and(eq(plan.org_id, orgId), isNull(plan.user_id), eq(plan.kind, kind)))
+      .orderBy(desc(plan.created_at))
+      .limit(1)
+    return pool[0] ?? null
+  }
+  async sumRunCostSince(orgId: string, sinceIso: string): Promise<number> {
+    const rows = await this.db
+      .select({ total: sql<number>`coalesce(sum(${run.cost_micro_usd}), 0)` })
+      .from(run)
+      .where(and(eq(run.org_id, orgId), gte(run.created_at, sinceIso)))
+    return Number(rows[0]?.total ?? 0)
+  }
+  async createConnection(cn: NewConnection): Promise<ConnectionRecord> {
+    const rows = await this.db.insert(connection).values(cn).returning()
+    return one(rows)
+  }
+  async getConnection(id: string): Promise<ConnectionRecord | null> {
+    const rows = await this.db.select().from(connection).where(eq(connection.id, id))
+    return rows[0] ?? null
+  }
+  async getConnectionsByIds(ids: string[]): Promise<ConnectionRecord[]> {
+    if (ids.length === 0) return []
+    return this.db.select().from(connection).where(inArray(connection.id, ids))
+  }
+  listConnections(orgId: string, userId?: string): Promise<ConnectionRecord[]> {
+    return this.db
+      .select()
+      .from(connection)
+      .where(
+        userId
+          ? and(eq(connection.org_id, orgId), eq(connection.user_id, userId))
+          : eq(connection.org_id, orgId),
+      )
+      .orderBy(desc(connection.created_at))
+  }
+  async setConnectionStatus(
+    id: string,
+    orgId: string,
+    status: ConnectionStatus,
+  ): Promise<ConnectionRecord | null> {
+    const rows = await this.db
+      .update(connection)
+      .set({ status })
+      .where(and(eq(connection.id, id), eq(connection.org_id, orgId)))
+      .returning()
+    return rows[0] ?? null
+  }
   async getAgentByToken(token: string): Promise<AgentRecord | null> {
     const rows = await this.db.select().from(agent).where(eq(agent.token, token))
+    return rows[0] ?? null
+  }
+  async getAgent(id: string): Promise<AgentRecord | null> {
+    const rows = await this.db.select().from(agent).where(eq(agent.id, id))
     return rows[0] ?? null
   }
   async getOAuthGrant(tokenHash: string): Promise<OAuthGrant | null> {

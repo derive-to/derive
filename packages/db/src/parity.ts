@@ -25,6 +25,7 @@ import type {
   CollectionMemberRecord,
   CollectionRecord,
   CommentRecord,
+  ConnectionRecord,
   ContextAskerRecord,
   ContextRecord,
   DeliveryRecord,
@@ -36,6 +37,7 @@ import type {
   InvitationRecord,
   MembershipRecord,
   NotificationRecord,
+  PlanRecord,
   ProposalRecord,
   RenderJobRecord,
   ReportRecord,
@@ -72,6 +74,8 @@ export interface TypedTables {
   agentMention: AgentMentionRecord
   automation: AutomationRecord
   run: RunRecord
+  plan: PlanRecord
+  connection: ConnectionRecord
   artifactInvite: ArtifactInviteRecord
   invitation: InvitationRecord
   betaSignup: BetaSignupRecord

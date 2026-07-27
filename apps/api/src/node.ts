@@ -19,12 +19,14 @@ import { loadLocalEmbedder } from "./embedder-local"
 import { workspacesBlockingDeletion } from "./lib/account"
 import { signupAttributionHook } from "./lib/attribution"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
+import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
 import { mountWeb } from "./lib/serve-web"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
+import { nodeSubstrate } from "./lib/substrate-node"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { createNodeSyncRunner } from "./node-sync"
@@ -340,6 +342,21 @@ const previewWorker = cfg.previews
 // the edge `RepoSyncRunner` DO. Resumed below on boot + a short interval.
 const syncRunner = createNodeSyncRunner(meta, blobs, authSecret)
 
+// EXPERIMENTAL hosted runs (DERIVE_HOSTED_RUNS, default off): this API process becomes the
+// executor host — it materializes due schedules, reclaims runs whose executor died, and starts
+// each due run as a `derive runner run` child process on this box, so an automation updates its
+// artifact with no separate machine and no polling runner. Off by default because it spawns
+// processes and spends the run initiator's model plan; a deployment opts in deliberately. When
+// off, runs stay queued for a polling `derive runner` exactly as before.
+const hostedDispatch = cfg.hostedRuns
+  ? {
+      meta,
+      substrate: nodeSubstrate({ bin: cfg.runnerBin }),
+      server: cfg.baseUrl,
+      secret: authSecret,
+    }
+  : null
+
 const app = createApp({
   meta,
   blobs,
@@ -392,6 +409,11 @@ const app = createApp({
   pokePreviews: previewWorker?.poke,
   // Run a triggered GitHub sync in the background so it survives a closed tab.
   startSync: syncRunner.start,
+  // Start a just-created run immediately instead of at the next tick, so "Run now" and a fire
+  // URL feel instant. Unset when hosted runs are off — the run then waits for a polling runner.
+  pokeRun: hostedDispatch
+    ? (runId: string) => void dispatchRunNow(hostedDispatch, runId).catch(() => undefined)
+    : undefined,
 })
 
 // Serve the bundled SPA from this process (single-container self-host). The API
@@ -441,6 +463,21 @@ draftSweepTimer.unref?.()
 void syncRunner.resumeStalled()
 const syncResumeTimer = setInterval(() => void syncRunner.resumeStalled(), 60_000)
 syncResumeTimer.unref?.()
+
+// EXPERIMENTAL hosted runs (DERIVE_HOSTED_RUNS=true, default off): this API process becomes
+// the executor host. A minutely tick materializes due schedules, reclaims runs whose executor
+// died, and starts each due run as a `derive runner run` child process on this box — so an
+// automation updates its artifact with no separate machine and no polling runner. Off by
+// default because it spawns processes and spends the owner's model plan; a deployment opts in
+// deliberately. When off, runs stay queued for a polling `derive runner` (unchanged behavior).
+let hostedRunsTimer: ReturnType<typeof setInterval> | undefined
+if (hostedDispatch) {
+  const hostedTick = () => void dispatchPass(hostedDispatch).catch(() => undefined)
+  hostedTick() // catch up on boot, like every other worker here
+  hostedRunsTimer = setInterval(hostedTick, 60_000)
+  hostedRunsTimer.unref?.()
+  log.info("hosted runs ENABLED (experimental)", { substrate: "node-child", bin: cfg.runnerBin })
+}
 
 // One-time cleanup of pre-existing owner self-views (the route no longer records
 // them). Pre-multi-workspace rows were rekeyed from "local" onto defaultOrg above,

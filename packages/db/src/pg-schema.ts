@@ -3,6 +3,7 @@ import type {
   ArtifactKind,
   AuditAction,
   CommentState,
+  ConnectionStatus,
   DeliveryKind,
   DeliveryStatus,
   DomainKind,
@@ -11,6 +12,7 @@ import type {
   LinkRole,
   Listed,
   NotificationKind,
+  PlanKind,
   PreviewStatus,
   ProposalState,
   RenderJobStatus,
@@ -184,6 +186,8 @@ export const automation = pgTable("automation", {
   trigger: text("trigger").notNull(),
   instruction: text("instruction").notNull(),
   refs: text("refs"),
+  connection_ids: text("connection_ids"),
+  context_id: text("context_id"),
   enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
@@ -203,6 +207,31 @@ export const run = pgTable("run", {
   finished_at: text("finished_at"),
   cost_micro_usd: integer("cost_micro_usd"),
   meta: text("meta"),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+
+// A bring-your-own plan (WO2): see schema.ts.
+export const plan = pgTable("plan", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  user_id: text("user_id"),
+  kind: text("kind").$type<PlanKind>().notNull(),
+  provider: text("provider").notNull(),
+  secret_enc: text("secret_enc").notNull(),
+  limits: text("limits"),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+
+// A per-user connected external account (WO3): see schema.ts.
+export const connection = pgTable("connection", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  user_id: text("user_id").notNull(),
+  broker: text("broker").notNull(),
+  toolkit: text("toolkit").notNull(),
+  broker_ref: text("broker_ref").notNull(),
+  scopes_label: text("scopes_label"),
+  status: text("status").$type<ConnectionStatus>().notNull().default("pending"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
@@ -795,6 +824,8 @@ const TABLES = [
   agentMention,
   automation,
   run,
+  plan,
+  connection,
   invitation,
   artifactInvite,
   betaSignup,
@@ -854,6 +885,16 @@ const CONTEXT_SESSION_DEDUPE_UNIQUE_PG =
   `CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session ` +
   `(context_id, asker_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working')`
 
+// One run per automation per cron occurrence — the Postgres twin of run_schedule_occurrence
+// in schema.ts. That comment carries the reasoning: the tick's dedupe is a read-then-write, so
+// two ticks racing can both materialize the same occurrence, and this makes losing that race
+// harmless rather than expensive. Scoped to reason='schedule' because manual runs, webhook
+// fires and retries legitimately share a timestamp.
+const RUN_SCHEDULE_OCCURRENCE_UNIQUE_PG =
+  `CREATE UNIQUE INDEX IF NOT EXISTS run_schedule_occurrence ON run ` +
+  `(automation_id, scheduled_for) WHERE reason = 'schedule' AND automation_id IS NOT NULL ` +
+  `AND scheduled_for IS NOT NULL`
+
 export const buildPgSchemaStatements = (): string[] => {
   const { creates, alters } = generateDdl(TABLES, getTableConfig, {
     ifNotExists: true,
@@ -865,9 +906,10 @@ export const buildPgSchemaStatements = (): string[] => {
     ...PERF_INDEXES,
     ...ARTIFACT_SEARCH_PG,
     ...alters,
-    // After the alters: the partial index depends on dedupe_key, which the alters
-    // add on a populated DB.
+    // After the alters: partial indexes reference columns the alters add on a populated DB
+    // (dedupe_key), and the PG boot has no per-statement try/catch, so ordering is load-bearing.
     CONTEXT_SESSION_DEDUPE_UNIQUE_PG,
+    RUN_SCHEDULE_OCCURRENCE_UNIQUE_PG,
   ]
 }
 

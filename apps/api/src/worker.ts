@@ -25,11 +25,13 @@ import { bindingEmbedder, EMBED_DIMENSIONS, type WorkersAiLike } from "./embedde
 import { workspacesBlockingDeletion } from "./lib/account"
 import { signupAttributionHook } from "./lib/attribution"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
+import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
+import { containerSubstrateFromEnv } from "./lib/substrate-container"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
 import { PgvectorSearchIndex } from "./search-pgvector"
 import { enqueueChannelDelivery } from "./webhooks"
@@ -40,6 +42,9 @@ export { PreviewRenderer } from "./preview-do"
 // — re-exported so the Workers runtime can instantiate them (see wrangler.toml
 // `durable_objects.bindings`).
 export { ArtifactRoom } from "./realtime-do"
+// EXPERIMENTAL hosted runs: one automation run per container instance, then it exits.
+// Declared in wrangler.toml [[containers]] + its DO binding; unbound = hosted runs off.
+export { RunContainer } from "./run-container"
 export { RepoSyncRunner } from "./sync-runner-do"
 export { WebhookOutbox } from "./webhook-do"
 
@@ -98,6 +103,14 @@ export interface Env {
   PREVIEW_RENDERER?: DurableObjectNamespace
   // Cloudflare Browser Rendering binding. Unbound ⇒ preview rendering is disabled.
   BROWSER?: BrowserWorker
+  // EXPERIMENTAL hosted runs: the Containers binding that executes ONE automation run per
+  // instance (scale to zero between runs). Declared in wrangler.toml `[[containers]]`.
+  // Unbound (the default) ⇒ hosted execution is off and runs wait for a polling runner.
+  RUN_CONTAINER?: unknown
+  // The run-dispatch QUEUE: the latency nudge, never the source of truth. Postgres is the
+  // queue of record, so a dropped message costs seconds (the cron sweep re-dispatches),
+  // not work. Unbound ⇒ "Run now" simply waits for the next cron tick, as before.
+  RUN_QUEUE?: { send: (body: unknown) => Promise<void> }
   // Native per-colo rate-limit bindings (limit + 60s window declared in wrangler.toml
   // [[ratelimits]]). The edge counts against these instead of an in-process Map so a cap
   // holds across isolates within a location. RL_STRICT is shared by the two tight 3/60
@@ -300,6 +313,12 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // renderPreviews is false so no jobs are enqueued.
         renderPreviews: !!env.BROWSER,
         pokePreviews: () => void edgeWaitUntil(pokePreviewRenderer(env)),
+        // Hosted runs: nudge the dispatch queue so an interactive run starts in seconds
+        // instead of on the next minute's cron. Best-effort by construction — the sweep is
+        // the guarantee — and a no-op when the queue isn't bound (hosted execution off).
+        pokeRun: (runId: string) => {
+          if (env.RUN_QUEUE) void edgeWaitUntil(env.RUN_QUEUE.send({ runId }).catch(() => {}))
+        },
         sandboxOrigin: env.DERIVE_SANDBOX_URL,
         // Read the SPA shell from static assets so /artifacts/:ref can carry unfurl meta.
         // Cached per isolate; null on any miss leaves the shell untouched.
@@ -382,5 +401,56 @@ export default {
   scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): void {
     ctx.waitUntil(pokeOutbox(env))
     ctx.waitUntil(pokePreviewRenderer(env))
+    // EXPERIMENTAL hosted runs: the same minute tick also drives automation execution when a
+    // container binding is configured — materialize due schedules, reclaim dead runs, and boot
+    // one scale-to-zero container per due run. Unbound (the default) = a no-op, so runs stay
+    // queued for a polling runner and an un-opted deployment behaves exactly as before.
+    ctx.waitUntil(hostedRunTick(env))
+  },
+
+  // The dispatch queue's consumer: one message = "this run was just created, start it now".
+  // Purely a latency path. Postgres remains the queue of record, so a message that is lost,
+  // duplicated, or arrives late costs nothing: dispatchRunNow no-ops on a run that is already
+  // claimed or settled, and the cron sweep re-dispatches anything still queued. Messages are
+  // acked either way — a retry would only re-enter the same idempotent path a minute early.
+  async queue(batch: { messages: { body: unknown }[] }, env: Env): Promise<void> {
+    const ids = batch.messages
+      .map((m) => (m.body as { runId?: unknown })?.runId)
+      .filter((id): id is string => typeof id === "string" && id.length > 0)
+    if (ids.length === 0) return
+    await withHostedDispatch(env, async (deps) => {
+      for (const runId of ids) await dispatchRunNow(deps, runId)
+    })
   },
 }
+
+/** Run something with hosted-dispatch deps, inside a request-scoped DB context (a binding
+ *  captured outside one goes stale — see lib/request-d1.ts). The single place the edge decides
+ *  whether hosted execution is configured at all: no container binding or no auth secret means
+ *  hosted runs are OFF, and both entry points (the cron sweep and the queue nudge) must degrade
+ *  to a no-op rather than fail, leaving runs queued for a polling runner. */
+async function withHostedDispatch(
+  env: Env,
+  fn: (deps: DispatchDeps) => Promise<void>,
+): Promise<void> {
+  const substrate = containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
+  const secret = env.DERIVE_AUTH_SECRET
+  if (!substrate || !secret) return
+  const scoped = () =>
+    fn({
+      meta: env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1),
+      substrate,
+      server: env.BASE_URL ?? "",
+      secret,
+    })
+  await (env.HYPERDRIVE
+    ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)
+    : requestD1.run(env.DB, scoped)
+  ).catch(() => undefined)
+}
+
+/** The cron sweep: materialize due schedules, reclaim dead runs, dispatch what is due. */
+const hostedRunTick = (env: Env): Promise<void> =>
+  withHostedDispatch(env, async (deps) => {
+    await dispatchPass(deps)
+  })

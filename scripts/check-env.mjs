@@ -25,6 +25,10 @@ const NON_CONFIG = new Set([
   "SYNC_RUNNER",
   "PREVIEW_RENDERER",
   "BROWSER",
+  // Hosted automation runs (experimental): the per-run container + the dispatch queue.
+  // Declared in wrangler.toml [[containers]] / [[queues]], never as env.
+  "RUN_CONTAINER",
+  "RUN_QUEUE",
   "AI",
   "RL_AUTH",
   "RL_INVITE",

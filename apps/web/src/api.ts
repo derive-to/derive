@@ -216,6 +216,20 @@ export interface Run {
   meta: string | null
   created_at: string
   finished_at: string | null
+  /** Derived server-side (never stored): where this run is and why. Lets the activity view
+   *  answer "nothing is happening — is it broken?" without anyone opening server logs. */
+  timeline?: {
+    phase: Run["status"]
+    /** Set when a queued run isn't due yet: a schedule, or a retry backoff. */
+    waiting_until: string | null
+    queued_ms: number | null
+    ran_ms: number | null
+    /** Attempts already spent (0 = first try); each one costs the initiator's model plan. */
+    retries: number
+    last_error: string | null
+    outcome: string | null
+    writes: unknown[]
+  }
 }
 /** An askable agent setup: a registered agent wired to a manifest artifact.
  *  Generated from the OpenAPI spec. */
@@ -360,6 +374,17 @@ export interface SearchHit {
   snippet: string
   /** True when this matched by MEANING only (no literal occurrence) — the UI badges it. */
   semantic: boolean
+}
+
+// A per-user connected external account (WO3) — a Source. Always the caller's own.
+export interface Connection {
+  id: string
+  user_id: string
+  broker: string
+  toolkit: string
+  scopes_label: string | null
+  status: "active" | "pending" | "revoked"
+  created_at: string
 }
 
 export const api = {
@@ -1126,5 +1151,19 @@ export const api = {
     const fields: Record<string, string> = { message }
     if (title?.trim()) fields.title = title.trim()
     return this.publish(new File([text], filename), fields, id)
+  },
+
+  // --- Connected sources (plain /v1 routes, hand-written client) ------------------------
+  connections(): Promise<Connection[]> {
+    return f("/v1/connections?mine=1", opts())
+      .then(j)
+      .then((r) => r.connections as Connection[])
+  },
+  connect(toolkit: string): Promise<Connection & { connect_url: string }> {
+    return f("/v1/connections", opts({ toolkit })).then(j)
+  },
+  async revokeConnection(id: string): Promise<void> {
+    const r = await f(`/v1/connections/${id}`, { credentials: "include", method: "DELETE" })
+    if (!r.ok) throw new ApiError("Couldn't revoke the connection.", r.status)
   },
 }
