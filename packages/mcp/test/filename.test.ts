@@ -21,16 +21,27 @@ describe("fallbackFilename — inline publish with no filename never re-types ma
   })
 
   it("an HTML fragment is NOT a document, so it defaults to .md (caveat: pass a filename)", () => {
-    // A styled page whose source starts with <div>/<style> rather than a doctype isn't
-    // detected as a document — the caller must pass filename:"x.html" to keep it HTML.
+    // A <div> opener is exactly how HTML-flavored Markdown (a centered README)
+    // starts, so it stays .md — the caller passes filename:"x.html" to keep it HTML.
     expect(fallbackFilename('<div class="card">hi</div>')).toBe("index.md")
-    expect(fallbackFilename("<style>body{color:red}</style><p>x</p>")).toBe("index.md")
+    expect(fallbackFilename("<!-- prettier-ignore -->\n# Heading\n\nprose")).toBe("index.md")
   })
 
-  it("looksLikeHtmlDocument only matches a leading doctype/html tag", () => {
+  it("a headless designed page (meta/style/head openers) lands as .html", () => {
+    expect(fallbackFilename('<meta name="viewport" content="width=device-width" />')).toBe(
+      "index.html",
+    )
+    expect(fallbackFilename("<style>body{color:red}</style><p>x</p>")).toBe("index.html")
+    expect(fallbackFilename("<!-- generated -->\n<meta charset=utf-8><style>a{}</style>")).toBe(
+      "index.html",
+    )
+  })
+
+  it("looksLikeHtmlDocument matches page openers, never mid-text tags", () => {
     expect(looksLikeHtmlDocument("<!DOCTYPE html>")).toBe(true)
     expect(looksLikeHtmlDocument("<html>")).toBe(true)
     expect(looksLikeHtmlDocument("# md then <html> later")).toBe(false)
     expect(looksLikeHtmlDocument("<htmlish>")).toBe(false) // needs a tag boundary
+    expect(looksLikeHtmlDocument("<!-- unterminated")).toBe(false)
   })
 })

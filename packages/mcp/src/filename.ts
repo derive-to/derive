@@ -6,14 +6,25 @@
 // These mirror the server's own sniff, inlined here because the stdio shim keeps NO
 // @derive/core dependency at runtime (it is a thin HTTP client).
 
-/** A full HTML document starts with `<!doctype html>` or `<html>`. Everything else
- *  (Markdown, plain text, an HTML fragment) is NOT one. */
-export const looksLikeHtmlDocument = (s: string): boolean =>
-  /^\s*<(!doctype\s+html|html)[\s>]/i.test(s.slice(0, 256))
+/** An HTML page opener: the doctype/`<html>` markers, plus the head/meta/style/
+ *  title/body openers a headless designed page starts with — matched after skipping
+ *  leading HTML comments (a comment alone never decides). A leading `<div>`/`<p>`/
+ *  custom tag is NOT one: that is how HTML-flavored Markdown (a centered README)
+ *  legitimately opens. Mirrors @derive/core's looksLikeHtmlDocument exactly. */
+export const looksLikeHtmlDocument = (s: string): boolean => {
+  let head = s.replace(/^﻿/, "").trimStart()
+  for (let i = 0; i < 8 && head.startsWith("<!--"); i++) {
+    const end = head.indexOf("-->")
+    if (end === -1) return false
+    head = head.slice(end + 3).trimStart()
+  }
+  return /^<(!doctype\s+html|html|head|body|meta|style|title)[\s/>]/i.test(head.slice(0, 64))
+}
 
-/** The fallback filename for inline content with none given: a full HTML document →
+/** The fallback filename for inline content with none given: an HTML page →
  *  `index.html`, anything else → `index.md`. So Markdown is never stored as HTML.
- *  Caveat: a fragment-HTML artifact (not starting with a doctype) republished with no
- *  filename lands as `.md` — pass an explicit `filename` (or use `edits`) to keep it. */
+ *  Caveat: fragment HTML that opens with a `<div>` (indistinguishable from
+ *  HTML-flavored Markdown) still lands as `.md` — pass an explicit
+ *  `filename` (or use `edits`) to keep it HTML. */
 export const fallbackFilename = (content: string | undefined): string =>
   looksLikeHtmlDocument(content ?? "") ? "index.html" : "index.md"
