@@ -2542,6 +2542,61 @@ export function runStoreContract(
       expect(dup).toBeNull()
     })
 
+    it("run cost ACCUMULATES across attempts and never nulls out a banked total", async () => {
+      // A retry reuses the SAME run row, so cost has to add rather than replace. Replacing meant
+      // a run that burned an expensive failed attempt and then settled cheaply reported only the
+      // cheap number — undercounting exactly the runs that cost the most, in the column the
+      // monthly budget sums. Driver-level because both adapters implement it and must agree.
+      const agentId = uuid()
+      const r = await store.createRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        reason: "manual:u1",
+        scheduled_for: "2000-01-01T00:00:00.000Z",
+      })
+      await store.claimDueRuns(agentId, "2100-01-01T00:00:00.000Z")
+
+      // Attempt 1 fails retryably having spent 900k; the requeue banks it. Scheduled in the past
+      // so the next claim picks it straight back up (the API path uses a real 60s backoff).
+      const requeued = await store.requeueRun(r.id, agentId, {
+        scheduledFor: "2000-01-01T00:00:00.000Z",
+        costMicroUsd: 900_000,
+      })
+      expect(requeued?.status).toBe("queued")
+      expect(requeued?.cost_micro_usd).toBe(900_000)
+
+      // Attempt 2 settles having spent 100k. The run cost 1,000,000, not 100,000.
+      await store.claimDueRuns(agentId, "2100-01-01T00:00:00.000Z")
+      const settled = await store.finishRun(r.id, agentId, {
+        status: "succeeded",
+        finishedAt: "2100-01-01T00:00:00.000Z",
+        costMicroUsd: 100_000,
+      })
+      expect(settled?.cost_micro_usd).toBe(1_000_000)
+
+      // A provider that reports NOTHING (Codex plain-text, an older CLI) must read as unknown and
+      // leave the banked total alone. An unconditional `cost = value ?? null` write erased it.
+      const r2 = await store.createRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        reason: "manual:u1",
+        scheduled_for: "2000-01-01T00:00:00.000Z",
+      })
+      await store.claimDueRuns(agentId, "2100-01-01T00:00:00.000Z")
+      await store.requeueRun(r2.id, agentId, {
+        scheduledFor: "2000-01-01T00:00:00.000Z",
+        costMicroUsd: 500_000,
+      })
+      await store.claimDueRuns(agentId, "2100-01-01T00:00:00.000Z")
+      const quiet = await store.finishRun(r2.id, agentId, {
+        status: "succeeded",
+        finishedAt: "2100-01-01T00:00:00.000Z",
+      })
+      expect(quiet?.cost_micro_usd).toBe(500_000)
+    })
+
     it("deleteAutomation cancels its queued runs and is org-scoped", async () => {
       const agentId = uuid()
       const a = await store.createAutomation({

@@ -54,6 +54,10 @@ function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
         // Codex plain-text mode surfaces no structured api status; the exit code
         // is the only signal, so retryable() falls back to "engine error".
         apiErrorStatus: null,
+        // Plain-text mode reports no cost either. Null = UNKNOWN, which the server stores as a
+        // null column and the budget's sum skips — a Codex run is honestly unpriced rather than
+        // silently counted as free. Structured output would be what makes this reportable.
+        costUsd: null,
       })
     })
     child.on("error", (err) => {
@@ -68,6 +72,7 @@ function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
         lastText: "",
         isError: true,
         apiErrorStatus: null,
+        costUsd: null,
       })
     })
   })

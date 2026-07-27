@@ -530,6 +530,9 @@ export const automationRoutes = (ctx: AppContext) => {
         const attempt = retries + 1
         const requeued = await meta.requeueRun(runId, agent.id, {
           scheduledFor: new Date(Date.now() + retryDelayMs(attempt)).toISOString(),
+          // The attempt that just failed still spent money. Bank it now: this row is what the
+          // retry reuses, so a cost dropped here never reaches the workspace budget at all.
+          costMicroUsd: b.cost_micro_usd ?? null,
           // MERGE onto the run's existing meta, never replace it — the rule run-meta.ts
           // states and reclaimStaleRuns already follows. Replacing dropped two things that
           // live there: the fire-URL `payloads` (so a retried webhook run executed with no

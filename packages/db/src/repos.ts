@@ -2709,7 +2709,14 @@ export function makeRepos(db: SqliteDb) {
       .set({
         status: fields.status,
         finished_at: fields.finishedAt,
-        cost_micro_usd: fields.costMicroUsd ?? null,
+        // ACCUMULATE, never replace. A retry reuses THIS row (see requeueRun), so a run that
+        // burned an expensive failed attempt and then settled cheaply would report only the
+        // cheap number — undercounting exactly the runs that cost the most. A missing value
+        // leaves the column untouched rather than nulling it, so a provider that reports no
+        // cost cannot erase what an earlier attempt already banked.
+        ...(fields.costMicroUsd == null
+          ? {}
+          : { cost_micro_usd: sql`coalesce(${run.cost_micro_usd}, 0) + ${fields.costMicroUsd}` }),
         meta: fields.meta ?? null,
       })
       .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
@@ -2754,7 +2761,7 @@ export function makeRepos(db: SqliteDb) {
   const requeueRun = async (
     id: string,
     agentId: string,
-    fields: { scheduledFor: string; meta?: string | null },
+    fields: { scheduledFor: string; meta?: string | null; costMicroUsd?: number | null },
   ): Promise<RunRecord | null> =>
     // Strict running → queued, only for the claiming agent: the status guard stops a duplicate
     // or late retry request from resurrecting a run that already settled.
@@ -2764,6 +2771,12 @@ export function makeRepos(db: SqliteDb) {
         status: "queued",
         started_at: null,
         scheduled_for: fields.scheduledFor,
+        // Bank the FAILED attempt's spend before the row goes back on the queue. A retryable
+        // failure still ran the model, often more than once, and dropping that on requeue is
+        // how a budget ends up ignoring the most expensive runs in the workspace.
+        ...(fields.costMicroUsd == null
+          ? {}
+          : { cost_micro_usd: sql`coalesce(${run.cost_micro_usd}, 0) + ${fields.costMicroUsd}` }),
         ...(fields.meta === undefined ? {} : { meta: fields.meta }),
       })
       .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))

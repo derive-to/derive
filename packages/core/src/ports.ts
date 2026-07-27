@@ -1063,7 +1063,10 @@ export interface AgentStore {
   requeueRun(
     id: string,
     agentId: string,
-    fields: { scheduledFor: string; meta?: string | null },
+    /** `costMicroUsd` banks the FAILED attempt's spend before the row goes back on the queue: a
+     *  retry reuses this same run row, so a cost not recorded here is lost for good when the run
+     *  eventually settles. Accumulates onto whatever the column already holds. */
+    fields: { scheduledFor: string; meta?: string | null; costMicroUsd?: number | null },
   ): Promise<RunRecord | null>
   /** The reclaim sweep: runs stuck `running` since before `cutoffIso` (their substrate died)
    *  go back to `queued` for re-dispatch, with an attempt count kept in meta; a run past
