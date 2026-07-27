@@ -1,13 +1,18 @@
-// RUN SIDE of `use`. There is no separate runner tool: being a context's agent is a mode
-// of `use`. `use({context})` (no instruction) on a context whose agent is this connection
-// PULLS its queued work; `use({session_id, answer})` on such a session posts the AGENT turn
-// (with optional progress/state/result). Only a registered dk_agt_ agent owns a context, so
-// these paths are unreachable for a human's OAuth grant — dispatch is by ownership, so a
-// context/session that isn't yours to run returns null and `use` falls through to the give
-// path, and the human surface is unchanged.
+// RUN SIDE of `use`. There is no separate runner tool: serving a context is a mode of
+// `use`, dispatched by ownership. TWO principals can run a context: its REGISTERED
+// dk_agt_ agent (agent_id === agent.id), and — OWNER-RUN — a human OAuth grant whose
+// user holds the manage-grade (owner) seat in the context's workspace, so the person who
+// wired a context up serves it from the session they already have, no second token.
+// `use({context})` (no instruction) PULLS queued work; `use({session_id, answer})` posts
+// the AGENT turn (with optional progress/state/result). A give always carries an
+// instruction and a check never carries `answer`, so the modes stay unambiguous; a
+// context/session that isn't yours to run returns null and `use` falls through to the
+// give path, and every other grant's surface is unchanged.
 import {
   type ContextRecord,
+  capRole,
   newId,
+  roleAllows,
   type SessionMessageRecord,
   type SessionRecord,
   type SessionState,
@@ -31,11 +36,28 @@ export async function runnerDispatch(
     state?: "answered" | "escalated" | "failed"
     result_artifact_id?: string
     answers?: string
+    workspace?: string
   },
 ): Promise<ToolResult | null> {
-  const { ctx, agent } = tc
+  const { ctx, agent, actingFor, ownerId, scopeForCap, registered, inGrant, resolveWs } = tc
   const { context, instruction, session_id, answer, progress, state, result_artifact_id, answers } =
     args
+
+  // OWNER-RUN: does this connection's human hold the manage-grade (owner) seat in `org`?
+  // Grants only — a registered agent runs by agent_id, never by seat. The default
+  // workspace's role is already membership-capped; a roamed one re-caps from the grant's
+  // scope against live membership, the same rule as resolveWs / the X-Derive-Workspace
+  // re-home. Exactly the people who could rewire the context anyway.
+  const ownerRunsOrg = async (org: string): Promise<boolean> => {
+    if (registered || !actingFor) return false
+    if (org === agent.org_id) return roleAllows(agent.role, "manage")
+    if (!ownerId || !inGrant(org)) return false
+    const m = await ctx.meta.getMembership(org, ownerId)
+    return !!m && roleAllows(capRole(scopeForCap, m.role), "manage")
+  }
+  // The agent turn's author: the registered agent, or the owner-run human — the
+  // transcript says who actually did the work.
+  const runnerId = registered ? agent.id : (actingFor?.id ?? agent.id)
 
   // A claimed session's lease — how long it holds `working` before re-serve (crash /
   // reboot). From the context's max_run_ms, clamped like the REST queue's leaseFor, plus a
@@ -45,15 +67,28 @@ export async function runnerDispatch(
     const ms = Math.min(Math.max(x.max_run_ms ?? 600_000, 30_000), 6 * 60 * 60_000)
     return new Date(Date.now() + ms + 60_000).toISOString()
   }
-  // A context THIS connection RUNS, by id or name — a context is owned by exactly one
-  // agent, so agent_id === agent.id is the whole gate. Null when not yours to run.
+  // A context THIS connection RUNS, by id or name. A registered agent runs exactly the
+  // contexts it is the agent for (agent_id === agent.id is the whole gate). A grant
+  // runs by OWNER-RUN: the context is resolved where a give would look (the named or
+  // default workspace) and the human must hold the manage-grade seat there. Null when
+  // not yours to run.
   const runnableContext = async (ref: string): Promise<ContextRecord | null> => {
     const trimmed = ref.trim()
+    if (registered) {
+      const byId = await ctx.meta.getContext(trimmed)
+      if (byId && byId.agent_id === agent.id) return byId
+      const lc = trimmed.toLowerCase()
+      const rows = await ctx.meta.listContexts(agent.org_id)
+      return rows.find((x) => x.agent_id === agent.id && x.name.toLowerCase() === lc) ?? null
+    }
+    if (!actingFor) return null
+    const t = await resolveWs(args.workspace)
+    if ("error" in t || !roleAllows(t.role, "manage")) return null
     const byId = await ctx.meta.getContext(trimmed)
-    if (byId && byId.agent_id === agent.id) return byId
+    if (byId && byId.org_id === t.org) return byId
     const lc = trimmed.toLowerCase()
-    const rows = await ctx.meta.listContexts(agent.org_id)
-    return rows.find((x) => x.agent_id === agent.id && x.name.toLowerCase() === lc) ?? null
+    const rows = await ctx.meta.listContexts(t.org)
+    return rows.find((x) => x.name.toLowerCase() === lc) ?? null
   }
   // SERVE: claim (open -> working) up to 10 runnable sessions and return each with its
   // transcript. Claiming leases each so overlapping runs never double-answer one; the
@@ -135,7 +170,7 @@ export async function runnerDispatch(
         id: newId("sm"),
         session_id: s.id,
         author_kind: "agent",
-        author_id: agent.id,
+        author_id: runnerId,
         body_md: o.body,
         meta: payloadMeta === undefined ? null : JSON.stringify(payloadMeta),
       },
@@ -169,11 +204,13 @@ export async function runnerDispatch(
     })
   }
 
-  // REPORT on a session you run — your `answer` is the agent turn.
+  // REPORT on a session you run — your `answer` is the agent turn. `answer` is runner
+  // vocabulary (a follow-up is `instruction`), so a session that isn't yours to run
+  // falls through to the check path unchanged.
   if (session_id && answer !== undefined) {
     const s = await ctx.meta.getSession(session_id)
     const x = s ? await ctx.meta.getContext(s.context_id) : null
-    if (s && x && x.agent_id === agent.id)
+    if (s && x && (registered ? x.agent_id === agent.id : await ownerRunsOrg(x.org_id)))
       return runnerAnswer(s, x, { body: answer, progress, state, result_artifact_id, answers })
   }
   // PULL your queued work: a context you run + NO instruction (a give always has one, so a
