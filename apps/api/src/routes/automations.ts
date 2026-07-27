@@ -7,6 +7,7 @@ import {
   normalizeSelectors,
   parseRunMeta,
   runCounter,
+  runTainted,
 } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { type Context, Hono } from "hono"
@@ -493,6 +494,12 @@ export const automationRoutes = (ctx: AppContext) => {
           // them, so a webhook-triggered run executed as though a clock had started it. Empty
           // for schedule and manual runs.
           payloads: parseRunMeta(r.meta).payloads ?? [],
+          // TAINT, as the SERVER knows it at claim time. A webhook payload is untrusted content
+          // by definition (it is whatever the caller POSTed), so a run carrying one starts
+          // tainted and can never live-publish — its writes land as proposals. A source-tool
+          // call stamps the same flag mid-run, from the tool endpoint. Sent to the executor so
+          // its local gate agrees with the server's view; the executor cannot clear it.
+          tainted: runTainted(parseRunMeta(r.meta)),
           flags,
         }
       }),
@@ -600,6 +607,17 @@ export const automationRoutes = (ctx: AppContext) => {
     if (!match) return fail(c, 403, "tool not allowed for this run")
     try {
       const result = await broker.execute({ ref: match.ref, tool: b.tool, args: b.args ?? {} })
+      // TAINT, stamped BEFORE the result is handed over. This run has now read data from an
+      // outside system, so it can no longer live-publish (see decideWrite): its writes become
+      // proposals a human approves. Recorded here rather than trusted from the executor,
+      // because this endpoint is the only place that KNOWS a tool ran — the executor is the
+      // party a prompt injection would already have captured, so its word on whether it read
+      // anything is worth nothing.
+      //
+      // Ordered before the response deliberately: if the stamp fails we would rather fail the
+      // tool call than hand back external data the gate does not know about. Merged, never
+      // replaced, like every other writer of run.meta.
+      await meta.updateRunMeta(run.id, mergeRunMeta(run.meta, { tainted: true }))
       return c.json({ result })
     } catch (e) {
       return fail(c, 502, e instanceof Error ? e.message : "tool failed")

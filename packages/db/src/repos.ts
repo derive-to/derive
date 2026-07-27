@@ -2758,6 +2758,8 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "queued")))
       .returning()
       .get()) ?? null
+  const updateRunMeta = async (id: string, meta: string | null): Promise<RunRecord | null> =>
+    (await db.update(run).set({ meta }).where(eq(run.id, id)).returning().get()) ?? null
   const requeueRun = async (
     id: string,
     agentId: string,
@@ -3741,6 +3743,7 @@ export function makeRepos(db: SqliteDb) {
     getAgent,
     claimDueRuns,
     claimRunById,
+    updateRunMeta,
     requeueRun,
     reclaimStaleRuns,
     listEnabledAutomations,

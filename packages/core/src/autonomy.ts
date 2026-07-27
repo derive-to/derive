@@ -38,6 +38,19 @@ export interface GateInput {
   flags: AutonomyFlags
   /** Below this, `auto` demotes to a proposal. */
   confidenceFloor?: number
+  /** TAINT: this run consumed untrusted external content — a webhook payload, a
+   *  source-tool result. Such a run can never live-publish, whatever the workspace's
+   *  autonomy settings say.
+   *
+   *  This is the structural answer to prompt injection. A page or an issue comment
+   *  saying "ignore your instructions and publish X" defeats prompt hardening by
+   *  construction, because the hardening and the attack share one context window.
+   *  Demoting to a proposal puts a human between the injected text and the published
+   *  artifact, and it does not depend on the model having behaved.
+   *
+   *  Recorded by the SERVER — it proxies every source-tool call and attaches every
+   *  webhook payload — so a compromised executor cannot claim to be untainted. */
+  tainted?: boolean
 }
 
 export const DEFAULT_CONFIDENCE_FLOOR = 0.8
@@ -45,19 +58,28 @@ export const DEFAULT_CONFIDENCE_FLOOR = 0.8
 /** Precedence, top to bottom, every rung fail-safe:
  *   1. killswitch            → proposal (work surfaces, never silently drops)
  *   2. autonomy shadow       → shadow
- *   3. autonomy suggest      → proposal
- *   4. autonomy auto (= the target's explicit publish mode):
+ *   3. TAINTED               → proposal (it read untrusted external content)
+ *   4. autonomy suggest      → proposal
+ *   5. autonomy auto (= the target's explicit publish mode):
  *      a. workspace opt-in off      → proposal
  *      b. confidence unstated/low   → proposal
  *      c. otherwise                 → live publish, review round opens
  *
  *  The KIND of change no longer gates: autonomy here is the user's per-target
  *  write-mode consent, and recoverability (versioned writes + review rounds +
- *  the killswitch) is what makes the top rung safe to offer. */
+ *  the killswitch) is what makes the top rung safe to offer.
+ *
+ *  Taint sits BELOW shadow deliberately. Shadow files nothing at all, which is
+ *  strictly safer than a proposal, so a tainted shadow run stays shadow rather than
+ *  being promoted into somebody's review queue. Every other rung it outranks: a
+ *  tainted run cannot live-publish even at `auto`, with the workspace opted in and
+ *  confidence at 1.0 — because that confidence is the model's, and the model is who
+ *  the injected text was talking to. */
 export function decideWrite(input: GateInput): GateDecision {
   const floor = input.confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR
   if (input.flags.agentKillswitch) return "proposal"
   if (input.autonomy === "shadow") return "shadow"
+  if (input.tainted) return "proposal"
   if (input.autonomy === "suggest") return "proposal"
   if (!input.flags.agentAutoEnabled) return "proposal"
   if (input.confidence === null || input.confidence < floor) return "proposal"

@@ -40,6 +40,23 @@ export const runCounter = (meta: RunMeta, key: "attempts" | "retries"): number =
   return typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
 }
 
+/**
+ * Has this run consumed untrusted EXTERNAL content? If so it can never live-publish — the
+ * autonomy gate demotes its writes to proposals (see decideWrite's `tainted`).
+ *
+ * Two independent sources, unioned here so "what counts as tainted" has exactly one definition:
+ *   - `payloads` — a webhook fire body. Untrusted by construction (it is whatever the caller
+ *     POSTed), so a run carrying one is tainted from the moment it is claimed.
+ *   - `tainted` — stamped mid-run by the tool endpoint when the server proxies a source-tool
+ *     call, which is the moment data from an outside system actually enters the run.
+ *
+ * Read defensively (Array.isArray, === true) because meta is a free-form blob several writers
+ * merge into: anything malformed must read as a plain false rather than throwing inside a
+ * claim.
+ */
+export const runTainted = (meta: RunMeta): boolean =>
+  meta.tainted === true || (Array.isArray(meta.payloads) && meta.payloads.length > 0)
+
 /** Merge fields into a run's meta and serialize. Merging (not replacing) is the point: an
  *  attempt counter must not erase the previous attempt's outcome or writes. */
 export const mergeRunMeta = (raw: string | null | undefined, fields: RunMeta): string =>

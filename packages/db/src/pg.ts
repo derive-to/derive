@@ -2664,6 +2664,10 @@ export class PgMetaStore implements MetaStore {
       .returning()
     return rows[0] ?? null
   }
+  async updateRunMeta(id: string, meta: string | null): Promise<RunRecord | null> {
+    const rows = await this.db.update(run).set({ meta }).where(eq(run.id, id)).returning()
+    return rows[0] ?? null
+  }
   async requeueRun(
     id: string,
     agentId: string,

@@ -1060,6 +1060,13 @@ export interface AgentStore {
    *  The transient-failure counterpart to finishRun: instead of a terminal row the run becomes
    *  `queued` again with `scheduled_for` in the future (the backoff) and its attempt count in
    *  meta. Returns the updated row, or null when the run isn't this agent's or isn't running. */
+  /** Replace a run's meta blob mid-flight, with no status transition — the writer for facts
+   *  discovered WHILE a run is running (today: taint, stamped when the server proxies a source
+   *  tool). Deliberately status-agnostic: the run is `running` at the time, and adding a guard
+   *  here would silently drop the stamp if the run were reclaimed in the same instant, which is
+   *  exactly when recording it matters most. Callers pass an already-merged blob (mergeRunMeta),
+   *  never a replacement, because run.meta has several independent writers. */
+  updateRunMeta(id: string, meta: string | null): Promise<RunRecord | null>
   requeueRun(
     id: string,
     agentId: string,
