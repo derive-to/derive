@@ -9,11 +9,15 @@ import {
 } from "../lib/api-token"
 import { MAX_UPLOAD_BYTES } from "../lib/http"
 import { MAX_ASSET_BYTES } from "../lib/image"
+import { badChoice } from "../lib/open-choice"
 import { PUBLISH_TARGET_CREATE, PUBLISH_TOKEN_TTL_MS, signPublishToken } from "../lib/publish-token"
 import { scopeGapMessage } from "../lib/scope-gap"
 import { signUploadToken, UPLOAD_TOKEN_TTL_MS } from "../lib/upload-token"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
+
+/** The stage targets. A growth point — see lib/open-choice.ts for why it isn't an enum. */
+const STAGE_TARGETS = ["doc", "asset", "api"] as const
 
 /** The capability each access level must actually pass to be mintable. */
 const ACCESS_ACTION: Record<ApiTokenAccess, Action> = {
@@ -50,10 +54,14 @@ export function registerStageTool(tc: ToolContext): void {
       description:
         "Work out-of-band from your shell — mint a SHORT-LIVED capability, then curl with it (zero bytes through context). target:'doc' for a whole big document or bundle more than ~a page (returns a no-bearer publish URL — curl the file, or a zipped dir which becomes a bundle; omit short_id to CREATE, pass it to REVISE that exact target; read derive://skills/publishing). target:'asset' for an image or font a document EMBEDS (returns a permanent url + an asset:<hash> ref; raster images and WOFF/WOFF2 only, max 25MB; read derive://skills/assets). target:'api' mints a REAL BEARER TOKEN for REST from your shell — 15 min, one workspace, capped at your role (narrow with `access`); a live credential in this transcript, so treat it like one. Staging alone does not publish an artifact. NEVER base64 a binary through a tool call — a pasted image is already a file on disk.",
       inputSchema: {
+        // A STRING, not an enum, on purpose: this discriminator grows (api was added
+        // after doc/asset), and a cached client validates an enum locally — so a new
+        // value would be unreachable until every connection reconnected. See
+        // lib/open-choice.ts. Values live in the description and are checked below.
         target: z
-          .enum(["doc", "asset", "api"])
+          .string()
           .describe(
-            "doc: a whole document/bundle too big to inline (returns a publish URL). asset: an image or font a doc embeds (returns a permanent asset url + ref). api: a short-lived BEARER TOKEN for calling REST from your shell at the access this connection already holds.",
+            "doc: a whole document/bundle too big to inline (returns a publish URL). asset: an image or font a doc embeds (returns a permanent asset url + ref). api: a short-lived BEARER TOKEN for calling REST from your shell at the access this connection already holds. One of: doc, asset, api.",
           ),
         short_id: z
           .string()
@@ -71,6 +79,8 @@ export function registerStageTool(tc: ToolContext): void {
       },
     },
     async ({ target, short_id, access, workspace }) => {
+      const wrong = badChoice("target", target, STAGE_TARGETS)
+      if (wrong) return err(wrong)
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
       // `access` shapes a minted token and nothing else. Silently ignoring it on the

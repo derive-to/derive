@@ -2,7 +2,14 @@ import { type Role, roleAllows } from "@derive/core"
 import type { ToolContext } from "../mcp-tool-context"
 import { json } from "../mcp-util"
 
-export function registerListWorkspacesTool(tc: ToolContext): void {
+export function registerListWorkspacesTool(
+  tc: ToolContext,
+  /** The server's LIVE tool names, read at call time. Compare against what your client
+   *  shows: a mismatch means the connection cached an older surface and must reconnect
+   *  to reach anything added since — the failure this makes diagnosable instead of
+   *  indistinguishable from a feature that doesn't exist. */
+  liveTools?: () => string[],
+): void {
   const { server, grantedWorkspaces, defaultOrg, agent, actingFor, registered, scopeForCap } = tc
   server.registerTool(
     "list_workspaces",
@@ -43,6 +50,19 @@ export function registerListWorkspacesTool(tc: ToolContext): void {
                 note: "Reach REST from your shell at this same access with stage target:'api' (a short-lived bearer). If a workspace ROLE is the limit, an admin changes it; if `access` is the limit, re-consent with a wider scope.",
               }),
         },
+        // The live tool surface. A client caches this list at connect and validates
+        // arguments against it, so anything shipped since is not just invisible but
+        // unusable — and indistinguishable from a feature that was never built. Naming
+        // the tools here turns that into a check an agent can actually run: if this
+        // list has something yours doesn't, reconnect.
+        ...(liveTools
+          ? {
+              surface: {
+                tools: liveTools(),
+                note: "The server's tools right now. If your cached list differs, this connection predates a deploy — reconnect to reach what's missing.",
+              },
+            }
+          : {}),
         count: rows.length,
         workspaces: rows,
       })
