@@ -27,6 +27,7 @@ import { makeGithubCommentSender } from "./lib/github-comments"
 import { mountWeb } from "./lib/serve-web"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
+import { loopSubstrate } from "./lib/substrate-loop"
 import { nodeSubstrate } from "./lib/substrate-node"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
@@ -352,7 +353,17 @@ const syncRunner = createNodeSyncRunner(meta, blobs, authSecret)
 const hostedDispatch = cfg.hostedRuns
   ? {
       meta,
-      substrate: nodeSubstrate({ bin: cfg.runnerBin }),
+      // WHICH SUBSTRATE. `DERIVE_LOOP_RUNS=1` executes runs in this process — a model and fetch,
+      // no child process and no container, which is all "read something, write an artifact"
+      // actually needs. Anything wanting a shell, a filesystem or git still belongs on the child
+      // process, so the CLI runner stays the default and the flag is the opt-in.
+      //
+      // The loop substrate is the SAME file the Worker entry would use: it is an HTTP client of
+      // this API, so there is no platform branch and nothing to keep in step between the two.
+      substrate:
+        process.env.DERIVE_LOOP_RUNS === "1"
+          ? loopSubstrate({ model: process.env.DERIVE_LOOP_MODEL })
+          : nodeSubstrate({ bin: cfg.runnerBin }),
       server: cfg.baseUrl,
       secret: authSecret,
     }

@@ -313,6 +313,18 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "true",
   },
   {
+    name: "DERIVE_LOOP_RUNS",
+    group: "advanced",
+    doc: 'EXPERIMENTAL — run hosted automations IN THIS PROCESS instead of spawning the derive CLI.\nA model call plus fetch, which is all a "read something, write an artifact" automation\nneeds, with no child process and no container. Anything wanting a shell, a filesystem or\ngit still belongs on the CLI runner, so this is opt-in and DERIVE_HOSTED_RUNS must also be\non. The same code path runs on Cloudflare: the loop is an HTTP client of this API, so\nthere is no platform-specific implementation to keep in step.',
+    example: "1",
+  },
+  {
+    name: "DERIVE_LOOP_MODEL",
+    group: "advanced",
+    doc: "Model id for DERIVE_LOOP_RUNS. Unset uses the built-in default. The KEY is never read\nfrom the environment — each run resolves its own credential through the payer chain\n(initiator, owner-lend, workspace pool), so who pays does not depend on where it ran.",
+    example: "claude-sonnet-5",
+  },
+  {
     name: "DERIVE_RUNNER_BIN",
     group: "advanced",
     doc: "Path to the derive CLI the hosted-runs worker spawns (read only when\nDERIVE_HOSTED_RUNS is on). Unset = `derive` on PATH.",

@@ -56,6 +56,20 @@ export const isRetryableFailure = (input: {
 }): boolean => {
   if (input.transportFailed) return true
   if (typeof input.status === "number") return input.status === 429 || input.status >= 500
-  // A clean run that simply did not follow the contract is deterministic.
-  return input.unparseable ? false : false
+  // Everything else is deterministic and must NOT be retried. A clean run that simply did not
+  // follow the output contract fails identically on a second attempt, and paying twice for the
+  // same answer is the failure mode this function exists to prevent. `unparseable` is accepted so
+  // callers can be explicit about which case they are in, not because it changes the verdict.
+  return false
 }
+
+/**
+ * USD (a float, as providers report it) → micro-USD (an integer, as the column stores it).
+ *
+ * Integer micros because money in a float sums badly and the budget SUMs this across a month.
+ * Rounded UP: a sub-micro run is real spend, and flooring it to zero would let a high-volume
+ * cheap automation run free against the cap forever. Null in, null out — "never found out" is
+ * not "cost nothing", and only the second belongs in a sum.
+ */
+export const toMicroUsd = (usd: number | null | undefined): number | null =>
+  typeof usd === "number" && Number.isFinite(usd) && usd >= 0 ? Math.ceil(usd * 1_000_000) : null
