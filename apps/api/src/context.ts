@@ -445,6 +445,9 @@ export function buildContext(deps: AppDeps) {
     Context,
     { ownerId: string; scopeRole: Role; clientId: string; boundWorkspaces: string[] }
   >()
+  // Set when this request's bearer is a minted dkapi_ token — read by the mint to
+  // refuse chaining (see isMintedApiToken).
+  const mintedApiCache = new WeakMap<Context, boolean>()
   // A run CAPABILITY token's scope: the one run id the bearer may claim/settle/pull for.
   // Set only when agentFor resolved a dkrun_ token; the run endpoints read it to pin the
   // principal to exactly its run (a leaked token can't touch any other run).
@@ -482,6 +485,7 @@ export function buildContext(deps: AppDeps) {
             created_at: new Date().toISOString(),
           }
           owner = claim.userId
+          mintedApiCache.set(c, true)
           oauthGrantCache.set(c, {
             ownerId: claim.userId,
             // The minted role IS the scope ceiling — a token minted for `publish`
@@ -1057,6 +1061,11 @@ export function buildContext(deps: AppDeps) {
     /** The session id a dksess_ capability bearer is pinned to (null for every other
      *  principal) — the ask lane's twin of agentRunScope. */
     agentSessionScope: (c: Context): string | null => sessionScopeCache.get(c) ?? null,
+    /** Is this request authenticated by a MINTED api token (dkapi_)? The mint refuses
+     *  to run off one: a token minting its successor with a fresh TTL would renew
+     *  itself indefinitely and quietly defeat the "expires in minutes" property that
+     *  makes a leaked one a bounded liability. Mint from the grant, not from a mint. */
+    isMintedApiToken: (c: Context): boolean => mintedApiCache.get(c) ?? false,
     resolvePrincipal,
     actingUser,
     actingHuman,

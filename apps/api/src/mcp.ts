@@ -118,6 +118,9 @@ async function buildServer(
   // The OAuth client behind this connection ("" for a registered dk_agt_ token).
   // Recorded into tokens minted by `stage target:'api'` as their provenance.
   clientId: string,
+  // This connection is itself authenticated by a minted dkapi_ token — the mint
+  // refuses to chain off one (it would renew its own TTL indefinitely).
+  mintedToken: boolean,
 ): Promise<McpServer> {
   // The always-loaded CORE SKILLS index: one line per skill (name — summary — read
   // derive://skills/<name>), kept in lockstep with the skill bodies by iterating the
@@ -358,6 +361,7 @@ async function buildServer(
     registered,
     boundWorkspaces,
     clientId,
+    mintedToken,
     defaultOrg,
     defaultRole,
     pendingRequests,
@@ -406,6 +410,10 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
     const grant = await ctx.oauthGrant(c)
     const scopeForCap = grant?.scopeRole ?? agent.role
     const boundWorkspaces = grant?.boundWorkspaces ?? []
+    // A minted dkapi_ bearer resolves to the same principal shape as its grant, so the
+    // mint has to be told explicitly not to run off one (self-renewal — see
+    // isMintedApiToken).
+    const mintedToken = ctx.isMintedApiToken(c)
     const server = await buildServer(
       ctx,
       agent,
@@ -415,6 +423,7 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
       !grant,
       boundWorkspaces,
       grant?.clientId ?? "",
+      mintedToken,
     )
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)

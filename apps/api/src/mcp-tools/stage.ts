@@ -10,6 +10,7 @@ import {
 import { MAX_UPLOAD_BYTES } from "../lib/http"
 import { MAX_ASSET_BYTES } from "../lib/image"
 import { PUBLISH_TARGET_CREATE, PUBLISH_TOKEN_TTL_MS, signPublishToken } from "../lib/publish-token"
+import { scopeGapMessage } from "../lib/scope-gap"
 import { signUploadToken, UPLOAD_TOKEN_TTL_MS } from "../lib/upload-token"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
@@ -21,17 +22,20 @@ const ACCESS_ACTION: Record<ApiTokenAccess, Action> = {
   publish: "publish",
   manage: "manage",
 }
-/** The OAuth scope a caller would have to re-consent with to reach each level —
- *  named in the refusal so a scope gap is actionable instead of a dead end. */
-const SCOPE_FOR_ACCESS: Record<ApiTokenAccess, string> = {
-  read: "derive:read",
-  comment: "derive:comment",
-  publish: "derive:publish",
-  manage: "derive:manage",
-}
-
 export function registerStageTool(tc: ToolContext): void {
-  const { server, ctx, ownerId, clientId, reach, notFound, resolveWs, wsArg } = tc
+  const {
+    server,
+    ctx,
+    ownerId,
+    clientId,
+    mintedToken,
+    scopeForCap,
+    registered,
+    reach,
+    notFound,
+    resolveWs,
+    wsArg,
+  } = tc
 
   // STAGE — one tool, two out-of-band upload URLs, each spent with curl so bytes never
   // enter the model's context. target:'asset' = the former stage_asset (a binary a doc
@@ -82,22 +86,34 @@ export function registerStageTool(tc: ToolContext): void {
           return err(
             "stage target:'api' mints a token for a signed-in user, and this connection has no acting human. A static agent token (dk_agt_/DERIVE_TOKEN) already works from your shell — use it directly.",
           )
+        // No chaining: a minted token minting its successor would refresh its own TTL
+        // indefinitely, quietly turning "expires in minutes" into "lives forever" — the
+        // one property that makes a leaked token a bounded liability. Mint from the grant.
+        if (mintedToken)
+          return err(
+            "This connection is already using a minted API token, which can't mint another (that would let it renew itself indefinitely). Mint from the original MCP connection instead.",
+          )
         const secret = ctx.deps.encryptionKey
         if (!secret)
           return err(
             "This server has no signing secret configured, so it can't mint API tokens. Use a bearer token directly instead (DERIVE_TOKEN, or `derive login`).",
           )
         // Ceiling: the role this grant holds in the target workspace (itself already
-        // scope-capped AND membership-capped upstream). `access` may narrow it, never widen
-        // — asking for more than the grant holds is refused with the scope that would fix it,
-        // rather than silently minting something weaker than requested.
-        const wanted = access ? roleForAccess[access] : t.role
-        if (!roleAllows(t.role, ACCESS_ACTION[access ?? "read"]) && access)
+        // scope-capped AND membership-capped upstream). `access` may only NARROW it —
+        // asking for more is refused, naming whether the scope or the seat is short,
+        // rather than silently minting something weaker than the caller asked for.
+        if (access && !roleAllows(t.role, ACCESS_ACTION[access]))
           return err(
-            `This connection can't mint a "${access}" token here — it acts as ${t.role} in this workspace. ` +
-              `Re-consent with the ${SCOPE_FOR_ACCESS[access]} scope (or ask an admin for a higher role) to reach it.`,
+            scopeGapMessage({
+              action: ACCESS_ACTION[access],
+              scopeRole: scopeForCap,
+              memberRole: t.role,
+              registered,
+              baseUrl: ctx.deps.baseUrl,
+            }) ??
+              `This connection can't mint a "${access}" token here — it acts as ${t.role} in this workspace.`,
           )
-        const role = capRole(wanted, t.role)
+        const role = capRole(access ? roleForAccess[access] : t.role, t.role)
         const expiresAt = Date.now() + API_TOKEN_TTL_MS
         const tok = await signApiToken(secret, ownerId, t.org, role, clientId ?? "", expiresAt)
         const base = ctx.deps.baseUrl.replace(/\/$/, "")
