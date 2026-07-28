@@ -226,12 +226,21 @@ const serveOneRun = async (
   )
   if (result.revision.message) form.set("message", result.revision.message)
 
+  // Every write is CHECKED. `call` returns the raw Response and does not throw, so an unchecked
+  // write meant a 403 or a 500 was silently ignored and the run then settled `succeeded` with an
+  // artifact id — a failed write reported as a successful run, which is the worst shape a bug in
+  // a ledger can take. Only the create path threw, because it happened to go through `json`.
+  const write = async (path: string) => {
+    const res = await call(path, { method: "POST", body: form })
+    if (!res.ok)
+      throw new Error(`${path} failed (${res.status}): ${(await res.text()).slice(0, 200)}`)
+  }
   try {
     let shortId = target?.id
     if (target?.id && decision === "proposal") {
-      await call(`/v1/artifacts/${target.id}/proposals`, { method: "POST", body: form })
+      await write(`/v1/artifacts/${target.id}/proposals`)
     } else if (target?.id) {
-      await call(`/v1/artifacts/${target.id}/versions`, { method: "POST", body: form })
+      await write(`/v1/artifacts/${target.id}/versions`)
     } else {
       form.set("title", firstLine(result.revision.content) || "Untitled")
       form.set("request_review", "true")

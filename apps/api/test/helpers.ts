@@ -306,10 +306,19 @@ export const makeAuthedApp = (
           role: i === 0 ? "owner" : (defaultRole ?? "editor"),
         }))
   const m = makeStore(name, users, team)
-  // Fire-and-forget: makeAuthedApp is called at describe-body time (synchronous), and every
-  // request that could consult the payer goes through `app.request`, which is awaited well
-  // after this settles. Tests about the payer pass noPlan and assert the refusal.
-  if (!opts?.noPlan) void connectPoolPlan(m, "default")
+  // The workspace plan, AWAITED ON FIRST REQUEST rather than fired and forgotten.
+  //
+  // Two earlier shapes were both wrong. A floating `void connectPoolPlan(...)` raced the Postgres
+  // pool: the file ends, the pool closes, the stray insert lands after it ("Cannot use a pool
+  // after calling end on the pool"). A `beforeAll` hook fixed that but broke the other call
+  // pattern — some suites build their app INSIDE a test, and a hook registered at that point
+  // never fires, so every ask came back 402 and sessions were undefined.
+  //
+  // Gating `app.request` covers both: whoever calls first pays the wait, it always completes
+  // before the pool closes, and there is no floating promise to go unhandled.
+  const planReady = opts?.noPlan
+    ? Promise.resolve()
+    : connectPoolPlan(m, "default").catch(() => undefined)
   const app = createApp({
     meta: m,
     blobs: new FsBlobStore(join(dir, "blobs")),
@@ -320,7 +329,16 @@ export const makeAuthedApp = (
     defaultOrgId: "default",
     ...opts?.deps,
   })
-  return { app, meta: m }
+  const gated = new Proxy(app, {
+    get: (target, prop, recv) => {
+      if (prop !== "request") return Reflect.get(target, prop, recv)
+      return async (...args: Parameters<typeof app.request>) => {
+        await planReady
+        return app.request(...args)
+      }
+    },
+  })
+  return { app: gated, meta: m }
 }
 
 export const as = (email: string) => ({ "x-test-user": email })
