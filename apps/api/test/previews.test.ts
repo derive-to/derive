@@ -789,9 +789,11 @@ describe("startPreviewWorker", () => {
       },
       100_000,
     )
-    worker.poke()
-    // Allow the async tick to complete
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    // Await the drain itself. This used to sleep 50ms and hope, which raced the tick's
+    // final status write on a loaded runner: the screenshot landed (`seen` filled) but
+    // `preview_status` was still null, so the assertion below flaked. The interval here
+    // is 100s and nothing else pokes, so this awaits exactly this tick to completion.
+    await worker.poke()
     worker.stop()
 
     expect(seen.length).toBeGreaterThan(0)

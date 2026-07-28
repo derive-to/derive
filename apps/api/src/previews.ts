@@ -69,7 +69,15 @@ export interface RenderTickDeps {
 
 export interface PreviewWorker {
   stop(): void
-  poke(): void
+  /**
+   * Drain now. Returns the in-flight tick so a caller that needs the drain to have
+   * *finished* can await it — production wiring ignores it (`pokePreviews` is typed
+   * `() => void`, and `Promise<void>` is assignable to that), but a test awaiting a
+   * real completion signal is the difference between deterministic and timing-based.
+   * Resolves immediately when a tick is already running: the `running` flag coalesces,
+   * so this promises "no drain is owed", not "a fresh drain ran".
+   */
+  poke(): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -342,6 +350,6 @@ export const startPreviewWorker = (deps: RenderTickDeps, intervalMs = 1500): Pre
       stopped = true
       clearInterval(timer)
     },
-    poke: () => void tick(),
+    poke: () => tick(),
   }
 }
