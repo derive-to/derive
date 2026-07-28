@@ -251,7 +251,14 @@ describe("slack account linking (OIDC)", () => {
       created_at: new Date().toISOString(),
     })
 
-  // Stub the two OIDC back-channel calls (token exchange + userinfo).
+  // Stub the two OIDC back-channel calls (token exchange + userInfo).
+  //
+  // The method names here must be Slack's EXACT spelling. This mock used to match
+  // "openid.connect.userinfo" — all lowercase, the same typo the client carried — and an
+  // unrecognised URL fell through to `{}`, so the suite stayed green while account linking was
+  // impossible in production: Slack's Web API method names are case-sensitive and the lowercase
+  // spelling returns `unknown_method`. Two changes stop that recurring: the correct camelCase
+  // `userInfo`, and an unstubbed call now THROWS instead of being absorbed as an empty body.
   const stubOidc = (userId: string, teamId: string, email = "o@x.com") =>
     vi.stubGlobal(
       "fetch",
@@ -261,7 +268,7 @@ describe("slack account linking (OIDC)", () => {
           return new Response(JSON.stringify({ ok: true, access_token: "xoxp-oidc" }), {
             status: 200,
           })
-        if (u.includes("openid.connect.userinfo"))
+        if (u.includes("openid.connect.userInfo"))
           return new Response(
             JSON.stringify({
               "https://slack.com/user_id": userId,
@@ -270,7 +277,7 @@ describe("slack account linking (OIDC)", () => {
             }),
             { status: 200 },
           )
-        return new Response("{}", { status: 200 })
+        throw new Error(`unstubbed Slack call: ${u}`)
       }),
     )
 
