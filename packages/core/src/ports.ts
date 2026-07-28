@@ -2094,7 +2094,7 @@ export interface Brandprint {
   profileId?: string
   /** Personal-layer only: false turns the WORKSPACE Brandprint off for this user
    *  (their agents skip the org's conventions and profile; a personal collection
-   *  above still applies). Absent or true = the workspace layer applies. A
+   *  above still applies). Absent or true: the workspace layer applies. A
    *  workspace's own settings never carry this field. */
   useWorkspaceBrandprint?: boolean
 }

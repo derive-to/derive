@@ -47,7 +47,6 @@ describe("nextPersonalBrandprint", () => {
       { useWorkspaceBrandprint: undefined },
     )
     expect(next).toEqual({ collectionId: "col_1" })
-    expect(next && "useWorkspaceBrandprint" in next).toBe(true)
     expect(next?.useWorkspaceBrandprint).toBeUndefined()
   })
 

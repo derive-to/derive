@@ -658,8 +658,8 @@ describe("remote MCP endpoint (/mcp)", () => {
     })
 
     // The grant's owner (u_o) keeps their own personal collection but turns the
-    // workspace layer off — same store-level shape /v1/me/profile persists, seeded
-    // directly since this app has no session auth wired up.
+    // workspace layer off: the same store-level shape /v1/me/profile persists,
+    // seeded directly since this app has no session auth wired up.
     const personalDocId = (await (await publish(app, token, "My own conventions")).json()).short_id
     const personalDoc = await meta.getByShortId(personalDocId)
     if (!personalDoc) throw new Error("no artifact")
@@ -682,11 +682,11 @@ describe("remote MCP endpoint (/mcp)", () => {
     const uris = (
       (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
     ).map((r) => r.uri)
-    // No workspace doc, no profile — the toggle suppressed the workspace layer wholesale.
+    // No workspace doc, no profile: the toggle suppressed the workspace layer wholesale.
     expect(uris).not.toContain(`derive://brandprint/${wsDocId}`)
     expect(uris).not.toContain("derive://brandprint/profile")
     expect(uris).not.toContain(`derive://brandprint/${profId}`)
-    // The personal collection's own doc still appears — it's the caller's own opt-in.
+    // The personal collection's own doc still appears; it's the caller's own opt-in.
     expect(uris).toContain(`derive://brandprint/${personalDocId}`)
   })
 

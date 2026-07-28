@@ -144,8 +144,8 @@ describe("workspace Brandprint (write-side ownership check)", () => {
       await app.request("/v1/collections", jsonAs(as(admin.email), { title: "Brandprint" }))
     ).json()
 
-    // The toggle is personal scope only (Task 2 spec): a workspace PATCH strips it
-    // like any unknown key, same as the legacy `theme` field above.
+    // The toggle is personal scope only: a workspace PATCH strips it like any
+    // unknown key, same as the legacy `theme` field above.
     const r = await patchSettings(app, as(admin.email), {
       brandprint: { collectionId: col.id, useWorkspaceBrandprint: false },
     })

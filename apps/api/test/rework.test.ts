@@ -85,13 +85,13 @@ describe("rework: gating", () => {
     expect(((await res.json()) as { code: string }).code).toBe("needsBrandprint")
   })
 
-  it("409s brandprintDisabled when the caller turned the workspace Brandprint off", async () => {
+  it("409 brandprintDisabled when the caller turned the workspace Brandprint off", async () => {
     const { app, meta } = makeAuthedApp("rework-disabled", [owner, editor], "editor")
     const shortId = await newArtifact(app)
     await seedBrandprint(meta, shortId)
     await addAgent(app, "Reviser")
     // The caller turns the workspace layer off, with no personal collection of
-    // their own to fall back to — the brief goes empty because of the toggle,
+    // their own to fall back to: the brief goes empty because of the toggle,
     // not because nothing was ever set up.
     const saved = await app.request(
       "/v1/me/profile",
@@ -110,7 +110,7 @@ describe("rework: gating", () => {
     const shortId = await newArtifact(app)
     await seedBrandprint(meta, shortId)
     const ag = await addAgent(app, "Reviser")
-    // The caller turns the workspace layer off but keeps their own collection —
+    // The caller turns the workspace layer off but keeps their own collection:
     // the resolved brief is non-empty, so rework fires as usual.
     const col = await (
       await app.request("/v1/collections", jsonAs(as(editor.email), { title: "My Brandprint" }))

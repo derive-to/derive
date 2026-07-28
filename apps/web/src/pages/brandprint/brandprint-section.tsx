@@ -169,10 +169,10 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
   })
   const updateAccount = useApiMutation({
     // A save must never drop a field it isn't changing. `setProfile` replaces the
-    // whole personal Brandprint object, so this merges into the current one instead
-    // of sending `collectionId` bare (that would silently clear the workspace toggle
-    // below on every collection save, and clearing the collection would clear the
-    // toggle too). nextPersonalBrandprint collapses to null only once nothing is left.
+    // whole personal Brandprint object with no server-side merge, so the collection
+    // write merges through nextPersonalBrandprint (a bare { collectionId } would
+    // silently clear the workspace toggle below), which collapses to null only once
+    // nothing is left.
     mutationFn: (collectionId: string) =>
       api.setProfile({
         brandprint: nextPersonalBrandprint(me?.brandprint, {
@@ -535,9 +535,7 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
               id="brandprint-workspace-toggle"
               data-testid="brandprint-workspace-toggle"
               checked={me?.brandprint?.useWorkspaceBrandprint !== false}
-              disabled={
-                toggleWorkspace.isPending || updateAccount.isPending || importDocs.isPending
-              }
+              disabled={disabled}
               onCheckedChange={(on) => toggleWorkspace.mutate(on)}
             />
           </SettingRow>
