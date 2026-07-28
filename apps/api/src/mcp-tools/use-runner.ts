@@ -17,6 +17,7 @@ import {
   type SessionRecord,
   type SessionState,
 } from "@derive/core"
+import { parseManifestSkillPins, type StalePin, stalePins } from "../lib/manifest-pins"
 import type { ToolContext } from "../mcp-tool-context"
 import { clipSessionText, ENTRY_MAX, err, json } from "../mcp-util"
 
@@ -106,6 +107,23 @@ export async function runnerDispatch(
     const room = Math.max(0, (x.max_concurrency ?? 1) - working)
     const sessions =
       room === 0 ? [] : await ctx.meta.claimPendingSessions(x.id, Math.min(10, room), leaseFor(x))
+    // Stale-pin check, only when work was actually claimed (never on idle polls —
+    // a serve loop polls every few seconds and this reads the manifest). The
+    // manifest's skill pins are the right versioning model, but the bump is manual
+    // bookkeeping: publish skill v(N+1), forget the pin, and every run quietly
+    // executes vN. The claim that is about to execute the manifest is the moment
+    // to say so. Best-effort — a manifest read hiccup must never break a claim.
+    let stale: StalePin[] = []
+    if (sessions.length > 0) {
+      try {
+        const man = (await ctx.meta.getArtifactsByIds([x.manifest_artifact_id]))[0]
+        const v = man ? await ctx.meta.getVersion(man.id, man.current_version) : null
+        const md = v ? await ctx.sourceText(v) : null
+        if (md) stale = await stalePins(ctx.meta, parseManifestSkillPins(md))
+      } catch {
+        stale = []
+      }
+    }
     const consoleUrl = `${ctx.deps.baseUrl.replace(/\/$/, "")}/contexts/${x.id}`
     const bySession = new Map<string, SessionMessageRecord[]>()
     for (const m of await ctx.meta.listSessionMessagesFor(sessions.map((s) => s.id))) {
@@ -125,6 +143,14 @@ export async function runnerDispatch(
               note: "Nothing queued. Work arrives when someone gives this context an instruction — use({context, instruction}).",
             }
           : {}),
+      ...(stale.length
+        ? {
+            stale_skill_pins: stale,
+            stale_skill_pins_note:
+              "The manifest pins OLDER versions of these skills — this run materializes the pinned " +
+              "version. If the newer version is intended, bump the pin in the manifest frontmatter.",
+          }
+        : {}),
       sessions: sessions.map((s) => ({
         session_id: s.id,
         state: s.state,

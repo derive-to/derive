@@ -16,6 +16,7 @@ import {
   groupSessions,
   isHtmlLike,
   isMarkdownBundle,
+  missingBlobAdvisory,
   newId,
   outlineOf,
   PublishError,
@@ -903,13 +904,19 @@ export const artifactRoutes = (ctx: AppContext) => {
       }
       const versions = await meta.listVersions(artifact.id)
       // Advisories over what was just stored (missing viewport meta, oversized
-      // inline base64) — computed server-side so every client relays the same
-      // guidance; the boundary rules keep @derive/core out of the clients.
-      const advisories =
+      // inline base64, expiring upload URLs, page-markup-as-markdown, broken blob
+      // refs) — computed server-side so every client relays the same guidance; the
+      // boundary rules keep @derive/core out of the clients.
+      let advisories: string[] = []
+      if (
         artifact.kind === "file" &&
         (version.content_type === "text/html" || version.content_type === "text/markdown")
-          ? publishAdvisories(new TextDecoder().decode(bytes), version.content_type)
-          : []
+      ) {
+        const text = new TextDecoder().decode(bytes)
+        advisories = publishAdvisories(text, version.content_type)
+        const blobAdvisory = await missingBlobAdvisory(text, blobs)
+        if (blobAdvisory) advisories.push(blobAdvisory)
+      }
       return c.json(
         {
           ...toJson(deps.baseUrl, artifact, versions),

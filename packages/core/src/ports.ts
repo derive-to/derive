@@ -9,6 +9,11 @@ export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
   put(data: Uint8Array): Promise<string>
   get(key: string): Promise<Uint8Array | null>
+  /** Cheap existence check (a stat/HEAD, never a body read). OPTIONAL and additive so
+   *  existing stores keep compiling; a caller that needs it (publish lint's
+   *  broken-embed check) treats absence as "can't check here" and skips — it never
+   *  falls back to a full get. */
+  has?(key: string): Promise<boolean>
 }
 
 /**

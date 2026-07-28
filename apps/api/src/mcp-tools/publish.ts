@@ -2,6 +2,7 @@ import {
   artifactUrl,
   EditError,
   looksLikeHtmlDocument,
+  missingBlobAdvisory,
   newId,
   PublishError,
   propose as proposeChange,
@@ -678,6 +679,12 @@ export function registerPublishTool(tc: ToolContext): void {
               ]),
             )
           : null
+        // The one advisory that needs I/O — computed once here, folded into the
+        // note below alongside the pure publishAdvisories.
+        const blobAdvisory =
+          typeof content === "string" && artifact.kind === "file"
+            ? await missingBlobAdvisory(content, ctx.blobs)
+            : null
         return json({
           published: true,
           short_id: artifact.short_id,
@@ -710,10 +717,14 @@ export function registerPublishTool(tc: ToolContext): void {
               ? " No open Derive tab caught this push — open the url for the user (e.g. run `open <url>`) if they should see it now."
               : "") +
             // Advisories over what was just stored (missing viewport meta, oversized
-            // inline base64). `content` holds the full document for both direct and
+            // inline base64, expiring upload URLs, page-markup-as-markdown, broken
+            // blob refs). `content` holds the full document for both direct and
             // edits publishes — materializeEdits assigned into it above.
             (typeof content === "string" && artifact.kind === "file"
-              ? publishAdvisories(content, version.content_type)
+              ? [
+                  ...publishAdvisories(content, version.content_type),
+                  ...(blobAdvisory ? [blobAdvisory] : []),
+                ]
                   .map((advisory) => ` ${advisory}`)
                   .join("")
               : ""),

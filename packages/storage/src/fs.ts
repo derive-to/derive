@@ -30,4 +30,9 @@ export class FsBlobStore implements BlobStore {
       return null
     }
   }
+
+  async has(key: string): Promise<boolean> {
+    if (!/^[0-9a-f]{64}$/.test(key)) return false
+    return existsSync(this.pathFor(key))
+  }
 }
