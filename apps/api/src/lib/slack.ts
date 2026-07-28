@@ -315,6 +315,10 @@ export const openSlackDm = async (token: string, userId: string): Promise<string
  *  automatic prompt (a real scope-drift detector is future work). */
 export const SLACK_BOT_SCOPES = [
   "chat:write",
+  // Required by the /derive slash command. Without it Slack rejects the whole manifest
+  // ("Slash Commands requires `commands` bot scope"), so the app could not be created at
+  // all — the command has shipped since #454, but this scope never accompanied it.
+  "commands",
   "channels:read",
   "channels:join",
   "channels:history",
@@ -322,6 +326,9 @@ export const SLACK_BOT_SCOPES = [
   "groups:history",
   "users:read",
   "users:read.email",
+  // Outbound DMs only (mentions, review requests, shares). Reading DMs would need
+  // im:history, which we deliberately do NOT request — see the bot_events note in
+  // slack-app-setup.ts.
   "im:write",
 ]
 
