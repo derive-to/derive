@@ -19,6 +19,7 @@ import { loadLocalEmbedder } from "./embedder-local"
 import { workspacesBlockingDeletion } from "./lib/account"
 import { signupAttributionHook } from "./lib/attribution"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
+import { nodeSandbox } from "./lib/code-sandbox-node"
 import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
@@ -373,6 +374,9 @@ const app = createApp({
   token: cfg.token,
   // Encrypt stored third-party secrets (GitHub PATs) at rest with the auth secret.
   encryptionKey: authSecret,
+  // The isolate derive_code runs in. Node-only by construction: worker_threads does not exist on
+  // Cloudflare, so the edge entry passes nothing and the tool does not register there.
+  codeSandbox: nodeSandbox(),
   superAdmins: cfg.superAdmins,
   slack: cfg.slack,
   auth,

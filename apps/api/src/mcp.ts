@@ -75,6 +75,7 @@ import { makeToolContext, type ToolContextBase } from "./mcp-tool-context"
 import { registerAutomateTool } from "./mcp-tools/automate"
 import { registerCatchUpTool } from "./mcp-tools/catch-up"
 import { registerCheckpointTool } from "./mcp-tools/checkpoint"
+import { registerCodeTool } from "./mcp-tools/code"
 import { registerCommentTool } from "./mcp-tools/comment"
 import { registerFindTool } from "./mcp-tools/find"
 import { registerListWorkspacesTool } from "./mcp-tools/list-workspaces"
@@ -361,6 +362,21 @@ async function buildServer(
     profileArt,
   }
   const tc = makeToolContext(base)
+  // Capture every tool as it registers, so derive_code can invoke them BY NAME without any of
+  // the eleven tool modules knowing it exists. Wrapping the registrar rather than maintaining a
+  // second list is what keeps the two from drifting: a tool added tomorrow is reachable from
+  // code the moment it registers, with nothing to remember.
+  const registry = new Map<string, (input: Record<string, unknown>) => Promise<unknown>>()
+  const originalRegister = server.registerTool.bind(server)
+  server.registerTool = ((
+    name: string,
+    config: Parameters<typeof originalRegister>[1],
+    handler: (input: Record<string, unknown>) => Promise<unknown>,
+  ) => {
+    registry.set(name, handler)
+    return originalRegister(name, config, handler as never)
+  }) as typeof server.registerTool
+
   registerListWorkspacesTool(tc)
   registerFindTool(tc)
   registerReadTool(tc)
@@ -372,6 +388,10 @@ async function buildServer(
   registerCheckpointTool(tc)
   registerUseTool(tc)
   registerAutomateTool(tc)
+  // LAST, so the registry it reads is complete. Registers only when an isolate exists: the Node
+  // entry injects a worker-thread sandbox, and the Cloudflare entry injects nothing until the
+  // Worker Loader is out of beta — so the tool is absent there rather than present and broken.
+  if (ctx.deps.codeSandbox) registerCodeTool(tc, registry, ctx.deps.codeSandbox)
 
   return server
 }
