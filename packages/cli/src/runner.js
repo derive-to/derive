@@ -1251,7 +1251,7 @@ try { console.log(JSON.stringify(JSON.parse(text).result)) } catch { console.log
 // on every proxied call. Code mode changes how the model COMPOSES tools, never what it may
 // reach — a generated client with embedded credentials would have traded the whole design away
 // for some convenience.
-const TOOL_MODULE_SRC = (
+export const TOOL_MODULE_SRC = (
   toolNames,
 ) => `// Derive source tools — server-proxied, one function per tool.
 //
@@ -1282,7 +1282,7 @@ ${toolNames.map((n) => `  ${JSON.stringify(n)}: (args) => call(${JSON.stringify(
 export default sources
 `
 
-function writeToolShim(cwd, toolNames = []) {
+export function writeToolShim(cwd, toolNames = []) {
   writeFileSync(join(cwd, "derive-source.mjs"), TOOL_SHIM_SRC, { mode: 0o755 })
   // Both are written: the one-shot CLI for a single lookup, the module for composition. Keeping
   // the CLI costs one file and means an agent that ignores the module still works exactly as
