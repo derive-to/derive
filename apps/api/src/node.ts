@@ -491,7 +491,14 @@ if (hostedDispatch) {
   hostedTick() // catch up on boot, like every other worker here
   hostedRunsTimer = setInterval(hostedTick, 60_000)
   hostedRunsTimer.unref?.()
-  log.info("hosted runs ENABLED (experimental)", { substrate: "node-child", bin: cfg.runnerBin })
+  // Report the substrate ACTUALLY in use, not a hardcoded guess. This said "node-child" even
+  // when DERIVE_LOOP_RUNS had swapped in the in-process loop, so the one line an operator reads
+  // to answer "what is executing my runs" was wrong — and wrong in the direction that sends you
+  // looking for a child process that was never spawned.
+  log.info("hosted runs ENABLED (experimental)", {
+    substrate: hostedDispatch.substrate.name,
+    ...(hostedDispatch.substrate.name === "node-child" ? { bin: cfg.runnerBin } : {}),
+  })
 }
 
 // One-time cleanup of pre-existing owner self-views (the route no longer records
