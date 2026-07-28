@@ -129,8 +129,11 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
     scope === "workspace"
       ? (settings?.brandprint?.collectionId ?? "")
       : (me?.brandprint?.collectionId ?? "")
-  // The workspace's brand-profile pointer. The settings query is disabled on account
-  // scope, so this is always undefined there — no scope branch needed.
+  // The workspace's brand-profile pointer. The settings query never fetches on
+  // account scope, but it still reads the cache the workspace-scope section on this
+  // page fills (one shared key): the "Use workspace Brandprint" row below depends on
+  // that read, and a workspace profileId reaching account scope is benign (the
+  // import hook's account path ignores it; the doc list only hides that artifact).
   const profileId = settings?.brandprint?.profileId ?? undefined
 
   const updateWorkspace = useApiMutation({

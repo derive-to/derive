@@ -9,11 +9,11 @@ import { guestQuery } from "./lib/guest-id"
 export type { LinkRole, Listed, Role, WorkspaceAccess }
 
 /** A pointer to the conventions collection a workspace or an account likes its
- *  artifacts built from. The personal layer is collection-only — the brand profile
- *  (`profileId`) is workspace scope and rides the generated OrgSettings.brandprint.
- *  Mirrors packages/core/src/ports.ts Brandprint. Not itself a named OpenAPI schema —
- *  the personal copy is a Better Auth additionalField (a JSON string) surfaced through
- *  the hand-mapped `Me`, same as profession/about below. */
+ *  artifacts built from. Mirrors packages/core/src/ports.ts Brandprint, minus
+ *  `profileId`: the brand profile is workspace scope and rides the generated
+ *  OrgSettings.brandprint. Not itself a named OpenAPI schema; the personal copy is
+ *  a Better Auth additionalField (a JSON string) surfaced through the hand-mapped
+ *  `Me`, same as profession/about below. */
 export interface Brandprint {
   collectionId?: string | null
   /** Personal-layer only: false turns the workspace Brandprint off for this user

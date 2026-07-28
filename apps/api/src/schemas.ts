@@ -293,9 +293,9 @@ export const BrandprintSchema = z.object({
   profileId: z.string().trim().max(64).nullish(),
 })
 
-/** The personal layer is collection-only — the brand profile is a team property, so the
- *  profile route's request AND response omit `profileId` (a sent one strips, same as any
- *  unknown key, and the generated types can't advertise a field the server never returns). */
+/** The brand profile is a team property, so the profile route's request AND response
+ *  omit `profileId` (a sent one strips, same as any unknown key, and the generated
+ *  types can't advertise a field the server never returns). */
 export const PersonalBrandprintSchema = BrandprintSchema.omit({ profileId: true }).extend({
   useWorkspaceBrandprint: z
     .boolean()

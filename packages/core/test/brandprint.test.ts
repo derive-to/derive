@@ -67,7 +67,7 @@ describe("resolveBrandprint", () => {
     expect(r.workspaceSuppressed).toBeUndefined()
   })
 
-  it("absent and true both keep today's merge", () => {
+  it("absent and true both keep the workspace layer in the merge", () => {
     for (const p of [
       { collectionId: "my-col" },
       { collectionId: "my-col", useWorkspaceBrandprint: true },
