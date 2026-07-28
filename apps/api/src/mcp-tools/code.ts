@@ -1,3 +1,4 @@
+import { AGENT_SURFACE_HELP } from "@derive/core"
 import { z } from "zod"
 import { DEFAULT_CODE_TIMEOUT_MS, MAX_CODE_TIMEOUT_MS, type Sandbox } from "../lib/code-sandbox"
 import type { ToolContext } from "../mcp-tool-context"
@@ -39,10 +40,10 @@ export function registerCodeTool(
     {
       title: "Run code across Derive's tools",
       description:
-        `Do SEVERAL things in one call. Write JavaScript; every Derive tool is available as ` +
-        `\`await tools.<name>({ ...args })\`, and whatever you \`return\` comes back as the result. ` +
-        `Use this instead of a chain of separate calls: loop, filter and join here, and return ` +
-        `only the answer — intermediate data stays in the sandbox rather than in your context.\n\n` +
+        `Do SEVERAL things in one call, instead of a chain of separate calls.\n\n` +
+        // The SHARED description (packages/core/src/agent-surface.ts), so this tool and the
+        // container's run prompt cannot drift into describing different products.
+        `${AGENT_SURFACE_HELP}\n\n` +
         `Available: ${toolNames.join(", ")}.\n\n` +
         `Tools behave exactly as they do when called directly, including how writes land ` +
         `(publish vs proposal is the workspace's setting, never this tool's).\n\n` +

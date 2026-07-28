@@ -1,4 +1,5 @@
 export * from "./advisories"
+export * from "./agent-surface"
 export * from "./anchor"
 export * from "./autonomy"
 export * from "./brandprint"

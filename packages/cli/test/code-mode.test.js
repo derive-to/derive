@@ -68,9 +68,9 @@ const run = async (cwd, script, runId = "run_1") => {
   return stdout.trim()
 }
 
-/** ONE-COMMAND mode: `node derive-sources.mjs -e '<code>'`, nothing written to disk. */
+/** ONE-COMMAND mode: `node derive-tools.mjs -e '<code>'`, nothing written to disk. */
 const evalOne = async (cwd, code, runId = "run_1") => {
-  const { stdout } = await execFileAsync("node", ["derive-sources.mjs", "-e", code], {
+  const { stdout } = await execFileAsync("node", ["derive-tools.mjs", "-e", code], {
     cwd,
     env: {
       ...process.env,
@@ -89,16 +89,16 @@ describe("code mode: the generated tool module", () => {
     // this is an addition to what the executor can do, never a change to what it must do.
     const cwd = generate(["svc.read"])
     expect(readFileSync(join(cwd, "derive-source.mjs"), "utf8")).toContain("process.argv")
-    expect(readFileSync(join(cwd, "derive-sources.mjs"), "utf8")).toContain("export const sources")
+    expect(readFileSync(join(cwd, "derive-tools.mjs"), "utf8")).toContain("export const tools")
   })
 
   it("COMPOSES two tools in one script and proxies both through the run endpoint", async () => {
     const cwd = generate(["svc.list", "svc.get"])
     const out = await run(
       cwd,
-      `import { sources } from "./derive-sources.mjs"
-       const a = await sources["svc.list"]({ q: "x" })
-       const b = await sources["svc.get"]({ id: a.echo.q + "-1" })
+      `import { tools } from "./derive-tools.mjs"
+       const a = await tools["svc.list"]({ q: "x" })
+       const b = await tools["svc.get"]({ id: a.echo.q + "-1" })
        console.log(JSON.stringify({ first: a.tool, second: b.tool, joined: b.echo.id }))`,
     )
     expect(JSON.parse(out)).toEqual({ first: "svc.list", second: "svc.get", joined: "x-1" })
@@ -123,10 +123,10 @@ describe("code mode: the generated tool module", () => {
     const cwd = generate(["boom", "svc.get"])
     const out = await run(
       cwd,
-      `import { sources } from "./derive-sources.mjs"
+      `import { tools } from "./derive-tools.mjs"
        let caught = null
-       try { await sources["boom"]({}) } catch (e) { caught = e.message }
-       const ok = await sources["svc.get"]({ id: "still-works" })
+       try { await tools["boom"]({}) } catch (e) { caught = e.message }
+       const ok = await tools["svc.get"]({ id: "still-works" })
        console.log(JSON.stringify({ caught: caught.includes("502"), recovered: ok.echo.id }))`,
       "run_1",
     )
@@ -138,7 +138,7 @@ describe("code mode: the generated tool module", () => {
     // that changed). The module must still parse, or the whole run dies on import.
     const cwd = generate([])
     expect(
-      await run(cwd, `import s from "./derive-sources.mjs"; console.log(Object.keys(s).length)`),
+      await run(cwd, `import t from "./derive-tools.mjs"; console.log(Object.keys(t).length)`),
     ).toBe("0")
   })
 })
@@ -152,8 +152,8 @@ describe("code mode: one-command mode", () => {
     const before = readdirSync(cwd).sort()
     const out = await evalOne(
       cwd,
-      `const a = await sources["svc.list"]({ q: "x" })
-       const b = await sources["svc.get"]({ id: a.echo.q + "-1" })
+      `const a = await tools["svc.list"]({ q: "x" })
+       const b = await tools["svc.get"]({ id: a.echo.q + "-1" })
        return { joined: b.echo.id, second: b.tool }`,
     )
     expect(JSON.parse(out)).toEqual({ joined: "x-1", second: "svc.get" })
@@ -172,6 +172,42 @@ describe("code mode: one-command mode", () => {
   it("reports a failing tool on stderr and exits nonzero", async () => {
     // The executor reads exit codes. A silent failure would look like an empty result.
     const cwd = generate(["boom"])
-    await expect(evalOne(cwd, `return await sources["boom"]({})`)).rejects.toThrow()
+    await expect(evalOne(cwd, `return await tools["boom"]({})`)).rejects.toThrow()
+  })
+})
+
+describe("code mode: the agent surface is the canonical one", () => {
+  // The names live in packages/core/src/agent-surface.ts. The CLI cannot import core at runtime
+  // (dependency-free published package), so it hand-copies them — the same arrangement as
+  // decideWrite and the run contract, and this is the enforcement.
+  //
+  // These were `sources` and `call` here while the sandbox used `tools` and `call_tool`: one
+  // concept, two vocabularies, so an agent that learned one had to relearn the other. Renaming is
+  // cheap; discovering the drift in a transcript is not.
+  it("binds tools, call_tool and console — and nothing under the old names", () => {
+    const src = TOOL_MODULE_SRC(["svc.read"])
+    expect(src).toContain("export const tools")
+    expect(src).toContain("export async function call_tool")
+    // The old vocabulary must be gone, or both spellings end up in circulation.
+    expect(src).not.toContain("export const sources")
+    expect(src).not.toMatch(/export async function call\(/)
+  })
+
+  it("names the module derive-tools.mjs, not one character from its sibling", async () => {
+    // `derive-source.mjs` (the single-call CLI) and `derive-sources.mjs` (the module) differed by
+    // one letter, which is a support burden waiting to happen.
+    const cwd = generate(["svc.read"])
+    const files = readdirSync(cwd).sort()
+    expect(files).toContain("derive-tools.mjs")
+    expect(files).not.toContain("derive-sources.mjs")
+  })
+
+  it("exposes call_tool for a name computed at runtime", async () => {
+    const cwd = generate(["svc.get"])
+    const out = await evalOne(
+      cwd,
+      `const n = "svc" + ".get"; return (await call_tool(n, { id: 7 })).echo.id`,
+    )
+    expect(out).toBe("7")
   })
 })

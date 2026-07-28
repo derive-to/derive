@@ -96,6 +96,31 @@ export function runSandboxContract(label: string, make: () => Sandbox): void {
     })
   })
 
+  describe(`${label}: the canonical surface`, () => {
+    // The names in packages/core/src/agent-surface.ts, asserted rather than assumed. They are the
+    // same names the CONTAINER path binds, so code an agent writes in one place runs in the other
+    // — which is the whole reason that file exists.
+    it("binds tools, call_tool and console", async () => {
+      const r = await run(
+        `return { tools: typeof tools, call_tool: typeof call_tool, log: typeof console.log }`,
+      )
+      expect(r.value).toEqual({ tools: "object", call_tool: "function", log: "function" })
+    })
+
+    it("call_tool reaches a tool by a name computed at runtime", async () => {
+      // The escape hatch for a name the code assembles — indexing `tools` covers the literal
+      // case, this covers the rest.
+      const r = await run(`const n = "ec" + "ho"; return (await call_tool(n, { a: 1 })).echoed.a`)
+      expect(r.value).toBe(1)
+    })
+
+    it("returns a string as-is rather than quoted", async () => {
+      // The common case is a summary line; quoting it would make every caller strip quotes.
+      const r = await run(`return "done"`)
+      expect(r.value).toBe("done")
+    })
+  })
+
   describe(`${label}: it holds`, () => {
     it("cannot read the environment — no secrets to take", async () => {
       // THE property. The worker is spawned with env: {}, so even a full escape finds nothing.
