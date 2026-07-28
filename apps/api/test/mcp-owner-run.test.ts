@@ -5,7 +5,7 @@ import Database from "better-sqlite3"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
-import { dir } from "./helpers"
+import { connectPoolPlan, dir } from "./helpers"
 
 // OWNER-RUN + create_context over MCP: the owner who wires a context up serves it from
 // the grant they already have — bare use({context}) pulls, use({session_id, answer})
@@ -61,6 +61,11 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
       baseUrl: "http://derive.test",
       token: "tok",
     })
+    // Opening a session queues work, and work that nothing can pay for is refused at the door
+    // (src/lib/payer.ts). This suite builds its app directly rather than through makeAuthedApp,
+    // so it does not inherit that fixture's workspace plan — without one, every give here is a
+    // 402 and the owner-run path never gets exercised.
+    void connectPoolPlan(meta, "ws_main")
     return { app, meta }
   }
   type App = ReturnType<typeof ownerApp>["app"]
