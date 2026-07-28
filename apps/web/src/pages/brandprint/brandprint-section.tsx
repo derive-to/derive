@@ -299,7 +299,9 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
   const disabled =
     !ready ||
     importDocs.isPending ||
-    (scope === "workspace" ? !isAdmin || updateWorkspace.isPending : updateAccount.isPending)
+    (scope === "workspace"
+      ? !isAdmin || updateWorkspace.isPending
+      : updateAccount.isPending || toggleWorkspace.isPending)
   const save = (next: string) =>
     scope === "workspace" ? updateWorkspace.mutate(next) : updateAccount.mutate(next)
   const selected = collections?.find((c) => c.id === collectionId)?.title
@@ -533,7 +535,7 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
               id="brandprint-workspace-toggle"
               data-testid="brandprint-workspace-toggle"
               checked={me?.brandprint?.useWorkspaceBrandprint !== false}
-              disabled={toggleWorkspace.isPending}
+              disabled={toggleWorkspace.isPending || updateAccount.isPending}
               onCheckedChange={(on) => toggleWorkspace.mutate(on)}
             />
           </SettingRow>
