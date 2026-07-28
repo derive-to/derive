@@ -14,31 +14,41 @@ const base = {
 
 describe("decideWrite", () => {
   it("the full truth table — every combination lands where the precedence says", () => {
-    const rows: Array<[AutonomyLevel, number | null, boolean, boolean, GateDecision]> = []
+    // The SPEC, expressed as data. packages/cli/test/gate-parity.test.js derives its expectation
+    // with an identical block, because the CLI ships a hand-copied decideWrite — it is a
+    // dependency-free published package and cannot import this one at runtime. Change the
+    // precedence here and both tables must change with it; if the CLI's IMPLEMENTATION is not
+    // updated too, its parity test fails. That is the only thing standing between two copies of
+    // a safety gate and a silent divergence.
+    const rows: Array<[AutonomyLevel, number | null, boolean, boolean, boolean, GateDecision]> = []
     for (const autonomy of ["shadow", "suggest", "auto"] as const)
       for (const confidence of [null, 0.5, 1])
         for (const killswitch of [false, true])
-          for (const autoEnabled of [false, true]) {
-            const expected: GateDecision = killswitch
-              ? "proposal"
-              : autonomy === "shadow"
-                ? "shadow"
-                : autonomy === "suggest"
-                  ? "proposal"
-                  : !autoEnabled || confidence === null || confidence < DEFAULT_CONFIDENCE_FLOOR
+          for (const autoEnabled of [false, true])
+            for (const tainted of [false, true]) {
+              const expected: GateDecision = killswitch
+                ? "proposal"
+                : autonomy === "shadow"
+                  ? "shadow"
+                  : tainted
                     ? "proposal"
-                    : "live_publish_with_review"
-            rows.push([autonomy, confidence, killswitch, autoEnabled, expected])
-          }
-    expect(rows).toHaveLength(36)
-    for (const [autonomy, confidence, killswitch, autoEnabled, expected] of rows) {
+                    : autonomy === "suggest"
+                      ? "proposal"
+                      : !autoEnabled || confidence === null || confidence < DEFAULT_CONFIDENCE_FLOOR
+                        ? "proposal"
+                        : "live_publish_with_review"
+              rows.push([autonomy, confidence, killswitch, autoEnabled, tainted, expected])
+            }
+    expect(rows).toHaveLength(72)
+    for (const [autonomy, confidence, killswitch, autoEnabled, tainted, expected] of rows) {
       expect(
         decideWrite({
           autonomy,
           confidence,
+          tainted,
           flags: { agentKillswitch: killswitch, agentAutoEnabled: autoEnabled },
         }),
-        `${autonomy}/conf=${confidence}/kill=${killswitch}/auto=${autoEnabled}`,
+        `${autonomy}/conf=${confidence}/kill=${killswitch}/auto=${autoEnabled}/taint=${tainted}`,
       ).toBe(expected)
     }
   })
