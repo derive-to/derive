@@ -1,5 +1,5 @@
 import type { BrokerToolDef, ToolBroker } from "@derive/broker"
-import { brokerForRef, makeBroker } from "@derive/broker"
+import { makeBroker, refRouter } from "@derive/broker"
 import type { MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
 
@@ -21,21 +21,33 @@ export const toolsForRun = async (
   broker: ToolBroker,
   orgId: string,
   connectionIds: string[],
+  /** An optional SHARED ref router. Pass one when resolving several runs in a single request (a
+   *  claim), so every run's MCP lookups reuse one client and one set of sessions instead of
+   *  re-handshaking per run. Omitted, each call gets its own. */
+  router?: (ref: string) => ToolBroker,
 ): Promise<RunTool[]> => {
   if (connectionIds.length === 0) return []
   const conns = await meta.getConnectionsByIds(connectionIds)
   const active = conns.filter((cn) => cn.org_id === orgId && cn.status === "active")
+  // Per-CONNECTION routing through ONE router: an `mcp:` ref reaches the MCP broker whatever the
+  // workspace's broker plan is (it needs no vendor account at all), everything else keeps the
+  // plan's broker. Sharing the router across this resolution is what lets the MCP client reuse
+  // its session instead of re-handshaking per connection.
+  const route = router ?? refRouter(broker)
   const out: RunTool[] = []
+  // Dedupe by ref before listing. Two connection rows can point at the same broker_ref (the same
+  // MCP server bound twice, a re-connect that kept the ref), and listing it twice is two extra
+  // network round trips for a set of tools we already have.
+  const seen = new Set<string>()
   for (const cn of active) {
-    // Per-CONNECTION routing: an `mcp:` ref reaches the MCP broker whatever the workspace's
-    // broker plan is (it needs no vendor account at all), and everything else keeps using the
-    // plan's broker. One workspace can therefore mix the two, which a single global choice
-    // could not express.
-    const b = brokerForRef(cn.broker_ref, broker)
+    if (seen.has(cn.broker_ref)) continue
+    seen.add(cn.broker_ref)
     // One unreachable or hostile server must not take down the whole tool list: a run bound to
     // three connections still gets the other two, and sees the failure as a missing tool rather
     // than a failed claim.
-    const defs = await b.toolsFor([cn.broker_ref]).catch(() => [])
+    const defs = await route(cn.broker_ref)
+      .toolsFor([cn.broker_ref])
+      .catch(() => [])
     for (const def of defs) out.push({ def, ref: cn.broker_ref })
   }
   return out

@@ -21,15 +21,27 @@ export const makeBroker = (plan: { provider: string; key: string } | null): Tool
 }
 
 /**
- * Route by CONNECTION, not by workspace plan.
+ * Route by CONNECTION, not by workspace plan — and reuse ONE MCP client while doing it.
  *
  * An MCP connection carries its own server URL in its ref and needs no vendor account, so it has
- * to work in a workspace with no broker plan at all — which is every workspace today. Routing on
- * the ref also lets one workspace hold MCP connections and a Composio plan at the same time,
- * each reaching the right implementation, instead of a single global choice deciding for all of
- * them.
+ * to work in a workspace with no broker plan at all, which is every workspace today. Routing on
+ * the ref also lets one workspace hold MCP connections and a Composio plan at once, each
+ * reaching the right implementation.
+ *
+ * Returns a ROUTER rather than resolving one ref, because the instance matters. McpBroker keeps a
+ * URL → session-id map, and MCP's streamable HTTP transport lets a client skip `initialize` once
+ * it holds a session. Constructing a fresh broker per ref threw that map away every time, so
+ * every single tool listing paid `initialize` + `tools/list` instead of just `tools/list` —
+ * double the round trips, on the path a code-mode script hits hardest.
+ *
+ * One router per REQUEST is the intended lifetime: long enough for a claim resolving several
+ * runs, or a tool call validating against several bound servers, to share sessions and the memo;
+ * short enough that nothing is cached across requests. It holds no credentials — an MCP session
+ * id belongs to the client-server pair, not to a tenant.
  *
  * `fallback` is the plan-derived broker (Composio or Local) that every non-MCP ref keeps using.
  */
-export const brokerForRef = (ref: string, fallback: ToolBroker): ToolBroker =>
-  parseMcpRef(ref) ? new McpBroker() : fallback
+export const refRouter = (fallback: ToolBroker): ((ref: string) => ToolBroker) => {
+  const mcp = new McpBroker()
+  return (ref: string) => (parseMcpRef(ref) ? mcp : fallback)
+}

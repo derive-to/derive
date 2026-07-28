@@ -463,6 +463,20 @@ export const collectManagedIds = (rows: { files: string }[]): string[] => {
  * better-sqlite3 wraps them in a sync transaction and D1 runs them sequentially,
  * the sequential versions living here).
  */
+/**
+ * Cost ACCUMULATES onto whatever the run already banked — it never replaces it.
+ *
+ * A retry reuses the SAME run row (requeueRun), so a run that burned an expensive failed attempt
+ * and then settled cheaply would report only the cheap number, undercounting exactly the runs
+ * that cost the most in the column the monthly budget sums. A missing value leaves the column
+ * untouched rather than nulling it, so a provider that reports nothing (Codex plain-text, an
+ * older CLI) cannot erase what an earlier attempt recorded.
+ *
+ * Shared by finishRun and requeueRun, and mirrored in pg.ts — the two drivers must agree.
+ */
+const addRunCost = (micros: number | null | undefined) =>
+  micros == null ? {} : { cost_micro_usd: sql`coalesce(${run.cost_micro_usd}, 0) + ${micros}` }
+
 export function makeRepos(db: SqliteDb) {
   // ---- Artifacts + versions ----------------------------------------------
   const getByShortId = async (shortId: string): Promise<ArtifactRecord | null> =>
@@ -2709,14 +2723,7 @@ export function makeRepos(db: SqliteDb) {
       .set({
         status: fields.status,
         finished_at: fields.finishedAt,
-        // ACCUMULATE, never replace. A retry reuses THIS row (see requeueRun), so a run that
-        // burned an expensive failed attempt and then settled cheaply would report only the
-        // cheap number — undercounting exactly the runs that cost the most. A missing value
-        // leaves the column untouched rather than nulling it, so a provider that reports no
-        // cost cannot erase what an earlier attempt already banked.
-        ...(fields.costMicroUsd == null
-          ? {}
-          : { cost_micro_usd: sql`coalesce(${run.cost_micro_usd}, 0) + ${fields.costMicroUsd}` }),
+        ...addRunCost(fields.costMicroUsd),
         meta: fields.meta ?? null,
       })
       .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
@@ -2773,12 +2780,7 @@ export function makeRepos(db: SqliteDb) {
         status: "queued",
         started_at: null,
         scheduled_for: fields.scheduledFor,
-        // Bank the FAILED attempt's spend before the row goes back on the queue. A retryable
-        // failure still ran the model, often more than once, and dropping that on requeue is
-        // how a budget ends up ignoring the most expensive runs in the workspace.
-        ...(fields.costMicroUsd == null
-          ? {}
-          : { cost_micro_usd: sql`coalesce(${run.cost_micro_usd}, 0) + ${fields.costMicroUsd}` }),
+        ...addRunCost(fields.costMicroUsd),
         ...(fields.meta === undefined ? {} : { meta: fields.meta }),
       })
       .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))

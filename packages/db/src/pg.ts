@@ -293,6 +293,21 @@ const VIEW_WINDOW_MS = 30 * 86400_000
  * definition, dialect-correct SQL generated for us); the analytics aggregations
  * stay raw `pool.query` where GROUP BY / DISTINCT read clearer.
  */
+
+/**
+ * Cost ACCUMULATES onto whatever the run already banked — it never replaces it.
+ *
+ * A retry reuses the SAME run row (requeueRun), so a run that burned an expensive failed attempt
+ * and then settled cheaply would report only the cheap number, undercounting exactly the runs
+ * that cost the most in the column the monthly budget sums. A missing value leaves the column
+ * untouched rather than nulling it, so a provider that reports nothing (Codex plain-text, an
+ * older CLI) cannot erase what an earlier attempt recorded.
+ *
+ * Shared by finishRun and requeueRun, and mirrored in the other driver — the two must agree.
+ */
+const addRunCost = (micros: number | null | undefined) =>
+  micros == null ? {} : { cost_micro_usd: sql`coalesce(${run.cost_micro_usd}, 0) + ${micros}` }
+
 export class PgMetaStore implements MetaStore {
   private constructor(
     private pool: Pool,
@@ -2681,11 +2696,7 @@ export class PgMetaStore implements MetaStore {
         status: "queued",
         started_at: null,
         scheduled_for: fields.scheduledFor,
-        // Bank the FAILED attempt's spend before the row goes back on the queue — parity with
-        // the sqlite driver. A retryable failure still ran the model, often more than once.
-        ...(fields.costMicroUsd == null
-          ? {}
-          : { cost_micro_usd: sql`coalesce(${run.cost_micro_usd}, 0) + ${fields.costMicroUsd}` }),
+        ...addRunCost(fields.costMicroUsd),
         ...(fields.meta === undefined ? {} : { meta: fields.meta }),
       })
       .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
@@ -2768,13 +2779,7 @@ export class PgMetaStore implements MetaStore {
       .set({
         status: fields.status,
         finished_at: fields.finishedAt,
-        // ACCUMULATE, never replace — parity with the sqlite driver. A retry reuses THIS row
-        // (requeueRun), so replacing would report only the final attempt and undercount exactly
-        // the runs that cost the most. A missing value leaves the column alone rather than
-        // nulling it, so a provider that reports no cost cannot erase an earlier attempt.
-        ...(fields.costMicroUsd == null
-          ? {}
-          : { cost_micro_usd: sql`coalesce(${run.cost_micro_usd}, 0) + ${fields.costMicroUsd}` }),
+        ...addRunCost(fields.costMicroUsd),
         meta: fields.meta ?? null,
       })
       .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))

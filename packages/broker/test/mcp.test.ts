@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { brokerForRef, LocalBroker } from "../src/index"
+import { LocalBroker, refRouter } from "../src/index"
 import { encodeMcpRef, McpBroker, parseMcpRef, pinTools } from "../src/mcp"
 
 // The MCP broker: connect any Model Context Protocol server as a source.
@@ -171,14 +171,41 @@ describe("MCP broker: tool-description pinning", () => {
   })
 })
 
-describe("brokerForRef: routing by connection, not by workspace plan", () => {
+describe("refRouter: routing by connection, not by workspace plan", () => {
   it("an mcp: ref reaches the MCP broker; anything else keeps the fallback", () => {
     const fallback = new LocalBroker()
-    expect(brokerForRef(encodeMcpRef("https://x.test/mcp", "p"), fallback).provider).toBe("mcp")
-    expect(brokerForRef("local:gmail:u1", fallback).provider).toBe("local")
+    const route = refRouter(fallback)
+    expect(route(encodeMcpRef("https://x.test/mcp", "p")).provider).toBe("mcp")
+    expect(route("local:gmail:u1").provider).toBe("local")
     // The point: a workspace with NO broker plan (so the fallback is the stub LocalBroker) can
     // still use a real MCP server. That is what makes this usable today, since no workspace has
     // a working Composio connection.
-    expect(brokerForRef("mcp:pin:https://x.test/mcp", fallback)).not.toBe(fallback)
+    expect(route("mcp:pin:https://x.test/mcp")).not.toBe(fallback)
+  })
+
+  it("reuses ONE MCP client across refs, so sessions and handshakes are shared", () => {
+    // The instance is the optimization. A fresh broker per ref threw away the URL → session map,
+    // so every tool listing paid `initialize` + `tools/list` instead of just the list — double
+    // the round trips, on the path a code-mode script hits hardest.
+    const route = refRouter(new LocalBroker())
+    const a = route(encodeMcpRef("https://one.test/mcp", "p"))
+    const b = route(encodeMcpRef("https://two.test/mcp", "p"))
+    expect(a).toBe(b)
+  })
+})
+
+describe("MCP broker: round trips", () => {
+  it("handshakes ONCE per server, then only lists", async () => {
+    // The tool endpoint re-resolves the allowed set on EVERY tool call, so a composed script
+    // doing five calls across two servers was paying twenty round trips where ten would do.
+    const server = fakeServer({ tools: TOOLS })
+    const broker = new McpBroker(server.impl)
+    const link = await broker.connect({ orgId: "o", userId: "u", toolkit: "https://r.test/mcp" })
+    const afterConnect = server.calls.length
+    await broker.toolsFor([link.ref])
+    await broker.toolsFor([link.ref])
+    const added = server.calls.slice(afterConnect).map((c) => c.method)
+    // Two listings, two calls — no repeated initialize.
+    expect(added).toEqual(["tools/list", "tools/list"])
   })
 })

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -56,6 +56,21 @@ const execFileAsync = promisify(execFile)
 const run = async (cwd, script, runId = "run_1") => {
   writeFileSync(join(cwd, "task.mjs"), script)
   const { stdout } = await execFileAsync("node", ["task.mjs"], {
+    cwd,
+    env: {
+      ...process.env,
+      DERIVE_SERVER: `http://localhost:${port}`,
+      DERIVE_TOKEN: "tok-abc",
+      DERIVE_RUN_ID: runId,
+    },
+    encoding: "utf8",
+  })
+  return stdout.trim()
+}
+
+/** ONE-COMMAND mode: `node derive-sources.mjs -e '<code>'`, nothing written to disk. */
+const evalOne = async (cwd, code, runId = "run_1") => {
+  const { stdout } = await execFileAsync("node", ["derive-sources.mjs", "-e", code], {
     cwd,
     env: {
       ...process.env,
@@ -125,5 +140,38 @@ describe("code mode: the generated tool module", () => {
     expect(
       await run(cwd, `import s from "./derive-sources.mjs"; console.log(Object.keys(s).length)`),
     ).toBe("0")
+  })
+})
+
+describe("code mode: one-command mode", () => {
+  it("composes two tools in ONE invocation with no file written", async () => {
+    // The ergonomics that decide whether this gets used. Telling an agent to write a script and
+    // then run it is two actions — and in a supervised session, two approval prompts — for one
+    // step. A single command with `sources` already in scope is one of each.
+    const cwd = generate(["svc.list", "svc.get"])
+    const before = readdirSync(cwd).sort()
+    const out = await evalOne(
+      cwd,
+      `const a = await sources["svc.list"]({ q: "x" })
+       const b = await sources["svc.get"]({ id: a.echo.q + "-1" })
+       return { joined: b.echo.id, second: b.tool }`,
+    )
+    expect(JSON.parse(out)).toEqual({ joined: "x-1", second: "svc.get" })
+    // Nothing new on disk: the agent never had to author a file.
+    expect(readdirSync(cwd).sort()).toEqual(before)
+  })
+
+  it("a returned object is JSON-stringified, and console.log still works", async () => {
+    const cwd = generate(["svc.a"])
+    expect(await evalOne(cwd, `return { ok: 1 }`)).toBe('{"ok":1}')
+    expect(await evalOne(cwd, `console.log("plain"); `)).toBe("plain")
+    // A returned string is printed as-is rather than quoted — the common case is a summary line.
+    expect(await evalOne(cwd, `return "done"`)).toBe("done")
+  })
+
+  it("reports a failing tool on stderr and exits nonzero", async () => {
+    // The executor reads exit codes. A silent failure would look like an empty result.
+    const cwd = generate(["boom"])
+    await expect(evalOne(cwd, `return await sources["boom"]({})`)).rejects.toThrow()
   })
 })
