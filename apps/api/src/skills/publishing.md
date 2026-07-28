@@ -131,3 +131,28 @@ draft" — `workspace_access=member`, `link_role=none`, `listed=none`: a teammat
 the pasted link, the world can't, and it stays out of feeds until a human promotes it.
 Sharing wider (`workspace_access`, `link_role`, `listed`) stays a deliberate act — see
 those params' own descriptions for the exact meanings.
+
+## Reaching REST from your shell (stage target:'api')
+
+Your credential lives INSIDE this MCP transport: the connector holds it, your shell does
+not. So a REST route that has no tool — and anything you want to script with curl — is
+unreachable at the access you already hold, and hunting for a second credential (a CLI
+login, its own scopes, its own expiry) is the detour that wastes a session.
+
+`stage({target:"api"})` closes that: it mints a short-lived bearer for the access this
+connection ALREADY has, so you can curl any route that access can reach.
+
+- **Least privilege by construction.** Capped at your role in the target workspace, bound
+  to that ONE workspace, ~15 minutes, not refreshable. Narrow it further with
+  `access:"read"|"comment"|"publish"|"manage"` when the job needs less than you hold.
+- **It cannot widen your reach.** Asking for more than the grant holds is refused, naming
+  whether the SCOPE or your workspace ROLE is short — they need opposite fixes (re-consent
+  vs an admin changing your seat).
+- **It expires rather than refreshes.** When it lapses, mint another; that is one tool call,
+  so there is no refresh token to rotate and no session to keep alive.
+- **Treat it as the real credential it is.** It is not redacted from this transcript. Its
+  blast radius is one workspace, one role, minutes — and removing the human from that
+  workspace kills it immediately, mid-TTL.
+
+Use `list_workspaces` first when unsure what you hold: it reports the principal kind, the
+human you act for, your access ceiling, and per workspace what your role CANNOT do.

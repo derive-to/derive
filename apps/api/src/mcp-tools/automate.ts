@@ -1,6 +1,7 @@
 import { type AutomationTrigger, newId, normalizeSelectors, roleAllows } from "@derive/core"
 import { z } from "zod"
 import { mintToken, sha256 } from "../lib/crypto"
+import { scopeGapMessage } from "../lib/scope-gap"
 import type { ToolContext } from "../mcp-tool-context"
 import { json } from "../mcp-util"
 
@@ -23,7 +24,7 @@ const TRIGGER = z.object({
 })
 
 export function registerAutomateTool(tc: ToolContext): void {
-  const { server, ctx, agent, defaultOrg } = tc
+  const { server, ctx, agent, defaultOrg, scopeForCap, registered } = tc
   const meta = ctx.meta
   server.registerTool(
     "automate",
@@ -70,8 +71,20 @@ export function registerAutomateTool(tc: ToolContext): void {
     async (input) => {
       // Same gate as the REST surface: standing jobs are a manage decision, and this tool
       // spends the workspace's model budget on a clock. A commenter grant reads, never wires.
+      // The refusal names WHICH lever is short — scope vs seat (see lib/scope-gap.ts) —
+      // because they need opposite fixes and guessing wrong sends an agent hunting for a
+      // second credential.
       if (agent.role !== "owner")
-        return json({ error: "automations need a manage-level (owner) grant" })
+        return json({
+          error:
+            scopeGapMessage({
+              action: "manage",
+              scopeRole: scopeForCap,
+              memberRole: agent.role,
+              registered,
+              baseUrl: ctx.deps.baseUrl,
+            }) ?? "automations need a manage-level (owner) grant",
+        })
       const org = defaultOrg
 
       if (input.action === "list") {

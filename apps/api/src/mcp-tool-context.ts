@@ -32,6 +32,9 @@ export interface ToolContextBase {
   scopeForCap: Role
   registered: boolean
   boundWorkspaces: string[]
+  /** The OAuth client behind this connection ("" for a registered dk_agt_ token) —
+   *  provenance stamped into tokens minted by `stage target:'api'`. */
+  clientId: string
   defaultOrg: string
   defaultRole: Role
   pendingRequests: AgentMentionRecord[]

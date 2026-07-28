@@ -26,6 +26,7 @@ import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
 import { type Auth, mcpAudiences } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
+import { isApiToken, verifyApiToken } from "./lib/api-token"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
@@ -455,6 +456,48 @@ export function buildContext(deps: AppDeps) {
     const b = bearer(c)
     let a: AgentRecord | null = null
     let owner: string | null = null
+    // A MINTED API token (lib/api-token.ts): the agent's own MCP authentication, moved
+    // out to its shell so REST is reachable at the level it already holds. It resolves
+    // to the SAME principal shape the OAuth grant does — including the grant cache, so
+    // management-gated routes treat it identically — but its role is re-capped here
+    // against LIVE membership, so demoting or removing the human kills outstanding
+    // tokens mid-TTL. Fail-closed: bad signature/expiry, or a user who is no longer a
+    // member, resolves to anonymous rather than to a lesser principal.
+    if (b && deps.encryptionKey && isApiToken(b)) {
+      const claim = await verifyApiToken(deps.encryptionKey, b, Date.now())
+      if (claim) {
+        const m = await meta.getMembership(claim.orgId, claim.userId)
+        if (m) {
+          const role = capRole(claim.role, m.role)
+          a = {
+            id: `oauth:${claim.clientId}`,
+            org_id: claim.orgId,
+            name: (await meta.getOAuthClientName(claim.clientId)) || claim.clientId || "An agent",
+            token: "",
+            role,
+            created_by: claim.userId,
+            hosted: 0,
+            managed: 0,
+            runs_seen_at: null,
+            created_at: new Date().toISOString(),
+          }
+          owner = claim.userId
+          oauthGrantCache.set(c, {
+            ownerId: claim.userId,
+            // The minted role IS the scope ceiling — a token minted for `publish`
+            // must not reach management just because its human is an owner.
+            scopeRole: claim.role,
+            clientId: claim.clientId,
+            // Minted per workspace: this token reaches exactly the one it names.
+            boundWorkspaces: [claim.orgId],
+          })
+        }
+      }
+      agentCache.set(c, a)
+      onBehalfOfCache.set(c, owner)
+      if (a) c.set("actorId", a.id)
+      return a
+    }
     const workKind = b ? workTokenKind(b) : null
     if (b && workKind && deps.encryptionKey) {
       // A per-work capability token (unattended execution): signed + expiring, minted at

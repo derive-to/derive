@@ -115,6 +115,9 @@ async function buildServer(
   // clamps list_workspaces + the `workspace` arg + cross-workspace read to
   // exactly those: workspaces outside the grant are invisible and unreachable.
   boundWorkspaces: string[],
+  // The OAuth client behind this connection ("" for a registered dk_agt_ token).
+  // Recorded into tokens minted by `stage target:'api'` as their provenance.
+  clientId: string,
 ): Promise<McpServer> {
   // The always-loaded CORE SKILLS index: one line per skill (name — summary — read
   // derive://skills/<name>), kept in lockstep with the skill bodies by iterating the
@@ -354,6 +357,7 @@ async function buildServer(
     scopeForCap,
     registered,
     boundWorkspaces,
+    clientId,
     defaultOrg,
     defaultRole,
     pendingRequests,
@@ -410,6 +414,7 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
       scopeForCap,
       !grant,
       boundWorkspaces,
+      grant?.clientId ?? "",
     )
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)

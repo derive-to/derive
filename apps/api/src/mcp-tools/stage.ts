@@ -1,5 +1,12 @@
-import { roleAllows } from "@derive/core"
+import { type Action, capRole, roleAllows } from "@derive/core"
 import { z } from "zod"
+import {
+  API_TOKEN_ACCESS,
+  API_TOKEN_TTL_MS,
+  type ApiTokenAccess,
+  roleForAccess,
+  signApiToken,
+} from "../lib/api-token"
 import { MAX_UPLOAD_BYTES } from "../lib/http"
 import { MAX_ASSET_BYTES } from "../lib/image"
 import { PUBLISH_TARGET_CREATE, PUBLISH_TOKEN_TTL_MS, signPublishToken } from "../lib/publish-token"
@@ -7,8 +14,24 @@ import { signUploadToken, UPLOAD_TOKEN_TTL_MS } from "../lib/upload-token"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
 
+/** The capability each access level must actually pass to be mintable. */
+const ACCESS_ACTION: Record<ApiTokenAccess, Action> = {
+  read: "read",
+  comment: "comment",
+  publish: "publish",
+  manage: "manage",
+}
+/** The OAuth scope a caller would have to re-consent with to reach each level —
+ *  named in the refusal so a scope gap is actionable instead of a dead end. */
+const SCOPE_FOR_ACCESS: Record<ApiTokenAccess, string> = {
+  read: "derive:read",
+  comment: "derive:comment",
+  publish: "derive:publish",
+  manage: "derive:manage",
+}
+
 export function registerStageTool(tc: ToolContext): void {
-  const { server, ctx, ownerId, reach, notFound, resolveWs, wsArg } = tc
+  const { server, ctx, ownerId, clientId, reach, notFound, resolveWs, wsArg } = tc
 
   // STAGE — one tool, two out-of-band upload URLs, each spent with curl so bytes never
   // enter the model's context. target:'asset' = the former stage_asset (a binary a doc
@@ -21,25 +44,77 @@ export function registerStageTool(tc: ToolContext): void {
     "stage",
     {
       description:
-        "Upload out-of-band — mint a SHORT-LIVED, no-bearer upload URL, then curl the file's bytes to it from your shell (zero tokens through context). target:'doc' for a whole big document or bundle more than ~a page (returns a publish URL — curl the file, or a zipped dir which becomes a bundle; omit short_id to CREATE, pass it to REVISE that exact target; read derive://skills/publishing). target:'asset' for an image or font a document EMBEDS (returns a permanent url for single-file content + an asset:<hash> ref for a bundle `files` map; raster images and WOFF/WOFF2 only, max 25MB; read derive://skills/assets). Staging alone does not publish an artifact. NEVER base64 a binary through a tool call — a pasted image is already a file on disk.",
+        "Work out-of-band from your shell — mint a SHORT-LIVED capability, then curl with it (zero bytes through context). target:'doc' for a whole big document or bundle more than ~a page (returns a no-bearer publish URL — curl the file, or a zipped dir which becomes a bundle; omit short_id to CREATE, pass it to REVISE that exact target; read derive://skills/publishing). target:'asset' for an image or font a document EMBEDS (returns a permanent url + an asset:<hash> ref; raster images and WOFF/WOFF2 only, max 25MB; read derive://skills/assets). target:'api' mints a REAL BEARER TOKEN for REST from your shell — 15 min, one workspace, capped at your role (narrow with `access`); a live credential in this transcript, so treat it like one. Staging alone does not publish an artifact. NEVER base64 a binary through a tool call — a pasted image is already a file on disk.",
       inputSchema: {
         target: z
-          .enum(["doc", "asset"])
+          .enum(["doc", "asset", "api"])
           .describe(
-            "doc: a whole document/bundle too big to inline (returns a publish URL). asset: an image or font a doc embeds (returns a permanent asset url + ref).",
+            "doc: a whole document/bundle too big to inline (returns a publish URL). asset: an image or font a doc embeds (returns a permanent asset url + ref). api: a short-lived BEARER TOKEN for calling REST from your shell at the access this connection already holds.",
           ),
         short_id: z
           .string()
           .optional()
           .describe(
-            "target:'doc' ONLY — revise THIS artifact; omit to create a new one (the token is scoped to it). Rejected with target:'asset' (an asset isn't versioned).",
+            "target:'doc' ONLY — revise THIS artifact; omit to create a new one (the token is scoped to it). Rejected with target:'asset' and target:'api'.",
+          ),
+        access: z
+          .enum(API_TOKEN_ACCESS)
+          .optional()
+          .describe(
+            "target:'api' ONLY — narrow the minted token below what this connection holds (least privilege). Omit to mint at your current role. Asking for MORE than the grant holds is refused, naming the scope that would fix it.",
           ),
         workspace: wsArg,
       },
     },
-    async ({ target, short_id, workspace }) => {
+    async ({ target, short_id, access, workspace }) => {
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
+
+      if (target === "api") {
+        // The general case of what the other two targets do narrowly: this connection is
+        // authenticated, but only INSIDE this transport — so mint that same authentication
+        // as a spendable bearer for the shell. Least privilege by construction: capped at
+        // the role this grant already acts with here, further narrowed by `access`, bound to
+        // ONE workspace, minutes long, and re-checked against live membership on every spend.
+        if (short_id)
+          return err("`short_id` applies only to target:'doc'. Omit it for target:'api'.")
+        if (!ownerId)
+          return err(
+            "stage target:'api' mints a token for a signed-in user, and this connection has no acting human. A static agent token (dk_agt_/DERIVE_TOKEN) already works from your shell — use it directly.",
+          )
+        const secret = ctx.deps.encryptionKey
+        if (!secret)
+          return err(
+            "This server has no signing secret configured, so it can't mint API tokens. Use a bearer token directly instead (DERIVE_TOKEN, or `derive login`).",
+          )
+        // Ceiling: the role this grant holds in the target workspace (itself already
+        // scope-capped AND membership-capped upstream). `access` may narrow it, never widen
+        // — asking for more than the grant holds is refused with the scope that would fix it,
+        // rather than silently minting something weaker than requested.
+        const wanted = access ? roleForAccess[access] : t.role
+        if (!roleAllows(t.role, ACCESS_ACTION[access ?? "read"]) && access)
+          return err(
+            `This connection can't mint a "${access}" token here — it acts as ${t.role} in this workspace. ` +
+              `Re-consent with the ${SCOPE_FOR_ACCESS[access]} scope (or ask an admin for a higher role) to reach it.`,
+          )
+        const role = capRole(wanted, t.role)
+        const expiresAt = Date.now() + API_TOKEN_TTL_MS
+        const tok = await signApiToken(secret, ownerId, t.org, role, clientId ?? "", expiresAt)
+        const base = ctx.deps.baseUrl.replace(/\/$/, "")
+        return json({
+          target: "api",
+          token: tok,
+          workspace: t.org,
+          acts_as: role,
+          expires_in_minutes: Math.round(API_TOKEN_TTL_MS / 60_000),
+          base_url: base,
+          how:
+            `curl -sS -H "Authorization: Bearer ${tok}" "${base}/v1/artifacts?limit=1". ` +
+            "Spend it against any REST route this role can reach, in THIS workspace only. " +
+            "It expires on its own and is not refreshable — mint another when it lapses.",
+          note: "A real credential: it is not redacted from this transcript, so treat it like one. Its blast radius is one workspace, one role, minutes — and removing the user from the workspace kills it immediately.",
+        })
+      }
 
       if (target === "asset") {
         // A binary an embedding doc references — the former stage_asset path, verbatim.
