@@ -115,13 +115,20 @@ export const exchangeSlackOidc = async (
   return { accessToken: data.access_token }
 }
 
-/** The linked Slack identity (openid.connect.userinfo). The identifying claims are namespaced
+/** The linked Slack identity (openid.connect.userInfo). The identifying claims are namespaced
  *  URL keys (`https://slack.com/user_id`, `.../team_id`) — read them literally. These are the
- *  same `U…`/`T…` ids the bot sees in events, which is what makes the link resolvable. */
+ *  same `U…`/`T…` ids the bot sees in events, which is what makes the link resolvable.
+ *
+ *  The method name is camelCase — `userInfo`, NOT `userinfo`. Slack's Web API method names are
+ *  case-sensitive, and the all-lowercase spelling this used to send returns `unknown_method`,
+ *  so account linking failed for every user from the day it shipped: the authorize and token
+ *  exchange both succeed, and only this last hop fails, which is why it read as an app-config
+ *  problem rather than a typo. Verified against the live API — `userinfo` → `unknown_method`,
+ *  `userInfo` → `invalid_auth` (i.e. the method exists and only the credential was rejected). */
 export const slackOidcUserinfo = async (
   accessToken: string,
 ): Promise<{ slackUserId: string; teamId: string; email: string | null }> => {
-  const res = await fetch(`${API}/openid.connect.userinfo`, {
+  const res = await fetch(`${API}/openid.connect.userInfo`, {
     headers: { authorization: `Bearer ${accessToken}` },
   })
   const data = (await res.json()) as {

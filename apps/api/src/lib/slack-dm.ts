@@ -1,8 +1,11 @@
 // Per-user Slack DMs: the same "email is for interrupts" policy as notify-email.ts
 // (mentions, review requests, shares — see that file's header), mirrored onto Slack.
-// The Slack user is resolved live from the recipient's Derive account email via
-// users.lookupByEmail (see lib/slack.ts resolveSlackUserIdByEmail) — no per-user OAuth or
-// account-linking step, just the workspace's one bot install. Rides the same durable
+// The Slack user is resolved from the account link when the recipient has one, and only
+// falls back to guessing by their Derive account email via users.lookupByEmail (see
+// lib/slack.ts resolveSlackUserIdByEmail) when they haven't linked. That fallback is
+// best-effort: an unmatched email is reported as delivered-but-skipped rather than a
+// failure, so a Derive address that differs from the Slack one drops the DM silently —
+// linking is what makes delivery reliable. Rides the same durable
 // outbox as the comment mirror (a `slack_dm` delivery kind). Self-host clean: no new env,
 // no scheduler — a DM is enqueued inline with the triggering action and delivered by the
 // outbox.
