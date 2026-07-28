@@ -16,6 +16,11 @@ export type { LinkRole, Listed, Role, WorkspaceAccess }
  *  the hand-mapped `Me`, same as profession/about below. */
 export interface Brandprint {
   collectionId?: string | null
+  /** Personal-layer only: false turns the workspace Brandprint off for this user
+   *  (their agents skip the org's conventions and profile; a personal collection
+   *  above still applies). Absent or true: the workspace layer applies. A
+   *  workspace's own settings never carry this field. */
+  useWorkspaceBrandprint?: boolean
 }
 /** Parse a Me.brandprint / SessionUser.brandprint JSON string; null if absent/malformed. */
 export const parseBrandprint = (raw: string | null | undefined): Brandprint | null => {

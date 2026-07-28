@@ -64,6 +64,8 @@ export function ReworkMenuItem({
       if (code === "needsAgent") onConnect()
       else if (code === "needsBrandprint") nav({ to: "/brandprint" })
       else if (code === "alreadyQueued") toast(ALREADY_QUEUED)
+      else if (code === "brandprintDisabled")
+        toast.error("Brandprint is turned off in your settings. Turn it on to rework.")
       else toast.error("Rework request failed — try again.")
     },
   })

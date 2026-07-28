@@ -4,6 +4,7 @@ import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { collectionsQuery, summaryQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { nextPersonalBrandprint } from "./personal-brandprint"
 import { placeholderFile } from "./profile-placeholder"
 
 // What the intake reports back: how many docs made it in, which files didn't, and
@@ -73,7 +74,11 @@ export function useBrandprintImport(
       if (scope === "account") {
         // Personal scope is a preferences layer: docs only, never a profile placeholder.
         if (!created) return { created, ok, failed }
-        const profile = await api.setProfile({ brandprint: { collectionId: target } })
+        // Merge, don't clobber: a caller with the workspace toggle off must keep that
+        // preference when their first personal collection gets created here.
+        const profile = await api.setProfile({
+          brandprint: nextPersonalBrandprint(me?.brandprint, { collectionId: target }),
+        })
         return { created, ok, failed, profile }
       }
       if (created) {
