@@ -535,7 +535,9 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
               id="brandprint-workspace-toggle"
               data-testid="brandprint-workspace-toggle"
               checked={me?.brandprint?.useWorkspaceBrandprint !== false}
-              disabled={toggleWorkspace.isPending || updateAccount.isPending}
+              disabled={
+                toggleWorkspace.isPending || updateAccount.isPending || importDocs.isPending
+              }
               onCheckedChange={(on) => toggleWorkspace.mutate(on)}
             />
           </SettingRow>
