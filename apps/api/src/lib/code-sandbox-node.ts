@@ -122,7 +122,7 @@ export const nodeSandbox = (): Sandbox => ({
             )
           return
         }
-        if (m.type === "done") finish({ value: clip(m.value), logs, toolCalls })
+        if (m.type === "done") finish({ value: clipValue(m.value), logs, toolCalls })
         if (m.type === "error") finish({ value: null, logs, toolCalls, error: String(m.error) })
       })
       worker.on("error", (e: unknown) =>
@@ -150,8 +150,12 @@ const safeJson = (v: unknown): string => {
 }
 
 /** Cap what crosses back into the model's context — returning a megabyte of JSON is the problem
- *  code mode exists to solve, not a feature of it. */
-const clip = (v: unknown): unknown => {
+ *  code mode exists to solve, not a feature of it.
+ *
+ *  Named clipVALUE, not clip: lib/clip.ts already owns `clip` for TEXT (it appends a
+ *  "…[truncated]" suffix to a string). This takes an arbitrary value and returns a structured
+ *  marker instead, so two different jobs should not share one name in the same app. */
+const clipValue = (v: unknown): unknown => {
   const s = safeJson(v)
   if (s.length <= MAX_RESULT_CHARS) return v
   return {

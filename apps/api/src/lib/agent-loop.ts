@@ -1,4 +1,11 @@
-import { parseRevision, REVISION_CONTRACT, REVISION_NUDGE, type Revision } from "@derive/core"
+import {
+  addCostUsd,
+  NUDGE_LIMIT,
+  parseRevision,
+  REVISION_CONTRACT,
+  REVISION_NUDGE,
+  type Revision,
+} from "@derive/core"
 
 /**
  * The in-Worker agent loop — Basic execution without a container.
@@ -93,12 +100,15 @@ export const runAgentLoop = async (input: AgentLoopInput): Promise<AgentLoopResu
   const messages: ModelMessage[] = [{ role: "user", content: input.prompt }]
   // Accumulated across EVERY turn, including the ones that end in failure — a run that burned
   // eight turns and produced nothing still cost money, and the budget sums what is reported.
+  // Shared with the container executor via @derive/core/run-policy: null means UNKNOWN, never
+  // zero, and attempts ACCUMULATE — a run that burned three turns for nothing still cost money.
   let costUsd: number | null = null
   const spend = (c: number | null) => {
-    if (typeof c === "number" && Number.isFinite(c)) costUsd = (costUsd ?? 0) + c
+    costUsd = addCostUsd(costUsd, c)
   }
   let turns = 0
-  let nudged = false
+  // NUDGE_LIMIT is the shared policy (one re-ask), not a local choice.
+  let nudges = 0
 
   while (turns < maxTurns) {
     turns += 1
@@ -139,8 +149,8 @@ export const runAgentLoop = async (input: AgentLoopInput): Promise<AgentLoopResu
     // A finished turn with no block. Nudge ONCE — models routinely describe the change instead
     // of emitting it, and one reminder recovers the work rather than discarding a completed run.
     // Twice would just pay again for the same failure.
-    if (!nudged) {
-      nudged = true
+    if (nudges < NUDGE_LIMIT) {
+      nudges += 1
       messages.push({ role: "assistant", content: turn.text })
       messages.push({ role: "user", content: REVISION_NUDGE })
       continue
