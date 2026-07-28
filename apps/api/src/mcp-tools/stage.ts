@@ -112,17 +112,22 @@ export function registerStageTool(tc: ToolContext): void {
         // scope-capped AND membership-capped upstream). `access` may only NARROW it —
         // asking for more is refused, naming whether the scope or the seat is short,
         // rather than silently minting something weaker than the caller asked for.
-        if (access && !roleAllows(t.role, ACCESS_ACTION[access]))
+        if (access && !roleAllows(t.role, ACCESS_ACTION[access])) {
+          // The RAW membership, not t.role — t.role is already capped BY the scope, so
+          // passing it would report a seat gap on every scope gap and send the caller to
+          // an admin who has nothing to fix. Read only on this refusal path.
+          const seat = await ctx.meta.getMembership(t.org, ownerId).catch(() => null)
           return err(
             scopeGapMessage({
               action: ACCESS_ACTION[access],
               scopeRole: scopeForCap,
-              memberRole: t.role,
+              memberRole: seat?.role ?? t.role,
               registered,
               baseUrl: ctx.deps.baseUrl,
             }) ??
               `This connection can't mint a "${access}" token here — it acts as ${t.role} in this workspace.`,
           )
+        }
         const role = capRole(access ? roleForAccess[access] : t.role, t.role)
         const expiresAt = Date.now() + API_TOKEN_TTL_MS
         const tok = await signApiToken(secret, ownerId, t.org, role, clientId, expiresAt)

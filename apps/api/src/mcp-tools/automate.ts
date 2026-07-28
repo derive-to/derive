@@ -74,17 +74,24 @@ export function registerAutomateTool(tc: ToolContext): void {
       // The refusal names WHICH lever is short — scope vs seat (see lib/scope-gap.ts) —
       // because they need opposite fixes and guessing wrong sends an agent hunting for a
       // second credential.
-      if (agent.role !== "owner")
+      if (agent.role !== "owner") {
+        // The RAW membership, not agent.role — that one is already capped BY the scope,
+        // so passing it would report a seat gap on every scope gap and send the caller to
+        // an admin with nothing to fix. Read only on this refusal path.
+        const seat = tc.ownerId
+          ? await meta.getMembership(defaultOrg, tc.ownerId).catch(() => null)
+          : null
         return json({
           error:
             scopeGapMessage({
               action: "manage",
               scopeRole: scopeForCap,
-              memberRole: agent.role,
+              memberRole: seat?.role ?? agent.role,
               registered,
               baseUrl: ctx.deps.baseUrl,
             }) ?? "automations need a manage-level (owner) grant",
         })
+      }
       const org = defaultOrg
 
       if (input.action === "list") {

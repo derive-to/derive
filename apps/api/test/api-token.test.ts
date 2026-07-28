@@ -396,12 +396,18 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("stage target:'api' over /m
 
   it("can't mint above the grant's scope, and says which lever is short", async () => {
     const a = granted("api-mcp-ceiling")
-    // The human is an OWNER of ws_g, but this grant was consented publish-only — so
-    // manage is out of reach and the SCOPE is what's short, not the seat.
+    // The human is an OWNER of ws_g, but this grant was consented publish-only — so the
+    // SCOPE is short and the seat is fine. REGRESSION (found by dogfooding on a live
+    // server, not by these tests): the refusal used to pass the already-scope-capped
+    // role as the membership, so a pure scope gap reported as a seat gap too and sent
+    // the caller to an admin who had nothing to fix — the exact wrong-lever answer this
+    // feature exists to prevent.
     const refused = await mcp(a, "grant_publish", { target: "api", access: "manage" })
     expect(refused.isError).toBe(true)
     expect(refused.text).toContain("derive:manage")
     expect(refused.text).not.toContain("admin has to raise")
+    expect(refused.text).not.toContain("both are below")
+    expect(refused.text).toContain("your membership would allow it")
     // The same grant can still mint at or below what it holds.
     const ok = await mcp(a, "grant_publish", { target: "api", access: "publish" })
     expect(ok.isError).toBe(false)
