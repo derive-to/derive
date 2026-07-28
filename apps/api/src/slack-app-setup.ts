@@ -17,9 +17,14 @@ export const buildSlackManifest = (baseUrl: string) => {
   const u = (path: string): string => new URL(path, baseUrl).toString()
   return {
     display_information: {
+      // Slack hard-caps this at 140 characters and REJECTS the whole manifest past it
+      // (apps.manifest.validate → invalid_manifest / failed_constraint). This read 156 and
+      // so could never be pasted into "Create from manifest" — the setup page handed every
+      // deployer a manifest Slack refused. Kept under the cap with headroom; the test below
+      // pins it, the same way the 35-char name cap is pinned.
       name: "Derive",
       description:
-        "Get Derive comments, publishes and proposal updates in a Slack channel, reply back from the thread, and DM members for mentions, review requests and shares.",
+        "Derive comments, publishes and proposal updates in a Slack channel. Reply from the thread; DMs for mentions, review requests and shares.",
       background_color: "#1a1a2e",
     },
     features: {
@@ -42,7 +47,15 @@ export const buildSlackManifest = (baseUrl: string) => {
     settings: {
       event_subscriptions: {
         request_url: u("/v1/slack/events"),
-        bot_events: ["message.channels", "message.groups", "message.im"],
+        // Public + private channels only. `message.im` was subscribed here but is
+        // unreachable by design: /v1/slack/events gates every reply on a slack_thread_link
+        // lookup (channel + thread_ts), and links are written ONLY by the channel
+        // comment-mirror — slack-dm.ts never writes one. So a DM could never match, while
+        // Slack still refused the manifest over it ("message.im event is missing scope(s):
+        // im:history"). Dropping the event fixes that without asking to READ users' DMs for
+        // a path that ignores them. When the assistant increment lands, add the event and
+        // im:history together.
+        bot_events: ["message.channels", "message.groups"],
       },
       // Buttons on comment cards (resolve / reopen a thread) POST here.
       interactivity: {
