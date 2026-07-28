@@ -41,11 +41,14 @@ response is NORMAL, not an error. A settled session is normally `answered`; it c
 give it again). Results cite artifact short_ids you can then `read`. If the agent is offline,
 the session waits and runs when it comes back.
 
-## Running a context (you ARE its agent — bring your own agent)
+## Running a context (its agent — or its owner)
 
-If your token is a context's agent (a Claude Code or codex session wired up to run it), you run
-it through the SAME `use` tool — no daemon. A give always carries an instruction, so a bare
-`use({ context })` unambiguously means "I'm the agent — hand me my work." Loop:
+Two principals serve a context through the SAME `use` tool — no daemon. Its registered agent
+(a Claude Code or codex session connected with the context's `dk_agt_` token), or — OWNER-RUN —
+any session whose user holds the owner seat in the context's workspace: the person who wired it
+up runs it from the grant they already have, no second token. A give always carries an
+instruction, so a bare `use({ context })` unambiguously means "I'm the runner — hand me my
+work." Loop:
 
 - **PULL work:** `use({ context })` (a context you run, NO instruction). It atomically claims up
   to the next 10 waiting sessions (flips them to `working` and leases them, so two runners never
@@ -62,3 +65,12 @@ it through the SAME `use` tool — no daemon. A give always carries an instructi
 Pulling is capped by the context's concurrency (default 1: you claim exactly what you work on
 now, so a crash strands one session, not a batch). A crashed claim self-heals once its lease
 lapses — the next pull re-serves it.
+
+## Creating a context (owners)
+
+`automate` with `action: "create_context"` wires a new context in one call: `name` +
+`manifest_short_id` (an artifact in this workspace — the context's instructions), optional
+`max_run_ms` (per-run budget) and `max_concurrency`. Its agent auto-mints managed; the token is
+NOT returned (an MCP transcript is a bad place for a standing secret) — as an owner you run the
+context directly via owner-run, and a dedicated runner's token comes from REST when needed.
+New contexts start `ask_policy: "invited"` (creator-only); widen who may ask from the console.

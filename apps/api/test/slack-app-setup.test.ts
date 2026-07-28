@@ -18,16 +18,31 @@ describe("buildSlackManifest", () => {
   })
 
   it("is born with the events that drive two-way comment sync", () => {
-    // message.channels/groups/im back reply-back across public, private, and DM channels.
+    // message.channels/groups back reply-back across public and private channels.
     expect(m.settings.event_subscriptions.bot_events).toEqual(
-      expect.arrayContaining(["message.channels", "message.groups", "message.im"]),
+      expect.arrayContaining(["message.channels", "message.groups"]),
     )
+  })
+
+  // Regression: message.im was subscribed but is unreachable — /v1/slack/events keys every
+  // reply on a slack_thread_link (channel + thread_ts) and only the channel comment-mirror
+  // writes those, never slack-dm.ts. Slack rejected the manifest over the missing im:history
+  // scope, and granting it would mean asking to READ users' DMs for a path that ignores them.
+  it("does not subscribe to DM messages it cannot act on (and so needs no im:history)", () => {
+    expect(m.settings.event_subscriptions.bot_events).not.toContain("message.im")
+    expect(m.oauth_config.scopes.bot).not.toContain("im:history")
   })
 
   it("declares the scopes posting, reply-back, and mention-DM email resolution need", () => {
     expect(m.oauth_config.scopes.bot).toEqual(
       expect.arrayContaining(["chat:write", "channels:history", "users:read.email", "im:write"]),
     )
+  })
+
+  // Regression: /derive shipped in #454 but `commands` was never added, so Slack refused the
+  // manifest ("Slash Commands requires `commands` bot scope") — the app was uncreatable.
+  it("declares the commands scope its slash command requires", () => {
+    expect(m.oauth_config.scopes.bot).toContain("commands")
   })
 
   it("declares private-channel history scopes to match the message.groups subscription", () => {
@@ -52,6 +67,14 @@ describe("buildSlackManifest", () => {
   it("is named just Derive (Slack caps the app name at 35 chars)", () => {
     expect(m.display_information.name).toBe("Derive")
     expect(m.display_information.name.length).toBeLessThanOrEqual(35)
+  })
+
+  // Regression: this field shipped at 156 chars, and Slack rejects the WHOLE manifest over
+  // 140 (invalid_manifest / failed_constraint on /display_information/description). The app
+  // could not be created from it at all — caught only by posting the real manifest to
+  // apps.manifest.validate. The name cap above was pinned; this neighbouring one was not.
+  it("keeps the description within Slack's 140-char manifest cap", () => {
+    expect(m.display_information.description.length).toBeLessThanOrEqual(140)
   })
 })
 

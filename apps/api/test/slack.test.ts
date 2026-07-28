@@ -6,7 +6,7 @@ import { type ArtifactRecord, newId, type SlackThreadLinkRecord } from "@derive/
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { describe, expect, it } from "vitest"
 import { parseMeta } from "../src/lib/comments"
-import { slackAuthorizeUrl, verifySlackSignature } from "../src/lib/slack"
+import { slackAuthorizeUrl, slackOidcUserinfo, verifySlackSignature } from "../src/lib/slack"
 import { ingestSlackReply } from "../src/lib/slack-comments"
 
 describe("slack signature verification", () => {
@@ -104,5 +104,37 @@ describe("slack reply ingestion (inbound)", () => {
     const args = { ts: "1700.4", userId: "U1", userName: "X", text: "hi", botUserId: "UBOT" }
     expect(await ingestSlackReply(meta, link, args)).toBeTruthy()
     expect(await ingestSlackReply(meta, link, args)).toBe(null)
+  })
+})
+
+// Regression: this called `openid.connect.userinfo` (all lowercase). Slack's Web API method
+// names are case-sensitive, so it returned `unknown_method` and account linking failed for
+// every user from the day it shipped — silently, because the authorize and token exchange both
+// succeed and only this last hop dies. It went unnoticed because the route test's fetch stub
+// matched the same lowercase typo. Verified against the live API: `userinfo` -> unknown_method,
+// `userInfo` -> invalid_auth (the method exists, only the credential was rejected).
+describe("slack OIDC userinfo", () => {
+  it("calls Slack's camelCase openid.connect.userInfo, not the lowercase spelling", async () => {
+    const seen: string[] = []
+    const original = globalThis.fetch
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      seen.push(String(url))
+      return new Response(
+        JSON.stringify({
+          "https://slack.com/user_id": "U1",
+          "https://slack.com/team_id": "T1",
+          email: "a@b.c",
+        }),
+        { status: 200 },
+      )
+    }) as typeof fetch
+    try {
+      await slackOidcUserinfo("xoxp-test")
+    } finally {
+      globalThis.fetch = original
+    }
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toContain("openid.connect.userInfo")
+    expect(seen[0]).not.toContain("openid.connect.userinfo")
   })
 })

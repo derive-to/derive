@@ -28,16 +28,31 @@ describe("looksLikeHtmlDocument", () => {
     expect(looksLikeHtmlDocument("")).toBe(false)
   })
 
-  it("is false for an HTML fragment (not a whole document)", () => {
-    // A snippet is not a document; rendering it as markdown is correct.
-    expect(looksLikeHtmlDocument("<div>fragment</div>")).toBe(false)
-    expect(looksLikeHtmlDocument("<p>a paragraph</p>")).toBe(false)
-    expect(looksLikeHtmlDocument("<h1>title</h1>")).toBe(false)
+  it("detects a headless designed page by its head/meta/style openers", () => {
+    // The 2026-07 dogfood miss: a styled report opening with <meta>/<style> (no
+    // doctype) rendered its CSS as visible text through the markdown path.
+    expect(looksLikeHtmlDocument('<meta name="viewport" content="width=device-width" />')).toBe(
+      true,
+    )
+    expect(looksLikeHtmlDocument("<style>body{color:red}</style><p>x</p>")).toBe(true)
+    expect(looksLikeHtmlDocument("<head><title>t</title></head>")).toBe(true)
+    expect(looksLikeHtmlDocument("<body><h1>hi</h1></body>")).toBe(true)
   })
 
-  it("only inspects the very start: a leading comment or XML prolog hides the doc", () => {
-    // Documented limitation — detection keys on the first non-space token.
-    expect(looksLikeHtmlDocument("<!-- note --><!doctype html><html></html>")).toBe(false)
+  it("skips leading HTML comments; the comment alone never decides", () => {
+    expect(looksLikeHtmlDocument("<!-- generated --><!doctype html><html></html>")).toBe(true)
+    expect(looksLikeHtmlDocument('<!-- a -->\n<!-- b -->\n<meta charset="utf-8" />')).toBe(true)
+    // Markdown that merely opens with a comment stays markdown.
+    expect(looksLikeHtmlDocument("<!-- prettier-ignore -->\n# Heading\n\nprose")).toBe(false)
+    expect(looksLikeHtmlDocument("<!-- unterminated comment")).toBe(false)
+  })
+
+  it("is false for ambiguous fragments — how HTML-flavored Markdown opens", () => {
+    // A centered README opens with <div align="center">; a snippet with <p>/<h1>.
+    // Rendering those as markdown is correct.
+    expect(looksLikeHtmlDocument('<div align="center">fragment</div>')).toBe(false)
+    expect(looksLikeHtmlDocument("<p>a paragraph</p>")).toBe(false)
+    expect(looksLikeHtmlDocument("<h1>title</h1>")).toBe(false)
     expect(looksLikeHtmlDocument('<?xml version="1.0"?><svg></svg>')).toBe(false)
   })
 })

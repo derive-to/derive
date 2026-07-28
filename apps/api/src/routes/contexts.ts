@@ -335,6 +335,15 @@ export const contextRoutes = (ctx: AppContext) => {
           // an existing (service) agent instead.
           agent_id: z.string().optional(),
           manifest_short_id: z.string(),
+          // Same knobs (and bounds) as the MCP create_context action: per-run
+          // budget and runner parallelism. Omitted → the store defaults.
+          max_run_ms: z
+            .number()
+            .int()
+            .min(30_000)
+            .max(6 * 60 * 60_000)
+            .optional(),
+          max_concurrency: z.number().int().min(1).max(10).optional(),
         }),
       )
       if (b instanceof Response) return bail(b)
@@ -378,6 +387,8 @@ export const contextRoutes = (ctx: AppContext) => {
           agent_id: agentId,
           manifest_artifact_id: manifest.id,
           created_by: owner,
+          max_run_ms: b.max_run_ms ?? null,
+          ...(b.max_concurrency ? { max_concurrency: b.max_concurrency } : {}),
         })
         return c.json(
           {

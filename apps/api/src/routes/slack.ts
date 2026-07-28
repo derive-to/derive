@@ -69,10 +69,13 @@ export const slackRoutes = (ctx: AppContext) => {
   // Run best-effort work AFTER we've acked Slack (which demands a reply within 3s). On Workers,
   // executionCtx.waitUntil keeps the isolate alive until it settles; Node has no executionCtx, so
   // the promise just runs in-process. Either way a terminal .catch() is attached FIRST: an
-  // unawaited reject (e.g. a lookup throwing inside a deferred proposal action) would otherwise
-  // surface as an unhandledRejection — and under Node's default that can take down the process.
+  // unawaited reject (e.g. a lookup throwing inside a deferred proposal action, which runs its
+  // early lookups outside its own try/catch) would otherwise escape as an unhandledRejection.
+  // Not fatal here — node.ts installs a log-only last-resort handler — but that logs a bare,
+  // contextless line and only exists on the Node path; catching at the call site attributes the
+  // failure to the Slack deferral on both runtimes instead of leaning on the global net.
   const runAfterAck = (c: Context, work: Promise<unknown>): void => {
-    const guarded = Promise.resolve(work).catch((err) =>
+    const guarded = work.catch((err) =>
       log.warn("slack deferred work failed", { err: String(err) }),
     )
     try {

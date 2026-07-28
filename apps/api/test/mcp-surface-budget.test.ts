@@ -26,7 +26,11 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // description cap sits ~13% above the measured result; the instructions cap is deliberately
 // generous (the high-level block is finalized by hand in review) yet still below the old fat
 // prose so a regression to it fails here.
-const TOOL_DESCRIPTIONS_BUDGET = 8000
+// Raised 8000 → 8250 with contexts management: `automate` (the 11th tool) grew a
+// create_context sentence and `use` a run-a-context-you-serve steer (owner-run). Measured
+// ~8.06k after trimming — the cap keeps a tight ~2% headroom, so the next addition still
+// has to argue for its chars.
+const TOOL_DESCRIPTIONS_BUDGET = 8250
 const INSTRUCTIONS_BUDGET = 2400
 
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))

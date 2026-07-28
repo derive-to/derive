@@ -3,7 +3,7 @@ import { z } from "zod"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import type { ToolContext } from "../mcp-tool-context"
 import { ANSWER_MAX, clipSessionText, ENTRY_MAX, err, json, runnerOnline } from "../mcp-util"
-import { runnerDispatch } from "./use-runner"
+import { ownerRunsOrg, runnerDispatch } from "./use-runner"
 
 // USE A CONTEXT — query a workspace's live data agents ------------------------
 // Contexts are askable agent setups (a registered agent wired to a manifest, answering
@@ -12,15 +12,16 @@ import { runnerDispatch } from "./use-runner"
 // roster, re-checked per call via canUserAskContext) is the ONLY gate, so an agent can
 // reach exactly what its human can, and nothing more. Discovery is `find` (contexts ride
 // the browse/search results); a connection with no known human is refused at call time.
-// Management (create/rewire/delete) deliberately has no MCP path. (askableContexts /
-// runnerOnline live in mcp-tool-context / mcp-util — shared with find's context rows.)
+// Management lives on `automate` (create_context), owner grants only; rewire/delete
+// deliberately stay REST. (askableContexts / runnerOnline live in mcp-tool-context /
+// mcp-util — shared with find's context rows.)
 
 const NO_HUMAN =
   "Using a context opens a session on a human's behalf, and this connection has no acting human. " +
   "Reconnect with an OAuth login (or a token registered by a user) to use one."
 
 export function registerUseTool(tc: ToolContext): void {
-  const { server, ctx, actingFor, registered, askableContexts, inGrant, resolveWs, wsArg } = tc
+  const { server, ctx, actingFor, askableContexts, inGrant, resolveWs, wsArg } = tc
 
   // (Listing the askable contexts now lives in `find` — they ride the browse/search rows.)
 
@@ -34,10 +35,10 @@ export function registerUseTool(tc: ToolContext): void {
         "task; always name the target, e.g. 'for Acme'). FOLLOW UP: `session_id` + `instruction`. " +
         "CHECK/RESUME: `session_id` alone. The call waits up to `wait` seconds (default 25) for the " +
         "result; real runs take minutes and STREAM, so a still-working response is NORMAL — re-call " +
-        "with the returned session_id until it settles. RUN a context you are the agent for: " +
-        "`use({context})` with no instruction PULLS your queued work; `use({session_id, answer})` " +
-        "reports back (+ `progress` / `state` / `result_artifact_id`). For the modes and the runner " +
-        "loop, read derive://skills/contexts.",
+        "with the returned session_id until it settles. RUN a context you serve: `use({context})` " +
+        "with no instruction PULLS queued work; " +
+        "`use({session_id, answer})` reports back (+ `progress` / `state` / `result_artifact_id`). " +
+        "For the modes and the runner loop, read derive://skills/contexts.",
       inputSchema: {
         context: z
           .string()
@@ -127,11 +128,13 @@ export function registerUseTool(tc: ToolContext): void {
       answers,
       workspace,
     }) => {
-      // RUN MODE — a registered agent acting on a context it is the AGENT FOR needs no
-      // acting human (it acts as itself): runnerDispatch handles REPORT/PULL and returns a
-      // result, or null when this isn't a runner op, so it falls through to the give path
-      // below and the human surface is unchanged. (See mcp-tools/use-runner.ts.)
-      if (registered) {
+      // RUN MODE — dispatched by ownership: a registered agent on a context it is the
+      // AGENT FOR (needs no acting human — it acts as itself), or OWNER-RUN, a grant
+      // whose human holds the owner seat in the context's workspace. runnerDispatch
+      // handles REPORT/PULL and returns a result, or null when this isn't a runner op,
+      // so it falls through to the give path below and every other grant's surface is
+      // unchanged. (See mcp-tools/use-runner.ts.)
+      {
         const ran = await runnerDispatch(tc, {
           context,
           instruction,
@@ -141,6 +144,7 @@ export function registerUseTool(tc: ToolContext): void {
           state,
           result_artifact_id,
           answers,
+          workspace,
         })
         if (ran) return ran
       }
@@ -216,11 +220,17 @@ export function registerUseTool(tc: ToolContext): void {
         const resultUrl = s.result_artifact_id
           ? `${base}/artifacts/${s.result_artifact_id}`
           : undefined
+        // A queue with no live runner is a dead end for most askers — but its OWNER can
+        // just serve it (owner-run), so steer them there instead of telling them to wait.
+        // Registered agents keep the wait text: their bare use({context}) pull only
+        // reaches contexts they are the agent for.
         const note =
           s.state === "open"
             ? runnerOnline(x)
               ? "Queued — re-call use with this session_id (+ wait) to collect the answer."
-              : "Queued, but the context's runner looks OFFLINE — it answers when it comes back. Re-call use with this session_id later."
+              : (await ownerRunsOrg(tc, x.org_id))
+                ? `Queued, and no runner is polling this context's queue — but you own this workspace, so you can serve it yourself: use({context: "${x.name}"}) with no instruction pulls the queued work (see derive://skills/contexts).`
+                : "Queued, but the context's runner looks OFFLINE — it answers when it comes back. Re-call use with this session_id later."
             : s.state === "working"
               ? "In progress — the runner is working. Re-call use with this session_id (+ wait) to keep watching; the result link fills in as it goes."
               : s.state === "escalated"
