@@ -288,6 +288,45 @@ while every other path serves a static file or the SPA shell. `pnpm build:web` b
 apps/web and preps the output (writes `index.html`, drops the Pages-only `_redirects`
 catch-all that otherwise hijacks `/assets/*`); see `apps/api/scripts/prep-edge-assets.mjs`.
 
+### Upgrading an existing D1 database
+
+New D1 databases get the current shape from `deploy/d1-schema.sql` and need nothing extra.
+An **existing** one predating document chat still has `context_id NOT NULL` on
+`context_session`, and a chat session has no context — so those sessions fail to insert
+until you run the one-shot relaxation:
+
+```
+wrangler d1 execute <db> --remote --file=deploy/relax-context-session-d1.sql
+```
+
+Run it ONCE. It rebuilds the table (SQLite has no `ALTER COLUMN`), holding foreign keys
+until COMMIT so a session whose context was deleted cannot abort the migration. Postgres
+and self-host SQLite need no manual step: the former rides `deploy:pg-schema`, the latter
+runs the same rebuild guarded at boot. Check whether you need it with:
+
+```
+wrangler d1 execute <db> --remote --command "SELECT sql FROM sqlite_master WHERE name='context_session'"
+```
+
+### Chat (beta, off by default)
+
+Chat is gated per workspace by `chatBeta` and ships **off**, enforced server-side — the
+route 404s for a workspace that has not opted in, so a stray build cannot expose it. Turn
+it on for one workspace with `PATCH /v1/workspace/settings {"chatBeta": true}`.
+
+It also needs a model. Set all three as Worker secrets, or chat answers honestly that none
+is configured:
+
+```
+wrangler secret put DERIVE_MODEL_BASE_URL   # e.g. https://api.fireworks.ai/inference/v1
+wrangler secret put DERIVE_MODEL_API_KEY
+wrangler secret put DERIVE_MODEL_NAME       # the provider's own model id
+```
+
+This key pays for every attended turn on the deployment, so it is an operator decision
+rather than a per-user one. Unattended automation runs are unaffected — they still resolve
+their own credential through the payer chain.
+
 ### Semantic search (optional)
 
 Workspace search is lexical (SQLite/D1 FTS + Postgres tsvector) everywhere by default. You can add a
