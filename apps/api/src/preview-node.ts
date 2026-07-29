@@ -9,6 +9,8 @@ export const playwrightRenderer = (): Renderer => ({
     try {
       const context = await browser.newContext({
         viewport: { width: opts.width, height: opts.height },
+        // Below 1 for the full-page variants: fewer pixels is what bounds the shot.
+        ...(opts.deviceScaleFactor ? { deviceScaleFactor: opts.deviceScaleFactor } : {}),
       })
       const page = await context.newPage()
       await page.goto(url, { waitUntil: "networkidle", timeout: opts.timeoutMs })
