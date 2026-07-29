@@ -386,6 +386,8 @@ const hostedDispatch = cfg.hostedRuns
               gateway: modelGateway() ?? undefined,
             })
           : nodeSubstrate({ bin: cfg.runnerBin }),
+      // Sessions keep the child-process substrate whatever runs use: the loop serves RUNS only.
+      sessionSubstrate: nodeSubstrate({ bin: cfg.runnerBin }),
       server: cfg.baseUrl,
       secret: authSecret,
     }

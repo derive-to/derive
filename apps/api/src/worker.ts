@@ -480,16 +480,20 @@ async function withHostedDispatch(
   // below, without which the isolate is torn down the moment dispatch returns and the run dies
   // mid-model-call. Anything needing a shell or git still wants the container, so that stays the
   // default and the flag is the opt-in — off means derive.to behaves exactly as it does today.
+  const container = containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
   const substrate =
     env.DERIVE_LOOP_RUNS === "1"
       ? loopSubstrate({ model: env.DERIVE_MODEL_NAME, waitUntil })
-      : containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
+      : container
   const secret = env.DERIVE_AUTH_SECRET
   if (!substrate || !secret) return
   const scoped = () =>
     fn({
       meta: env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1),
       substrate,
+      // Sessions keep the container: the loop substrate serves RUNS only (see
+      // DispatchDeps.sessionSubstrate), and asks are already live on this deployment.
+      ...(container ? { sessionSubstrate: container } : {}),
       server: env.BASE_URL ?? "",
       secret,
     })

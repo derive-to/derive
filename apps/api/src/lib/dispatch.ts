@@ -45,6 +45,12 @@ export interface Substrate {
 export interface DispatchDeps {
   meta: MetaStore
   substrate: Substrate
+  /** Substrate for SESSIONS, when they cannot run on the same one as runs. Defaults to
+   *  `substrate`. The loop substrate claims over `/v1/agent/runs/claim` and matches the id
+   *  against the runs it gets back, so handing it a session id is a silent no-op — the session
+   *  is never served and dies at the give-up horizon. Anything that selects the loop for runs
+   *  must therefore leave sessions on a substrate that can actually serve them. */
+  sessionSubstrate?: Substrate
   /** The API base URL handed to each executor. */
   server: string
   /** DERIVE_AUTH_SECRET / encryptionKey — signs the capability tokens. */
@@ -84,7 +90,8 @@ const startOne = async (
   expMs: number,
 ): Promise<void> => {
   const token = await signWorkToken(kind, deps.secret, item.id, item.agentId, item.orgId, expMs)
-  await deps.substrate.start({ runId: item.id, token, server: deps.server })
+  const substrate = kind === "session" ? (deps.sessionSubstrate ?? deps.substrate) : deps.substrate
+  await substrate.start({ runId: item.id, token, server: deps.server })
 }
 
 /**
