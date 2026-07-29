@@ -325,6 +325,24 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "claude-sonnet-5",
   },
   {
+    name: "DERIVE_MODEL_BASE_URL",
+    group: "advanced",
+    doc: "Root of an OPENAI-COMPATIBLE model endpoint (Fireworks, OpenRouter, Together, a\nself-hosted gateway); `/chat/completions` is appended. Setting it points every in-process\nrun on this deploy at that endpoint instead of the Anthropic Messages API.\n\nIt BYPASSES THE PAYER CHAIN on purpose: one ambient key means the operator pays for\neveryone on the instance, which is right for a single-tenant box and wrong for a\nmulti-tenant host — so derive.to does not set it. Requires DERIVE_MODEL_API_KEY and\nDERIVE_MODEL_NAME; all three or none.",
+    example: "https://api.fireworks.ai/inference/v1",
+  },
+  {
+    name: "DERIVE_MODEL_API_KEY",
+    group: "advanced",
+    doc: "Bearer token for DERIVE_MODEL_BASE_URL. Read by the API process only and never forwarded\ninto a CLI runner's environment, so it cannot redirect a coding agent's credentials.",
+    example: "sk-...",
+  },
+  {
+    name: "DERIVE_MODEL_NAME",
+    group: "advanced",
+    doc: "Model id to send to DERIVE_MODEL_BASE_URL, exactly as that provider names it.",
+    example: "accounts/fireworks/models/deepseek-v4-flash",
+  },
+  {
     name: "DERIVE_RUNNER_BIN",
     group: "advanced",
     doc: "Path to the derive CLI the hosted-runs worker spawns (read only when\nDERIVE_HOSTED_RUNS is on). Unset = `derive` on PATH.",

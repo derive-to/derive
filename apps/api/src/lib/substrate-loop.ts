@@ -3,6 +3,7 @@ import { log } from "../log"
 import { type AgentLoopInput, type LoopTool, runAgentLoop } from "./agent-loop"
 import type { Substrate } from "./dispatch"
 import { anthropicModel } from "./model-anthropic"
+import { openAiCompatModel } from "./model-openai"
 
 /**
  * The LOOP substrate: execute a run here, in the API process, with no container.
@@ -37,6 +38,15 @@ export interface LoopSubstrateOptions {
   callModel?: AgentLoopInput["callModel"]
   /** Model id for the resolved-credential path. */
   model?: string
+  /** An OPERATOR-CONFIGURED OpenAI-compatible endpoint (Fireworks, OpenRouter, a self-hosted
+   *  gateway). When set, every run on this deploy calls it with this key instead of resolving a
+   *  per-run credential.
+   *
+   *  That BYPASSES THE PAYER CHAIN by design, and it is why this is a self-host/dev affordance
+   *  rather than something derive.to sets: one ambient key means the operator pays for everyone
+   *  on the instance, which is the correct model for a single-tenant box and the wrong one for a
+   *  multi-tenant host. See the Node caveat in the status doc. */
+  gateway?: { baseUrl: string; apiKey: string; model: string }
   /** Cloudflare's `ctx.waitUntil`, so a Worker does not tear the isolate down mid-run. Absent on
    *  Node, where nothing collects the process out from under us. */
   waitUntil?: (p: Promise<unknown>) => void
@@ -144,7 +154,18 @@ const serveOneRun = async (
   // WHOSE PLAN PAYS: resolved per run through the payer chain (initiator → owner-lend → pool),
   // over the same endpoint the container executor calls. A run with nothing to bill fails here
   // rather than silently running on someone else's key.
+  //
+  // UNLESS the operator configured a gateway, which is the single-tenant escape hatch: one
+  // ambient key for the whole box, no per-run resolution and no chain. Checked BEFORE the
+  // credential call so a self-host with no connected plan still works at all.
   let callModel = opts.callModel
+  if (!callModel && opts.gateway) {
+    callModel = openAiCompatModel({
+      baseUrl: opts.gateway.baseUrl,
+      apiKey: opts.gateway.apiKey,
+      model: opts.gateway.model,
+    })
+  }
   if (!callModel) {
     const cred = await json<{
       credential: { kind: string; value: string } | null

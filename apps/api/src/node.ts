@@ -349,6 +349,24 @@ const syncRunner = createNodeSyncRunner(meta, blobs, authSecret)
 // each due run as a `derive runner run` child process on this box, so an automation updates its
 // artifact with no separate machine and no polling runner. Off by default because it spawns
 // processes and spends the run initiator's model plan; a deployment opts in deliberately. When
+/** An operator-configured OpenAI-compatible endpoint, or null. ALL THREE vars or none: a base URL
+ *  with no key would 401 every run, and a key with no model id would send an empty model — both
+ *  are silent-at-boot, loud-at-3am failures, so an incomplete set is treated as unset and warned
+ *  about once here. */
+const modelGateway = (): { baseUrl: string; apiKey: string; model: string } | null => {
+  const baseUrl = process.env.DERIVE_MODEL_BASE_URL
+  const apiKey = process.env.DERIVE_MODEL_API_KEY
+  const model = process.env.DERIVE_MODEL_NAME
+  if (baseUrl && apiKey && model) return { baseUrl, apiKey, model }
+  if (baseUrl || apiKey || model)
+    log.warn("model gateway ignored: set DERIVE_MODEL_BASE_URL, _API_KEY and _NAME together", {
+      baseUrl: !!baseUrl,
+      apiKey: !!apiKey,
+      model: !!model,
+    })
+  return null
+}
+
 // off, runs stay queued for a polling `derive runner` exactly as before.
 const hostedDispatch = cfg.hostedRuns
   ? {
@@ -362,7 +380,10 @@ const hostedDispatch = cfg.hostedRuns
       // this API, so there is no platform branch and nothing to keep in step between the two.
       substrate:
         process.env.DERIVE_LOOP_RUNS === "1"
-          ? loopSubstrate({ model: process.env.DERIVE_LOOP_MODEL })
+          ? loopSubstrate({
+              model: process.env.DERIVE_LOOP_MODEL,
+              gateway: modelGateway() ?? undefined,
+            })
           : nodeSubstrate({ bin: cfg.runnerBin }),
       server: cfg.baseUrl,
       secret: authSecret,
