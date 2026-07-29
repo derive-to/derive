@@ -374,6 +374,14 @@ describe("dispatch loop — deterministic simulation", () => {
   // on the first handful, and forty cost 28s of every CI run for exploration that was mostly
   // re-treading the same shapes. If a regression ever slips through, widen this and re-run —
   // seeds are reproducible, so a wider search is a one-line change, not an investigation.
+  // 🚩 KNOWN FLAKE, under `test:pg` only. Seed 1014 has failed the "resurrected" invariant on
+  // roughly half of full pg runs and passes on the rest; the sqlite lane has never failed it.
+  // The seeds are fixed and the PRNG is deterministic, so an intermittent failure on ONE seed
+  // cannot be a deterministic bug in the code under test — it is a race between this harness
+  // and a real Postgres (the sim drives virtual time while the store keeps real timestamps and
+  // real transaction visibility). Worth chasing, because the invariant it guards is real: a
+  // settled run returning to `running` means a finished automation republishes. Do not silence
+  // it by dropping the seed — reproduce it under pg and find the race.
   const SEEDS = Array.from({ length: 12 }, (_, i) => 1000 + i * 7)
   it.each(SEEDS)("holds every invariant under interleaving (seed %i)", async (seed) => {
     await simulate(seed, 200)

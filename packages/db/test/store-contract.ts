@@ -1557,6 +1557,56 @@ export function runStoreContract(
       })
     }
 
+    // The ATTENDED (chat) claim. A contextless session has no agent to check ownership through,
+    // so this is its only mutual exclusion — and a primitive that works on one driver and not
+    // another is worse than none, which is why it lives in the contract rather than a
+    // sqlite-only test. Every driver runs these.
+    it("claimAttendedSession: one winner, no double-claim, reclaim after lapse", async () => {
+      const mk = async (id: string) =>
+        store.createSession({
+          id,
+          context_id: null,
+          context_version: null,
+          org_id: ORG,
+          asker_id: "rob",
+          subject_ref: JSON.stringify({ kind: "artifact", id: "doc1" }),
+        })
+      const soon = () => new Date(Date.now() + 60_000).toISOString()
+
+      // Ten concurrent callers — two tabs hitting send at once, or a retry after a timeout.
+      const raceId = uuid()
+      await mk(raceId)
+      const claims = await Promise.all(
+        Array.from({ length: 10 }, () => store.claimAttendedSession(raceId, soon())),
+      )
+      expect(claims.filter(Boolean)).toHaveLength(1)
+
+      // A live lease is not re-claimable.
+      expect(await store.claimAttendedSession(raceId, soon())).toBeNull()
+
+      // A LAPSED lease is: otherwise a process that died mid-turn strands the session and the
+      // UI polls it forever.
+      const deadId = uuid()
+      await mk(deadId)
+      expect(
+        await store.claimAttendedSession(deadId, new Date(Date.now() - 1000).toISOString()),
+      ).not.toBeNull()
+      expect(await store.claimAttendedSession(deadId, soon())).not.toBeNull()
+
+      // Fails closed on a CONTEXT-owned session: those belong to the agent's claim, which
+      // checks ownership through the context. This must not become a way around it.
+      const cx = await newContext()
+      const ctxSes = uuid()
+      await store.createSession({
+        id: ctxSes,
+        context_id: cx.id,
+        context_version: 1,
+        org_id: ORG,
+        asker_id: "rob",
+      })
+      expect(await store.claimAttendedSession(ctxSes, soon())).toBeNull()
+    })
+
     it("creates a context, lists it by workspace, resolves by id", async () => {
       const ctx = await newContext()
       expect(await store.getContext(ctx.id)).toMatchObject({ name: ctx.name })
