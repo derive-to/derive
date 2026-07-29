@@ -25,11 +25,51 @@ export const toolsForRun = async (
   if (connectionIds.length === 0) return []
   const conns = await meta.getConnectionsByIds(connectionIds)
   const active = conns.filter((cn) => cn.org_id === orgId && cn.status === "active")
+  // A PERSONAL connection acts as its owner, so it must not outlive them: if the owner
+  // is no longer a member, the credential stops resolving that instant — same live-
+  // membership recheck the minted API tokens do. Workspace connections are the org's
+  // and survive any one member leaving.
+  const owners = [
+    ...new Set(active.filter((cn) => cn.scope === "personal").map((cn) => cn.user_id)),
+  ]
+  const rows = await Promise.all(owners.map((uid) => meta.getMembership(orgId, uid)))
+  const alive = new Set(owners.filter((_, i) => rows[i] !== null))
+  const usable = active.filter((cn) => cn.scope === "workspace" || alive.has(cn.user_id))
   const out: RunTool[] = []
-  for (const cn of active) {
+  for (const cn of usable) {
     for (const def of await broker.toolsFor([cn.broker_ref])) out.push({ def, ref: cn.broker_ref })
   }
   return out
+}
+
+/**
+ * The bind-time policy for attaching connections to an automation/context. Returns an
+ * error string (for a 400) or null when every id is attachable by this actor:
+ *   - every id must exist and live in THIS workspace (never another tenant's);
+ *   - a WORKSPACE connection needs a managing actor — otherwise whoever can write an
+ *     instruction holds the org's keys, and instructions are the thing agents edit;
+ *   - a PERSONAL connection may be attached only by its owner (act-as-me is consensual).
+ * `actorUserId` null (a service/agent principal) can therefore bind workspace
+ * connections when managing, and never anyone's personal ones.
+ */
+export const connectionBindError = async (
+  meta: MetaStore,
+  orgId: string,
+  actor: { userId: string | null; canManage: boolean },
+  connectionIds: string[],
+): Promise<string | null> => {
+  if (connectionIds.length === 0) return null
+  const conns = await meta.getConnectionsByIds(connectionIds)
+  if (conns.length !== connectionIds.length || conns.some((cn) => cn.org_id !== orgId))
+    return "connections must exist in this workspace"
+  for (const cn of conns) {
+    if (cn.scope === "workspace") {
+      if (!actor.canManage) return `attaching workspace connection "${cn.toolkit}" needs manage`
+    } else if (!actor.userId || cn.user_id !== actor.userId) {
+      return `personal connection "${cn.toolkit}" can only be attached by its owner`
+    }
+  }
+  return null
 }
 
 /**

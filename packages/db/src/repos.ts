@@ -14,6 +14,7 @@ import type {
   CommentSignals,
   CommentState,
   ConnectionRecord,
+  ConnectionScope,
   ConnectionStatus,
   ContextAskerRecord,
   ContextRecord,
@@ -2938,17 +2939,21 @@ export function makeRepos(db: SqliteDb) {
     (await db.select().from(connection).where(eq(connection.id, id)).get()) ?? null
   const getConnectionsByIds = async (ids: string[]): Promise<ConnectionRecord[]> =>
     ids.length === 0 ? [] : db.select().from(connection).where(inArray(connection.id, ids)).all()
-  const listConnections = async (orgId: string, userId?: string): Promise<ConnectionRecord[]> =>
-    db
+  const listConnections = async (
+    orgId: string,
+    userId?: string,
+    scope?: ConnectionScope,
+  ): Promise<ConnectionRecord[]> => {
+    const wh = [eq(connection.org_id, orgId)]
+    if (userId) wh.push(eq(connection.user_id, userId))
+    if (scope) wh.push(eq(connection.scope, scope))
+    return db
       .select()
       .from(connection)
-      .where(
-        userId
-          ? and(eq(connection.org_id, orgId), eq(connection.user_id, userId))
-          : eq(connection.org_id, orgId),
-      )
+      .where(and(...wh))
       .orderBy(desc(connection.created_at))
       .all()
+  }
   const setConnectionStatus = async (
     id: string,
     orgId: string,

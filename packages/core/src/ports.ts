@@ -1141,8 +1141,13 @@ export interface AgentStore {
   /** Batch-load connections by id in ONE query — backs the least-privilege toolsFor: a run
    *  resolves ONLY its bound connection ids, never the workspace's whole list. Empty ⇒ []. */
   getConnectionsByIds(ids: string[]): Promise<ConnectionRecord[]>
-  /** A workspace's connections, newest first; pass userId to scope to one person's. */
-  listConnections(orgId: string, userId?: string): Promise<ConnectionRecord[]>
+  /** A workspace's connections, newest first. userId narrows to one person's rows;
+   *  scope narrows to personal/workspace rows; combine for "my personal connections". */
+  listConnections(
+    orgId: string,
+    userId?: string,
+    scope?: ConnectionScope,
+  ): Promise<ConnectionRecord[]>
   /** Flip a connection's status (activate on authorize, revoke on teardown), org-scoped. */
   setConnectionStatus(
     id: string,
@@ -1634,6 +1639,11 @@ export interface NewPlan {
  *  round trip; revoked when torn down. */
 export type ConnectionStatus = "active" | "pending" | "revoked"
 
+/** Who a connection belongs to. "personal" = one person's account, only they may bind it
+ *  to a context/automation, and it stops resolving the moment they leave the workspace.
+ *  "workspace" = org infrastructure (admin-managed), survives any one member leaving. */
+export type ConnectionScope = "personal" | "workspace"
+
 /** A per-user connected external account (WO3): the owner authorized Derive's broker to act on
  *  their Gmail/Stripe/GitHub/etc. Always bound to ONE person (identity never falls back), and
  *  scoped least-privilege per toolkit. A hosted run sees the tools of its bound connections
@@ -1641,8 +1651,12 @@ export type ConnectionStatus = "active" | "pending" | "revoked"
 export interface ConnectionRecord {
   id: string
   org_id: string
-  /** The owner — always a specific person, never null. */
+  /** Who ADDED it. For scope "personal" this is the owner (identity never falls back);
+   *  for scope "workspace" it is provenance only ("added by Rob") — the credential is
+   *  the workspace's and is admin-managed. */
   user_id: string
+  /** personal (default) = act-as-me, owner-bound. workspace = org infrastructure. */
+  scope: ConnectionScope
   /** Broker provider slug: "local" | "composio". */
   broker: string
   /** Toolkit slug, e.g. "gmail" | "stripe" | "github". */
@@ -1659,6 +1673,7 @@ export interface NewConnection {
   id: string
   org_id: string
   user_id: string
+  scope?: ConnectionScope
   broker: string
   toolkit: string
   broker_ref: string
