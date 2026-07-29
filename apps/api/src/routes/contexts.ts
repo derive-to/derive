@@ -862,7 +862,12 @@ export const contextRoutes = (ctx: AppContext) => {
       // Placed AFTER the dedupe join deliberately: joining an already-open session creates no
       // new work, so it must keep working even in a workspace whose plan was disconnected
       // after that session opened. Only the branch that OPENS one has to be able to pay.
+      // An operator-configured gateway means THIS DEPLOY pays, so there is no chain to walk
+      // and no plan to connect. Without this the guard 402s every session on exactly the
+      // self-host deployments DERIVE_MODEL_BASE_URL exists to serve — the model would work
+      // and the session could never open. Found by running it, not by reading it.
       if (
+        !ctx.callModel &&
         !(await canPayForAgent(meta, {
           orgId: x.org_id,
           agentId: x.agent_id,
