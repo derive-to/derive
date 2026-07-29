@@ -26,6 +26,7 @@ import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
 import { type Auth, mcpAudiences } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
+import type { AgentLoopInput } from "./lib/agent-loop"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import type { Sandbox } from "./lib/code-sandbox"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
@@ -89,6 +90,14 @@ export interface AppDeps {
    *  Injected rather than imported so the API never drags `node:worker_threads` into a Workers
    *  bundle, and so a test can supply a fake. */
   codeSandbox?: Sandbox
+  /** How an ATTENDED turn calls the model — the chat path, where someone is waiting and the work
+   *  runs in this request rather than through the queue. Unattended runs do NOT use this: they
+   *  resolve their own credential per run through the payer chain, so who pays never depends on
+   *  the process they landed in.
+   *
+   *  Unset ⇒ chat answers with "no model configured" instead of silently doing nothing. Injected
+   *  rather than imported so a test can script it and so no provider choice is baked into the app. */
+  callModel?: AgentLoopInput["callModel"]
   /** Operator (instance super-admin) emails: global moderation powers, on top of `token`. */
   superAdmins?: string[]
   /** Slack App credentials for the connect flow + inbound Events API. All three set ⇒
@@ -997,6 +1006,7 @@ export function buildContext(deps: AppDeps) {
     deps,
     meta,
     blobs,
+    callModel: deps.callModel,
     search: deps.search,
     bus,
     presence,

@@ -20,6 +20,7 @@ import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
+import { runSessionTurn } from "../lib/session-turn"
 import { log } from "../log"
 
 /**
@@ -51,6 +52,87 @@ export const contextRoutes = (ctx: AppContext) => {
     workspaceCan,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
+
+  /**
+   * Serve one attended turn for a session that names an artifact subject.
+   *
+   * Claims the session first (the same status-guarded lease a runner would take), so a polling
+   * BYO runner for the same context cannot double-serve the turn. Everything after that is
+   * best-effort: this runs detached, and a failure has to land in the TRANSCRIPT rather than
+   * anywhere the caller could see, because the caller has already been answered.
+   */
+  const serveAttended = async (
+    s: SessionRecord,
+    me: { id: string; name?: string | null; username?: string | null; email?: string },
+    agentId: string,
+  ) => {
+    const subject = parseSubject(s.subject_ref)
+    if (!subject || subject.kind !== "artifact") return
+    const reply = async (body: string, state: SessionState) => {
+      await meta.addSessionMessage(
+        {
+          id: newId("sm"),
+          session_id: s.id,
+          author_kind: "agent",
+          author_id: agentId,
+          body_md: body,
+        },
+        state,
+      )
+    }
+    // No model wired (the common self-host case) — say so in the transcript rather than leaving
+    // the session `open` forever waiting on a runner that will never come.
+    if (!ctx.callModel) {
+      await reply(
+        "No model is configured on this deploy, so I cannot answer. Set DERIVE_MODEL_BASE_URL, DERIVE_MODEL_API_KEY and DERIVE_MODEL_NAME.",
+        "failed",
+      )
+      return
+    }
+    // Claim AS THE CONTEXT'S AGENT, using the same status-guarded claim a polling runner takes.
+    // That is what stops a BYO runner for this context from serving the same turn twice — and it
+    // has to be that agent's id, because the claim checks ownership through the context.
+    const claimed = await meta.claimSessionById(
+      s.id,
+      agentId,
+      new Date(Date.now() + RUN_LEASE_MS).toISOString(),
+    )
+    if (!claimed) return // someone else is already serving this turn
+    try {
+      const artifact = await meta.getByShortId(subject.id)
+      if (!artifact) {
+        await reply("That document no longer exists, so I have not changed anything.", "failed")
+        return
+      }
+      const res = await runSessionTurn(
+        {
+          meta,
+          blobs: ctx.blobs,
+          bus,
+          notify: ctx.notify,
+          notifyRender: ctx.notifyRender,
+          background: ctx.background,
+          search: ctx.search,
+          callModel: ctx.callModel,
+        },
+        {
+          session: s,
+          subject,
+          artifact,
+          transcript: await meta.listSessionMessages(s.id),
+          flags: { agentKillswitch: false, agentAutoEnabled: true },
+          onBehalf: { id: me.id, name: me.name ?? me.username ?? me.email ?? "someone" },
+        },
+      )
+      await reply(res.reply, res.outcome === "failed" ? "failed" : "answered")
+    } catch (e) {
+      log.error("attended turn failed", {
+        session: s.id,
+        error: e instanceof Error ? e.message : String(e),
+      })
+      await reply("Something went wrong on my side. Nothing has been changed.", "failed")
+    }
+  }
 
   const ContextInfo = z
     .object({
@@ -1012,6 +1094,10 @@ export const contextRoutes = (ctx: AppContext) => {
         author_id: me.id,
         body_md: b.body_md,
       })
+      // ATTENDED: someone is sitting there, so serve the turn HERE instead of queuing it for a
+      // runner that may not be running. Detached — the response returns now and the TRANSCRIPT is
+      // what the surface follows, so closing the tab mid-turn loses nothing.
+      await serveAttended(s, me, linked.context.agent_id)
       return c.json({ message: messageJson(m) }, 201)
     },
   )

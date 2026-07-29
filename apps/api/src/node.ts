@@ -24,6 +24,7 @@ import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
+import { openAiCompatModel } from "./lib/model-openai"
 import { mountWeb } from "./lib/serve-web"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
@@ -390,8 +391,13 @@ const hostedDispatch = cfg.hostedRuns
     }
   : null
 
+const gateway = modelGateway()
+
 const app = createApp({
   meta,
+  // The ATTENDED path only. Unattended runs still resolve their own credential per run through
+  // the payer chain — this key never becomes the answer to "who pays" for queued work.
+  callModel: gateway ? openAiCompatModel(gateway) : undefined,
   blobs,
   // Share the realtime relay with the webhook worker so a deferred Slack reply publishes
   // comment.created to the same in-process subscribers a request would.
