@@ -73,6 +73,11 @@ export function registerStageTool(tc: ToolContext): void {
     async ({ target, short_id, access, workspace }) => {
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
+      // `access` shapes a minted token and nothing else. Silently ignoring it on the
+      // upload targets would let a caller believe they had narrowed something they
+      // hadn't — the same reason `short_id` is rejected rather than dropped.
+      if (access && target !== "api")
+        return err(`\`access\` applies only to target:'api'. Omit it for target:'${target}'.`)
 
       if (target === "api") {
         // The general case of what the other two targets do narrowly: this connection is
@@ -82,9 +87,14 @@ export function registerStageTool(tc: ToolContext): void {
         // ONE workspace, minutes long, and re-checked against live membership on every spend.
         if (short_id)
           return err("`short_id` applies only to target:'doc'. Omit it for target:'api'.")
-        if (!ownerId)
+        // Only a transport-bound credential needs this. A REGISTERED dk_agt_ token (and
+        // the static operator bearer) is already a string its holder can curl with, so
+        // minting from one converts a long-lived credential into a differently-shaped
+        // one for no gain — and every credential shape that exists is one more to reason
+        // about. Refused for the same reason it isn't needed.
+        if (registered || !ownerId)
           return err(
-            "stage target:'api' mints a token for a signed-in user, and this connection has no acting human. A static agent token (dk_agt_/DERIVE_TOKEN) already works from your shell — use it directly.",
+            "stage target:'api' exists to move a credential that only lives inside this MCP transport out to your shell. This connection already holds a shell-usable bearer (dk_agt_/DERIVE_TOKEN) — use that directly.",
           )
         // No chaining: a minted token minting its successor would refresh its own TTL
         // indefinitely, quietly turning "expires in minutes" into "lives forever" — the
@@ -115,7 +125,7 @@ export function registerStageTool(tc: ToolContext): void {
           )
         const role = capRole(access ? roleForAccess[access] : t.role, t.role)
         const expiresAt = Date.now() + API_TOKEN_TTL_MS
-        const tok = await signApiToken(secret, ownerId, t.org, role, clientId ?? "", expiresAt)
+        const tok = await signApiToken(secret, ownerId, t.org, role, clientId, expiresAt)
         const base = ctx.deps.baseUrl.replace(/\/$/, "")
         return json({
           target: "api",

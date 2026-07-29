@@ -408,6 +408,33 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("stage target:'api' over /m
     expect((JSON.parse(ok.text) as { acts_as: string }).acts_as).toBe("editor")
   })
 
+  it("refuses a REGISTERED agent token — it already has a shell-usable bearer", async () => {
+    // The mint exists to move a TRANSPORT-BOUND credential out to the shell. A dk_agt_
+    // token is already a string its holder can curl with, so minting from one would add
+    // another credential shape to reason about for no gain.
+    const a = granted("api-mcp-registered")
+    const agent = (await (
+      await a.request("/v1/agents", {
+        method: "POST",
+        headers: { authorization: "Bearer grant_manage", "content-type": "application/json" },
+        body: JSON.stringify({ name: "Runner", role: "editor" }),
+      })
+    ).json()) as { token: string }
+    expect(agent.token.startsWith("dk_agt_")).toBe(true)
+    const refused = await mcp(a, agent.token, { target: "api" })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toContain("already holds a shell-usable bearer")
+  })
+
+  it("rejects `access` on the upload targets instead of silently ignoring it", async () => {
+    // A caller passing access:'read' with target:'asset' would otherwise believe they
+    // had narrowed something they hadn't.
+    const a = granted("api-mcp-access-misuse")
+    const refused = await mcp(a, "grant_manage", { target: "asset", access: "read" })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toContain("applies only to target:'api'")
+  })
+
   it("narrows on request (least privilege), and the narrowed token can't reach past it", async () => {
     const a = granted("api-mcp-narrow")
     const narrow = JSON.parse(
