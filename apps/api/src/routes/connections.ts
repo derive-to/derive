@@ -2,7 +2,7 @@ import { type ConnectionRecord, newId } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
-import { brokerFor } from "../lib/broker"
+import { brokerFor, isDirect } from "../lib/broker"
 import { encryptSecret } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 
@@ -109,6 +109,12 @@ export const connectionRoutes = (ctx: AppContext) => {
               .listGithubInstallations(org)
               .then(([i]) => i && { ref: i.installation_id, label: i.account_login })
       if (!install) return fail(c, 400, installMissing[b.kind])
+      // One install, one connection: re-wiring is idempotent rather than piling up rows
+      // that all point at the same place and can't be told apart in a picker.
+      const existing = (await meta.listConnections(org, undefined, "workspace")).find(
+        (x) => x.kind === b.kind && x.broker_ref === install.ref && x.status === "active",
+      )
+      if (existing) return c.json(present(existing))
       const rec = await meta.createConnection({
         id: newId("conn"),
         org_id: org,
@@ -192,9 +198,12 @@ export const connectionRoutes = (ctx: AppContext) => {
       const gate = await requireWorkspace(c, "manage")
       if (gate instanceof Response) return gate
     }
-    // A secret connection has no vendor side to revoke — flipping the status is the
-    // whole revocation (the tool proxy refuses non-active rows).
-    if (cn.kind !== "secret") {
+    // Only a broker-backed connection has a vendor side to revoke. For every direct kind
+    // the status flip IS the revocation (the tool proxy refuses non-active rows) — and
+    // for the install-backed ones it MUST be: broker_ref is an installation id, not a
+    // broker ref, and removing an agent's access must never uninstall the integration
+    // the workspace uses for everything else.
+    if (!isDirect(cn.kind)) {
       const broker = await brokerFor(meta, org, cn.user_id, deps.encryptionKey)
       try {
         await broker.revoke(cn.broker_ref)

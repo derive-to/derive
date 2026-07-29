@@ -52,8 +52,13 @@ export const toolsForRun = async (
 }
 
 /** Kinds Derive authenticates and calls itself, rather than handing to the broker. They
- *  differ only in where the bearer comes from (see bearerFor) — the HTTP call is identical. */
-export const isDirect = (kind: ConnectionKind): boolean => kind !== "oauth"
+ *  differ only in where the bearer comes from (see bearerFor) — the HTTP call is identical.
+ *
+ *  Enumerated rather than `!== "oauth"`: this gates whether we spend a credential ourselves
+ *  and whether a revoke reaches a vendor, so a kind added later must fail into the broker
+ *  path (which refuses an unknown ref) instead of silently into ours. */
+const DIRECT_KINDS = new Set<ConnectionKind>(["secret", "github_app", "slack"])
+export const isDirect = (kind: ConnectionKind): boolean => DIRECT_KINDS.has(kind)
 
 /** The tools a direct connection exposes. Named `<toolkit>.<verb>` to match the broker's
  *  convention, so the runner's shim treats every kind of connection identically. */

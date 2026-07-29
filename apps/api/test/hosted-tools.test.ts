@@ -193,6 +193,54 @@ describe("hosted tool injection — least privilege (WO4)", () => {
     ).rejects.toThrow(/reconnect/i)
   })
 
+  it("github_app: points at the sync install, stores nothing, and never revokes it", async () => {
+    const h = makeAuthedApp("conn-gh", [owner], "editor", { deps: { encryptionKey: "k" } })
+    const early = await h.app.request(
+      "/v1/connections",
+      jsonAs(as(owner.email), { kind: "github_app" }),
+    )
+    expect(early.status).toBe(400)
+    expect((await early.json()).error).toMatch(/GitHub App/i)
+
+    await h.meta.upsertGithubInstallation({
+      installation_id: "77123",
+      org_id: "default",
+      account_login: "derive-to",
+      created_by: owner.id,
+      created_at: new Date().toISOString(),
+    })
+    const cn = await (
+      await h.app.request("/v1/connections", jsonAs(as(owner.email), { kind: "github_app" }))
+    ).json()
+    expect(cn).toMatchObject({
+      kind: "github_app",
+      scope: "workspace",
+      toolkit: "github",
+      base_url: "https://api.github.com",
+    })
+    const [rec] = await h.meta.getConnectionsByIds([cn.id])
+    // The installation id is the whole reference — no credential is stored, so there is
+    // nothing here to leak, and nothing to rotate when GitHub rotates the token.
+    expect(rec?.secret_enc).toBeNull()
+    expect(rec?.broker_ref).toBe("77123")
+
+    // Wiring it again returns the same row rather than piling up duplicates.
+    const again = await (
+      await h.app.request("/v1/connections", jsonAs(as(owner.email), { kind: "github_app" }))
+    ).json()
+    expect(again.id).toBe(cn.id)
+
+    // Revoking the connection removes the AGENT's access and must leave the install
+    // alone — the workspace still syncs repos through it.
+    const del = await h.app.request(`/v1/connections/${cn.id}`, {
+      method: "DELETE",
+      headers: as(owner.email),
+    })
+    expect(del.status).toBe(204)
+    expect(await h.meta.listGithubInstallations("default")).toHaveLength(1)
+    expect(await toolsForRun(h.meta, new LocalBroker(), "default", [cn.id])).toHaveLength(0)
+  })
+
   it("a departed member's PERSONAL connection stops resolving; a workspace one survives", async () => {
     // A second member connects a personal toolkit and the owner adds a workspace one.
     const gone: TestUser = { id: "u_ht_gone", email: "htgone@derive.test", name: "G" }
