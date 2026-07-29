@@ -1271,9 +1271,15 @@ const outcomeFor = (decision) =>
  *  can't stall the drain, exactly like a failed session. */
 export async function serveRun(client, run, manifest, cfg) {
   console.log(`[runner] run ${run.id}: "${run.instruction.slice(0, 80)}"`)
+  // `run.started_at` is what THIS claim actually began with -- proof to the server that
+  // this call is settling the claim it holds, not merely naming a run id its token still
+  // (validly, unexpired) authorizes. Without it, a run that gets reclaimed and re-claimed
+  // while this process is mid-flight would let a stale finish call requeue -- or worse,
+  // SETTLE -- a run a newer executor now owns, using a token nobody revoked. Every call
+  // goes through this one function, so every finish (success, failure, retryable) is fenced.
   const finish = (fields) =>
     client
-      .finishRun(run.id, fields)
+      .finishRun(run.id, { ...fields, claimed_started_at: run.started_at })
       .catch((err) => console.error(`[runner] run ${run.id} finish failed: ${err.message}`))
   // meta rides as an OBJECT: the finish endpoint validates a record and stringifies it
   // server-side, so a pre-stringified blob is a 400 that silently loses the run's outcome.

@@ -2676,9 +2676,13 @@ export class PgMetaStore implements MetaStore {
     id: string,
     agentId: string,
     fields: { scheduledFor: string; meta?: string | null },
+    expectedStartedAt?: string | null,
   ): Promise<RunRecord | null> {
     // Strict running → queued, only for the claiming agent: the status guard stops a duplicate
-    // or late retry request from resurrecting a run that already settled.
+    // or late retry request from resurrecting a run that already settled. FENCED on
+    // started_at too, when the caller supplies it — see the sqlite twin (repos.ts) for the
+    // full reasoning: status+agent alone can't tell "my own claim" from one that superseded
+    // it, since a run-scoped token carries no notion of which claim episode minted it.
     const rows = await this.db
       .update(run)
       .set({
@@ -2687,7 +2691,18 @@ export class PgMetaStore implements MetaStore {
         scheduled_for: fields.scheduledFor,
         ...(fields.meta === undefined ? {} : { meta: fields.meta }),
       })
-      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
+      .where(
+        and(
+          eq(run.id, id),
+          eq(run.agent_id, agentId),
+          eq(run.status, "running"),
+          expectedStartedAt === undefined
+            ? undefined
+            : expectedStartedAt === null
+              ? isNull(run.started_at)
+              : eq(run.started_at, expectedStartedAt),
+        ),
+      )
       .returning()
     return rows[0] ?? null
   }
@@ -2758,10 +2773,14 @@ export class PgMetaStore implements MetaStore {
       costMicroUsd?: number | null
       meta?: string | null
     },
+    expectedStartedAt?: string | null,
   ): Promise<RunRecord | null> {
     // Strict running → terminal transition: only the claiming agent, and only a run that is
     // actually running — a duplicate/retried finish can't clobber a settled run's cost, and a
-    // finish can't terminate a never-claimed queued run.
+    // finish can't terminate a never-claimed queued run. FENCED on started_at too, when
+    // supplied — see requeueRun's twin comment: without it, a stale but unexpired token from
+    // a claim a newer one has superseded can settle a run out from under the executor
+    // actually working it.
     const rows = await this.db
       .update(run)
       .set({
@@ -2770,7 +2789,18 @@ export class PgMetaStore implements MetaStore {
         cost_micro_usd: fields.costMicroUsd ?? null,
         meta: fields.meta ?? null,
       })
-      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
+      .where(
+        and(
+          eq(run.id, id),
+          eq(run.agent_id, agentId),
+          eq(run.status, "running"),
+          expectedStartedAt === undefined
+            ? undefined
+            : expectedStartedAt === null
+              ? isNull(run.started_at)
+              : eq(run.started_at, expectedStartedAt),
+        ),
+      )
       .returning()
     return rows[0] ?? null
   }
