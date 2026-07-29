@@ -21,7 +21,7 @@ import { as, bearer, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 // not just the fixed one, so the exposure stays visible rather than looking closed for
 // everyone the moment this merges.
 
-const SECRET = "stale-claim-secret-16-chars-ok"
+const SECRET = "stale-claim-secret-at-least-16-chars"
 const owner: TestUser = { id: "u_stale", email: "stale@derive.test", name: "Stale" }
 
 /** One full retry-then-supersede setup, shared by both tests below: E1 claims, reports a
