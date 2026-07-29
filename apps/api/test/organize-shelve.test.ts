@@ -154,6 +154,95 @@ describe("organize state — retire an artifact and put it back", () => {
     expect(back.state.synced_from_repo).toBeUndefined()
   })
 
+  it("will not let an editor reverse a MODERATION takedown", async () => {
+    // removed_at means two different things. An author retiring their own draft is the
+    // cheap one; an admin taking content down is not, and it also resolves the open
+    // reports. If the editor bar could clear it, a takedown could be undone silently and
+    // the content would never resurface in the moderation queue.
+    const { app, meta, token } = await setup("shelve-moderated")
+    const pub = await call(app, token, "publish", { title: "Bad", content: "# Bad\n\nbody" })
+    const art = await meta.getByShortId(pub.short_id)
+    if (!art) throw new Error("artifact missing")
+
+    // Taken down the way moderation does it: the tombstone plus its audit row.
+    await meta.setArtifactRemoved(art.id, new Date().toISOString())
+    await meta.createAuditLog({
+      id: "au_test_1",
+      org_id: art.org_id,
+      action: "takedown",
+      artifact_id: art.id,
+      actor: "an-admin",
+      detail: "abuse",
+    })
+
+    const tryBack = await call(app, token, "organize", {
+      short_ids: [pub.short_id],
+      state: "live",
+    })
+    expect(tryBack.state.changed).toBe(0)
+    expect(tryBack.state.moderation_hold).toEqual([pub.short_id])
+    expect(tryBack.state.moderation_hold_note).toContain("manage-level")
+    // Still down, which is the whole point.
+    expect((await meta.getByShortId(pub.short_id))?.removed_at).toBeTruthy()
+  })
+
+  it("still restores normally once moderation has reinstated it", async () => {
+    // The guard reads the STANDING decision, not merely "was ever taken down": after a
+    // reinstate, an author's own retire/restore works again.
+    const { app, meta, token } = await setup("shelve-reinstated")
+    const pub = await call(app, token, "publish", { title: "Ok", content: "# Ok\n\nbody" })
+    const art = await meta.getByShortId(pub.short_id)
+    if (!art) throw new Error("artifact missing")
+    const row = (action: "takedown" | "reinstate", id: string) => ({
+      id,
+      org_id: art.org_id,
+      action,
+      artifact_id: art.id,
+      actor: "an-admin",
+      detail: null,
+    })
+    await meta.createAuditLog(row("takedown", "au_test_2"))
+    await meta.createAuditLog(row("reinstate", "au_test_3"))
+
+    await call(app, token, "organize", { short_ids: [pub.short_id], state: "removed" })
+    const back = await call(app, token, "organize", { short_ids: [pub.short_id], state: "live" })
+    expect(back.state.changed).toBe(1)
+    expect(back.state.moderation_hold).toBeUndefined()
+  })
+
+  it("warns when the artifact is a live context's manifest", async () => {
+    // A context cannot outlive its manifest — hard delete cascades it — but shelving is
+    // not a delete, so the context stays askable and its RUNNER hits the takedown error
+    // minutes later, in another process, with nothing pointing back here.
+    const { app, meta, token } = await setup("shelve-manifest")
+    const man = await call(app, token, "publish", {
+      title: "Manifest",
+      content: "---\nname: c\n---\n\n# Manifest",
+    })
+    const art = await meta.getByShortId(man.short_id)
+    if (!art) throw new Error("artifact missing")
+    const bot = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "CtxBot", role: "editor" }))
+    ).json()
+    await meta.createContext({
+      id: "ctx_shelf_1",
+      org_id: art.org_id,
+      name: "qa-ctx",
+      agent_id: bot.id,
+      manifest_artifact_id: art.id,
+      created_by: owner.id,
+    })
+
+    const gone = await call(app, token, "organize", {
+      short_ids: [man.short_id],
+      state: "removed",
+    })
+    // Allowed — decommissioning a context is a real thing to want — but never silent.
+    expect(gone.state.changed).toBe(1)
+    expect(gone.state.in_use_by_contexts).toEqual([{ short_id: man.short_id, context: "qa-ctx" }])
+    expect(gone.state.in_use_by_contexts_note).toContain("runner will fail")
+  })
+
   it("still needs short_ids, and says so", async () => {
     const { app, token } = await setup("shelve-noids")
     const bare = await callRaw(app, token, "organize", { state: "removed" })

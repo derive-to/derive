@@ -31,6 +31,7 @@ import { normalizeTags } from "../lib/tags"
 import type { ToolContext } from "../mcp-tool-context"
 import {
   err,
+  IMAGE_INLINE_MAX,
   json,
   largestInlineDataUriBytes,
   MAX_INLINE_CONTENT_BYTES,
@@ -292,6 +293,14 @@ export function registerPublishTool(tc: ToolContext): void {
       edits,
       base_version,
     }) => {
+      // BEFORE anything is written. Validating this after the publish committed meant a
+      // near-miss variant ("screenshot", "png") returned isError on an artifact that was
+      // already live — and the obvious retry then created a SECOND one. Argument checks
+      // belong ahead of the mutation, which is where organize does its equivalent.
+      if (render) {
+        const wrongRender = badChoice("render", render, RENDER_VARIANTS)
+        if (wrongRender) return err(wrongRender)
+      }
       let content = contentIn
       const BP = "derive://brandprint/"
       // The brand profile is never published LIVE — its reveal/revision is always a
@@ -761,8 +770,6 @@ export function registerPublishTool(tc: ToolContext): void {
         // publish-then-go-look-at-it loop is two calls and a guess at how long to
         // sleep — and an agent cannot simply open the tab instead.
         if (render) {
-          const wrong = badChoice("render", render, RENDER_VARIANTS)
-          if (wrong) return err(wrong)
           const shot = await collectRender(
             ctx,
             artifact.id,
@@ -770,7 +777,12 @@ export function registerPublishTool(tc: ToolContext): void {
             render as RenderVariant,
             wait ?? 0,
           )
-          if (shot)
+          // The SAME ceiling `read` applies. Half density bounds the common case, it does
+          // not guarantee one: a long enough page still clears the cap, and base64-ing
+          // multiple MB into a single MCP message is the client-side blowup `read`
+          // deliberately refuses to cause. Over the cap, fall through to the ordinary
+          // response, which already says how to collect it.
+          if (shot && shot.bytes.length <= IMAGE_INLINE_MAX)
             return {
               content: [
                 { type: "text" as const, text: JSON.stringify(payload, null, 2) },

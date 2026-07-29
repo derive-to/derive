@@ -296,12 +296,15 @@ export const runRenderTick = async (
         timeoutMs: RENDER_TIMEOUT_MS,
         deviceScaleFactor: FULL_PAGE_SCALE,
       })
+      // FULL density, unlike `full` above. This variant exists so the @N badges drawn on
+      // the page line up with the region map you READ, and those badges are 12px type —
+      // at half density they rasterize to six physical pixels and stop being legible,
+      // which makes the variant a worse copy of `full` rather than a different view.
       await renderPreviewVariant(deps, artifact.id, job.version_n, "marked", `${url}?marks=1`, {
         width: OG_W,
         height: OG_H,
         fullPage: true,
         timeoutMs: RENDER_TIMEOUT_MS,
-        deviceScaleFactor: FULL_PAGE_SCALE,
       })
     } catch (err) {
       const msg = (err instanceof Error ? err.message : String(err)).slice(0, 200)
