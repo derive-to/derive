@@ -734,7 +734,9 @@ export function Artifact() {
         {/* The split row lives BELOW the full-width bar: the document stage on
                 the left, the comments aside on the right, so the panel slides in
                 under the toolbar rather than beside it. */}
-        <div className="flex min-h-0 flex-1">
+        {/* `relative` so the rail's tab strip anchors HERE, below the toolbar, rather than
+            resolving to a further ancestor and overlapping the workbench buttons. */}
+        <div className="relative flex min-h-0 flex-1">
           <div
             className="relative flex min-w-0 flex-1 flex-col"
             // On phones the comments sheet sits at the bottom — reserve exactly the
