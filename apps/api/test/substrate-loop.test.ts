@@ -85,7 +85,13 @@ const runToSettle = async (
   callModel: Parameters<typeof loopSubstrate>[0]["callModel"],
 ) => {
   await loopSubstrate({ callModel }).start({ runId: "run_1", token: "tok", server })
-  for (let i = 0; i < 100 && rec.finishes.length === 0; i++)
+  // Poll for up to 10s, not 2s. `start` returns once the work BEGINS, so the settle lands on
+  // its own schedule — and under a full parallel suite the original 2s budget was occasionally
+  // shorter than the run, which reads as "the substrate never finished" when it simply had not
+  // finished YET. A generous ceiling costs nothing on the happy path (it exits on the first
+  // finish) and buys a test that fails for real reasons only.
+  const deadline = Date.now() + 10_000
+  while (rec.finishes.length === 0 && Date.now() < deadline)
     await new Promise((r) => setTimeout(r, 20))
   return rec.finishes[0] ?? null
 }

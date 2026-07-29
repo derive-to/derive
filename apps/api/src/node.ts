@@ -398,6 +398,10 @@ const app = createApp({
   // The ATTENDED path only. Unattended runs still resolve their own credential per run through
   // the payer chain — this key never becomes the answer to "who pays" for queued work.
   callModel: gateway ? openAiCompatModel(gateway) : undefined,
+  chatAllowlist: (process.env.DERIVE_CHAT_ALLOWLIST ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean),
   blobs,
   // Share the realtime relay with the webhook worker so a deferred Slack reply publishes
   // comment.created to the same in-process subscribers a request would.

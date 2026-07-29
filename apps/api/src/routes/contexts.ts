@@ -57,6 +57,10 @@ export const contextRoutes = (ctx: AppContext) => {
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
+  /** Is this workspace allowed to spend the operator's model key? See DERIVE_CHAT_ALLOWLIST. */
+  const chatAllowed = (orgId: string): boolean =>
+    !ctx.callModel || !ctx.chatAllowlist?.length || ctx.chatAllowlist.includes(orgId)
+
   /**
    * Serve one attended turn for a session that names an artifact subject.
    *
@@ -1039,6 +1043,12 @@ export const contextRoutes = (ctx: AppContext) => {
       // lane that spends the operator's model key.
       const settings = await meta.getOrgSettings(art.org_id).catch(() => null)
       if (!settings?.chatBeta) return bail(fail(c, 404, "chat is not enabled for this workspace"))
+      // ALLOWLIST, on top of the workspace's own opt-in. `chatBeta` is gated on `manage`, so on
+      // a shared host any workspace owner could switch it on and spend the operator's key. An
+      // empty list means no restriction — right for a single-tenant box, where the operator is
+      // the user — so this only bites where it should.
+      if (!chatAllowed(art.org_id))
+        return bail(fail(c, 404, "chat is not enabled for this workspace"))
       const wantsPublish = b.mode === "publish"
       if (wantsPublish && !(await authorize(c, "publish", art)))
         return bail(fail(c, 403, "you cannot publish to that artifact"))

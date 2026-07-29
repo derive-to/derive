@@ -99,6 +99,11 @@ export interface AppDeps {
    *  Unset ⇒ chat answers with "no model configured" instead of silently doing nothing. Injected
    *  rather than imported so a test can script it and so no provider choice is baked into the app. */
   callModel?: AgentLoopInput["callModel"]
+  /** Workspace ids allowed to enable chat when `callModel` is set (an operator-paid gateway).
+   *  Empty/undefined = no restriction, which is correct for a single-tenant box where the
+   *  operator IS the user. On a shared host this is what stops any workspace owner from
+   *  enabling chat for themselves and spending the operator's key. */
+  chatAllowlist?: string[]
   /** Operator (instance super-admin) emails: global moderation powers, on top of `token`. */
   superAdmins?: string[]
   /** Slack App credentials for the connect flow + inbound Events API. All three set ⇒
@@ -1054,6 +1059,7 @@ export function buildContext(deps: AppDeps) {
     meta,
     blobs,
     callModel: deps.callModel,
+    chatAllowlist: deps.chatAllowlist,
     search: deps.search,
     bus,
     presence,

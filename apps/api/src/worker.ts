@@ -133,6 +133,8 @@ export interface Env {
   DERIVE_MODEL_BASE_URL?: string
   DERIVE_MODEL_API_KEY?: string
   DERIVE_MODEL_NAME?: string
+  /** Workspace ids allowed to enable chat while the gateway above pays. */
+  DERIVE_CHAT_ALLOWLIST?: string
   DERIVE_SANDBOX_URL?: string
   DERIVE_SUPERADMIN_EMAILS?: string
   // Base domain for vanity subdomains (domain mode); unset = off.
@@ -268,6 +270,12 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
                 model: env.DERIVE_MODEL_NAME,
               })
             : undefined,
+        // Multi-tenant, so the allowlist matters here more than anywhere: without it any
+        // workspace owner could enable chat and spend Derive's key.
+        chatAllowlist: (env.DERIVE_CHAT_ALLOWLIST ?? "")
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean),
         blobs: new R2BlobStore(env.BUCKET),
         // Hybrid search's dense arm, embeddings from Workers AI (env.AI). The vectors live in
         // pgvector in the SAME Postgres as metadata (HYPERDRIVE) — the table is created out of band

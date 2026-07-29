@@ -312,3 +312,59 @@ describe("access is re-checked on every turn, not just at session open", () => {
     expect(last?.body_md ?? "").toMatch(/no longer have access|not found/i)
   })
 })
+
+describe("the allowlist, when the OPERATOR's key pays", () => {
+  const setup = async (name: string, allowlist: string[] | undefined) => {
+    const users = [{ id: "u-ed", email: "ed@x.com", name: "Ed" }]
+    const { app, meta } = makeAuthedApp(name, users, undefined, {
+      deps: {
+        callModel: async () => ({
+          text: revision("# New"),
+          toolUses: [],
+          costUsd: null,
+          done: true,
+        }),
+        chatAllowlist: allowlist,
+      },
+    })
+    // The workspace opts ITSELF in — which is exactly the move the allowlist has to survive.
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatBeta: true,
+    })
+    const made = await app.request("/v1/artifacts", {
+      method: "POST",
+      headers: as("ed@x.com"),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new Blob(["# Doc"], { type: "text/markdown" }), "d.md")
+        f.set("title", "Doc")
+        return f
+      })(),
+    })
+    const { short_id } = (await made.json()) as { short_id: string }
+    return app.request("/v1/artifacts/chat-session", {
+      method: "POST",
+      headers: { ...as("ed@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ short_id, body_md: "hello" }),
+    })
+  }
+
+  it("REFUSES a workspace that enabled chat but is not on the list", async () => {
+    // The abuse this closes: chatBeta is gated on `manage`, so on a shared host any workspace
+    // owner can switch it on. Without the allowlist that is a self-serve licence to spend the
+    // operator's model key.
+    const res = await setup("allow-no", ["ws_someone_else"])
+    expect(res.status).toBe(404)
+  })
+
+  it("ALLOWS a listed workspace", async () => {
+    const res = await setup("allow-yes", ["default"])
+    expect(res.status).toBe(201)
+  })
+
+  it("an EMPTY list means no restriction — a single-tenant box is not a shared host", async () => {
+    const res = await setup("allow-empty", [])
+    expect(res.status).toBe(201)
+  })
+})

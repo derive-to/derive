@@ -337,6 +337,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "sk-...",
   },
   {
+    name: "DERIVE_CHAT_ALLOWLIST",
+    group: "advanced",
+    doc: "Comma-separated workspace ids allowed to turn chat on, when DERIVE_MODEL_BASE_URL is set.\n\nWhy it exists: `chatBeta` is a workspace setting, gated on `manage` — so on a MULTI-TENANT\nhost any workspace owner could enable chat for themselves and spend the operator's model\nkey. On a single-tenant box that is fine (the operator IS the user), which is why an unset\nallowlist means no restriction. Set it on a shared host and only those workspaces can\nenable chat, however many owners ask.",
+    example: "ws_abc123,ws_def456",
+  },
+  {
     name: "DERIVE_MODEL_NAME",
     group: "advanced",
     doc: "Model id to send to DERIVE_MODEL_BASE_URL, exactly as that provider names it.",
