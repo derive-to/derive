@@ -30,12 +30,13 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // create_context sentence and `use` a run-a-context-you-serve steer (owner-run). Measured
 // ~8.06k after trimming — the cap keeps a tight ~2% headroom, so the next addition still
 // has to argue for its chars.
-// Raised 8250 → 8500 for the auth cleanup, on top of the above: `stage` gained a
+// Raised 8250 → 8400 for the auth cleanup, on top of the above: `stage` gained a
 // target:'api' clause whose consequence sentence ("a live credential in this transcript")
 // must stay in the description per the safety rule, and `list_workspaces` became the
 // identity read, which only helps if its description says so. Both were trimmed before
-// raising; the cap still sits close enough that the next addition has to argue for itself.
-const TOOL_DESCRIPTIONS_BUDGET = 8500
+// raising; measured 8218 across 11 tools, so the cap keeps the same ~2% headroom the
+// previous raise settled on and the next addition still has to argue for its chars.
+const TOOL_DESCRIPTIONS_BUDGET = 8400
 const INSTRUCTIONS_BUDGET = 2400
 
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))
