@@ -28,6 +28,7 @@ import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
+import { openAiCompatModel } from "./lib/model-openai"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
@@ -127,6 +128,11 @@ export interface Env {
   BASE_URL?: string
   DERIVE_AUTH_SECRET?: string
   DERIVE_TOKEN?: string
+  /** OpenAI-compatible model gateway for ATTENDED chat. All three or none — an incomplete
+   *  set is treated as unset, so chat stays honestly off rather than 401ing every turn. */
+  DERIVE_MODEL_BASE_URL?: string
+  DERIVE_MODEL_API_KEY?: string
+  DERIVE_MODEL_NAME?: string
   DERIVE_SANDBOX_URL?: string
   DERIVE_SUPERADMIN_EMAILS?: string
   // Base domain for vanity subdomains (domain mode); unset = off.
@@ -250,6 +256,18 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // had omitted it, so operator-token auth (reindex, and any DERIVE_TOKEN automation)
         // was dead on prod. Undefined when unset ⇒ isToken stays false, as before.
         token: env.DERIVE_TOKEN,
+        // ATTENDED chat needs a model here too. Without it the Chat tab renders, accepts a
+        // message, and answers "no model is configured" — the surface works and the product
+        // does not. Same three vars as self-host, delivered as Worker secrets. Unattended runs
+        // are unaffected: they still resolve their own credential through the payer chain.
+        callModel:
+          env.DERIVE_MODEL_BASE_URL && env.DERIVE_MODEL_API_KEY && env.DERIVE_MODEL_NAME
+            ? openAiCompatModel({
+                baseUrl: env.DERIVE_MODEL_BASE_URL,
+                apiKey: env.DERIVE_MODEL_API_KEY,
+                model: env.DERIVE_MODEL_NAME,
+              })
+            : undefined,
         blobs: new R2BlobStore(env.BUCKET),
         // Hybrid search's dense arm, embeddings from Workers AI (env.AI). The vectors live in
         // pgvector in the SAME Postgres as metadata (HYPERDRIVE) — the table is created out of band

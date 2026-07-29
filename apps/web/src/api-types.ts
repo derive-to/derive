@@ -5785,6 +5785,8 @@ export interface components {
             whiteLabel: boolean;
             /** @description Master switch for Derive-hosted agent runs; off silences every hosted run. */
             hostedAgentsEnabled: boolean;
+            /** @description BETA: the Chat tab on a document. Off by default — the tab is hidden and the chat route refuses, so a workspace opts in deliberately. */
+            chatBeta: boolean;
             /** @description When true, every hosted agent write demotes to a proposal, instantly. */
             agentKillswitch: boolean;
             /** @description Opt-in for autonomy 'auto' to live-publish (always with a review round). */

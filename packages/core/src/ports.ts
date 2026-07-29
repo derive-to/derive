@@ -2318,6 +2318,12 @@ export interface OrgSettings {
    *  hosted run (the managed executor skips the workspace); owner-run agents are
    *  unaffected. */
   hostedAgentsEnabled: boolean
+  /** BETA: chat with a document (the right-rail Chat tab). OFF by default — unlike every
+   *  other setting here, this one gates a surface we are still testing, and the Derive
+   *  workspace turns it on for itself first. Off means the tab does not render at all and
+   *  the chat route refuses, so a half-enabled state cannot leave someone typing into a
+   *  panel that will never answer. */
+  chatBeta: boolean
   /** The agent-write killswitch, read fresh per run by the autonomy gate: when true,
    *  every hosted agent write demotes to a proposal, instantly. */
   agentKillswitch: boolean
@@ -2367,6 +2373,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   // the run-time safety lives in the autonomy gate (killswitch defaults off but
   // every write still lands as a proposal until a workspace opts into auto).
   hostedAgentsEnabled: true,
+  // Beta, so the default is the conservative one — opt IN per workspace.
+  chatBeta: false,
   agentKillswitch: false,
   agentAutoEnabled: false,
 }

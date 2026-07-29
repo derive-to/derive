@@ -24,6 +24,9 @@ describe("workspace integration settings", () => {
       whiteLabel: false,
       // Hosted-agent controls: hosting available, no autonomy until opted in.
       hostedAgentsEnabled: true,
+      // Chat ships BETA and OFF: a workspace opts in deliberately. This line failing is the
+      // signal that someone flipped the default, which is the whole point of asserting it.
+      chatBeta: false,
       agentKillswitch: false,
       agentAutoEnabled: false,
     })

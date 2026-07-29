@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+import { RailTabs } from "./artifact-chat"
 import { Composer } from "./comment-composer"
 import { CollapsibleThreadSection, CommentCard, PinnedZone } from "./comment-thread"
 import { useCommentScope } from "./lib/comment-scope"
@@ -40,6 +41,10 @@ export function MobileComments({
   onSubmitNew,
   onCancelNew,
   onHeightChange,
+  rail,
+  onRail,
+  chatPanel,
+  openCount,
 }: {
   open: boolean
   openThreads: Comment[][]
@@ -53,6 +58,14 @@ export function MobileComments({
    *  closed). The page reserves exactly this under the document so no black band
    *  is left below it. */
   onHeightChange?: (px: number) => void
+  /** THE RAIL on a phone. The peek bar is always docked, which makes it the natural home
+   *  for the tab strip — comments keep their entry point and chat is one tap away, with no
+   *  second sheet competing for the bottom of the screen. Undefined ⇒ chat is off (beta),
+   *  and this is the comments sheet it has always been. */
+  rail?: "comments" | "chat"
+  onRail?: (r: "comments" | "chat") => void
+  chatPanel?: ReactNode
+  openCount?: number
 }) {
   // The sheet is ALWAYS docked on a phone (peek is the floor — there is no hidden
   // state and no scrim; the doc above stays live). Two resting sizes: peek (the slim
@@ -267,7 +280,16 @@ export function MobileComments({
           <div className="h-1 w-10 rounded-full bg-border" />
         </div>
         <div className="flex items-center gap-2 border-b border-border-soft pb-3 pl-3 pr-2.5 pt-2">
-          <CommentsHeading count={openThreads.length} />
+          {/* The strip REPLACES the static heading when chat is on: same always-docked bar,
+              now the way you choose which conversation the sheet is showing. Without chat it
+              is the heading it has always been. */}
+          {rail && onRail ? (
+            <div className="flex min-w-0 flex-1 items-center">
+              <RailTabs tab={rail} commentCount={openCount ?? openThreads.length} onTab={onRail} />
+            </div>
+          ) : (
+            <CommentsHeading count={openThreads.length} />
+          )}
           {size === "full" && !composer && openThreads.length > 1 && (
             // Step through the discussion one thread at a time: the card scrolls
             // into view and an anchored thread scrolls the doc to its highlight.
@@ -293,7 +315,7 @@ export function MobileComments({
               </Button>
             </div>
           )}
-          {canComment && (
+          {rail !== "chat" && canComment && (
             <Button
               variant="outline"
               size="sm"
@@ -318,7 +340,11 @@ export function MobileComments({
           </Button>
         </div>
       </div>
-      {composer ? (
+      {rail === "chat" ? (
+        // CHAT owns the body, and brings its own composer — so the comments composer and
+        // its keyboard handling stay untouched rather than being taught a second mode.
+        chatPanel
+      ) : composer ? (
         // Composing ("half open"): just the composer, so the sheet is a compact bar
         // pinned above the keyboard with the document visible above. The list
         // reappears once you send or cancel.

@@ -879,6 +879,10 @@
             "type": "boolean",
             "description": "Master switch for Derive-hosted agent runs; off silences every hosted run."
           },
+          "chatBeta": {
+            "type": "boolean",
+            "description": "BETA: the Chat tab on a document. Off by default — the tab is hidden and the chat route refuses, so a workspace opts in deliberately."
+          },
           "agentKillswitch": {
             "type": "boolean",
             "description": "When true, every hosted agent write demotes to a proposal, instantly."
@@ -919,6 +923,7 @@
           "defaultListed",
           "whiteLabel",
           "hostedAgentsEnabled",
+          "chatBeta",
           "agentKillswitch",
           "agentAutoEnabled"
         ]

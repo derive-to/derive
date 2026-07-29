@@ -952,6 +952,11 @@ export const contextRoutes = (ctx: AppContext) => {
       const art = await meta.getByShortId(b.short_id)
       if (!art || art.current_version === 0 || !(await authorize(c, "read", art)))
         return bail(fail(c, 404, "not found"))
+      // BETA GATE, enforced on the SERVER as well as hidden in the UI. A flag that only
+      // hides a button is not a gate: the route is reachable directly, and this is the
+      // lane that spends the operator's model key.
+      const settings = await meta.getOrgSettings(art.org_id).catch(() => null)
+      if (!settings?.chatBeta) return bail(fail(c, 404, "chat is not enabled for this workspace"))
       const wantsPublish = b.mode === "publish"
       if (wantsPublish && !(await authorize(c, "publish", art)))
         return bail(fail(c, 403, "you cannot publish to that artifact"))

@@ -22,6 +22,13 @@ const setup = async (name: string, reply: string) => {
     },
   })
 
+  // Chat is BETA and off by default, so every test that exercises it opts the workspace in
+  // — which is itself the proof that the default is closed.
+  await meta.setOrgSettings("default", {
+    ...(await meta.getOrgSettings("default")),
+    chatBeta: true,
+  })
+
   // The document being chatted about.
   const res = await app.request("/v1/artifacts", {
     method: "POST",
@@ -138,5 +145,33 @@ describe("the subject is authorized separately from the context", () => {
       body: JSON.stringify({ body_md: "hi", subject: { kind: "nonsense" } }),
     })
     expect(res.status).toBe(400)
+  })
+})
+
+describe("the beta gate", () => {
+  it("REFUSES a workspace that has not opted in", async () => {
+    // A flag that only hides a button is not a gate: the route is reachable directly, and
+    // this is the lane that spends the operator's model key.
+    const users = [{ id: "u-ed", email: "ed@x.com", name: "Ed" }]
+    const { app } = makeAuthedApp("chat-beta-off", users, undefined, {
+      deps: { callModel: async () => ({ text: "hi", toolUses: [], costUsd: null, done: true }) },
+    })
+    const made = await app.request("/v1/artifacts", {
+      method: "POST",
+      headers: as("ed@x.com"),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new Blob(["# Doc"], { type: "text/markdown" }), "doc.md")
+        f.set("title", "Doc")
+        return f
+      })(),
+    })
+    const { short_id } = (await made.json()) as { short_id: string }
+    const res = await app.request("/v1/artifacts/chat-session", {
+      method: "POST",
+      headers: { ...as("ed@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ short_id, body_md: "hello" }),
+    })
+    expect(res.status).toBe(404)
   })
 })
