@@ -1164,7 +1164,13 @@ export const contextRoutes = (ctx: AppContext) => {
         ...sessionJson(s),
         messages: bySession.get(s.id) ?? [],
       }))
-      return c.json({ sessions: out })
+      // The same tools the hosted claim returns. A BYO runner is not a lesser executor —
+      // it serves the same context and must reach the same things, or a context's hands
+      // would depend on where it happens to run.
+      return c.json({
+        sessions: out,
+        tools: (await contextTools(x)).map((t) => ({ def: t.def, ref: t.ref })),
+      })
     },
   )
 
@@ -1226,12 +1232,14 @@ export const contextRoutes = (ctx: AppContext) => {
   app.post("/v1/agent/sessions/:id/tool", async (c) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
+    // A session capability bearer may act ONLY on the session it was minted for. A standing
+    // agent bearer (the BYO polling runner) has no session scope, and is allowed here for
+    // sessions of a context it owns — the ownership check below is what bounds it, exactly
+    // as the run lane bounds a standing bearer by run.agent_id.
     const scope = agentSessionScope(c)
-    // Session tokens only, and only for their own session — the mirror of the run lane's
-    // refusal of a session bearer. A standing agent bearer must not reach another
-    // context's tools by naming its session id.
-    if (!scope || scope !== c.req.param("id")) return fail(c, 403, "not this session's token")
-    const s = await meta.getSession(scope)
+    const sessionId = c.req.param("id") ?? ""
+    if (scope && scope !== sessionId) return fail(c, 403, "not this session's token")
+    const s = await meta.getSession(sessionId)
     const x = s ? await meta.getContext(s.context_id) : null
     if (!s || !x || x.agent_id !== agent.id || x.org_id !== agent.org_id)
       return fail(c, 404, "not found")

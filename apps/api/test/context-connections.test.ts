@@ -144,6 +144,56 @@ describe("context connections (the ask lane gets hands)", () => {
     }
   })
 
+  it("a BYO polling runner gets the same tools, and may spend them with its standing bearer", async () => {
+    const secretValue = "sk-byo-lane-secret-5678"
+    const conn = await makeConnection({
+      toolkit: "ops",
+      kind: "secret",
+      secret: secretValue,
+      base_url: "https://api.ops.test",
+      scope: "workspace",
+    })
+    const ctx = await makeContext("BYO", [conn.id])
+    const ask = await app.request(
+      `/v1/contexts/${ctx.id}/sessions`,
+      jsonAs(as(owner.email), { body_md: "status?" }),
+    )
+    const { session } = (await ask.json()) as { session: { id: string } }
+
+    // The queue is the BYO runner's door, and it carries the same list the hosted claim does.
+    const queue = await app.request(`/v1/contexts/${ctx.id}/queue`, {
+      headers: bearer(ctx.agent_token),
+    })
+    const q = await queue.json()
+    expect(q.tools.map((t: { def: { name: string } }) => t.def.name).sort()).toEqual([
+      "ops.get",
+      "ops.post",
+    ])
+
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ ok: 1 }), { status: 200 })) as typeof fetch
+    try {
+      // A standing agent bearer spends them for its OWN context's session — the same
+      // latitude the run lane gives a standing bearer for its own runs.
+      const mine = await app.request(
+        `/v1/agent/sessions/${session.id}/tool`,
+        jsonAs(bearer(ctx.agent_token), { tool: "ops.get", args: { path: "/health" } }),
+      )
+      expect(mine.status).toBe(200)
+
+      // Another context's agent gets nothing, standing bearer or not.
+      const other = await makeContext("Other")
+      const stolen = await app.request(
+        `/v1/agent/sessions/${session.id}/tool`,
+        jsonAs(bearer(other.agent_token), { tool: "ops.get", args: { path: "/health" } }),
+      )
+      expect(stolen.status).toBe(404)
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
   it("a session token reaches only its OWN session's tools", async () => {
     const conn = await makeConnection({ toolkit: "stripe" })
     const mine = await makeContext("Mine", [conn.id])
