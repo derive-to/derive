@@ -275,3 +275,24 @@ describe("the stored subject", () => {
     expect(parseSubject(null)).toBeNull()
   })
 })
+
+describe("an edit never changes the document's format", () => {
+  it("keeps text/markdown even when the model returns an .html filename", async () => {
+    // The bug this prevents, seen in a real run: the model omitted a filename, parseRevision
+    // fell back to `index.html` (correct when CREATING, wrong when editing), and a Markdown
+    // document was silently republished as HTML — rendering as raw unformatted text with no
+    // error anywhere. The format belongs to the document, not to the model.
+    const { meta, blobs, artifact } = await setup()
+    const html = `<revision>${JSON.stringify({ content: "# Still markdown", filename: "index.html", confidence: 0.95, message: "m" })}</revision>`
+    const res = await runSessionTurn(deps(meta, blobs, html), {
+      session: session(),
+      subject: { kind: "artifact", id: "doc1", mode: "publish" },
+      artifact,
+      transcript: transcript("make it shorter"),
+      flags: FLAGS,
+      onBehalf: ED,
+    })
+    expect(res.outcome).toBe("published")
+    expect((await meta.getVersion("a1", 2))?.content_type).toBe("text/markdown")
+  })
+})

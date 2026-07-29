@@ -108,12 +108,19 @@ export const automationRoutes = (ctx: AppContext) => {
    *  then fails from inside an executor that had to boot to find out. The chain (initiator →
    *  owner-lend → workspace pool) is the same one the executor resolves later — see lib/payer.ts,
    *  which exists so the two cannot drift. */
-  const canPay = (a: AutomationRecord, initiatorId: string | null): Promise<boolean> =>
-    canPayForAgent(meta, {
+  const canPay = async (a: AutomationRecord, initiatorId: string | null): Promise<boolean> => {
+    // An operator-configured gateway means THIS DEPLOY pays, so there is no chain to walk and
+    // no plan for anyone to connect. Without this the guard refuses every run on exactly the
+    // self-host deployments DERIVE_MODEL_BASE_URL exists to serve — the loop substrate would
+    // happily execute them, and they could never be created. Same fix, and the same reasoning,
+    // as the attended lane in routes/contexts.ts; found by running both end to end.
+    if (ctx.callModel) return true
+    return canPayForAgent(meta, {
       orgId: a.org_id,
       agentId: a.agent_id,
       initiator: initiatorId ? { userId: initiatorId, source: "initiator" } : null,
     })
+  }
 
   // ---- Owner surface: define / list / delete ---------------------------------
   app.post("/v1/automations", async (c) => {

@@ -174,7 +174,15 @@ const land = async (
 
   const bytes = new TextEncoder().encode(revision.content)
   const blobKey = await deps.blobs.put(bytes)
-  const contentType = revision.filename.endsWith(".md") ? "text/markdown" : "text/html"
+  // KEEP THE DOCUMENT'S OWN FORMAT. Deriving this from the model's filename silently converted
+  // a Markdown doc to HTML the moment the model omitted or mangled the name — parseRevision
+  // falls back to `index.html`, which is right when CREATING an artifact and wrong when editing
+  // one. The result rendered as raw unformatted text, and nothing reported an error. An edit
+  // changes content; the format is the document's, not the model's. Falls back to the filename
+  // only for a document that somehow has no recorded type.
+  const contentType =
+    input.artifact.current_content_type ??
+    (revision.filename.endsWith(".md") ? "text/markdown" : "text/html")
   const author = input.onBehalf?.name ?? "Derive"
 
   // A human published while the model was thinking. Demote rather than clobber: their write
