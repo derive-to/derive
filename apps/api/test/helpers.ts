@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -28,18 +29,26 @@ type TestStore = MetaStore & { close(): unknown }
 type Seat = { user_id: string; role: Role }
 
 // Postgres has no file-per-store isolation like SQLite, so each named store gets
-// its own schema (search_path), dropped + recreated on first use in this file.
-// Same name → same schema (mirrors SQLite's `${name}.db`). A per-worker key
-// namespaces the schema so parallel test files never collide: VITEST_POOL_ID is
-// unique per worker slot and pool-agnostic (correct under forks OR threads),
-// falling back to the pid outside vitest. Isolation also relies on vitest's
-// default isolate:true — a fresh module per file re-runs the DROP+recreate below,
-// so a worker's next file starts clean. Pools are tracked so afterAll releases them.
+// its own schema (search_path), created on first use in this file. Same name →
+// same schema within a file (mirrors SQLite's `${name}.db`). Pools are tracked so
+// afterAll releases them.
+//
+// The key is per-FILE, not per-worker. A worker runs its files one after another, and while
+// VITEST_POOL_ID alone kept CONCURRENT files apart, consecutive files in the same worker shared
+// a schema name and relied on a DROP+recreate to separate them. That holds right up until a
+// write outlives the file that issued it: an orphaned async write (an un-awaited enqueue, a
+// poller mid-tick) then lands in the NEXT file's freshly created schema, and that file fails
+// asserting on rows it never wrote — a cross-file failure with no plausible local cause, which
+// is exactly how it presented in CI (assertion failures that moved between unrelated files run
+// to run, none of them reproducible alone). Under vitest's default isolate:true this module is
+// re-imported per file, so a value minted at import time IS a file identity. Two files can no
+// longer name the same schema, and leftovers stay in the schema of the file that made them.
 const pgStores: TestStore[] = []
 const pgSchemas = new Set<string>()
 const workerKey = (process.env.VITEST_POOL_ID ?? String(process.pid)).replace(/[^a-z0-9]+/gi, "_")
+const fileKey = randomUUID().replace(/-/g, "").slice(0, 10)
 const schemaFor = (name: string) =>
-  `t_${workerKey}_${name.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`
+  `t_${workerKey}_${fileKey}_${name.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`
 
 const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore => {
   const base = PG_URL as string

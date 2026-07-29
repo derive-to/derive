@@ -329,20 +329,25 @@ export function buildContext(deps: AppDeps) {
     return Promise.all([webhooks, channel]).then(() => {})
   }
 
-  // Enqueue a screenshot render for a newly-published version. Fire-and-forget,
-  // mirroring `notify` above: non-fatal (logged on error), never awaited in the
-  // request path. Gated by deps.renderPreviews so self-hosted deployments without
-  // a renderer configured never attempt to enqueue.
-  const notifyRender = (a: ArtifactRecord, n: number): void => {
-    if (!deps.renderPreviews) return
-    enqueueRender(meta, a.id, n)
-      .then(() => deps.pokePreviews?.())
-      .catch((err) =>
-        log.error("preview enqueue failed", {
-          artifact: a.short_id,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      )
+  // Enqueue a screenshot render for a newly-published version. Non-fatal (logged on error)
+  // and off the request path, but through `background()` rather than orphaned: on Workers that
+  // is waitUntil, so the request still returns immediately; on Node it awaits, which is what
+  // stops the write outliving the caller. That mattered under the test suite, where an
+  // un-awaited enqueue could land AFTER its file finished and write into the next file's
+  // freshly recreated schema — a cross-file failure with no plausible local cause.
+  // Gated by deps.renderPreviews so self-hosted deployments without a renderer never enqueue.
+  const notifyRender = (a: ArtifactRecord, n: number): Promise<void> => {
+    if (!deps.renderPreviews) return Promise.resolve()
+    return background(
+      enqueueRender(meta, a.id, n)
+        .then(() => deps.pokePreviews?.())
+        .catch((err) =>
+          log.error("preview enqueue failed", {
+            artifact: a.short_id,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        ),
+    )
   }
 
   // Run after-the-response work without blocking the reply. On Workers the request
