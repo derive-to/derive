@@ -209,7 +209,8 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
     const sessionId = c.req.query("session")
     if (sessionId) {
       const s = await meta.getSession(sessionId)
-      const sctx = s ? await meta.getContext(s.context_id) : null
+      // Contextless sessions have no owning agent, so an agent cannot resolve their credential.
+      const sctx = s?.context_id ? await meta.getContext(s.context_id) : null
       if (!s || !sctx || sctx.agent_id !== agent.id || s.org_id !== agent.org_id)
         return fail(c, 404, "unknown session")
       out.push({ userId: s.asker_id, source: "asker" })

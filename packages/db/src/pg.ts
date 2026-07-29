@@ -2214,6 +2214,8 @@ export class PgMetaStore implements MetaStore {
     const sRows = await this.db.select().from(contextSession).where(eq(contextSession.id, id))
     const s = sRows[0]
     if (!s) return null
+    // No context ⇒ no owning agent ⇒ not agent-claimable (see the sqlite driver).
+    if (!s.context_id) return null
     const cRows = await this.db.select().from(context).where(eq(context.id, s.context_id))
     if (cRows[0]?.agent_id !== agentId) return null
     const now = new Date().toISOString()

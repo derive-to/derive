@@ -494,7 +494,7 @@ export function buildContext(deps: AppDeps) {
         } else {
           const s = await meta.getSession(claim.id)
           // A session's agent lives on its CONTEXT (sessions have no agent column).
-          const cx = s ? await meta.getContext(s.context_id) : null
+          const cx = s?.context_id ? await meta.getContext(s.context_id) : null
           live = !!(
             s &&
             cx &&

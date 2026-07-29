@@ -2413,6 +2413,10 @@ export function makeRepos(db: SqliteDb) {
     // checked through it rather than on the row. A foreign agent claims nothing.
     const s = await db.select().from(contextSession).where(eq(contextSession.id, id)).get()
     if (!s) return null
+    // A session with NO context has no agent that owns it, so no external agent may claim it —
+    // the default-agent path is served in-process by the API, which already authorized the asker.
+    // Fail closed here rather than letting any agent answer into someone's private chat.
+    if (!s.context_id) return null
     const cx = await db.select().from(context).where(eq(context.id, s.context_id)).get()
     if (!cx || cx.agent_id !== agentId) return null
     const now = new Date().toISOString()

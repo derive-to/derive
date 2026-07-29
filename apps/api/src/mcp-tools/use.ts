@@ -282,7 +282,7 @@ export function registerUseTool(tc: ToolContext): void {
             "Pass `context` OR `session_id`, not both — a follow-up already knows its context.",
           )
         const found = await ctx.meta.getSession(session_id)
-        const linked = found ? await ctx.meta.getContext(found.context_id) : null
+        const linked = found?.context_id ? await ctx.meta.getContext(found.context_id) : null
         // Ownership + the LIVE grant, re-checked per call (a human removed from
         // the workspace/roster loses ask-through-agent the moment they lose
         // ask-directly), and the OAuth grant's workspace clamp. Any miss reads

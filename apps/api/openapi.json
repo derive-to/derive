@@ -2349,14 +2349,17 @@
             "type": "string"
           },
           "context_id": {
-            "type": "string"
+            "type": "string",
+            "nullable": true,
+            "description": "The packaged agent answering, or null when the default agent is."
           },
           "asker_id": {
             "type": "string"
           },
           "context_version": {
             "type": "number",
-            "description": "The manifest version this session was opened against."
+            "nullable": true,
+            "description": "The manifest version this session opened against; null with no context."
           },
           "state": {
             "type": "string",

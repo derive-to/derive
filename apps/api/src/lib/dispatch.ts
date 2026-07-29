@@ -283,6 +283,9 @@ const dispatchSessions = async (
         )
       if (hostedOff.get(s.org_id)) continue
       // A session's acting agent lives on its CONTEXT (sessions carry no agent column).
+      // A contextless session is the DEFAULT agent's and is served in-process by the API, so
+      // dispatch must skip it — there is no runner to dispatch to and no context to bill through.
+      if (!s.context_id) continue
       const cx = await deps.meta.getContext(s.context_id)
       if (!cx) continue
 

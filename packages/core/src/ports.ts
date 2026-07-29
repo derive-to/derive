@@ -1961,11 +1961,13 @@ export type SessionMessageAuthor = "asker" | "agent"
  *  runner's credentials can reach, so it never gets artifact-style visibility. */
 export interface SessionRecord {
   id: string
-  context_id: string
+  /** The packaged agent answering, or NULL when the default agent is (chat with a document
+   *  needs no context). A context is how you opt INTO a packaged agent. */
+  context_id: string | null
   org_id: string
   asker_id: string
-  /** The manifest version the session started against (provenance). */
-  context_version: number
+  /** The manifest version the session started against (provenance); null with no context. */
+  context_version: number | null
   state: SessionState
   created_at: string
   /** Bumped on every message/state change; null until then (read as ?? created_at). */
@@ -1989,10 +1991,10 @@ export interface SessionRecord {
 }
 export interface NewSession {
   id: string
-  context_id: string
+  context_id?: string | null
   org_id: string
   asker_id: string
-  context_version: number
+  context_version?: number | null
   /** Optional idempotency key; when set, a matching in-flight session is reused. */
   dedupe_key?: string | null
   /** JSON-encoded `Selector`; null/absent for a plain ask. */

@@ -6254,10 +6254,11 @@ export interface components {
         };
         Session: {
             id: string;
-            context_id: string;
+            /** @description The packaged agent answering, or null when the default agent is. */
+            context_id: string | null;
             asker_id: string;
-            /** @description The manifest version this session was opened against. */
-            context_version: number;
+            /** @description The manifest version this session opened against; null with no context. */
+            context_version: number | null;
             /**
              * @description open = awaiting the agent; working = a runner claimed it and is answering; answered; escalated = draft went to review; failed = run crashed; closed = ended by asker/owner.
              * @enum {string}

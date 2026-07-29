@@ -239,9 +239,15 @@ export const contextRoutes = (ctx: AppContext) => {
   const Session = z
     .object({
       id: z.string(),
-      context_id: z.string(),
+      context_id: z
+        .string()
+        .nullable()
+        .describe("The packaged agent answering, or null when the default agent is."),
       asker_id: z.string(),
-      context_version: z.number().describe("The manifest version this session was opened against."),
+      context_version: z
+        .number()
+        .nullable()
+        .describe("The manifest version this session opened against; null with no context."),
       state: z
         .enum(["open", "working", "answered", "escalated", "failed", "closed"])
         .describe(
@@ -351,6 +357,9 @@ export const contextRoutes = (ctx: AppContext) => {
 
   /** A session's context + manifest, or null when either half is gone. */
   const contextOf = async (s: SessionRecord) => {
+    // Contextless (default-agent) sessions resolve to null here, which every caller already
+    // treats as "not found" — the fail-closed default for every agent-facing lane.
+    if (!s.context_id) return null
     const x = await meta.getContext(s.context_id)
     if (!x) return null
     const manifest = await meta.getArtifactById(x.manifest_artifact_id)
@@ -1237,7 +1246,8 @@ export const contextRoutes = (ctx: AppContext) => {
     // and letting one claim by id would bypass the per-context concurrency cap.
     if (!scope) return fail(c, 403, "a session capability token is required")
     const s = await meta.getSession(scope)
-    const x = s ? await meta.getContext(s.context_id) : null
+    // No context ⇒ no owning agent ⇒ 404 (a contextless chat session is served in-process).
+    const x = s?.context_id ? await meta.getContext(s.context_id) : null
     if (!s || !x || x.agent_id !== agent.id) return fail(c, 404, "not found")
     // The HOSTED lease comes from the run lifecycle clock, NOT from leaseFor(context).
     //

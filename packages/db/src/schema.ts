@@ -898,12 +898,14 @@ export const contextSession = sqliteTable(
   "context_session",
   {
     id: text("id").primaryKey(),
-    context_id: text("context_id")
-      .notNull()
-      .references(() => context.id),
+    // NULLABLE since chat: a session that names no context is served by the default agent
+    // (the model plus the document). A context is how you opt INTO a packaged agent, not a
+    // requirement for having a conversation. Relaxed on existing DBs by RELAX_STATEMENTS.
+    context_id: text("context_id").references(() => context.id),
     org_id: text("org_id").notNull(),
     asker_id: text("asker_id").notNull(),
-    context_version: integer("context_version").notNull(),
+    /** The manifest version this session opened against; null when there is no context. */
+    context_version: integer("context_version"),
     state: text("state").$type<SessionState>().notNull().default("open"),
     created_at: text("created_at").notNull().default(now),
     updated_at: text("updated_at"),

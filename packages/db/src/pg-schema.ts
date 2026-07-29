@@ -721,12 +721,10 @@ export const contextSession = pgTable(
   "context_session",
   {
     id: text("id").primaryKey(),
-    context_id: text("context_id")
-      .notNull()
-      .references(() => context.id),
+    context_id: text("context_id").references(() => context.id),
     org_id: text("org_id").notNull(),
     asker_id: text("asker_id").notNull(),
-    context_version: integer("context_version").notNull(),
+    context_version: integer("context_version"),
     state: text("state").$type<SessionState>().notNull().default("open"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
     updated_at: text("updated_at"),
