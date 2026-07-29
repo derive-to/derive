@@ -139,9 +139,8 @@ export const automationRoutes = (ctx: AppContext) => {
       if (!agents.some((a) => a.id === b.agentId))
         return bail(fail(c, 400, "agent must be in this workspace"))
     }
-    // Bound sources: exist in THIS workspace, and attachable by THIS caller — workspace
-    // connections need manage (which this route already gates), personal ones only their
-    // owner. Least privilege at bind time, not just at run time.
+    // Least privilege at bind time, not only at run time: the ids must be this workspace's,
+    // and attachable by this caller. The route already gated on manage, hence canManage.
     if (b.connectionIds?.length) {
       const bindErr = await connectionBindError(
         meta,
@@ -467,7 +466,9 @@ export const automationRoutes = (ctx: AppContext) => {
           // per write; it never re-derives semantics.
           targets: parseRefs(a.refs),
           // The run's source tools (name/description/params + broker ref), least-privilege.
-          tools,
+          // Projected field by field on purpose: RunTool also carries routing detail the
+          // executor has no use for, and this endpoint is the last stop before the wire.
+          tools: tools.map((t) => ({ def: t.def, ref: t.ref })),
           // What fired it, when something sent a body. /fire stores each webhook payload on
           // the run (coalescing a burst into one run of many payloads), and this is where they
           // reach the executor. Without it the fire-URL path was write-only: payloads were
@@ -578,12 +579,12 @@ export const automationRoutes = (ctx: AppContext) => {
     const match = allowed.find((t) => t.def.name === b.tool && (!b.ref || t.ref === b.ref))
     if (!match) return fail(c, 403, "tool not allowed for this run")
     try {
-      // A pasted-secret connection is executed by Derive itself (HTTP with the decrypted
-      // secret attached server-side); everything else goes through the broker. Either
-      // way the runner only ever sent a tool NAME — no credential enters the executor.
-      if (match.ref.startsWith("secret:")) {
-        const cn = (await meta.getConnectionsByIds(connIds)).find((x) => x.broker_ref === match.ref)
-        if (!cn || !deps.encryptionKey) return fail(c, 403, "tool not allowed for this run")
+      // A pasted-secret connection has no vendor, so Derive executes it: the credential is
+      // fetched, decrypted and spent here. Either way the runner only ever sent a tool NAME.
+      if (match.kind === "secret") {
+        if (!deps.encryptionKey) return fail(c, 502, "secret connections need an encryption key")
+        const cn = await meta.getConnection(match.connectionId)
+        if (!cn || cn.org_id !== agent.org_id) return fail(c, 404, "not found")
         const result = await executeSecretTool(cn, b.tool, b.args ?? {}, deps.encryptionKey)
         return c.json({ result })
       }

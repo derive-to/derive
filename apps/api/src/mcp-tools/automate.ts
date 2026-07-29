@@ -239,9 +239,9 @@ export function registerAutomateTool(tc: ToolContext): void {
       // create
       if (!input.trigger || !input.instruction)
         return json({ error: "create needs trigger + instruction" })
-      // Bound sources: same bind-time policy as the REST route (this tool is already
-      // owner-grant-gated, so canManage holds; personal connections still need the
-      // grant's own user to be their owner).
+      // Same bind policy as the REST route. This action is owner-grant-only (checked
+      // above), which is why canManage is true here; a personal connection still has to
+      // belong to the human behind the grant.
       if (input.connection_ids?.length) {
         const bindErr = await connectionBindError(
           meta,

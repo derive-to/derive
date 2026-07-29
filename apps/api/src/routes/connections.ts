@@ -13,8 +13,8 @@ import { bail, fail, readJson } from "../lib/http"
 // A hosted run sees the tools of its bound connections only. The BYO path never touches
 // these. broker_ref is the broker-side connected-account id.
 
-// Explicit allowlist — secret_enc must NEVER ride any response, on any route, at any
-// role, including the minted dkapi_ REST bearer. Write-only is the whole contract.
+// An allowlist, not a spread: secret_enc must never ride a response, at any role, including
+// over a minted dkapi_ bearer. A pasted credential is write-only once it is stored.
 const present = (cn: ConnectionRecord) => ({
   id: cn.id,
   org_id: cn.org_id,
@@ -59,6 +59,8 @@ export const connectionRoutes = (ctx: AppContext) => {
     const b = await readJson(
       c,
       z.object({
+        // Slug-shaped because it becomes the prefix of the tool names a model reads
+        // (`github.get`): whitespace or a dot would make the surface ambiguous.
         toolkit: z
           .string()
           .min(1)
@@ -87,8 +89,7 @@ export const connectionRoutes = (ctx: AppContext) => {
         return fail(c, 400, "a secret connection needs `secret` and `base_url`")
       if (!b.base_url.startsWith("https://") && !b.base_url.startsWith("http://localhost"))
         return fail(c, 400, "base_url must be https (or http://localhost for dev)")
-      if (!deps.encryptionKey)
-        return fail(c, 400, "secret connections need an encryption key configured")
+      if (!deps.encryptionKey) return fail(c, 502, "secret connections need an encryption key")
       const rec = await meta.createConnection({
         id: newId("conn"),
         org_id: org,
@@ -96,13 +97,17 @@ export const connectionRoutes = (ctx: AppContext) => {
         scope: b.scope,
         kind: "secret",
         secret_enc: encryptSecret(b.secret, deps.encryptionKey),
-        // Normalized without a trailing slash so tool-call joins are predictable.
+        // Stored without a trailing slash; executeSecretTool adds one when it resolves a path.
         base_url: b.base_url.replace(/\/+$/, ""),
-        broker: "none", // no vendor: the tool proxy spends this credential itself
+        broker: "none",
         toolkit: b.toolkit,
-        broker_ref: `secret:${newId("sref")}`,
-        // Display hint only — the last 4 characters, never the credential.
+        // There is no vendor account behind this, but a run still identifies its tools by
+        // ref, so mint a synthetic one. Nothing parses it — routing is on `kind`.
+        broker_ref: newId("sref"),
+        // Display hint, never the credential. The default is the last 4 characters, which
+        // is how someone recognizes which key they pasted.
         scopes_label: b.scopes_label ?? `…${b.secret.slice(-4)}`,
+        // Nothing to authorize, so it is usable immediately.
         status: "active",
       })
       return c.json(present(rec), 201)

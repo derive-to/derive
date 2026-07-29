@@ -1665,9 +1665,10 @@ export interface ConnectionRecord {
   scope: ConnectionScope
   /** oauth (default) = broker-connected account; secret = pasted credential. */
   kind: ConnectionKind
-  /** kind "secret" only: the credential, AES-GCM encrypted. NEVER presented by any route. */
+  /** kind "secret" only: the credential, AES-GCM encrypted. Never presented by any route —
+   *  it is spent server-side by the tool proxy and read nowhere else. */
   secret_enc: string | null
-  /** kind "secret" only: the HTTPS base every tool call is joined against (and confined to). */
+  /** kind "secret" only: the HTTPS base every tool call resolves under, and is confined to. */
   base_url: string | null
   /** Broker provider slug: "local" | "composio". */
   broker: string
@@ -1675,7 +1676,8 @@ export interface ConnectionRecord {
   toolkit: string
   /** Broker-side connected-account id. */
   broker_ref: string
-  /** Human label of the granted scopes (display only), or null. */
+  /** Human label of the granted scopes, or null. Display only — for kind "secret" it doubles
+   *  as the credential hint (the pasted key's last 4), which is all a read ever gets. */
   scopes_label: string | null
   status: ConnectionStatus
   created_at: string

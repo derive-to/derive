@@ -1,7 +1,6 @@
 import { LocalBroker } from "@derive/broker"
 import { describe, expect, it } from "vitest"
 import { executeSecretTool, toolsForRun } from "../src/lib/broker"
-import { encryptSecret } from "../src/lib/crypto"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 // WO4 — least-privilege tool injection. A hosted run sees the tools of its BOUND connections
@@ -62,7 +61,8 @@ describe("hosted tool injection — least privilege (WO4)", () => {
     // The tool surface mirrors the broker's naming, so the shim treats both kinds alike.
     const tools = await toolsForRun(meta, new LocalBroker(), "default", [created.id])
     expect(tools.map((t) => t.def.name).sort()).toEqual(["game.get", "game.post"])
-    expect(tools.every((t) => t.ref.startsWith("secret:"))).toBe(true)
+    // How the proxy knows to execute these itself rather than asking the broker.
+    expect(tools.every((t) => t.kind === "secret" && t.connectionId === created.id)).toBe(true)
 
     // Execution: the server joins the path, attaches the decrypted bearer, returns the body.
     const [cn] = await meta.getConnectionsByIds([created.id])
@@ -81,15 +81,62 @@ describe("hosted tool injection — least privilege (WO4)", () => {
       method: "GET",
     })
 
-    // Confinement: absolute URLs and traversal out of the base both refuse — a hostile
-    // path must not aim the credential at another host or another route family.
+    // Confinement. The path comes from the model, so it is attacker-influenced: the
+    // credential must only ever be offered to the base it was pasted for.
     await expect(
       executeSecretTool(cn, "game.get", { path: "https://evil.test/x" }, key, fakeFetch),
     ).rejects.toThrow(/start with/)
     await expect(
       executeSecretTool(cn, "game.get", { path: "/../secrets" }, key, fakeFetch),
     ).rejects.toThrow(/escapes/)
-    expect(calls).toHaveLength(1) // neither hostile call reached fetch
+    // A sibling path that merely shares the base's prefix: /admin must not be satisfied by
+    // /administrator. Comparing hrefs without the trailing slash accepts this one.
+    await expect(
+      executeSecretTool(cn, "game.get", { path: "/../administrator/x" }, key, fakeFetch),
+    ).rejects.toThrow(/escapes/)
+    expect(calls).toHaveLength(1) // none of the hostile paths reached fetch
+  })
+
+  it("the claim response carries tool defs and refs only — never the connection record", async () => {
+    const created = await (
+      await app.request(
+        "/v1/connections",
+        jsonAs(as(owner.email), {
+          toolkit: "vault",
+          kind: "secret",
+          secret: "super-secret-value-xyz",
+          base_url: "https://api.vault.test",
+        }),
+      )
+    ).json()
+    const auto = await (
+      await app.request(
+        "/v1/automations",
+        jsonAs(as(owner.email), {
+          trigger: { kind: "manual" },
+          instruction: "Read the vault.",
+          connectionIds: [created.id],
+        }),
+      )
+    ).json()
+    await app.request(`/v1/automations/${auto.id}/run`, {
+      method: "POST",
+      headers: as(owner.email),
+    })
+    const claim = await app.request("/v1/agent/runs/claim", {
+      method: "GET",
+      headers: { authorization: `Bearer ${auto.agent_token}` },
+    })
+    const text = await claim.text()
+    expect(text).not.toContain("super-secret-value-xyz")
+    expect(text).not.toContain("secret_enc")
+    // The routing fields RunTool carries for the proxy stop at the wire, too.
+    expect(text).not.toContain("connectionId")
+    const [run] = JSON.parse(text).runs
+    expect(run.tools.map((t: { def: { name: string } }) => t.def.name).sort()).toEqual([
+      "vault.get",
+      "vault.post",
+    ])
   })
 
   it("a departed member's PERSONAL connection stops resolving; a workspace one survives", async () => {
