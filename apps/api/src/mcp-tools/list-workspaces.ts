@@ -11,6 +11,7 @@ export function registerListWorkspacesTool(
   liveTools?: () => string[],
 ): void {
   const { server, grantedWorkspaces, defaultOrg, agent, actingFor, registered, scopeForCap } = tc
+  const { mintedToken } = tc
   server.registerTool(
     "list_workspaces",
     {
@@ -40,11 +41,22 @@ export function registerListWorkspacesTool(
         // reading errors. `access` is the grant's own ceiling BEFORE each workspace's
         // membership caps it — which is why a row's role can be lower than this.
         me: {
-          principal: registered ? "registered_agent" : actingFor ? "oauth_grant" : "static_token",
+          // `registered` is literally "no OAuth grant", so anything else IS a grant —
+          // a third label here could only ever be wrong about it. A MINTED bearer says
+          // so, because the difference is actionable: it expires and it cannot mint.
+          principal: registered
+            ? "registered_agent"
+            : mintedToken
+              ? "minted_api_token"
+              : "oauth_grant",
           name: agent.name,
           acting_for: actingFor ? (actingFor.name ?? actingFor.id) : null,
           access: scopeForCap,
-          ...(registered
+          // Only tell a connection to mint if it CAN. A registered token already holds a
+          // shell-usable bearer, and a minted one is refused (it would renew itself
+          // forever) — advice you can't act on is the exact thing this block exists to
+          // stop handing out.
+          ...(registered || mintedToken
             ? {}
             : {
                 note: "Reach REST from your shell at this same access with stage target:'api' (a short-lived bearer). If a workspace ROLE is the limit, an admin changes it; if `access` is the limit, re-consent with a wider scope.",

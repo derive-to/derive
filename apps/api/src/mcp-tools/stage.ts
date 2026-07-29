@@ -151,9 +151,14 @@ export function registerStageTool(tc: ToolContext): void {
           base_url: base,
           how:
             `curl -sS -H "Authorization: Bearer ${tok}" "${base}/v1/artifacts?limit=1". ` +
-            "Spend it against any REST route this role can reach, in THIS workspace only. " +
+            `Spend it against any REST route this role can reach. Its workspace SEAT is ${t.org} alone. ` +
             "It expires on its own and is not refreshable — mint another when it lapses.",
-          note: "A real credential: it is not redacted from this transcript, so treat it like one. Its blast radius is one workspace, one role, minutes — and removing the user from the workspace kills it immediately.",
+          // Precise about the bound, because an overstated one is worse than none: the
+          // SEAT is a single workspace, but a link-shared artifact grants its own role to
+          // whoever holds the link, and that is not capped by this token's role — the
+          // same as any other credential this human holds. `access` narrows the seat, not
+          // the link.
+          note: "A real credential: it is not redacted from this transcript, so treat it like one. It carries one workspace seat, one role, for minutes, and removing the user from that workspace kills it immediately. It does NOT shrink what link-shared artifacts already grant the holder of their link.",
         })
       }
 

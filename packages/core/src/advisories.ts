@@ -74,12 +74,17 @@ export const missingBlobAdvisory = async (
   blobs: BlobStore,
 ): Promise<string | null> => {
   if (!blobs.has) return null
+  const has = blobs.has.bind(blobs)
   try {
     const keys = [
       ...new Set([...content.matchAll(BLOB_REF)].map((m) => (m[1] as string).toLowerCase())),
     ]
-    const missing: string[] = []
-    for (const key of keys.slice(0, BLOB_CHECK_CAP)) if (!(await blobs.has(key))) missing.push(key)
+    // CONCURRENT, not sequential: this is awaited on the publish response path, and on
+    // S3/R2 each `has` is a signed HEAD over the network. Serially a 12-ref page would
+    // add twelve round trips (~1s) to every publish; together they cost the slowest one.
+    const checked = keys.slice(0, BLOB_CHECK_CAP)
+    const present = await Promise.all(checked.map((key) => has(key)))
+    const missing = checked.filter((_, i) => !present[i])
     if (!missing.length) return null
     return (
       `${missing.length} embedded asset URL(s) reference blobs that don't exist ` +

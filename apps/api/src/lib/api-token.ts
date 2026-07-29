@@ -80,8 +80,18 @@ export const signApiToken = async (
   role: Role,
   clientId: string,
   expEpochMs: number,
-): Promise<string> =>
-  `${API_TOKEN_PREFIX}${await signCapabilityToken(DOMAIN, secret, [userId, orgId, role, clientId], expEpochMs)}`
+): Promise<string> => {
+  // The payload is dot-DELIMITED and parsed from the left, so a dot inside either id
+  // shifts every field after it. A userId of `u_a.ws_other.owner` would verify as a
+  // DIFFERENT workspace at a HIGHER role, correctly signed, with no forgery involved.
+  // Today's ids can't contain dots (base36 ids, alphanumeric auth subjects), which is
+  // precisely why this is enforced instead of assumed: the day an id source changes (an
+  // SSO subject, an imported id, a self-host seed) the break would be silent. clientId
+  // is last and absorbs dots harmlessly, so only the first two are checked.
+  if (userId.includes(".") || orgId.includes("."))
+    throw new Error("api token: userId and orgId must not contain '.', the payload delimiter")
+  return `${API_TOKEN_PREFIX}${await signCapabilityToken(DOMAIN, secret, [userId, orgId, role, clientId], expEpochMs)}`
+}
 
 /**
  * Verify a minted API token. Returns its claims, or null on any failure (bad prefix,

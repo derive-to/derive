@@ -19,6 +19,29 @@ import { dir } from "./helpers"
 const SECRET = "test-signing-secret"
 
 describe("api token — signing and verification", () => {
+  it("refuses to sign an id containing the payload delimiter", async () => {
+    // The payload is dot-delimited and parsed from the left, so a dot inside userId
+    // shifts every field after it. Signing `u_a.ws_other.owner` as the user would mint a
+    // token that verifies as a DIFFERENT workspace at a HIGHER role — correctly signed,
+    // no forgery involved. Today's ids can't contain dots, which is exactly why this is
+    // enforced rather than assumed: a future id source (an SSO subject, an imported id)
+    // would otherwise arm it silently.
+    const exp = Date.now() + API_TOKEN_TTL_MS
+    await expect(
+      signApiToken(SECRET, "u_a.ws_other.owner", "ws_low", "viewer", "cli", exp),
+    ).rejects.toThrow(/delimiter/)
+    await expect(
+      signApiToken(SECRET, "u_a", "ws_a.ws_other", "viewer", "cli", exp),
+    ).rejects.toThrow(/delimiter/)
+    // A dot in the clientId is harmless: it is the LAST field, so it absorbs the rest.
+    const ok = await signApiToken(SECRET, "u_a", "ws_a", "viewer", "cli.with.dots", exp)
+    expect(await verifyApiToken(SECRET, ok, Date.now())).toMatchObject({
+      userId: "u_a",
+      orgId: "ws_a",
+      clientId: "cli.with.dots",
+    })
+  })
+
   it("round-trips its claims", async () => {
     const exp = Date.now() + API_TOKEN_TTL_MS
     const tok = await signApiToken(SECRET, "u_1", "ws_1", "editor", "cli", exp)

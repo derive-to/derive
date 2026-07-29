@@ -178,7 +178,13 @@ export function registerReadTool(tc: ToolContext): void {
         // a second read doesn't double-enqueue a still-failed-looking row. Bounded:
         // one re-queue per read call; the job keeps its own MAX_ATTEMPTS dead-letter.
         let requeued = false
-        if (variant.status === "failed") {
+        // ONLY for the CURRENT version. The render worker discards a job whose version has
+        // been superseded (previews.ts marks it done without rendering it), so re-queueing
+        // an older one would flip `failed` to `pending` PERMANENTLY: nothing ever renders
+        // it, and the heal can't fire again because it only triggers on `failed`. That
+        // trades an honest error message for "not ready yet, try again shortly" forever.
+        // An old version keeps its failure, which is the truthful answer.
+        if (variant.status === "failed" && n === a.current_version) {
           await enqueueRender(ctx.meta, a.id, n)
           if (render === "top")
             await ctx.meta.setVersionPreview(a.id, n, { preview_status: "pending" })

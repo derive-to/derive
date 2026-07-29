@@ -139,4 +139,48 @@ describe("read render self-heal", () => {
       1,
     )
   })
+
+  it("does NOT re-queue a SUPERSEDED version, which would strand it in pending forever", async () => {
+    // The render worker discards a job whose version is no longer current (previews.ts
+    // marks it done without rendering). So healing an old version would flip `failed` to
+    // `pending` with nothing able to render it, and the heal could never fire again --
+    // it only triggers on `failed`. An honest error would become "not ready yet" forever.
+    const { app, meta, token } = await setup("dx-render-heal-old")
+    const pub = await call(app, token, "publish", {
+      title: "Superseded",
+      filename: "index.html",
+      content: "<h1>v1</h1>",
+    })
+    const a = await meta.getByShortId(pub.short_id)
+    if (!a) throw new Error("artifact missing")
+    // Publish a second version, so v1 is no longer current.
+    await call(app, token, "publish", { short_id: pub.short_id, content: "<h1>v2</h1>" })
+    const after = await meta.getByShortId(pub.short_id)
+    expect(after?.current_version).toBe(pub.version + 1)
+
+    const lease = new Date(Date.now() + 60_000).toISOString()
+    await meta.claimDueRenderJobs(new Date().toISOString(), 50, lease)
+    await meta.setVersionPreview(a.id, pub.version, {
+      preview_status: "failed",
+      preview_error: "boom (transient)",
+    })
+
+    const res = await callRaw(app, token, "read", {
+      short_id: pub.short_id,
+      version: pub.version,
+      render: "top",
+    })
+    // It still reports the real failure rather than pretending a retry is coming.
+    expect(res.isError).toBe(true)
+    expect(res.text).toContain("boom (transient)")
+    expect(res.text).not.toContain("re-queued")
+    // The variant KEEPS its failed status: no silent downgrade to a pending it can't leave.
+    const v = await meta.getVersion(a.id, pub.version)
+    expect(v?.preview_status).toBe("failed")
+    // And no doomed job was enqueued for the superseded version.
+    const jobs = await meta.claimDueRenderJobs(new Date().toISOString(), 50, lease)
+    expect(jobs.filter((j) => j.artifact_id === a.id && j.version_n === pub.version)).toHaveLength(
+      0,
+    )
+  })
 })
