@@ -1,0 +1,38 @@
+# EPHEMERAL preview of the chat branch. Deliberately NOT deploy/fly.toml — that file is the
+# template self-hosters copy, and it must not carry a throwaway app name.
+#
+# Ephemeral in the way Fly actually supports: the machine STOPS when idle and starts again on
+# the next request, so it costs nothing between looks. Destroy it outright with
+#   fly apps destroy derive-chat-preview-0729
+app = "derive-chat-preview-0729"
+primary_region = "iad"
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  PORT = '8080'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  # 0, not 1: nothing keeps running after you stop looking at it.
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/readyz"
+    interval = "15s"
+    timeout = "2s"
+
+# SQLite + local blobs need one persistent volume; no DATABASE_URL is set on purpose.
+[mounts]
+  source = "data"
+  destination = "/data"
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
