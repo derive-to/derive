@@ -12,6 +12,7 @@ import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createInProcessBackplane } from "../src/bus"
+import { TruncatedReplyError } from "../src/lib/model-openai"
 import { runSessionTurn, type TurnDeps } from "../src/lib/session-turn"
 
 // THE TURN — "chat with a derive", the whole attended path.
@@ -294,5 +295,36 @@ describe("an edit never changes the document's format", () => {
     })
     expect(res.outcome).toBe("published")
     expect((await meta.getVersion("a1", 2))?.content_type).toBe("text/markdown")
+  })
+})
+
+describe("a document too long to rewrite in one reply", () => {
+  it("says so, and does NOT tell you to try again", async () => {
+    // Found by chatting with a real 53KB page on the preview deploy. The truncation guard fired
+    // correctly — nothing was mangled — but the reply blamed connectivity and advised a retry
+    // that could never succeed, because the document does not fit in one reply and never will.
+    const { meta, blobs, artifact } = await setup()
+    const res = await runSessionTurn(
+      deps(meta, blobs, async () => {
+        throw new TruncatedReplyError()
+      }),
+      {
+        session: session(),
+        subject: { kind: "artifact", id: "doc1", mode: "publish" },
+        artifact,
+        transcript: transcript("add a glossary"),
+        flags: FLAGS,
+        onBehalf: ED,
+      },
+    )
+    expect(res.outcome).toBe("failed")
+    expect(res.wrote).toBeNull()
+    expect(res.reply).toMatch(/too long/i)
+    // Neither of the two things that do not work: retrying, or narrowing the request. The
+    // contract is whole-document, so a one-word change fails exactly like a rewrite.
+    expect(res.reply).not.toMatch(/try again/i)
+    expect(res.reply).not.toMatch(/one section/i)
+    // The document is untouched — a truncated reply must never be treated as content.
+    expect((await meta.getArtifactById("a1"))?.current_version).toBe(1)
   })
 })

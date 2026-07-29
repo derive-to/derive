@@ -28,6 +28,17 @@ export interface OpenAiCompatOptions {
   fetchImpl?: typeof fetch
 }
 
+/** The reply hit the token ceiling. Its own type because the CALLER has to tell it apart from a
+ *  network failure: one is "try again", the other is "this will never fit", and telling a person
+ *  to retry something that cannot succeed is worse than saying nothing. */
+export class TruncatedReplyError extends Error {
+  readonly truncated = true
+  constructor() {
+    super("model reply hit the token ceiling before it finished")
+    this.name = "TruncatedReplyError"
+  }
+}
+
 interface ToolCall {
   id?: string
   type?: string
@@ -113,10 +124,7 @@ export const openAiCompatModel = (opts: OpenAiCompatOptions): AgentLoopInput["ca
     // with no closing tag, treats it as prose, and pastes tens of kilobytes of raw JSON into the
     // conversation as the "answer". Thrown (not returned) so it reads as a retryable failure,
     // the same as any other bad response from the provider.
-    if (choice?.finish_reason === "length")
-      throw new Error(
-        "model call failed (truncated): the reply hit the token ceiling before it finished — the document may be too long to revise in one turn",
-      )
+    if (choice?.finish_reason === "length") throw new TruncatedReplyError()
     return {
       text: choice?.message?.content ?? "",
       toolUses: calls

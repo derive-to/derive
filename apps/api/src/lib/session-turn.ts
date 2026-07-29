@@ -28,6 +28,7 @@ import {
 import { log } from "../log"
 import { type AfterPublishDeps, afterPublish } from "./after-publish"
 import type { AgentLoopInput } from "./agent-loop"
+import { TruncatedReplyError } from "./model-openai"
 
 export interface TurnDeps extends AfterPublishDeps {
   callModel: AgentLoopInput["callModel"]
@@ -118,8 +119,20 @@ ${src.text}
       text = res.text
     } catch (err) {
       log.error("model call failed", { session: input.session.id, err: String(err) })
+      // Truncation is not a connectivity problem, and "try again" is advice that cannot work:
+      // the document does not fit in one reply and will not next time either.
+      //
+      // Nor does "change one section" help, which an earlier version of this message suggested —
+      // REVISION_CONTRACT asks for the COMPLETE document back however small the change, so every
+      // edit to a large page fails identically. The honest fix is the `edits` contract
+      // (applyEdits in core, already used by the publish and proposal routes): a search/replace
+      // whose reply is bounded by the size of the CHANGE rather than the document. Chat is the
+      // only writer not using it. Until then this says what is true and stops there.
+      const truncated = err instanceof TruncatedReplyError
       return {
-        reply: "I could not reach the model just now. Nothing has been changed — try again.",
+        reply: truncated
+          ? "This document is too long for me to edit — I have to return the whole thing and it does not fit in one reply, so nothing has been changed. I can still answer questions about it."
+          : "I could not reach the model just now. Nothing has been changed — try again.",
         outcome: "failed",
         wrote: null,
         costMicroUsd: toMicroUsd(cost),

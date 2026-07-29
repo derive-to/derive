@@ -186,6 +186,6 @@ describe("the response it reads", () => {
           ],
         }),
       )({ system: "s", messages: [], tools: [] }),
-    ).rejects.toThrow(/truncated/)
+    ).rejects.toThrow(/token ceiling/)
   })
 })
