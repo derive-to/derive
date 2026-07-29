@@ -246,3 +246,69 @@ describe("chat obeys the workspace's autonomy settings", () => {
     expect(r.proposals).toBe(1)
   })
 })
+
+describe("access is re-checked on every turn, not just at session open", () => {
+  it("REFUSES once the asker has lost access to the document", async () => {
+    // A session id is long-lived; an ACL is not. Checking only at creation made the session a
+    // permanent grant: someone removed from the workspace still held the id, and every turn
+    // read the document's CURRENT contents back to them and could publish to it.
+    const users = [
+      { id: "u-ed", email: "ed@x.com", name: "Ed" },
+      { id: "u-mo", email: "mo@x.com", name: "Mo" },
+    ]
+    const { app, meta } = makeAuthedApp("chat-revoke", users, "editor", {
+      deps: {
+        callModel: async () => ({
+          text: revision("# Owned"),
+          toolUses: [],
+          costUsd: null,
+          done: true,
+        }),
+      },
+    })
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatBeta: true,
+      agentAutoEnabled: true,
+    })
+    const made = await app.request("/v1/artifacts", {
+      method: "POST",
+      headers: as("ed@x.com"),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new Blob(["# Secret"], { type: "text/markdown" }), "s.md")
+        f.set("title", "Secret")
+        return f
+      })(),
+    })
+    const { short_id } = (await made.json()) as { short_id: string }
+
+    // Mo opens a chat session while still a member.
+    const opened = await app.request("/v1/artifacts/chat-session", {
+      method: "POST",
+      headers: { ...as("mo@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ short_id, body_md: "hello" }),
+    })
+    expect(opened.status).toBe(201)
+    const { session } = (await opened.json()) as { session: { id: string } }
+
+    // Mo is removed from the workspace, but still holds the session id.
+    await meta.removeMembership("default", "u-mo")
+
+    const before = (await meta.getByShortId(short_id))?.current_version
+    await app.request(`/v1/sessions/${session.id}/messages`, {
+      method: "POST",
+      headers: { ...as("mo@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ body_md: "rewrite the whole thing" }),
+    })
+    for (let i = 0; i < 60; i++) {
+      const msgs = await meta.listSessionMessages(session.id)
+      if (msgs.some((m) => m.author_kind === "agent")) break
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    // The document is untouched, and the transcript says why rather than going silent.
+    expect((await meta.getByShortId(short_id))?.current_version).toBe(before)
+    const last = (await meta.listSessionMessages(session.id)).at(-1)
+    expect(last?.body_md ?? "").toMatch(/no longer have access|not found/i)
+  })
+})

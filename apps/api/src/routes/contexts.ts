@@ -45,8 +45,10 @@ export const contextRoutes = (ctx: AppContext) => {
     agentSessionScope,
     authorize,
     bus,
+    askLimiter,
     canAskContext,
     currentUser,
+    limited,
     managementPrincipal,
     requireUser,
     requireWorkspace,
@@ -71,7 +73,7 @@ export const contextRoutes = (ctx: AppContext) => {
   ) => {
     const subject = parseSubject(s.subject_ref)
     if (!subject || subject.kind !== "artifact") return
-    const reply = async (body: string, state: SessionState) => {
+    const reply = async (body: string, state: SessionState, payload?: unknown) => {
       await meta.addSessionMessage(
         {
           id: newId("sm"),
@@ -79,6 +81,7 @@ export const contextRoutes = (ctx: AppContext) => {
           author_kind: "agent",
           author_id: agentId ?? "derive",
           body_md: body,
+          meta: payload === undefined ? null : JSON.stringify(payload),
         },
         state,
       )
@@ -164,7 +167,16 @@ export const contextRoutes = (ctx: AppContext) => {
           onBehalf: { id: me.id, name: me.name ?? me.username ?? me.email ?? "someone" },
         },
       )
-      await reply(res.reply, res.outcome === "failed" ? "failed" : "answered")
+      // METERING. The turn computes its spend and this used to throw it away, so attended chat
+      // — the lane on the operator's key — left no trace anywhere. Recorded on the agent message
+      // so a turn is auditable next to what it produced, without a new table. `cost_micro_usd`
+      // is null when the provider does not report cost (which is every provider today, by
+      // design — see costOf); the OUTCOME and turn count are still worth having on their own.
+      await reply(res.reply, res.outcome === "failed" ? "failed" : "answered", {
+        outcome: res.outcome,
+        wrote: res.wrote,
+        cost_micro_usd: res.costMicroUsd,
+      })
     } catch (e) {
       log.error("attended turn failed", {
         session: s.id,
@@ -981,6 +993,12 @@ export const contextRoutes = (ctx: AppContext) => {
     async (c) => {
       const me = await requireUser(c)
       if (me instanceof Response) return bail(me)
+      // RATE LIMIT. This lane spends the OPERATOR's model key, and had no limiter of any kind —
+      // a loop against one public document could burn it with nothing in any ledger to notice
+      // by. `askLimiter` already existed for exactly this shape of request and was wired up but
+      // never used anywhere.
+      const rl = await limited(c, askLimiter)
+      if (rl) return bail(rl)
       const b = await readJson(
         c,
         z.object({
@@ -1027,7 +1045,12 @@ export const contextRoutes = (ctx: AppContext) => {
         "open",
       )
       // Served here, not queued — the person is waiting. Detached, so this returns now.
-      await serveAttended(session, me, null)
+      // Through `background`, not a bare await: on Workers that is executionCtx.waitUntil, so
+      // the turn outlives the response and a client that gives up mid-turn still gets its reply
+      // in the transcript. On Node (and tests) it awaits inline, which is what keeps the suite
+      // deterministic. The comments and the polling UI both describe THIS, and previously the
+      // code did not do it.
+      await ctx.background(serveAttended(session, me, null))
       return c.json({ session: sessionJson(session), messages: [messageJson(first)] }, 201)
     },
   )
@@ -1255,7 +1278,7 @@ export const contextRoutes = (ctx: AppContext) => {
         const st = await meta.getOrgSettings(s.org_id).catch(() => null)
         if (!st?.chatBeta) return c.json({ message: messageJson(m) }, 201)
       }
-      await serveAttended(s, me, linked?.context.agent_id ?? null)
+      await ctx.background(serveAttended(s, me, linked?.context.agent_id ?? null))
       return c.json({ message: messageJson(m) }, 201)
     },
   )

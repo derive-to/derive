@@ -40,12 +40,21 @@ export function useArtifactChat(shortId: string) {
     }
   }, [])
 
-  // Reset when the document changes, so one doc's transcript never bleeds into another's.
+  // Reset when the document changes. `shortId` MUST be in the deps: the route reuses this
+  // component instance across /artifacts/$ref changes, so without it doc A's session id
+  // survives a navigation to doc B — and the next message posts to a session whose subject
+  // is still A. You would watch B on screen while A was edited. exhaustive-deps cannot catch
+  // this, because the effect body references nothing from the closure.
+  // shortId is a RESET TRIGGER, not a value the body reads, which is why the rule cannot see
+  // that it is needed. Dropping it re-introduces the bug: the route reuses this component
+  // across /artifacts/$ref changes, so doc A's session id survives to doc B and the next
+  // message edits A.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset trigger, see above
   useEffect(() => {
     setSessionId(null)
     setMessages([])
     setError(null)
-  }, [])
+  }, [shortId])
 
   const send = useCallback(
     async (body: string, canPublish: boolean) => {

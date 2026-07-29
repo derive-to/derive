@@ -173,4 +173,19 @@ describe("the response it reads", () => {
     })
     expect(res.costUsd).toBeNull()
   })
+
+  it("THROWS on a truncated reply rather than pasting raw JSON as the answer", async () => {
+    // The failure this prevents: a long document hits the ceiling mid-<revision>, the block has
+    // no closing tag, the turn reads it as prose, and the user gets 30KB of JSON in a chat
+    // bubble while the document is silently untouched.
+    await expect(
+      model(
+        reply({
+          choices: [
+            { message: { content: '<revision>{"content":"# Half a doc' }, finish_reason: "length" },
+          ],
+        }),
+      )({ system: "s", messages: [], tools: [] }),
+    ).rejects.toThrow(/truncated/)
+  })
 })

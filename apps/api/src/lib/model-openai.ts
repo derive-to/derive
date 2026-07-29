@@ -108,6 +108,15 @@ export const openAiCompatModel = (opts: OpenAiCompatOptions): AgentLoopInput["ca
     }
     const choice = body.choices?.[0]
     const calls = choice?.message?.tool_calls ?? []
+    // TRUNCATION IS NOT A REPLY. The revision contract asks for the COMPLETE document back, so
+    // a long doc can hit the token ceiling mid-`<revision>`. Unchecked, the caller sees a reply
+    // with no closing tag, treats it as prose, and pastes tens of kilobytes of raw JSON into the
+    // conversation as the "answer". Thrown (not returned) so it reads as a retryable failure,
+    // the same as any other bad response from the provider.
+    if (choice?.finish_reason === "length")
+      throw new Error(
+        "model call failed (truncated): the reply hit the token ceiling before it finished — the document may be too long to revise in one turn",
+      )
     return {
       text: choice?.message?.content ?? "",
       toolUses: calls

@@ -46,10 +46,15 @@ export function ArtifactChat(props: {
   const [sending, setSending] = useState(false)
   const endRef = useRef<HTMLDivElement | null>(null)
 
-  // Follow the tail as turns land, the way every chat surface does.
+  // Follow the tail as turns land. Depends on the message COUNT (and the working flag, which
+  // adds the thinking row) — with empty deps this fired on mount only and every reply landed
+  // below the fold.
+  // These deps are the CHANGE SIGNAL to scroll on, not values the body reads. With none, this
+  // fired on mount only and every reply landed below the fold.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: change signal, see above
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
-  }, [])
+  }, [messages.length, working])
 
   useEffect(() => {
     if (!working) return
