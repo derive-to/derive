@@ -1,3 +1,4 @@
+import type { DocEdit } from "./doc-text"
 /**
  * The RUN CONTRACT: what an automation run must return, and how that reply is read.
  *
@@ -59,6 +60,111 @@ block is discarded and nothing is written.
 
 Return the WHOLE artifact source, not a diff. Derive decides how the write lands — publish,
 propose, or record — from the automation's settings and your confidence; that is never your call.`
+
+/**
+ * The EDITS contract — the same job as REVISION_CONTRACT, sized for a document that cannot be
+ * returned whole.
+ *
+ * A revision's reply is bounded by the DOCUMENT; an edit's is bounded by the CHANGE. That is the
+ * entire reason this exists: past roughly 30KB a full-source reply hits the token ceiling, and
+ * every edit fails identically whether it changes a word or rewrites the page. Search/replace has
+ * no such relationship to document size.
+ *
+ * Deliberately the same shape as the coding Edit tool (old_str/new_str/occurrence), because models
+ * are already good at it and already know how to recover from a miss.
+ */
+export const EDITS_CONTRACT = `
+
+## Output format — REQUIRED
+
+This document is TOO LARGE to return in full, so do not try. Reply with a single <edits> block of
+JSON and NOTHING after it, describing only what should CHANGE.
+
+<edits>
+{
+  "edits": [
+    { "old_str": "text to find, copied EXACTLY from the source", "new_str": "text to put in its place" }
+  ],
+  "confidence": 0.0,
+  "message": "a one-line version note"
+}
+</edits>
+
+Rules that decide whether this applies at all:
+- "old_str" must appear EXACTLY ONCE. Include enough surrounding text to make it unique — a bare
+  tag or a common word will match many times and be rejected.
+- Copy "old_str" byte for byte from the source, including whitespace and markup. It is matched
+  literally, not fuzzily.
+- If a phrase is intentionally repeated, add "occurrence": N (1-based) to say which one.
+- Keep each "old_str" as small as it can be while staying unique. You are not being asked for
+  context, you are being asked for the change.
+- To ADD a section, anchor on the text it should follow and put both the anchor and the new
+  content in "new_str".
+
+Either every edit applies or none does — a partial document is never written.`
+
+/** Sent when the model replied without a usable <edits> block, or when applying them failed.
+ *  `detail` carries applyEdits' own diagnostic, which explains WHY a match failed (not merely
+ *  that it did) — that is what lets the second attempt actually succeed. */
+export const editsNudge = (detail: string): string =>
+  `Your previous reply was NOT applied: ${detail}\n\nReply now with ONLY a corrected <edits> block and nothing else. Copy old_str byte for byte from the source shown above, and include enough surrounding text that it appears exactly once.`
+
+/** Read a model reply into edits, forgiving about shape and strict about substance — same stance
+ *  as parseRevision. An empty or malformed list is an error, never a silent no-op. */
+export const parseEdits = (
+  text: string,
+):
+  | { edits: DocEdit[]; confidence: number | null; message?: string; error?: undefined }
+  | {
+      edits?: undefined
+      confidence?: undefined
+      message?: undefined
+      error: string
+    } => {
+  const m = text.match(/<edits>([\s\S]*?)<\/edits>/i)
+  if (!m?.[1]) return { error: NO_EDITS_BLOCK }
+  const cleaned = m[1]
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .trim()
+  let raw: unknown
+  try {
+    raw = JSON.parse(cleaned)
+  } catch (e) {
+    return { error: `edits JSON parse: ${(e as Error).message}` }
+  }
+  if (!raw || typeof raw !== "object") return { error: "edits is not an object" }
+  const o = raw as Record<string, unknown>
+  const list = Array.isArray(o.edits) ? o.edits : null
+  if (!list?.length) return { error: "edits must be a non-empty array of {old_str, new_str}" }
+  const out: DocEdit[] = []
+  for (const [i, e] of list.entries()) {
+    if (!e || typeof e !== "object") return { error: `edit ${i + 1} is not an object` }
+    const x = e as Record<string, unknown>
+    if (typeof x.old_str !== "string" || x.old_str === "")
+      return { error: `edit ${i + 1}: old_str must be a non-empty string` }
+    if (typeof x.new_str !== "string")
+      return { error: `edit ${i + 1}: new_str must be a string (use "" to delete)` }
+    const occ = typeof x.occurrence === "number" ? { occurrence: x.occurrence } : {}
+    out.push({ old_str: x.old_str, new_str: x.new_str, ...occ })
+  }
+  const conf = typeof o.confidence === "number" ? o.confidence : Number(o.confidence)
+  return {
+    edits: out,
+    confidence: Number.isFinite(conf) ? conf : null,
+    message: typeof o.message === "string" ? o.message : undefined,
+  }
+}
+
+/** The `error` value meaning no <edits> block was present at all. */
+export const NO_EDITS_BLOCK = "no <edits> block in result"
+
+/** Above this many characters of source, a full-document reply will not fit in a normal model
+ *  reply, so the turn asks for edits instead. Set well below the real ceiling (~30KB at 8k
+ *  tokens): the reply also carries prose, and a document just under the limit that fails is a
+ *  worse experience than one comfortably over it that uses edits. */
+export const EDITS_THRESHOLD_CHARS = 12_000
 
 /** Sent when a reply arrived without the block: one more chance, asking for the block alone. */
 export const REVISION_NUDGE = `Your previous reply was NOT accepted — it did not end with the required <revision> block, so nothing was written. Reply now with ONLY that block and nothing else: <revision>{"content":"<the full new artifact source>","filename":"index.html","confidence":…,"message":"…"}</revision>.`

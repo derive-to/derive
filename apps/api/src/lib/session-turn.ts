@@ -12,11 +12,18 @@
 import {
   type ArtifactRecord,
   addCostUsd,
+  applyEdits,
   decideWrite,
+  EDITS_CONTRACT,
+  EDITS_THRESHOLD_CHARS,
+  EditError,
+  editsNudge,
   MAX_ARTIFACT_CHARS,
+  NO_EDITS_BLOCK,
   NO_REVISION_BLOCK,
   NUDGE_LIMIT,
   newId,
+  parseEdits,
   parseRevision,
   REVISION_CONTRACT,
   REVISION_NUDGE,
@@ -90,13 +97,19 @@ export const runSessionTurn = async (
       costMicroUsd: null,
     }
 
+  // WHICH CONTRACT. A revision's reply is bounded by the DOCUMENT; an edit's by the CHANGE. Below
+  // the threshold, whole-document is the better ask — it cannot miss on an exact match. Above it,
+  // a whole-document reply cannot fit at all, so search/replace is not a preference but the only
+  // thing that works.
+  const big = src.text.length > EDITS_THRESHOLD_CHARS
+
   const system = `You are helping someone edit a document they are looking at right now.
 
 If they are asking you to CHANGE the document, reply with the revision block described below.
 If they are asking a QUESTION, or thinking out loud, just answer them in prose — do NOT emit a
 revision block, and do not change the document. Most messages are one or the other; decide which.
 
-${REVISION_CONTRACT}
+${big ? EDITS_CONTRACT : REVISION_CONTRACT}
 
 The document's current source follows, and its filename is ${input.artifact.short_id}.
 
@@ -106,13 +119,15 @@ ${src.text}
 
   let cost: number | null = null
   let text = ""
+  // What to send on the retry. For a revision it is fixed; for edits it carries applyEdits'
+  // own diagnostic, which is the thing that makes the second attempt likely to work.
+  let nudge = REVISION_NUDGE
   const turns = asTurns(input.transcript)
   for (let attempt = 0; attempt <= NUDGE_LIMIT; attempt++) {
     try {
       const res = await deps.callModel({
         system,
-        messages:
-          attempt === 0 ? turns : [...turns, { role: "user" as const, content: REVISION_NUDGE }],
+        messages: attempt === 0 ? turns : [...turns, { role: "user" as const, content: nudge }],
         tools: [],
       })
       cost = addCostUsd(cost, res.costUsd)
@@ -131,12 +146,62 @@ ${src.text}
       const truncated = err instanceof TruncatedReplyError
       return {
         reply: truncated
-          ? "This document is too long for me to edit — I have to return the whole thing and it does not fit in one reply, so nothing has been changed. I can still answer questions about it."
+          ? "That reply was cut off before it finished, so nothing has been changed. Try asking for a smaller change."
           : "I could not reach the model just now. Nothing has been changed — try again.",
         outcome: "failed",
         wrote: null,
         costMicroUsd: toMicroUsd(cost),
       }
+    }
+    if (big) {
+      const ed = parseEdits(text)
+      if (ed.edits) {
+        try {
+          // All-or-nothing: applyEdits rejects the whole batch on any miss, so a document is
+          // never half-written by a model that got one anchor wrong.
+          const content = applyEdits(src.text, ed.edits)
+          return await land(
+            deps,
+            input,
+            {
+              content,
+              filename: input.artifact.short_id,
+              confidence: ed.confidence,
+              message: ed.message,
+            },
+            src.version,
+            cost,
+          )
+        } catch (e) {
+          // A miss is recoverable and worth ONE retry, because the diagnostic says WHY it missed
+          // (nearest match, how many times it matched) rather than merely that it did.
+          if (e instanceof EditError && attempt < NUDGE_LIMIT) {
+            nudge = editsNudge(e.message)
+            continue
+          }
+          return {
+            reply:
+              e instanceof EditError
+                ? `I could not apply that change: ${e.message}`
+                : "I could not apply that change, so nothing has been written.",
+            outcome: "failed",
+            wrote: null,
+            costMicroUsd: toMicroUsd(cost),
+          }
+        }
+      }
+      // No block at all is a plain answer, exactly as with a revision.
+      if (ed.error === NO_EDITS_BLOCK) {
+        const prose = text.replace(/<edits>[\s\S]*?<\/edits>/gi, "").trim()
+        return {
+          reply: prose || "(no reply)",
+          outcome: "answered",
+          wrote: null,
+          costMicroUsd: toMicroUsd(cost),
+        }
+      }
+      nudge = editsNudge(ed.error)
+      continue
     }
     const parsed = parseRevision(text)
     if (parsed.revision) return await land(deps, input, parsed.revision, src.version, cost)

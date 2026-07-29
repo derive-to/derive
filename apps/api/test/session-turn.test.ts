@@ -298,11 +298,12 @@ describe("an edit never changes the document's format", () => {
   })
 })
 
-describe("a document too long to rewrite in one reply", () => {
-  it("says so, and does NOT tell you to try again", async () => {
-    // Found by chatting with a real 53KB page on the preview deploy. The truncation guard fired
-    // correctly — nothing was mangled — but the reply blamed connectivity and advised a retry
-    // that could never succeed, because the document does not fit in one reply and never will.
+describe("a reply cut off mid-flight", () => {
+  it("writes nothing, and suggests something that can actually work", async () => {
+    // Reachable now only for a SMALL document — anything large takes the edits contract and is
+    // never asked for a whole-document reply. So "ask for a smaller change" is honest advice
+    // here in a way it was not when it meant a 53KB page: on a small document a smaller change
+    // genuinely does fit.
     const { meta, blobs, artifact } = await setup()
     const res = await runSessionTurn(
       deps(meta, blobs, async () => {
@@ -319,12 +320,118 @@ describe("a document too long to rewrite in one reply", () => {
     )
     expect(res.outcome).toBe("failed")
     expect(res.wrote).toBeNull()
-    expect(res.reply).toMatch(/too long/i)
-    // Neither of the two things that do not work: retrying, or narrowing the request. The
-    // contract is whole-document, so a one-word change fails exactly like a rewrite.
-    expect(res.reply).not.toMatch(/try again/i)
-    expect(res.reply).not.toMatch(/one section/i)
-    // The document is untouched — a truncated reply must never be treated as content.
+    expect(res.reply).toMatch(/cut off/i)
+    // A truncated reply must never be treated as content.
+    expect((await meta.getArtifactById("a1"))?.current_version).toBe(1)
+  })
+})
+
+describe("a document too large for a whole-document reply uses EDITS", () => {
+  // Anything over EDITS_THRESHOLD_CHARS. The point of the contract switch is that the reply is
+  // bounded by the CHANGE, so the same one-line edit works on a document of any size.
+  const big = `# Big\n\n${"filler paragraph that makes this document long. ".repeat(400)}\n\n## Risks\n\nOne risk.\n`
+  const editsBlock = (edits: unknown, message = "m") =>
+    `<edits>${JSON.stringify({ edits, confidence: 0.95, message })}</edits>`
+
+  it("applies a search/replace and publishes the result", async () => {
+    const { meta, blobs, artifact } = await setup({ source: big })
+    const res = await runSessionTurn(
+      deps(
+        meta,
+        blobs,
+        editsBlock([
+          { old_str: "## Risks\n\nOne risk.", new_str: "## Risks\n\nOne risk.\nA second risk." },
+        ]),
+      ),
+      {
+        session: session(),
+        subject: { kind: "artifact", id: "doc1", mode: "publish" },
+        artifact,
+        transcript: transcript("add a second risk"),
+        flags: FLAGS,
+        onBehalf: ED,
+      },
+    )
+    expect(res.outcome).toBe("published")
+    const v = await meta.getVersion("a1", 2)
+    const text = new TextDecoder().decode((await blobs.get(v?.blob_key ?? "")) ?? undefined)
+    expect(text).toContain("A second risk.")
+    // The rest of the document survived — an edit is not a rewrite.
+    expect(text.length).toBeGreaterThan(big.length - 10)
+  })
+
+  it("writes NOTHING when an anchor does not match, even partially", async () => {
+    // applyEdits is all-or-nothing. A model that gets one anchor right and one wrong must not
+    // leave a half-applied document behind.
+    const { meta, blobs, artifact } = await setup({ source: big })
+    const res = await runSessionTurn(
+      deps(
+        meta,
+        blobs,
+        editsBlock([
+          { old_str: "## Risks\n\nOne risk.", new_str: "## Risks\n\nChanged." },
+          { old_str: "TEXT THAT IS NOT IN THE DOCUMENT", new_str: "x" },
+        ]),
+      ),
+      {
+        session: session(),
+        subject: { kind: "artifact", id: "doc1", mode: "publish" },
+        artifact,
+        transcript: transcript("two changes"),
+        flags: FLAGS,
+        onBehalf: ED,
+      },
+    )
+    expect(res.outcome).toBe("failed")
+    expect(res.wrote).toBeNull()
+    expect((await meta.getArtifactById("a1"))?.current_version).toBe(1)
+    // The reply carries applyEdits' diagnostic rather than a shrug.
+    expect(res.reply).toMatch(/not found|could not apply/i)
+  })
+
+  it("RETRIES a miss with the diagnostic, and succeeds on the second attempt", async () => {
+    // The reason a miss is worth retrying at all: the diagnostic says WHY it missed, so the
+    // model can correct the anchor rather than guess again.
+    const { meta, blobs, artifact } = await setup({ source: big })
+    let call = 0
+    const flaky: TurnDeps = {
+      ...deps(meta, blobs, ""),
+      callModel: async () => {
+        call += 1
+        return {
+          text:
+            call === 1
+              ? editsBlock([{ old_str: "NOT PRESENT ANYWHERE", new_str: "x" }])
+              : editsBlock([{ old_str: "One risk.", new_str: "One risk. And another." }]),
+          toolUses: [],
+          costUsd: null,
+          done: true,
+        }
+      },
+    }
+    const res = await runSessionTurn(flaky, {
+      session: session(),
+      subject: { kind: "artifact", id: "doc1", mode: "publish" },
+      artifact,
+      transcript: transcript("add a risk"),
+      flags: FLAGS,
+      onBehalf: ED,
+    })
+    expect(call).toBe(2)
+    expect(res.outcome).toBe("published")
+  })
+
+  it("still answers a QUESTION about a large document without editing it", async () => {
+    const { meta, blobs, artifact } = await setup({ source: big })
+    const res = await runSessionTurn(deps(meta, blobs, "It is about 400 paragraphs long."), {
+      session: session(),
+      subject: { kind: "artifact", id: "doc1", mode: "publish" },
+      artifact,
+      transcript: transcript("how long is it?"),
+      flags: FLAGS,
+      onBehalf: ED,
+    })
+    expect(res.outcome).toBe("answered")
     expect((await meta.getArtifactById("a1"))?.current_version).toBe(1)
   })
 })
