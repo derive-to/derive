@@ -174,6 +174,11 @@ describe("read render self-heal", () => {
     expect(res.isError).toBe(true)
     expect(res.text).toContain("boom (transient)")
     expect(res.text).not.toContain("re-queued")
+    // And it must not promise a retry it won't perform. Dogfooding caught the message
+    // still saying "reading again re-queues a fresh render" here, which the guard above
+    // had just made false: advice that silently does nothing.
+    expect(res.text).not.toContain("Reading again re-queues")
+    expect(res.text).toContain(`only v${pub.version + 1} re-renders`)
     // The variant KEEPS its failed status: no silent downgrade to a pending it can't leave.
     const v = await meta.getVersion(a.id, pub.version)
     expect(v?.preview_status).toBe("failed")

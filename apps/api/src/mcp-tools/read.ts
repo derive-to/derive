@@ -232,7 +232,13 @@ export function registerReadTool(tc: ToolContext): void {
         }
         if (variant.status === "failed")
           return err(
-            `The render:${render} of "${short_id}" v${n} failed${requeued ? " again on a re-queued attempt" : ""}${variant.error ? ` (${variant.error})` : ""} — the page may still be fine; open ${url} to check. Reading again re-queues a fresh render.`,
+            `The render:${render} of "${short_id}" v${n} failed${requeued ? " again on a re-queued attempt" : ""}${variant.error ? ` (${variant.error})` : ""} — the page may still be fine; open ${url} to check. ` +
+              // Only the current version re-renders: the worker discards a job for a
+              // superseded one, so promising a retry here would be advice that silently
+              // does nothing. Say what actually works instead.
+              (n === a.current_version
+                ? "Reading again re-queues a fresh render."
+                : `This is an old version, and only v${a.current_version} re-renders — read it without \`version\` to retry.`),
           )
         if (requeued)
           return err(
