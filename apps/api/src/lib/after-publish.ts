@@ -13,7 +13,9 @@ import {
   type BlobStore,
   type MetaStore,
   newId,
+  parseDataSlots,
   type SearchIndex,
+  SLOT_GEN,
   type VersionRecord,
 } from "@derive/core"
 import type { Backplane } from "../bus"
@@ -55,6 +57,44 @@ export const emitVersionBump = async (
   } catch (err) {
     log.error("search index update failed", { artifact: artifact.id, err: String(err) })
   }
+  // Extract this version's structured data slots into queryable rows. Sibling to search
+  // indexing — same "every publish/restore/proposal-approve" reach, same best-effort
+  // contract (a hiccup must never fail a publish that already went live). The publish
+  // response already advises about any UNstored slot via publishAdvisories; this is the
+  // persistence half, and both call the one parser so they can't disagree.
+  try {
+    await extractVersionData(meta, blobs, version)
+  } catch (err) {
+    log.error("data-slot extraction failed", { artifact: artifact.id, err: String(err) })
+  }
+}
+
+/** Extract a single-file HTML/markdown version's data slots and persist them (see
+ *  @derive/core data-slots). Bundles, decks and non-text versions carry no slots and are
+ *  skipped. Writes only when at least one slot parsed — a fresh version has no prior rows,
+ *  so there is nothing to clear when it has none. */
+const extractVersionData = async (
+  meta: Pick<MetaStore, "setVersionData">,
+  blobs: BlobStore,
+  version: VersionRecord,
+): Promise<void> => {
+  const ct = version.content_type
+  if (ct !== "text/html" && ct !== "text/markdown") return
+  const bytes = await blobs.get(version.blob_key)
+  if (!bytes) return
+  const { slots } = parseDataSlots(new TextDecoder().decode(bytes), ct)
+  if (slots.length === 0) return
+  await meta.setVersionData(
+    version.artifact_id,
+    version.n,
+    slots.map((s) => ({
+      id: newId("vd"),
+      slot: s.slot,
+      json: s.json,
+      size_bytes: s.bytes,
+      gen: SLOT_GEN,
+    })),
+  )
 }
 
 export interface AfterPublishDeps extends VersionBumpDeps {

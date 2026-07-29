@@ -123,6 +123,44 @@ export function runStoreContract(
       expect(await store.getVersion(a.id, 99)).toBeNull()
     })
 
+    it("stores and reads a version's data slots by name and all-at-once", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const v = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, v.n, [
+        { id: uuid(), slot: "checks", json: `{"pass":44}`, size_bytes: 11, gen: 1 },
+        { id: uuid(), slot: "budget", json: "[1,2]", size_bytes: 5, gen: 1 },
+      ])
+      // All slots, ordered by slot name.
+      const all = await store.getVersionData(a.id, v.n)
+      expect(all.map((r) => r.slot)).toEqual(["budget", "checks"])
+      expect(all[0]?.gen).toBe(1)
+      // One slot by name.
+      const one = await store.getVersionData(a.id, v.n, "checks")
+      expect(one).toHaveLength(1)
+      expect(one[0]?.json).toBe(`{"pass":44}`)
+      expect(one[0]?.size_bytes).toBe(11)
+      // A missing slot / version ⇒ empty.
+      expect(await store.getVersionData(a.id, v.n, "nope")).toEqual([])
+      expect(await store.getVersionData(a.id, 999)).toEqual([])
+    })
+
+    it("setVersionData replaces a version's slots idempotently (delete-then-insert)", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const v = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, v.n, [
+        { id: uuid(), slot: "x", json: "1", size_bytes: 1, gen: 1 },
+      ])
+      // Re-extract the same version with a different set — the old rows are gone.
+      await store.setVersionData(a.id, v.n, [
+        { id: uuid(), slot: "y", json: "2", size_bytes: 1, gen: 1 },
+      ])
+      const all = await store.getVersionData(a.id, v.n)
+      expect(all.map((r) => r.slot)).toEqual(["y"])
+      // Empty set clears them entirely.
+      await store.setVersionData(a.id, v.n, [])
+      expect(await store.getVersionData(a.id, v.n)).toEqual([])
+    })
+
     it("filters listArtifacts by title search and by id set (empty ⇒ none)", async () => {
       const a = await store.createArtifact(newArtifact({ title: "Quarterly Report XYZ" }))
       expect((await store.listArtifacts({ q: "quarterly report xyz" })).map((x) => x.id)).toContain(

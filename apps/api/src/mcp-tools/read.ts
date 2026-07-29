@@ -14,6 +14,7 @@ import { clip, MAX_CHARS } from "../lib/clip"
 import { pickVariant } from "../lib/collect-render"
 import { sniffImageType } from "../lib/image"
 import { baseType, isTextType, present, type ReadFormat } from "../lib/search"
+import { log } from "../log"
 import type { ToolContext } from "../mcp-tool-context"
 import {
   clipDoc,
@@ -81,10 +82,16 @@ export function registerReadTool(tc: ToolContext): void {
             "With `render`: when the screenshot isn't computed yet (a publish is seconds old), block up to this many seconds (max 30) for it to land instead of returning the not-ready message. Returns at once when it's already ready or has failed.",
           ),
         version: z.coerce.number().optional().describe("Defaults to the current version."),
+        data: z
+          .string()
+          .optional()
+          .describe(
+            'A version\'s structured DATA slot: the JSON a `derive-data` block on the page stored under this name (see the publishing skill), so you can read back data you published instead of re-parsing old markup. Pass "*" to list the slots this version carries. Reads the current version unless `version` is set.',
+          ),
         workspace: wsArg,
       },
     },
-    async ({ short_id, section, format, version, lines, render, wait, workspace }) => {
+    async ({ short_id, section, format, version, lines, render, wait, data, workspace }) => {
       const fmt: ReadFormat = format ?? "markdown"
       // `derive://brandprint/*` URIs are readable through `read`, not only as MCP
       // resources — the exact strings the server instructions name, reachable by every
@@ -243,6 +250,46 @@ export function registerReadTool(tc: ToolContext): void {
           `The render:${render} of "${short_id}" v${n} isn't ready yet — screenshots are computed a few seconds after publish. Try again shortly, or pass \`wait\` (seconds, max 30) to block for it.`,
         )
       }
+      // The data rung: a version's structured slots, queried instead of re-parsed. A
+      // whole-version view like `render`, so it can't combine with a within-doc selector.
+      if (data !== undefined) {
+        if (section || lines || render)
+          return err(
+            "`data` reads a version's stored slots — pass it alone (with `version` for history), not with section/lines/render.",
+          )
+        if (data === "*") {
+          const rows = await ctx.meta.getVersionData(a.id, n)
+          return json({
+            short_id,
+            version: n,
+            slots: rows.map((r) => ({ slot: r.slot, bytes: r.size_bytes })),
+            ...(rows.length
+              ? {}
+              : {
+                  note: `Version ${n} of "${short_id}" carries no data slots. Embed a derive-data block (see the publishing skill) to make one queryable.`,
+                }),
+          })
+        }
+        const rows = await ctx.meta.getVersionData(a.id, n, data)
+        const row = rows[0]
+        if (!row) {
+          const all = await ctx.meta.getVersionData(a.id, n)
+          return err(
+            all.length
+              ? `No data slot "${data}" in "${short_id}" v${n} — slots: ${all.map((r) => r.slot).join(", ")}. Pass data:"*" to list them.`
+              : `"${short_id}" v${n} carries no data slots — embed a derive-data block to add one.`,
+          )
+        }
+        // Stored JSON was validated at publish, so parse is the useful shape; fall back to
+        // the raw text on the off chance a row predates validation.
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(row.json)
+        } catch {
+          parsed = row.json
+        }
+        return json({ short_id, version: n, slot: row.slot, data: parsed })
+      }
       const manifest = await manifestOf(ctx, v)
 
       if (!manifest) {
@@ -323,7 +370,22 @@ export function registerReadTool(tc: ToolContext): void {
             clipDoc(body, outline),
           )
         }
+        // Tripwire (evidence for the derived-view cache decision, #433): time the
+        // HTML→markdown conversion on the whole-doc read path — the exact recompute that
+        // PR would cache — and log source size + cost + whether it crosses that PR's
+        // 150K-char gate. One line, no schema; a week of these numbers says whether the
+        // cache is worth landing or closing. Only for HTML sources (markdown `present` is
+        // a near-noop and would just be log noise).
+        const tConv = Date.now()
         const body = present(src, ct, fmt)
+        if (baseType(ct) === "text/html")
+          log.info("derived_view_read", {
+            short_id,
+            chars: src.length,
+            ms: Date.now() - tConv,
+            fmt,
+            gate_150k: src.length >= 150_000,
+          })
         if (!section && body.length > FULL_DOC_MAX) {
           const outline = outlineOf(src, ct)
           if (outline.length)

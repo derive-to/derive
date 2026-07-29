@@ -6,12 +6,18 @@
 // looking at the render afterward: correct-by-construction beats
 // correct-by-vigilance.
 
+import { parseDataSlots } from "./data-slots"
 import type { BlobStore } from "./ports"
 import { needsReflow } from "./reflow"
 
 /** Advisory strings for a just-published single file — empty when nothing to say. */
 export const publishAdvisories = (content: string, contentType: string): string[] => {
   const out: string[] = []
+
+  // Structured data slots that couldn't be stored (bad name, invalid JSON, oversize,
+  // duplicate, over the per-version cap). The SAME parser persists the good slots in the
+  // version-bump chain, so what's advised here and what's stored can never disagree.
+  out.push(...parseDataSlots(content, contentType).advisories)
 
   // A temporary asset UPLOAD url (the mint-and-curl target) embedded as if it were
   // the permanent asset URL — it expires in minutes, so every image breaks shortly

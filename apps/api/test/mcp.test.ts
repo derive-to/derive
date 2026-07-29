@@ -387,6 +387,56 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(out?.content?.[0]?.text ?? "").toMatch(/stage target:.?doc/i)
   })
 
+  it("extracts data slots on publish and reads them back by name and as a list", async () => {
+    const { app, token } = appWithGrant("dataslots", "openid derive:read derive:publish")
+    const page =
+      "<!doctype html><html><body><h1>Nightly</h1>" +
+      '<script type="application/derive-data" data-slot="checks">{"pass":44,"fail":0}</script>' +
+      '<script type="application/derive-data" data-slot="budget">[1,2,3]</script>' +
+      "</body></html>"
+    const pub = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Nightly", content: page })),
+    )
+    const shortId = pub.short_id as string
+    expect(shortId).toBeTruthy()
+
+    // One slot by name → the parsed JSON payload.
+    const checks = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: shortId, data: "checks" })),
+    )
+    expect(checks.slot).toBe("checks")
+    expect(checks.data).toEqual({ pass: 44, fail: 0 })
+
+    // The slots this version carries (ordered by name).
+    const listed = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: shortId, data: "*" })),
+    )
+    expect(listed.slots.map((s: { slot: string }) => s.slot)).toEqual(["budget", "checks"])
+
+    // A missing slot names the ones that exist rather than an opaque miss.
+    const miss = await call(app, token, "read", { short_id: shortId, data: "nope" })
+    const missText =
+      (miss.parsed?.result as { content?: { text: string }[] }).content?.[0]?.text ?? ""
+    expect(missText).toContain("checks")
+  })
+
+  it("advises about a data slot it could not store, without failing the publish", async () => {
+    const { app, token } = appWithGrant("dataslotbad", "openid derive:read derive:publish")
+    const page =
+      '<!doctype html><html><body><script type="application/derive-data" data-slot="broken">{not json}</script></body></html>'
+    const r = await call(app, token, "publish", { title: "Broken slot", content: page })
+    const out = JSON.parse(toolText(r))
+    // The publish still went live...
+    expect(out.short_id).toBeTruthy()
+    // ...and the note names the unstored slot.
+    expect(String(out.note ?? "")).toMatch(/not valid JSON/i)
+    // Nothing was stored for it.
+    const listed = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: out.short_id, data: "*" })),
+    )
+    expect(listed.slots).toEqual([])
+  })
+
   it("exposes the workspace's Brandprint as resources + an instructions pointer", async () => {
     const { app, token, meta } = appWithGrant("brandprint", "openid derive:read derive:publish")
     const shortId = (await (await publish(app, token, "How we write Markdown")).json()).short_id

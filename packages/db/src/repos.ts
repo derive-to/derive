@@ -66,6 +66,7 @@ import type {
   NewSessionMessage,
   NewSignupAttribution,
   NewVersion,
+  NewVersionData,
   NewWebhook,
   NotificationRecord,
   OAuthGrant,
@@ -97,6 +98,7 @@ import type {
   TakedownInput,
   UserNotificationPrefRecord,
   UserProfile,
+  VersionDataRecord,
   VersionRecord,
   WebhookRecord,
   WorkspaceAccess,
@@ -180,6 +182,7 @@ import {
   slackUserLink,
   userNotificationPref,
   version,
+  versionData,
   webhook,
   webhookDelivery,
   workspace,
@@ -279,6 +282,7 @@ export function artifactListOrder(
 export const schema = {
   artifact,
   version,
+  versionData,
   comment,
   webhook,
   webhookDelivery,
@@ -327,6 +331,7 @@ const _schemaExhaustive: Exhaustive<typeof schema> = true
 const _schemaShapes: Shapes<typeof schema> = {
   artifact: true,
   version: true,
+  versionData: true,
   comment: true,
   webhook: true,
   webhookDelivery: true,
@@ -576,6 +581,42 @@ export function makeRepos(db: SqliteDb) {
       .from(version)
       .where(eq(version.artifact_id, artifactId))
       .orderBy(asc(version.n))
+      .all()
+
+  const setVersionData = async (
+    artifactId: string,
+    n: number,
+    rows: NewVersionData[],
+  ): Promise<void> => {
+    // Delete-then-insert so a re-extraction of the same version is idempotent (a fresh
+    // publish never has existing rows for its new n; restore/re-extract might).
+    await db
+      .delete(versionData)
+      .where(and(eq(versionData.artifact_id, artifactId), eq(versionData.n, n)))
+      .run()
+    if (rows.length === 0) return
+    await db
+      .insert(versionData)
+      .values(rows.map((r) => ({ ...r, artifact_id: artifactId, n })))
+      .run()
+  }
+
+  const getVersionData = async (
+    artifactId: string,
+    n: number,
+    slot?: string,
+  ): Promise<VersionDataRecord[]> =>
+    db
+      .select()
+      .from(versionData)
+      .where(
+        and(
+          eq(versionData.artifact_id, artifactId),
+          eq(versionData.n, n),
+          slot ? eq(versionData.slot, slot) : undefined,
+        ),
+      )
+      .orderBy(asc(versionData.slot))
       .all()
 
   const reclassifyVersion = async (
@@ -3580,6 +3621,8 @@ export function makeRepos(db: SqliteDb) {
     addVersion,
     listVersions,
     getVersion,
+    setVersionData,
+    getVersionData,
     reclassifyVersion,
     setVersionPreview,
     setVersionPreviewVariant,

@@ -68,6 +68,7 @@ import type {
   NewSessionMessage,
   NewSignupAttribution,
   NewVersion,
+  NewVersionData,
   NewView,
   NewWebhook,
   NotificationRecord,
@@ -100,6 +101,7 @@ import type {
   UserDir,
   UserNotificationPrefRecord,
   UserProfile,
+  VersionDataRecord,
   VersionRecord,
   ViewStats,
   WebhookRecord,
@@ -175,6 +177,7 @@ import {
   slackUserLink,
   userNotificationPref,
   version,
+  versionData,
   webhook,
   webhookDelivery,
   workspace,
@@ -198,6 +201,7 @@ const one = <T>(rows: T[]): T => {
 export const schema = {
   artifact,
   version,
+  versionData,
   comment,
   webhook,
   webhookDelivery,
@@ -246,6 +250,7 @@ const _schemaExhaustive: Exhaustive<typeof schema> = true
 const _schemaShapes: Shapes<typeof schema> = {
   artifact: true,
   version: true,
+  versionData: true,
   comment: true,
   webhook: true,
   webhookDelivery: true,
@@ -439,6 +444,30 @@ export class PgMetaStore implements MetaStore {
       .from(version)
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
     return rows[0] ?? null
+  }
+  async setVersionData(artifactId: string, n: number, rows: NewVersionData[]): Promise<void> {
+    // Delete-then-insert so a re-extraction of the same version is idempotent (a fresh
+    // publish never has existing rows for its new n; restore/re-extract might).
+    await this.db
+      .delete(versionData)
+      .where(and(eq(versionData.artifact_id, artifactId), eq(versionData.n, n)))
+    if (rows.length === 0) return
+    await this.db
+      .insert(versionData)
+      .values(rows.map((r) => ({ ...r, artifact_id: artifactId, n })))
+  }
+  async getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]> {
+    return this.db
+      .select()
+      .from(versionData)
+      .where(
+        and(
+          eq(versionData.artifact_id, artifactId),
+          eq(versionData.n, n),
+          slot ? eq(versionData.slot, slot) : undefined,
+        ),
+      )
+      .orderBy(asc(versionData.slot))
   }
   async reclassifyVersion(artifactId: string, n: number, contentType: string): Promise<void> {
     await this.db

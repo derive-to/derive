@@ -315,6 +315,29 @@ export interface NewVersion {
   name?: string | null
 }
 
+/** One structured data slot extracted from a version's source (see @derive/core
+ *  data-slots). The natural key is (artifact_id, n, slot); `json` is the block's stored
+ *  text, `gen` marks which extraction rules produced it. Rows are written once when a
+ *  version goes live and never mutated — a version is immutable, so its slots are too. */
+export interface VersionDataRecord {
+  id: string
+  artifact_id: string
+  n: number
+  slot: string
+  json: string
+  size_bytes: number
+  gen: number
+  created_at: string
+}
+
+export interface NewVersionData {
+  id: string
+  slot: string
+  json: string
+  size_bytes: number
+  gen: number
+}
+
 export interface ArtifactStore {
   createArtifact(a: NewArtifact): Promise<ArtifactRecord>
   /** Change an artifact's access: workspace access (member seats vs none), the
@@ -349,6 +372,13 @@ export interface ArtifactStore {
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   listVersions(artifactId: string): Promise<VersionRecord[]>
   getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
+  /** Replace a version's stored data slots with `rows` (delete-then-insert, so a
+   *  re-extraction is idempotent). Empty `rows` clears them. Keyed by the immutable
+   *  (artifact, n); called best-effort from the version-bump chain. */
+  setVersionData(artifactId: string, n: number, rows: NewVersionData[]): Promise<void>
+  /** A version's data slots: one named `slot`, or all of them (slot omitted), in slot
+   *  order. Empty when the version carries none. */
+  getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]>
   /** Correct a version's stored content_type in place (no new version). Also
    *  updates the artifact's current_content_type when n is the current version.
    *  Used to repair mis-classified content (e.g. HTML that was tagged markdown). */
