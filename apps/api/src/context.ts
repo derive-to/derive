@@ -104,6 +104,9 @@ export interface AppDeps {
    *  operator IS the user. On a shared host this is what stops any workspace owner from
    *  enabling chat for themselves and spending the operator's key. */
   chatAllowlist?: string[]
+  /** Workspace ids allowed to use automations, when the beta setting is on. Same purpose and
+   *  same semantics as {@link chatAllowlist}: empty/unset means no restriction. */
+  automateAllowlist?: string[]
   /** Operator (instance super-admin) emails: global moderation powers, on top of `token`. */
   superAdmins?: string[]
   /** Slack App credentials for the connect flow + inbound Events API. All three set ⇒
@@ -1065,6 +1068,7 @@ export function buildContext(deps: AppDeps) {
     blobs,
     callModel: deps.callModel,
     chatAllowlist: deps.chatAllowlist,
+    automateAllowlist: deps.automateAllowlist,
     search: deps.search,
     bus,
     presence,

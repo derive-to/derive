@@ -402,6 +402,10 @@ const app = createApp({
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean),
+  automateAllowlist: (process.env.DERIVE_AUTOMATE_ALLOWLIST ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean),
   blobs,
   // Share the realtime relay with the webhook worker so a deferred Slack reply publishes
   // comment.created to the same in-process subscribers a request would.

@@ -343,6 +343,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "ws_abc123,ws_def456",
   },
   {
+    name: "DERIVE_AUTOMATE_ALLOWLIST",
+    group: "advanced",
+    doc: "Comma-separated workspace ids allowed to CREATE or RUN automations while the surface is in\nbeta. Unset means no restriction.\n\nOne layer, unlike chat's setting-plus-allowlist, and the difference is deliberate: chat was a\nnew surface, so a workspace opt-in defaulting to off cost nobody anything. Automations\nalready ship and already run, so a per-workspace flag defaulting to off would delete a\nworking feature from every self-host on upgrade. Hence: unset restricts nobody (self-host is\nunchanged), and a shared host names the workspaces in the beta. Reads and deletes stay open\neither way, so a workspace never loses access to automations it already made.",
+    example: "ws_abc123,ws_def456",
+  },
+  {
     name: "DERIVE_MODEL_NAME",
     group: "advanced",
     doc: "Model id to send to DERIVE_MODEL_BASE_URL, exactly as that provider names it.",

@@ -33,6 +33,7 @@ import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
 import { containerSubstrateFromEnv } from "./lib/substrate-container"
+import { loopSubstrate } from "./lib/substrate-loop"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
 import { PgvectorSearchIndex } from "./search-pgvector"
 import { enqueueChannelDelivery } from "./webhooks"
@@ -135,6 +136,13 @@ export interface Env {
   DERIVE_MODEL_NAME?: string
   /** Workspace ids allowed to enable chat while the gateway above pays. */
   DERIVE_CHAT_ALLOWLIST?: string
+  DERIVE_AUTOMATE_ALLOWLIST?: string
+  /** "1" runs automations in this isolate via the loop substrate instead of booting a container.
+   *  Off by default, so derive.to keeps its current behaviour until it is set deliberately. */
+  DERIVE_LOOP_RUNS?: string
+  /** Model id for the loop substrate's resolved-credential path (each run still pays its own way
+   *  through the payer chain — no ambient gateway key on a multi-tenant host). */
+  DERIVE_LOOP_MODEL?: string
   DERIVE_SANDBOX_URL?: string
   DERIVE_SUPERADMIN_EMAILS?: string
   // Base domain for vanity subdomains (domain mode); unset = off.
@@ -273,6 +281,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // Multi-tenant, so the allowlist matters here more than anywhere: without it any
         // workspace owner could enable chat and spend Derive's key.
         chatAllowlist: (env.DERIVE_CHAT_ALLOWLIST ?? "")
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean),
+        automateAllowlist: (env.DERIVE_AUTOMATE_ALLOWLIST ?? "")
           .split(",")
           .map((x) => x.trim())
           .filter(Boolean),
@@ -431,7 +443,7 @@ export default {
     // container binding is configured — materialize due schedules, reclaim dead runs, and boot
     // one scale-to-zero container per due run. Unbound (the default) = a no-op, so runs stay
     // queued for a polling runner and an un-opted deployment behaves exactly as before.
-    ctx.waitUntil(hostedRunTick(env))
+    ctx.waitUntil(hostedRunTick(env, ctx))
   },
 
   // The dispatch queue's consumer: one message = "this run was just created, start it now".
@@ -439,14 +451,24 @@ export default {
   // duplicated, or arrives late costs nothing: dispatchRunNow no-ops on a run that is already
   // claimed or settled, and the cron sweep re-dispatches anything still queued. Messages are
   // acked either way — a retry would only re-enter the same idempotent path a minute early.
-  async queue(batch: { messages: { body: unknown }[] }, env: Env): Promise<void> {
+  async queue(
+    batch: { messages: { body: unknown }[] },
+    env: Env,
+    ctx?: ExecutionContext,
+  ): Promise<void> {
     const ids = batch.messages
       .map((m) => (m.body as { runId?: unknown })?.runId)
       .filter((id): id is string => typeof id === "string" && id.length > 0)
     if (ids.length === 0) return
-    await withHostedDispatch(env, async (deps) => {
-      for (const runId of ids) await dispatchRunNow(deps, runId)
-    })
+    await withHostedDispatch(
+      env,
+      async (deps) => {
+        for (const runId of ids) await dispatchRunNow(deps, runId)
+      },
+      // Same reason as the cron tick: on the loop substrate the run happens here, so the consumer
+      // invocation has to be kept alive past the ack.
+      ctx ? (p) => ctx.waitUntil(p) : undefined,
+    )
   },
 }
 
@@ -458,8 +480,18 @@ export default {
 async function withHostedDispatch(
   env: Env,
   fn: (deps: DispatchDeps) => Promise<void>,
+  waitUntil?: (p: Promise<unknown>) => void,
 ): Promise<void> {
-  const substrate = containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
+  // WHICH SUBSTRATE, mirroring node.ts. `DERIVE_LOOP_RUNS=1` runs the work in this isolate — a
+  // model and fetch, which is all "read a document, write a revision" needs, and the only runner
+  // in scope. It is the SAME file Node uses; the entire platform difference is the `waitUntil`
+  // below, without which the isolate is torn down the moment dispatch returns and the run dies
+  // mid-model-call. Anything needing a shell or git still wants the container, so that stays the
+  // default and the flag is the opt-in — off means derive.to behaves exactly as it does today.
+  const substrate =
+    env.DERIVE_LOOP_RUNS === "1"
+      ? loopSubstrate({ model: env.DERIVE_LOOP_MODEL, waitUntil })
+      : containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
   const secret = env.DERIVE_AUTH_SECRET
   if (!substrate || !secret) return
   const scoped = () =>
@@ -476,7 +508,15 @@ async function withHostedDispatch(
 }
 
 /** The cron sweep: materialize due schedules, reclaim dead runs, dispatch what is due. */
-const hostedRunTick = (env: Env): Promise<void> =>
-  withHostedDispatch(env, async (deps) => {
-    await dispatchPass(deps)
-  })
+const hostedRunTick = (env: Env, ctx?: ExecutionContext): Promise<void> =>
+  withHostedDispatch(
+    env,
+    async (deps) => {
+      await dispatchPass(deps)
+    },
+    // The loop substrate runs the model call in THIS isolate, and dispatch returns as soon as the
+    // work has begun. Without handing it waitUntil, the cron invocation finishes and Cloudflare
+    // tears the isolate down mid-run: the run stays `running` until the reclaim sweep requeues it,
+    // which looks like a hang rather than the truncation it is.
+    ctx ? (p) => ctx.waitUntil(p) : undefined,
+  )
