@@ -1,18 +1,26 @@
 import { describe, expect, it } from "vitest"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
-// The automations BETA ALLOWLIST (DERIVE_AUTOMATE_ALLOWLIST): which workspaces may create or run
-// automations on this deployment.
+// The automations BETA GATE, which is the same two layers chat uses:
 //
-// One layer, not chat's two, and the asymmetry is deliberate: chat was a new surface, so a
-// workspace opt-in defaulting to off cost nobody anything, while automations already ship and
-// already run — a per-workspace flag defaulting to off would delete a working feature from every
-// self-host on upgrade. So an UNSET allowlist means no restriction, and naming any workspace
-// restricts to exactly those.
-describe("automations beta allowlist", () => {
+//   1. `automateBeta`, the workspace's own opt-in, OFF by default.
+//   2. DERIVE_AUTOMATE_ALLOWLIST, the operator's list, on top of it — because the setting is gated
+//      on `manage`, so on a shared host a workspace owner could otherwise enable it for themselves
+//      and spend the operator's model key. Unset = no restriction (right for single-tenant).
+//
+// makeAuthedApp opts the shared workspace IN (fifteen suites create automations and should not each
+// have to remember), so the closed-by-default case is proved HERE by switching it back off — which
+// is the honest place for it, since this is the file that claims the gate works.
+describe("automations beta gate", () => {
   const owner: TestUser = { id: "u_gate_own", email: "gateown@derive.test", name: "Owner" }
 
   type App = ReturnType<typeof makeAuthedApp>["app"]
+  type Meta = ReturnType<typeof makeAuthedApp>["meta"]
+
+  const setBeta = async (meta: Meta, on: boolean) => {
+    const current = await meta.getOrgSettings("default")
+    if (current) await meta.setOrgSettings("default", { ...current, automateBeta: on })
+  }
 
   const create = (app: App) =>
     app.request(
@@ -23,34 +31,39 @@ describe("automations beta allowlist", () => {
       }),
     )
 
-  it("unset allowlist does not restrict anyone — self-host keeps working", async () => {
-    const { app } = makeAuthedApp("gate-unset", [owner])
+  it("is CLOSED by default — the workspace has to opt in", async () => {
+    const { app, meta } = makeAuthedApp("gate-default-off", [owner])
+    // Force one request through first, so the harness' seed has run and this genuinely reverses
+    // it rather than racing it.
+    await app.request("/v1/automations", { headers: as(owner.email) })
+    await setBeta(meta, false)
+    // 404, not 403: a surface this workspace has not enabled should not confirm it exists.
+    expect((await create(app)).status).toBe(404)
+  })
+
+  it("opted in, with no allowlist configured, works", async () => {
+    const { app } = makeAuthedApp("gate-optin", [owner])
     expect((await create(app)).status).toBe(201)
   })
 
-  it("a workspace ON the list still works", async () => {
+  it("opted in AND on the allowlist works", async () => {
     const { app } = makeAuthedApp("gate-allowed", [owner], undefined, {
       deps: { automateAllowlist: ["default"] },
     })
     expect((await create(app)).status).toBe(201)
   })
 
-  it("a workspace OFF the list is refused, and told nothing", async () => {
+  it("opted in but OFF the allowlist is still refused — the operator has the last word", async () => {
     const { app } = makeAuthedApp("gate-blocked", [owner], undefined, {
       deps: { automateAllowlist: ["ws_someone_else"] },
     })
-    const res = await create(app)
-    // 404, not 403: a surface this workspace is not in the beta for should not confirm it exists.
-    expect(res.status).toBe(404)
+    expect((await create(app)).status).toBe(404)
   })
 
   it("run now is gated too, not just creation", async () => {
-    // Create while allowed, then re-open the SAME store with the workspace off the list. This is
-    // the case a create-only gate misses: an automation that already exists, whose owner presses
+    // The case a create-only gate misses: an automation that already exists, whose owner presses
     // Run now after the beta moved on without them.
-    const { app } = makeAuthedApp("gate-runnow", [owner], undefined, {
-      deps: { automateAllowlist: ["default"] },
-    })
+    const { app } = makeAuthedApp("gate-runnow", [owner])
     const made = await create(app)
     expect(made.status).toBe(201)
     const { id } = (await made.json()) as { id: string }
@@ -63,9 +76,7 @@ describe("automations beta allowlist", () => {
   })
 
   it("reads and deletes stay open, so nobody loses access to their own rows", async () => {
-    const { app } = makeAuthedApp("gate-reads", [owner], undefined, {
-      deps: { automateAllowlist: ["default"] },
-    })
+    const { app } = makeAuthedApp("gate-reads", [owner])
     const made = await create(app)
     const { id } = (await made.json()) as { id: string }
 

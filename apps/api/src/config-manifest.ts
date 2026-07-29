@@ -345,7 +345,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_AUTOMATE_ALLOWLIST",
     group: "advanced",
-    doc: "Comma-separated workspace ids allowed to CREATE or RUN automations while the surface is in\nbeta. Unset means no restriction.\n\nOne layer, unlike chat's setting-plus-allowlist, and the difference is deliberate: chat was a\nnew surface, so a workspace opt-in defaulting to off cost nobody anything. Automations\nalready ship and already run, so a per-workspace flag defaulting to off would delete a\nworking feature from every self-host on upgrade. Hence: unset restricts nobody (self-host is\nunchanged), and a shared host names the workspaces in the beta. Reads and deletes stay open\neither way, so a workspace never loses access to automations it already made.",
+    doc: "Comma-separated workspace ids allowed to CREATE or RUN automations while the surface is in\nbeta. Unset means no restriction.\n\nWhy it exists (the same reason as DERIVE_CHAT_ALLOWLIST): `automateBeta` is a workspace\nsetting gated on `manage`, so on a MULTI-TENANT host any workspace owner could enable\nautomations for themselves and spend the operator's model key. On a single-tenant box that is\nfine (the operator IS the user), which is why an unset allowlist means no restriction.\n\nBoth layers must pass. Reads and deletes stay open either way, so a workspace never loses\naccess to automations it already made.\n\nUPGRADE NOTE: automations ran before this gate existed and `automateBeta` defaults OFF, so an\nexisting deployment stops running them until each workspace opts in.",
     example: "ws_abc123,ws_def456",
   },
   {

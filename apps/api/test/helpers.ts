@@ -301,7 +301,7 @@ export const makeAuthedApp = (
   name: string,
   users: TestUser[],
   defaultRole?: AppDeps["defaultRole"],
-  opts?: { isolated?: boolean; deps?: Partial<AppDeps>; noPlan?: boolean },
+  opts?: { isolated?: boolean; deps?: Partial<AppDeps>; noPlan?: boolean; noAutomate?: boolean },
 ) => {
   // Seed a shared "default" workspace so the user list collaborates (the single-
   // mode default before always-multi): users[0] is the Admin/owner, the rest take
@@ -325,9 +325,23 @@ export const makeAuthedApp = (
   //
   // Gating `app.request` covers both: whoever calls first pays the wait, it always completes
   // before the pool closes, and there is no floating promise to go unhandled.
-  const planReady = opts?.noPlan
-    ? Promise.resolve()
-    : connectPoolPlan(m, "default").catch(() => undefined)
+  // Seeded on the same awaited-on-first-request promise as the plan, and for the same reason: a
+  // floating write races the pool's close, and a beforeAll hook never fires for suites that build
+  // their app inside a test.
+  //
+  // AUTOMATIONS ARE BETA and off per workspace, so the shared test workspace opts IN here rather
+  // than in each of the fifteen suites that create one. That the default is closed is proved
+  // deliberately in automate-gate.test.ts, which builds apps WITHOUT this seed, instead of being
+  // proved incidentally by every other suite having to remember.
+  const planReady = (async () => {
+    if (!opts?.noPlan) await connectPoolPlan(m, "default").catch(() => undefined)
+    // `noAutomate` opts OUT: the suite that asserts the shipped DEFAULTS has to see the real ones,
+    // and a blanket seed would have made that assertion quietly lie about this exact field.
+    if (opts?.noAutomate) return
+    const current = await m.getOrgSettings("default").catch(() => null)
+    if (current)
+      await m.setOrgSettings("default", { ...current, automateBeta: true }).catch(() => undefined)
+  })()
   const app = createApp({
     meta: m,
     blobs: new FsBlobStore(join(dir, "blobs")),

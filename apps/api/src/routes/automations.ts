@@ -97,21 +97,28 @@ export const automationRoutes = (ctx: AppContext) => {
   const app = new Hono()
 
   /**
-   * BETA GATE: which workspaces may create or run automations on THIS deployment.
+   * BETA GATE, the same two layers chat uses.
    *
-   * Deliberately ONE layer (the operator allowlist), not chat's two. Chat was a brand-new surface,
-   * so a workspace opt-in defaulting to off cost nobody anything. Automations already work and are
-   * already live, so a per-workspace flag defaulting to off would DELETE a working feature from
-   * every self-host on upgrade — a regression dressed as a safety gate. An unset allowlist
-   * therefore means no restriction (self-host is unchanged), and derive.to names the workspaces
-   * that may use it while it is in beta.
+   * `automateBeta` is the workspace's own opt-in and defaults OFF. The ALLOWLIST sits on top of it
+   * because the setting is gated on `manage`: on a MULTI-TENANT host any workspace owner could
+   * otherwise switch automations on for themselves and spend the operator's model key. An unset
+   * allowlist means no restriction, which is right for a single-tenant box where the operator IS
+   * the user.
    *
-   * Applied to the lanes that CREATE or RUN work, never to reads or deletes, so a workspace can
-   * still see and remove what it already made. 404 rather than 403: an un-enabled surface should
-   * not confirm it exists.
+   * Applied to the lanes that CREATE or RUN work, never to reads or deletes, so a workspace that
+   * made automations before the gate can still see and remove them. 404 rather than 403, because
+   * an un-enabled surface should not confirm it exists.
+   *
+   * NOTE for upgrades: automations already ran before this gate existed, so turning the default
+   * off means an existing deployment stops running them until the workspace opts in. That is the
+   * intended trade for keeping a beta closed by default; it is a behaviour change, not a bug.
    */
-  const automateOff = (orgId: string): boolean =>
-    !!ctx.automateAllowlist?.length && !ctx.automateAllowlist.includes(orgId)
+  const automateAllowed = (orgId: string): boolean =>
+    !ctx.automateAllowlist?.length || ctx.automateAllowlist.includes(orgId)
+  const automateOff = async (orgId: string): Promise<boolean> => {
+    const s = await meta.getOrgSettings(orgId)
+    return !s?.automateBeta || !automateAllowed(orgId)
+  }
 
   // The run lane reads "no run scope" as "a standing polling runner", which is the only
   // thing entitled to claim a BATCH, tick the schedule and sweep the queue. A session
@@ -149,7 +156,7 @@ export const automationRoutes = (ctx: AppContext) => {
   app.post("/v1/automations", async (c) => {
     const org = await requireWorkspace(c, "manage")
     if (org instanceof Response) return org
-    if (automateOff(org)) return fail(c, 404, "not found")
+    if (await automateOff(org)) return fail(c, 404, "not found")
     const b = await readJson(
       c,
       z.object({
@@ -331,7 +338,7 @@ export const automationRoutes = (ctx: AppContext) => {
   app.post("/v1/automations/:id/run", async (c) => {
     const org = await requireWorkspace(c, "publish")
     if (org instanceof Response) return org
-    if (automateOff(org)) return fail(c, 404, "not found")
+    if (await automateOff(org)) return fail(c, 404, "not found")
     const me = await requireUser(c)
     if (me instanceof Response) return me
     const a = await meta.getAutomation(c.req.param("id"))
@@ -377,7 +384,7 @@ export const automationRoutes = (ctx: AppContext) => {
     if (trigger.on !== "webhook" || !trigger.secret_hash) return fail(c, 404, "not found")
     // Same 404 as above, and for the same reason: a fire URL minted before the gate must stop
     // creating work once the workspace is no longer enabled, and must not reveal that it exists.
-    if (automateOff(a.org_id)) return fail(c, 404, "not found")
+    if (await automateOff(a.org_id)) return fail(c, 404, "not found")
     // Constant-time check of the presented bearer against the stored hash.
     const presented = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "")
     if (!safeEqual(trigger.secret_hash, sha256(presented))) return fail(c, 401, "invalid secret")

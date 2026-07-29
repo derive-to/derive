@@ -4,7 +4,10 @@ import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 const owner: TestUser = { id: "u-own", email: "own@x.com", name: "Owner", username: "owner" }
 const editor: TestUser = { id: "u-ed", email: "ed@x.com", name: "Ed", username: "ed" }
 
-const { app } = makeAuthedApp("integ-settings", [owner, editor], "editor")
+const { app } = makeAuthedApp("integ-settings", [owner, editor], "editor", {
+  // This suite asserts the SHIPPED defaults, so it declines the harness' convenience opt-in.
+  noAutomate: true,
+})
 
 describe("workspace integration settings", () => {
   it("defaults to all channels enabled", async () => {
@@ -27,6 +30,8 @@ describe("workspace integration settings", () => {
       // Chat ships BETA and OFF: a workspace opts in deliberately. This line failing is the
       // signal that someone flipped the default, which is the whole point of asserting it.
       chatBeta: false,
+      // Automations ship the same way, and the same reasoning applies to this line.
+      automateBeta: false,
       agentKillswitch: false,
       agentAutoEnabled: false,
     })

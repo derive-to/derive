@@ -2388,6 +2388,12 @@ export interface OrgSettings {
    *  the chat route refuses, so a half-enabled state cannot leave someone typing into a
    *  panel that will never answer. */
   chatBeta: boolean
+  /** BETA: automations (the artifact's "Automate…" surface). Same shape and same reasoning as
+   *  {@link chatBeta}, and separate from it because they are different bets: chat is attended
+   *  and answers in the request, an automation runs unattended on a trigger and can write while
+   *  nobody is watching. Off means the entry point does not render and the create/run/fire lanes
+   *  refuse, so a workspace cannot queue work that will never be executed. */
+  automateBeta: boolean
   /** The agent-write killswitch, read fresh per run by the autonomy gate: when true,
    *  every hosted agent write demotes to a proposal, instantly. */
   agentKillswitch: boolean
@@ -2444,6 +2450,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   hostedAgentsEnabled: true,
   // Beta, so the default is the conservative one — opt IN per workspace.
   chatBeta: false,
+  automateBeta: false,
   agentKillswitch: false,
   agentAutoEnabled: false,
 }
