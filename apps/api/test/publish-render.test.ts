@@ -1,6 +1,8 @@
+import { join } from "node:path"
+import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
 import { collectRender } from "../src/lib/collect-render"
-import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
+import { as, dir, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 // PUBLISH → SEE IT, in one call.
 //
@@ -52,6 +54,41 @@ const setup = async (name: string) => {
 }
 
 describe("publish carries its own render", () => {
+  it("when the shot IS delivered, the payload does not also say 'queued — call read'", async () => {
+    // Caught by actually looking at what came back, not by checking "did an image
+    // arrive": the image landed, and the JSON right next to it still said "queued — call
+    // read(...) in a few seconds", the pointer for when nothing was delivered. An agent
+    // reading the text alone would poll for a picture already in its hand.
+    const { app, meta, token } = await setup("pubrender-attached")
+    const blobs = new FsBlobStore(join(dir, "blobs"))
+    const created = await callRaw(app, token, "publish", {
+      title: "Race",
+      content: "# Race\n\nbody",
+    })
+    const { short_id } = JSON.parse(created?.content?.[0]?.text ?? "{}") as { short_id: string }
+    const art = await meta.getByShortId(short_id)
+    if (!art) throw new Error("artifact missing")
+    // The republish below creates version 2; seed ITS variant while the request's real
+    // 1s poll loop is running, so the render lands mid-wait rather than being ready
+    // before the call even starts.
+    const key = await blobs.put(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]))
+    setTimeout(() => {
+      void meta.setVersionPreview(art.id, 2, { preview_status: "ready", preview_key: key })
+    }, 300)
+
+    const r = await callRaw(app, token, "publish", {
+      short_id,
+      content: "# Race v2\n\nbody",
+      render: "top",
+      wait: 5,
+    })
+    const body = JSON.parse(r?.content?.[0]?.text ?? "{}")
+    expect(r?.content).toHaveLength(2)
+    expect(r?.content?.[1]?.type).toBe("image")
+    expect(body.render).toBe("attached below")
+    expect(body.render).not.toContain("queued")
+  })
+
   it("without `render`, the response is unchanged — one text block, no image", async () => {
     const { app, token } = await setup("pubrender-off")
     const r = await callRaw(app, token, "publish", { title: "Plain", content: "# Plain\n\nbody" })
