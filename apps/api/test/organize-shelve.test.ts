@@ -126,6 +126,9 @@ describe("organize state — retire an artifact and put it back", () => {
     expect(out.state.changed).toBe(1)
     expect(out.state.skipped).toBe(1)
     expect((await meta.getByShortId(mine.short_id))?.removed_at).toBeTruthy()
+    // And the undo names ONLY what changed. Echoing the whole input would hand back a call
+    // claiming to restore an artifact that was skipped and never retired.
+    expect(out.state.undo.arguments.short_ids).toEqual([mine.short_id])
   })
 
   it("still needs short_ids, and says so", async () => {

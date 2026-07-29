@@ -81,6 +81,7 @@ export function registerOrganizeTool(tc: ToolContext): void {
           if (wrong) return err(wrong)
           const removedAt = state === "removed" ? new Date().toISOString() : null
           const ok: string[] = []
+          const done: string[] = []
           let skipped = 0
           for (const shortId of [...new Set(short_ids)]) {
             // Sees past the takedown gate on purpose: this operates on that flag, so the
@@ -94,6 +95,7 @@ export function registerOrganizeTool(tc: ToolContext): void {
               continue
             }
             ok.push(reached.a.id)
+            done.push(shortId)
           }
           // One update for the batch, per the store's own guidance, rather than a call per id.
           if (ok.length) await ctx.meta.setArtifactsRemoved(ok, removedAt)
@@ -101,12 +103,15 @@ export function registerOrganizeTool(tc: ToolContext): void {
             state,
             changed: ok.length,
             skipped,
-            // The reversal, handed back at the moment it might be wanted.
-            undo: ok.length
+            // The reversal, handed back at the moment it might be wanted — naming only what
+            // actually changed. Echoing the whole input would tell you to restore artifacts
+            // that were skipped and never retired, which is an undo that does not describe
+            // the thing it claims to reverse.
+            undo: done.length
               ? {
                   tool: "organize",
                   arguments: {
-                    short_ids,
+                    short_ids: done,
                     state: state === "removed" ? "live" : "removed",
                     ...(workspace ? { workspace } : {}),
                   },
