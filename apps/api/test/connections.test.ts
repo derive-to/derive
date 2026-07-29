@@ -128,6 +128,57 @@ describe("connections (Sources — per-user connected accounts)", () => {
     expect(ok.status).toBe(201)
   })
 
+  it("paste-a-secret: stored encrypted, write-only — the credential appears in NO response", async () => {
+    const secret = "sk_game_admin_9f3a7b2c1d"
+    const res = await app.request(
+      "/v1/connections",
+      jsonAs(as(owner.email), {
+        toolkit: "game-admin",
+        kind: "secret",
+        secret,
+        base_url: "https://api.17-0.game/admin/", // trailing slash normalizes away
+        scope: "workspace",
+      }),
+    )
+    expect(res.status).toBe(201)
+    const body = await res.text()
+    // Write-only is the contract: the raw secret and the encrypted blob both stay out.
+    expect(body).not.toContain(secret)
+    expect(body).not.toContain("secret_enc")
+    const cn = JSON.parse(body)
+    expect(cn).toMatchObject({
+      kind: "secret",
+      broker: "none",
+      status: "active",
+      base_url: "https://api.17-0.game/admin",
+      scopes_label: `…${secret.slice(-4)}`, // hint only, never the credential
+    })
+    // The list route is equally silent about it.
+    const list = await (
+      await app.request("/v1/connections?scope=workspace", { headers: as(owner.email) })
+    ).text()
+    expect(list).not.toContain(secret)
+    expect(list).not.toContain("secret_enc")
+  })
+
+  it("a secret connection refuses http bases and missing fields", async () => {
+    const noFields = await app.request(
+      "/v1/connections",
+      jsonAs(as(owner.email), { toolkit: "thing", kind: "secret" }),
+    )
+    expect(noFields.status).toBe(400)
+    const insecure = await app.request(
+      "/v1/connections",
+      jsonAs(as(owner.email), {
+        toolkit: "thing",
+        kind: "secret",
+        secret: "s3cr3t-value",
+        base_url: "http://api.example.com",
+      }),
+    )
+    expect(insecure.status).toBe(400)
+  })
+
   it("owner revokes their own connection; a foreign one needs manage", async () => {
     const mine = await (await connect(owner.email, "github")).json()
     const del = await app.request(`/v1/connections/${mine.id}`, {

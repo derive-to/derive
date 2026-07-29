@@ -1,12 +1,17 @@
 import type { BrokerToolDef, ToolBroker } from "@derive/broker"
 import { makeBroker } from "@derive/broker"
-import type { MetaStore } from "@derive/core"
+import type { ConnectionKind, ConnectionRecord, MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
 
-/** One tool a hosted run may call, paired with the connected-account ref it executes through. */
+/** One tool a hosted run may call, paired with the connected-account ref it executes through.
+ *  `kind` and `connectionId` are how the tool proxy routes the call without a second lookup;
+ *  the connection RECORD is deliberately not here — it carries secret_enc, and this struct
+ *  flows toward the claim response. */
 export interface RunTool {
   def: BrokerToolDef
   ref: string
+  kind: ConnectionKind
+  connectionId: string
 }
 
 /**
@@ -25,32 +30,97 @@ export const toolsForRun = async (
   if (connectionIds.length === 0) return []
   const conns = await meta.getConnectionsByIds(connectionIds)
   const active = conns.filter((cn) => cn.org_id === orgId && cn.status === "active")
-  // A PERSONAL connection acts as its owner, so it must not outlive them: if the owner
-  // is no longer a member, the credential stops resolving that instant — same live-
-  // membership recheck the minted API tokens do. Workspace connections are the org's
-  // and survive any one member leaving.
-  const owners = [
-    ...new Set(active.filter((cn) => cn.scope === "personal").map((cn) => cn.user_id)),
-  ]
-  const rows = await Promise.all(owners.map((uid) => meta.getMembership(orgId, uid)))
-  const alive = new Set(owners.filter((_, i) => rows[i] !== null))
-  const usable = active.filter((cn) => cn.scope === "workspace" || alive.has(cn.user_id))
+  // A personal connection acts as its owner, so it must not outlive them: an offboarded
+  // member's credential stops resolving on the next run, the same live-membership recheck
+  // a minted API token gets at spend time. Workspace connections are the org's and survive.
+  const owners = [...new Set(active.filter((cn) => cn.scope === "personal").map((c) => c.user_id))]
+  const seats = await Promise.all(
+    owners.map(async (uid) => [uid, await meta.getMembership(orgId, uid)] as const),
+  )
+  const stillMembers = new Set(seats.filter(([, seat]) => seat !== null).map(([uid]) => uid))
+  const usable = active.filter((cn) => cn.scope === "workspace" || stillMembers.has(cn.user_id))
   const out: RunTool[] = []
   for (const cn of usable) {
-    for (const def of await broker.toolsFor([cn.broker_ref])) out.push({ def, ref: cn.broker_ref })
+    const entry = { ref: cn.broker_ref, kind: cn.kind, connectionId: cn.id }
+    // A secret connection has no vendor account, so its tools are ours to declare and
+    // ours to execute (see executeSecretTool); the broker is never asked about it.
+    const defs =
+      cn.kind === "secret" ? secretTools(cn.toolkit) : await broker.toolsFor([cn.broker_ref])
+    for (const def of defs) out.push({ def, ...entry })
   }
   return out
 }
 
+/** The tools a pasted-secret connection exposes. Named `<toolkit>.<verb>` to match the
+ *  broker's convention, so the runner's shim treats both kinds of connection identically. */
+export const secretTools = (toolkit: string): BrokerToolDef[] => [
+  {
+    name: `${toolkit}.get`,
+    description: `GET a path on the ${toolkit} API (authenticated server-side).`,
+    params: { path: { type: "string", description: "Path starting with /" } },
+  },
+  {
+    name: `${toolkit}.post`,
+    description: `POST JSON to a path on the ${toolkit} API (authenticated server-side).`,
+    params: { path: { type: "string" }, body: { type: "object" } },
+  },
+]
+
 /**
- * The bind-time policy for attaching connections to an automation/context. Returns an
- * error string (for a 400) or null when every id is attachable by this actor:
- *   - every id must exist and live in THIS workspace (never another tenant's);
- *   - a WORKSPACE connection needs a managing actor — otherwise whoever can write an
- *     instruction holds the org's keys, and instructions are the thing agents edit;
- *   - a PERSONAL connection may be attached only by its owner (act-as-me is consensual).
- * `actorUserId` null (a service/agent principal) can therefore bind workspace
- * connections when managing, and never anyone's personal ones.
+ * Execute one tool call for a pasted-secret connection: resolve the requested path under
+ * the connection's base_url, attach the decrypted credential, return status + body. The
+ * caller has already verified the tool is on this run's least-privilege list.
+ *
+ * The path is attacker-influenced (it comes from the model, which may have read hostile
+ * content), so confinement is the load-bearing part: the credential must only ever be
+ * offered to the base it was pasted for. Two things do that work — resolving as `.<path>`
+ * makes `..` climb out of the base instead of escaping the parser, and the containment
+ * check compares against base.href WITH its trailing slash, so a base of `/admin` cannot
+ * be satisfied by `/administrator` (string-prefix matching without the slash accepts it).
+ */
+export const executeSecretTool = async (
+  cn: ConnectionRecord,
+  tool: string,
+  args: unknown,
+  encryptionKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ status: number; body: unknown }> => {
+  if (!cn.secret_enc || !cn.base_url) throw new Error("secret connection is missing its secret")
+  const a = (args ?? {}) as { path?: unknown; body?: unknown }
+  const path = typeof a.path === "string" ? a.path : ""
+  if (!path.startsWith("/")) throw new Error("path must start with /")
+  const base = new URL(`${cn.base_url}/`)
+  const url = new URL(`.${path}`, base)
+  if (!url.href.startsWith(base.href)) throw new Error("path escapes the connection's base_url")
+  const verb = tool.endsWith(".post") ? "POST" : "GET"
+  const res = await fetchImpl(url.href, {
+    method: verb,
+    headers: {
+      authorization: `Bearer ${decryptSecret(cn.secret_enc, encryptionKey)}`,
+      ...(verb === "POST" ? { "content-type": "application/json" } : {}),
+    },
+    body: verb === "POST" ? JSON.stringify(a.body ?? {}) : undefined,
+    signal: AbortSignal.timeout(20_000),
+  })
+  const text = await res.text()
+  let body: unknown = text
+  try {
+    body = JSON.parse(text)
+  } catch {
+    // Non-JSON responses ride through as text.
+  }
+  return { status: res.status, body }
+}
+
+/**
+ * The bind-time policy for attaching connections to an automation or context. Returns the
+ * 400 message, or null when every id is attachable by this actor:
+ *   - the id exists and belongs to THIS workspace (never another tenant's);
+ *   - a workspace connection needs a managing actor — otherwise anyone who can write an
+ *     instruction holds the org's keys, and instructions are what agents edit;
+ *   - a personal connection binds only for its owner, since act-as-me is consensual.
+ * An actor with no user id (an agent principal acting for no one) can bind workspace
+ * connections when managing, and nobody's personal ones.
  */
 export const connectionBindError = async (
   meta: MetaStore,

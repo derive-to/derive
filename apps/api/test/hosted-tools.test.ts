@@ -1,6 +1,6 @@
 import { LocalBroker } from "@derive/broker"
 import { describe, expect, it } from "vitest"
-import { toolsForRun } from "../src/lib/broker"
+import { executeSecretTool, toolsForRun } from "../src/lib/broker"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 // WO4 — least-privilege tool injection. A hosted run sees the tools of its BOUND connections
@@ -42,6 +42,101 @@ describe("hosted tool injection — least privilege (WO4)", () => {
     const stripe = await connect("stripe")
     const tools = await toolsForRun(meta, new LocalBroker(), "other-org", [stripe.id])
     expect(tools).toHaveLength(0)
+  })
+
+  it("a secret connection exposes get/post tools and executes CONFINED to its base_url", async () => {
+    const key = "k"
+    const secret = "game-admin-token-123456"
+    const created = await (
+      await app.request(
+        "/v1/connections",
+        jsonAs(as(owner.email), {
+          toolkit: "game",
+          kind: "secret",
+          secret,
+          base_url: "https://api.game.test/admin",
+        }),
+      )
+    ).json()
+    // The tool surface mirrors the broker's naming, so the shim treats both kinds alike.
+    const tools = await toolsForRun(meta, new LocalBroker(), "default", [created.id])
+    expect(tools.map((t) => t.def.name).sort()).toEqual(["game.get", "game.post"])
+    // How the proxy knows to execute these itself rather than asking the broker.
+    expect(tools.every((t) => t.kind === "secret" && t.connectionId === created.id)).toBe(true)
+
+    // Execution: the server joins the path, attaches the decrypted bearer, returns the body.
+    const [cn] = await meta.getConnectionsByIds([created.id])
+    if (!cn) throw new Error("connection not found")
+    const calls: { url: string; auth: string | null; method: string }[] = []
+    const fakeFetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      const h = new Headers(init?.headers)
+      calls.push({ url: String(url), auth: h.get("authorization"), method: init?.method ?? "GET" })
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }) as typeof fetch
+    const out = await executeSecretTool(cn, "game.get", { path: "/report?days=30" }, key, fakeFetch)
+    expect(out).toEqual({ status: 200, body: { ok: true } })
+    expect(calls[0]).toMatchObject({
+      url: "https://api.game.test/admin/report?days=30",
+      auth: `Bearer ${secret}`,
+      method: "GET",
+    })
+
+    // Confinement. The path comes from the model, so it is attacker-influenced: the
+    // credential must only ever be offered to the base it was pasted for.
+    await expect(
+      executeSecretTool(cn, "game.get", { path: "https://evil.test/x" }, key, fakeFetch),
+    ).rejects.toThrow(/start with/)
+    await expect(
+      executeSecretTool(cn, "game.get", { path: "/../secrets" }, key, fakeFetch),
+    ).rejects.toThrow(/escapes/)
+    // A sibling path that merely shares the base's prefix: /admin must not be satisfied by
+    // /administrator. Comparing hrefs without the trailing slash accepts this one.
+    await expect(
+      executeSecretTool(cn, "game.get", { path: "/../administrator/x" }, key, fakeFetch),
+    ).rejects.toThrow(/escapes/)
+    expect(calls).toHaveLength(1) // none of the hostile paths reached fetch
+  })
+
+  it("the claim response carries tool defs and refs only — never the connection record", async () => {
+    const created = await (
+      await app.request(
+        "/v1/connections",
+        jsonAs(as(owner.email), {
+          toolkit: "vault",
+          kind: "secret",
+          secret: "super-secret-value-xyz",
+          base_url: "https://api.vault.test",
+        }),
+      )
+    ).json()
+    const auto = await (
+      await app.request(
+        "/v1/automations",
+        jsonAs(as(owner.email), {
+          trigger: { kind: "manual" },
+          instruction: "Read the vault.",
+          connectionIds: [created.id],
+        }),
+      )
+    ).json()
+    await app.request(`/v1/automations/${auto.id}/run`, {
+      method: "POST",
+      headers: as(owner.email),
+    })
+    const claim = await app.request("/v1/agent/runs/claim", {
+      method: "GET",
+      headers: { authorization: `Bearer ${auto.agent_token}` },
+    })
+    const text = await claim.text()
+    expect(text).not.toContain("super-secret-value-xyz")
+    expect(text).not.toContain("secret_enc")
+    // The routing fields RunTool carries for the proxy stop at the wire, too.
+    expect(text).not.toContain("connectionId")
+    const [run] = JSON.parse(text).runs
+    expect(run.tools.map((t: { def: { name: string } }) => t.def.name).sort()).toEqual([
+      "vault.get",
+      "vault.post",
+    ])
   })
 
   it("a departed member's PERSONAL connection stops resolving; a workspace one survives", async () => {

@@ -1644,6 +1644,12 @@ export type ConnectionStatus = "active" | "pending" | "revoked"
  *  "workspace" = org infrastructure (admin-managed), survives any one member leaving. */
 export type ConnectionScope = "personal" | "workspace"
 
+/** How a connection authenticates. "oauth" = a broker-side connected account (broker_ref
+ *  points at the vendor). "secret" = a pasted credential (API key / bearer token) stored
+ *  encrypted and spent ONLY server-side by the tool proxy — write-only by construction:
+ *  no endpoint ever returns it, runs only ever see tool names. */
+export type ConnectionKind = "oauth" | "secret"
+
 /** A per-user connected external account (WO3): the owner authorized Derive's broker to act on
  *  their Gmail/Stripe/GitHub/etc. Always bound to ONE person (identity never falls back), and
  *  scoped least-privilege per toolkit. A hosted run sees the tools of its bound connections
@@ -1657,13 +1663,21 @@ export interface ConnectionRecord {
   user_id: string
   /** personal (default) = act-as-me, owner-bound. workspace = org infrastructure. */
   scope: ConnectionScope
+  /** oauth (default) = broker-connected account; secret = pasted credential. */
+  kind: ConnectionKind
+  /** kind "secret" only: the credential, AES-GCM encrypted. Never presented by any route —
+   *  it is spent server-side by the tool proxy and read nowhere else. */
+  secret_enc: string | null
+  /** kind "secret" only: the HTTPS base every tool call resolves under, and is confined to. */
+  base_url: string | null
   /** Broker provider slug: "local" | "composio". */
   broker: string
   /** Toolkit slug, e.g. "gmail" | "stripe" | "github". */
   toolkit: string
   /** Broker-side connected-account id. */
   broker_ref: string
-  /** Human label of the granted scopes (display only), or null. */
+  /** Human label of the granted scopes, or null. Display only — for kind "secret" it doubles
+   *  as the credential hint (the pasted key's last 4), which is all a read ever gets. */
   scopes_label: string | null
   status: ConnectionStatus
   created_at: string
@@ -1674,6 +1688,9 @@ export interface NewConnection {
   org_id: string
   user_id: string
   scope?: ConnectionScope
+  kind?: ConnectionKind
+  secret_enc?: string | null
+  base_url?: string | null
   broker: string
   toolkit: string
   broker_ref: string
