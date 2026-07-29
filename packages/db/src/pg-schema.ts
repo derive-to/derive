@@ -910,6 +910,11 @@ export const buildPgSchemaStatements = (): string[] => {
     // (dedupe_key), and the PG boot has no per-statement try/catch, so ordering is load-bearing.
     CONTEXT_SESSION_DEDUPE_UNIQUE_PG,
     RUN_SCHEDULE_OCCURRENCE_UNIQUE_PG,
+    // A session no longer requires a context (chat with a document). Postgres can say this
+    // directly, and DROP NOT NULL on an already-nullable column is a no-op, so it is safe to
+    // run on every boot. SQLite needs a table rebuild instead — see CONTEXT_SESSION_RELAX_SQLITE.
+    `ALTER TABLE context_session ALTER COLUMN context_id DROP NOT NULL`,
+    `ALTER TABLE context_session ALTER COLUMN context_version DROP NOT NULL`,
   ]
 }
 

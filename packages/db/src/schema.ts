@@ -1125,6 +1125,53 @@ export const SCHEMA_STATEMENTS: string[] = [
  */
 export const MIGRATION_STATEMENTS: string[] = ddl.alters
 
+/**
+ * NOT-NULL RELAXATIONS for existing databases.
+ *
+ * `ADD COLUMN` cannot express "this column may now be null", and SQLite has no
+ * `ALTER COLUMN` at all — the only way is to rebuild the table. That is why these are a
+ * separate list from MIGRATION_STATEMENTS rather than generated: a rebuild is destructive
+ * if it goes wrong, so each one is written out and reviewed rather than inferred.
+ *
+ * Runs INSIDE a transaction, and only when the old constraint is still present (the caller
+ * checks `PRAGMA table_info`), so a second boot is a no-op rather than a second rebuild.
+ * Column order matches the CREATE in ddl.ts; `subject_ref` is last because it was the most
+ * recent add.
+ */
+export const CONTEXT_SESSION_RELAX_SQLITE: string[] = [
+  `CREATE TABLE context_session__new (
+  id TEXT PRIMARY KEY,
+  context_id TEXT,
+  org_id TEXT NOT NULL,
+  asker_id TEXT NOT NULL,
+  context_version INTEGER,
+  state TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT,
+  started_at TEXT,
+  lease_until TEXT,
+  result_artifact_id TEXT,
+  dedupe_key TEXT,
+  subject_ref TEXT,
+  FOREIGN KEY (context_id) REFERENCES context(id)
+)`,
+  `INSERT INTO context_session__new (id, context_id, org_id, asker_id, context_version, state,
+     created_at, updated_at, started_at, lease_until, result_artifact_id, dedupe_key, subject_ref)
+   SELECT id, context_id, org_id, asker_id, context_version, state,
+     created_at, updated_at, started_at, lease_until, result_artifact_id, dedupe_key, subject_ref
+   FROM context_session`,
+  // schema-ignore — the ONE sanctioned drop, and only as the middle step of the documented
+  // SQLite table-rebuild (create-copy-drop-rename). The guardrail is right in general: you
+  // evolve by adding. But `ADD COLUMN` cannot express "may now be null" and SQLite has no
+  // ALTER COLUMN, so relaxing a NOT NULL has no additive form. The copy above has already
+  // run inside the same transaction, and the test asserts every pre-existing row survives.
+  `DROP TABLE context_session`, // schema-ignore: middle step of the rebuild above
+  `ALTER TABLE context_session__new RENAME TO context_session`,
+  `CREATE INDEX IF NOT EXISTS context_session_queue ON context_session (context_id, state, created_at)`,
+  `CREATE INDEX IF NOT EXISTS context_session_asker ON context_session (asker_id, created_at)`,
+  CONTEXT_SESSION_DEDUPE_UNIQUE,
+]
+
 // Schema parity is enforced in repos.ts, where the shared `schema` object lives:
 // `Exhaustive`/`Shapes` (./parity) force every table to be classified and every
 // typed table's row shape to match its @derive/core Record. See ./parity.

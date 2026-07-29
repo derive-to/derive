@@ -18,6 +18,7 @@ import {
   artifactMember,
   artifactTag,
   auditLog,
+  CONTEXT_SESSION_RELAX_SQLITE,
   collection,
   collectionItem,
   collectionMember,
@@ -69,6 +70,37 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     }
   }
   for (const stmt of SCHEMA_STATEMENTS) raw.exec(stmt)
+  // RELAXATIONS: a rebuild, so it runs only when the old constraint is actually still there.
+  // `PRAGMA table_info` is the check — cheap, exact, and it makes a second boot a no-op instead
+  // of a second rebuild. Wrapped in a transaction so a failure mid-way leaves the original table
+  // intact rather than a half-copied one.
+  try {
+    const cols = raw.pragma("table_info(context_session)") as { name: string; notnull: number }[]
+    const stale = cols.some((c) => c.name === "context_id" && c.notnull === 1)
+    if (stale) {
+      // Foreign keys OFF for the duration. A rebuild re-validates every FK on the copied
+      // rows, so a single pre-existing orphan (a session whose context was deleted) would
+      // abort the whole migration and wedge the deploy. This is the documented SQLite
+      // procedure for altering a table, not a shortcut. It is a no-op inside a transaction,
+      // hence the ordering: pragma, then BEGIN.
+      const fkWasOn = (raw.pragma("foreign_keys", { simple: true }) as number) === 1
+      if (fkWasOn) raw.pragma("foreign_keys = OFF")
+      raw.exec("BEGIN")
+      try {
+        for (const stmt of CONTEXT_SESSION_RELAX_SQLITE) raw.exec(stmt)
+        raw.exec("COMMIT")
+      } catch (e) {
+        raw.exec("ROLLBACK")
+        throw e
+      } finally {
+        if (fkWasOn) raw.pragma("foreign_keys = ON")
+      }
+    }
+  } catch (e) {
+    // A fresh DB has no legacy table to relax; anything else is a real failure and must not
+    // be swallowed — a silently-skipped migration is how a deploy 500s in production instead.
+    if (!/no such table/i.test(String(e))) throw e
+  }
   const db = drizzle(raw, { schema })
   const repos = makeRepos(db)
 
