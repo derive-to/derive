@@ -287,7 +287,13 @@ export async function publish(
     // Rename on republish only when a title is explicitly supplied (the in-browser
     // editor sends it; a CLI republish without --title leaves the name untouched).
     const newTitle = input.title?.trim()
-    if (newTitle && newTitle !== artifact.title) await meta.setArtifactTitle(artifact.id, newTitle)
+    // Re-derive the URL name with the title. The slug was computed once at create and
+    // never again, so a renamed doc kept advertising its former title in every link it
+    // handed out — and nothing could fix it, because renaming is the only lever there is.
+    // Safe to change: the ref is `<slug>-<short_id>` and parseRef resolves on the trailing
+    // short id, so every link already shared keeps working.
+    if (newTitle && newTitle !== artifact.title)
+      await meta.setArtifactTitle(artifact.id, newTitle, slugify(newTitle) || null)
     return { artifact: (await meta.getByShortId(shortId)) as ArtifactRecord, version }
   }
 

@@ -816,8 +816,16 @@ export function makeRepos(db: SqliteDb) {
     if (ids.length === 0) return
     await db.update(artifact).set({ removed_at: removedAt }).where(inArray(artifact.id, ids)).run()
   }
-  const setArtifactTitle = async (id: string, title: string): Promise<void> => {
-    await db.update(artifact).set({ title }).where(eq(artifact.id, id)).run()
+  const setArtifactTitle = async (
+    id: string,
+    title: string,
+    slug?: string | null,
+  ): Promise<void> => {
+    await db
+      .update(artifact)
+      .set(slug === undefined ? { title } : { title, slug })
+      .where(eq(artifact.id, id))
+      .run()
   }
   const setArtifactSourcePath = async (id: string, sourcePath: string | null): Promise<void> => {
     await db.update(artifact).set({ source_path: sourcePath }).where(eq(artifact.id, id)).run()
