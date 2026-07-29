@@ -3,6 +3,7 @@ import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
 import { brokerFor } from "../lib/broker"
+import { encryptSecret } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 
 // WO3 — connected external accounts (Sources). Connect once (OAuth via the broker), then
@@ -12,11 +13,15 @@ import { bail, fail, readJson } from "../lib/http"
 // A hosted run sees the tools of its bound connections only. The BYO path never touches
 // these. broker_ref is the broker-side connected-account id.
 
+// Explicit allowlist — secret_enc must NEVER ride any response, on any route, at any
+// role, including the minted dkapi_ REST bearer. Write-only is the whole contract.
 const present = (cn: ConnectionRecord) => ({
   id: cn.id,
   org_id: cn.org_id,
   user_id: cn.user_id,
   scope: cn.scope,
+  kind: cn.kind,
+  base_url: cn.base_url,
   broker: cn.broker,
   toolkit: cn.toolkit,
   scopes_label: cn.scopes_label,
@@ -54,18 +59,53 @@ export const connectionRoutes = (ctx: AppContext) => {
     const b = await readJson(
       c,
       z.object({
-        toolkit: z.string().min(1).max(64),
+        toolkit: z
+          .string()
+          .min(1)
+          .max(64)
+          .regex(/^[a-z0-9][a-z0-9_-]*$/, "toolkit must be a lowercase slug"),
         scopes_label: z.string().max(200).optional(),
         // "personal" (default) = the caller's own account. "workspace" = org
         // infrastructure — requires manage, because whoever can add a workspace
         // credential decides what every context bound to it can reach.
         scope: z.enum(["personal", "workspace"]).default("personal"),
+        // "oauth" (default) = broker round trip. "secret" = paste an API key or
+        // bearer token: stored encrypted, spent only server-side, never returned.
+        kind: z.enum(["oauth", "secret"]).default("oauth"),
+        // kind "secret" only:
+        secret: z.string().min(8).max(4096).optional(),
+        base_url: z.string().url().max(500).optional(),
       }),
     )
     if (b instanceof Response) return bail(b)
     if (b.scope === "workspace") {
       const gate = await requireWorkspace(c, "manage")
       if (gate instanceof Response) return gate
+    }
+    if (b.kind === "secret") {
+      if (!b.secret || !b.base_url)
+        return fail(c, 400, "a secret connection needs `secret` and `base_url`")
+      if (!b.base_url.startsWith("https://") && !b.base_url.startsWith("http://localhost"))
+        return fail(c, 400, "base_url must be https (or http://localhost for dev)")
+      if (!deps.encryptionKey)
+        return fail(c, 400, "secret connections need an encryption key configured")
+      const rec = await meta.createConnection({
+        id: newId("conn"),
+        org_id: org,
+        user_id: me.id,
+        scope: b.scope,
+        kind: "secret",
+        secret_enc: encryptSecret(b.secret, deps.encryptionKey),
+        // Normalized without a trailing slash so tool-call joins are predictable.
+        base_url: b.base_url.replace(/\/+$/, ""),
+        broker: "none", // no vendor: the tool proxy spends this credential itself
+        toolkit: b.toolkit,
+        broker_ref: `secret:${newId("sref")}`,
+        // Display hint only — the last 4 characters, never the credential.
+        scopes_label: b.scopes_label ?? `…${b.secret.slice(-4)}`,
+        status: "active",
+      })
+      return c.json(present(rec), 201)
     }
     // A workspace connection resolves its broker plan from the pool (it must not ride —
     // and die with — one member's personal broker plan); a personal one from the caller.
@@ -104,11 +144,15 @@ export const connectionRoutes = (ctx: AppContext) => {
       const gate = await requireWorkspace(c, "manage")
       if (gate instanceof Response) return gate
     }
-    const broker = await brokerFor(meta, org, cn.user_id, deps.encryptionKey)
-    try {
-      await broker.revoke(cn.broker_ref)
-    } catch {
-      // Best-effort external revoke; the local status still flips to revoked.
+    // A secret connection has no vendor side to revoke — flipping the status is the
+    // whole revocation (the tool proxy refuses non-active rows).
+    if (cn.kind !== "secret") {
+      const broker = await brokerFor(meta, org, cn.user_id, deps.encryptionKey)
+      try {
+        await broker.revoke(cn.broker_ref)
+      } catch {
+        // Best-effort external revoke; the local status still flips to revoked.
+      }
     }
     await meta.setConnectionStatus(cn.id, org, "revoked")
     return c.body(null, 204)

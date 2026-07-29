@@ -12,7 +12,7 @@ import { z } from "@hono/zod-openapi"
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
 import { parseConnectionIds, parseRefs, parseTrigger } from "../lib/automation"
-import { brokerFor, connectionBindError, toolsForRun } from "../lib/broker"
+import { brokerFor, connectionBindError, executeSecretTool, toolsForRun } from "../lib/broker"
 import { overBudget } from "../lib/budget"
 import { mintToken, safeEqual, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
@@ -578,6 +578,15 @@ export const automationRoutes = (ctx: AppContext) => {
     const match = allowed.find((t) => t.def.name === b.tool && (!b.ref || t.ref === b.ref))
     if (!match) return fail(c, 403, "tool not allowed for this run")
     try {
+      // A pasted-secret connection is executed by Derive itself (HTTP with the decrypted
+      // secret attached server-side); everything else goes through the broker. Either
+      // way the runner only ever sent a tool NAME — no credential enters the executor.
+      if (match.ref.startsWith("secret:")) {
+        const cn = (await meta.getConnectionsByIds(connIds)).find((x) => x.broker_ref === match.ref)
+        if (!cn || !deps.encryptionKey) return fail(c, 403, "tool not allowed for this run")
+        const result = await executeSecretTool(cn, b.tool, b.args ?? {}, deps.encryptionKey)
+        return c.json({ result })
+      }
       const result = await broker.execute({ ref: match.ref, tool: b.tool, args: b.args ?? {} })
       return c.json({ result })
     } catch (e) {

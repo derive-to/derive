@@ -3,6 +3,7 @@ import type {
   ArtifactKind,
   AuditAction,
   CommentState,
+  ConnectionKind,
   ConnectionScope,
   ConnectionStatus,
   DeliveryKind,
@@ -280,6 +281,11 @@ export const connection = sqliteTable("connection", {
   // personal (default) = act-as-me, owner-bound; workspace = org infrastructure,
   // admin-managed, survives the adder leaving. user_id stays "who added it" either way.
   scope: text("scope").$type<ConnectionScope>().notNull().default("personal"),
+  // oauth (default) = broker-connected account; secret = a pasted credential, stored
+  // encrypted, spent only server-side by the tool proxy, never returned by any route.
+  kind: text("kind").$type<ConnectionKind>().notNull().default("oauth"),
+  secret_enc: text("secret_enc"),
+  base_url: text("base_url"),
   broker: text("broker").notNull(),
   toolkit: text("toolkit").notNull(),
   broker_ref: text("broker_ref").notNull(),

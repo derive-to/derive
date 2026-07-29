@@ -1,6 +1,6 @@
 import type { BrokerToolDef, ToolBroker } from "@derive/broker"
 import { makeBroker } from "@derive/broker"
-import type { MetaStore } from "@derive/core"
+import type { ConnectionRecord, MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
 
 /** One tool a hosted run may call, paired with the connected-account ref it executes through. */
@@ -37,9 +37,74 @@ export const toolsForRun = async (
   const usable = active.filter((cn) => cn.scope === "workspace" || alive.has(cn.user_id))
   const out: RunTool[] = []
   for (const cn of usable) {
+    // A secret connection has no vendor: Derive itself is the executor, so its tool
+    // defs are emitted here and its calls are handled by executeSecretTool — the
+    // broker never sees the ref and the credential never leaves the server.
+    if (cn.kind === "secret") {
+      for (const def of secretTools(cn.toolkit)) out.push({ def, ref: cn.broker_ref })
+      continue
+    }
     for (const def of await broker.toolsFor([cn.broker_ref])) out.push({ def, ref: cn.broker_ref })
   }
   return out
+}
+
+/** The tool pair a pasted-secret connection exposes: HTTP against its base_url, executed
+ *  server-side with the decrypted secret as a bearer. Names mirror the broker's
+ *  `<toolkit>.<verb>` convention so the shim treats both kinds identically. */
+export const secretTools = (toolkit: string): BrokerToolDef[] => [
+  {
+    name: `${toolkit}.get`,
+    description: `GET a path on the ${toolkit} API (authenticated server-side).`,
+    params: { path: { type: "string", description: "Path starting with /" } },
+  },
+  {
+    name: `${toolkit}.post`,
+    description: `POST JSON to a path on the ${toolkit} API (authenticated server-side).`,
+    params: { path: { type: "string" }, body: { type: "object" } },
+  },
+]
+
+/**
+ * Execute one tool call for a pasted-secret connection: join the requested path against
+ * the connection's base_url, CONFINE the result to that base (no absolute URLs, no
+ * traversal out of the prefix — a hostile path must not aim the credential at another
+ * host or another route family), attach the secret as a bearer, and return status+body.
+ * The caller has already verified the tool is on the run's least-privilege list.
+ */
+export const executeSecretTool = async (
+  cn: ConnectionRecord,
+  tool: string,
+  args: unknown,
+  encryptionKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ status: number; body: unknown }> => {
+  if (!cn.secret_enc || !cn.base_url) throw new Error("secret connection is missing its secret")
+  const a = (args ?? {}) as { path?: unknown; body?: unknown }
+  const path = typeof a.path === "string" ? a.path : ""
+  if (!path.startsWith("/")) throw new Error("path must start with /")
+  const base = new URL(`${cn.base_url}/`)
+  const url = new URL(`.${path}`, base) // "." pins resolution under base even for hostile paths
+  if (url.origin !== base.origin || !url.href.startsWith(cn.base_url))
+    throw new Error("path escapes the connection's base_url")
+  const verb = tool.endsWith(".post") ? "POST" : "GET"
+  const res = await fetchImpl(url.href, {
+    method: verb,
+    headers: {
+      authorization: `Bearer ${decryptSecret(cn.secret_enc, encryptionKey)}`,
+      ...(verb === "POST" ? { "content-type": "application/json" } : {}),
+    },
+    body: verb === "POST" ? JSON.stringify(a.body ?? {}) : undefined,
+    signal: AbortSignal.timeout(20_000),
+  })
+  const text = await res.text()
+  let body: unknown = text
+  try {
+    body = JSON.parse(text)
+  } catch {
+    // Non-JSON responses ride through as text.
+  }
+  return { status: res.status, body }
 }
 
 /**
