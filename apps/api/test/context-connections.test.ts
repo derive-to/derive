@@ -88,7 +88,7 @@ describe("context connections (the ask lane gets hands)", () => {
   })
 
   it("a session claim carries the context's tools, and nothing behind them", async () => {
-    const secretValue = "sk-context-lane-secret-1234"
+    const secretValue = "fixture-bearer-context-lane"
     const conn = await makeConnection({
       toolkit: "game",
       kind: "secret",
@@ -145,7 +145,7 @@ describe("context connections (the ask lane gets hands)", () => {
   })
 
   it("a BYO polling runner gets the same tools, and may spend them with its standing bearer", async () => {
-    const secretValue = "sk-byo-lane-secret-5678"
+    const secretValue = "fixture-bearer-byo-lane"
     const conn = await makeConnection({
       toolkit: "ops",
       kind: "secret",

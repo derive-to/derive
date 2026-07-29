@@ -22,14 +22,3 @@ export const parseRefs = (raw: string | null): Selector[] => {
   } catch {}
   return []
 }
-
-/** An automation's bound connection ids (a JSON string array), parsed defensively → []. */
-export const parseConnectionIds = (raw: string | null): string[] => {
-  if (!raw) return []
-  try {
-    const a = JSON.parse(raw)
-    return Array.isArray(a) ? a.filter((x): x is string => typeof x === "string") : []
-  } catch {
-    return []
-  }
-}

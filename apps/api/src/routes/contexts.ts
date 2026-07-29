@@ -13,13 +13,12 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { parseConnectionIds } from "../lib/automation"
 import { resolveActorBrandprint } from "../lib/brandprint"
 import {
   brokerFor,
+  callTool,
   connectionBindError,
-  executeHttpTool,
-  isDirect,
+  parseConnectionIds,
   toolsForRun,
 } from "../lib/broker"
 import { sha256 } from "../lib/crypto"
@@ -181,15 +180,15 @@ export const contextRoutes = (ctx: AppContext) => {
     })
     .openapi("Session")
 
-  // The context's least-privilege tool list. Identical resolution to the run lane's —
-  // same bound-connections-only rule, same live-membership recheck on personal ones —
-  // so a context reaches exactly the same things whether a schedule fired it or someone
-  // asked it a question. Empty (and broker-free) when nothing is bound.
+  // The context's tools, resolved exactly as the run lane resolves an automation's, so a
+  // context reaches the same things however it was triggered. The broker rides along
+  // because the proxy needs it to execute a non-direct tool; nothing bound means no
+  // broker is built at all.
   const contextTools = async (x: ContextRecord) => {
     const ids = parseConnectionIds(x.connection_ids)
-    if (ids.length === 0) return []
+    if (ids.length === 0) return { broker: null, tools: [] }
     const broker = await brokerFor(meta, x.org_id, null, deps.encryptionKey)
-    return toolsForRun(meta, broker, x.org_id, ids)
+    return { broker, tools: await toolsForRun(meta, broker, x.org_id, ids) }
   }
 
   const contextJson = (x: ContextRecord, manifestShortId: string | null) => ({
@@ -367,9 +366,8 @@ export const contextRoutes = (ctx: AppContext) => {
             .max(6 * 60 * 60_000)
             .optional(),
           max_concurrency: z.number().int().min(1).max(10).optional(),
-          // The context's hands: connections it may use, in every lane it runs in.
-          // Same bind policy as an automation's — workspace connections need manage,
-          // personal ones only their owner.
+          // Same bind policy as an automation's: a workspace connection needs manage,
+          // a personal one only its owner.
           connection_ids: z.array(z.string().max(64)).max(20).optional(),
         }),
       )
@@ -1164,12 +1162,11 @@ export const contextRoutes = (ctx: AppContext) => {
         ...sessionJson(s),
         messages: bySession.get(s.id) ?? [],
       }))
-      // The same tools the hosted claim returns. A BYO runner is not a lesser executor —
-      // it serves the same context and must reach the same things, or a context's hands
-      // would depend on where it happens to run.
+      // The same list the hosted claim returns. A context's reach must not depend on
+      // which kind of executor picked its session up.
       return c.json({
         sessions: out,
-        tools: (await contextTools(x)).map((t) => ({ def: t.def, ref: t.ref })),
+        tools: (await contextTools(x)).tools.map((t) => ({ def: t.def, ref: t.ref })),
       })
     },
   )
@@ -1218,17 +1215,15 @@ export const contextRoutes = (ctx: AppContext) => {
         messages: (await meta.listSessionMessagesFor([claimed.id])).map(messageJson),
       },
       context: { id: x.id, name: x.name, manifest_short_id: manifest?.short_id ?? null },
-      // The context's hands, resolved the same way the run lane resolves them, and
-      // projected the same way: def + ref only. RunTool's routing fields (and the
-      // connection behind them) stay server-side.
-      tools: (await contextTools(x)).map((t) => ({ def: t.def, ref: t.ref })),
+      // Projected def + ref only, as the run claim is: RunTool's routing fields, and the
+      // connection behind them, stay server-side.
+      tools: (await contextTools(x)).tools.map((t) => ({ def: t.def, ref: t.ref })),
     })
   })
 
-  // Execute one of the session's tools. The mirror of the run lane's proxy, and for the
-  // same reason: the executor holds a session capability token and NO credential, so a
-  // tool call comes back here, gets re-checked against this context's least-privilege
-  // list, and is executed server-side.
+  // Execute one of the session's tools — the ask lane's mirror of the run proxy. The
+  // executor holds a capability token and no credential, so the call comes back here to
+  // be re-checked against this context's list and run server-side.
   app.post("/v1/agent/sessions/:id/tool", async (c) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
@@ -1252,26 +1247,19 @@ export const contextRoutes = (ctx: AppContext) => {
       }),
     )
     if (b instanceof Response) return bail(b)
-    const allowed = await contextTools(x)
-    if (allowed.length === 0) return fail(c, 403, "this context has no connections")
-    const match = allowed.find((t) => t.def.name === b.tool && (!b.ref || t.ref === b.ref))
-    if (!match) return fail(c, 403, "tool not allowed for this context")
-    try {
-      if (isDirect(match.kind)) {
-        if (!deps.encryptionKey) return fail(c, 502, "direct connections need an encryption key")
-        const cn = await meta.getConnection(match.connectionId)
-        if (!cn || cn.org_id !== x.org_id) return fail(c, 404, "not found")
-        return c.json({
-          result: await executeHttpTool(meta, cn, b.tool, b.args ?? {}, deps.encryptionKey),
-        })
-      }
-      const broker = await brokerFor(meta, x.org_id, null, deps.encryptionKey)
-      return c.json({
-        result: await broker.execute({ ref: match.ref, tool: b.tool, args: b.args ?? {} }),
-      })
-    } catch (e) {
-      return fail(c, 502, e instanceof Error ? e.message : "tool failed")
-    }
+    const { broker, tools } = await contextTools(x)
+    const out = await callTool({
+      meta,
+      broker,
+      orgId: x.org_id,
+      encryptionKey: deps.encryptionKey,
+      allowed: tools,
+      subject: "this context",
+      tool: b.tool,
+      args: b.args,
+      ref: b.ref,
+    })
+    return out.ok ? c.json({ result: out.result }) : fail(c, out.status, out.message)
   })
 
   return app
