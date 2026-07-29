@@ -18,6 +18,13 @@ import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { resolveActorBrandprint } from "../lib/brandprint"
+import {
+  brokerFor,
+  callTool,
+  connectionBindError,
+  parseConnectionIds,
+  toolsForRun,
+} from "../lib/broker"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
@@ -48,6 +55,7 @@ export const contextRoutes = (ctx: AppContext) => {
     askLimiter,
     canAskContext,
     currentUser,
+    deps,
     limited,
     managementPrincipal,
     requireUser,
@@ -233,6 +241,9 @@ export const contextRoutes = (ctx: AppContext) => {
         .describe(
           "Who in the workspace may ask: any member, or the invited roster. Never outside the workspace.",
         ),
+      connection_ids: z
+        .array(z.string())
+        .describe("Connections this context may use — its tools, in every lane it runs in."),
     })
     .openapi("ContextInfo")
 
@@ -347,6 +358,17 @@ export const contextRoutes = (ctx: AppContext) => {
     })
     .openapi("Session")
 
+  // The context's tools, resolved exactly as the run lane resolves an automation's, so a
+  // context reaches the same things however it was triggered. The broker rides along
+  // because the proxy needs it to execute a non-direct tool; nothing bound means no
+  // broker is built at all.
+  const contextTools = async (x: ContextRecord) => {
+    const ids = parseConnectionIds(x.connection_ids)
+    if (ids.length === 0) return { broker: null, tools: [] }
+    const broker = await brokerFor(meta, x.org_id, null, deps.encryptionKey)
+    return { broker, tools: await toolsForRun(meta, broker, x.org_id, ids) }
+  }
+
   const contextJson = (x: ContextRecord, manifestShortId: string | null) => ({
     id: x.id,
     name: x.name,
@@ -356,6 +378,7 @@ export const contextRoutes = (ctx: AppContext) => {
     created_at: x.created_at,
     runner_seen_at: x.runner_seen_at,
     ask_policy: x.ask_policy,
+    connection_ids: parseConnectionIds(x.connection_ids),
   })
 
   const messageJson = (m: SessionMessageRecord) => {
@@ -529,12 +552,24 @@ export const contextRoutes = (ctx: AppContext) => {
             .max(6 * 60 * 60_000)
             .optional(),
           max_concurrency: z.number().int().min(1).max(10).optional(),
+          // Same bind policy as an automation's: a workspace connection needs manage,
+          // a personal one only its owner.
+          connection_ids: z.array(z.string().max(64)).max(20).optional(),
         }),
       )
       if (b instanceof Response) return bail(b)
       if (b.agent_id) {
         const agents = await meta.listAgents(org)
         if (!agents.some((a) => a.id === b.agent_id)) return bail(fail(c, 404, "no such agent"))
+      }
+      if (b.connection_ids?.length) {
+        const bindErr = await connectionBindError(
+          meta,
+          org,
+          { userId: owner, canManage: await workspaceCan(c, "manage") },
+          b.connection_ids,
+        )
+        if (bindErr) return bail(fail(c, 400, bindErr))
       }
       const manifest = await meta.getByShortId(b.manifest_short_id)
       if (!manifest || manifest.org_id !== org || !(await authorize(c, "share", manifest)))
@@ -574,6 +609,7 @@ export const contextRoutes = (ctx: AppContext) => {
           created_by: owner,
           max_run_ms: b.max_run_ms ?? null,
           ...(b.max_concurrency ? { max_concurrency: b.max_concurrency } : {}),
+          connection_ids: b.connection_ids?.length ? JSON.stringify(b.connection_ids) : null,
         })
         return c.json(
           {
@@ -751,6 +787,56 @@ export const contextRoutes = (ctx: AppContext) => {
       if (b instanceof Response) return bail(b)
       await meta.setContextAskPolicy(x.id, b.ask_policy)
       return c.json({ ask_policy: b.ask_policy })
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/contexts/{id}/connections",
+      tags: ["Contexts"],
+      summary: "Set the connections this context may use (whole-list replace).",
+      request: {
+        params: z.object({ id: z.string() }),
+        body: {
+          content: {
+            "application/json": {
+              schema: z.object({ connection_ids: z.array(z.string().max(64)).max(20) }),
+            },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description: "The context's connections after the change.",
+          content: {
+            "application/json": { schema: z.object({ connection_ids: z.array(z.string()) }) },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const x = await manageableContext(c)
+      if (x instanceof Response) return bail(x)
+      const b = await readJson(c, z.object({ connection_ids: z.array(z.string().max(64)).max(20) }))
+      if (b instanceof Response) return bail(b)
+      // Re-checked on every set, not just at create: a personal connection may have
+      // changed hands or a manager may have lost the seat since the last edit.
+      const bindErr = await connectionBindError(
+        meta,
+        x.org_id,
+        {
+          userId: await managementPrincipal(c),
+          canManage: await workspaceCan(c, "manage"),
+        },
+        b.connection_ids,
+      )
+      if (bindErr) return bail(fail(c, 400, bindErr))
+      await meta.setContextConnections(
+        x.id,
+        b.connection_ids.length ? JSON.stringify(b.connection_ids) : null,
+      )
+      return c.json({ connection_ids: b.connection_ids })
     },
   )
 
@@ -1432,7 +1518,12 @@ export const contextRoutes = (ctx: AppContext) => {
         ...sessionJson(s),
         messages: bySession.get(s.id) ?? [],
       }))
-      return c.json({ sessions: out })
+      // The same list the hosted claim returns. A context's reach must not depend on
+      // which kind of executor picked its session up.
+      return c.json({
+        sessions: out,
+        tools: (await contextTools(x)).tools.map((t) => ({ def: t.def, ref: t.ref })),
+      })
     },
   )
 
@@ -1481,7 +1572,54 @@ export const contextRoutes = (ctx: AppContext) => {
         messages: (await meta.listSessionMessagesFor([claimed.id])).map(messageJson),
       },
       context: { id: x.id, name: x.name, manifest_short_id: manifest?.short_id ?? null },
+      // Projected def + ref only, as the run claim is: RunTool's routing fields, and the
+      // connection behind them, stay server-side.
+      tools: (await contextTools(x)).tools.map((t) => ({ def: t.def, ref: t.ref })),
     })
+  })
+
+  // Execute one of the session's tools — the ask lane's mirror of the run proxy. The
+  // executor holds a capability token and no credential, so the call comes back here to
+  // be re-checked against this context's list and run server-side.
+  app.post("/v1/agent/sessions/:id/tool", async (c) => {
+    const agent = await agentFor(c)
+    if (!agent) return fail(c, 401, "agent token required")
+    // A session capability bearer may act ONLY on the session it was minted for. A standing
+    // agent bearer (the BYO polling runner) has no session scope, and is allowed here for
+    // sessions of a context it owns — the ownership check below is what bounds it, exactly
+    // as the run lane bounds a standing bearer by run.agent_id.
+    const scope = agentSessionScope(c)
+    const sessionId = c.req.param("id") ?? ""
+    if (scope && scope !== sessionId) return fail(c, 403, "not this session's token")
+    const s = await meta.getSession(sessionId)
+    // A CONTEXTLESS (chat) session has no context and therefore no owning agent, so no agent
+    // bearer may reach its tools — the same fail-closed rule every other agent-facing session
+    // lane follows. Chat is served in-process for a signed-in human, never by a bearer.
+    const x = s?.context_id ? await meta.getContext(s.context_id) : null
+    if (!s || !x || x.agent_id !== agent.id || x.org_id !== agent.org_id)
+      return fail(c, 404, "not found")
+    const b = await readJson(
+      c,
+      z.object({
+        tool: z.string().max(200),
+        args: z.unknown().optional(),
+        ref: z.string().max(200).optional(),
+      }),
+    )
+    if (b instanceof Response) return bail(b)
+    const { broker, tools } = await contextTools(x)
+    const out = await callTool({
+      meta,
+      broker,
+      orgId: x.org_id,
+      encryptionKey: deps.encryptionKey,
+      allowed: tools,
+      subject: "this context",
+      tool: b.tool,
+      args: b.args,
+      ref: b.ref,
+    })
+    return out.ok ? c.json({ result: out.result }) : fail(c, out.status, out.message)
   })
 
   return app

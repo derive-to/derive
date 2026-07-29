@@ -705,6 +705,7 @@ export const context = pgTable(
     // route-parsed config sidecar).
     max_run_ms: integer("max_run_ms"),
     max_concurrency: integer("max_concurrency").notNull().default(1),
+    connection_ids: text("connection_ids"),
     config: text("config"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],

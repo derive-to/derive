@@ -56,7 +56,9 @@ export function registerCodeTool(
           .min(1)
           .max(20_000)
           .describe("JavaScript. `tools` is in scope; return the result. Top-level await is fine."),
-        timeout_ms: z.number().int().positive().max(MAX_CODE_TIMEOUT_MS).optional(),
+        // coerce, not bare number: a client that connected before this parameter existed sends
+        // it as a STRING, and a bare z.number() would reject a value the caller passed correctly.
+        timeout_ms: z.coerce.number().int().positive().max(MAX_CODE_TIMEOUT_MS).optional(),
       },
     },
     async (input) => {

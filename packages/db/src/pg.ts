@@ -2092,6 +2092,9 @@ export class PgMetaStore implements MetaStore {
   async setContextAskPolicy(id: string, policy: "workspace" | "invited"): Promise<void> {
     await this.db.update(context).set({ ask_policy: policy }).where(eq(context.id, id))
   }
+  async setContextConnections(id: string, connectionIds: string | null): Promise<void> {
+    await this.db.update(context).set({ connection_ids: connectionIds }).where(eq(context.id, id))
+  }
   async listContextAskers(contextId: string): Promise<ContextAskerRecord[]> {
     return this.db
       .select()
@@ -3374,8 +3377,11 @@ export class PgMetaStore implements MetaStore {
     if (ids.length === 0) return
     await this.db.update(artifact).set({ removed_at: removedAt }).where(inArray(artifact.id, ids))
   }
-  async setArtifactTitle(id: string, title: string): Promise<void> {
-    await this.db.update(artifact).set({ title }).where(eq(artifact.id, id))
+  async setArtifactTitle(id: string, title: string, slug?: string | null): Promise<void> {
+    await this.db
+      .update(artifact)
+      .set(slug === undefined ? { title } : { title, slug })
+      .where(eq(artifact.id, id))
   }
   async setArtifactSourcePath(id: string, sourcePath: string | null): Promise<void> {
     await this.db.update(artifact).set({ source_path: sourcePath }).where(eq(artifact.id, id))

@@ -13,12 +13,12 @@ import {
 import { z } from "@hono/zod-openapi"
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
-import { parseConnectionIds, parseRefs, parseTrigger } from "../lib/automation"
+import { parseRefs, parseTrigger } from "../lib/automation"
 import {
   brokerFor,
+  callTool,
   connectionBindError,
-  executeHttpTool,
-  isDirect,
+  parseConnectionIds,
   toolsForRun,
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
@@ -636,46 +636,31 @@ export const automationRoutes = (ctx: AppContext) => {
     // per tool call — and this endpoint is called once per tool a composed script runs.
     const route = refRouter(broker)
     const allowed = await toolsForRun(meta, broker, agent.org_id, connIds, route)
-    const match = allowed.find((t) => t.def.name === b.tool && (!b.ref || t.ref === b.ref))
-    if (!match) return fail(c, 403, "tool not allowed for this run")
-    try {
-      // Resolve the result by whichever path this connection uses, THEN stamp taint once for
-      // both. Keeping the direct branch's early return would have left it untainted — a run
-      // reading Gmail through a direct connection is every bit as externally-influenced as one
-      // reading it through a broker, and the gate would not have known.
-      let result: unknown
-      if (isDirect(match.kind)) {
-        // A direct connection has no vendor, so Derive executes it: the credential is resolved
-        // (decrypted, or minted from an install) and spent here. Either way the runner only
-        // ever sent a tool NAME — no credential has ever been near the executor.
-        if (!deps.encryptionKey) return fail(c, 502, "direct connections need an encryption key")
-        const cn = await meta.getConnection(match.connectionId)
-        if (!cn || cn.org_id !== agent.org_id) return fail(c, 404, "not found")
-        result = await executeHttpTool(meta, cn, b.tool, b.args ?? {}, deps.encryptionKey)
-      } else {
-        // Per-connection routing, same as toolsForRun: the REF decides the implementation, so an
-        // MCP tool listed on the claim executes through the MCP broker rather than the plan's.
-        result = await route(match.ref).execute({
-          ref: match.ref,
-          tool: b.tool,
-          args: b.args ?? {},
-        })
-      }
-      // TAINT, stamped BEFORE the result is handed over. This run has now read data from an
-      // outside system, so it can no longer live-publish (see decideWrite): its writes become
-      // proposals a human approves. Recorded here rather than trusted from the executor,
-      // because this endpoint is the only place that KNOWS a tool ran — the executor is the
-      // party a prompt injection would already have captured, so its word on whether it read
-      // anything is worth nothing.
-      //
-      // Ordered before the response deliberately: if the stamp fails we would rather fail the
-      // tool call than hand back external data the gate does not know about. Merged, never
-      // replaced, like every other writer of run.meta.
-      await meta.updateRunMeta(run.id, mergeRunMeta(run.meta, { tainted: true }))
-      return c.json({ result })
-    } catch (e) {
-      return fail(c, 502, e instanceof Error ? e.message : "tool failed")
-    }
+    const out = await callTool({
+      meta,
+      broker,
+      orgId: agent.org_id,
+      encryptionKey: deps.encryptionKey,
+      allowed,
+      subject: "this run",
+      tool: b.tool,
+      args: b.args,
+      ref: b.ref,
+    })
+    if (!out.ok) return fail(c, out.status, out.message)
+    // TAINT, stamped BEFORE the result is handed over. This run has now read data from an
+    // outside system, so it can no longer live-publish (see decideWrite): its writes become
+    // proposals a human approves. Recorded here rather than trusted from the executor, because
+    // this endpoint is the only place that KNOWS a tool ran — the executor is the party a prompt
+    // injection would already have captured, so its word on whether it read anything is worth
+    // nothing.
+    //
+    // It lives HERE rather than inside callTool because taint belongs to a RUN, and callTool now
+    // serves the context lane too, where there is no run to stamp. Ordered before the response
+    // deliberately: if the stamp fails we would rather fail the tool call than hand back external
+    // data the gate does not know about. Merged, never replaced, like every other writer of meta.
+    await meta.updateRunMeta(run.id, mergeRunMeta(run.meta, { tainted: true }))
+    return c.json({ result: out.result })
   })
 
   // Record an already-finished run straight into the ledger — the host's best-effort write

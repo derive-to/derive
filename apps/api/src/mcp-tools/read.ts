@@ -71,7 +71,7 @@ export function registerReadTool(tc: ToolContext): void {
           .describe(
             'SEE the published page instead of reading its text — what a viewer actually sees, catching visual breakage (a failed font, a broken layout) no text read can. "top": the 1200x630 crop (fastest, what an og:image unfurl shows). "full": the whole page, fullPage screenshot — catches below-the-fold breakage "top" misses. "marked": "full" again with the region map\'s @N refs drawn on it — pairs with a no-heading page\'s region map so what you SEE lines up with what you READ. All three computed a few seconds after each publish; pass alone (optionally with `version`).',
           ),
-        wait: z
+        wait: z.coerce
           .number()
           .int()
           .min(1)
@@ -80,7 +80,7 @@ export function registerReadTool(tc: ToolContext): void {
           .describe(
             "With `render`: when the screenshot isn't computed yet (a publish is seconds old), block up to this many seconds (max 30) for it to land instead of returning the not-ready message. Returns at once when it's already ready or has failed.",
           ),
-        version: z.number().optional().describe("Defaults to the current version."),
+        version: z.coerce.number().optional().describe("Defaults to the current version."),
         workspace: wsArg,
       },
     },

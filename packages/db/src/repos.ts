@@ -830,8 +830,16 @@ export function makeRepos(db: SqliteDb) {
     if (ids.length === 0) return
     await db.update(artifact).set({ removed_at: removedAt }).where(inArray(artifact.id, ids)).run()
   }
-  const setArtifactTitle = async (id: string, title: string): Promise<void> => {
-    await db.update(artifact).set({ title }).where(eq(artifact.id, id)).run()
+  const setArtifactTitle = async (
+    id: string,
+    title: string,
+    slug?: string | null,
+  ): Promise<void> => {
+    await db
+      .update(artifact)
+      .set(slug === undefined ? { title } : { title, slug })
+      .where(eq(artifact.id, id))
+      .run()
   }
   const setArtifactSourcePath = async (id: string, sourcePath: string | null): Promise<void> => {
     await db.update(artifact).set({ source_path: sourcePath }).where(eq(artifact.id, id)).run()
@@ -2294,6 +2302,9 @@ export function makeRepos(db: SqliteDb) {
   ): Promise<void> => {
     await db.update(context).set({ ask_policy: policy }).where(eq(context.id, id)).run()
   }
+  const setContextConnections = async (id: string, connectionIds: string | null): Promise<void> => {
+    await db.update(context).set({ connection_ids: connectionIds }).where(eq(context.id, id)).run()
+  }
   const listContextAskers = async (contextId: string): Promise<ContextAskerRecord[]> =>
     db
       .select()
@@ -3744,6 +3755,7 @@ export function makeRepos(db: SqliteDb) {
     deleteContext,
     touchContextSeen,
     setContextAskPolicy,
+    setContextConnections,
     listContextAskers,
     getContextAsker,
     addContextAsker,

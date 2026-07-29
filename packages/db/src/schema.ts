@@ -879,6 +879,11 @@ export const context = sqliteTable(
     // How many sessions the runner may work in parallel on this context. Constant
     // default 1 (serial), so it migrates onto populated rows without a backfill.
     max_concurrency: integer("max_concurrency").notNull().default(1),
+    // Connections this context may use, as a JSON array of ids — the SAME shape (and
+    // parser) as automation.connection_ids, because an automation bound to a context is
+    // a scheduled use(context, instruction) and the two must not disagree about what a
+    // context can reach. Null/absent = no tools.
+    connection_ids: text("connection_ids"),
     // Opaque JSON sidecar, parsed only at the route layer (like session_message.meta)
     // — never by the store. Nullable (clean ADD COLUMN; unset until the owner sets one).
     config: text("config"),

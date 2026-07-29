@@ -235,7 +235,13 @@ export function registerPublishTool(tc: ToolContext): void {
               "Return a screenshot of the published page with this response, instead of a second read.",
             ),
           ),
-        wait: z
+        // COERCED, not bare `z.number()`. A client caches the tool schema at connect, so a
+        // parameter added afterwards has no type for it to coerce against and the value
+        // arrives as a string — the server then rejects it, and the capability is exactly
+        // as unreachable as a new enum value used to be. Found by using it: `render` (a
+        // string) passed through while `wait` did not, so the render could be requested
+        // and never waited for. See scripts/check-mcp-coercion.mjs.
+        wait: z.coerce
           .number()
           .optional()
           .describe(
@@ -789,8 +795,13 @@ export function registerPublishTool(tc: ToolContext): void {
                 { type: "image" as const, data: toBase64(shot.bytes), mimeType: shot.mimeType },
               ],
             }
-          // Not ready inside the wait: fall through to the ordinary response, whose
-          // `render` field already says how to collect it.
+          // Not ready inside the wait. Say WHY rather than falling through to the generic
+          // "queued — call read(...)" pointer, which ignores that a render was asked for
+          // and reads as though nothing was requested.
+          payload.render =
+            wait && wait > 0
+              ? `not ready within ${wait}s — call read(short_id:"${artifact.short_id}", render:"${render}", wait:30) to collect it.`
+              : `requested but not waited for — pass \`wait\` (seconds) to get it inline, or call read(short_id:"${artifact.short_id}", render:"${render}", wait:30).`
         }
         return json(payload)
       } catch (e) {

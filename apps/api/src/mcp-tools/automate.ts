@@ -72,13 +72,15 @@ export function registerAutomateTool(tc: ToolContext): void {
         // `create_context` only — wire a new context to a manifest artifact.
         name: z.string().trim().min(1).max(80).optional(),
         manifest_short_id: z.string().max(64).optional(),
-        max_run_ms: z
+        // Coerced for the same reason as publish.wait: added after clients connected, so a
+        // stale schema sends these as strings.
+        max_run_ms: z.coerce
           .number()
           .int()
           .min(30_000)
           .max(6 * 60 * 60_000)
           .optional(),
-        max_concurrency: z.number().int().min(1).max(10).optional(),
+        max_concurrency: z.coerce.number().int().min(1).max(10).optional(),
       },
     },
     async (input) => {
