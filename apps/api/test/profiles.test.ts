@@ -123,6 +123,55 @@ describe("usernames + public profiles", () => {
     expect((await cleared.json()).brandprint).toBeNull()
   })
 
+  it("persists and returns the personal Brandprint toggle", async () => {
+    const kai: TestUser = { id: "u_kai", email: "kai@derive.test", name: "Kai", username: "kai" }
+    const { app, meta } = makeAuthedApp("profiles-brandprint-toggle", [kai])
+
+    const r = await app.request(
+      "/v1/me/profile",
+      jsonAs(as(kai.email), { brandprint: { useWorkspaceBrandprint: false } }),
+    )
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({
+      profession: null,
+      about: null,
+      brandprint: { useWorkspaceBrandprint: false },
+    })
+
+    // Persisted, not just echoed back: the stored JSON blob carries the toggle.
+    expect(await meta.getUserBrandprint(kai.id)).toBe(
+      JSON.stringify({ useWorkspaceBrandprint: false }),
+    )
+  })
+
+  it("saving a collection alongside the toggle keeps both", async () => {
+    const remy: TestUser = {
+      id: "u_remy",
+      email: "remy@derive.test",
+      name: "Remy",
+      username: "remy",
+    }
+    const { app, meta } = makeAuthedApp("profiles-brandprint-toggle-collection", [remy])
+    const col = await (
+      await app.request("/v1/collections", jsonAs(as(remy.email), { title: "Brandprint" }))
+    ).json()
+
+    const r = await app.request(
+      "/v1/me/profile",
+      jsonAs(as(remy.email), {
+        brandprint: { collectionId: col.id, useWorkspaceBrandprint: false },
+      }),
+    )
+    expect(r.status).toBe(200)
+    expect((await r.json()).brandprint).toEqual({
+      collectionId: col.id,
+      useWorkspaceBrandprint: false,
+    })
+    expect(await meta.getUserBrandprint(remy.id)).toBe(
+      JSON.stringify({ collectionId: col.id, useWorkspaceBrandprint: false }),
+    )
+  })
+
   it("strips a profileId from a personal brandprint (workspace-only field)", async () => {
     const pi: TestUser = { id: "u_pi", email: "pi@derive.test", name: "Pi", username: "pi" }
     const { app, meta } = makeAuthedApp("profiles-brandprint-profileid", [pi])

@@ -157,7 +157,7 @@ export const reworkRoutes = (ctx: AppContext) => {
       summary: "Ask a registered agent to rework this artifact to match the Brandprint.",
       request: { params: z.object({ shortId: z.string() }), body: requestBody },
       responses: requestCreated(
-        "The rework request was posted and landed in the agent's pull inbox. 409 needsAgent when no agent is registered; 409 needsBrandprint when no Brandprint resolves; 409 alreadyQueued while an earlier request for this artifact still waits.",
+        "The rework request was posted and landed in the agent's pull inbox. 409 needsAgent when no agent is registered; 409 needsBrandprint when no Brandprint resolves; 409 brandprintDisabled when the caller turned the workspace Brandprint off in their settings; 409 alreadyQueued while an earlier request for this artifact still waits.",
       ),
     }),
     async (c) => {
@@ -176,12 +176,18 @@ export const reworkRoutes = (ctx: AppContext) => {
       // The resolved Brandprint (workspace ⊕ requester's profile) drives the
       // profile-first line and guards the empty brief: firing the canned instruction
       // with zero derive://brandprint/* resources behind it would hand the agent
-      // nothing to read.
+      // nothing to read. An empty brief has two distinct causes: the caller turned
+      // the workspace layer off (workspaceSuppressed), or nothing was ever set up.
+      // Tell them apart so the client can point at Settings instead of onboarding.
       if (resolved.collectionIds.length === 0 && !resolved.profileId)
         return bail(
-          fail(c, 409, "no Brandprint is set on this workspace or your profile", {
-            code: "needsBrandprint",
-          }),
+          resolved.workspaceSuppressed
+            ? fail(c, 409, "Brandprint is turned off in your settings. Turn it on to rework.", {
+                code: "brandprintDisabled",
+              })
+            : fail(c, 409, "no Brandprint is set on this workspace or your profile", {
+                code: "needsBrandprint",
+              }),
         )
       let profileLive = false
       if (resolved.profileId) {
