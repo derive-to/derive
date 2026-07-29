@@ -2,6 +2,7 @@ import type { BrokerToolDef, ToolBroker } from "@derive/broker"
 import { makeBroker } from "@derive/broker"
 import type { ConnectionKind, ConnectionRecord, MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
+import { installationToken } from "./github-app"
 
 /** One tool a hosted run may call, paired with the connected-account ref it executes through.
  *  `kind` and `connectionId` are how the tool proxy routes the call without a second lookup;
@@ -42,18 +43,21 @@ export const toolsForRun = async (
   const out: RunTool[] = []
   for (const cn of usable) {
     const entry = { ref: cn.broker_ref, kind: cn.kind, connectionId: cn.id }
-    // A secret connection has no vendor account, so its tools are ours to declare and
-    // ours to execute (see executeSecretTool); the broker is never asked about it.
-    const defs =
-      cn.kind === "secret" ? secretTools(cn.toolkit) : await broker.toolsFor([cn.broker_ref])
+    // A direct connection has no vendor account, so its tools are ours to declare and
+    // ours to execute (see executeHttpTool); the broker is never asked about it.
+    const defs = isDirect(cn.kind) ? httpTools(cn.toolkit) : await broker.toolsFor([cn.broker_ref])
     for (const def of defs) out.push({ def, ...entry })
   }
   return out
 }
 
-/** The tools a pasted-secret connection exposes. Named `<toolkit>.<verb>` to match the
- *  broker's convention, so the runner's shim treats both kinds of connection identically. */
-export const secretTools = (toolkit: string): BrokerToolDef[] => [
+/** Kinds Derive authenticates and calls itself, rather than handing to the broker. They
+ *  differ only in where the bearer comes from (see bearerFor) — the HTTP call is identical. */
+export const isDirect = (kind: ConnectionKind): boolean => kind !== "oauth"
+
+/** The tools a direct connection exposes. Named `<toolkit>.<verb>` to match the broker's
+ *  convention, so the runner's shim treats every kind of connection identically. */
+export const httpTools = (toolkit: string): BrokerToolDef[] => [
   {
     name: `${toolkit}.get`,
     description: `GET a path on the ${toolkit} API (authenticated server-side).`,
@@ -67,25 +71,66 @@ export const secretTools = (toolkit: string): BrokerToolDef[] => [
 ]
 
 /**
- * Execute one tool call for a pasted-secret connection: resolve the requested path under
- * the connection's base_url, attach the decrypted credential, return status + body. The
- * caller has already verified the tool is on this run's least-privilege list.
+ * The bearer for a direct connection, resolved at CALL time — never at bind time, and never
+ * stored on the RunTool. Each kind answers the same question from a different place:
+ *
+ *   secret      the pasted credential, decrypted here
+ *   github_app  a short-lived installation token, minted per call (cached ~1h) against the
+ *               App install that repo sync already uses — so nothing long-lived exists to leak
+ *   slack       the workspace's bot token from its existing install
+ *
+ * Throws when the underlying install is gone (uninstalled, revoked): the connection outlives
+ * its integration as a row, and this is where that surfaces as a refusal rather than a call
+ * with no credential.
+ */
+export const bearerFor = async (
+  meta: MetaStore,
+  cn: ConnectionRecord,
+  encryptionKey: string,
+): Promise<string> => {
+  if (cn.kind === "secret") {
+    if (!cn.secret_enc) throw new Error("secret connection is missing its secret")
+    return decryptSecret(cn.secret_enc, encryptionKey)
+  }
+  if (cn.kind === "github_app") {
+    const app = await meta.getGithubApp()
+    if (!app) throw new Error("the GitHub App is not configured on this instance")
+    return installationToken(
+      app.app_id,
+      decryptSecret(app.private_key, encryptionKey),
+      cn.broker_ref,
+    )
+  }
+  if (cn.kind === "slack") {
+    const install = await meta.getSlackInstall(cn.org_id)
+    if (!install) throw new Error("Slack is no longer connected to this workspace")
+    if (install.needs_reauth === 1) throw new Error("the Slack install needs to be reconnected")
+    return decryptSecret(install.bot_token, encryptionKey)
+  }
+  throw new Error(`connection kind ${cn.kind} has no direct credential`)
+}
+
+/**
+ * Execute one tool call for a direct connection: resolve the requested path under the
+ * connection's base_url, attach its bearer, return status + body. The caller has already
+ * verified the tool is on this run's least-privilege list.
  *
  * The path is attacker-influenced (it comes from the model, which may have read hostile
  * content), so confinement is the load-bearing part: the credential must only ever be
- * offered to the base it was pasted for. Two things do that work — resolving as `.<path>`
- * makes `..` climb out of the base instead of escaping the parser, and the containment
- * check compares against base.href WITH its trailing slash, so a base of `/admin` cannot
- * be satisfied by `/administrator` (string-prefix matching without the slash accepts it).
+ * offered to the base it was registered for. Two things do that work — resolving as
+ * `.<path>` makes `..` climb out of the base instead of escaping the parser, and the
+ * containment check compares against base.href WITH its trailing slash, so a base of
+ * `/admin` cannot be satisfied by `/administrator` (a bare prefix test accepts it).
  */
-export const executeSecretTool = async (
+export const executeHttpTool = async (
+  meta: MetaStore,
   cn: ConnectionRecord,
   tool: string,
   args: unknown,
   encryptionKey: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ status: number; body: unknown }> => {
-  if (!cn.secret_enc || !cn.base_url) throw new Error("secret connection is missing its secret")
+  if (!cn.base_url) throw new Error("connection is missing its base_url")
   const a = (args ?? {}) as { path?: unknown; body?: unknown }
   const path = typeof a.path === "string" ? a.path : ""
   if (!path.startsWith("/")) throw new Error("path must start with /")
@@ -96,7 +141,7 @@ export const executeSecretTool = async (
   const res = await fetchImpl(url.href, {
     method: verb,
     headers: {
-      authorization: `Bearer ${decryptSecret(cn.secret_enc, encryptionKey)}`,
+      authorization: `Bearer ${await bearerFor(meta, cn, encryptionKey)}`,
       ...(verb === "POST" ? { "content-type": "application/json" } : {}),
     },
     body: verb === "POST" ? JSON.stringify(a.body ?? {}) : undefined,

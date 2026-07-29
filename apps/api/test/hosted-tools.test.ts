@@ -1,6 +1,7 @@
 import { LocalBroker } from "@derive/broker"
 import { describe, expect, it } from "vitest"
-import { executeSecretTool, toolsForRun } from "../src/lib/broker"
+import { executeHttpTool, toolsForRun } from "../src/lib/broker"
+import { encryptSecret } from "../src/lib/crypto"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 // WO4 — least-privilege tool injection. A hosted run sees the tools of its BOUND connections
@@ -73,7 +74,14 @@ describe("hosted tool injection — least privilege (WO4)", () => {
       calls.push({ url: String(url), auth: h.get("authorization"), method: init?.method ?? "GET" })
       return new Response(JSON.stringify({ ok: true }), { status: 200 })
     }) as typeof fetch
-    const out = await executeSecretTool(cn, "game.get", { path: "/report?days=30" }, key, fakeFetch)
+    const out = await executeHttpTool(
+      meta,
+      cn,
+      "game.get",
+      { path: "/report?days=30" },
+      key,
+      fakeFetch,
+    )
     expect(out).toEqual({ status: 200, body: { ok: true } })
     expect(calls[0]).toMatchObject({
       url: "https://api.game.test/admin/report?days=30",
@@ -84,15 +92,15 @@ describe("hosted tool injection — least privilege (WO4)", () => {
     // Confinement. The path comes from the model, so it is attacker-influenced: the
     // credential must only ever be offered to the base it was pasted for.
     await expect(
-      executeSecretTool(cn, "game.get", { path: "https://evil.test/x" }, key, fakeFetch),
+      executeHttpTool(meta, cn, "game.get", { path: "https://evil.test/x" }, key, fakeFetch),
     ).rejects.toThrow(/start with/)
     await expect(
-      executeSecretTool(cn, "game.get", { path: "/../secrets" }, key, fakeFetch),
+      executeHttpTool(meta, cn, "game.get", { path: "/../secrets" }, key, fakeFetch),
     ).rejects.toThrow(/escapes/)
     // A sibling path that merely shares the base's prefix: /admin must not be satisfied by
     // /administrator. Comparing hrefs without the trailing slash accepts this one.
     await expect(
-      executeSecretTool(cn, "game.get", { path: "/../administrator/x" }, key, fakeFetch),
+      executeHttpTool(meta, cn, "game.get", { path: "/../administrator/x" }, key, fakeFetch),
     ).rejects.toThrow(/escapes/)
     expect(calls).toHaveLength(1) // none of the hostile paths reached fetch
   })
@@ -137,6 +145,52 @@ describe("hosted tool injection — least privilege (WO4)", () => {
       "vault.get",
       "vault.post",
     ])
+  })
+
+  it("slack: backed by the workspace's existing install, storing no credential of its own", async () => {
+    const h = makeAuthedApp("conn-slack", [owner], "editor", { deps: { encryptionKey: "k" } })
+    // Refused until the workspace has actually connected Slack — this endpoint starts no
+    // OAuth, it only gives an existing install a tool surface.
+    const early = await h.app.request("/v1/connections", jsonAs(as(owner.email), { kind: "slack" }))
+    expect(early.status).toBe(400)
+    expect((await early.json()).error).toMatch(/connect Slack/i)
+
+    await h.meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T123",
+      team_name: "Derive HQ",
+      bot_token: encryptSecret("xoxb-real-bot-token", "k"),
+      bot_user_id: "U1",
+      default_channel: null,
+      needs_reauth: 0,
+      created_at: new Date().toISOString(),
+    })
+    const res = await h.app.request("/v1/connections", jsonAs(as(owner.email), { kind: "slack" }))
+    expect(res.status).toBe(201)
+    const body = await res.text()
+    expect(body).not.toContain("xoxb-real-bot-token")
+    const cn = JSON.parse(body)
+    // Workspace-scoped by construction — the install belongs to the org, not the wirer.
+    expect(cn).toMatchObject({ kind: "slack", scope: "workspace", toolkit: "slack" })
+
+    const [rec] = await h.meta.getConnectionsByIds([cn.id])
+    if (!rec) throw new Error("connection not found")
+    expect(rec.secret_enc).toBeNull() // nothing stored here to leak or rotate
+    const calls: { auth: string | null }[] = []
+    const fakeFetch = (async (_u: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ auth: new Headers(init?.headers).get("authorization") })
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }) as typeof fetch
+    await executeHttpTool(h.meta, rec, "slack.get", { path: "/conversations.list" }, "k", fakeFetch)
+    // The bearer came from the install, resolved at call time.
+    expect(calls[0]?.auth).toBe("Bearer xoxb-real-bot-token")
+
+    // An install flagged for re-auth refuses rather than calling with a dead token.
+    const install = await h.meta.getSlackInstall("default")
+    if (install) await h.meta.setSlackInstall({ ...install, needs_reauth: 1 })
+    await expect(
+      executeHttpTool(h.meta, rec, "slack.get", { path: "/x" }, "k", fakeFetch),
+    ).rejects.toThrow(/reconnect/i)
   })
 
   it("a departed member's PERSONAL connection stops resolving; a workspace one survives", async () => {

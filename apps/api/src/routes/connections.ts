@@ -29,6 +29,13 @@ const present = (cn: ConnectionRecord) => ({
   created_at: cn.created_at,
 })
 
+// What to say when someone wires up an integration Derive isn't connected to yet. The fix
+// is the integration's own setup flow, not this endpoint — so the message points there.
+const installMissing: Record<"github_app" | "slack", string> = {
+  github_app: "connect the GitHub App first (Settings → Sync), then add it as a connection",
+  slack: "connect Slack to this workspace first (Settings → Slack), then add it as a connection",
+}
+
 export const connectionRoutes = (ctx: AppContext) => {
   const { meta, requireUser, requireWorkspace, deps } = ctx
   const app = new Hono()
@@ -61,29 +68,65 @@ export const connectionRoutes = (ctx: AppContext) => {
       z.object({
         // Slug-shaped because it becomes the prefix of the tool names a model reads
         // (`github.get`): whitespace or a dot would make the surface ambiguous.
+        // Ignored for github_app/slack, which name themselves.
         toolkit: z
           .string()
           .min(1)
           .max(64)
-          .regex(/^[a-z0-9][a-z0-9_-]*$/, "toolkit must be a lowercase slug"),
+          .regex(/^[a-z0-9][a-z0-9_-]*$/, "toolkit must be a lowercase slug")
+          .optional(),
         scopes_label: z.string().max(200).optional(),
         // "personal" (default) = the caller's own account. "workspace" = org
         // infrastructure — requires manage, because whoever can add a workspace
         // credential decides what every context bound to it can reach.
         scope: z.enum(["personal", "workspace"]).default("personal"),
-        // "oauth" (default) = broker round trip. "secret" = paste an API key or
-        // bearer token: stored encrypted, spent only server-side, never returned.
-        kind: z.enum(["oauth", "secret"]).default("oauth"),
+        // How it authenticates. "oauth" (default) = broker round trip. "secret" = paste
+        // a key. "github_app"/"slack" = give an install Derive ALREADY holds a tool
+        // surface; they store no credential of their own.
+        kind: z.enum(["oauth", "secret", "github_app", "slack"]).default("oauth"),
         // kind "secret" only:
         secret: z.string().min(8).max(4096).optional(),
         base_url: z.string().url().max(500).optional(),
       }),
     )
     if (b instanceof Response) return bail(b)
-    if (b.scope === "workspace") {
+    // An install-backed connection is org infrastructure by construction — the install
+    // belongs to the workspace, not to whoever happens to wire it up.
+    const scope = b.kind === "github_app" || b.kind === "slack" ? "workspace" : b.scope
+    if (scope === "workspace") {
       const gate = await requireWorkspace(c, "manage")
       if (gate instanceof Response) return gate
     }
+    if (b.kind === "github_app" || b.kind === "slack") {
+      // Point at what the workspace already connected. Nothing is created here and no
+      // OAuth is started — if the install is missing, the integration's own flow is
+      // where you go. A second App install on the same workspace is a real (if rare)
+      // case; the first is used until someone asks to choose.
+      const install =
+        b.kind === "slack"
+          ? await meta.getSlackInstall(org).then((i) => i && { ref: i.team_id, label: i.team_name })
+          : await meta
+              .listGithubInstallations(org)
+              .then(([i]) => i && { ref: i.installation_id, label: i.account_login })
+      if (!install) return fail(c, 400, installMissing[b.kind])
+      const rec = await meta.createConnection({
+        id: newId("conn"),
+        org_id: org,
+        user_id: me.id,
+        scope: "workspace",
+        kind: b.kind,
+        // Deliberately no secret_enc: the credential is minted or read per call from the
+        // install this ref points at, so there is nothing here to leak or to rotate.
+        broker: "none",
+        toolkit: b.kind === "slack" ? "slack" : "github",
+        broker_ref: install.ref,
+        base_url: b.kind === "slack" ? "https://slack.com/api" : "https://api.github.com",
+        scopes_label: b.scopes_label ?? install.label,
+        status: "active",
+      })
+      return c.json(present(rec), 201)
+    }
+    if (!b.toolkit) return fail(c, 400, "toolkit is required")
     if (b.kind === "secret") {
       if (!b.secret || !b.base_url)
         return fail(c, 400, "a secret connection needs `secret` and `base_url`")
