@@ -121,3 +121,43 @@ describe("S3BlobStore put/get (SigV4 over fetch)", () => {
     await expect(store.get("c".repeat(64))).rejects.toThrow(/s3 get .* failed: 500/)
   })
 })
+
+describe("S3BlobStore.has (metadata-only existence)", () => {
+  const store = s3FromUrl("s3://AK:SECRET@s3.us-west-2.amazonaws.com/derive")
+
+  it("HEADs rather than reading the body, and maps 404 to false", async () => {
+    const calls: { method?: string }[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_u: string, init?: { method?: string }) => {
+        calls.push({ method: init?.method })
+        return new Response(null, { status: 200 })
+      }),
+    )
+    expect(await store.has("a".repeat(64))).toBe(true)
+    expect(calls).toEqual([{ method: "HEAD" }])
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 404 })),
+    )
+    expect(await store.has("b".repeat(64))).toBe(false)
+  })
+
+  it("rejects a malformed key before any request", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }))
+    vi.stubGlobal("fetch", fetchMock)
+    expect(await store.has("nope")).toBe(false)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it("reports exists on a transport failure — an advisory must not cry wolf", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network down")
+      }),
+    )
+    expect(await store.has("c".repeat(64))).toBe(true)
+  })
+})

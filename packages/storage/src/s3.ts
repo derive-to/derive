@@ -41,7 +41,7 @@ export class S3BlobStore implements BlobStore {
   }
 
   /** SigV4-sign a request for an object key and return headers + URL. */
-  private sign(method: "PUT" | "GET", key: string, payloadHash: string) {
+  private sign(method: "PUT" | "GET" | "HEAD", key: string, payloadHash: string) {
     const { region, accessKey, secretKey } = this.cfg
     const { host, path, url } = this.target(key)
     const now = new Date()
@@ -98,6 +98,21 @@ export class S3BlobStore implements BlobStore {
     if (res.status === 404) return null
     if (!res.ok) throw new Error(`s3 get ${key} failed: ${res.status}`)
     return new Uint8Array(await res.arrayBuffer())
+  }
+
+  /** Metadata-only existence check (a signed HEAD — never pulls the body). A transport
+   *  failure reports "exists" rather than throwing: `has` backs an advisory, and a
+   *  flaky network must not turn into a false "your image is broken". */
+  async has(key: string): Promise<boolean> {
+    if (!/^[0-9a-f]{64}$/.test(key)) return false
+    const { url, headers } = this.sign("HEAD", key, hash(""))
+    try {
+      const res = await fetch(url, { method: "HEAD", headers })
+      if (res.status === 404) return false
+      return res.ok
+    } catch {
+      return true
+    }
   }
 }
 

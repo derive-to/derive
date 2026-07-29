@@ -44,6 +44,10 @@ import { as, bearer, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
  * path is exercised on every seed rather than never.
  */
 
+/** The liveness sweep reads a wider window than the per-step invariant checks: it must see
+ *  every run this seed created, not just the newest page of a store twelve seeds share. */
+const LIVENESS_WINDOW = 5000
+
 const SECRET = "sim-secret-at-least-16-chars"
 const owner: TestUser = { id: "u_sim", email: "sim@derive.test", name: "Sim" }
 const { app, meta } = makeAuthedApp("dispatch-sim", [owner], "commenter", {
@@ -73,18 +77,18 @@ type Executor = {
 
 /** The invariant checker. Runs after EVERY operation, against the real store.
  *
- *  Scoped to runs this seed created (`mine`): the store is shared by every seed in the file
- *  and dispatch is deployment-wide by design, so an unscoped assertion would fail on a
- *  previous seed's leftovers and report a bug that isn't there. */
+ *  Scoped to runs this seed created (`mine`, by automation): the store is shared by every seed
+ *  in the file and dispatch is deployment-wide by design, so an unscoped assertion would fail
+ *  on a previous seed's leftovers and report a bug that isn't there. */
 const checkInvariants = async (
   orgId: string,
-  mine: (id: string) => boolean,
+  mine: (r: { automation_id: string | null }) => boolean,
   executors: Executor[],
   seenAttempts: Map<string, number>,
   settled: Set<string>,
   nowMs: number,
 ) => {
-  const runs = (await meta.listRuns(orgId, 500)).filter((r) => mine(r.id))
+  const runs = (await meta.listRuns(orgId, 500)).filter((r) => mine(r))
 
   // SAFETY: never two DANGEROUS executors on one run. Dangerous means: alive, holding a claim,
   // and still inside its token TTL — because a token is what lets it write. This is precisely
@@ -184,8 +188,17 @@ describe("dispatch loop — deterministic simulation", () => {
 
     // Everything already in the store belongs to an earlier seed. Dispatch is deployment-wide,
     // so it will legitimately act on those rows too — this seed just must not ASSERT on them.
-    const before = new Set((await meta.listRuns(orgId, 500)).map((r) => r.id))
-    const mine = (id: string) => !before.has(id)
+    //
+    // Scoped by AUTOMATION, not by a snapshot of run ids taken before the seed starts. The
+    // snapshot was a listRuns(500), and listRuns is `order by created_at desc limit N`: twelve
+    // seeds share this store, so once their runs pass 500 the snapshot silently stops covering
+    // the older ones, and every run it missed then reads as "mine". A seed would assert its
+    // liveness and attempt-cap invariants against another seed's leftovers — volume-dependent,
+    // so it surfaces on a full CI suite and never on a single-file run. Every run a seed
+    // creates hangs off one of its own automations (both `Run now` and schedule
+    // materialization stamp automation_id), which makes this exact and unbounded.
+    const mine = (r: { automation_id: string | null }) =>
+      r.automation_id !== null && autoIds.includes(r.automation_id)
 
     // The substrate hands each boot to the simulation instead of starting anything: the sim
     // decides when (or whether) that executor claims, finishes, or simply dies.
@@ -278,7 +291,17 @@ describe("dispatch loop — deterministic simulation", () => {
           jsonAs(bearer(e.token), body),
         )
         const after = res.status < 300 ? await meta.getRun(e.runId) : null
-        if (after && after.status !== "queued") settled.add(e.runId)
+        // TERMINAL, not merely "not queued". A retryable failure REQUEUES rather than settling,
+        // and these operations run concurrently on purpose — so any other claimer (a dispatch
+        // tick, a polling runner's claimDueRuns, another executor) may legally take the run
+        // back to `running` in the window between that requeue committing and this re-read.
+        // Reading "not queued" as settlement therefore records a run that is still in flight,
+        // and the resurrection invariant below then fires against a run that never settled: a
+        // false accusation that only shows up where the interleaving is slow enough to hit,
+        // i.e. Postgres in CI and not SQLite on a laptop. dispatch-requeue-race.test.ts forces
+        // that exact window deterministically.
+        if (after && (after.status === "succeeded" || after.status === "failed"))
+          settled.add(e.runId)
       }
       e.alive = false
       e.claimed = false
@@ -344,23 +367,32 @@ describe("dispatch loop — deterministic simulation", () => {
         if (r.status === "queued") await meta.claimRunById(e.runId, r.agent_id, now().toISOString())
         const after = await meta.getRun(e.runId)
         if (after?.status === "running") {
-          await meta.finishRun(e.runId, r.agent_id, {
+          // Record settlement from what the WRITE returned, not from having asked for it:
+          // finishRun is status-guarded, so it answers null when the run moved underneath
+          // this read, and assuming success there marks an unsettled run as settled.
+          const done = await meta.finishRun(e.runId, r.agent_id, {
             status: "succeeded",
             finishedAt: now().toISOString(),
           })
-          settled.add(e.runId)
+          if (done && (done.status === "succeeded" || done.status === "failed"))
+            settled.add(e.runId)
         }
         e.alive = false
         e.claimed = false
       }
-      const left = (await meta.listRuns(orgId, 500)).filter(
-        (r) => mine(r.id) && (r.status === "queued" || r.status === "running"),
+      // A WIDER window than the per-step checks use. listRuns is `order by created_at desc
+      // limit N`, and twelve seeds share this store: measured, 1424 of 2400 per-step checks were
+      // already reading a truncated 500. Truncation only weakens a per-step assertion, but here
+      // it would decide "everything drained" while this seed still had runs in flight outside
+      // the window — a false PASS on the one property this loop exists to establish.
+      const left = (await meta.listRuns(orgId, LIVENESS_WINDOW)).filter(
+        (r) => mine(r) && (r.status === "queued" || r.status === "running"),
       )
       if (left.length === 0) break
     }
 
-    const stuck = (await meta.listRuns(orgId, 500)).filter(
-      (r) => mine(r.id) && (r.status === "queued" || r.status === "running"),
+    const stuck = (await meta.listRuns(orgId, LIVENESS_WINDOW)).filter(
+      (r) => mine(r) && (r.status === "queued" || r.status === "running"),
     )
     expect(
       stuck.map((r) => `${r.id}:${r.status}`),

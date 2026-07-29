@@ -28,6 +28,7 @@ import {
   sleep,
   toBase64,
 } from "../mcp-util"
+import { enqueueRender } from "../previews"
 import { CORE_SKILLS } from "../skills-reference.gen"
 
 export function registerReadTool(tc: ToolContext): void {
@@ -170,6 +171,27 @@ export function registerReadTool(tc: ToolContext): void {
               ? "the whole page"
               : "the whole page, with the region map's @N refs drawn on it"
         let variant = pick(v)
+        // SELF-HEAL on read: a dead-lettered render (a transient storage/browser
+        // error that exhausted its retries) used to demand a no-op republish just to
+        // re-render. Re-queue it right here instead — reset the variant to pending so
+        // the wait loop below can collect the fresh result in this same call, and so
+        // a second read doesn't double-enqueue a still-failed-looking row. Bounded:
+        // one re-queue per read call; the job keeps its own MAX_ATTEMPTS dead-letter.
+        let requeued = false
+        // ONLY for the CURRENT version. The render worker discards a job whose version has
+        // been superseded (previews.ts marks it done without rendering it), so re-queueing
+        // an older one would flip `failed` to `pending` PERMANENTLY: nothing ever renders
+        // it, and the heal can't fire again because it only triggers on `failed`. That
+        // trades an honest error message for "not ready yet, try again shortly" forever.
+        // An old version keeps its failure, which is the truthful answer.
+        if (variant.status === "failed" && n === a.current_version) {
+          await enqueueRender(ctx.meta, a.id, n)
+          if (render === "top")
+            await ctx.meta.setVersionPreview(a.id, n, { preview_status: "pending" })
+          else await ctx.meta.setVersionPreviewVariant(a.id, n, render, { status: "pending" })
+          variant = { ...variant, status: "pending" }
+          requeued = true
+        }
         // Long-poll: the screenshot lands a few seconds after a publish. When it's neither
         // ready nor failed and the caller passed `wait`, block up to that many seconds
         // (max 30), re-reading the version, before returning the not-ready message — a
@@ -210,7 +232,17 @@ export function registerReadTool(tc: ToolContext): void {
         }
         if (variant.status === "failed")
           return err(
-            `The render:${render} of "${short_id}" v${n} failed${variant.error ? ` (${variant.error})` : ""} — the page may still be fine; open ${url} to check, or republish to retry.`,
+            `The render:${render} of "${short_id}" v${n} failed${requeued ? " again on a re-queued attempt" : ""}${variant.error ? ` (${variant.error})` : ""} — the page may still be fine; open ${url} to check. ` +
+              // Only the current version re-renders: the worker discards a job for a
+              // superseded one, so promising a retry here would be advice that silently
+              // does nothing. Say what actually works instead.
+              (n === a.current_version
+                ? "Reading again re-queues a fresh render."
+                : `This is an old version, and only v${a.current_version} re-renders — read it without \`version\` to retry.`),
+          )
+        if (requeued)
+          return err(
+            `The render:${render} of "${short_id}" v${n} had failed (${variant.error ?? "transient error"}) — a fresh render was just re-queued. Call read again with \`wait\` (seconds, max 30) to collect it.`,
           )
         return err(
           `The render:${render} of "${short_id}" v${n} isn't ready yet — screenshots are computed a few seconds after publish. Try again shortly, or pass \`wait\` (seconds, max 30) to block for it.`,

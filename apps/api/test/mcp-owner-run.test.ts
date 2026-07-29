@@ -147,20 +147,27 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
 
   it("create_context refuses non-owner grants and bad manifests; a dup name unwinds the mint", async () => {
     const { app, meta } = ownerApp("own-create-gates")
-    // Owner seat but publish-only scope → the grant caps to editor → refused.
+    // Both of the next two are refused, but for OPPOSITE reasons, and the refusal has to
+    // say which — a scope gap is fixed by re-consenting, a seat gap only by an admin, and
+    // an agent told the wrong one burns a round trip or goes hunting for a second
+    // credential. See lib/scope-gap.ts.
+    // Owner seat but publish-only scope → the grant caps to editor → the SCOPE is short.
     const noScope = await call(app, "tok_nomanage", "automate", {
       action: "create_context",
       name: "QA",
       manifest_short_id: "zzzzzzzz",
     })
-    expect(noScope.error).toContain("owner")
-    // Manage scope but editor seat → same refusal.
+    expect(noScope.error).toContain("derive:manage")
+    expect(noScope.error).toContain("membership would allow it")
+    // Manage scope but editor seat → refused too, but the SEAT is short, so re-consenting
+    // is explicitly ruled out rather than suggested.
     const noSeat = await call(app, "tok_editor", "automate", {
       action: "create_context",
       name: "QA",
       manifest_short_id: "zzzzzzzz",
     })
-    expect(noSeat.error).toContain("owner")
+    expect(noSeat.error).toContain("an admin has to raise your role")
+    expect(noSeat.error).not.toContain("derive:manage")
     // Owner, but the manifest doesn't exist.
     const noManifest = await call(app, "tok_full", "automate", {
       action: "create_context",
