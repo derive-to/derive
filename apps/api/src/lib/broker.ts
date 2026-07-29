@@ -162,6 +162,64 @@ export const executeHttpTool = async (
   return { status: res.status, body }
 }
 
+/** A connection-id list as stored (a JSON array in a text column), parsed defensively: a
+ *  hand-edited or truncated row yields no tools rather than 500ing the lane that read it.
+ *  Both the automation column and the context column carry this shape. */
+export const parseConnectionIds = (raw: string | null): string[] => {
+  if (!raw) return []
+  try {
+    const v = JSON.parse(raw)
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []
+  } catch {
+    return []
+  }
+}
+
+/** What a proxied tool call resolved to: the result, or the status + message the route
+ *  should return. A shared shape so the two lanes can't drift on what a call means. */
+export type ToolCallOutcome =
+  | { ok: true; result: unknown }
+  | { ok: false; status: 403 | 404 | 502; message: string }
+
+/**
+ * Execute one tool call against a lane's already-resolved least-privilege list. Both proxies
+ * are this function plus their own authorization: match the requested NAME to one of this
+ * work item's tools (a supplied ref must be that tool's, never another's), then execute —
+ * ourselves for a direct connection, through the broker otherwise.
+ *
+ * Shared on purpose. The run lane and the ask lane serve the same contexts, so a difference
+ * in what a tool call may do would be a difference in what a context can reach depending on
+ * how it was triggered — the thing bound connections exist to make impossible.
+ */
+export const callTool = async (opts: {
+  meta: MetaStore
+  broker: ToolBroker | null
+  orgId: string
+  encryptionKey: string | undefined
+  allowed: RunTool[]
+  subject: string
+  tool: string
+  args?: unknown
+  ref?: string
+}): Promise<ToolCallOutcome> => {
+  const { meta, broker, orgId, encryptionKey, allowed, tool, args, ref } = opts
+  const match = allowed.find((t) => t.def.name === tool && (!ref || t.ref === ref))
+  if (!match) return { ok: false, status: 403, message: `tool not allowed for ${opts.subject}` }
+  try {
+    if (isDirect(match.kind)) {
+      if (!encryptionKey)
+        return { ok: false, status: 502, message: "direct connections need an encryption key" }
+      const cn = await meta.getConnection(match.connectionId)
+      if (!cn || cn.org_id !== orgId) return { ok: false, status: 404, message: "not found" }
+      return { ok: true, result: await executeHttpTool(meta, cn, tool, args ?? {}, encryptionKey) }
+    }
+    if (!broker) return { ok: false, status: 502, message: "no broker for this workspace" }
+    return { ok: true, result: await broker.execute({ ref: match.ref, tool, args: args ?? {} }) }
+  } catch (e) {
+    return { ok: false, status: 502, message: e instanceof Error ? e.message : "tool failed" }
+  }
+}
+
 /**
  * The bind-time policy for attaching connections to an automation or context. Returns the
  * 400 message, or null when every id is attachable by this actor:

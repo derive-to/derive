@@ -2077,6 +2077,9 @@ export class PgMetaStore implements MetaStore {
   async setContextAskPolicy(id: string, policy: "workspace" | "invited"): Promise<void> {
     await this.db.update(context).set({ ask_policy: policy }).where(eq(context.id, id))
   }
+  async setContextConnections(id: string, connectionIds: string | null): Promise<void> {
+    await this.db.update(context).set({ connection_ids: connectionIds }).where(eq(context.id, id))
+  }
   async listContextAskers(contextId: string): Promise<ContextAskerRecord[]> {
     return this.db
       .select()

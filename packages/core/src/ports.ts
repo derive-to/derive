@@ -849,6 +849,9 @@ export interface ContextStore {
   touchContextSeen(id: string, at: string): Promise<void>
   /** Set who may ask (workspace | invited). Does not touch the roster. */
   setContextAskPolicy(id: string, policy: "workspace" | "invited"): Promise<void>
+  /** Replace the context's bound connections (a JSON array of ids, or null for none).
+   *  Whole-list semantics: the caller has already checked every id is attachable. */
+  setContextConnections(id: string, connectionIds: string | null): Promise<void>
   /** The invited-asker roster for a context (only consulted when ask_policy = invited). */
   listContextAskers(contextId: string): Promise<ContextAskerRecord[]>
   /** Is this user on the context's asker roster? (Membership is checked separately.) */
@@ -1952,6 +1955,9 @@ export interface ContextRecord {
   /** Opaque JSON sidecar, parsed only at the route layer (like session_message.meta)
    *  — the store never reads it. Null until the owner sets one. */
   config: string | null
+  /** Connections this context may use, as a JSON array of ids (same shape as
+   *  automation.connection_ids). Null = no tools. */
+  connection_ids: string | null
 }
 export interface NewContext {
   id: string
@@ -1968,6 +1974,8 @@ export interface NewContext {
   max_concurrency?: number
   /** Opaque JSON sidecar; omitted → null. */
   config?: string | null
+  /** JSON array of connection ids the context may use; omitted → null. */
+  connection_ids?: string | null
 }
 export interface ContextAskerRecord {
   id: string

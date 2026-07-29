@@ -11,12 +11,12 @@ import {
 import { z } from "@hono/zod-openapi"
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
-import { parseConnectionIds, parseRefs, parseTrigger } from "../lib/automation"
+import { parseRefs, parseTrigger } from "../lib/automation"
 import {
   brokerFor,
+  callTool,
   connectionBindError,
-  executeHttpTool,
-  isDirect,
+  parseConnectionIds,
   toolsForRun,
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
@@ -582,24 +582,18 @@ export const automationRoutes = (ctx: AppContext) => {
     // be one of them; if a ref is supplied it must match that tool's ref (never cross to another).
     const broker = await brokerFor(meta, agent.org_id, null, deps.encryptionKey)
     const allowed = await toolsForRun(meta, broker, agent.org_id, connIds)
-    const match = allowed.find((t) => t.def.name === b.tool && (!b.ref || t.ref === b.ref))
-    if (!match) return fail(c, 403, "tool not allowed for this run")
-    try {
-      // A direct connection has no vendor, so Derive executes it: the credential is resolved
-      // (decrypted, or minted from an install) and spent here. Either way the runner only
-      // ever sent a tool NAME — no credential has ever been near the executor.
-      if (isDirect(match.kind)) {
-        if (!deps.encryptionKey) return fail(c, 502, "direct connections need an encryption key")
-        const cn = await meta.getConnection(match.connectionId)
-        if (!cn || cn.org_id !== agent.org_id) return fail(c, 404, "not found")
-        const result = await executeHttpTool(meta, cn, b.tool, b.args ?? {}, deps.encryptionKey)
-        return c.json({ result })
-      }
-      const result = await broker.execute({ ref: match.ref, tool: b.tool, args: b.args ?? {} })
-      return c.json({ result })
-    } catch (e) {
-      return fail(c, 502, e instanceof Error ? e.message : "tool failed")
-    }
+    const out = await callTool({
+      meta,
+      broker,
+      orgId: agent.org_id,
+      encryptionKey: deps.encryptionKey,
+      allowed,
+      subject: "this run",
+      tool: b.tool,
+      args: b.args,
+      ref: b.ref,
+    })
+    return out.ok ? c.json({ result: out.result }) : fail(c, out.status, out.message)
   })
 
   // Record an already-finished run straight into the ledger — the host's best-effort write
