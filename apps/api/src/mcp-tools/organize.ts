@@ -82,6 +82,7 @@ export function registerOrganizeTool(tc: ToolContext): void {
           const removedAt = state === "removed" ? new Date().toISOString() : null
           const ok: string[] = []
           const done: string[] = []
+          const synced: string[] = []
           let skipped = 0
           for (const shortId of [...new Set(short_ids)]) {
             // Sees past the takedown gate on purpose: this operates on that flag, so the
@@ -96,6 +97,12 @@ export function registerOrganizeTool(tc: ToolContext): void {
             }
             ok.push(reached.a.id)
             done.push(shortId)
+            // A repo-synced artifact is not really yours to retire: sync clears this exact
+            // flag whenever the file changes (lib/sync.ts), so it comes back with nothing
+            // to explain why. Allowed, because the tombstone is still what you asked for
+            // today, but SAID, because a silent resurrection is the surprise this whole
+            // change exists to remove.
+            if (reached.a.source_path) synced.push(shortId)
           }
           // One update for the batch, per the store's own guidance, rather than a call per id.
           if (ok.length) await ctx.meta.setArtifactsRemoved(ok, removedAt)
@@ -117,6 +124,15 @@ export function registerOrganizeTool(tc: ToolContext): void {
                   },
                 }
               : undefined,
+            // Named separately from `note` so it cannot be mistaken for the ordinary
+            // outcome: this is the one case where the retirement does not stay put.
+            ...(state === "removed" && synced.length
+              ? {
+                  synced_from_repo: synced,
+                  synced_from_repo_note:
+                    "These are synced from a repository, and a sync that sees their file change will clear the retirement. To retire one for good, remove the file at the source.",
+                }
+              : {}),
             note:
               state === "removed"
                 ? "Retired from the library: the url now reads as removed. Nothing is deleted, and `state:'live'` puts it back."
