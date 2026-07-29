@@ -551,6 +551,7 @@ CREATE TABLE IF NOT EXISTS context_session (
   lease_until TEXT,
   result_artifact_id TEXT,
   dedupe_key TEXT,
+  subject_ref TEXT,
   FOREIGN KEY (context_id) REFERENCES context(id)
 );
 

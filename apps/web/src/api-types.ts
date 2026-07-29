@@ -6266,6 +6266,14 @@ export interface components {
             created_at: string;
             /** @description Last state/message change; equals created_at when never updated. */
             updated_at: string;
+            /** @description What this session is about, when it names one: an artifact, plus how a write to it lands. Null for a plain ask. */
+            subject: {
+                /** @enum {string} */
+                kind: "artifact";
+                id: string;
+                /** @enum {string} */
+                mode?: "publish" | "propose";
+            } | null;
         };
         SessionMessage: {
             id: string;

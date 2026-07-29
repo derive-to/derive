@@ -1981,6 +1981,11 @@ export interface SessionRecord {
   /** Optional idempotency key; the partial-unique index keeps at most one live
    *  (open|working) session per (context, dedupe_key). Null = not deduped. */
   dedupe_key: string | null
+  /** What this session is ABOUT, as a JSON-encoded `Selector` — the same shape
+   *  `automation.refs` stores, so one address type serves both lanes. Read it with
+   *  `parseSubject`. Null = a plain ask with no subject, which is every session
+   *  opened before this column existed. */
+  subject_ref: string | null
 }
 export interface NewSession {
   id: string
@@ -1990,6 +1995,8 @@ export interface NewSession {
   context_version: number
   /** Optional idempotency key; when set, a matching in-flight session is reused. */
   dedupe_key?: string | null
+  /** JSON-encoded `Selector`; null/absent for a plain ask. */
+  subject_ref?: string | null
 }
 
 export interface SessionMessageRecord {

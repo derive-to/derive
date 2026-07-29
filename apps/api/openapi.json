@@ -2376,6 +2376,33 @@
           "updated_at": {
             "type": "string",
             "description": "Last state/message change; equals created_at when never updated."
+          },
+          "subject": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "artifact"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "publish",
+                  "propose"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "description": "What this session is about, when it names one: an artifact, plus how a write to it lands. Null for a plain ask."
           }
         },
         "required": [
@@ -2385,7 +2412,8 @@
           "context_version",
           "state",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "subject"
         ]
       },
       "SessionMessage": {

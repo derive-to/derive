@@ -71,9 +71,15 @@ export const REVISION_NUDGE = `Your previous reply was NOT accepted — it did n
  * worth discarding real work over. What is never guessed is `content` — an empty or missing
  * content means the run produced nothing, and inventing a fallback would publish silence.
  */
+/** The `error` value meaning the reply carried NO block at all, as opposed to a malformed
+ *  one. Exported because an attended caller (chat) treats "chose not to revise" as a perfectly
+ *  good answer and must be able to tell it apart from "tried and failed" — without
+ *  string-matching a message that could later be reworded. */
+export const NO_REVISION_BLOCK = "no <revision> block in result"
+
 export const parseRevision = (text: string): RevisionParse => {
   const m = text.match(/<revision>([\s\S]*?)<\/revision>/i)
-  if (!m?.[1]) return { error: "no <revision> block in result" }
+  if (!m?.[1]) return { error: NO_REVISION_BLOCK }
   const cleaned = m[1]
     .trim()
     .replace(/^```(?:json)?\s*/i, "")

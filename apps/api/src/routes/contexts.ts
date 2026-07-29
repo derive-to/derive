@@ -3,6 +3,8 @@ import {
   type ContextAskerRecord,
   type ContextRecord,
   newId,
+  normalizeSelector,
+  parseSubject,
   type SessionMessageRecord,
   type SessionRecord,
   type SessionState,
@@ -167,6 +169,16 @@ export const contextRoutes = (ctx: AppContext) => {
       updated_at: z
         .string()
         .describe("Last state/message change; equals created_at when never updated."),
+      subject: z
+        .object({
+          kind: z.literal("artifact"),
+          id: z.string(),
+          mode: z.enum(["publish", "propose"]).optional(),
+        })
+        .nullable()
+        .describe(
+          "What this session is about, when it names one: an artifact, plus how a write to it lands. Null for a plain ask.",
+        ),
     })
     .openapi("Session")
 
@@ -211,6 +223,11 @@ export const contextRoutes = (ctx: AppContext) => {
     state: s.state,
     created_at: s.created_at,
     updated_at: s.updated_at ?? s.created_at,
+    subject: parseSubject(s.subject_ref) as {
+      kind: "artifact"
+      id: string
+      mode?: "publish" | "propose"
+    } | null,
   })
 
   // Any terminal turn — the runner's answer, a crash-fail, a close — pings the
@@ -706,9 +723,33 @@ export const contextRoutes = (ctx: AppContext) => {
           // so a double "run for brand X" never runs twice. The partial unique index
           // on (context_id, dedupe_key) is the race backstop; this is the fast join.
           dedupe_key: z.string().trim().min(1).max(200).optional(),
+          // WHAT this session is about. Accepts the same shapes automation targets do —
+          // a bare short_id, or {kind:"artifact", id, mode} — because it is the same
+          // Selector type, normalized by the same function. Absent = a plain ask, which
+          // is every session that existed before this field.
+          subject: z.unknown().optional(),
         }),
       )
       if (b instanceof Response) return bail(b)
+      // Normalize (and validate) the subject up front: a caller who names a subject we
+      // cannot read should be told now, not discover it when the answer comes back empty.
+      const subject = normalizeSelector(b.subject ?? null)
+      if (b.subject !== undefined && !subject)
+        return bail(fail(c, 400, "subject is not a valid selector"))
+      if (subject && subject.kind !== "artifact")
+        return bail(fail(c, 400, "only an artifact subject is supported"))
+      if (subject) {
+        // Ask-access to the CONTEXT is not read-access to the DOCUMENT. Re-check the
+        // artifact separately, or a session becomes a way to read anything by naming it.
+        const target = await meta.getByShortId(subject.id)
+        if (!target || target.current_version === 0 || !(await authorize(c, "read", target)))
+          return bail(fail(c, 404, "not found"))
+        // Publishing to it is a stronger grant than reading it, checked separately so a
+        // reader cannot request `mode:"publish"` and have the gate be the only thing
+        // standing between them and a live write.
+        if (subject.mode === "publish" && !(await authorize(c, "publish", target)))
+          return bail(fail(c, 403, "you cannot publish to that artifact"))
+      }
       // Return an in-flight session's current state as this ask's result (the join) —
       // same shape/status as a fresh open, so a caller need not special-case it.
       const joined = async (sess: SessionRecord) =>
@@ -747,6 +788,7 @@ export const contextRoutes = (ctx: AppContext) => {
           asker_id: me.id,
           context_version: manifest.current_version,
           dedupe_key: b.dedupe_key,
+          subject_ref: subject ? JSON.stringify(subject) : null,
         })
       } catch (e) {
         // Lost the create race to this asker's own concurrent same-key ask — the unique

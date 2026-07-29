@@ -736,6 +736,8 @@ export const contextSession = pgTable(
     lease_until: text("lease_until"),
     result_artifact_id: text("result_artifact_id"),
     dedupe_key: text("dedupe_key"),
+    // What this session is about, as a Selector — mirror of the sqlite def.
+    subject_ref: text("subject_ref"),
   },
   (t) => [
     index("context_session_queue").on(t.context_id, t.state, t.created_at),

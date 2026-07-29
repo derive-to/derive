@@ -916,6 +916,13 @@ export const contextSession = sqliteTable(
     // Ask idempotency key. The partial-unique index below keeps at most one live
     // (open|working) session per (context, dedupe_key). Nullable = not deduped.
     dedupe_key: text("dedupe_key"),
+    // What this session is ABOUT, as a Selector (packages/core/src/selectors.ts) —
+    // the same JSON shape automation.refs stores, so one address type serves both
+    // lanes. Null = a plain ask with no subject, which is every session before this.
+    //
+    // It carries the write mode too (`propose` by default), so "what it is about"
+    // and "how a write lands" are one field rather than two that can disagree.
+    subject_ref: text("subject_ref"),
   },
   (t) => [
     index("context_session_queue").on(t.context_id, t.state, t.created_at),
