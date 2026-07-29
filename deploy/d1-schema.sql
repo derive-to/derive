@@ -528,6 +528,7 @@ CREATE TABLE IF NOT EXISTS context (
   ask_policy TEXT NOT NULL DEFAULT 'invited',
   max_run_ms INTEGER,
   max_concurrency INTEGER NOT NULL DEFAULT 1,
+  connection_ids TEXT,
   config TEXT,
   UNIQUE (org_id, name),
   FOREIGN KEY (manifest_artifact_id) REFERENCES artifact(id)

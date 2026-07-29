@@ -4366,6 +4366,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/contexts/{id}/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set the connections this context may use (whole-list replace). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        connection_ids: string[];
+                    };
+                };
+            };
+            responses: {
+                /** @description The context's connections after the change. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            connection_ids: string[];
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/contexts/{id}/askers": {
         parameters: {
             query?: never;
@@ -6244,6 +6290,8 @@ export interface components {
              * @enum {string}
              */
             ask_policy: "workspace" | "invited";
+            /** @description Connections this context may use — its tools, in every lane it runs in. */
+            connection_ids: string[];
         };
         BrandprintConfig: {
             /** @description The workspace brand-profile artifact (an HTML page carrying theme tokens), when set; null otherwise. Not in `members` — it is the headline read, not a note. */

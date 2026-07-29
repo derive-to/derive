@@ -2280,6 +2280,9 @@ export function makeRepos(db: SqliteDb) {
   ): Promise<void> => {
     await db.update(context).set({ ask_policy: policy }).where(eq(context.id, id)).run()
   }
+  const setContextConnections = async (id: string, connectionIds: string | null): Promise<void> => {
+    await db.update(context).set({ connection_ids: connectionIds }).where(eq(context.id, id)).run()
+  }
   const listContextAskers = async (contextId: string): Promise<ContextAskerRecord[]> =>
     db
       .select()
@@ -3694,6 +3697,7 @@ export function makeRepos(db: SqliteDb) {
     deleteContext,
     touchContextSeen,
     setContextAskPolicy,
+    setContextConnections,
     listContextAskers,
     getContextAsker,
     addContextAsker,

@@ -2289,6 +2289,13 @@
               "invited"
             ],
             "description": "Who in the workspace may ask: any member, or the invited roster. Never outside the workspace."
+          },
+          "connection_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Connections this context may use — its tools, in every lane it runs in."
           }
         },
         "required": [
@@ -2299,7 +2306,8 @@
           "created_by",
           "created_at",
           "runner_seen_at",
-          "ask_policy"
+          "ask_policy",
+          "connection_ids"
         ]
       },
       "BrandprintConfig": {
@@ -7113,6 +7121,69 @@
                   },
                   "required": [
                     "ask_policy"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/connections": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Set the connections this context may use (whole-list replace).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "connection_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 64
+                    },
+                    "maxItems": 20
+                  }
+                },
+                "required": [
+                  "connection_ids"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The context's connections after the change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connection_ids": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "connection_ids"
                   ]
                 }
               }
