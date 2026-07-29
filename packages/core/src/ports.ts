@@ -1078,7 +1078,15 @@ export interface AgentStore {
   /** Send a RUNNING run back to the queue for a later retry, scoped to the claiming agent.
    *  The transient-failure counterpart to finishRun: instead of a terminal row the run becomes
    *  `queued` again with `scheduled_for` in the future (the backoff) and its attempt count in
-   *  meta. Returns the updated row, or null when the run isn't this agent's or isn't running. */
+   *  meta. Returns the updated row, or null when the run isn't this agent's or isn't running —
+   *  OR when `expectedStartedAt` is given and no longer matches. That fence is what makes this
+   *  safe against a STALE claim: a run-scoped work token authorizes (run, agent, org) for its
+   *  whole TTL with no notion of WHICH claim episode minted it, so once a run is re-claimed,
+   *  the superseded executor's still-valid token could otherwise requeue — or, via finishRun,
+   *  outright SETTLE — a run a newer claim now owns, with no signal to either side. Passing the
+   *  started_at the caller's OWN claim began with closes that: a newer claim changes it, so a
+   *  late request from an old one matches nothing and is refused rather than silently honored.
+   *  Optional for callers with no claim identity to fence on (a human retry, a migration). */
   /** Replace a run's meta blob mid-flight, with no status transition — the writer for facts
    *  discovered WHILE a run is running (today: taint, stamped when the server proxies a source
    *  tool). Deliberately status-agnostic: the run is `running` at the time, and adding a guard
@@ -1093,6 +1101,7 @@ export interface AgentStore {
      *  retry reuses this same run row, so a cost not recorded here is lost for good when the run
      *  eventually settles. Accumulates onto whatever the column already holds. */
     fields: { scheduledFor: string; meta?: string | null; costMicroUsd?: number | null },
+    expectedStartedAt?: string | null,
   ): Promise<RunRecord | null>
   /** The reclaim sweep: runs stuck `running` since before `cutoffIso` (their substrate died)
    *  go back to `queued` for re-dispatch, with an attempt count kept in meta; a run past
@@ -1108,7 +1117,11 @@ export interface AgentStore {
    *  dispatch scan. Read-only: dispatch does NOT claim; the booted substrate claims. */
   listDueQueuedRuns(now: string, limit?: number): Promise<RunRecord[]>
   /** Terminate a run: set the terminal status, finished_at, and (optional) cost + meta.
-   *  Scoped to (id, agent) so only the claiming agent settles it. */
+   *  Scoped to (id, agent) so only the claiming agent settles it. `expectedStartedAt`, when
+   *  given, fences it to THIS caller's own claim — see requeueRun's doc for why: without it, a
+   *  stale-but-unexpired token from a claim a newer one has already superseded can settle a
+   *  run out from under the executor actually working it, overwriting its eventual real
+   *  outcome (or reporting one before the real work even finished). */
   finishRun(
     id: string,
     agentId: string,
@@ -1118,6 +1131,7 @@ export interface AgentStore {
       costMicroUsd?: number | null
       meta?: string | null
     },
+    expectedStartedAt?: string | null,
   ): Promise<RunRecord | null>
   /** The workspace's recent runs, newest first (the activity view / ledger). Default 50. */
   listRuns(orgId: string, limit?: number): Promise<RunRecord[]>

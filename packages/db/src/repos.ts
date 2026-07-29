@@ -2763,10 +2763,14 @@ export function makeRepos(db: SqliteDb) {
       costMicroUsd?: number | null
       meta?: string | null
     },
+    expectedStartedAt?: string | null,
   ): Promise<RunRecord | null> =>
     // Strict running → terminal transition: only the claiming agent, and only a run that is
     // actually running. Guards a duplicate/retried finish from clobbering a settled run's
-    // status/cost, and stops a finish from terminating a never-claimed queued run.
+    // status/cost, and stops a finish from terminating a never-claimed queued run. FENCED on
+    // started_at too, when supplied — see requeueRun's twin comment: without it, a stale but
+    // unexpired token from a claim a newer one has superseded can settle a run out from under
+    // the executor actually working it.
     (await db
       .update(run)
       .set({
@@ -2775,7 +2779,18 @@ export function makeRepos(db: SqliteDb) {
         ...addRunCost(fields.costMicroUsd),
         meta: fields.meta ?? null,
       })
-      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
+      .where(
+        and(
+          eq(run.id, id),
+          eq(run.agent_id, agentId),
+          eq(run.status, "running"),
+          expectedStartedAt === undefined
+            ? undefined
+            : expectedStartedAt === null
+              ? isNull(run.started_at)
+              : eq(run.started_at, expectedStartedAt),
+        ),
+      )
       .returning()
       .get()) ?? null
   const listRuns = async (orgId: string, limit = 50): Promise<RunRecord[]> =>
@@ -2820,9 +2835,14 @@ export function makeRepos(db: SqliteDb) {
     id: string,
     agentId: string,
     fields: { scheduledFor: string; meta?: string | null; costMicroUsd?: number | null },
+    expectedStartedAt?: string | null,
   ): Promise<RunRecord | null> =>
     // Strict running → queued, only for the claiming agent: the status guard stops a duplicate
-    // or late retry request from resurrecting a run that already settled.
+    // or late retry request from resurrecting a run that already settled. FENCED on
+    // started_at too, when the caller supplies it — the same technique reclaimStaleRuns uses,
+    // here because status+agent alone can't tell "my own claim" from "a claim that superseded
+    // mine": a run-scoped token has no notion of which claim episode minted it, so without
+    // this a stale-but-unexpired token could requeue a run a newer claim already owns.
     (await db
       .update(run)
       .set({
@@ -2832,7 +2852,18 @@ export function makeRepos(db: SqliteDb) {
         ...addRunCost(fields.costMicroUsd),
         ...(fields.meta === undefined ? {} : { meta: fields.meta }),
       })
-      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "running")))
+      .where(
+        and(
+          eq(run.id, id),
+          eq(run.agent_id, agentId),
+          eq(run.status, "running"),
+          expectedStartedAt === undefined
+            ? undefined
+            : expectedStartedAt === null
+              ? isNull(run.started_at)
+              : eq(run.started_at, expectedStartedAt),
+        ),
+      )
       .returning()
       .get()) ?? null
   const reclaimStaleRuns = async (

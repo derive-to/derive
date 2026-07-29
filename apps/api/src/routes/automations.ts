@@ -516,6 +516,13 @@ export const automationRoutes = (ctx: AppContext) => {
         return {
           id: r.id,
           reason: r.reason,
+          // THIS claim's own started_at, so the executor can hand it straight back on
+          // /finish as `claimed_started_at` — its proof that a later call is settling the
+          // claim it just received, not merely a run id its (still valid, unexpired) token
+          // happens to authorize. Without carrying this forward, a run that gets reclaimed
+          // and re-claimed while this executor is mid-flight would let a stale finish call
+          // requeue, or even settle, a run a newer executor now owns.
+          started_at: r.started_at,
           // The wallet key: whose plan this run bills (null = clock/event → registrant
           // today, the workspace pool once it lands). The executor passes it back on
           // the model-credential fetch via ?run=.
@@ -568,37 +575,60 @@ export const automationRoutes = (ctx: AppContext) => {
         status: z.enum(["succeeded", "failed"]),
         cost_micro_usd: z.number().int().nonnegative().nullish(),
         meta: META.nullish(),
+        // The started_at THIS caller's own claim began with — its proof that it is talking
+        // about the claim it actually holds, not merely a run id its (still-valid) token
+        // happens to name. Without it, a run-scoped token authorizes acting on (run, agent,
+        // org) for its whole TTL with no notion of WHICH claim episode minted it: a stale
+        // executor whose claim has already been superseded could otherwise requeue — or
+        // outright settle — a run a newer claim now owns, using a token nobody revoked and
+        // that never expired. Optional so an older, not-yet-upgraded caller keeps working
+        // exactly as before (today's behavior, today's exposure) rather than breaking outright.
+        claimed_started_at: z.string().nullish(),
       }),
     )
     if (b instanceof Response) return bail(b)
     const runId = c.req.param("id")
+    const prior = await meta.getRun(runId)
+    // Caught here, once, for a message that names the problem — the fenced writes below
+    // would ALSO refuse this (same guard, enforced at the row), but as an undifferentiated
+    // 404 that reads like "no such run" rather than "your claim on this run has ended."
+    if (
+      b.claimed_started_at !== undefined &&
+      prior?.status === "running" &&
+      prior.started_at !== b.claimed_started_at
+    )
+      return fail(c, 409, "this run has been claimed again since your token was minted")
     // RETRY, not resurrection. A run that failed for a TRANSIENT reason (the executor says
     // `retryable`: a provider 5xx/429, a timeout, a failed spawn) goes back to the queue with a
     // backoff instead of settling. A deterministic failure — no revision block, a rejected
     // write, an empty instruction — is terminal: retrying it would fail identically while
     // spending the owner's model plan again. The cap is small for the same reason.
     if (b.status === "failed" && b.meta?.retryable === true) {
-      const prior = await meta.getRun(runId)
       const retries = runCounter(parseRunMeta(prior?.meta), "retries")
       if (retries < RUN_MAX_RETRIES) {
         const attempt = retries + 1
-        const requeued = await meta.requeueRun(runId, agent.id, {
-          scheduledFor: new Date(Date.now() + retryDelayMs(attempt)).toISOString(),
-          // The attempt that just failed still spent money. Bank it now: this row is what the
-          // retry reuses, so a cost dropped here never reaches the workspace budget at all.
-          costMicroUsd: b.cost_micro_usd ?? null,
-          // MERGE onto the run's existing meta, never replace it — the rule run-meta.ts
-          // states and reclaimStaleRuns already follows. Replacing dropped two things that
-          // live there: the fire-URL `payloads` (so a retried webhook run executed with no
-          // input at all), and the `attempts` counter written by the reclaim sweep (so the
-          // retry cap and the attempt cap stopped composing, allowing far more executions
-          // than either was set to permit).
-          meta: mergeRunMeta(prior?.meta, {
-            ...b.meta,
-            retries: attempt,
-            last_error: b.meta.why ?? null,
-          }),
-        })
+        const requeued = await meta.requeueRun(
+          runId,
+          agent.id,
+          {
+            scheduledFor: new Date(Date.now() + retryDelayMs(attempt)).toISOString(),
+            // The attempt that just failed still spent money. Bank it now: this row is what the
+            // retry reuses, so a cost dropped here never reaches the workspace budget at all.
+            costMicroUsd: b.cost_micro_usd ?? null,
+            // MERGE onto the run's existing meta, never replace it — the rule run-meta.ts
+            // states and reclaimStaleRuns already follows. Replacing dropped two things that
+            // live there: the fire-URL `payloads` (so a retried webhook run executed with no
+            // input at all), and the `attempts` counter written by the reclaim sweep (so the
+            // retry cap and the attempt cap stopped composing, allowing far more executions
+            // than either was set to permit).
+            meta: mergeRunMeta(prior?.meta, {
+              ...b.meta,
+              retries: attempt,
+              last_error: b.meta.why ?? null,
+            }),
+          },
+          b.claimed_started_at,
+        )
         if (requeued) return c.json({ id: requeued.id, status: requeued.status, retry: attempt })
       }
     }
@@ -608,13 +638,19 @@ export const automationRoutes = (ctx: AppContext) => {
     // run that failed twice and then succeeded reported zero retries in the timeline built to
     // answer exactly that question — and the `payloads` of a webhook-triggered run, so the
     // ledger no longer showed what it had acted on. Found by the dispatch simulation.
-    const settling = await meta.getRun(runId)
-    const rec = await meta.finishRun(runId, agent.id, {
-      status: b.status,
-      finishedAt: isoNow(),
-      costMicroUsd: b.cost_micro_usd ?? null,
-      meta: b.meta ? mergeRunMeta(settling?.meta, b.meta) : (settling?.meta ?? null),
-    })
+    // `prior`, not a second read: nothing has written to this run since it was read above
+    // unless a requeue attempt already returned above it, and this line is unreached then.
+    const rec = await meta.finishRun(
+      runId,
+      agent.id,
+      {
+        status: b.status,
+        finishedAt: isoNow(),
+        costMicroUsd: b.cost_micro_usd ?? null,
+        meta: b.meta ? mergeRunMeta(prior?.meta, b.meta) : (prior?.meta ?? null),
+      },
+      b.claimed_started_at,
+    )
     return rec ? c.json({ id: rec.id, status: rec.status }) : fail(c, 404, "not found")
   })
 
@@ -634,6 +670,22 @@ export const automationRoutes = (ctx: AppContext) => {
     const run = await meta.getRun(c.req.param("id"))
     if (!run || run.agent_id !== agent.id || run.org_id !== agent.org_id)
       return fail(c, 404, "not found")
+    // A run-scoped token authorizes (run, agent, org) for its whole TTL — it does not expire
+    // when the RUN stops being this token's to act on. Before this, a QUEUED run (never
+    // claimed) or a REQUEUED one (its claim superseded, sitting queued again) would still let
+    // the token invoke tools: real third-party side effects, gated on nothing but the token
+    // not yet expiring. A tool call only ever makes sense while the run is actually running.
+    //
+    // KNOWN GAP, not closed here: this checks status alone, same as /finish did before its
+    // `claimed_started_at` fence (see dispatch-stale-claim.test.ts). A stale claim whose run
+    // has been RE-claimed and is genuinely running again — under someone else's claim — still
+    // passes this check, because the run really is "running", just not running as THIS
+    // caller's claim. Dogfooded live: a superseded token's tool call during another
+    // executor's active claim is refused only by an unrelated guard (no bound sources on the
+    // test automation), not by this one. Extending the started_at fence here needs the same
+    // client-side plumbing /finish got (carrying the claim's started_at on every call, not
+    // just the terminal one) — deferred as its own change rather than folded in unproven.
+    if (run.status !== "running") return fail(c, 409, "this run isn't running")
     const b = await readJson(
       c,
       z.object({
