@@ -99,16 +99,16 @@ export const contextRoutes = (ctx: AppContext) => {
     // Claim AS THE CONTEXT'S AGENT, using the same status-guarded claim a polling runner takes.
     // That is what stops a BYO runner for this context from serving the same turn twice — and it
     // has to be that agent's id, because the claim checks ownership through the context.
-    // A contextless session has no runner competing for it, so there is nothing to exclude
-    // and nothing to claim — the claim exists solely to stop a BYO runner double-serving.
-    if (agentId) {
-      const claimed = await meta.claimSessionById(
-        s.id,
-        agentId,
-        new Date(Date.now() + RUN_LEASE_MS).toISOString(),
-      )
-      if (!claimed) return // someone else is already serving this turn
-    }
+    // CLAIM EITHER WAY. The earlier reasoning — "no runner competes, so nothing to exclude" —
+    // missed that the claim is also the mutual exclusion between two CALLERS (two tabs, or a
+    // retry after a client-side timeout), and the only thing that writes a lease a crashed
+    // turn can recover from. Without it, both callers ran a turn and both wrote; and a process
+    // that died mid-turn left the session `open` forever, which the UI polls on indefinitely.
+    const lease = new Date(Date.now() + RUN_LEASE_MS).toISOString()
+    const claimed = agentId
+      ? await meta.claimSessionById(s.id, agentId, lease)
+      : await meta.claimAttendedSession(s.id, lease)
+    if (!claimed) return // someone else is already serving this turn
     try {
       const artifact = await meta.getByShortId(subject.id)
       if (!artifact) {
@@ -132,6 +132,27 @@ export const contextRoutes = (ctx: AppContext) => {
       )
       if (!role || !roleAllows(role, "read")) {
         await reply("You no longer have access to that document.", "failed")
+        return
+      }
+      // WRITING needs propose at minimum. `read` alone is not enough: the turn's proposal path
+      // calls the store directly rather than going through /v1/artifacts/:id/proposals, so the
+      // route's `propose` check does not apply here and has to be made explicitly. Without it,
+      // any signed-in user could file unlimited proposals onto any PUBLIC artifact in a
+      // chat-enabled workspace, at the operator's model cost.
+      if (!roleAllows(role, "propose")) {
+        await reply(
+          "You can read this document but not suggest changes to it, so I have not written anything.",
+          "failed",
+        )
+        return
+      }
+      // GitHub-synced artifacts are read-only in Derive, exactly as the proposal route says —
+      // changes belong in the repo, and chat must not be a way around that.
+      if ((await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id)) {
+        await reply(
+          "This document is managed by GitHub sync, so changes belong in the repo rather than here.",
+          "failed",
+        )
         return
       }
       // The write mode is re-derived too — a demoted editor must fall back to proposing rather

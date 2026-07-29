@@ -896,6 +896,11 @@ export interface ContextStore {
   /** Extend a claimed session's lease (a streaming runner's heartbeat) — keeps a
    *  slow-but-live run from being re-served/double-run at max_concurrency > 1. */
   renewSessionLease(sessionId: string, leaseUntil: string): Promise<void>
+  /** Status-guarded claim for a CONTEXTLESS (chat) session, which has no agent to check
+   *  ownership through. Returns the row only if this caller won: `open`, or `working` with a
+   *  lapsed lease (crash recovery). Two tabs sending at once therefore run ONE turn, and a
+   *  process that dies mid-turn leaves a lease that lapses instead of a session stuck forever. */
+  claimAttendedSession(id: string, leaseUntil: string): Promise<SessionRecord | null>
   /** Append an asker follow-up and reopen the session ATOMICALLY (compare-and-set): a
    *  `working` session stays working (don't vacate the active claim); a settled/open one
    *  goes to `open` (reclaimable), and a settled one drops its dedupe key so it can't collide

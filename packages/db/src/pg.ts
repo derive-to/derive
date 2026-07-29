@@ -2303,6 +2303,28 @@ export class PgMetaStore implements MetaStore {
       .where(eq(contextSession.id, m.session_id))
     return one(rows)
   }
+  async claimAttendedSession(id: string, leaseUntil: string): Promise<SessionRecord | null> {
+    const now = new Date().toISOString()
+    // Mirror of the sqlite driver: contextless only, and the status predicate is the exclusion.
+    const rows = await this.db
+      .update(contextSession)
+      .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
+      .where(
+        and(
+          eq(contextSession.id, id),
+          isNull(contextSession.context_id),
+          or(
+            eq(contextSession.state, "open"),
+            and(
+              eq(contextSession.state, "working"),
+              or(lte(contextSession.lease_until, now), isNull(contextSession.lease_until)),
+            ),
+          ),
+        ),
+      )
+      .returning()
+    return rows[0] ?? null
+  }
   async setSessionState(id: string, state: SessionState): Promise<SessionRecord | null> {
     const rows = await this.db
       .update(contextSession)

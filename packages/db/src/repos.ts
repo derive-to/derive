@@ -2516,6 +2516,35 @@ export function makeRepos(db: SqliteDb) {
       .run()
     return row
   }
+  const claimAttendedSession = async (
+    id: string,
+    leaseUntil: string,
+  ): Promise<SessionRecord | null> => {
+    const now = new Date().toISOString()
+    // Contextless only — an agent-owned session still goes through claimSessionById, which
+    // checks ownership through the context. The status predicate IS the exclusion: a second
+    // caller finds neither `open` nor a lapsed lease and gets nothing.
+    return (
+      (await db
+        .update(contextSession)
+        .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
+        .where(
+          and(
+            eq(contextSession.id, id),
+            isNull(contextSession.context_id),
+            or(
+              eq(contextSession.state, "open"),
+              and(
+                eq(contextSession.state, "working"),
+                or(lte(contextSession.lease_until, now), isNull(contextSession.lease_until)),
+              ),
+            ),
+          ),
+        )
+        .returning()
+        .get()) ?? null
+    )
+  }
   const setSessionState = async (id: string, state: SessionState): Promise<SessionRecord | null> =>
     (await db
       .update(contextSession)
@@ -3721,6 +3750,7 @@ export function makeRepos(db: SqliteDb) {
     setResultArtifact,
     renewSessionLease,
     appendFollowupReopen,
+    claimAttendedSession,
     setSessionState,
     addSessionMessage,
     listSessionMessages,
