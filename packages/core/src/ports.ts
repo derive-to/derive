@@ -1650,11 +1650,16 @@ export type ConnectionStatus = "active" | "pending" | "revoked"
  *  "workspace" = org infrastructure (admin-managed), survives any one member leaving. */
 export type ConnectionScope = "personal" | "workspace"
 
-/** How a connection authenticates. "oauth" = a broker-side connected account (broker_ref
- *  points at the vendor). "secret" = a pasted credential (API key / bearer token) stored
- *  encrypted and spent ONLY server-side by the tool proxy — write-only by construction:
- *  no endpoint ever returns it, runs only ever see tool names. */
-export type ConnectionKind = "oauth" | "secret"
+/** How a connection authenticates. Everything but "oauth" is DIRECT: Derive holds the
+ *  credential and makes the call itself, so a run only ever sees tool names.
+ *
+ *  oauth       a broker-side connected account; broker_ref points at the vendor.
+ *  secret      a pasted API key / bearer token, encrypted at rest and write-only after.
+ *  github_app  no stored credential — broker_ref is the installation id of the App repo
+ *              sync already uses, and a short-lived token is minted per call.
+ *  slack       no stored credential — the workspace's existing bot install provides it.
+ */
+export type ConnectionKind = "oauth" | "secret" | "github_app" | "slack"
 
 /** A per-user connected external account (WO3): the owner authorized Derive's broker to act on
  *  their Gmail/Stripe/GitHub/etc. Always bound to ONE person (identity never falls back), and
