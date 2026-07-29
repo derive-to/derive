@@ -50,6 +50,36 @@ describe("renaming an artifact re-derives its slug", () => {
     expect(((await old.json()) as { title: string }).title).toBe("A Much Better Name")
   })
 
+  it("REPAIRS an artifact whose slug already drifted, even with the title unchanged", async () => {
+    // The case that motivated the fix, and the one it originally missed. A doc renamed
+    // before the slug followed along has a title that moved on and a url that did not —
+    // and republishing under its CURRENT title changes nothing, because the title already
+    // matches, so the only lever that could fix it never fires. It self-heals instead.
+    const { app, meta } = makeAuthedApp("rename-slug-drifted", [owner], "editor")
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const created = await publishAs(app, "# Old", { title: "Old Name" }, as(owner.email))
+    const { short_id } = (await created.json()) as { short_id: string }
+    const art = await meta.getByShortId(short_id)
+    if (!art) throw new Error("artifact missing")
+
+    // Exactly the pre-fix state: title advanced, slug left behind.
+    await meta.setArtifactTitle(art.id, "Agent Ergonomics")
+    expect((await meta.getByShortId(short_id))?.slug).toBe("old-name")
+
+    // A republish carrying the CURRENT title — no rename at all.
+    const out = await publishAs(
+      app,
+      "# Old v2",
+      { title: "Agent Ergonomics" },
+      as(owner.email),
+      short_id,
+    )
+    const { url } = (await out.json()) as { url: string }
+    expect((await meta.getByShortId(short_id))?.slug).toBe("agent-ergonomics")
+    expect(url).toContain("agent-ergonomics")
+    expect(url).not.toContain("old-name")
+  })
+
   it("leaves the slug alone when the republish carries no title", async () => {
     // A CLI republish without --title must not rename anything, so it must not re-slug
     // either: the name is the human's, not a side effect of pushing content.

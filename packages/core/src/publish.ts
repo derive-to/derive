@@ -292,8 +292,16 @@ export async function publish(
     // handed out — and nothing could fix it, because renaming is the only lever there is.
     // Safe to change: the ref is `<slug>-<short_id>` and parseRef resolves on the trailing
     // short id, so every link already shared keeps working.
-    if (newTitle && newTitle !== artifact.title)
-      await meta.setArtifactTitle(artifact.id, newTitle, slugify(newTitle) || null)
+    if (newTitle) {
+      const nextSlug = slugify(newTitle) || null
+      // Also when the TITLE is unchanged but the slug no longer matches it. Artifacts
+      // renamed before the slug followed along are stuck otherwise: their title moved on,
+      // their url did not, and republishing under the current title is a no-op because the
+      // title already matches — so the one lever that could fix it never fires. This
+      // self-heals that drift the next time a title is supplied.
+      if (newTitle !== artifact.title || nextSlug !== artifact.slug)
+        await meta.setArtifactTitle(artifact.id, newTitle, nextSlug)
+    }
     return { artifact: (await meta.getByShortId(shortId)) as ArtifactRecord, version }
   }
 
