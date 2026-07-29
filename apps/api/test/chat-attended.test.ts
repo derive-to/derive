@@ -27,6 +27,10 @@ const setup = async (name: string, reply: string) => {
   await meta.setOrgSettings("default", {
     ...(await meta.getOrgSettings("default")),
     chatBeta: true,
+    // Live publishing needs the workspace's OWN autonomy opt-in, which defaults off. The
+    // suite sets it explicitly so the publish path is tested deliberately rather than by
+    // accident — and the test below proves what happens without it.
+    agentAutoEnabled: true,
   })
 
   // The document being chatted about.
@@ -173,5 +177,72 @@ describe("the beta gate", () => {
       body: JSON.stringify({ short_id, body_md: "hello" }),
     })
     expect(res.status).toBe(404)
+  })
+})
+
+describe("chat obeys the workspace's autonomy settings", () => {
+  const withSettings = async (name: string, settings: Record<string, unknown>) => {
+    const users = [{ id: "u-ed", email: "ed@x.com", name: "Ed" }]
+    const { app, meta } = makeAuthedApp(name, users, undefined, {
+      deps: {
+        callModel: async () => ({
+          text: revision("# New"),
+          toolUses: [],
+          costUsd: null,
+          done: true,
+        }),
+      },
+    })
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatBeta: true,
+      ...settings,
+    })
+    const made = await app.request("/v1/artifacts", {
+      method: "POST",
+      headers: as("ed@x.com"),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new Blob(["# Doc"], { type: "text/markdown" }), "doc.md")
+        f.set("title", "Doc")
+        return f
+      })(),
+    })
+    const { short_id } = (await made.json()) as { short_id: string }
+    await app.request("/v1/artifacts/chat-session", {
+      method: "POST",
+      headers: { ...as("ed@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ short_id, body_md: "make it shorter", mode: "publish" }),
+    })
+    for (let i = 0; i < 100; i++) {
+      const a = await meta.getByShortId(short_id)
+      if ((a?.current_version ?? 0) > 1) break
+      if ((await meta.listProposals(a?.id ?? "")).length) break
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    const art = await meta.getByShortId(short_id)
+    return {
+      version: art?.current_version,
+      proposals: (await meta.listProposals(art?.id ?? "")).length,
+    }
+  }
+
+  it("does NOT live-publish when the workspace has not opted into auto", async () => {
+    // The default. mode:"publish" is the USER's consent for this document; agentAutoEnabled is
+    // the WORKSPACE's consent for agents to write live at all. Both are required.
+    const r = await withSettings("chat-auto-off", { agentAutoEnabled: false })
+    expect(r.version).toBe(1)
+    expect(r.proposals).toBe(1)
+  })
+
+  it("obeys the KILLSWITCH even with auto on", async () => {
+    // An operator who flips the killswitch after a bad run must stop chat too — hardcoding
+    // these flags meant chat sailed straight past it.
+    const r = await withSettings("chat-killswitch", {
+      agentAutoEnabled: true,
+      agentKillswitch: true,
+    })
+    expect(r.version).toBe(1)
+    expect(r.proposals).toBe(1)
   })
 })

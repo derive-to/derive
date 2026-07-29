@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto"
 import {
   type ContextAskerRecord,
   type ContextRecord,
+  effectiveRole,
   newId,
   normalizeSelector,
   parseSubject,
+  roleAllows,
   type SessionMessageRecord,
   type SessionRecord,
   type SessionState,
@@ -81,6 +83,7 @@ export const contextRoutes = (ctx: AppContext) => {
         state,
       )
     }
+    const flags = await meta.getOrgSettings(s.org_id).catch(() => null)
     // No model wired (the common self-host case) — say so in the transcript rather than leaving
     // the session `open` forever waiting on a runner that will never come.
     if (!ctx.callModel) {
@@ -109,6 +112,31 @@ export const contextRoutes = (ctx: AppContext) => {
         await reply("That document no longer exists, so I have not changed anything.", "failed")
         return
       }
+      // RE-CHECK ACCESS EVERY TURN, never just at session creation. A session id is long-lived
+      // and the ACL is not: someone removed from the workspace, demoted to viewer, or unshared
+      // from the doc still holds the id, and without this they would keep reading the CURRENT
+      // contents back and keep publishing to it. `canRead`/`canWrite` are resolved for the
+      // asker, not for whoever opened the session.
+      const seat = await meta.getMembership(artifact.org_id, me.id)
+      const role = effectiveRole(
+        {
+          kind: "user",
+          orgRole: seat?.role,
+          artifactRole: (await meta.getArtifactMember(artifact.id, me.id))?.role,
+        },
+        artifact.workspace_access,
+        artifact.link_role,
+      )
+      if (!role || !roleAllows(role, "read")) {
+        await reply("You no longer have access to that document.", "failed")
+        return
+      }
+      // The write mode is re-derived too — a demoted editor must fall back to proposing rather
+      // than keep the `publish` they held when the session opened.
+      const effective: typeof subject =
+        subject.mode === "publish" && roleAllows(role, "publish")
+          ? subject
+          : { kind: "artifact", id: subject.id }
       const res = await runSessionTurn(
         {
           meta,
@@ -122,10 +150,17 @@ export const contextRoutes = (ctx: AppContext) => {
         },
         {
           session: s,
-          subject,
+          subject: effective,
           artifact,
           transcript: await meta.listSessionMessages(s.id),
-          flags: { agentKillswitch: false, agentAutoEnabled: true },
+          // REAL workspace flags, not hardcoded ones. Hardcoding these made chat ignore the
+          // killswitch entirely and granted the `auto` opt-in that a workspace has to enable
+          // deliberately (it defaults OFF) — so an operator who flipped the killswitch after a
+          // bad run would have found chat still live-publishing.
+          flags: {
+            agentKillswitch: flags?.agentKillswitch ?? false,
+            agentAutoEnabled: flags?.agentAutoEnabled ?? false,
+          },
           onBehalf: { id: me.id, name: me.name ?? me.username ?? me.email ?? "someone" },
         },
       )
@@ -834,6 +869,14 @@ export const contextRoutes = (ctx: AppContext) => {
         return bail(fail(c, 400, "subject is not a valid selector"))
       if (subject && subject.kind !== "artifact")
         return bail(fail(c, 400, "only an artifact subject is supported"))
+      // A SUBJECT on the ask lane is the chat feature wearing a context, so it needs the same
+      // opt-in the chat route needs. Without this, gating only /v1/artifacts/chat-session left
+      // the front door locked and this one open: any member could name a doc here and spend
+      // the operator's key in a workspace that never enabled chat.
+      if (subject) {
+        const st = await meta.getOrgSettings(x.org_id).catch(() => null)
+        if (!st?.chatBeta) return bail(fail(c, 404, "chat is not enabled for this workspace"))
+      }
       if (subject) {
         // Ask-access to the CONTEXT is not read-access to the DOCUMENT. Re-check the
         // artifact separately, or a session becomes a way to read anything by naming it.
@@ -1204,6 +1247,14 @@ export const contextRoutes = (ctx: AppContext) => {
       // ATTENDED: someone is sitting there, so serve the turn HERE instead of queuing it for a
       // runner that may not be running. Detached — the response returns now and the TRANSCRIPT is
       // what the surface follows, so closing the tab mid-turn loses nothing.
+      // The beta gate again, on the lane that actually SPENDS the key. Gating only session
+      // CREATION would mean turning the flag off leaves every existing conversation running —
+      // a kill switch that does not kill. A contextless (chat) session needs the opt-in; a
+      // context session is the pre-existing ask lane and is unaffected by it.
+      if (!s.context_id) {
+        const st = await meta.getOrgSettings(s.org_id).catch(() => null)
+        if (!st?.chatBeta) return c.json({ message: messageJson(m) }, 201)
+      }
       await serveAttended(s, me, linked?.context.agent_id ?? null)
       return c.json({ message: messageJson(m) }, 201)
     },

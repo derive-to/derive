@@ -37,3 +37,6 @@ apps/api/.verify-data/
 
 # Local dev scratch data (screenshot/walkthrough runs)
 apps/api/.localdata/
+# …and every suffixed variant (.localdata-rv, .localdata-ux, …). The unsuffixed glob
+# missed those and a run's derive.db plus its .auth-secret got committed.
+apps/api/.localdata-*/
