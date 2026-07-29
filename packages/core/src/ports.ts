@@ -9,6 +9,11 @@ export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
   put(data: Uint8Array): Promise<string>
   get(key: string): Promise<Uint8Array | null>
+  /** Cheap existence check (a stat/HEAD, never a body read). OPTIONAL and additive so
+   *  existing stores keep compiling; a caller that needs it (publish lint's
+   *  broken-embed check) treats absence as "can't check here" and skips — it never
+   *  falls back to a full get. */
+  has?(key: string): Promise<boolean>
 }
 
 /**
@@ -132,6 +137,10 @@ export interface ArtifactRecord {
    *  stamps it once; owner self-views were already excluded upstream). Null until
    *  someone else has actually seen the work. */
   first_foreign_view_at: string | null
+  /** Owner opt-in: the ANONYMOUS public page shows version history (dropdown + old
+   *  versions). Falsy = anon sees the current version only; signed-in readers always
+   *  keep workbench history (auth is the gate, like comments). */
+  public_history: 0 | 1 | null
   /** For a GitHub-synced artifact: its path within the repo (e.g. "docs/plans/foo.md").
    *  The structural "location" — drives the folder/tree view — kept distinct from the
    *  human `title`. Null for artifacts not mirrored from a repo. */
@@ -320,6 +329,8 @@ export interface ArtifactStore {
   ): Promise<void>
   /** Toggle the change-lock: when locked, direct publishes are rejected. */
   setLocked(artifactId: string, locked: 0 | 1): Promise<void>
+  /** Owner opt-in: the anonymous public page shows version history. */
+  setPublicHistory(artifactId: string, on: 0 | 1): Promise<void>
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
   /** Load an artifact by its internal id (used by domain mode's host lookup). */
   getArtifactById(id: string): Promise<ArtifactRecord | null>
@@ -1151,8 +1162,13 @@ export interface AgentStore {
   /** Batch-load connections by id in ONE query — backs the least-privilege toolsFor: a run
    *  resolves ONLY its bound connection ids, never the workspace's whole list. Empty ⇒ []. */
   getConnectionsByIds(ids: string[]): Promise<ConnectionRecord[]>
-  /** A workspace's connections, newest first; pass userId to scope to one person's. */
-  listConnections(orgId: string, userId?: string): Promise<ConnectionRecord[]>
+  /** A workspace's connections, newest first. userId narrows to one person's rows;
+   *  scope narrows to personal/workspace rows; combine for "my personal connections". */
+  listConnections(
+    orgId: string,
+    userId?: string,
+    scope?: ConnectionScope,
+  ): Promise<ConnectionRecord[]>
   /** Flip a connection's status (activate on authorize, revoke on teardown), org-scoped. */
   setConnectionStatus(
     id: string,
@@ -1644,6 +1660,22 @@ export interface NewPlan {
  *  round trip; revoked when torn down. */
 export type ConnectionStatus = "active" | "pending" | "revoked"
 
+/** Who a connection belongs to. "personal" = one person's account, only they may bind it
+ *  to a context/automation, and it stops resolving the moment they leave the workspace.
+ *  "workspace" = org infrastructure (admin-managed), survives any one member leaving. */
+export type ConnectionScope = "personal" | "workspace"
+
+/** How a connection authenticates. Everything but "oauth" is DIRECT: Derive holds the
+ *  credential and makes the call itself, so a run only ever sees tool names.
+ *
+ *  oauth       a broker-side connected account; broker_ref points at the vendor.
+ *  secret      a pasted API key / bearer token, encrypted at rest and write-only after.
+ *  github_app  no stored credential — broker_ref is the installation id of the App repo
+ *              sync already uses, and a short-lived token is minted per call.
+ *  slack       no stored credential — the workspace's existing bot install provides it.
+ */
+export type ConnectionKind = "oauth" | "secret" | "github_app" | "slack"
+
 /** A per-user connected external account (WO3): the owner authorized Derive's broker to act on
  *  their Gmail/Stripe/GitHub/etc. Always bound to ONE person (identity never falls back), and
  *  scoped least-privilege per toolkit. A hosted run sees the tools of its bound connections
@@ -1651,15 +1683,27 @@ export type ConnectionStatus = "active" | "pending" | "revoked"
 export interface ConnectionRecord {
   id: string
   org_id: string
-  /** The owner — always a specific person, never null. */
+  /** Who ADDED it. For scope "personal" this is the owner (identity never falls back);
+   *  for scope "workspace" it is provenance only ("added by Rob") — the credential is
+   *  the workspace's and is admin-managed. */
   user_id: string
+  /** personal (default) = act-as-me, owner-bound. workspace = org infrastructure. */
+  scope: ConnectionScope
+  /** oauth (default) = broker-connected account; secret = pasted credential. */
+  kind: ConnectionKind
+  /** kind "secret" only: the credential, AES-GCM encrypted. Never presented by any route —
+   *  it is spent server-side by the tool proxy and read nowhere else. */
+  secret_enc: string | null
+  /** kind "secret" only: the HTTPS base every tool call resolves under, and is confined to. */
+  base_url: string | null
   /** Broker provider slug: "local" | "composio". */
   broker: string
   /** Toolkit slug, e.g. "gmail" | "stripe" | "github". */
   toolkit: string
   /** Broker-side connected-account id. */
   broker_ref: string
-  /** Human label of the granted scopes (display only), or null. */
+  /** Human label of the granted scopes, or null. Display only — for kind "secret" it doubles
+   *  as the credential hint (the pasted key's last 4), which is all a read ever gets. */
   scopes_label: string | null
   status: ConnectionStatus
   created_at: string
@@ -1669,6 +1713,10 @@ export interface NewConnection {
   id: string
   org_id: string
   user_id: string
+  scope?: ConnectionScope
+  kind?: ConnectionKind
+  secret_enc?: string | null
+  base_url?: string | null
   broker: string
   toolkit: string
   broker_ref: string
@@ -2362,6 +2410,11 @@ export interface Brandprint {
    *  intake's stub (`profileState` derives live/pending from that). Workspace-only: a
    *  personal Brandprint never sets it. */
   profileId?: string
+  /** Personal-layer only: false turns the WORKSPACE Brandprint off for this user
+   *  (their agents skip the org's conventions and profile; a personal collection
+   *  above still applies). Absent or true: the workspace layer applies. A
+   *  workspace's own settings never carry this field. */
+  useWorkspaceBrandprint?: boolean
 }
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {

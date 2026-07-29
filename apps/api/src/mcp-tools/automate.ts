@@ -1,7 +1,10 @@
 import { type AutomationTrigger, newId, normalizeSelectors, roleAllows } from "@derive/core"
 import { z } from "zod"
+import { connectionBindError } from "../lib/broker"
 import { mintToken, sha256 } from "../lib/crypto"
+import { badChoice, choiceDescription } from "../lib/open-choice"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
+import { scopeGapMessage } from "../lib/scope-gap"
 import type { ToolContext } from "../mcp-tool-context"
 import { json } from "../mcp-util"
 
@@ -16,6 +19,11 @@ import { json } from "../mcp-util"
 // transcript is a bad place for a standing secret); a webhook trigger mints its fire secret,
 // returned ONCE like the REST response.
 
+/** The automate actions. A growth point — see lib/open-choice.ts for why it isn't an enum.
+ *  Adding one here is the WHOLE change: the schema description and the server-side check
+ *  both read this, so they cannot disagree about what is valid. */
+const AUTOMATE_ACTIONS = ["create", "list", "run_now", "record", "create_context"] as const
+
 const TRIGGER = z.object({
   kind: z.enum(["manual", "schedule", "event"]),
   cron: z.string().optional(),
@@ -24,7 +32,7 @@ const TRIGGER = z.object({
 })
 
 export function registerAutomateTool(tc: ToolContext): void {
-  const { server, ctx, agent, defaultOrg } = tc
+  const { server, ctx, agent, defaultOrg, scopeForCap, registered } = tc
   const meta = ctx.meta
   server.registerTool(
     "automate",
@@ -32,7 +40,12 @@ export function registerAutomateTool(tc: ToolContext): void {
       description:
         "Standing automations — a scheduled use(context, instruction). `create`: trigger ({kind: manual|schedule|event, cron?, tz?, on:'webhook'?}) + instruction; optional refs (targets, mode publish|propose), context_id (the run acts as that context's agent), connection_ids (bound sources). Webhook triggers return fire_url + fire_secret ONCE. `run_now` enqueues now. `record` files a run you executed LOCALLY (automation_id, wrote:[short_ids], outcome, note) into the same ledger. `list` shows them. `create_context` (name + manifest_short_id, + max_run_ms?/max_concurrency?) wires a context — no token returned; owners run it via use. Owner grants only.",
       inputSchema: {
-        action: z.enum(["create", "list", "run_now", "record", "create_context"]),
+        // A STRING, not an enum, on purpose: this discriminator grows (create_context is
+        // itself the fifth value, and it shipped unreachable to every already-connected
+        // client for exactly this reason), and a cached client validates an enum locally —
+        // so a newly-shipped action never even reaches the server. See lib/open-choice.ts.
+        // Checked server-side below.
+        action: z.string().describe(choiceDescription(AUTOMATE_ACTIONS, "What to do.")),
         trigger: TRIGGER.optional(),
         instruction: z.string().min(1).max(4000).optional(),
         refs: z
@@ -69,10 +82,31 @@ export function registerAutomateTool(tc: ToolContext): void {
       },
     },
     async (input) => {
+      const wrongAction = badChoice("action", input.action, AUTOMATE_ACTIONS)
+      if (wrongAction) return json({ error: wrongAction })
       // Same gate as the REST surface: standing jobs are a manage decision, and this tool
       // spends the workspace's model budget on a clock. A commenter grant reads, never wires.
-      if (agent.role !== "owner")
-        return json({ error: "automations need a manage-level (owner) grant" })
+      // The refusal names WHICH lever is short — scope vs seat (see lib/scope-gap.ts) —
+      // because they need opposite fixes and guessing wrong sends an agent hunting for a
+      // second credential.
+      if (agent.role !== "owner") {
+        // The RAW membership, not agent.role — that one is already capped BY the scope,
+        // so passing it would report a seat gap on every scope gap and send the caller to
+        // an admin with nothing to fix. Read only on this refusal path.
+        const seat = tc.ownerId
+          ? await meta.getMembership(defaultOrg, tc.ownerId).catch(() => null)
+          : null
+        return json({
+          error:
+            scopeGapMessage({
+              action: "manage",
+              scopeRole: scopeForCap,
+              memberRole: seat?.role ?? agent.role,
+              registered,
+              baseUrl: ctx.deps.baseUrl,
+            }) ?? "automations need a manage-level (owner) grant",
+        })
+      }
       const org = defaultOrg
 
       if (input.action === "list") {
@@ -218,6 +252,18 @@ export function registerAutomateTool(tc: ToolContext): void {
       // create
       if (!input.trigger || !input.instruction)
         return json({ error: "create needs trigger + instruction" })
+      // Same bind policy as the REST route. This action is owner-grant-only (checked
+      // above), which is why canManage is true here; a personal connection still has to
+      // belong to the human behind the grant.
+      if (input.connection_ids?.length) {
+        const bindErr = await connectionBindError(
+          meta,
+          org,
+          { userId: tc.ownerId ?? null, canManage: true },
+          input.connection_ids,
+        )
+        if (bindErr) return json({ error: bindErr })
+      }
       let agentId: string | null = null
       if (input.context_id) {
         const bound = await meta.getContext(input.context_id)

@@ -30,6 +30,7 @@ RUNNER.md
 
 # Local scratch DB from manual verification runs
 apps/api/.verify-data/
+apps/api/.localdata/
 
 # Claude Code session worktrees (live checkouts of other sessions' branches —
 # never repo content, and their nested configs break root tooling if scanned)
@@ -40,3 +41,7 @@ apps/api/.localdata/
 # …and every suffixed variant (.localdata-rv, .localdata-ux, …). The unsuffixed glob
 # missed those and a run's derive.db plus its .auth-secret got committed.
 apps/api/.localdata-*/
+
+# Coverage output. Untracked, but a FAILED `pnpm verify` leaves these behind, and the
+# next run's lint step then scans them and fails on generated files.
+coverage/

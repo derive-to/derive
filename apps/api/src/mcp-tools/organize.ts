@@ -1,9 +1,15 @@
 import { type ArtifactRecord, newId, roleAllows } from "@derive/core"
 import { z } from "zod"
+import { badChoice, choiceDescription } from "../lib/open-choice"
 import { computeTagSuggestions } from "../lib/tag-suggestions"
 import { normalizeTags } from "../lib/tags"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
+
+/** Whether an artifact is in the library or retired from it. A growth point (an
+ *  `archived` tier is the obvious next one), so a string checked server-side rather
+ *  than an enum a cached client would refuse — see lib/open-choice.ts. */
+const LIBRARY_STATES = ["removed", "live"] as const
 
 export function registerOrganizeTool(tc: ToolContext): void {
   const { server, ctx, agent, actingFor, reach, resolveWs, wsArg } = tc
@@ -17,7 +23,7 @@ export function registerOrganizeTool(tc: ToolContext): void {
     "organize",
     {
       description:
-        "Tags and collections in one tool — the library's findability layer. READ (no `short_ids`) returns the workspace's tag vocabulary + collections; READ with `short_ids` returns their tags/collections plus suggested tags. WRITE (`add`/`remove`/`set` tags, and/or `collection`) changes them — each artifact is authorized on its own, so ones you can't touch come back skipped, never failing the batch. Tag freely and reuse the vocabulary; a collection is for when a set is a real unit. For the read-vs-write modes and the tags-vs-collections call, read derive://skills/organize.",
+        "Tags, collections, and shelving in one tool — the library layer. READ (no `short_ids`) returns the workspace's tag vocabulary + collections; READ with `short_ids` returns their tags/collections plus suggested tags. WRITE (`add`/`remove`/`set` tags, `collection`, and/or `state`) changes them — each artifact is authorized on its own, so ones you can't touch come back skipped, never failing the batch. `state:'removed'` retires an artifact from the library and `state:'live'` puts it back, so cleaning up after yourself is safe. For the read-vs-write modes and the tags-vs-collections call, read derive://skills/organize.",
       inputSchema: {
         short_ids: z
           .array(z.string())
@@ -33,21 +39,35 @@ export function registerOrganizeTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe("Fold `short_ids` into this collection — an id, or a name (created if new)."),
+        // Both directions on ONE parameter, deliberately. Remove and undo are the same
+        // decision read in two directions, and splitting them across two actions (or two
+        // tools) is how you end up with a surface that can retire something and no obvious
+        // way back.
+        state: z
+          .string()
+          .optional()
+          .describe(
+            choiceDescription(
+              LIBRARY_STATES,
+              "Retire these from the library, or restore ones already retired. Reversible either way.",
+            ),
+          ),
         workspace: wsArg,
       },
     },
-    async ({ short_ids, add, remove, set, collection, workspace }) => {
+    async ({ short_ids, add, remove, set, collection, state, workspace }) => {
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
       const actorId = actingFor?.id ?? agent.id
       const sortVocab = (v: { tag: string; count: number }[]) =>
         v.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
 
-      // ---- WRITE: add/remove/set tags and/or fold into a collection ----
-      if (add || remove || set || collection) {
+      // ---- WRITE: add/remove/set tags, fold into a collection, and/or shelve ----
+      if (add || remove || set || collection || state) {
         if (!short_ids?.length)
-          return err("Pass `short_ids` to organize (with add/remove/set and/or collection).")
+          return err("Pass `short_ids` to organize (with add/remove/set, collection and/or state).")
         const out: Record<string, unknown> = {}
+
         if (add || remove || set) {
           const removeSet = new Set(normalizeTags(remove ?? []))
           let updated = 0
@@ -141,6 +161,126 @@ export function registerOrganizeTool(tc: ToolContext): void {
           }
           out.collected = { collection: { id: col.id, title: col.title }, added, skipped }
         }
+        // SHELVE / UNSHELVE. Both directions on one parameter: an artifact retired with
+        // `state:"removed"` comes back with `state:"live"`, and the response says so, so
+        // the way back is never something you have to already know.
+        //
+        // The tombstone itself is old — sync retires an artifact whose file was deleted,
+        // moderation takes one down, PR-preview teardown sweeps a batch. What never existed
+        // was an AUTHORING path: the subsystems could retire an artifact and the person who
+        // made it could not. This is that path, and nothing more.
+        if (state) {
+          const wrong = badChoice("state", state, LIBRARY_STATES)
+          if (wrong) return err(wrong)
+          const removedAt = state === "removed" ? new Date().toISOString() : null
+          const ok: string[] = []
+          const done: string[] = []
+          const synced: string[] = []
+          const moderated: string[] = []
+          const wiredTo: { short_id: string; context: string }[] = []
+          let skipped = 0
+          // Fetched ONCE for the batch, not per artifact. A context cannot outlive its
+          // manifest — hard delete cascades it away deliberately — but shelving is not a
+          // delete, so the context stays askable and its runner walks into a takedown
+          // error minutes later, in a different process, with nothing linking back to
+          // this call. Retiring one is still allowed (decommissioning a context is a real
+          // thing to want); it just never happens quietly.
+          const contexts =
+            state === "removed" ? await ctx.meta.listContexts(t.org).catch(() => []) : []
+          for (const shortId of [...new Set(short_ids)]) {
+            // Sees past the takedown gate on purpose: this operates on that flag, so the
+            // ordinary content gate would hide the artifact being restored. Workspace,
+            // membership and role are all still enforced.
+            const reached = await reach(shortId, workspace, { allowRemoved: true })
+            // Same bar as editing an artifact's content, deliberately: this is reversible,
+            // so it does not warrant a higher one than the publish that created it.
+            if (!reached || "error" in reached || !roleAllows(reached.role, "publish")) {
+              skipped++
+              continue
+            }
+            // A MODERATION takedown is not yours to reverse. `removed_at` carries two very
+            // different meanings — "I retired my own draft" and "an admin took this down" —
+            // and the moderation path sets it at MANAGE grade, writes an audit row, and
+            // resolves every open report in one transaction. Clearing it at the editor bar
+            // would undo all three silently, put abusive or DMCA'd content back, and leave
+            // the reports closed so it never resurfaces in the queue. The audit log is the
+            // only record of which meaning applies, so a restore consults it and defers.
+            if (state === "live" && !roleAllows(reached.role, "manage")) {
+              const log = await ctx.meta
+                .listAuditLog(t.org, { artifactId: reached.a.id, limit: 20 })
+                .catch(() => [])
+              // Newest first, so the first takedown/reinstate is the standing decision.
+              const standing = log.find((e) => e.action === "takedown" || e.action === "reinstate")
+              if (standing?.action === "takedown") {
+                moderated.push(shortId)
+                skipped++
+                continue
+              }
+            }
+            ok.push(reached.a.id)
+            done.push(shortId)
+            // A repo-synced artifact is not really yours to retire: sync clears this exact
+            // flag whenever the file changes (lib/sync.ts), so it comes back with nothing
+            // to explain why. Allowed, because the tombstone is still what you asked for
+            // today, but SAID, because a silent resurrection is the surprise this whole
+            // change exists to remove.
+            if (reached.a.source_path) synced.push(shortId)
+            for (const cx of contexts)
+              if (cx.manifest_artifact_id === reached.a.id)
+                wiredTo.push({ short_id: shortId, context: cx.name })
+          }
+          // One update for the batch, per the store's own guidance, rather than a call per id.
+          if (ok.length) await ctx.meta.setArtifactsRemoved(ok, removedAt)
+          out.state = {
+            state,
+            changed: ok.length,
+            skipped,
+            // The reversal, handed back at the moment it might be wanted — naming only what
+            // actually changed. Echoing the whole input would tell you to restore artifacts
+            // that were skipped and never retired, which is an undo that does not describe
+            // the thing it claims to reverse.
+            undo: done.length
+              ? {
+                  tool: "organize",
+                  arguments: {
+                    short_ids: done,
+                    state: state === "removed" ? "live" : "removed",
+                    ...(workspace ? { workspace } : {}),
+                  },
+                }
+              : undefined,
+            // Named separately from `note` so it cannot be mistaken for the ordinary
+            // outcome: this is the one case where the retirement does not stay put.
+            // Called out by name: "skipped" alone would read as a permission problem the
+            // caller could fix, and this one they should not.
+            ...(wiredTo.length
+              ? {
+                  in_use_by_contexts: wiredTo,
+                  in_use_by_contexts_note:
+                    "These are the manifests live contexts run from. The context stays askable, and its runner will fail reading the manifest rather than at the moment you retired it. Retire the context too, or put the manifest back.",
+                }
+              : {}),
+            ...(moderated.length
+              ? {
+                  moderation_hold: moderated,
+                  moderation_hold_note:
+                    "These were taken down by moderation, not retired by an author. Restoring one is an admin decision — it reopens content someone removed deliberately — so it needs a manage-level grant.",
+                }
+              : {}),
+            ...(state === "removed" && synced.length
+              ? {
+                  synced_from_repo: synced,
+                  synced_from_repo_note:
+                    "These are synced from a repository, and a sync that sees their file change will clear the retirement. To retire one for good, remove the file at the source.",
+                }
+              : {}),
+            note:
+              state === "removed"
+                ? "Retired from the library: the url now reads as removed. Nothing is deleted, and `state:'live'` puts it back."
+                : "Back in the library and readable again.",
+          }
+        }
+
         return json(out)
       }
 

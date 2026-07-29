@@ -3,6 +3,8 @@ import type {
   ArtifactKind,
   AuditAction,
   CommentState,
+  ConnectionKind,
+  ConnectionScope,
   ConnectionStatus,
   DeliveryKind,
   DeliveryStatus,
@@ -83,6 +85,11 @@ export const artifact = sqliteTable("artifact", {
   // When the first non-author view landed (recordView stamps it once — the
   // activation moment). Nullable, no default, so it ALTER ADDs cleanly.
   first_foreign_view_at: text("first_foreign_view_at"),
+  // Owner opt-in: the ANONYMOUS public page shows version history (dropdown +
+  // old-version reads). Off, anon callers get the current version only — signed-in
+  // readers always keep workbench history (auth is the gate, like comments).
+  // Nullable (null = off), no default, so it ALTER ADDs cleanly.
+  public_history: integer("public_history").$type<0 | 1>(),
   source_path: text("source_path"),
   // The CURRENT (last) author, denormalized from the latest version row for the list
   // view + author filtering. For a GitHub-synced artifact these mirror the last commit's
@@ -276,6 +283,14 @@ export const connection = sqliteTable("connection", {
   id: text("id").primaryKey(),
   org_id: text("org_id").notNull(),
   user_id: text("user_id").notNull(),
+  // personal (default) = act-as-me, owner-bound; workspace = org infrastructure,
+  // admin-managed, survives the adder leaving. user_id stays "who added it" either way.
+  scope: text("scope").$type<ConnectionScope>().notNull().default("personal"),
+  // oauth (default) = broker-connected account; secret = a pasted credential, stored
+  // encrypted, spent only server-side by the tool proxy, never returned by any route.
+  kind: text("kind").$type<ConnectionKind>().notNull().default("oauth"),
+  secret_enc: text("secret_enc"),
+  base_url: text("base_url"),
   broker: text("broker").notNull(),
   toolkit: text("toolkit").notNull(),
   broker_ref: text("broker_ref").notNull(),

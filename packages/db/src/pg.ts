@@ -14,6 +14,7 @@ import type {
   CommentSignals,
   CommentState,
   ConnectionRecord,
+  ConnectionScope,
   ConnectionStatus,
   ContextAskerRecord,
   ContextRecord,
@@ -366,6 +367,10 @@ export class PgMetaStore implements MetaStore {
 
   async setLocked(artifactId: string, locked: 0 | 1): Promise<void> {
     await this.db.update(artifact).set({ locked }).where(eq(artifact.id, artifactId))
+  }
+
+  async setPublicHistory(artifactId: string, on: 0 | 1): Promise<void> {
+    await this.db.update(artifact).set({ public_history: on }).where(eq(artifact.id, artifactId))
   }
 
   async getByShortId(shortId: string): Promise<ArtifactRecord | null> {
@@ -2933,15 +2938,18 @@ export class PgMetaStore implements MetaStore {
     if (ids.length === 0) return []
     return this.db.select().from(connection).where(inArray(connection.id, ids))
   }
-  listConnections(orgId: string, userId?: string): Promise<ConnectionRecord[]> {
+  listConnections(
+    orgId: string,
+    userId?: string,
+    scope?: ConnectionScope,
+  ): Promise<ConnectionRecord[]> {
+    const wh = [eq(connection.org_id, orgId)]
+    if (userId) wh.push(eq(connection.user_id, userId))
+    if (scope) wh.push(eq(connection.scope, scope))
     return this.db
       .select()
       .from(connection)
-      .where(
-        userId
-          ? and(eq(connection.org_id, orgId), eq(connection.user_id, userId))
-          : eq(connection.org_id, orgId),
-      )
+      .where(and(...wh))
       .orderBy(desc(connection.created_at))
   }
   async setConnectionStatus(

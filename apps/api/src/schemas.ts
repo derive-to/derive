@@ -142,6 +142,12 @@ export const Artifact = z
       .describe(
         "Open-thread count for the sign-in-to-comment pill; present only for anonymous callers on a link that grants commenting.",
       ),
+    public_history: z
+      .boolean()
+      .optional()
+      .describe(
+        "Owner opt-in: the anonymous public page shows version history. When false, anonymous detail responses carry only the current version.",
+      ),
     org_id: z
       .string()
       .optional()
@@ -305,7 +311,14 @@ export const BrandprintSchema = z.object({
   profileId: z.string().trim().max(64).nullish(),
 })
 
-/** The personal layer is collection-only — the brand profile is a team property, so the
- *  profile route's request AND response omit `profileId` (a sent one strips, same as any
- *  unknown key, and the generated types can't advertise a field the server never returns). */
-export const PersonalBrandprintSchema = BrandprintSchema.omit({ profileId: true })
+/** The brand profile is a team property, so the profile route's request AND response
+ *  omit `profileId` (a sent one strips, same as any unknown key, and the generated
+ *  types can't advertise a field the server never returns). */
+export const PersonalBrandprintSchema = BrandprintSchema.omit({ profileId: true }).extend({
+  useWorkspaceBrandprint: z
+    .boolean()
+    .optional()
+    .describe(
+      "False turns the workspace Brandprint off for this user; their personal collection still applies. Absent or true: the workspace layer applies. Personal scope only.",
+    ),
+})

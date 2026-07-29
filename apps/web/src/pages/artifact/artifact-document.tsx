@@ -36,6 +36,7 @@ export function ArtifactDocument({
   onDeckPrev,
   onDeckNext,
   onFullscreen,
+  anonView = false,
 }: {
   shown: number
   currentVersion: number
@@ -58,6 +59,9 @@ export function ArtifactDocument({
   onDeckPrev: () => void
   onDeckNext: () => void
   onFullscreen: () => void
+  /** Anonymous public viewer: the past-version strip keeps only "Back to current"
+   *  (diff and restore are workbench affordances an anon caller can't use). */
+  anonView?: boolean
 }) {
   const past = shown !== currentVersion
   return (
@@ -66,33 +70,41 @@ export function ArtifactDocument({
           off-current is a "this matters" moment, not a status warning). */}
       {past && (
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 border-b border-primary/30 bg-primary/5 px-4 py-2 text-sm">
-          <span className="font-medium text-primary">Viewing an earlier version</span>
-          <span className="text-muted-foreground">·</span>
-          <Button
-            variant="link"
-            data-testid="artifact-toggle-diff"
-            className="h-auto p-0 underline"
-            onClick={onToggleDiff}
-          >
-            {view === "diff" ? "Hide changes" : "Show changes since this"}
-          </Button>
+          <span className="font-medium text-primary">
+            Viewing an earlier version{anonView ? ` (v${shown})` : ""}
+          </span>
+          {!anonView && (
+            <>
+              <span className="text-muted-foreground">·</span>
+              <Button
+                variant="link"
+                data-testid="artifact-toggle-diff"
+                className="h-auto p-0 underline"
+                onClick={onToggleDiff}
+              >
+                {view === "diff" ? "Hide changes" : "Show changes since this"}
+              </Button>
+            </>
+          )}
           <span className="flex-1" />
-          <Button
-            variant="outline"
-            size="sm"
-            data-testid="artifact-restore"
-            onClick={onRestore}
-            disabled={restoring}
-          >
-            {restoring ? "Restoring…" : "Restore this version"}
-          </Button>
+          {!anonView && (
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="artifact-restore"
+              onClick={onRestore}
+              disabled={restoring}
+            >
+              {restoring ? "Restoring…" : "Restore this version"}
+            </Button>
+          )}
           <Button
             variant="secondary"
             size="sm"
             data-testid="artifact-back-to-current"
             onClick={onBackToCurrent}
           >
-            Back to current
+            {anonView ? `Back to current (v${currentVersion})` : "Back to current"}
           </Button>
         </div>
       )}

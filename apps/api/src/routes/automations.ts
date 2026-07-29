@@ -14,7 +14,13 @@ import { z } from "@hono/zod-openapi"
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
 import { parseConnectionIds, parseRefs, parseTrigger } from "../lib/automation"
-import { brokerFor, toolsForRun } from "../lib/broker"
+import {
+  brokerFor,
+  connectionBindError,
+  executeHttpTool,
+  isDirect,
+  toolsForRun,
+} from "../lib/broker"
 import { overBudget } from "../lib/budget"
 import { mintToken, safeEqual, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
@@ -161,12 +167,16 @@ export const automationRoutes = (ctx: AppContext) => {
       if (!agents.some((a) => a.id === b.agentId))
         return bail(fail(c, 400, "agent must be in this workspace"))
     }
-    // Bound sources must be connections that exist in THIS workspace (least privilege: a run
-    // reads only through these). Ownership isn't required — an automation is a workspace job.
+    // Least privilege at bind time, not only at run time: the ids must be this workspace's,
+    // and attachable by this caller. The route already gated on manage, hence canManage.
     if (b.connectionIds?.length) {
-      const conns = await meta.getConnectionsByIds(b.connectionIds)
-      if (conns.length !== b.connectionIds.length || conns.some((cn) => cn.org_id !== org))
-        return bail(fail(c, 400, "connections must exist in this workspace"))
+      const bindErr = await connectionBindError(
+        meta,
+        org,
+        { userId: (await privateOwnerId(c)) ?? null, canManage: true },
+        b.connectionIds,
+      )
+      if (bindErr) return bail(fail(c, 400, bindErr))
     }
     let agentId = b.agentId ?? boundContext?.agent_id ?? null
     let agentToken: string | null = null
@@ -503,7 +513,9 @@ export const automationRoutes = (ctx: AppContext) => {
           // per write; it never re-derives semantics.
           targets: parseRefs(a.refs),
           // The run's source tools (name/description/params + broker ref), least-privilege.
-          tools,
+          // Projected field by field on purpose: RunTool also carries routing detail the
+          // executor has no use for, and this endpoint is the last stop before the wire.
+          tools: tools.map((t) => ({ def: t.def, ref: t.ref })),
           // What fired it, when something sent a body. /fire stores each webhook payload on
           // the run (coalescing a burst into one run of many payloads), and this is where they
           // reach the executor. Without it the fire-URL path was write-only: payloads were
@@ -627,13 +639,28 @@ export const automationRoutes = (ctx: AppContext) => {
     const match = allowed.find((t) => t.def.name === b.tool && (!b.ref || t.ref === b.ref))
     if (!match) return fail(c, 403, "tool not allowed for this run")
     try {
-      // Same per-connection routing as toolsForRun: the REF decides the implementation, so an
-      // MCP tool listed on the claim executes through the MCP broker rather than the plan's.
-      const result = await route(match.ref).execute({
-        ref: match.ref,
-        tool: b.tool,
-        args: b.args ?? {},
-      })
+      // Resolve the result by whichever path this connection uses, THEN stamp taint once for
+      // both. Keeping the direct branch's early return would have left it untainted — a run
+      // reading Gmail through a direct connection is every bit as externally-influenced as one
+      // reading it through a broker, and the gate would not have known.
+      let result: unknown
+      if (isDirect(match.kind)) {
+        // A direct connection has no vendor, so Derive executes it: the credential is resolved
+        // (decrypted, or minted from an install) and spent here. Either way the runner only
+        // ever sent a tool NAME — no credential has ever been near the executor.
+        if (!deps.encryptionKey) return fail(c, 502, "direct connections need an encryption key")
+        const cn = await meta.getConnection(match.connectionId)
+        if (!cn || cn.org_id !== agent.org_id) return fail(c, 404, "not found")
+        result = await executeHttpTool(meta, cn, b.tool, b.args ?? {}, deps.encryptionKey)
+      } else {
+        // Per-connection routing, same as toolsForRun: the REF decides the implementation, so an
+        // MCP tool listed on the claim executes through the MCP broker rather than the plan's.
+        result = await route(match.ref).execute({
+          ref: match.ref,
+          tool: b.tool,
+          args: b.args ?? {},
+        })
+      }
       // TAINT, stamped BEFORE the result is handed over. This run has now read data from an
       // outside system, so it can no longer live-publish (see decideWrite): its writes become
       // proposals a human approves. Recorded here rather than trusted from the executor,

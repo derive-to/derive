@@ -1,12 +1,18 @@
 import type { BrokerToolDef, ToolBroker } from "@derive/broker"
 import { makeBroker, refRouter } from "@derive/broker"
-import type { MetaStore } from "@derive/core"
+import type { ConnectionKind, ConnectionRecord, MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
+import { installationToken } from "./github-app"
 
-/** One tool a hosted run may call, paired with the connected-account ref it executes through. */
+/** One tool a hosted run may call, paired with the connected-account ref it executes through.
+ *  `kind` and `connectionId` are how the tool proxy routes the call without a second lookup;
+ *  the connection RECORD is deliberately not here — it carries secret_enc, and this struct
+ *  flows toward the claim response. */
 export interface RunTool {
   def: BrokerToolDef
   ref: string
+  kind: ConnectionKind
+  connectionId: string
 }
 
 /**
@@ -29,6 +35,15 @@ export const toolsForRun = async (
   if (connectionIds.length === 0) return []
   const conns = await meta.getConnectionsByIds(connectionIds)
   const active = conns.filter((cn) => cn.org_id === orgId && cn.status === "active")
+  // A personal connection acts as its owner, so it must not outlive them: an offboarded
+  // member's credential stops resolving on the next run, the same live-membership recheck
+  // a minted API token gets at spend time. Workspace connections are the org's and survive.
+  const owners = [...new Set(active.filter((cn) => cn.scope === "personal").map((c) => c.user_id))]
+  const seats = await Promise.all(
+    owners.map(async (uid) => [uid, await meta.getMembership(orgId, uid)] as const),
+  )
+  const stillMembers = new Set(seats.filter(([, seat]) => seat !== null).map(([uid]) => uid))
+  const usable = active.filter((cn) => cn.scope === "workspace" || stillMembers.has(cn.user_id))
   // Per-CONNECTION routing through ONE router: an `mcp:` ref reaches the MCP broker whatever the
   // workspace's broker plan is (it needs no vendor account at all), everything else keeps the
   // plan's broker. Sharing the router across this resolution is what lets the MCP client reuse
@@ -39,18 +54,165 @@ export const toolsForRun = async (
   // MCP server bound twice, a re-connect that kept the ref), and listing it twice is two extra
   // network round trips for a set of tools we already have.
   const seen = new Set<string>()
-  for (const cn of active) {
+  for (const cn of usable) {
     if (seen.has(cn.broker_ref)) continue
     seen.add(cn.broker_ref)
+    const entry = { ref: cn.broker_ref, kind: cn.kind, connectionId: cn.id }
+    // A direct connection has no vendor account, so its tools are ours to declare and
+    // ours to execute (see executeHttpTool); the broker is never asked about it.
+    //
     // One unreachable or hostile server must not take down the whole tool list: a run bound to
     // three connections still gets the other two, and sees the failure as a missing tool rather
     // than a failed claim.
-    const defs = await route(cn.broker_ref)
-      .toolsFor([cn.broker_ref])
-      .catch(() => [])
-    for (const def of defs) out.push({ def, ref: cn.broker_ref })
+    const defs = isDirect(cn.kind)
+      ? httpTools(cn.toolkit)
+      : await route(cn.broker_ref)
+          .toolsFor([cn.broker_ref])
+          .catch(() => [])
+    for (const def of defs) out.push({ def, ...entry })
   }
   return out
+}
+
+/** Kinds Derive authenticates and calls itself, rather than handing to the broker. They
+ *  differ only in where the bearer comes from (see bearerFor) — the HTTP call is identical.
+ *
+ *  Enumerated rather than `!== "oauth"`: this gates whether we spend a credential ourselves
+ *  and whether a revoke reaches a vendor, so a kind added later must fail into the broker
+ *  path (which refuses an unknown ref) instead of silently into ours. */
+const DIRECT_KINDS = new Set<ConnectionKind>(["secret", "github_app", "slack"])
+export const isDirect = (kind: ConnectionKind): boolean => DIRECT_KINDS.has(kind)
+
+/** The tools a direct connection exposes. Named `<toolkit>.<verb>` to match the broker's
+ *  convention, so the runner's shim treats every kind of connection identically. */
+export const httpTools = (toolkit: string): BrokerToolDef[] => [
+  {
+    name: `${toolkit}.get`,
+    description: `GET a path on the ${toolkit} API (authenticated server-side).`,
+    params: { path: { type: "string", description: "Path starting with /" } },
+  },
+  {
+    name: `${toolkit}.post`,
+    description: `POST JSON to a path on the ${toolkit} API (authenticated server-side).`,
+    params: { path: { type: "string" }, body: { type: "object" } },
+  },
+]
+
+/**
+ * The bearer for a direct connection, resolved at CALL time — never at bind time, and never
+ * stored on the RunTool. Each kind answers the same question from a different place:
+ *
+ *   secret      the pasted credential, decrypted here
+ *   github_app  a short-lived installation token, minted per call (cached ~1h) against the
+ *               App install that repo sync already uses — so nothing long-lived exists to leak
+ *   slack       the workspace's bot token from its existing install
+ *
+ * Throws when the underlying install is gone (uninstalled, revoked): the connection outlives
+ * its integration as a row, and this is where that surfaces as a refusal rather than a call
+ * with no credential.
+ */
+export const bearerFor = async (
+  meta: MetaStore,
+  cn: ConnectionRecord,
+  encryptionKey: string,
+): Promise<string> => {
+  if (cn.kind === "secret") {
+    if (!cn.secret_enc) throw new Error("secret connection is missing its secret")
+    return decryptSecret(cn.secret_enc, encryptionKey)
+  }
+  if (cn.kind === "github_app") {
+    const app = await meta.getGithubApp()
+    if (!app) throw new Error("the GitHub App is not configured on this instance")
+    return installationToken(
+      app.app_id,
+      decryptSecret(app.private_key, encryptionKey),
+      cn.broker_ref,
+    )
+  }
+  if (cn.kind === "slack") {
+    const install = await meta.getSlackInstall(cn.org_id)
+    if (!install) throw new Error("Slack is no longer connected to this workspace")
+    if (install.needs_reauth === 1) throw new Error("the Slack install needs to be reconnected")
+    return decryptSecret(install.bot_token, encryptionKey)
+  }
+  throw new Error(`connection kind ${cn.kind} has no direct credential`)
+}
+
+/**
+ * Execute one tool call for a direct connection: resolve the requested path under the
+ * connection's base_url, attach its bearer, return status + body. The caller has already
+ * verified the tool is on this run's least-privilege list.
+ *
+ * The path is attacker-influenced (it comes from the model, which may have read hostile
+ * content), so confinement is the load-bearing part: the credential must only ever be
+ * offered to the base it was registered for. Two things do that work — resolving as
+ * `.<path>` makes `..` climb out of the base instead of escaping the parser, and the
+ * containment check compares against base.href WITH its trailing slash, so a base of
+ * `/admin` cannot be satisfied by `/administrator` (a bare prefix test accepts it).
+ */
+export const executeHttpTool = async (
+  meta: MetaStore,
+  cn: ConnectionRecord,
+  tool: string,
+  args: unknown,
+  encryptionKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ status: number; body: unknown }> => {
+  if (!cn.base_url) throw new Error("connection is missing its base_url")
+  const a = (args ?? {}) as { path?: unknown; body?: unknown }
+  const path = typeof a.path === "string" ? a.path : ""
+  if (!path.startsWith("/")) throw new Error("path must start with /")
+  const base = new URL(`${cn.base_url}/`)
+  const url = new URL(`.${path}`, base)
+  if (!url.href.startsWith(base.href)) throw new Error("path escapes the connection's base_url")
+  const verb = tool.endsWith(".post") ? "POST" : "GET"
+  const res = await fetchImpl(url.href, {
+    method: verb,
+    headers: {
+      authorization: `Bearer ${await bearerFor(meta, cn, encryptionKey)}`,
+      ...(verb === "POST" ? { "content-type": "application/json" } : {}),
+    },
+    body: verb === "POST" ? JSON.stringify(a.body ?? {}) : undefined,
+    signal: AbortSignal.timeout(20_000),
+  })
+  const text = await res.text()
+  let body: unknown = text
+  try {
+    body = JSON.parse(text)
+  } catch {
+    // Non-JSON responses ride through as text.
+  }
+  return { status: res.status, body }
+}
+
+/**
+ * The bind-time policy for attaching connections to an automation or context. Returns the
+ * 400 message, or null when every id is attachable by this actor:
+ *   - the id exists and belongs to THIS workspace (never another tenant's);
+ *   - a workspace connection needs a managing actor — otherwise anyone who can write an
+ *     instruction holds the org's keys, and instructions are what agents edit;
+ *   - a personal connection binds only for its owner, since act-as-me is consensual.
+ * An actor with no user id (an agent principal acting for no one) can bind workspace
+ * connections when managing, and nobody's personal ones.
+ */
+export const connectionBindError = async (
+  meta: MetaStore,
+  orgId: string,
+  actor: { userId: string | null; canManage: boolean },
+  connectionIds: string[],
+): Promise<string | null> => {
+  if (connectionIds.length === 0) return null
+  const conns = await meta.getConnectionsByIds(connectionIds)
+  if (conns.length !== connectionIds.length || conns.some((cn) => cn.org_id !== orgId))
+    return "connections must exist in this workspace"
+  for (const cn of conns) {
+    if (cn.scope === "workspace") {
+      if (!actor.canManage) return `attaching workspace connection "${cn.toolkit}" needs manage`
+    } else if (!actor.userId || cn.user_id !== actor.userId) {
+      return `personal connection "${cn.toolkit}" can only be attached by its owner`
+    }
+  }
+  return null
 }
 
 /**

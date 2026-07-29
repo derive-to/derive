@@ -133,6 +133,8 @@ export interface paths {
                             /** @description Saved personal Brandprint (collection-only; the brand profile is workspace scope); null when cleared. */
                             brandprint: {
                                 collectionId?: string | null;
+                                /** @description False turns the workspace Brandprint off for this user; their personal collection still applies. Absent or true: the workspace layer applies. Personal scope only. */
+                                useWorkspaceBrandprint?: boolean;
                             } | null;
                         };
                     };
@@ -1463,6 +1465,8 @@ export interface paths {
                             listed: "none" | "workspace" | "public";
                             /** @description true when the world link is now password-locked. */
                             locked: boolean;
+                            /** @description Whether the anonymous public page shows version history. */
+                            public_history: boolean;
                         };
                     };
                 };
@@ -3918,7 +3922,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description The rework request was posted and landed in the agent's pull inbox. 409 needsAgent when no agent is registered; 409 needsBrandprint when no Brandprint resolves; 409 alreadyQueued while an earlier request for this artifact still waits. */
+                /** @description The rework request was posted and landed in the agent's pull inbox. 409 needsAgent when no agent is registered; 409 needsBrandprint when no Brandprint resolves; 409 brandprintDisabled when the caller turned the workspace Brandprint off in their settings; 409 alreadyQueued while an earlier request for this artifact still waits. */
                 201: {
                     headers: {
                         [name: string]: unknown;
@@ -5544,6 +5548,8 @@ export interface components {
             badge?: boolean;
             /** @description Open-thread count for the sign-in-to-comment pill; present only for anonymous callers on a link that grants commenting. */
             open_comment_count?: number;
+            /** @description Owner opt-in: the anonymous public page shows version history. When false, anonymous detail responses carry only the current version. */
+            public_history?: boolean;
             /** @description The artifact's workspace id; drives move-to-workspace. */
             org_id?: string;
             /** @description Signed, short-lived token for fetching raw content; detail responses only. */

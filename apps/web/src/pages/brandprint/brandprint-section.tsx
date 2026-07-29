@@ -24,6 +24,7 @@ import {
   SelectMenuTrigger,
 } from "@/components/ui/select-menu"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
@@ -36,6 +37,7 @@ import {
 } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { refFor } from "../artifact/parse-ref"
+import { nextPersonalBrandprint } from "./personal-brandprint"
 import {
   ensureProfilePlaceholder,
   type ImportResult,
@@ -127,8 +129,11 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
     scope === "workspace"
       ? (settings?.brandprint?.collectionId ?? "")
       : (me?.brandprint?.collectionId ?? "")
-  // The workspace's brand-profile pointer. The settings query is disabled on account
-  // scope, so this is always undefined there — no scope branch needed.
+  // The workspace's brand-profile pointer. The settings query never fetches on
+  // account scope, but it still reads the cache the workspace-scope section on this
+  // page fills (one shared key): the "Use workspace Brandprint" row below depends on
+  // that read, and a workspace profileId reaching account scope is benign (the
+  // import hook's account path ignores it; the doc list only hides that artifact).
   const profileId = settings?.brandprint?.profileId ?? undefined
 
   const updateWorkspace = useApiMutation({
@@ -166,8 +171,34 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
     success: "Brandprint updated",
   })
   const updateAccount = useApiMutation({
+    // A save must never drop a field it isn't changing. `setProfile` replaces the
+    // whole personal Brandprint object with no server-side merge, so the collection
+    // write merges through nextPersonalBrandprint (a bare { collectionId } would
+    // silently clear the workspace toggle below), which collapses to null only once
+    // nothing is left.
     mutationFn: (collectionId: string) =>
-      api.setProfile({ brandprint: collectionId ? { collectionId } : null }),
+      api.setProfile({
+        brandprint: nextPersonalBrandprint(me?.brandprint, {
+          collectionId: collectionId || undefined,
+        }),
+      }),
+    onSuccess: (r) => {
+      if (me) setMe({ ...me, brandprint: r.brandprint })
+    },
+    success: "Brandprint updated",
+  })
+  // The personal "use workspace Brandprint" switch: off suppresses the workspace
+  // layer for this user while their own personal collection (above) still applies.
+  // Same merge-preserving save and setMe mirroring as updateAccount, just patching
+  // the toggle field instead of the collection pointer.
+  const toggleWorkspace = useApiMutation({
+    mutationFn: (on: boolean) =>
+      api.setProfile({
+        brandprint: nextPersonalBrandprint(me?.brandprint, {
+          // Write undefined (not true) so "on" stores nothing: absent means on.
+          useWorkspaceBrandprint: on ? undefined : false,
+        }),
+      }),
     onSuccess: (r) => {
       if (me) setMe({ ...me, brandprint: r.brandprint })
     },
@@ -271,7 +302,9 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
   const disabled =
     !ready ||
     importDocs.isPending ||
-    (scope === "workspace" ? !isAdmin || updateWorkspace.isPending : updateAccount.isPending)
+    (scope === "workspace"
+      ? !isAdmin || updateWorkspace.isPending
+      : updateAccount.isPending || toggleWorkspace.isPending)
   const save = (next: string) =>
     scope === "workspace" ? updateWorkspace.mutate(next) : updateAccount.mutate(next)
   const selected = collections?.find((c) => c.id === collectionId)?.title
@@ -494,6 +527,22 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
           </Dialog>
         </SettingRow>
       )}
+      {scope === "account" &&
+        (settings?.brandprint?.collectionId || settings?.brandprint?.profileId) && (
+          <SettingRow
+            htmlFor="brandprint-workspace-toggle"
+            label="Use workspace Brandprint"
+            description="Off: your agents skip this workspace's style and profile. Your personal conventions above still apply."
+          >
+            <Switch
+              id="brandprint-workspace-toggle"
+              data-testid="brandprint-workspace-toggle"
+              checked={me?.brandprint?.useWorkspaceBrandprint !== false}
+              disabled={disabled}
+              onCheckedChange={(on) => toggleWorkspace.mutate(on)}
+            />
+          </SettingRow>
+        )}
     </SettingsGroup>
   )
 }

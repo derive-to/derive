@@ -116,6 +116,12 @@ async function buildServer(
   // clamps list_workspaces + the `workspace` arg + cross-workspace read to
   // exactly those: workspaces outside the grant are invisible and unreachable.
   boundWorkspaces: string[],
+  // The OAuth client behind this connection ("" for a registered dk_agt_ token).
+  // Recorded into tokens minted by `stage target:'api'` as their provenance.
+  clientId: string,
+  // This connection is itself authenticated by a minted dkapi_ token — the mint
+  // refuses to chain off one (it would renew its own TTL indefinitely).
+  mintedToken: boolean,
 ): Promise<McpServer> {
   // The always-loaded CORE SKILLS index: one line per skill (name — summary — read
   // derive://skills/<name>), kept in lockstep with the skill bodies by iterating the
@@ -165,6 +171,17 @@ async function buildServer(
   const server = new McpServer(
     { name: "derive", version: "1.0.0" },
     {
+      // Advertise that this server's tool list can CHANGE. Clients cache the surface at
+      // connect, so a capability shipped afterwards is invisible — and worse, unusable:
+      // the client validates arguments against its cached schema and refuses before the
+      // request is ever sent (a new enum value never reaches us). Declaring listChanged
+      // is the protocol's own answer and costs nothing. It is not the WHOLE answer here,
+      // because this server is stateless — a fresh instance per request — so it can never
+      // wake an idle client. Hence the other two halves: the growth-prone discriminators
+      // validate server-side rather than by enum (so a stale client's argument still
+      // arrives), and list_workspaces reports the live surface (so staleness is
+      // diagnosable instead of looking like a missing feature).
+      capabilities: { tools: { listChanged: true } },
       // High-level ORIENTATION, not a manual (SOTA per the MCP spec's "hint" framing and
       // GitHub/Goose/Cline/Codex: identity first, capability pointers second, procedure
       // deferred). Carries only what no single tool description conveys — identity, the loop
@@ -355,6 +372,8 @@ async function buildServer(
     scopeForCap,
     registered,
     boundWorkspaces,
+    clientId,
+    mintedToken,
     defaultOrg,
     defaultRole,
     pendingRequests,
@@ -362,22 +381,30 @@ async function buildServer(
     profileArt,
   }
   const tc = makeToolContext(base)
-  // Capture every tool as it registers, so derive_code can invoke them BY NAME without any of
-  // the eleven tool modules knowing it exists. Wrapping the registrar rather than maintaining a
-  // second list is what keeps the two from drifting: a tool added tomorrow is reachable from
-  // code the moment it registers, with nothing to remember.
+  // The LIVE tool surface, captured as each tool registers, in two shapes because two
+  // callers need different things from it. Wrapping the registrar rather than maintaining a
+  // second list is what keeps them from drifting: a tool added tomorrow appears in both the
+  // moment it registers, with nothing to remember.
+  //
+  // `registry` maps name -> handler so derive_code can invoke a tool BY NAME without any of
+  // the tool modules knowing it exists. `toolNames` is the answer to "is my cached tool list
+  // stale?" — which only means anything if it reflects what the server actually serves, so a
+  // hand-kept list would eventually lie about the very thing it reports on.
   const registry = new Map<string, (input: Record<string, unknown>) => Promise<unknown>>()
+  const toolNames = new Set<string>()
   const originalRegister = server.registerTool.bind(server)
   server.registerTool = ((
     name: string,
     config: Parameters<typeof originalRegister>[1],
-    handler: (input: Record<string, unknown>) => Promise<unknown>,
+    handler: Parameters<typeof originalRegister>[2],
   ) => {
-    registry.set(name, handler)
-    return originalRegister(name, config, handler as never)
+    registry.set(name, handler as (input: Record<string, unknown>) => Promise<unknown>)
+    toolNames.add(name)
+    return originalRegister(name, config, handler)
   }) as typeof server.registerTool
 
-  registerListWorkspacesTool(tc)
+  // Read at CALL time (every tool has registered by then), never at registration time.
+  registerListWorkspacesTool(tc, () => [...toolNames].sort())
   registerFindTool(tc)
   registerReadTool(tc)
   registerOrganizeTool(tc)
@@ -422,6 +449,10 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
     const grant = await ctx.oauthGrant(c)
     const scopeForCap = grant?.scopeRole ?? agent.role
     const boundWorkspaces = grant?.boundWorkspaces ?? []
+    // A minted dkapi_ bearer resolves to the same principal shape as its grant, so the
+    // mint has to be told explicitly not to run off one (self-renewal — see
+    // isMintedApiToken).
+    const mintedToken = ctx.isMintedApiToken(c)
     const server = await buildServer(
       ctx,
       agent,
@@ -430,6 +461,8 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
       scopeForCap,
       !grant,
       boundWorkspaces,
+      grant?.clientId ?? "",
+      mintedToken,
     )
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)

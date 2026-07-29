@@ -1285,6 +1285,21 @@ export function runStoreContract(
       })
       expect((await store.getByShortId(a.short_id))?.first_foreign_view_at).toBe(stamped)
     })
+
+    it("flips public_history (off by default) without touching access", async () => {
+      const a = await store.createArtifact(newArtifact())
+      expect((await store.getByShortId(a.short_id))?.public_history).toBeFalsy()
+
+      await store.setPublicHistory(a.id, 1)
+      const on = await store.getByShortId(a.short_id)
+      expect(on?.public_history).toBe(1)
+      // The flag rides alone — the access triple is untouched.
+      expect(on?.workspace_access).toBe(a.workspace_access)
+      expect(on?.link_role).toBe(a.link_role)
+
+      await store.setPublicHistory(a.id, 0)
+      expect((await store.getByShortId(a.short_id))?.public_history).toBeFalsy()
+    })
   })
 
   describe(`${label}: webhooks + outbox`, () => {

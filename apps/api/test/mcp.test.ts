@@ -38,7 +38,7 @@ function appWithGrant(
   const meta = new SqliteMetaStore(path)
   const db = new Database(path)
   db.exec(`
-    CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT);
+    CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT, brandprint TEXT);
     CREATE TABLE IF NOT EXISTS "oauthClient" (clientId TEXT PRIMARY KEY, name TEXT);
     CREATE TABLE IF NOT EXISTS "oauthAccessToken" (token TEXT PRIMARY KEY, clientId TEXT, userId TEXT, scopes TEXT, expiresAt TEXT);
   `)
@@ -634,6 +634,61 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(
       toolText(await call(app, token, "read", { short_id: "derive://brandprint/profile" })),
     ).toContain("no live brand profile")
+  })
+
+  it("a caller whose personal toggle is off gets no workspace Brandprint resources, only their own", async () => {
+    const { app, token, meta } = appWithGrant("bp-toggle-off", "openid derive:read derive:publish")
+    // The workspace has a Brandprint: a convention doc plus a brand profile.
+    const wsDocId = (await (await publish(app, token, "Workspace conventions")).json()).short_id
+    const profId = (await (await publish(app, token, "Brand profile")).json()).short_id
+    const wsDoc = await meta.getByShortId(wsDocId)
+    const prof = await meta.getByShortId(profId)
+    if (!wsDoc || !prof) throw new Error("no artifacts")
+    const wsCollectionId = "col_bp_toggle_ws"
+    await meta.createCollection({
+      id: wsCollectionId,
+      org_id: wsDoc.org_id,
+      title: "Brandprint",
+      created_by: "u_o",
+    })
+    await meta.addCollectionItem(wsCollectionId, wsDoc.id)
+    await meta.addCollectionItem(wsCollectionId, prof.id)
+    await meta.setOrgSettings(wsDoc.org_id, {
+      ...(await meta.getOrgSettings(wsDoc.org_id)),
+      brandprint: { collectionId: wsCollectionId, profileId: profId },
+    })
+
+    // The grant's owner (u_o) keeps their own personal collection but turns the
+    // workspace layer off: the same store-level shape /v1/me/profile persists,
+    // seeded directly since this app has no session auth wired up.
+    const personalDocId = (await (await publish(app, token, "My own conventions")).json()).short_id
+    const personalDoc = await meta.getByShortId(personalDocId)
+    if (!personalDoc) throw new Error("no artifact")
+    const personalCollectionId = "col_bp_toggle_personal"
+    await meta.createCollection({
+      id: personalCollectionId,
+      org_id: personalDoc.org_id,
+      title: "My Brandprint",
+      created_by: "u_o",
+    })
+    await meta.addCollectionItem(personalCollectionId, personalDoc.id)
+    await meta.setUserProfile("u_o", {
+      brandprint: JSON.stringify({
+        collectionId: personalCollectionId,
+        useWorkspaceBrandprint: false,
+      }),
+    })
+
+    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
+    const uris = (
+      (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
+    ).map((r) => r.uri)
+    // No workspace doc, no profile: the toggle suppressed the workspace layer wholesale.
+    expect(uris).not.toContain(`derive://brandprint/${wsDocId}`)
+    expect(uris).not.toContain("derive://brandprint/profile")
+    expect(uris).not.toContain(`derive://brandprint/${profId}`)
+    // The personal collection's own doc still appears; it's the caller's own opt-in.
+    expect(uris).toContain(`derive://brandprint/${personalDocId}`)
   })
 
   it("publish to derive://brandprint/profile scaffolds the slot, is idempotent, and the loop goes live", async () => {
