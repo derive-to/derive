@@ -63,6 +63,11 @@ export function ArtifactTopBar(props: {
   locked: boolean
   /** Owner-only: may move this artifact to a different workspace. */
   canMove: boolean
+  /** BETA: automations are off per workspace. Hidden rather than shown-and-refused, since the
+   *  routes 404 either way and a visible item would only offer an action that cannot work.
+   *  Passed down rather than queried here: the page already reads workspace settings for the Chat
+   *  tab, so both gates come from one fetch. */
+  automateBeta: boolean
   onFavorite: (fav: boolean) => void
   onTags: (tags: string[]) => void
   onCollections: (ids: string[]) => void
@@ -202,7 +207,7 @@ export function ArtifactTopBar(props: {
                 <Icon name="move" size={16} /> Move to workspace…
               </DropdownMenuItem>
             )}
-            {props.canMove && (
+            {props.canMove && props.automateBeta && (
               <DropdownMenuItem
                 data-testid="artifact-automate"
                 onSelect={() => setAutomateOpen(true)}

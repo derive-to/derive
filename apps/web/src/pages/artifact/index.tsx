@@ -160,8 +160,10 @@ export function Artifact() {
   const [rail, setRail] = useState<"comments" | "chat">("comments")
   // BETA: chat only renders where the workspace has opted in. The server refuses too —
   // this just avoids showing a tab that would 404 (see the chat-session route).
-  const chatBeta =
-    useQuery({ ...workspaceSettingsQuery(), staleTime: 60_000 }).data?.chatBeta === true
+  const settings = useQuery({ ...workspaceSettingsQuery(), staleTime: 60_000 }).data
+  const chatBeta = settings?.chatBeta === true
+  // Automations are BETA the same way, read from the same fetch.
+  const automateBeta = settings?.automateBeta === true
   const chat = useArtifactChat(shortId)
   const [composer, setComposer] = useState<ComposerState>(null)
   const [activeThread, setActiveThread] = useState<string | null>(null)
@@ -723,6 +725,7 @@ export function Artifact() {
               isDeck={!!deck || art.current_content_type === "text/x-derive-deck"}
               canLock={canLock}
               canMove={canMove}
+              automateBeta={automateBeta}
               locked={isLocked}
               onPresent={toggleFullscreen}
               onLockToggle={() => lockMut.mutate(!isLocked)}
