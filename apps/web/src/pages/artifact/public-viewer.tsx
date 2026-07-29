@@ -5,12 +5,19 @@ import type { Artifact, Viewer } from "@/api"
 import { Icon } from "@/components/icons"
 import { Logo } from "@/components/shared/logo"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { artifactTypeLabel } from "@/lib/artifact"
 import { stampSrc } from "@/lib/src-stamp"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { FloatingControl } from "./floating-control"
 import { commentNudgeCopy, shouldPromptSignInToComment } from "./lib/comment-access"
+import { refFor } from "./parse-ref"
 import { Presence } from "./rail-deck"
 
 // Backdrop texture for the anon comments panel — the marketing site's "chats
@@ -40,6 +47,7 @@ const GHOST_COMMENTS = [
 // as `children`.
 export function PublicViewer({
   art,
+  shown,
   returnTo,
   viewers,
   selfId,
@@ -47,6 +55,8 @@ export function PublicViewer({
   children,
 }: {
   art: Artifact
+  /** The version being rendered (an @vN link may pin one behind current). */
+  shown: number
   /** The current /artifacts/<ref> path, so Sign in returns here afterward. */
   returnTo: string
   viewers: Viewer[]
@@ -65,6 +75,8 @@ export function PublicViewer({
   const nudge = shouldPromptSignInToComment(art.link_role, !!art.removed)
   const copy = commentNudgeCopy(art.open_comment_count)
   const [nudgeOpen, setNudgeOpen] = useState(false)
+  // Base ref for the version menu's links (current = bare, past = @vN).
+  const baseRef = refFor({ short_id: art.short_id, title: art.title })
 
   return (
     <div data-artifact-view className="flex min-h-0 flex-1 flex-col bg-background">
@@ -105,7 +117,48 @@ export function PublicViewer({
               ) : (
                 <>by {authorName} · </>
               ))}
-            {artifactTypeLabel(art)} · v{art.current_version}
+            {artifactTypeLabel(art)} ·{" "}
+            {/* With public history on, the version reads as a menu: every version,
+                one line each, navigating the @vN refs the router already serves.
+                Off (or a single version), it stays the inert text it always was. */}
+            {art.public_history && (art.versions?.length ?? 0) > 1 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  data-testid="public-version-menu"
+                  className="rounded-sm text-foreground underline decoration-dotted underline-offset-2 outline-none hover:decoration-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                >
+                  v{shown} ▾
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="max-w-[420px]">
+                  {[...(art.versions ?? [])].reverse().map((v) => (
+                    <DropdownMenuItem key={v.n} asChild data-testid={`public-version-${v.n}`}>
+                      <Link
+                        to="/artifacts/$ref"
+                        params={{
+                          ref: v.n === art.current_version ? baseRef : `${baseRef}@v${v.n}`,
+                        }}
+                        className="flex w-full min-w-0 items-baseline gap-2 font-mono text-xs"
+                      >
+                        <span className={cn("shrink-0", v.n === shown && "font-semibold")}>
+                          v{v.n}
+                        </span>
+                        <span className="shrink-0 text-muted-foreground">
+                          {v.created_at ? ago(v.created_at) : ""}
+                        </span>
+                        {v.author && (
+                          <span className="shrink-0 text-muted-foreground">· {v.author}</span>
+                        )}
+                        {v.message && (
+                          <span className="truncate text-muted-foreground">· {v.message}</span>
+                        )}
+                      </Link>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <>v{shown}</>
+            )}
             {art.updated_at ? ` · ${ago(art.updated_at)}` : ""}
           </div>
         </div>

@@ -354,6 +354,10 @@ export class PgMetaStore implements MetaStore {
     await this.db.update(artifact).set({ locked }).where(eq(artifact.id, artifactId))
   }
 
+  async setPublicHistory(artifactId: string, on: 0 | 1): Promise<void> {
+    await this.db.update(artifact).set({ public_history: on }).where(eq(artifact.id, artifactId))
+  }
+
   async getByShortId(shortId: string): Promise<ArtifactRecord | null> {
     const rows = await this.db.select().from(artifact).where(eq(artifact.short_id, shortId))
     return rows[0] ?? null

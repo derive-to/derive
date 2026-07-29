@@ -441,6 +441,14 @@ export function Artifact() {
     )
 
   const shown = version ?? art.current_version
+  // The public-history gate, client half: an anonymous @vN link on an artifact whose
+  // owner kept history private is a 404, not a downgrade — the server already
+  // refuses the old version's bytes (raw.ts), so render the same not-found the
+  // hand-typed-id case gets rather than a broken frame. Only once auth has
+  // SETTLED anonymous: while it loads, `me` is null for signed-in users too,
+  // and they must not flash a not-found for a version they can see.
+  if (!loading && !me && shown !== art.current_version && !art.public_history)
+    return <ArtifactNotFound onBack={() => nav({ to: "/" })} />
   const editable = art.kind === "file" && shown === art.current_version
   // The `t/:raw_token` segment is the sandboxed iframe's own proof of access: it has no
   // `allow-same-origin` (by design — the content must never touch our cookies/storage),
@@ -558,6 +566,7 @@ export function Artifact() {
       onDeckPrev={() => deckCmd("prev")}
       onDeckNext={() => deckCmd("next")}
       onFullscreen={toggleFullscreen}
+      anonView={isAnon}
     />
   )
 
@@ -569,6 +578,7 @@ export function Artifact() {
     return (
       <PublicViewer
         art={art}
+        shown={shown}
         returnTo={`/artifacts/${ref}`}
         viewers={live.viewers}
         selfId={guestPresenceId()}
@@ -680,6 +690,7 @@ export function Artifact() {
               linkRole={art.link_role}
               listed={art.listed}
               passwordProtected={!!art.password_protected}
+              publicHistory={!!art.public_history}
               favorite={!!art.favorite}
               tags={art.tags ?? []}
               collections={art.collections ?? []}

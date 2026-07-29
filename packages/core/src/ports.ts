@@ -137,6 +137,10 @@ export interface ArtifactRecord {
    *  stamps it once; owner self-views were already excluded upstream). Null until
    *  someone else has actually seen the work. */
   first_foreign_view_at: string | null
+  /** Owner opt-in: the ANONYMOUS public page shows version history (dropdown + old
+   *  versions). Falsy = anon sees the current version only; signed-in readers always
+   *  keep workbench history (auth is the gate, like comments). */
+  public_history: 0 | 1 | null
   /** For a GitHub-synced artifact: its path within the repo (e.g. "docs/plans/foo.md").
    *  The structural "location" — drives the folder/tree view — kept distinct from the
    *  human `title`. Null for artifacts not mirrored from a repo. */
@@ -325,6 +329,8 @@ export interface ArtifactStore {
   ): Promise<void>
   /** Toggle the change-lock: when locked, direct publishes are rejected. */
   setLocked(artifactId: string, locked: 0 | 1): Promise<void>
+  /** Owner opt-in: the anonymous public page shows version history. */
+  setPublicHistory(artifactId: string, on: 0 | 1): Promise<void>
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
   /** Load an artifact by its internal id (used by domain mode's host lookup). */
   getArtifactById(id: string): Promise<ArtifactRecord | null>

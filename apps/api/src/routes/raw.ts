@@ -17,8 +17,18 @@ const RAW_TOKEN_MAX_AGE_MS = 5 * 60 * 1000
 /** The sandbox: raw artifact + proposal bytes under /raw/*. Served with an
  *  opaque-origin CSP; a proposal renders exactly like the live version will. */
 export const rawRoutes = (ctx: AppContext) => {
-  const { meta, blobs, deps, authorize, background } = ctx
+  const { meta, blobs, deps, authorize, actorFor, background } = ctx
   const app = new Hono()
+
+  // The public-history gate: unless the owner opted the public page into history,
+  // an anonymous caller reads only the CURRENT version — an old version's bytes are
+  // as hidden as the workbench that lists them. Applies to the viewer entry points
+  // (cookie + raw_token) only: the preview route's token is a server-minted
+  // capability for exactly one artifact+version, and proposals aren't versions.
+  const anonHistoryBlocked = async (c: Context, artifact: ArtifactRecord, n: number) =>
+    n !== artifact.current_version &&
+    !artifact.public_history &&
+    (await actorFor(c, artifact)).kind === "anon"
 
   // The comment-anchor client, referenced by URL from artifact HTML. Artifact
   // pages are cached immutable; this is cached short so the client can evolve
@@ -84,6 +94,7 @@ export const rawRoutes = (ctx: AppContext) => {
     )
     const ok = claim?.rid === artifact.id || (await authorize(c, "read", artifact))
     if (!ok) return c.text("not found", 404)
+    if (await anonHistoryBlocked(c, artifact, n)) return c.text("not found", 404)
     return serveVersion(
       c,
       artifact,
@@ -132,6 +143,7 @@ export const rawRoutes = (ctx: AppContext) => {
     const artifact = await meta.getByShortId(shortId)
     if (!artifact || !Number.isInteger(n)) return c.text("not found", 404)
     if (!(await authorize(c, "read", artifact))) return c.text("not found", 404)
+    if (await anonHistoryBlocked(c, artifact, n)) return c.text("not found", 404)
     return serveVersion(c, artifact, n, `/raw/${shortId}/v/${c.req.param("n")}/`)
   })
 

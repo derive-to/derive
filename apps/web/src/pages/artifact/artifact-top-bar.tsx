@@ -41,6 +41,7 @@ export function ArtifactTopBar(props: {
   linkRole?: LinkRole
   listed?: Listed
   passwordProtected?: boolean
+  publicHistory?: boolean
   favorite: boolean
   tags: string[]
   collections: string[]
@@ -96,6 +97,7 @@ export function ArtifactTopBar(props: {
           linkRole={props.linkRole}
           listed={props.listed}
           passwordProtected={props.passwordProtected}
+          publicHistory={props.publicHistory}
           collectionAccess={props.collectionAccess}
         />
         <StarButton shortId={shortId} favorite={props.favorite} onChange={props.onFavorite} />

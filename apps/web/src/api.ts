@@ -613,12 +613,15 @@ export const api = {
       linkRole?: LinkRole
       listed?: Listed
       password?: string
+      /** Owner opt-in: the anonymous public page shows version history. */
+      publicHistory?: boolean
     },
   ): Promise<{
     workspace_access: WorkspaceAccess
     link_role: LinkRole
     listed: Listed
     locked: boolean
+    public_history: boolean
   }> =>
     f(`/v1/artifacts/${id}/access`, {
       ...opts(access),

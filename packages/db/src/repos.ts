@@ -524,6 +524,10 @@ export function makeRepos(db: SqliteDb) {
     await db.update(artifact).set({ locked }).where(eq(artifact.id, artifactId)).run()
   }
 
+  const setPublicHistory = async (artifactId: string, on: 0 | 1): Promise<void> => {
+    await db.update(artifact).set({ public_history: on }).where(eq(artifact.id, artifactId)).run()
+  }
+
   const getVersion = async (artifactId: string, n: number): Promise<VersionRecord | null> =>
     (await db
       .select()
@@ -3526,6 +3530,7 @@ export function makeRepos(db: SqliteDb) {
     createArtifact,
     setAccess,
     setLocked,
+    setPublicHistory,
     getByShortId,
     getArtifactById,
     getArtifactsByIds,

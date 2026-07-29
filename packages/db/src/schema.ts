@@ -85,6 +85,11 @@ export const artifact = sqliteTable("artifact", {
   // When the first non-author view landed (recordView stamps it once — the
   // activation moment). Nullable, no default, so it ALTER ADDs cleanly.
   first_foreign_view_at: text("first_foreign_view_at"),
+  // Owner opt-in: the ANONYMOUS public page shows version history (dropdown +
+  // old-version reads). Off, anon callers get the current version only — signed-in
+  // readers always keep workbench history (auth is the gate, like comments).
+  // Nullable (null = off), no default, so it ALTER ADDs cleanly.
+  public_history: integer("public_history").$type<0 | 1>(),
   source_path: text("source_path"),
   // The CURRENT (last) author, denormalized from the latest version row for the list
   // view + author filtering. For a GitHub-synced artifact these mirror the last commit's

@@ -1290,7 +1290,16 @@ export const artifactRoutes = (ctx: AppContext) => {
           removed: true,
           managed: false,
         })
-      const versions = await meta.listVersions(artifact.id)
+      const allVersions = await meta.listVersions(artifact.id)
+      // The public-history gate: unless the owner opted the public page in, an
+      // anonymous caller's history collapses to the current version — the payload
+      // must not leak what the page won't show (version messages and author names
+      // are workbench material). Everything below (versions, sessions, bylines)
+      // derives from this list, so trimming here keeps the response consistent.
+      const versions =
+        actor.kind === "anon" && !artifact.public_history
+          ? allVersions.filter((v) => v.n === artifact.current_version)
+          : allVersions
       const me = actor.kind === "user" ? actor.userId : null
       const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
       const favorite = me ? (await meta.listUserFavoriteIds(me)).includes(artifact.id) : false
@@ -1422,6 +1431,10 @@ export const artifactRoutes = (ctx: AppContext) => {
         // only for white-label workspaces; the viewer reads this single boolean so
         // workspace settings never travel to anonymous clients.
         badge: !(await meta.getOrgSettings(artifact.org_id)).whiteLabel,
+        // Owner opt-in: the anonymous public page shows version history. The
+        // client uses it to render the byline dropdown; the server enforces it
+        // above (trimmed versions) and in raw.ts (old-version bytes).
+        public_history: !!artifact.public_history,
         // Open-thread count for the public viewer's sign-in-to-comment pill. Anon
         // never sees comment bodies (collaboration, not content — see comments.ts),
         // so the count is the one bit that crosses; it crosses only where the pill
@@ -1496,6 +1509,9 @@ export const artifactRoutes = (ctx: AppContext) => {
                   .enum(["none", "workspace", "public"])
                   .describe("New discovery listing: nowhere, the workspace, or public."),
                 locked: z.boolean().describe("true when the world link is now password-locked."),
+                public_history: z
+                  .boolean()
+                  .describe("Whether the anonymous public page shows version history."),
               }),
             },
           },
@@ -1513,6 +1529,10 @@ export const artifactRoutes = (ctx: AppContext) => {
           linkRole: z.enum(["none", "viewer", "commenter", "editor"]).optional(),
           listed: z.enum(["none", "workspace", "public"]).optional(),
           password: z.string().optional(),
+          // Owner opt-in: the anonymous public page shows version history.
+          // Omitted preserves; rides this route because it's a disclosure
+          // control like the triple, applied by the same dialog.
+          publicHistory: z.boolean().optional(),
           // Legacy wire (pre-v2 clients): `visibility` maps onto the triple, `generalRole`
           // is the old spelling of the world link role.
           visibility: z.string().optional(),
@@ -1544,11 +1564,15 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (b.visibility === "password" && !passwordHash)
         return bail(fail(c, 400, "a password is required for password visibility"))
       await meta.setAccess(artifact.id, workspaceAccess, listed, linkRole, passwordHash)
+      const publicHistory = b.publicHistory ?? !!artifact.public_history
+      if (b.publicHistory !== undefined)
+        await meta.setPublicHistory(artifact.id, b.publicHistory ? 1 : 0)
       return c.json({
         workspace_access: workspaceAccess,
         link_role: linkRole,
         listed,
         locked: !!passwordHash,
+        public_history: publicHistory,
       })
     },
   )
