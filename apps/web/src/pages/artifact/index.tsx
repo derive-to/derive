@@ -823,11 +823,8 @@ export function Artifact() {
                 chatBeta={chatBeta}
                 chatPanel={
                   <ArtifactChat
-                    shortId={shortId}
-                    sessionId={chat.sessionId}
                     messages={chat.messages}
                     working={chat.working}
-                    loading={chat.loading}
                     disabledReason={chat.error ?? undefined}
                     onSend={(b) => chat.send(b, effectiveCanPublish)}
                     onPoll={chat.poll}

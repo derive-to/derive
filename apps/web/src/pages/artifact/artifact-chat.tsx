@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
@@ -28,20 +27,16 @@ export interface ChatMessage {
 const POLL_MS = 900
 
 export function ArtifactChat(props: {
-  shortId: string
-  /** Null until a session exists for this document; opening one is the first send. */
-  sessionId: string | null
   messages: ChatMessage[]
   /** True while the agent owes a reply — drives the thinking row and the poll. */
   working: boolean
-  loading: boolean
   disabled?: boolean
   /** Why chat cannot be used, when it cannot (no model configured, no permission). */
   disabledReason?: string
   onSend: (body: string) => Promise<void>
   onPoll: () => void
 }) {
-  const { messages, working, loading, disabled, disabledReason, onSend, onPoll } = props
+  const { messages, working, disabled, disabledReason, onSend, onPoll } = props
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
   const endRef = useRef<HTMLDivElement | null>(null)
@@ -77,12 +72,7 @@ export function ArtifactChat(props: {
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="artifact-chat">
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        {loading ? (
-          <div className="space-y-3">
-            <Skeleton className="h-12 w-4/5" />
-            <Skeleton className="ml-auto h-12 w-3/5" />
-          </div>
-        ) : messages.length === 0 ? (
+        {messages.length === 0 ? (
           <EmptyState
             icon={<Icon name="sparkles" />}
             title="Chat with this document"

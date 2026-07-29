@@ -27,7 +27,6 @@ export function useArtifactChat(shortId: string) {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [state, setState] = useState<string>("answered")
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async (id: string) => {
@@ -107,15 +106,12 @@ export function useArtifactChat(shortId: string) {
   }, [sessionId, refresh])
 
   return {
-    sessionId,
     messages,
     // `working` is the server's own view of whose turn it is, not a local flag that can
     // desync — a reload mid-turn still shows the spinner because the SESSION says working.
     working: state === "working" || state === "open",
-    loading,
     error,
     send,
     poll,
-    setLoading,
   }
 }

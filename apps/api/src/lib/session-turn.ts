@@ -167,13 +167,10 @@ const land = async (
     // which the asker can already see. Taint returns the moment a turn can call a tool.
     tainted: false,
   })
-  if (decision === "shadow")
-    return {
-      reply: revision.message || "Done (shadow mode: nothing was written).",
-      outcome: "answered",
-      wrote: null,
-      costMicroUsd: toMicroUsd(cost),
-    }
+  // No `shadow` branch: `autonomy` here is only ever `auto` or `suggest` (derived from the
+  // subject's mode), and decideWrite returns `shadow` only for autonomy `shadow`. Shadow is an
+  // unattended-run concept — filing nothing at all makes no sense when someone is waiting for
+  // a reply — so the case is unreachable rather than unhandled.
 
   const bytes = new TextEncoder().encode(revision.content)
   const blobKey = await deps.blobs.put(bytes)
