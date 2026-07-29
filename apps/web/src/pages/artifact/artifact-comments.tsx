@@ -27,6 +27,9 @@ import {
 export function ArtifactComments(p: {
   shortId: string
   isMobile: boolean
+  /** Phones show ONE bottom sheet at a time; when the rail is on Chat, the chat sheet
+   *  owns that space and this one stands down rather than stacking two sheets. */
+  suppressMobileSheet?: boolean
   isAnon: boolean
   /** May the caller create comments here (commenter+)? Gates every write affordance;
    *  reading stays open to any authenticated viewer. */
@@ -164,7 +167,7 @@ export function ArtifactComments(p: {
         {/* Phones: comments live in a slide-up sheet that takes the bottom half, so
           the document stays visible above it. Tapping a quote scrolls the visible
           document to the highlight without closing the sheet. */}
-        {isMobile && !isAnon && (
+        {isMobile && !isAnon && !p.suppressMobileSheet && (
           <MobileComments
             open={panel === "open"}
             openThreads={p.openThreads}

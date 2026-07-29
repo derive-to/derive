@@ -734,6 +734,30 @@ export function Artifact() {
         {/* The split row lives BELOW the full-width bar: the document stage on
                 the left, the comments aside on the right, so the panel slides in
                 under the toolbar rather than beside it. */}
+        {/* Phones get the same two conversations, but as ONE bottom sheet at a time rather
+            than a side rail there is no room for. The tab bar docks above the sheet so
+            switching is a thumb-reach away, and the document above stays live either way. */}
+        {isMobile && !isAnon && !focus && (
+          <div className="fixed inset-x-0 bottom-0 z-40 flex flex-col">
+            {rail === "chat" && (
+              <div className="flex h-[55vh] flex-col border-t border-border bg-background">
+                <ArtifactChat
+                  shortId={shortId}
+                  sessionId={chat.sessionId}
+                  messages={chat.messages}
+                  working={chat.working}
+                  loading={chat.loading}
+                  disabledReason={chat.error ?? undefined}
+                  onSend={(b) => chat.send(b, effectiveCanPublish)}
+                  onPoll={chat.poll}
+                />
+              </div>
+            )}
+            <div className="flex items-center justify-center gap-1 border-t border-border bg-background px-2 py-1.5 pb-[env(safe-area-inset-bottom)]">
+              <RailTabs tab={rail} commentCount={openCount} onTab={setRail} />
+            </div>
+          </div>
+        )}
         {/* `relative` so the rail's tab strip anchors HERE, below the toolbar, rather than
             resolving to a further ancestor and overlapping the workbench buttons. */}
         <div className="relative flex min-h-0 flex-1">
@@ -839,6 +863,7 @@ export function Artifact() {
                 </aside>
               ) : (
                 <ArtifactComments
+                  suppressMobileSheet={rail === "chat"}
                   shortId={shortId}
                   isMobile={isMobile}
                   isAnon={isAnon}
