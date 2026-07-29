@@ -267,6 +267,9 @@ zone_name = "derive.page"
 # Cross-instance realtime fan-out uses the ArtifactRoom Durable Object (one room
 # per channel).
 [vars]
+# Automations execute in the isolate (model + fetch), no container. Which workspaces may use
+# them is the per-workspace `automateBeta` setting, not this.
+DERIVE_LOOP_RUNS = "1"
 # DERIVE_SUPERADMIN_EMAILS (operator allow-list) is optional;
 # DERIVE_AUTH_SECRET is a secret (`wrangler secret put`). Workspaces are always multi.
 #

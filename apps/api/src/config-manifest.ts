@@ -319,12 +319,6 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "1",
   },
   {
-    name: "DERIVE_LOOP_MODEL",
-    group: "advanced",
-    doc: "Model id for DERIVE_LOOP_RUNS. Unset uses the built-in default. The KEY is never read\nfrom the environment — each run resolves its own credential through the payer chain\n(initiator, owner-lend, workspace pool), so who pays does not depend on where it ran.",
-    example: "claude-sonnet-5",
-  },
-  {
     name: "DERIVE_MODEL_BASE_URL",
     group: "advanced",
     doc: "Root of an OPENAI-COMPATIBLE model endpoint (Fireworks, OpenRouter, Together, a\nself-hosted gateway); `/chat/completions` is appended. Setting it points every in-process\nrun on this deploy at that endpoint instead of the Anthropic Messages API.\n\nIt BYPASSES THE PAYER CHAIN on purpose: one ambient key means the operator pays for\neveryone on the instance, which is right for a single-tenant box and wrong for a\nmulti-tenant host — so derive.to does not set it. Requires DERIVE_MODEL_API_KEY and\nDERIVE_MODEL_NAME; all three or none.",
@@ -340,12 +334,6 @@ const CONFIG_VARS: ConfigVar[] = [
     name: "DERIVE_CHAT_ALLOWLIST",
     group: "advanced",
     doc: "Comma-separated workspace ids allowed to turn chat on, when DERIVE_MODEL_BASE_URL is set.\n\nWhy it exists: `chatBeta` is a workspace setting, gated on `manage` — so on a MULTI-TENANT\nhost any workspace owner could enable chat for themselves and spend the operator's model\nkey. On a single-tenant box that is fine (the operator IS the user), which is why an unset\nallowlist means no restriction. Set it on a shared host and only those workspaces can\nenable chat, however many owners ask.",
-    example: "ws_abc123,ws_def456",
-  },
-  {
-    name: "DERIVE_AUTOMATE_ALLOWLIST",
-    group: "advanced",
-    doc: "Comma-separated workspace ids allowed to CREATE or RUN automations while the surface is in\nbeta. Unset means no restriction.\n\nWhy it exists (the same reason as DERIVE_CHAT_ALLOWLIST): `automateBeta` is a workspace\nsetting gated on `manage`, so on a MULTI-TENANT host any workspace owner could enable\nautomations for themselves and spend the operator's model key. On a single-tenant box that is\nfine (the operator IS the user), which is why an unset allowlist means no restriction.\n\nBoth layers must pass. Reads and deletes stay open either way, so a workspace never loses\naccess to automations it already made.\n\nUPGRADE NOTE: automations ran before this gate existed and `automateBeta` defaults OFF, so an\nexisting deployment stops running them until each workspace opts in.",
     example: "ws_abc123,ws_def456",
   },
   {

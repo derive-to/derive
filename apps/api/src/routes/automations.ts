@@ -97,28 +97,17 @@ export const automationRoutes = (ctx: AppContext) => {
   const app = new Hono()
 
   /**
-   * BETA GATE, the same two layers chat uses.
-   *
-   * `automateBeta` is the workspace's own opt-in and defaults OFF. The ALLOWLIST sits on top of it
-   * because the setting is gated on `manage`: on a MULTI-TENANT host any workspace owner could
-   * otherwise switch automations on for themselves and spend the operator's model key. An unset
-   * allowlist means no restriction, which is right for a single-tenant box where the operator IS
-   * the user.
+   * BETA GATE: `automateBeta`, the workspace's own opt-in, OFF by default.
    *
    * Applied to the lanes that CREATE or RUN work, never to reads or deletes, so a workspace that
    * made automations before the gate can still see and remove them. 404 rather than 403, because
    * an un-enabled surface should not confirm it exists.
    *
-   * NOTE for upgrades: automations already ran before this gate existed, so turning the default
-   * off means an existing deployment stops running them until the workspace opts in. That is the
-   * intended trade for keeping a beta closed by default; it is a behaviour change, not a bug.
+   * NOTE for upgrades: automations ran before this gate existed, so an existing deployment stops
+   * running them until each workspace opts in.
    */
-  const automateAllowed = (orgId: string): boolean =>
-    !ctx.automateAllowlist?.length || ctx.automateAllowlist.includes(orgId)
-  const automateOff = async (orgId: string): Promise<boolean> => {
-    const s = await meta.getOrgSettings(orgId)
-    return !s?.automateBeta || !automateAllowed(orgId)
-  }
+  const automateOff = async (orgId: string): Promise<boolean> =>
+    !(await meta.getOrgSettings(orgId))?.automateBeta
 
   // The run lane reads "no run scope" as "a standing polling runner", which is the only
   // thing entitled to claim a BATCH, tick the schedule and sweep the queue. A session

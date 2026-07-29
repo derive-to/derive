@@ -382,7 +382,7 @@ const hostedDispatch = cfg.hostedRuns
       substrate:
         process.env.DERIVE_LOOP_RUNS === "1"
           ? loopSubstrate({
-              model: process.env.DERIVE_LOOP_MODEL,
+              model: process.env.DERIVE_MODEL_NAME,
               gateway: modelGateway() ?? undefined,
             })
           : nodeSubstrate({ bin: cfg.runnerBin }),
@@ -399,10 +399,6 @@ const app = createApp({
   // the payer chain — this key never becomes the answer to "who pays" for queued work.
   callModel: gateway ? openAiCompatModel(gateway) : undefined,
   chatAllowlist: (process.env.DERIVE_CHAT_ALLOWLIST ?? "")
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean),
-  automateAllowlist: (process.env.DERIVE_AUTOMATE_ALLOWLIST ?? "")
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean),

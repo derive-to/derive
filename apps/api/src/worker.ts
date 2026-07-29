@@ -136,13 +136,9 @@ export interface Env {
   DERIVE_MODEL_NAME?: string
   /** Workspace ids allowed to enable chat while the gateway above pays. */
   DERIVE_CHAT_ALLOWLIST?: string
-  DERIVE_AUTOMATE_ALLOWLIST?: string
   /** "1" runs automations in this isolate via the loop substrate instead of booting a container.
    *  Off by default, so derive.to keeps its current behaviour until it is set deliberately. */
   DERIVE_LOOP_RUNS?: string
-  /** Model id for the loop substrate's resolved-credential path (each run still pays its own way
-   *  through the payer chain — no ambient gateway key on a multi-tenant host). */
-  DERIVE_LOOP_MODEL?: string
   DERIVE_SANDBOX_URL?: string
   DERIVE_SUPERADMIN_EMAILS?: string
   // Base domain for vanity subdomains (domain mode); unset = off.
@@ -281,10 +277,6 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // Multi-tenant, so the allowlist matters here more than anywhere: without it any
         // workspace owner could enable chat and spend Derive's key.
         chatAllowlist: (env.DERIVE_CHAT_ALLOWLIST ?? "")
-          .split(",")
-          .map((x) => x.trim())
-          .filter(Boolean),
-        automateAllowlist: (env.DERIVE_AUTOMATE_ALLOWLIST ?? "")
           .split(",")
           .map((x) => x.trim())
           .filter(Boolean),
@@ -490,7 +482,7 @@ async function withHostedDispatch(
   // default and the flag is the opt-in — off means derive.to behaves exactly as it does today.
   const substrate =
     env.DERIVE_LOOP_RUNS === "1"
-      ? loopSubstrate({ model: env.DERIVE_LOOP_MODEL, waitUntil })
+      ? loopSubstrate({ model: env.DERIVE_MODEL_NAME, waitUntil })
       : containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
   const secret = env.DERIVE_AUTH_SECRET
   if (!substrate || !secret) return
