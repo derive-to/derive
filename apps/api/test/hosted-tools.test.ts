@@ -43,4 +43,32 @@ describe("hosted tool injection — least privilege (WO4)", () => {
     const tools = await toolsForRun(meta, new LocalBroker(), "other-org", [stripe.id])
     expect(tools).toHaveLength(0)
   })
+
+  it("a departed member's PERSONAL connection stops resolving; a workspace one survives", async () => {
+    // A second member connects a personal toolkit and the owner adds a workspace one.
+    const gone: TestUser = { id: "u_ht_gone", email: "htgone@derive.test", name: "G" }
+    const h = makeAuthedApp("hosted-tools-offboard", [owner, gone], "editor", {
+      deps: { encryptionKey: "k" },
+    })
+    const personal = await (
+      await h.app.request("/v1/connections", jsonAs(as(gone.email), { toolkit: "gmail" }))
+    ).json()
+    const ws = await (
+      await h.app.request(
+        "/v1/connections",
+        jsonAs(as(owner.email), { toolkit: "github", scope: "workspace" }),
+      )
+    ).json()
+    const bound = [personal.id, ws.id]
+    // Both resolve while the member is present…
+    const before = await toolsForRun(h.meta, new LocalBroker(), "default", bound)
+    expect(before.some((t) => t.def.name.startsWith("gmail"))).toBe(true)
+    expect(before.some((t) => t.def.name.startsWith("github"))).toBe(true)
+    // …then the member leaves: their personal credential must not outlive them,
+    // while the workspace credential — org infrastructure — keeps working.
+    await h.meta.removeMembership("default", gone.id)
+    const after = await toolsForRun(h.meta, new LocalBroker(), "default", bound)
+    expect(after.some((t) => t.def.name.startsWith("gmail"))).toBe(false)
+    expect(after.some((t) => t.def.name.startsWith("github"))).toBe(true)
+  })
 })

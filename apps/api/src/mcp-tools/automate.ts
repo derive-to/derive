@@ -1,5 +1,6 @@
 import { type AutomationTrigger, newId, normalizeSelectors, roleAllows } from "@derive/core"
 import { z } from "zod"
+import { connectionBindError } from "../lib/broker"
 import { mintToken, sha256 } from "../lib/crypto"
 import { badChoice, choiceDescription } from "../lib/open-choice"
 import { scopeGapMessage } from "../lib/scope-gap"
@@ -238,6 +239,18 @@ export function registerAutomateTool(tc: ToolContext): void {
       // create
       if (!input.trigger || !input.instruction)
         return json({ error: "create needs trigger + instruction" })
+      // Bound sources: same bind-time policy as the REST route (this tool is already
+      // owner-grant-gated, so canManage holds; personal connections still need the
+      // grant's own user to be their owner).
+      if (input.connection_ids?.length) {
+        const bindErr = await connectionBindError(
+          meta,
+          org,
+          { userId: tc.ownerId ?? null, canManage: true },
+          input.connection_ids,
+        )
+        if (bindErr) return json({ error: bindErr })
+      }
       let agentId: string | null = null
       if (input.context_id) {
         const bound = await meta.getContext(input.context_id)

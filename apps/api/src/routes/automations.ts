@@ -12,7 +12,7 @@ import { z } from "@hono/zod-openapi"
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
 import { parseConnectionIds, parseRefs, parseTrigger } from "../lib/automation"
-import { brokerFor, toolsForRun } from "../lib/broker"
+import { brokerFor, connectionBindError, toolsForRun } from "../lib/broker"
 import { overBudget } from "../lib/budget"
 import { mintToken, safeEqual, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
@@ -139,12 +139,17 @@ export const automationRoutes = (ctx: AppContext) => {
       if (!agents.some((a) => a.id === b.agentId))
         return bail(fail(c, 400, "agent must be in this workspace"))
     }
-    // Bound sources must be connections that exist in THIS workspace (least privilege: a run
-    // reads only through these). Ownership isn't required — an automation is a workspace job.
+    // Bound sources: exist in THIS workspace, and attachable by THIS caller — workspace
+    // connections need manage (which this route already gates), personal ones only their
+    // owner. Least privilege at bind time, not just at run time.
     if (b.connectionIds?.length) {
-      const conns = await meta.getConnectionsByIds(b.connectionIds)
-      if (conns.length !== b.connectionIds.length || conns.some((cn) => cn.org_id !== org))
-        return bail(fail(c, 400, "connections must exist in this workspace"))
+      const bindErr = await connectionBindError(
+        meta,
+        org,
+        { userId: (await privateOwnerId(c)) ?? null, canManage: true },
+        b.connectionIds,
+      )
+      if (bindErr) return bail(fail(c, 400, bindErr))
     }
     let agentId = b.agentId ?? boundContext?.agent_id ?? null
     let agentToken: string | null = null
