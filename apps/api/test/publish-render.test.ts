@@ -86,7 +86,41 @@ describe("publish carries its own render", () => {
     })
     expect(r?.isError).toBeFalsy()
     expect(r?.content).toHaveLength(1)
-    expect(JSON.parse(r?.content?.[0]?.text ?? "{}").published).toBe(true)
+    const body = JSON.parse(r?.content?.[0]?.text ?? "{}")
+    expect(body.published).toBe(true)
+    // And it says WHY there is no picture. The generic "queued — call read(...)" pointer
+    // ignores that a render was asked for, and reads as though nothing was requested.
+    expect(body.render).toContain("not waited for")
+  })
+
+  it("says the wait ELAPSED when one was given and the shot still didn't land", async () => {
+    const { app, token } = await setup("pubrender-elapsed")
+    const r = await callRaw(app, token, "publish", {
+      title: "Elapsed",
+      content: "# Elapsed\n\nbody",
+      render: "top",
+      wait: 1,
+    })
+    const body = JSON.parse(r?.content?.[0]?.text ?? "{}")
+    expect(body.published).toBe(true)
+    expect(body.render).toContain("not ready within 1s")
+  })
+
+  it("accepts a wait sent as a STRING, the way a stale client sends it", async () => {
+    // The bug this change exists for. A client that connected before `wait` existed has no
+    // type to coerce against, so it sends "1". A bare z.number() rejects that — the render
+    // can be requested and never waited for, which is half-reachable and reads as broken.
+    const { app, token } = await setup("pubrender-string-wait")
+    const r = await callRaw(app, token, "publish", {
+      title: "Stringy",
+      content: "# Stringy\n\nbody",
+      render: "top",
+      wait: "1",
+    })
+    expect(r?.isError).toBeFalsy()
+    const body = JSON.parse(r?.content?.[0]?.text ?? "{}")
+    expect(body.published).toBe(true)
+    expect(body.render).toContain("not ready within 1s")
   })
 })
 

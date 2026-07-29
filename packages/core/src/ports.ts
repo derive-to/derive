@@ -1280,7 +1280,10 @@ export interface ModerationStore {
   takedownArtifact(input: TakedownInput): Promise<void>
   /** Update an artifact's display title (used when a GitHub-synced file is renamed —
    *  the title tracks the repo path; the artifact + its comments are preserved). */
-  setArtifactTitle(id: string, title: string): Promise<void>
+  /** Rename. Pass `slug` to re-derive the URL name with it: the ref is
+   *  `<slug>-<short_id>` and `parseRef` resolves on the trailing short id, so an old
+   *  link keeps working while a renamed doc stops advertising its former title. */
+  setArtifactTitle(id: string, title: string, slug?: string | null): Promise<void>
   /** Set the repo path of a GitHub-synced artifact (its folder/tree "location"). */
   setArtifactSourcePath(id: string, sourcePath: string | null): Promise<void>
   /** Override "updated_at" with an external timestamp (a synced file's last-commit
