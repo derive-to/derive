@@ -64,7 +64,8 @@ export const contextRoutes = (ctx: AppContext) => {
   const serveAttended = async (
     s: SessionRecord,
     me: { id: string; name?: string | null; username?: string | null; email?: string },
-    agentId: string,
+    /** The context's agent, or NULL for a contextless (default-agent) chat session. */
+    agentId: string | null,
   ) => {
     const subject = parseSubject(s.subject_ref)
     if (!subject || subject.kind !== "artifact") return
@@ -74,7 +75,7 @@ export const contextRoutes = (ctx: AppContext) => {
           id: newId("sm"),
           session_id: s.id,
           author_kind: "agent",
-          author_id: agentId,
+          author_id: agentId ?? "derive",
           body_md: body,
         },
         state,
@@ -92,12 +93,16 @@ export const contextRoutes = (ctx: AppContext) => {
     // Claim AS THE CONTEXT'S AGENT, using the same status-guarded claim a polling runner takes.
     // That is what stops a BYO runner for this context from serving the same turn twice — and it
     // has to be that agent's id, because the claim checks ownership through the context.
-    const claimed = await meta.claimSessionById(
-      s.id,
-      agentId,
-      new Date(Date.now() + RUN_LEASE_MS).toISOString(),
-    )
-    if (!claimed) return // someone else is already serving this turn
+    // A contextless session has no runner competing for it, so there is nothing to exclude
+    // and nothing to claim — the claim exists solely to stop a BYO runner double-serving.
+    if (agentId) {
+      const claimed = await meta.claimSessionById(
+        s.id,
+        agentId,
+        new Date(Date.now() + RUN_LEASE_MS).toISOString(),
+      )
+      if (!claimed) return // someone else is already serving this turn
+    }
     try {
       const artifact = await meta.getByShortId(subject.id)
       if (!artifact) {
@@ -909,6 +914,76 @@ export const contextRoutes = (ctx: AppContext) => {
     },
   )
 
+  // CHAT WITH A DOCUMENT — the zero-setup path, and the reason a session no longer needs a
+  // context. No agent to register, no context to pick, nothing to configure: name the document
+  // and start talking. The first message opens the session, so merely opening the Chat tab
+  // creates nothing.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/artifacts/chat-session",
+      tags: ["Contexts"],
+      summary: "Open a chat session about an artifact (no context required).",
+      responses: {
+        201: {
+          description: "The new session and its first message.",
+          content: {
+            "application/json": {
+              schema: z.object({ session: Session, messages: z.array(SessionMessage) }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await requireUser(c)
+      if (me instanceof Response) return bail(me)
+      const b = await readJson(
+        c,
+        z.object({
+          short_id: z.string(),
+          body_md: z.string().trim().min(1).max(20_000),
+          // How an edit lands. Checked against real publish rights below — a reader asking
+          // for `publish` gets 403 rather than having the gate be the only thing in the way.
+          mode: z.enum(["publish", "propose"]).optional(),
+        }),
+      )
+      if (b instanceof Response) return bail(b)
+      const art = await meta.getByShortId(b.short_id)
+      if (!art || art.current_version === 0 || !(await authorize(c, "read", art)))
+        return bail(fail(c, 404, "not found"))
+      const wantsPublish = b.mode === "publish"
+      if (wantsPublish && !(await authorize(c, "publish", art)))
+        return bail(fail(c, 403, "you cannot publish to that artifact"))
+      const session = await meta.createSession({
+        id: newId("ses"),
+        // NO CONTEXT: this is the default agent, which is the absence of a packaged one.
+        context_id: null,
+        context_version: null,
+        org_id: art.org_id,
+        asker_id: me.id,
+        subject_ref: JSON.stringify({
+          kind: "artifact",
+          id: art.short_id,
+          ...(wantsPublish ? { mode: "publish" } : {}),
+        }),
+      })
+      const first = await meta.addSessionMessage(
+        {
+          id: newId("sm"),
+          session_id: session.id,
+          author_kind: "asker",
+          author_id: me.id,
+          body_md: b.body_md,
+        },
+        "open",
+      )
+      // Served here, not queued — the person is waiting. Detached, so this returns now.
+      await serveAttended(session, me, null)
+      return c.json({ session: sessionJson(session), messages: [messageJson(first)] }, 201)
+    },
+  )
+
   // A context's sessions: the owner sees every session (the activity view);
   // anyone else sees only their own.
   app.openapi(
@@ -954,7 +1029,10 @@ export const contextRoutes = (ctx: AppContext) => {
             "application/json": {
               schema: z.object({
                 session: Session,
-                context: z.object({ id: z.string(), name: z.string() }),
+                context: z
+                  .object({ id: z.string(), name: z.string() })
+                  .nullable()
+                  .describe("The packaged agent answering, or null for a chat session."),
                 messages: z.array(SessionMessage),
               }),
             },
@@ -972,16 +1050,22 @@ export const contextRoutes = (ctx: AppContext) => {
       // more than a removed asker can (the invariant applies to owners too). The
       // creator sees ANY session on their context; anyone else sees only their
       // own — sessions stay private to asker + owner.
+      // A CONTEXTLESS chat session has no context to gate on, so it is private to its
+      // asker and nobody else — including a workspace owner, who has no standing here that
+      // a context would otherwise have conferred. Without this branch every poll on a chat
+      // session 404s and the reply never appears, which is exactly what dogfooding caught.
+      const mine = !!s && !s.context_id && s.asker_id === me.id
       const allowed =
-        !!s &&
-        !!linked &&
-        (await canAskContext(c, linked.context)) &&
-        (linked.context.created_by === me.id || s.asker_id === me.id)
-      if (!s || !linked || !allowed) return bail(fail(c, 404, "not found"))
+        mine ||
+        (!!s &&
+          !!linked &&
+          (await canAskContext(c, linked.context)) &&
+          (linked.context.created_by === me.id || s.asker_id === me.id))
+      if (!s || !allowed) return bail(fail(c, 404, "not found"))
       const messages = await meta.listSessionMessages(s.id)
       return c.json({
         session: sessionJson(s),
-        context: { id: linked.context.id, name: linked.context.name },
+        context: linked ? { id: linked.context.id, name: linked.context.name } : null,
         messages: messages.map(messageJson),
       })
     },
@@ -1007,7 +1091,9 @@ export const contextRoutes = (ctx: AppContext) => {
     async (c) => {
       const s = await meta.getSession(c.req.param("id"))
       const linked = s ? await contextOf(s) : null
-      if (!s || !linked) return bail(fail(c, 404, "not found"))
+      // A contextless chat session is legitimate and has no context to resolve; only an
+      // AGENT branch below needs one, and that branch is unreachable without it.
+      if (!s || (!linked && s.context_id)) return bail(fail(c, 404, "not found"))
       // Authorization decides before state does: a caller with no standing gets the
       // same 404 whether the session is open or closed — 409 would leak its state.
       const closed = (): Response | null =>
@@ -1015,7 +1101,7 @@ export const contextRoutes = (ctx: AppContext) => {
 
       const agent = await agentFor(c)
       if (agent) {
-        if (agent.id !== linked.context.agent_id) return bail(fail(c, 404, "not found"))
+        if (!linked || agent.id !== linked.context.agent_id) return bail(fail(c, 404, "not found"))
         const gone = closed()
         if (gone) return bail(gone)
         const b = await readJson(
@@ -1088,7 +1174,9 @@ export const contextRoutes = (ctx: AppContext) => {
       // the session and the runner answers it (a fresh query against the data).
       // A member removed from the workspace/roster after opening a session must
       // not keep querying through it — canAskContext re-checks membership + policy.
-      if (s.asker_id !== me.id || !(await canAskContext(c, linked.context)))
+      // Contextless: ownership IS the whole gate. With a context, re-check the ask grant
+      // too, so someone removed from the roster cannot keep querying through an old session.
+      if (s.asker_id !== me.id || (linked && !(await canAskContext(c, linked.context))))
         return bail(fail(c, 404, "not found"))
       const gone = closed()
       if (gone) return bail(gone)
@@ -1111,7 +1199,7 @@ export const contextRoutes = (ctx: AppContext) => {
       // ATTENDED: someone is sitting there, so serve the turn HERE instead of queuing it for a
       // runner that may not be running. Detached — the response returns now and the TRANSCRIPT is
       // what the surface follows, so closing the tab mid-turn loses nothing.
-      await serveAttended(s, me, linked.context.agent_id)
+      await serveAttended(s, me, linked?.context.agent_id ?? null)
       return c.json({ message: messageJson(m) }, 201)
     },
   )

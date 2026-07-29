@@ -4534,6 +4534,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/chat-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open a chat session about an artifact (no context required). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new session and its first message. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            session: components["schemas"]["Session"];
+                            messages: components["schemas"]["SessionMessage"][];
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{id}": {
         parameters: {
             query?: never;
@@ -4561,10 +4600,11 @@ export interface paths {
                     content: {
                         "application/json": {
                             session: components["schemas"]["Session"];
+                            /** @description The packaged agent answering, or null for a chat session. */
                             context: {
                                 id: string;
                                 name: string;
-                            };
+                            } | null;
                             messages: components["schemas"]["SessionMessage"][];
                         };
                     };

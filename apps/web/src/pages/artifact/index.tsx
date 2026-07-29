@@ -18,6 +18,7 @@ import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
 import { useArtifactActions } from "./artifact-actions"
 import { ArtifactBreadcrumb } from "./artifact-breadcrumb"
+import { ArtifactChat, RailTabs } from "./artifact-chat"
 import { ArtifactComments } from "./artifact-comments"
 import { ArtifactDocument } from "./artifact-document"
 import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact-states"
@@ -27,6 +28,7 @@ import { ActionsCtx } from "./comment-actions"
 import { FloatingControl } from "./floating-control"
 import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
+import { useArtifactChat } from "./lib/use-artifact-chat"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
@@ -146,6 +148,12 @@ export function Artifact() {
   const [editTitle, setEditTitle] = useState("")
 
   // Comments UI state shared across the page, the panel, and the iframe bridge.
+  // The right rail carries two conversations about the same document: anchored comments
+  // and unanchored chat. They compete for the same space, so they TAB rather than stack —
+  // the document never loses width to a second panel. Declared with the other state, ABOVE
+  // the locked/loading early returns, so the hook order never changes between renders.
+  const [rail, setRail] = useState<"comments" | "chat">("comments")
+  const chat = useArtifactChat(shortId)
   const [composer, setComposer] = useState<ComposerState>(null)
   const [activeThread, setActiveThread] = useState<string | null>(null)
   const [hoverThread, setHoverThread] = useState<string | null>(null)
@@ -797,48 +805,83 @@ export function Artifact() {
           </div>
 
           {!focus && (
-            <ArtifactComments
-              shortId={shortId}
-              isMobile={isMobile}
-              isAnon={isAnon}
-              canComment={canComment}
-              reviewCard={
-                // Top of the comments rail, not its own pane; members who can act only.
-                canComment ? <ReviewCard shortId={shortId} refreshKey={reviewTick} /> : undefined
-              }
-              onSheetHeight={setSheetInset}
-              docLive={docLive}
-              panel={effectivePanel}
-              asideWidth={asideWidth}
-              openCount={openCount}
-              frameRef={frame}
-              subscribeGeom={subscribeGeom}
-              onScrollDoc={scrollBy}
-              pinned={pinned}
-              general={general}
-              resolved={resolvedThreads}
-              openThreads={openThreads}
-              activeThread={activeThread}
-              hoverThread={hoverThread}
-              inDoc={inDoc}
-              composer={composer}
-              sel={sel}
-              setPanel={setPanel}
-              setComposer={setComposer}
-              setSel={setSel}
-              setActiveThread={setActiveThread}
-              setHoverThread={setHoverThread}
-              activate={activateThread}
-              toggleResolve={toggleResolve}
-              reply={reply}
-              submitNew={submitNew}
-              jumpTo={jumpTo}
-              startSelComment={startSelComment}
-              agents={agents}
-              currentSlide={deck?.i ?? null}
-              landedSlides={landedSlides}
-              anchorConf={anchorConf}
-            />
+            <>
+              {/* The rail: one tab strip over two panels. Chat only makes sense on a
+                document that has content, and only for someone who can be identified,
+                so it hides rather than teasing an anon viewer with a dead input. */}
+              {!isMobile && panel === "open" && !isAnon && (
+                <div
+                  className="absolute right-0 top-0 z-20 flex h-10 items-center border-b border-border bg-background px-2"
+                  style={{ width: asideWidth }}
+                >
+                  <RailTabs tab={rail} commentCount={openCount} onTab={setRail} />
+                </div>
+              )}
+              {rail === "chat" && !isMobile && panel === "open" && !isAnon ? (
+                <aside
+                  className="flex min-h-0 shrink-0 flex-col border-l border-border pt-10"
+                  style={{ width: asideWidth }}
+                >
+                  <ArtifactChat
+                    shortId={shortId}
+                    sessionId={chat.sessionId}
+                    messages={chat.messages}
+                    working={chat.working}
+                    loading={chat.loading}
+                    disabledReason={chat.error ?? undefined}
+                    // Publish rights are read at SEND time, not at hook time: they depend on
+                    // the loaded artifact, which is not known when the hook first runs.
+                    onSend={(b) => chat.send(b, effectiveCanPublish)}
+                    onPoll={chat.poll}
+                  />
+                </aside>
+              ) : (
+                <ArtifactComments
+                  shortId={shortId}
+                  isMobile={isMobile}
+                  isAnon={isAnon}
+                  canComment={canComment}
+                  reviewCard={
+                    // Top of the comments rail, not its own pane; members who can act only.
+                    canComment ? (
+                      <ReviewCard shortId={shortId} refreshKey={reviewTick} />
+                    ) : undefined
+                  }
+                  onSheetHeight={setSheetInset}
+                  docLive={docLive}
+                  panel={effectivePanel}
+                  asideWidth={asideWidth}
+                  openCount={openCount}
+                  frameRef={frame}
+                  subscribeGeom={subscribeGeom}
+                  onScrollDoc={scrollBy}
+                  pinned={pinned}
+                  general={general}
+                  resolved={resolvedThreads}
+                  openThreads={openThreads}
+                  activeThread={activeThread}
+                  hoverThread={hoverThread}
+                  inDoc={inDoc}
+                  composer={composer}
+                  sel={sel}
+                  setPanel={setPanel}
+                  setComposer={setComposer}
+                  setSel={setSel}
+                  setActiveThread={setActiveThread}
+                  setHoverThread={setHoverThread}
+                  activate={activateThread}
+                  toggleResolve={toggleResolve}
+                  reply={reply}
+                  submitNew={submitNew}
+                  jumpTo={jumpTo}
+                  startSelComment={startSelComment}
+                  agents={agents}
+                  currentSlide={deck?.i ?? null}
+                  landedSlides={landedSlides}
+                  anchorConf={anchorConf}
+                />
+              )}
+            </>
           )}
         </div>
       </div>
