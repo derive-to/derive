@@ -43,6 +43,16 @@ export const RENDER_CLAIM_LIMIT = 3
 /** Maximum missing-preview versions the self-heal sweep enqueues per tick. */
 export const SWEEP_LIMIT = 50
 
+/** The agent-facing full-page variants render at HALF density. A fullPage shot of a long
+ *  document ran past what MCP can return at all, leaving "open the url yourself" as the
+ *  only answer to "did my page come out right?" — which a human can act on and an agent
+ *  cannot. Measured on an 80-paragraph page: 489KB at full density, 106KB at half, a 78%
+ *  cut. Re-encoding as JPEG instead was tried first and measured 15%, and at half density
+ *  JPEG is actually LARGER than PNG (135KB vs 106KB) because it handles sharp text edges
+ *  badly. So the lever is pixel count, not encoding, and these stay PNG. The 1200x630 OG
+ *  crop keeps full density: it is the og:image other sites unfurl. */
+export const FULL_PAGE_SCALE = 0.5
+
 // ---------------------------------------------------------------------------
 // Interfaces
 // ---------------------------------------------------------------------------
@@ -52,6 +62,9 @@ export interface ScreenshotOpts {
   height: number
   fullPage?: boolean
   timeoutMs: number
+  /** Device pixel density. Defaults to 1. Below 1 the same page renders to proportionally
+   *  fewer pixels, which is what actually bounds a full-page shot — see FULL_PAGE_SCALE. */
+  deviceScaleFactor?: number
 }
 
 export interface Renderer {
@@ -273,17 +286,22 @@ export const runRenderTick = async (
       // parallel: each screenshot() launches its own browser, and the
       // single-consumer invariant (one browser at a time, no parallel rendering
       // billing) applies to every render this job makes, not just the OG one.
+      // Half density for both, unlike the OG crop above: these are full-page shots of
+      // documents that can run to any length, and at full density a long one exceeds what
+      // the read tool can hand back at all. See FULL_PAGE_SCALE.
       await renderPreviewVariant(deps, artifact.id, job.version_n, "full", url, {
         width: OG_W,
         height: OG_H,
         fullPage: true,
         timeoutMs: RENDER_TIMEOUT_MS,
+        deviceScaleFactor: FULL_PAGE_SCALE,
       })
       await renderPreviewVariant(deps, artifact.id, job.version_n, "marked", `${url}?marks=1`, {
         width: OG_W,
         height: OG_H,
         fullPage: true,
         timeoutMs: RENDER_TIMEOUT_MS,
+        deviceScaleFactor: FULL_PAGE_SCALE,
       })
     } catch (err) {
       const msg = (err instanceof Error ? err.message : String(err)).slice(0, 200)

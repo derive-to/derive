@@ -1,9 +1,15 @@
 import { type ArtifactRecord, newId, roleAllows } from "@derive/core"
 import { z } from "zod"
+import { badChoice, choiceDescription } from "../lib/open-choice"
 import { computeTagSuggestions } from "../lib/tag-suggestions"
 import { normalizeTags } from "../lib/tags"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
+
+/** Whether an artifact is in the library or retired from it. A growth point (an
+ *  `archived` tier is the obvious next one), so a string checked server-side rather
+ *  than an enum a cached client would refuse — see lib/open-choice.ts. */
+const LIBRARY_STATES = ["removed", "live"] as const
 
 export function registerOrganizeTool(tc: ToolContext): void {
   const { server, ctx, agent, actingFor, reach, resolveWs, wsArg } = tc
@@ -17,7 +23,7 @@ export function registerOrganizeTool(tc: ToolContext): void {
     "organize",
     {
       description:
-        "Tags and collections in one tool — the library's findability layer. READ (no `short_ids`) returns the workspace's tag vocabulary + collections; READ with `short_ids` returns their tags/collections plus suggested tags. WRITE (`add`/`remove`/`set` tags, and/or `collection`) changes them — each artifact is authorized on its own, so ones you can't touch come back skipped, never failing the batch. Tag freely and reuse the vocabulary; a collection is for when a set is a real unit. For the read-vs-write modes and the tags-vs-collections call, read derive://skills/organize.",
+        "Tags, collections, and shelving in one tool — the library layer. READ (no `short_ids`) returns the workspace's tag vocabulary + collections; READ with `short_ids` returns their tags/collections plus suggested tags. WRITE (`add`/`remove`/`set` tags, `collection`, and/or `state`) changes them — each artifact is authorized on its own, so ones you can't touch come back skipped, never failing the batch. `state:'removed'` retires an artifact from the library and `state:'live'` puts it back, so cleaning up after yourself is safe. For the read-vs-write modes and the tags-vs-collections call, read derive://skills/organize.",
       inputSchema: {
         short_ids: z
           .array(z.string())
@@ -33,21 +39,85 @@ export function registerOrganizeTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe("Fold `short_ids` into this collection — an id, or a name (created if new)."),
+        // Both directions on ONE parameter, deliberately. Remove and undo are the same
+        // decision read in two directions, and splitting them across two actions (or two
+        // tools) is how you end up with a surface that can retire something and no obvious
+        // way back.
+        state: z
+          .string()
+          .optional()
+          .describe(
+            choiceDescription(
+              LIBRARY_STATES,
+              "Retire these from the library, or restore ones already retired. Reversible either way.",
+            ),
+          ),
         workspace: wsArg,
       },
     },
-    async ({ short_ids, add, remove, set, collection, workspace }) => {
+    async ({ short_ids, add, remove, set, collection, state, workspace }) => {
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
       const actorId = actingFor?.id ?? agent.id
       const sortVocab = (v: { tag: string; count: number }[]) =>
         v.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
 
-      // ---- WRITE: add/remove/set tags and/or fold into a collection ----
-      if (add || remove || set || collection) {
+      // ---- WRITE: add/remove/set tags, fold into a collection, and/or shelve ----
+      if (add || remove || set || collection || state) {
         if (!short_ids?.length)
-          return err("Pass `short_ids` to organize (with add/remove/set and/or collection).")
+          return err("Pass `short_ids` to organize (with add/remove/set, collection and/or state).")
         const out: Record<string, unknown> = {}
+
+        // SHELVE / UNSHELVE. Both directions on one parameter: an artifact retired with
+        // `state:"removed"` comes back with `state:"live"`, and the response says so, so
+        // the way back is never something you have to already know.
+        //
+        // The tombstone itself is old — sync retires an artifact whose file was deleted,
+        // moderation takes one down, PR-preview teardown sweeps a batch. What never existed
+        // was an AUTHORING path: the subsystems could retire an artifact and the person who
+        // made it could not. This is that path, and nothing more.
+        if (state) {
+          const wrong = badChoice("state", state, LIBRARY_STATES)
+          if (wrong) return err(wrong)
+          const removedAt = state === "removed" ? new Date().toISOString() : null
+          const ok: string[] = []
+          let skipped = 0
+          for (const shortId of [...new Set(short_ids)]) {
+            // Sees past the takedown gate on purpose: this operates on that flag, so the
+            // ordinary content gate would hide the artifact being restored. Workspace,
+            // membership and role are all still enforced.
+            const reached = await reach(shortId, workspace, { allowRemoved: true })
+            // Same bar as editing an artifact's content, deliberately: this is reversible,
+            // so it does not warrant a higher one than the publish that created it.
+            if (!reached || "error" in reached || !roleAllows(reached.role, "publish")) {
+              skipped++
+              continue
+            }
+            ok.push(reached.a.id)
+          }
+          // One update for the batch, per the store's own guidance, rather than a call per id.
+          if (ok.length) await ctx.meta.setArtifactsRemoved(ok, removedAt)
+          out.state = {
+            state,
+            changed: ok.length,
+            skipped,
+            // The reversal, handed back at the moment it might be wanted.
+            undo: ok.length
+              ? {
+                  tool: "organize",
+                  arguments: {
+                    short_ids,
+                    state: state === "removed" ? "live" : "removed",
+                    ...(workspace ? { workspace } : {}),
+                  },
+                }
+              : undefined,
+            note:
+              state === "removed"
+                ? "Retired from the library: the url now reads as removed. Nothing is deleted, and `state:'live'` puts it back."
+                : "Back in the library and readable again.",
+          }
+        }
         if (add || remove || set) {
           const removeSet = new Set(normalizeTags(remove ?? []))
           let updated = 0

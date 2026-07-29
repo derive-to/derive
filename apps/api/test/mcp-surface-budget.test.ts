@@ -36,7 +36,12 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // identity read, which only helps if its description says so. Both were trimmed before
 // raising; measured 8218 across 11 tools, so the cap keeps the same ~2% headroom the
 // previous raise settled on and the next addition still has to argue for its chars.
-const TOOL_DESCRIPTIONS_BUDGET = 8400
+// Raised 8400 → 8550 for the read-back loop: `organize` gained the shelving clause (the
+// authoring path for removal, and the way back) and `publish` gained one sentence about
+// returning the screenshot with the publish. Measured 8353 across 11 tools, so the cap
+// keeps the ~2% headroom the previous raises settled on rather than the 47 characters it
+// would otherwise leave, where the next edit fails for no reason worth arguing about.
+const TOOL_DESCRIPTIONS_BUDGET = 8550
 const INSTRUCTIONS_BUDGET = 2400
 
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))

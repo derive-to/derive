@@ -60,6 +60,11 @@ export interface ToolContext extends ToolContextBase {
   reach: (
     shortId: string,
     wsRef?: string,
+    /** `allowRemoved` sees PAST the takedown gate, for the one caller that acts on an
+     *  artifact's shelf state rather than its content: without it, restoring is
+     *  impossible, because reach refuses the very artifact you are trying to bring
+     *  back. Every other gate (workspace, membership, role) still applies. */
+    opts?: { allowRemoved?: boolean },
   ) => Promise<{ a: ArtifactRecord; org: string; role: Role } | { error: string } | null>
   notFound: (shortId: string) => ReturnType<typeof err>
   wsArg: typeof wsArg
@@ -133,6 +138,7 @@ export function makeToolContext(base: ToolContextBase): ToolContext {
   const reach = async (
     shortId: string,
     wsRef?: string,
+    opts?: { allowRemoved?: boolean },
   ): Promise<{ a: ArtifactRecord; org: string; role: Role } | { error: string } | null> => {
     const a = await ctx.meta.getByShortId(shortId)
     if (!a) return null
@@ -164,7 +170,10 @@ export function makeToolContext(base: ToolContextBase): ToolContext {
     // one-artifact tool. It stays visible as a tombstone in find's browse rows (metadata
     // only). Checked AFTER the reach/membership gates so it never confirms a removed
     // short_id to someone who couldn't have reached it anyway (they still get notFound).
-    if (a.removed_at) return { error: `"${shortId}" was taken down and is no longer available.` }
+    // `allowRemoved` is the shelving path: it acts ON this flag, so gating it out would
+    // make the artifact it needs unreachable and restoring impossible.
+    if (a.removed_at && !opts?.allowRemoved)
+      return { error: `"${shortId}" was taken down and is no longer available.` }
     return { a, org, role }
   }
   const notFound = (shortId: string) =>

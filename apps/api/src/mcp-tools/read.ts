@@ -6,12 +6,13 @@ import {
   outlineOf,
   sectionOf,
   toMarkdown,
-  type VersionRecord,
 } from "@derive/core"
 import { z } from "zod"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "../brandprint-reference"
 import { cleanPath } from "../lib/bundle"
 import { clip, MAX_CHARS } from "../lib/clip"
+import { pickVariant } from "../lib/collect-render"
+import { sniffImageType } from "../lib/image"
 import { baseType, isTextType, present, type ReadFormat } from "../lib/search"
 import type { ToolContext } from "../mcp-tool-context"
 import {
@@ -150,27 +151,13 @@ export function registerReadTool(tc: ToolContext): void {
           return err(
             "`render` is a view of the whole version — pass it alone (with `version` for history).",
           )
-        const pick = (ver: VersionRecord) =>
-          render === "top"
-            ? { key: ver.preview_key, status: ver.preview_status, error: ver.preview_error }
-            : render === "full"
-              ? {
-                  key: ver.preview_full_key,
-                  status: ver.preview_full_status,
-                  error: ver.preview_full_error,
-                }
-              : {
-                  key: ver.preview_marked_key,
-                  status: ver.preview_marked_status,
-                  error: ver.preview_marked_error,
-                }
         const label =
           render === "top"
             ? "the top of the page, 1200x630"
             : render === "full"
               ? "the whole page"
               : "the whole page, with the region map's @N refs drawn on it"
-        let variant = pick(v)
+        let variant = pickVariant(v, render)
         // SELF-HEAL on read: a dead-lettered render (a transient storage/browser
         // error that exhausted its retries) used to demand a no-op republish just to
         // re-render. Re-queue it right here instead — reset the variant to pending so
@@ -205,27 +192,35 @@ export function registerReadTool(tc: ToolContext): void {
           ) {
             await sleep(Math.min(1500, Math.max(0, deadline - Date.now())))
             const refreshed = await ctx.meta.getVersion(a.id, n)
-            if (refreshed) variant = pick(refreshed)
+            if (refreshed) variant = pickVariant(refreshed, render)
           }
         }
         if (variant.status === "ready" && variant.key) {
-          const png = await ctx.blobs.get(variant.key)
-          if (png) {
-            if (png.length > IMAGE_INLINE_MAX)
+          const shot = await ctx.blobs.get(variant.key)
+          if (shot) {
+            if (shot.length > IMAGE_INLINE_MAX)
               return json({
                 short_id,
                 version: n,
                 render: "ready",
-                bytes: png.length,
+                bytes: shot.length,
                 note: `Too large to inline over MCP — open ${url} to view the page.`,
               })
             return {
               content: [
                 {
                   type: "text" as const,
-                  text: `render:${render} of "${short_id}" v${n} — ${label} (${png.length} bytes), as a viewer sees it. The source is untouched; use read/search for the text.`,
+                  text: `render:${render} of "${short_id}" v${n} — ${label} (${shot.length} bytes), as a viewer sees it. The source is untouched; use read/search for the text.`,
                 },
-                { type: "image" as const, data: toBase64(png), mimeType: "image/png" },
+                {
+                  type: "image" as const,
+                  data: toBase64(shot),
+                  // SNIFFED, not assumed. Every variant is PNG today, but this used to be
+                  // hardcoded, so the label was a claim about the pipeline rather than a
+                  // reading of the bytes — and it would go quietly wrong the day any
+                  // variant is stored in another format.
+                  mimeType: sniffImageType(shot) ?? "image/png",
+                },
               ],
             }
           }

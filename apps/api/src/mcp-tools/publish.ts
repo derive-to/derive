@@ -16,9 +16,16 @@ import { PROFILE_PLACEHOLDER_HTML } from "../brandprint-reference"
 import { markAddressed } from "../lib/addressed"
 import { afterPublish } from "../lib/after-publish"
 import { cleanPath, mergeBundleZip, zipBundleFiles } from "../lib/bundle"
+import {
+  collectRender,
+  RENDER_VARIANTS,
+  RENDER_WAIT_MAX,
+  type RenderVariant,
+} from "../lib/collect-render"
 import { type MaterializedEdits, materializeEdits, preservingFilename } from "../lib/edits"
 import { buildReviewEmail } from "../lib/email"
 import { MAX_UPLOAD_BYTES } from "../lib/http"
+import { badChoice, choiceDescription } from "../lib/open-choice"
 import { enqueueSlackReviewRequestedDm } from "../lib/slack-dm"
 import { normalizeTags } from "../lib/tags"
 import type { ToolContext } from "../mcp-tool-context"
@@ -30,6 +37,7 @@ import {
   MAX_INLINE_DATA_URI_BYTES,
   manifestOf,
   text,
+  toBase64,
   withTimeout,
 } from "../mcp-util"
 import { enqueueChannelDelivery } from "../webhooks"
@@ -130,7 +138,7 @@ export function registerPublishTool(tc: ToolContext): void {
     "publish",
     {
       description:
-        "Publish a document: pass `short_id` to UPDATE an existing one, omit it to CREATE a new one (`title` required). Choose ONE payload by what you're changing. DEFAULT to `edits` for any change to an existing doc — it is the safe, precise option: exact find/replace against the stored source, so read format:'html' FIRST or it won't match, and it fails unless each search string hits exactly once (add surrounding text to make it unique). Use `content` to write or fully replace a single file, or `files` for a multi-page bundle. Do NOT inline anything past ~a page or any image/font — use stage (target:'doc' for a whole big doc/bundle, target:'asset' for an image/font) instead; oversized inline payloads are rejected. Publishes go LIVE at your role; pass for_review:true to file a PROPOSAL a human approves instead (nothing changes until they do). Pass `addresses` (thread ids from catch_up) to resolve the feedback this revision answers. As a short_id you may pass derive://brandprint/profile to file this workspace's brand profile (an Admin's first publish there scaffolds the slot). Read derive://skills/publishing before bundles or edits, and derive://skills/assets before embedding images or fonts.",
+        "Publish a document: pass `short_id` to UPDATE an existing one, omit it to CREATE a new one (`title` required). Choose ONE payload by what you're changing. DEFAULT to `edits` for any change to an existing doc — it is the safe, precise option: exact find/replace against the stored source, so read format:'html' FIRST or it won't match, and it fails unless each search string hits exactly once (add surrounding text to make it unique). Use `content` to write or fully replace a single file, or `files` for a multi-page bundle. Do NOT inline anything past ~a page or any image/font — use stage (target:'doc' for a whole big doc/bundle, target:'asset' for an image/font) instead; oversized inline payloads are rejected. Publishes go LIVE at your role; pass for_review:true to file a PROPOSAL a human approves instead (nothing changes until they do). Pass `addresses` (thread ids from catch_up) to resolve the feedback this revision answers. As a short_id you may pass derive://brandprint/profile to file this workspace's brand profile (an Admin's first publish there scaffolds the slot). Pass `render` (with `wait`) to get the screenshot back here instead of a second call. Read derive://skills/publishing before bundles or edits, and derive://skills/assets before embedding images or fonts.",
       inputSchema: {
         content: z
           .string()
@@ -215,6 +223,23 @@ export function registerPublishTool(tc: ToolContext): void {
           .describe(
             "After a LIVE publish, open a review round asking your human to review this version — the /derive loop. They answer inline and hit Send back (or Approve); poll catch_up's `review` for the state. No effect on a proposal (that already IS a review).",
           ),
+        // SEE IT in the same call. Optional and off by default, so an existing caller's
+        // response shape never changes.
+        render: z
+          .string()
+          .optional()
+          .describe(
+            choiceDescription(
+              RENDER_VARIANTS,
+              "Return a screenshot of the published page with this response, instead of a second read.",
+            ),
+          ),
+        wait: z
+          .number()
+          .optional()
+          .describe(
+            `With \`render\`: block up to this many seconds (max ${RENDER_WAIT_MAX}) for the shot. Omit and you get the ordinary response if it isn't ready yet.`,
+          ),
         workspace: wsArg,
         edits: z
           .array(
@@ -261,6 +286,8 @@ export function registerPublishTool(tc: ToolContext): void {
       for_review,
       addresses,
       request_review,
+      render,
+      wait,
       workspace,
       edits,
       base_version,
@@ -685,7 +712,7 @@ export function registerPublishTool(tc: ToolContext): void {
           typeof content === "string" && artifact.kind === "file"
             ? await missingBlobAdvisory(content, ctx.blobs)
             : null
-        return json({
+        const payload = {
           published: true,
           short_id: artifact.short_id,
           ...(review_round ? { review_requested: true } : {}),
@@ -728,7 +755,32 @@ export function registerPublishTool(tc: ToolContext): void {
                   .map((advisory) => ` ${advisory}`)
                   .join("")
               : ""),
-        })
+        }
+        // PUBLISH → SEE IT, in one call. Without `render` this is exactly the old
+        // response. With it, wait for the shot and hand it back here, because the
+        // publish-then-go-look-at-it loop is two calls and a guess at how long to
+        // sleep — and an agent cannot simply open the tab instead.
+        if (render) {
+          const wrong = badChoice("render", render, RENDER_VARIANTS)
+          if (wrong) return err(wrong)
+          const shot = await collectRender(
+            ctx,
+            artifact.id,
+            version.n,
+            render as RenderVariant,
+            wait ?? 0,
+          )
+          if (shot)
+            return {
+              content: [
+                { type: "text" as const, text: JSON.stringify(payload, null, 2) },
+                { type: "image" as const, data: toBase64(shot.bytes), mimeType: shot.mimeType },
+              ],
+            }
+          // Not ready inside the wait: fall through to the ordinary response, whose
+          // `render` field already says how to collect it.
+        }
+        return json(payload)
       } catch (e) {
         const msg = e instanceof PublishError ? e.message : "could not publish"
         return text(`Publish failed: ${msg}`)

@@ -12,7 +12,12 @@ export const cfBrowserRenderer = (binding: BrowserWorker): Renderer => ({
     const browser = await puppeteer.launch(binding)
     try {
       const page = await browser.newPage()
-      await page.setViewport({ width: opts.width, height: opts.height })
+      await page.setViewport({
+        width: opts.width,
+        height: opts.height,
+        // Mirrors the Node renderer, so the two runtimes cannot disagree about a variant.
+        ...(opts.deviceScaleFactor ? { deviceScaleFactor: opts.deviceScaleFactor } : {}),
+      })
       await page.goto(url, { waitUntil: "networkidle0", timeout: opts.timeoutMs })
       const buf = (await page.screenshot({ type: "png", fullPage: !!opts.fullPage })) as Uint8Array
       return buf
