@@ -97,6 +97,8 @@ type AccessDraft = {
   linkRole: LinkRole
   listed: Listed
   password?: string
+  /** Owner opt-in: the anonymous public page shows version history. */
+  publicHistory?: boolean
 }
 
 /**
@@ -113,6 +115,7 @@ export function ShareButton({
   linkRole,
   listed,
   passwordProtected = false,
+  publicHistory = false,
   collectionAccess,
 }: {
   shortId: string
@@ -123,6 +126,8 @@ export function ShareButton({
   listed?: Listed
   /** The world link carries a password (the lock). */
   passwordProtected?: boolean
+  /** The anonymous public page shows version history (owner opt-in). */
+  publicHistory?: boolean
   /** Collections whose sharing reaches this artifact (detail response) — rendered as
    *  disclosure rows so the dialog never claims "Invited" while a collection grants
    *  the workspace access. */
@@ -149,6 +154,8 @@ export function ShareButton({
   const [pw, setPw] = useState("")
   // The lock as the server knows it, kept locally current as we set/clear it.
   const [hasLock, setHasLock] = useState(passwordProtected)
+  // Public history as the server knows it (see the world-link row below).
+  const [pubHist, setPubHist] = useState(publicHistory)
   // The checkbox is checked before a password exists (the input is showing) —
   // nothing applies until Set password.
   const [lockDraft, setLockDraft] = useState(false)
@@ -232,10 +239,11 @@ export function ShareButton({
   const accessMut = useApiMutation({
     mutationFn: (next: AccessDraft) => api.setAccess(shortId, next),
     optimistic: (next) => {
-      const prev = { wsAccess, lRole, lst, hasLock, lockDraft }
+      const prev = { wsAccess, lRole, lst, hasLock, lockDraft, pubHist }
       setWsAccess(next.workspaceAccess)
       setLRole(next.linkRole)
       setLst(next.listed)
+      if (next.publicHistory !== undefined) setPubHist(next.publicHistory)
       if (next.linkRole === "none") {
         setHasLock(false)
         setLockDraft(false)
@@ -246,6 +254,7 @@ export function ShareButton({
         setLst(prev.lst)
         setHasLock(prev.hasLock)
         setLockDraft(prev.lockDraft)
+        setPubHist(prev.pubHist)
       }
     },
     onSuccess: (r) => {
@@ -253,6 +262,7 @@ export function ShareButton({
       setLRole(r.link_role)
       setLst(r.listed)
       setHasLock(!!r.locked)
+      setPubHist(!!r.public_history)
       setLockDraft(false)
       setPw("")
       setPwOpen(false)
@@ -309,6 +319,9 @@ export function ShareButton({
     listed: lst,
     password,
   })
+  // Public history: applies immediately like every other switch here.
+  const togglePublicHistory = (on: boolean) =>
+    void applyAccess({ workspaceAccess: wsAccess, linkRole: lRole, listed: lst, publicHistory: on })
   // The lock checkbox: checking reveals the password input (applies on Set);
   // unchecking clears the lock immediately (an explicit empty password).
   const toggleLock = (on: boolean) => {
@@ -446,6 +459,7 @@ export function ShareButton({
           // Re-seed the lock from the server's state and drop any half-typed
           // draft — an abandoned checkbox must not survive a close/reopen.
           setHasLock(passwordProtected)
+          setPubHist(publicHistory)
           setLockDraft(false)
           setMore(false)
           load()
@@ -574,6 +588,25 @@ export function ShareButton({
                         aria-label="List in the public directory"
                         data-testid="share-listed"
                         onCheckedChange={toggleListed}
+                      />
+                    </div>
+
+                    {/* Public history — a disclosure like the listing: whether the
+                        anonymous page shows every version (dropdown + old reads).
+                        Signed-in readers always see history; this governs anon only. */}
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm text-foreground">Show version history</div>
+                        <div className="text-xs text-muted-foreground">
+                          Anyone with the link can browse every version.
+                        </div>
+                      </div>
+                      <Switch
+                        checked={pubHist}
+                        disabled={accessMut.isPending}
+                        aria-label="Show version history on the public page"
+                        data-testid="share-public-history"
+                        onCheckedChange={togglePublicHistory}
                       />
                     </div>
 

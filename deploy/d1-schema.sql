@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS artifact (
   removed_at TEXT,
   expires_at TEXT,
   first_foreign_view_at TEXT,
+  public_history INTEGER,
   source_path TEXT,
   author_name TEXT,
   author_login TEXT,

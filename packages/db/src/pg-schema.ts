@@ -61,6 +61,8 @@ export const artifact = pgTable("artifact", {
   expires_at: text("expires_at"),
   // First non-author view (the activation moment; see schema.ts).
   first_foreign_view_at: text("first_foreign_view_at"),
+  // Owner opt-in: anon public page shows version history (see schema.ts).
+  public_history: integer("public_history").$type<0 | 1>(),
   source_path: text("source_path"),
   // The CURRENT (last) author, denormalized from the latest version for the list view +
   // author filtering. For a GitHub-synced artifact these mirror the last commit's author.

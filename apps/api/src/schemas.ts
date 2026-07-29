@@ -142,6 +142,12 @@ export const Artifact = z
       .describe(
         "Open-thread count for the sign-in-to-comment pill; present only for anonymous callers on a link that grants commenting.",
       ),
+    public_history: z
+      .boolean()
+      .optional()
+      .describe(
+        "Owner opt-in: the anonymous public page shows version history. When false, anonymous detail responses carry only the current version.",
+      ),
     org_id: z
       .string()
       .optional()
