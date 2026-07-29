@@ -66,3 +66,44 @@ describe("automations beta gate", () => {
     expect(del.status).toBeLessThan(300)
   })
 })
+
+// The gate is only useful if it can be OPENED. `automateBeta` shipped as a setting that no route
+// accepted, and the settings PATCH strips unknown keys, so the flag was silently unflippable and
+// the surface permanently closed on any real deployment.
+describe("automateBeta is reachable over the API", () => {
+  const admin: TestUser = { id: "u_gate_adm", email: "gateadm@derive.test", name: "Admin" }
+
+  it("an admin can turn it on and off, and it round-trips", async () => {
+    const { app } = makeAuthedApp("gate-patch", [admin])
+    const patch = (on: boolean) =>
+      app.request("/v1/workspace/settings", {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...as(admin.email) },
+        body: JSON.stringify({ automateBeta: on }),
+      })
+
+    const off = await patch(false)
+    expect(off.status).toBe(200)
+    expect((await off.json()).automateBeta).toBe(false)
+    // Refused while off, which proves the PATCH reached the gate and not just the response body.
+    expect(
+      (
+        await app.request(
+          "/v1/automations",
+          jsonAs(as(admin.email), { trigger: { kind: "manual" }, instruction: "x" }),
+        )
+      ).status,
+    ).toBe(404)
+
+    const on = await patch(true)
+    expect((await on.json()).automateBeta).toBe(true)
+    expect(
+      (
+        await app.request(
+          "/v1/automations",
+          jsonAs(as(admin.email), { trigger: { kind: "manual" }, instruction: "x" }),
+        )
+      ).status,
+    ).toBe(201)
+  })
+})

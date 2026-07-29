@@ -141,6 +141,11 @@ export const workspaceRoutes = (ctx: AppContext) => {
         .describe(
           "BETA: the Chat tab on a document. Off by default — the tab is hidden and the chat route refuses, so a workspace opts in deliberately.",
         ),
+      automateBeta: z
+        .boolean()
+        .describe(
+          "BETA: automations on a document. Off by default — the Automate entry point is hidden and the create/run/fire routes refuse, so a workspace opts in deliberately.",
+        ),
       agentKillswitch: z
         .boolean()
         .describe("When true, every hosted agent write demotes to a proposal, instantly."),
@@ -653,6 +658,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
             whiteLabel: z.boolean(),
             hostedAgentsEnabled: z.boolean(),
             chatBeta: z.boolean(),
+            automateBeta: z.boolean(),
             agentKillswitch: z.boolean(),
             agentAutoEnabled: z.boolean(),
             defaultAgentId: z.string().nullable(),
