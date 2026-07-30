@@ -1902,7 +1902,12 @@ export function runStoreContract(
     it("hard-deletes the artifact row and all FK-dependent rows", async () => {
       const a = await store.createArtifact(newArtifact())
       const thread = uuid()
-      await store.addVersion(a.id, newVersion())
+      const dv = await store.addVersion(a.id, newVersion())
+      // Data slots hang off the version by artifact_id — a delete that doesn't clear them
+      // first hits a FOREIGN KEY constraint (found by deleting a slot-bearing artifact live).
+      await store.setVersionData(a.id, dv.n, [
+        { id: uuid(), slot: "checks", json: `{"pass":1}`, size_bytes: 10, gen: 1 },
+      ])
       await store.createComment({
         id: uuid(),
         artifact_id: a.id,
@@ -1934,6 +1939,7 @@ export function runStoreContract(
       expect(await store.getByShortId(a.short_id)).toBeNull()
       expect(await store.getArtifactById(a.id)).toBeNull()
       expect(await store.listVersions(a.id)).toHaveLength(0)
+      expect(await store.getVersionData(a.id, dv.n)).toHaveLength(0)
       expect(await store.listComments(a.id)).toHaveLength(0)
       expect(await store.getArtifactMember(a.id, "bob")).toBeNull()
       expect(await store.listUserFavoriteIds("amy")).not.toContain(a.id)

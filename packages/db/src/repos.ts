@@ -3511,6 +3511,7 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
     await db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
     await db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
+    await db.delete(versionData).where(eq(versionData.artifact_id, id)).run()
     await db.delete(version).where(eq(version.artifact_id, id)).run()
     await db.delete(comment).where(eq(comment.artifact_id, id)).run()
     await db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()
