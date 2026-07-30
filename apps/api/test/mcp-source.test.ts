@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
 import { LocalBroker } from "@derive/broker"
 import { afterAll, describe, expect, it } from "vitest"
-import { callTool, toolsForRun } from "../src/lib/broker"
+import { callTool, isDirect, toolsForRun } from "../src/lib/broker"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 // MCP as a SOURCE, driven through the real HTTP path.
@@ -121,6 +121,18 @@ describe("MCP as a source: connect, list, call", () => {
     // Fail closed and QUIETLY: no tools, no thrown claim. A run bound to several servers keeps
     // the others and reports a missing tool.
     expect(await toolsForRun(meta, new LocalBroker(), "default", [id])).toHaveLength(0)
+  })
+
+  it("is stored as its own kind, not as oauth", async () => {
+    // It was stored as `oauth` — already loose, and an outright lie once it carries a
+    // `secret_enc`, which only a `secret` connection was ever meant to have. Anything reasoning
+    // about `kind` (revocation, credential resolution, a picker) would act on that lie.
+    const mcp = await startServer([{ name: "read", description: "Read a doc." }])
+    const created = await connect({ toolkit: "docs", mcp_url: mcp.url })
+    expect(created.status).toBe(201)
+    expect(created.body.kind).toBe("mcp")
+    // And it is NOT a direct kind: Derive does not make its HTTP call itself, the broker does.
+    expect(isDirect("mcp")).toBe(false)
   })
 
   it("an unreachable server is refused at the door, not stored as pending", async () => {

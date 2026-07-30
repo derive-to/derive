@@ -219,6 +219,10 @@ export const connectionRoutes = (ctx: AppContext) => {
       user_id: me.id, // personal: the owner (never falls back). workspace: provenance.
       scope: b.scope,
       broker: broker.provider,
+      // An MCP connection is its OWN kind. Storing it as `oauth` was already loose; once it
+      // carries a `secret_enc` — which only `secret` was ever meant to have — it is a lie that
+      // anything reasoning about `kind` will act on.
+      ...(b.mcp_url ? { kind: "mcp" as const } : {}),
       toolkit: b.toolkit,
       broker_ref: link.ref,
       // Write-only, exactly as `kind: "secret"` stores a pasted key: encrypted at rest, spent
@@ -252,7 +256,10 @@ export const connectionRoutes = (ctx: AppContext) => {
     // for the install-backed ones it MUST be: broker_ref is an installation id, not a
     // broker ref, and removing an agent's access must never uninstall the integration
     // the workspace uses for everything else.
-    if (!isDirect(cn.kind)) {
+    // `mcp` joins the direct kinds here for the same reason they are here: there is no vendor
+    // account behind it, so the status flip IS the revocation. Asking a plan broker to revoke an
+    // `mcp:` ref would reach the wrong vendor, or (with no plan) a broker that refuses.
+    if (!isDirect(cn.kind) && cn.kind !== "mcp") {
       const broker = await brokerFor(meta, org, cn.user_id, deps.encryptionKey, deps.allowEchoStub)
       try {
         await broker.revoke(cn.broker_ref)
