@@ -6,27 +6,20 @@
 // the message is watching. See the design doc (derive.to 8205agbp).
 //
 // What it DOES share with the unattended lane is every decision that must not drift: the run
-// contract (what to ask for, how to read it), the autonomy gate (how a write lands), and the
-// cost accounting. Those are imported from core, not re-implemented.
+// contract (what to ask for, how to read it), the autonomy gate (how a write lands), the nudge
+// policy and the cost accounting. Those are lib/turn-core.ts, which the loop substrate runs too.
+// This file is what is genuinely attended about an attended turn: the document comes from the
+// store rather than a claim, and the write goes to the store rather than over HTTP.
 
 import {
   type ArtifactRecord,
-  addCostUsd,
-  applyEdits,
-  decideWrite,
   EDITS_CONTRACT,
   EDITS_THRESHOLD_CHARS,
-  EditError,
-  editsNudge,
   MAX_ARTIFACT_CHARS,
-  NO_EDITS_BLOCK,
-  NO_REVISION_BLOCK,
   NUDGE_LIMIT,
   newId,
-  parseEdits,
-  parseRevision,
   REVISION_CONTRACT,
-  REVISION_NUDGE,
+  type Revision,
   type Selector,
   type SessionMessageRecord,
   type SessionRecord,
@@ -35,7 +28,13 @@ import {
 import { log } from "../log"
 import { type AfterPublishDeps, afterPublish } from "./after-publish"
 import type { AgentLoopInput } from "./agent-loop"
-import { TruncatedReplyError } from "./model-openai"
+import {
+  answerContract,
+  editsContract,
+  type LandingPort,
+  runTurn,
+  type TurnOutcome,
+} from "./turn-core"
 
 export interface TurnDeps extends AfterPublishDeps {
   callModel: AgentLoopInput["callModel"]
@@ -49,6 +48,16 @@ export interface TurnResult {
   /** The version number written, or the proposal id filed. Null when nothing landed. */
   wrote: { kind: "version"; n: number } | { kind: "proposal"; id: string } | null
   costMicroUsd: number | null
+}
+
+type TurnInput = {
+  session: SessionRecord
+  subject: Extract<Selector, { kind: "artifact" }>
+  artifact: ArtifactRecord
+  transcript: SessionMessageRecord[]
+  flags: { agentKillswitch: boolean; agentAutoEnabled: boolean }
+  /** The human this turn acts for — follower fan-out and version authorship. */
+  onBehalf: { id: string; name: string } | null
 }
 
 const sourceOf = async (
@@ -71,23 +80,34 @@ const asTurns = (msgs: SessionMessageRecord[]): { role: "user" | "assistant"; co
     content: m.body_md,
   }))
 
+/** What to tell the person when the turn produced nothing. The classification is the turn core's
+ *  and shared; the WORDING is this lane's, because somebody is reading it. */
+const apologyFor = (failure: NonNullable<TurnOutcome["failure"]>): string => {
+  // Truncation is not a connectivity problem, and "try again" is advice that cannot work: the
+  // reply did not fit and will not fit next time either. Reachable now only for a SMALL document
+  // — anything large takes the edits contract, whose reply is bounded by the CHANGE — so "ask for
+  // a smaller change" is honest advice here in a way it was not when it meant a 53KB page.
+  if (failure.reason === "truncated")
+    return "That reply was cut off before it finished, so nothing has been changed. Try asking for a smaller change."
+  if (failure.reason === "model")
+    return "I could not reach the model just now. Nothing has been changed — try again."
+  if (failure.reason === "write")
+    return "I could not save that change, so nothing has been written."
+  // The contract's own diagnostic when it had one — an edit that missed knows WHICH anchor
+  // missed, and "nearest match was…" is the difference between a shrug and something the person
+  // can act on.
+  return (
+    failure.reply ??
+    "I tried to revise the document but could not produce a valid revision. Nothing has changed."
+  )
+}
+
 /**
  * Run one turn against `artifact`, writing through the gate. Never throws: a turn that
  * fails still returns a reply, because the transcript is what the person is looking at
  * and an empty conversation is a worse failure than an honest error message.
  */
-export const runSessionTurn = async (
-  deps: TurnDeps,
-  input: {
-    session: SessionRecord
-    subject: Extract<Selector, { kind: "artifact" }>
-    artifact: ArtifactRecord
-    transcript: SessionMessageRecord[]
-    flags: { agentKillswitch: boolean; agentAutoEnabled: boolean }
-    /** The human this turn acts for — follower fan-out and version authorship. */
-    onBehalf: { id: string; name: string } | null
-  },
-): Promise<TurnResult> => {
+export const runSessionTurn = async (deps: TurnDeps, input: TurnInput): Promise<TurnResult> => {
   const src = await sourceOf(deps, input.artifact)
   if (!src)
     return {
@@ -101,7 +121,13 @@ export const runSessionTurn = async (
   // the threshold, whole-document is the better ask — it cannot miss on an exact match. Above it,
   // a whole-document reply cannot fit at all, so search/replace is not a preference but the only
   // thing that works.
+  //
+  // Either way the contract is ANSWERABLE: a reply with no block is a perfectly good answer to a
+  // question, not a failure to follow the contract. That is the difference from an unattended
+  // automation run, and it is a property of the READING, not of the words we ask in — so the
+  // prompt below is unchanged and only the parse is shared.
   const big = src.text.length > EDITS_THRESHOLD_CHARS
+  const contract = big ? editsContract(src.text) : answerContract(REVISION_CONTRACT)
 
   const system = `You are helping someone edit a document they are looking at right now.
 
@@ -117,202 +143,129 @@ The document's current source follows, and its filename is ${input.artifact.shor
 ${src.text}
 --- END DOCUMENT ---`
 
-  let cost: number | null = null
-  let text = ""
-  // What to send on the retry. For a revision it is fixed; for edits it carries applyEdits'
-  // own diagnostic, which is the thing that makes the second attempt likely to work.
-  let nudge = REVISION_NUDGE
-  const turns = asTurns(input.transcript)
-  for (let attempt = 0; attempt <= NUDGE_LIMIT; attempt++) {
-    try {
-      const res = await deps.callModel({
-        system,
-        messages: attempt === 0 ? turns : [...turns, { role: "user" as const, content: nudge }],
-        tools: [],
-      })
-      cost = addCostUsd(cost, res.costUsd)
-      text = res.text
-    } catch (err) {
-      log.error("model call failed", { session: input.session.id, err: String(err) })
-      // Truncation is not a connectivity problem, and "try again" is advice that cannot work:
-      // the document does not fit in one reply and will not next time either.
-      //
-      // Nor does "change one section" help, which an earlier version of this message suggested —
-      // REVISION_CONTRACT asks for the COMPLETE document back however small the change, so every
-      // edit to a large page fails identically. The honest fix is the `edits` contract
-      // (applyEdits in core, already used by the publish and proposal routes): a search/replace
-      // whose reply is bounded by the size of the CHANGE rather than the document. Chat is the
-      // only writer not using it. Until then this says what is true and stops there.
-      const truncated = err instanceof TruncatedReplyError
-      return {
-        reply: truncated
-          ? "That reply was cut off before it finished, so nothing has been changed. Try asking for a smaller change."
-          : "I could not reach the model just now. Nothing has been changed — try again.",
-        outcome: "failed",
-        wrote: null,
-        costMicroUsd: toMicroUsd(cost),
-      }
-    }
-    if (big) {
-      const ed = parseEdits(text)
-      if (ed.edits) {
-        try {
-          // All-or-nothing: applyEdits rejects the whole batch on any miss, so a document is
-          // never half-written by a model that got one anchor wrong.
-          const content = applyEdits(src.text, ed.edits)
-          return await land(
-            deps,
-            input,
-            {
-              content,
-              filename: input.artifact.short_id,
-              confidence: ed.confidence,
-              message: ed.message,
-            },
-            src.version,
-            cost,
-          )
-        } catch (e) {
-          // A miss is recoverable and worth ONE retry, because the diagnostic says WHY it missed
-          // (nearest match, how many times it matched) rather than merely that it did.
-          if (e instanceof EditError && attempt < NUDGE_LIMIT) {
-            nudge = editsNudge(e.message)
-            continue
-          }
-          return {
-            reply:
-              e instanceof EditError
-                ? `I could not apply that change: ${e.message}`
-                : "I could not apply that change, so nothing has been written.",
-            outcome: "failed",
-            wrote: null,
-            costMicroUsd: toMicroUsd(cost),
-          }
-        }
-      }
-      // No block at all is a plain answer, exactly as with a revision.
-      if (ed.error === NO_EDITS_BLOCK) {
-        const prose = text.replace(/<edits>[\s\S]*?<\/edits>/gi, "").trim()
-        return {
-          reply: prose || "(no reply)",
-          outcome: "answered",
-          wrote: null,
-          costMicroUsd: toMicroUsd(cost),
-        }
-      }
-      nudge = editsNudge(ed.error)
-      continue
-    }
-    const parsed = parseRevision(text)
-    if (parsed.revision) return await land(deps, input, parsed.revision, src.version, cost)
-    // NO revision block is a legitimate answer here, unlike an unattended run: the person may
-    // simply have asked a question. Only a block that was PRESENT but malformed earns a nudge —
-    // that is the model trying and failing the contract, rather than choosing not to edit.
-    if (parsed.error === NO_REVISION_BLOCK) {
-      const prose = text.replace(/<revision>[\s\S]*?<\/revision>/gi, "").trim()
-      return {
-        reply: prose || "(no reply)",
-        outcome: "answered",
-        wrote: null,
-        costMicroUsd: toMicroUsd(cost),
-      }
-    }
-  }
-  return {
-    reply:
-      "I tried to revise the document but could not produce a valid revision. Nothing has changed.",
-    outcome: "failed",
-    wrote: null,
-    costMicroUsd: toMicroUsd(cost),
-  }
-}
-
-const land = async (
-  deps: TurnDeps,
-  input: Parameters<typeof runSessionTurn>[1],
-  revision: { content: string; filename: string; confidence: number | null; message?: string },
-  baseVersion: number,
-  cost: number | null,
-): Promise<TurnResult> => {
-  // THE GATE, not the model, decides how this lands. `mode` rides on the subject selector,
-  // so the person's edit-vs-suggest preference is the same field that says what the session
-  // is about — one field, and the two can never disagree.
-  const decision = decideWrite({
-    autonomy: input.subject.mode === "publish" ? "auto" : "suggest",
-    confidence: revision.confidence,
-    flags: input.flags,
-    // Nothing external was read: the model saw this document and this conversation, both of
-    // which the asker can already see. Taint returns the moment a turn can call a tool.
-    tainted: false,
+  const out = await runTurn({
+    system,
+    messages: asTurns(input.transcript),
+    contract,
+    callModel: deps.callModel,
+    // No tools, so nothing can extend the turn: one attempt plus the single shared nudge.
+    maxTurns: NUDGE_LIMIT + 1,
+    gate: {
+      // `mode` rides on the subject selector, so the person's edit-vs-suggest preference is the
+      // same field that says what the session is about — one field, and the two can never
+      // disagree.
+      autonomy: input.subject.mode === "publish" ? "auto" : "suggest",
+      flags: input.flags,
+      // Nothing external was read: the model saw this document and this conversation, both of
+      // which the asker can already see. Taint returns the moment a turn can call a tool.
+      tainted: false,
+    },
+    land: landInProcess(deps, input, src.version),
   })
-  // No `shadow` branch: `autonomy` here is only ever `auto` or `suggest` (derived from the
-  // subject's mode), and decideWrite returns `shadow` only for autonomy `shadow`. Shadow is an
-  // unattended-run concept — filing nothing at all makes no sense when someone is waiting for
-  // a reply — so the case is unreachable rather than unhandled.
 
-  const bytes = new TextEncoder().encode(revision.content)
-  const blobKey = await deps.blobs.put(bytes)
-  // KEEP THE DOCUMENT'S OWN FORMAT. Deriving this from the model's filename silently converted
-  // a Markdown doc to HTML the moment the model omitted or mangled the name — parseRevision
-  // falls back to `index.html`, which is right when CREATING an artifact and wrong when editing
-  // one. The result rendered as raw unformatted text, and nothing reported an error. An edit
-  // changes content; the format is the document's, not the model's. Falls back to the filename
-  // only for a document that somehow has no recorded type.
-  const contentType =
-    input.artifact.current_content_type ??
-    (revision.filename.endsWith(".md") ? "text/markdown" : "text/html")
-  const author = input.onBehalf?.name ?? "Derive"
-
-  // A human published while the model was thinking. Demote rather than clobber: their write
-  // is the one that was reviewed by a person, and the turn's answer becomes a proposal against
-  // what they wrote. The check is cheap and re-reads the artifact deliberately.
-  const fresh = await deps.meta.getArtifactById(input.artifact.id)
-  const raced = !!fresh && fresh.current_version !== baseVersion
-
-  if (decision === "proposal" || raced) {
-    const proposal = await deps.meta.createProposal({
-      id: newId("p"),
-      artifact_id: input.artifact.id,
-      blob_key: blobKey,
-      content_type: contentType,
-      kind: input.artifact.kind,
-      message: revision.message ?? null,
-      author,
-      author_id: input.onBehalf?.id ?? null,
-      on_behalf_of: input.onBehalf?.id ?? null,
-      base_version: baseVersion,
+  if (out.failure) {
+    log.warn("attended turn produced nothing", {
+      session: input.session.id,
+      reason: out.failure.reason,
+      error: out.failure.error,
     })
     return {
-      reply: raced
-        ? `${revision.message || "Done."}\n\n(Someone published while I was working, so I filed this as a proposal instead of editing.)`
-        : revision.message || "Done — filed as a proposal.",
-      outcome: "proposed",
-      wrote: { kind: "proposal", id: proposal.id },
-      costMicroUsd: toMicroUsd(cost),
+      reply: apologyFor(out.failure),
+      outcome: "failed",
+      wrote: null,
+      costMicroUsd: toMicroUsd(out.costUsd),
     }
   }
-
-  const version = await deps.meta.addVersion(input.artifact.id, {
-    id: newId("v"),
-    blob_key: blobKey,
-    content_type: contentType,
-    size_bytes: bytes.byteLength,
-    author,
-    author_id: input.onBehalf?.id ?? null,
-    source: "api",
-    message: revision.message ?? null,
-    name: null,
-  })
-  // Same post-publish work as any other write — webhooks, realtime, re-anchor — so a chat
-  // edit is indistinguishable downstream from one made in the editor. That is the point.
-  await afterPublish(deps, input.artifact, version, {
-    isNew: false,
-    onBehalf: input.onBehalf?.id ?? null,
-  })
+  // `shadow` is unreachable: autonomy here is only ever `auto` or `suggest` (derived from the
+  // subject's mode), and decideWrite returns `shadow` only for autonomy `shadow`. Filing nothing
+  // at all makes no sense when someone is waiting for a reply, so it is unreachable rather than
+  // unhandled — and if it ever became reachable, an honest "nothing happened" beats a lie.
+  if (out.outcome === "shadow")
+    return {
+      reply: "I did not write anything.",
+      outcome: "failed",
+      wrote: null,
+      costMicroUsd: toMicroUsd(out.costUsd),
+    }
   return {
-    reply: revision.message || `Done — published v${version.n}.`,
-    outcome: "published",
-    wrote: { kind: "version", n: version.n },
-    costMicroUsd: toMicroUsd(cost),
+    reply: out.reply || "(no reply)",
+    outcome: out.outcome,
+    // The in-process port only ever files a version or a proposal; `artifact` is the loop's
+    // create-a-new-one landing, which chat has no route to (it is always ABOUT a document).
+    wrote: out.wrote?.kind === "artifact" ? null : (out.wrote ?? null),
+    costMicroUsd: toMicroUsd(out.costUsd),
   }
 }
+
+/**
+ * The ATTENDED landing: straight into the store, because this IS the API and the person is
+ * waiting on the round trip. The loop substrate's port does the same job over HTTP; the split
+ * is at lib/turn-core.ts's LandingPort and nowhere else.
+ */
+const landInProcess =
+  (deps: TurnDeps, input: TurnInput, baseVersion: number): LandingPort =>
+  async (decision, revision: Revision) => {
+    const bytes = new TextEncoder().encode(revision.content)
+    const blobKey = await deps.blobs.put(bytes)
+    // KEEP THE DOCUMENT'S OWN FORMAT. Deriving this from the model's filename silently converted
+    // a Markdown doc to HTML the moment the model omitted or mangled the name — parseRevision
+    // falls back to `index.html`, which is right when CREATING an artifact and wrong when editing
+    // one. The result rendered as raw unformatted text, and nothing reported an error. An edit
+    // changes content; the format is the document's, not the model's. Falls back to the filename
+    // only for a document that somehow has no recorded type.
+    const contentType =
+      input.artifact.current_content_type ??
+      (revision.filename.endsWith(".md") ? "text/markdown" : "text/html")
+    const author = input.onBehalf?.name ?? "Derive"
+
+    // A human published while the model was thinking. Demote rather than clobber: their write
+    // is the one that was reviewed by a person, and the turn's answer becomes a proposal against
+    // what they wrote. The check is cheap and re-reads the artifact deliberately.
+    const fresh = await deps.meta.getArtifactById(input.artifact.id)
+    const raced = !!fresh && fresh.current_version !== baseVersion
+
+    if (decision === "proposal" || raced) {
+      const proposal = await deps.meta.createProposal({
+        id: newId("p"),
+        artifact_id: input.artifact.id,
+        blob_key: blobKey,
+        content_type: contentType,
+        kind: input.artifact.kind,
+        message: revision.message ?? null,
+        author,
+        author_id: input.onBehalf?.id ?? null,
+        on_behalf_of: input.onBehalf?.id ?? null,
+        base_version: baseVersion,
+      })
+      return {
+        outcome: "proposed",
+        wrote: { kind: "proposal", id: proposal.id },
+        note: raced
+          ? `${revision.message || "Done."}\n\n(Someone published while I was working, so I filed this as a proposal instead of editing.)`
+          : revision.message || "Done — filed as a proposal.",
+      }
+    }
+
+    const version = await deps.meta.addVersion(input.artifact.id, {
+      id: newId("v"),
+      blob_key: blobKey,
+      content_type: contentType,
+      size_bytes: bytes.byteLength,
+      author,
+      author_id: input.onBehalf?.id ?? null,
+      source: "api",
+      message: revision.message ?? null,
+      name: null,
+    })
+    // Same post-publish work as any other write — webhooks, realtime, re-anchor — so a chat
+    // edit is indistinguishable downstream from one made in the editor. That is the point.
+    await afterPublish(deps, input.artifact, version, {
+      isNew: false,
+      onBehalf: input.onBehalf?.id ?? null,
+    })
+    return {
+      outcome: "published",
+      wrote: { kind: "version", n: version.n },
+      note: revision.message || `Done — published v${version.n}.`,
+    }
+  }

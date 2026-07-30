@@ -109,6 +109,16 @@ Either every edit applies or none does — a partial document is never written.`
 export const editsNudge = (detail: string): string =>
   `Your previous reply was NOT applied: ${detail}\n\nReply now with ONLY a corrected <edits> block and nothing else. Copy old_str byte for byte from the source shown above, and include enough surrounding text that it appears exactly once.`
 
+/** Models wrap the JSON in ``` fences inside the tags often enough that every reader has to
+ *  tolerate it. Shared so the three readers tolerate it IDENTICALLY — a fence one of them
+ *  stripped and another did not is exactly the invisible drift these contracts exist to stop. */
+const unfence = (s: string): string =>
+  s
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .trim()
+
 /** Read a model reply into edits, forgiving about shape and strict about substance — same stance
  *  as parseRevision. An empty or malformed list is an error, never a silent no-op. */
 export const parseEdits = (
@@ -123,11 +133,7 @@ export const parseEdits = (
     } => {
   const m = text.match(/<edits>([\s\S]*?)<\/edits>/i)
   if (!m?.[1]) return { error: NO_EDITS_BLOCK }
-  const cleaned = m[1]
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/```\s*$/i, "")
-    .trim()
+  const cleaned = unfence(m[1])
   let raw: unknown
   try {
     raw = JSON.parse(cleaned)
@@ -183,17 +189,31 @@ export const REVISION_NUDGE = `Your previous reply was NOT accepted — it did n
  *  string-matching a message that could later be reworded. */
 export const NO_REVISION_BLOCK = "no <revision> block in result"
 
+/** The metadata half of a revision, normalized. Shared by every reader of the block so an
+ *  attended turn, an automation run and an ask agree on what a mangled filename or a string
+ *  confidence MEANS — the drift that a per-lane copy invites and nothing would notice. */
+const normalizeRevision = (r: Record<string, unknown>, content: string): Revision => ({
+  content,
+  // A filename without an extension sets no content type, so fall back rather than publish an
+  // artifact the viewer cannot render.
+  filename:
+    typeof r.filename === "string" && /\.[a-z0-9]+$/i.test(r.filename.trim())
+      ? r.filename.trim().slice(0, 120)
+      : "index.html",
+  // Clamped, not rejected: a model that says 1.5 means "very sure", and failing the run over
+  // it would throw away completed work. Anything non-numeric reads as UNSTATED (null), which
+  // the autonomy gate treats as never-auto-publish.
+  confidence: typeof r.confidence === "number" ? Math.max(0, Math.min(1, r.confidence)) : null,
+  message:
+    typeof r.message === "string" && r.message.trim() ? r.message.trim().slice(0, 200) : undefined,
+})
+
 export const parseRevision = (text: string): RevisionParse => {
   const m = text.match(/<revision>([\s\S]*?)<\/revision>/i)
   if (!m?.[1]) return { error: NO_REVISION_BLOCK }
-  const cleaned = m[1]
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/```\s*$/i, "")
-    .trim()
   let raw: unknown
   try {
-    raw = JSON.parse(cleaned)
+    raw = JSON.parse(unfence(m[1]))
   } catch (e) {
     return { error: `revision JSON parse: ${(e as Error).message}` }
   }
@@ -202,24 +222,176 @@ export const parseRevision = (text: string): RevisionParse => {
   if (typeof r.content !== "string" || !r.content.trim())
     return { error: "content must be a non-empty string" }
   if (r.content.length > MAX_ARTIFACT_CHARS) return { error: "content is over the 2MB cap" }
-  // A filename without an extension sets no content type, so fall back rather than publish an
-  // artifact the viewer cannot render.
-  const filename =
-    typeof r.filename === "string" && /\.[a-z0-9]+$/i.test(r.filename.trim())
-      ? r.filename.trim().slice(0, 120)
-      : "index.html"
-  return {
-    revision: {
-      content: r.content,
-      filename,
-      // Clamped, not rejected: a model that says 1.5 means "very sure", and failing the run over
-      // it would throw away completed work. Anything non-numeric reads as UNSTATED (null), which
-      // the autonomy gate treats as never-auto-publish.
-      confidence: typeof r.confidence === "number" ? Math.max(0, Math.min(1, r.confidence)) : null,
-      message:
-        typeof r.message === "string" && r.message.trim()
-          ? r.message.trim().slice(0, 200)
-          : undefined,
+  return { revision: normalizeRevision(r, r.content) }
+}
+
+// ---- the ASK variant: the same turn, where the model may choose not to write ----------------
+//
+// An ask is not a different contract. It is the SAME <revision> block on a turn where somebody
+// is waiting, so two things change and nothing else does:
+//
+//   1. The block is OPTIONAL. "They asked a question" is a complete, correct turn — the attended
+//      chat path has always treated a reply with no block as an ANSWER (NO_REVISION_BLOCK above),
+//      and an unattended ask deserves exactly the same reading.
+//   2. It carries the fields only a waiting person can use: escalate, and caveats.
+//
+// A parallel <answer> contract would fork the one thing that must not fork. The CLI runner has
+// its own <answer> block for historical reasons and its own filesystem-backed page channel; the
+// FIELDS below are the part shared with it, and packages/cli/test/ask-parity.test.js holds the
+// two readers to the same reading of them.
+
+/** The fields a SESSION turn carries that an automation run has no use for: nobody is waiting on
+ *  an automation, so there is nobody to escalate to and nobody to warn. */
+export interface AskFields {
+  /** This needs a person. The answer still stands — it is a draft to escalate, not a refusal. */
+  escalate: boolean
+  escalationReason: string | null
+  /** Anything the asker should treat with care. */
+  caveats: string[]
+  /** A page the model says it wrote TO ITS OWN DISK (`artifact: {title, path}` — the CLI
+   *  runner's channel, because a coding agent in a container has a filesystem and building a
+   *  large page into a file beats re-typing it into JSON).
+   *
+   *  Kept as its OWN field rather than folded into `revision` because it is the one thing an
+   *  executor without a filesystem genuinely cannot serve. Reading it is what lets such an
+   *  executor SAY SO. Dropping the key instead would lose a page the model built and report
+   *  success, which is the failure this field exists to prevent. */
+  pageOnDisk: { title: string; path: string } | null
+}
+
+/** One session turn's reply. */
+export interface AskReply extends AskFields {
+  /** The prose the asker reads. Never empty. */
+  body_md: string
+  /** Present when the model chose to WRITE. Null when it answered, which is not a contract
+   *  miss — it is the other half of the contract. */
+  revision: Revision | null
+}
+
+export type AskParse = { reply: AskReply; error?: undefined } | { reply?: undefined; error: string }
+
+/** Appended to the system prompt for an ASK. Deliberately the same block as REVISION_CONTRACT:
+ *  a reply that satisfies one satisfies the other, minus the fields nobody unattended can use. */
+export const ASK_CONTRACT = `
+
+## Output format — REQUIRED
+
+Someone ASKED you this and is waiting for the reply. Two things can happen, and you decide which:
+
+- They asked a QUESTION, or are thinking out loud. Answer in prose and emit NO block. Your prose
+  IS the answer and nothing is written.
+- They asked for a CHANGE, or for a page to be built. Answer in prose AND end your FINAL message
+  with a single <revision> block of JSON, with nothing after it.
+
+<revision>
+{
+  "content": "the COMPLETE new source — omit this key entirely when you are not writing",
+  "filename": "index.html or notes.md — sets the content type",
+  "confidence": 0.0,
+  "message": "a one-line version note",
+  "escalate": false,
+  "escalation_reason": null,
+  "caveats": ["anything the asker should treat with care"]
+}
+</revision>
+
+Put the WHOLE source in "content", never a diff, and inline everything a page needs (CSS, JS,
+SVG) — it renders in a sandbox that cannot fetch. Derive decides how the write lands — publish,
+propose, or record — from the settings and your confidence; that is never your call.
+
+Set "escalate" to true, with a short "escalation_reason", when this needs a person — and still
+give your best answer in prose. You may send the block with no "content" at all, purely to carry
+"escalate" or "caveats" alongside a prose answer.`
+
+/** Sent when a block WAS present and could not be read. A reply with no block is never nudged:
+ *  on an ask that is an answer, not a miss. */
+export const ASK_NUDGE = `Your previous reply was NOT accepted — the <revision> block in it could not be read, so nothing was written. Reply now with your answer in prose, followed by a single corrected block if you meant to change something: <revision>{"content":"<the full new source>","filename":"index.html","confidence":…,"message":"…"}</revision>. If you did not mean to change anything, answer in prose with no block at all.`
+
+/** Both output blocks, because "the prose" means the same thing whichever one a turn asked for
+ *  and a large-document turn that answers in prose must not have its answer contaminated by a
+ *  block it also emitted. */
+const BLOCK_RE = /<(revision|edits)>[\s\S]*?<\/\1>/gi
+
+/** Whatever the model said OUTSIDE the block — the prose an asker actually reads. */
+export const proseOf = (text: string): string => text.replace(BLOCK_RE, "").trim()
+
+/** The page-on-disk channel, read exactly as the CLI runner reads its own: inline HTML wins,
+ *  an oversized inline page WITH a path falls through to the path rather than being dropped,
+ *  and a nameless artifact is not one. Returns the inline source separately because inline HTML
+ *  is just a revision by another name. */
+const readArtifactChannel = (
+  a: unknown,
+): { html?: string; title: string; path?: string } | null => {
+  if (!a || typeof a !== "object") return null
+  const o = a as Record<string, unknown>
+  if (typeof o.title !== "string" || !o.title.trim()) return null
+  // Model-generated: clamped to card width, not trusted less.
+  const title = o.title.trim().slice(0, 120)
+  if (typeof o.html === "string" && o.html.trim() && o.html.length <= MAX_ARTIFACT_CHARS)
+    return { title, html: o.html }
+  if (typeof o.path === "string" && o.path.trim()) return { title, path: o.path.trim() }
+  return null
+}
+
+/**
+ * Read a model reply as one SESSION turn.
+ *
+ * Strict about the same substance parseRevision is, and forgiving about one more thing: the block
+ * itself. No block is an ANSWER. A block whose `content` is absent or empty is an answer too —
+ * that is how a model carries `escalate` or `caveats` on a turn that writes nothing. Only a block
+ * that is PRESENT and unreadable is an error, because that is the model trying and failing the
+ * contract rather than choosing not to write.
+ */
+export const parseAsk = (text: string): AskParse => {
+  const m = text.match(/<revision>([\s\S]*?)<\/revision>/i)
+  const prose = proseOf(text)
+  const answered = (over: Partial<AskReply> = {}): AskParse => ({
+    reply: {
+      body_md: prose || "(no reply)",
+      revision: null,
+      escalate: false,
+      escalationReason: null,
+      caveats: [],
+      pageOnDisk: null,
+      ...over,
     },
+  })
+  if (!m?.[1]) return answered()
+  let raw: unknown
+  try {
+    raw = JSON.parse(unfence(m[1]))
+  } catch (e) {
+    return { error: `revision JSON parse: ${(e as Error).message}` }
   }
+  if (!raw || typeof raw !== "object") return { error: "revision is not an object" }
+  const r = raw as Record<string, unknown>
+  if (typeof r.content === "string" && r.content.length > MAX_ARTIFACT_CHARS)
+    return { error: "content is over the 2MB cap" }
+
+  // A page built with the CLI's artifact channel. Inline HTML IS a revision — "the complete
+  // source of a page" is the only thing a revision ever was — so it folds in rather than
+  // becoming a second way to say the same thing. A path cannot fold in: it names a file on an
+  // executor's disk, so it rides out separately for a caller that can serve it (or explain).
+  const channel = readArtifactChannel(r.artifact)
+  const content =
+    typeof r.content === "string" && r.content.trim() ? r.content : (channel?.html ?? null)
+  const fields: AskFields = {
+    // Strictly the boolean. A truthy string must NOT escalate: escalation routes an answer to a
+    // person, and a model that wrote "false" would otherwise page somebody.
+    escalate: r.escalate === true,
+    escalationReason: typeof r.escalation_reason === "string" ? r.escalation_reason : null,
+    caveats: Array.isArray(r.caveats) ? r.caveats.filter((x) => typeof x === "string") : [],
+    pageOnDisk: channel?.path ? { title: channel.title, path: channel.path } : null,
+  }
+  if (content === null) return answered(fields)
+  const revision = normalizeRevision(
+    // An inline page has no filename of its own; its title is not one either (it is prose, and
+    // a title with a dot in it would set a content type by accident). HTML is what it is.
+    channel?.html === content && typeof r.filename !== "string"
+      ? { ...r, filename: "page.html" }
+      : r,
+    content,
+  )
+  const body = typeof r.body_md === "string" && r.body_md.trim() ? r.body_md.trim() : prose
+  return { reply: { ...fields, body_md: body || revision.message || "(no reply)", revision } }
 }

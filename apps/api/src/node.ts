@@ -379,6 +379,10 @@ const hostedDispatch = cfg.hostedRuns
       //
       // The loop substrate is the SAME file the Worker entry would use: it is an HTTP client of
       // this API, so there is no platform branch and nothing to keep in step between the two.
+      //
+      // ONE substrate for both lanes. Sessions used to be pinned to the child process because
+      // the loop served runs only; it now branches on the work token and claims an ask through
+      // `/v1/agent/sessions/claim`, so the split is gone.
       substrate:
         process.env.DERIVE_LOOP_RUNS === "1"
           ? loopSubstrate({
@@ -386,8 +390,6 @@ const hostedDispatch = cfg.hostedRuns
               gateway: modelGateway() ?? undefined,
             })
           : nodeSubstrate({ bin: cfg.runnerBin }),
-      // Sessions keep the child-process substrate whatever runs use: the loop serves RUNS only.
-      sessionSubstrate: nodeSubstrate({ bin: cfg.runnerBin }),
       server: cfg.baseUrl,
       secret: authSecret,
     }

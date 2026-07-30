@@ -44,13 +44,11 @@ export interface Substrate {
 
 export interface DispatchDeps {
   meta: MetaStore
+  /** Where BOTH lanes execute. There is no session-specific substrate: every substrate in scope
+   *  serves an ask as well as a run, because an ask and a schedule are the same
+   *  (context, instruction) call. The CLI runner branches on the token prefix (`dksess_` vs
+   *  `dkrun_`), and so does the loop. */
   substrate: Substrate
-  /** Substrate for SESSIONS, when they cannot run on the same one as runs. Defaults to
-   *  `substrate`. The loop substrate claims over `/v1/agent/runs/claim` and matches the id
-   *  against the runs it gets back, so handing it a session id is a silent no-op — the session
-   *  is never served and dies at the give-up horizon. Anything that selects the loop for runs
-   *  must therefore leave sessions on a substrate that can actually serve them. */
-  sessionSubstrate?: Substrate
   /** The API base URL handed to each executor. */
   server: string
   /** DERIVE_AUTH_SECRET / encryptionKey — signs the capability tokens. */
@@ -82,7 +80,8 @@ export interface DispatchResult {
 
 /** Mint the capability token for a work item and hand it to the substrate. Runs and sessions
  *  differ only in the token's kind and the id the executor is told to serve — the substrate
- *  boots the same image either way, which is the whole point of unifying the two lanes. */
+ *  boots the same image either way, which is the whole point of unifying the two lanes, and the
+ *  token's prefix is how the executor knows which claim endpoint it belongs to. */
 const startOne = async (
   deps: DispatchDeps,
   kind: "run" | "session",
@@ -90,8 +89,7 @@ const startOne = async (
   expMs: number,
 ): Promise<void> => {
   const token = await signWorkToken(kind, deps.secret, item.id, item.agentId, item.orgId, expMs)
-  const substrate = kind === "session" ? (deps.sessionSubstrate ?? deps.substrate) : deps.substrate
-  await substrate.start({ runId: item.id, token, server: deps.server })
+  await deps.substrate.start({ runId: item.id, token, server: deps.server })
 }
 
 /**

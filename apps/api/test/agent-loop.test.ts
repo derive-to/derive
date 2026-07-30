@@ -1,3 +1,4 @@
+import { REVISION_CONTRACT } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import {
   type AgentLoopInput,
@@ -5,6 +6,7 @@ import {
   type ModelTurn,
   runAgentLoop,
 } from "../src/lib/agent-loop"
+import { answerContract, revisionContract } from "../src/lib/turn-core"
 
 // The in-Worker agent loop — Basic execution without a container.
 //
@@ -39,9 +41,10 @@ const scripted = (turns: ModelTurn[]) => {
 }
 
 const base = (over: Partial<AgentLoopInput>): AgentLoopInput => ({
-  systemPrompt: "You maintain artifacts.",
-  prompt: "Update the roadmap.",
+  system: `You maintain artifacts.${REVISION_CONTRACT}`,
+  messages: [{ role: "user", content: "Update the roadmap." }],
   tools: [],
+  contract: revisionContract,
   callModel: scripted([turn({ text: revisionText() })]).callModel,
   executeTool: async () => ({ ok: true }),
   ...over,
@@ -52,12 +55,12 @@ describe("agent loop: the happy path", () => {
     const out = await runAgentLoop(base({}))
     expect(out.ok).toBe(true)
     if (!out.ok) return
-    expect(out.revision.content).toBe("# Fresh")
-    expect(out.revision.confidence).toBe(0.9)
+    expect(out.product.revision?.content).toBe("# Fresh")
+    expect(out.product.revision?.confidence).toBe(0.9)
     expect(out.turns).toBe(1)
   })
 
-  it("appends the SHARED revision contract to the system prompt", async () => {
+  it("sends the SHARED revision contract to the model, verbatim", async () => {
     // The whole reason the contract moved into core. If the Worker asked for a different output
     // shape than the container executor, the two substrates would stop being comparable and
     // routing between them on cost would change behaviour rather than just cost.
@@ -65,6 +68,54 @@ describe("agent loop: the happy path", () => {
     await runAgentLoop(base({ callModel: model.callModel }))
     expect(model.seen[0]?.system).toContain("<revision>")
     expect(model.seen[0]?.system).toContain("NOTHING after it")
+  })
+})
+
+describe("agent loop: the contract is injected, not assumed", () => {
+  // The loop runs three lanes that legitimately ask for different things: an automation wants a
+  // revision or nothing happened, an ask wants a revision OR a prose answer. Forking the loop to
+  // get that is how the two substrates would stop being comparable, so the contract is a
+  // parameter and the control flow around it is one implementation.
+  it("an ANSWERABLE contract treats a reply with no block as a product, not a miss", async () => {
+    const model = scripted([turn({ text: "It is about three paragraphs long." })])
+    const out = await runAgentLoop(base({ callModel: model.callModel, contract: answerContract() }))
+    expect(out.ok).toBe(true)
+    if (!out.ok) return
+    expect(out.product.revision).toBeNull()
+    expect(out.product.prose).toBe("It is about three paragraphs long.")
+    // Not nudged: the model chose not to write, which is half the contract, not a failure of it.
+    expect(model.calls()).toBe(1)
+  })
+
+  it("the SAME reply is a miss under the automation contract, and IS nudged", async () => {
+    const model = scripted([turn({ text: "I updated it, trust me." })])
+    const out = await runAgentLoop(base({ callModel: model.callModel }))
+    expect(out.ok).toBe(false)
+    expect(model.calls()).toBe(2)
+  })
+
+  it("carries the ask's session-only fields through", async () => {
+    const model = scripted([
+      turn({
+        text: `Here is what I found.\n<revision>${JSON.stringify({
+          escalate: true,
+          escalation_reason: "the numbers disagree",
+          caveats: ["one source was stale"],
+        })}</revision>`,
+      }),
+    ])
+    const out = await runAgentLoop(base({ callModel: model.callModel, contract: answerContract() }))
+    expect(out.ok).toBe(true)
+    if (!out.ok) return
+    // A block with no content is an ANSWER that carries session fields — the only way a model
+    // can escalate a turn it deliberately wrote nothing on.
+    expect(out.product.revision).toBeNull()
+    expect(out.product.ask).toMatchObject({
+      escalate: true,
+      escalationReason: "the numbers disagree",
+      caveats: ["one source was stale"],
+    })
+    expect(out.product.prose).toBe("Here is what I found.")
   })
 })
 
@@ -86,7 +137,7 @@ describe("agent loop: tools", () => {
       }),
     )
     expect(executed).toEqual([{ name: "docs.search", input: { q: "roadmap" } }])
-    expect(out.ok && out.revision.content).toBe("# With data")
+    expect(out.ok && out.product.revision?.content).toBe("# With data")
     expect(out.turns).toBe(2)
     // The tool RESULT has to reach the model, or the second turn is answering blind.
     const second = model.seen[1]?.messages ?? []
@@ -151,7 +202,7 @@ describe("agent loop: failure paths", () => {
       turn({ text: revisionText("# Recovered") }),
     ])
     const out = await runAgentLoop(base({ callModel: model.callModel }))
-    expect(out.ok && out.revision.content).toBe("# Recovered")
+    expect(out.ok && out.product.revision?.content).toBe("# Recovered")
     expect(JSON.stringify(model.seen[1]?.messages)).toContain("NOT accepted")
   })
 

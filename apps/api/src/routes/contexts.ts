@@ -1566,12 +1566,21 @@ export const contextRoutes = (ctx: AppContext) => {
     // executor exits clean rather than double-answering.
     if (!claimed) return c.json({ session: null })
     const manifest = await meta.getArtifactById(x.manifest_artifact_id)
+    // The autonomy gate's inputs, resolved server-side and FRESH at claim time — exactly as the
+    // runs claim resolves them, so a flipped killswitch is seen on the very next ask. An executor
+    // with no flags to gate on would have to either ignore the switch or invent a policy of its
+    // own, and both are worse than one more read here.
+    const settings = await meta.getOrgSettings(x.org_id)
     return c.json({
       session: {
         ...sessionJson(claimed),
         messages: (await meta.listSessionMessagesFor([claimed.id])).map(messageJson),
       },
       context: { id: x.id, name: x.name, manifest_short_id: manifest?.short_id ?? null },
+      flags: {
+        agentKillswitch: settings.agentKillswitch,
+        agentAutoEnabled: settings.agentAutoEnabled,
+      },
       // Projected def + ref only, as the run claim is: RunTool's routing fields, and the
       // connection behind them, stay server-side.
       tools: (await contextTools(x)).tools.map((t) => ({ def: t.def, ref: t.ref })),
