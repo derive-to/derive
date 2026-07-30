@@ -23,9 +23,11 @@ import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
+import { openAiCompatModel } from "./lib/model-openai"
 import { mountWeb } from "./lib/serve-web"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
+import { loopSubstrate } from "./lib/substrate-loop"
 import { nodeSubstrate } from "./lib/substrate-node"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
@@ -347,18 +349,66 @@ const syncRunner = createNodeSyncRunner(meta, blobs, authSecret)
 // each due run as a `derive runner run` child process on this box, so an automation updates its
 // artifact with no separate machine and no polling runner. Off by default because it spawns
 // processes and spends the run initiator's model plan; a deployment opts in deliberately. When
+/** An operator-configured OpenAI-compatible endpoint, or null. ALL THREE vars or none: a base URL
+ *  with no key would 401 every run, and a key with no model id would send an empty model — both
+ *  are silent-at-boot, loud-at-3am failures, so an incomplete set is treated as unset and warned
+ *  about once here. */
+const modelGateway = (): { baseUrl: string; apiKey: string; model: string } | null => {
+  const baseUrl = process.env.DERIVE_MODEL_BASE_URL
+  const apiKey = process.env.DERIVE_MODEL_API_KEY
+  const model = process.env.DERIVE_MODEL_NAME
+  if (baseUrl && apiKey && model) return { baseUrl, apiKey, model }
+  if (baseUrl || apiKey || model)
+    log.warn("model gateway ignored: set DERIVE_MODEL_BASE_URL, _API_KEY and _NAME together", {
+      baseUrl: !!baseUrl,
+      apiKey: !!apiKey,
+      model: !!model,
+    })
+  return null
+}
+
 // off, runs stay queued for a polling `derive runner` exactly as before.
 const hostedDispatch = cfg.hostedRuns
   ? {
       meta,
-      substrate: nodeSubstrate({ bin: cfg.runnerBin }),
+      // WHICH SUBSTRATE. `DERIVE_LOOP_RUNS=1` executes runs in this process — a model and fetch,
+      // no child process and no container, which is all "read something, write an artifact"
+      // actually needs. Anything wanting a shell, a filesystem or git still belongs on the child
+      // process, so the CLI runner stays the default and the flag is the opt-in.
+      //
+      // The loop substrate is the SAME file the Worker entry would use: it is an HTTP client of
+      // this API, so there is no platform branch and nothing to keep in step between the two.
+      //
+      // ONE substrate for both lanes. Sessions used to be pinned to the child process because
+      // the loop served runs only; it now branches on the work token and claims an ask through
+      // `/v1/agent/sessions/claim`, so the split is gone.
+      substrate:
+        process.env.DERIVE_LOOP_RUNS === "1"
+          ? loopSubstrate({
+              // DERIVE_LOOP_MODEL, not DERIVE_MODEL_NAME: this field is the ANTHROPIC model id
+              // used on the per-run resolved-credential path, while DERIVE_MODEL_NAME names the
+              // model on the GATEWAY below. Passing the gateway's id here pointed a Fireworks
+              // path at api.anthropic.com and 404'd every run that resolved a real plan.
+              model: process.env.DERIVE_LOOP_MODEL,
+              gateway: modelGateway() ?? undefined,
+            })
+          : nodeSubstrate({ bin: cfg.runnerBin }),
       server: cfg.baseUrl,
       secret: authSecret,
     }
   : null
 
+const gateway = modelGateway()
+
 const app = createApp({
   meta,
+  // The ATTENDED path only. Unattended runs still resolve their own credential per run through
+  // the payer chain — this key never becomes the answer to "who pays" for queued work.
+  callModel: gateway ? openAiCompatModel(gateway) : undefined,
+  chatAllowlist: (process.env.DERIVE_CHAT_ALLOWLIST ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean),
   blobs,
   // Share the realtime relay with the webhook worker so a deferred Slack reply publishes
   // comment.created to the same in-process subscribers a request would.
@@ -476,7 +526,14 @@ if (hostedDispatch) {
   hostedTick() // catch up on boot, like every other worker here
   hostedRunsTimer = setInterval(hostedTick, 60_000)
   hostedRunsTimer.unref?.()
-  log.info("hosted runs ENABLED (experimental)", { substrate: "node-child", bin: cfg.runnerBin })
+  // Report the substrate ACTUALLY in use, not a hardcoded guess. This said "node-child" even
+  // when DERIVE_LOOP_RUNS had swapped in the in-process loop, so the one line an operator reads
+  // to answer "what is executing my runs" was wrong — and wrong in the direction that sends you
+  // looking for a child process that was never spawned.
+  log.info("hosted runs ENABLED (experimental)", {
+    substrate: hostedDispatch.substrate.name,
+    ...(hostedDispatch.substrate.name === "node-child" ? { bin: cfg.runnerBin } : {}),
+  })
 }
 
 // One-time cleanup of pre-existing owner self-views (the route no longer records

@@ -18,6 +18,7 @@ import {
   artifactMember,
   artifactTag,
   auditLog,
+  CONTEXT_SESSION_RELAX_SQLITE,
   collection,
   collectionItem,
   collectionMember,
@@ -70,6 +71,55 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     }
   }
   for (const stmt of SCHEMA_STATEMENTS) raw.exec(stmt)
+  // RELAXATIONS: a rebuild, so it runs only when the old constraint is actually still there.
+  // `PRAGMA table_info` is the check — cheap, exact, and it makes a second boot a no-op instead
+  // of a second rebuild. Wrapped in a transaction so a failure mid-way leaves the original table
+  // intact rather than a half-copied one.
+  try {
+    const cols = raw.pragma("table_info(context_session)") as { name: string; notnull: number }[]
+    const stale = cols.some((c) => c.name === "context_id" && c.notnull === 1)
+    if (stale) {
+      // Foreign keys OFF for the duration. A rebuild re-validates every FK on the copied
+      // rows, so a single pre-existing orphan (a session whose context was deleted) would
+      // abort the whole migration and wedge the deploy. This is the documented SQLite
+      // procedure for altering a table, not a shortcut. It is a no-op inside a transaction,
+      // hence the ordering: pragma, then BEGIN.
+      const fkWasOn = (raw.pragma("foreign_keys", { simple: true }) as number) === 1
+      if (fkWasOn) raw.pragma("foreign_keys = OFF")
+      raw.exec("BEGIN")
+      try {
+        for (const stmt of CONTEXT_SESSION_RELAX_SQLITE) raw.exec(stmt)
+        raw.exec("COMMIT")
+      } catch (e) {
+        raw.exec("ROLLBACK")
+        throw e
+      } finally {
+        if (fkWasOn) raw.pragma("foreign_keys = ON")
+      }
+    }
+  } catch (e) {
+    // ONLY the fresh-database case is tolerable: no legacy `context_session` to relax, so
+    // there is nothing to do. It is matched BY NAME.
+    //
+    // The old filter was a bare /no such table/, which is exactly the text a genuinely broken
+    // rebuild emits: `ALTER TABLE context_session__new RENAME TO context_session` re-parses
+    // every dependent object, and a dangling reference (session_message's foreign key, a view)
+    // fails with "no such table: <that object's target>". So the one error this migration is
+    // most likely to produce was the one error it treated as success — the deploy then booted
+    // on the un-relaxed schema, and every contextless chat session 500'd with
+    // `NOT NULL constraint failed` far away from here, with nothing in any log pointing back.
+    //
+    // Anything else is rethrown, wrapped so the boot failure names the migration rather than
+    // surfacing a bare SQLite string. There is no logger in this package (and `console` is
+    // lint-banned here), so the throw IS the report — and it is the correct response anyway:
+    // the rollback above already restored the original table, so failing to start beats
+    // serving on a schema we know is wrong.
+    const msg = e instanceof Error ? e.message : String(e)
+    if (!/no such table:\s*(main\.)?context_session\b/i.test(msg))
+      throw new Error(`context_session relaxation failed (schema left unchanged): ${msg}`, {
+        cause: e,
+      })
+  }
   const db = drizzle(raw, { schema })
   const repos = makeRepos(db)
 

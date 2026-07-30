@@ -469,6 +469,20 @@ export const collectManagedIds = (rows: { files: string }[]): string[] => {
  * better-sqlite3 wraps them in a sync transaction and D1 runs them sequentially,
  * the sequential versions living here).
  */
+/**
+ * Cost ACCUMULATES onto whatever the run already banked — it never replaces it.
+ *
+ * A retry reuses the SAME run row (requeueRun), so a run that burned an expensive failed attempt
+ * and then settled cheaply would report only the cheap number, undercounting exactly the runs
+ * that cost the most in the column the monthly budget sums. A missing value leaves the column
+ * untouched rather than nulling it, so a provider that reports nothing (Codex plain-text, an
+ * older CLI) cannot erase what an earlier attempt recorded.
+ *
+ * Shared by finishRun and requeueRun, and mirrored in pg.ts — the two drivers must agree.
+ */
+const addRunCost = (micros: number | null | undefined) =>
+  micros == null ? {} : { cost_micro_usd: sql`coalesce(${run.cost_micro_usd}, 0) + ${micros}` }
+
 export function makeRepos(db: SqliteDb) {
   // ---- Artifacts + versions ----------------------------------------------
   const getByShortId = async (shortId: string): Promise<ArtifactRecord | null> =>
@@ -2478,6 +2492,10 @@ export function makeRepos(db: SqliteDb) {
     // checked through it rather than on the row. A foreign agent claims nothing.
     const s = await db.select().from(contextSession).where(eq(contextSession.id, id)).get()
     if (!s) return null
+    // A session with NO context has no agent that owns it, so no external agent may claim it —
+    // the default-agent path is served in-process by the API, which already authorized the asker.
+    // Fail closed here rather than letting any agent answer into someone's private chat.
+    if (!s.context_id) return null
     const cx = await db.select().from(context).where(eq(context.id, s.context_id)).get()
     if (!cx || cx.agent_id !== agentId) return null
     const now = new Date().toISOString()
@@ -2576,6 +2594,35 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(contextSession.id, m.session_id))
       .run()
     return row
+  }
+  const claimAttendedSession = async (
+    id: string,
+    leaseUntil: string,
+  ): Promise<SessionRecord | null> => {
+    const now = new Date().toISOString()
+    // Contextless only — an agent-owned session still goes through claimSessionById, which
+    // checks ownership through the context. The status predicate IS the exclusion: a second
+    // caller finds neither `open` nor a lapsed lease and gets nothing.
+    return (
+      (await db
+        .update(contextSession)
+        .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
+        .where(
+          and(
+            eq(contextSession.id, id),
+            isNull(contextSession.context_id),
+            or(
+              eq(contextSession.state, "open"),
+              and(
+                eq(contextSession.state, "working"),
+                or(lte(contextSession.lease_until, now), isNull(contextSession.lease_until)),
+              ),
+            ),
+          ),
+        )
+        .returning()
+        .get()) ?? null
+    )
   }
   const setSessionState = async (id: string, state: SessionState): Promise<SessionRecord | null> =>
     (await db
@@ -2792,7 +2839,7 @@ export function makeRepos(db: SqliteDb) {
       .set({
         status: fields.status,
         finished_at: fields.finishedAt,
-        cost_micro_usd: fields.costMicroUsd ?? null,
+        ...addRunCost(fields.costMicroUsd),
         meta: fields.meta ?? null,
       })
       .where(
@@ -2848,7 +2895,7 @@ export function makeRepos(db: SqliteDb) {
   const requeueRun = async (
     id: string,
     agentId: string,
-    fields: { scheduledFor: string; meta?: string | null },
+    fields: { scheduledFor: string; meta?: string | null; costMicroUsd?: number | null },
     expectedStartedAt?: string | null,
   ): Promise<RunRecord | null> =>
     // Strict running → queued, only for the claiming agent: the status guard stops a duplicate
@@ -2863,6 +2910,7 @@ export function makeRepos(db: SqliteDb) {
         status: "queued",
         started_at: null,
         scheduled_for: fields.scheduledFor,
+        ...addRunCost(fields.costMicroUsd),
         ...(fields.meta === undefined ? {} : { meta: fields.meta }),
       })
       .where(
@@ -3823,6 +3871,7 @@ export function makeRepos(db: SqliteDb) {
     setResultArtifact,
     renewSessionLease,
     appendFollowupReopen,
+    claimAttendedSession,
     setSessionState,
     addSessionMessage,
     listSessionMessages,

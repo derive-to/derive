@@ -4,6 +4,7 @@ import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
 import { decryptSecret, encryptSecret, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { fallbackPayerTiers, POOL_USER } from "../lib/payer"
 
 // Model-plan credentials. Every team member connects their OWN Claude/Codex plan token (or
 // an API key), encrypted at rest (lib/crypto, keyed by DERIVE_AUTH_SECRET). A workspace may
@@ -19,10 +20,11 @@ import { bail, fail, readJson } from "../lib/http"
 const PROVIDERS = ["claude-code", "codex"] as const
 const isoNow = () => new Date().toISOString()
 
-// The workspace-pool credential is a model_credential row keyed on this reserved sentinel
-// user id, so the org's shared plan reuses the whole encrypted-secret store with no new
-// table. It can never collide with a real user id (those are newId-prefixed).
-const POOL_USER = "__workspace_pool__"
+// The workspace-pool credential is a model_credential row keyed on a reserved sentinel user
+// id, so the org's shared plan reuses the whole encrypted-secret store with no new table. It
+// can never collide with a real user id (those are newId-prefixed). Defined in lib/payer.ts,
+// which owns the payer chain — this route resolves it for an in-flight run, and the enqueue
+// preflight resolves it before creating work; the two must agree.
 
 export const modelCredentialRoutes = (ctx: AppContext) => {
   const { meta, deps, agentFor, agentRunScope, agentSessionScope, requireUser, requireWorkspace } =
@@ -207,7 +209,8 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
     const sessionId = c.req.query("session")
     if (sessionId) {
       const s = await meta.getSession(sessionId)
-      const sctx = s ? await meta.getContext(s.context_id) : null
+      // Contextless sessions have no owning agent, so an agent cannot resolve their credential.
+      const sctx = s?.context_id ? await meta.getContext(s.context_id) : null
       if (!s || !sctx || sctx.agent_id !== agent.id || s.org_id !== agent.org_id)
         return fail(c, 404, "unknown session")
       out.push({ userId: s.asker_id, source: "asker" })
@@ -219,12 +222,9 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
         return fail(c, 404, "unknown run")
       if (r.initiated_by) out.push({ userId: r.initiated_by, source: "initiator" })
     }
-    if (agent.created_by) {
-      const settings = await meta.getOrgSettings(agent.org_id)
-      if (settings.ownerLendAgents?.includes(agent.id))
-        out.push({ userId: agent.created_by, source: "owner" })
-    }
-    out.push({ userId: POOL_USER, source: "pool" })
+    // The tiers after the initiator (owner-lend, then the pool) come from lib/payer.ts, so the
+    // enqueue preflight refuses exactly the work this would later fail to pay for.
+    out.push(...(await fallbackPayerTiers(meta, agent.org_id, agent.id, agent.created_by)))
     return out
   }
 

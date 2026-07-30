@@ -802,6 +802,19 @@ export function parseRevision(text) {
  *   4. a clean exit with no block nudges once on the SAME session (a reformat, not new work);
  *   5. real output but still no block SALVAGES it, when the lane allows.
  *  Returns {ok, value} or {ok:false, error}. */
+/**
+ * USD (float, as the CLIs report it) → micro-USD (integer, as the column stores it).
+ *
+ * Integer micros because money in a float sums badly, and the budget SUMs this column across a
+ * month of runs. Rounded UP: a sub-micro run is real spend, and flooring it to 0 would let a
+ * high-volume cheap automation run free against the cap forever.
+ *
+ * null in, null out — "we never found out what this cost" is not "this cost nothing", and only
+ * the second belongs in a sum. The column is nullable precisely so the difference survives.
+ */
+export const toMicroUsd = (usd) =>
+  Number.isFinite(usd) && usd >= 0 ? Math.ceil(usd * 1_000_000) : null
+
 async function runStructured(provider, opts) {
   const { contract, parse, nudgePrompt, salvage } = opts
   const base = {
@@ -813,8 +826,18 @@ async function runStructured(provider, opts) {
     env: opts.env,
   }
   const why = (x) => (x.lastText || x.resultText || x.stderr || "").replace(/\s+/g, " ").trim()
+  // Cost METER, not a return value. This function has six exits and can spawn the model up to
+  // three times (first attempt, one retry, one nudge), and every one of those spends real money —
+  // including the ones that end in failure. Accumulating into a caller-owned object means a run
+  // reports what it ACTUALLY spent rather than what its last turn cost, and no exit path added
+  // later can forget to carry the number.
+  const meter = opts.meter ?? { costUsd: null }
+  const spend = (x) => {
+    if (Number.isFinite(x?.costUsd)) meter.costUsd = (meter.costUsd ?? 0) + x.costUsd
+  }
   const started = Date.now()
   let r = await provider.run({ ...base, prompt: opts.prompt, resumeSessionId: null })
+  spend(r)
   let parsed = parse(r.resultText)
 
   if (!parsed.value && provider.retryable(r)) {
@@ -830,6 +853,7 @@ async function runStructured(provider, opts) {
       prompt: sid ? RESUME_PROMPT : opts.prompt,
       resumeSessionId: sid,
     })
+    spend(r)
     parsed = parse(r.resultText)
   }
 
@@ -854,6 +878,7 @@ async function runStructured(provider, opts) {
       prompt: nudgePrompt,
       resumeSessionId: r.sessionId,
     })
+    spend(r2)
     const p2 = parse(r2.resultText)
     if (p2.value) return { ok: true, value: p2.value }
   }
@@ -1271,6 +1296,12 @@ const outcomeFor = (decision) =>
  *  can't stall the drain, exactly like a failed session. */
 export async function serveRun(client, run, manifest, cfg) {
   console.log(`[runner] run ${run.id}: "${run.instruction.slice(0, 80)}"`)
+  // What this run spent, filled in by the model spawns below. Attached to EVERY finish (including
+  // failures — a run that burned three attempts and produced nothing still cost money) so the
+  // workspace budget sums something real. Until this existed, run.cost_micro_usd was never
+  // written, so the budget's SUM was always zero and every check passed: the cap was decoration
+  // and concurrency was the only true ceiling.
+  const meter = { costUsd: null }
   // `run.started_at` is what THIS claim actually began with -- proof to the server that
   // this call is settling the claim it holds, not merely naming a run id its token still
   // (validly, unexpired) authorizes. Without it, a run that gets reclaimed and re-claimed
@@ -1279,7 +1310,11 @@ export async function serveRun(client, run, manifest, cfg) {
   // goes through this one function, so every finish (success, failure, retryable) is fenced.
   const finish = (fields) =>
     client
-      .finishRun(run.id, { ...fields, claimed_started_at: run.started_at })
+      .finishRun(run.id, {
+        ...fields,
+        cost_micro_usd: toMicroUsd(meter.costUsd),
+        claimed_started_at: run.started_at,
+      })
       .catch((err) => console.error(`[runner] run ${run.id} finish failed: ${err.message}`))
   // meta rides as an OBJECT: the finish endpoint validates a record and stringifies it
   // server-side, so a pre-stringified blob is a 400 that silently loses the run's outcome.
@@ -1342,6 +1377,7 @@ export async function serveRun(client, run, manifest, cfg) {
           systemPrompt: manifest,
           prompt: buildRunPrompt(run, before),
           env,
+          meter,
         })
   } finally {
     // Remove any per-run credential files (a Codex login's auth.json) now the spawn is done.

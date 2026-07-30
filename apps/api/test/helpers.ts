@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -10,6 +11,7 @@ import { Pool } from "pg"
 import { afterAll } from "vitest"
 import { type AppDeps, createApp } from "../src/app"
 import { DEFAULT_WORKSPACE_NAME } from "../src/lib/http"
+import { POOL_USER } from "../src/lib/payer"
 
 export const dir = mkdtempSync(join(tmpdir(), "derive-test-"))
 
@@ -27,18 +29,26 @@ type TestStore = MetaStore & { close(): unknown }
 type Seat = { user_id: string; role: Role }
 
 // Postgres has no file-per-store isolation like SQLite, so each named store gets
-// its own schema (search_path), dropped + recreated on first use in this file.
-// Same name → same schema (mirrors SQLite's `${name}.db`). A per-worker key
-// namespaces the schema so parallel test files never collide: VITEST_POOL_ID is
-// unique per worker slot and pool-agnostic (correct under forks OR threads),
-// falling back to the pid outside vitest. Isolation also relies on vitest's
-// default isolate:true — a fresh module per file re-runs the DROP+recreate below,
-// so a worker's next file starts clean. Pools are tracked so afterAll releases them.
+// its own schema (search_path), created on first use in this file. Same name →
+// same schema within a file (mirrors SQLite's `${name}.db`). Pools are tracked so
+// afterAll releases them.
+//
+// The key is per-FILE, not per-worker. A worker runs its files one after another, and while
+// VITEST_POOL_ID alone kept CONCURRENT files apart, consecutive files in the same worker shared
+// a schema name and relied on a DROP+recreate to separate them. That holds right up until a
+// write outlives the file that issued it: an orphaned async write (an un-awaited enqueue, a
+// poller mid-tick) then lands in the NEXT file's freshly created schema, and that file fails
+// asserting on rows it never wrote — a cross-file failure with no plausible local cause, which
+// is exactly how it presented in CI (assertion failures that moved between unrelated files run
+// to run, none of them reproducible alone). Under vitest's default isolate:true this module is
+// re-imported per file, so a value minted at import time IS a file identity. Two files can no
+// longer name the same schema, and leftovers stay in the schema of the file that made them.
 const pgStores: TestStore[] = []
 const pgSchemas = new Set<string>()
 const workerKey = (process.env.VITEST_POOL_ID ?? String(process.pid)).replace(/[^a-z0-9]+/gi, "_")
+const fileKey = randomUUID().replace(/-/g, "").slice(0, 10)
 const schemaFor = (name: string) =>
-  `t_${workerKey}_${name.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`
+  `t_${workerKey}_${fileKey}_${name.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`
 
 const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore => {
   const base = PG_URL as string
@@ -260,11 +270,38 @@ const fakeAuth = (users: TestUser[]): AppDeps["auth"] =>
     },
   }) as unknown as AppDeps["auth"]
 
+/**
+ * Give a workspace a POOL model plan, so work in it can be paid for.
+ *
+ * Every enqueue lane now refuses to queue work nothing can pay for (src/lib/payer.ts). That is
+ * right in production and pure noise in a test about retry backoff or webhook coalescing, so
+ * makeAuthedApp connects one by DEFAULT and the tests that are ABOUT the payer opt out with
+ * `{ noPlan: true }`.
+ *
+ * Written straight to the store rather than through the route: the route encrypts, while the
+ * payer chain only asks whether a credential EXISTS. Keeping this dumb means a change to how
+ * secrets are stored can never quietly make every fixture unpayable.
+ */
+export const connectPoolPlan = async (meta: MetaStore, orgId = "default") => {
+  const now = new Date().toISOString()
+  await meta.setModelCredential({
+    id: `mc_pool_${orgId}`,
+    org_id: orgId,
+    user_id: POOL_USER,
+    provider: "claude-code",
+    kind: "api_key",
+    secret: "sk-test-pool",
+    hint: "test",
+    created_at: now,
+    updated_at: now,
+  })
+}
+
 export const makeAuthedApp = (
   name: string,
   users: TestUser[],
   defaultRole?: AppDeps["defaultRole"],
-  opts?: { isolated?: boolean; deps?: Partial<AppDeps> },
+  opts?: { isolated?: boolean; deps?: Partial<AppDeps>; noPlan?: boolean; noAutomate?: boolean },
 ) => {
   // Seed a shared "default" workspace so the user list collaborates (the single-
   // mode default before always-multi): users[0] is the Admin/owner, the rest take
@@ -278,6 +315,33 @@ export const makeAuthedApp = (
           role: i === 0 ? "owner" : (defaultRole ?? "editor"),
         }))
   const m = makeStore(name, users, team)
+  // The workspace plan, AWAITED ON FIRST REQUEST rather than fired and forgotten.
+  //
+  // Two earlier shapes were both wrong. A floating `void connectPoolPlan(...)` raced the Postgres
+  // pool: the file ends, the pool closes, the stray insert lands after it ("Cannot use a pool
+  // after calling end on the pool"). A `beforeAll` hook fixed that but broke the other call
+  // pattern — some suites build their app INSIDE a test, and a hook registered at that point
+  // never fires, so every ask came back 402 and sessions were undefined.
+  //
+  // Gating `app.request` covers both: whoever calls first pays the wait, it always completes
+  // before the pool closes, and there is no floating promise to go unhandled.
+  // Seeded on the same awaited-on-first-request promise as the plan, and for the same reason: a
+  // floating write races the pool's close, and a beforeAll hook never fires for suites that build
+  // their app inside a test.
+  //
+  // AUTOMATIONS ARE BETA and off per workspace, so the shared test workspace opts IN here rather
+  // than in each of the fifteen suites that create one. That the default is closed is proved
+  // deliberately in automate-gate.test.ts, which builds apps WITHOUT this seed, instead of being
+  // proved incidentally by every other suite having to remember.
+  const planReady = (async () => {
+    if (!opts?.noPlan) await connectPoolPlan(m, "default").catch(() => undefined)
+    // `noAutomate` opts OUT: the suite that asserts the shipped DEFAULTS has to see the real ones,
+    // and a blanket seed would have made that assertion quietly lie about this exact field.
+    if (opts?.noAutomate) return
+    const current = await m.getOrgSettings("default").catch(() => null)
+    if (current)
+      await m.setOrgSettings("default", { ...current, automateBeta: true }).catch(() => undefined)
+  })()
   const app = createApp({
     meta: m,
     blobs: new FsBlobStore(join(dir, "blobs")),
@@ -288,7 +352,41 @@ export const makeAuthedApp = (
     defaultOrgId: "default",
     ...opts?.deps,
   })
-  return { app, meta: m }
+  const gated = new Proxy(app, {
+    get: (target, prop, recv) => {
+      if (prop !== "request") return Reflect.get(target, prop, recv)
+      return async (...args: Parameters<typeof app.request>) => {
+        await planReady
+        return app.request(...args)
+      }
+    },
+  })
+  // THE STORE IS GATED ON THE SAME PROMISE, and it has to be.
+  //
+  // `planReady` does a READ-MODIFY-WRITE of org settings (it reads the row, then writes it back
+  // with automateBeta on). A test that writes settings directly — comment-fanout's "email
+  // toggle off", say — goes through the store, which was NOT gated, so the two raced: when the
+  // seed's write landed second it put back the copy it had read BEFORE the test's write, and
+  // the toggle the test had just switched off came back on. The test then failed asserting on
+  // behaviour it had correctly configured, in a file nobody had touched.
+  //
+  // It is timing-dependent, so it hid locally and surfaced on CI's parallel runner. Gating both
+  // ends orders the seed first and leaves the test's write as the one that survives, which is
+  // what every one of these tests already assumes.
+  //
+  // Only string-keyed methods are wrapped, and `then` is passed through untouched: on the
+  // Postgres lane the store is itself a deferring Proxy that answers every property with a
+  // function, and wrapping `then` would make this object thenable — `await`ing it anywhere
+  // would then resolve to something that is not the store.
+  const gatedMeta = new Proxy(m, {
+    get: (target, prop, recv) => {
+      const value = Reflect.get(target, prop, recv)
+      if (typeof prop !== "string" || prop === "then" || typeof value !== "function") return value
+      const fn = value as (...a: unknown[]) => unknown
+      return (...args: unknown[]) => planReady.then(() => fn.apply(target, args))
+    },
+  })
+  return { app: gated, meta: gatedMeta }
 }
 
 export const as = (email: string) => ({ "x-test-user": email })

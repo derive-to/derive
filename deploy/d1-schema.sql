@@ -559,10 +559,10 @@ CREATE TABLE IF NOT EXISTS context_asker (
 
 CREATE TABLE IF NOT EXISTS context_session (
   id TEXT PRIMARY KEY,
-  context_id TEXT NOT NULL,
+  context_id TEXT,
   org_id TEXT NOT NULL,
   asker_id TEXT NOT NULL,
-  context_version INTEGER NOT NULL,
+  context_version INTEGER,
   state TEXT NOT NULL DEFAULT 'open',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT,
@@ -570,6 +570,7 @@ CREATE TABLE IF NOT EXISTS context_session (
   lease_until TEXT,
   result_artifact_id TEXT,
   dedupe_key TEXT,
+  subject_ref TEXT,
   FOREIGN KEY (context_id) REFERENCES context(id)
 );
 

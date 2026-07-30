@@ -813,7 +813,13 @@ export function registerPublishTool(tc: ToolContext): void {
           if (shot && shot.bytes.length <= IMAGE_INLINE_MAX)
             return {
               content: [
-                { type: "text" as const, text: JSON.stringify(payload, null, 2) },
+                {
+                  type: "text" as const,
+                  // The generic `render` field is a POINTER to go look — wrong the moment
+                  // the picture is already attached to this same response. Unset, it told
+                  // an agent to call read again for something already in hand.
+                  text: JSON.stringify({ ...payload, render: "attached below" }, null, 2),
+                },
                 { type: "image" as const, data: toBase64(shot.bytes), mimeType: shot.mimeType },
               ],
             }

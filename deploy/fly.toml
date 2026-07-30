@@ -1,5 +1,8 @@
 # Fly.io config for the Derive API container. Deploy with:
-#   fly deploy --config deploy/fly.toml
+#   fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile --app <your-app>
+#
+# `--app` overrides the placeholder below, so ONE config serves every instance: your own
+# self-host, and a throwaway preview. Verified end to end on Fly with SQLite + a volume.
 # Self-hosting your own instance? Change `app` to yours (or run `fly launch`,
 # which rewrites it) and make the volume name below match yours.
 app = "your-derive-app" # must be globally unique — `fly launch` picks one for you
@@ -16,7 +19,11 @@ primary_region = "iad"
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
-  min_machines_running = 1
+  # 0 = scale to zero: the machine STOPS when idle and starts again on the next request, so an
+  # instance nobody is using costs nothing. The trade is a cold start (a few seconds) on the
+  # first request after idle. Set 1 if you would rather pay to keep it warm — that is the right
+  # choice for anything with real users, and the wrong one for a preview or a personal instance.
+  min_machines_running = 0
 
   [[http_service.checks]]
     method = "GET"

@@ -46,6 +46,12 @@ function spawnClaude({ bin, cwd, args, timeoutMs, env }) {
     // model name is wrong" — the exit code alone can't tell them apart.
     let isError = false
     let apiErrorStatus = null
+    // What the turn COST, in USD, as the CLI reports it on that same result event. Captured so the
+    // workspace budget can enforce something: it sums run.cost_micro_usd, and while nothing wrote
+    // that column the sum was always zero, every check passed, and concurrency was the only real
+    // ceiling. Null when the CLI reports nothing (an older CLI, or a plan that does not price a
+    // turn) — null means UNKNOWN, never zero, so an unreported run cannot quietly look free.
+    let costUsd = null
     let timedOut = false
     let killTimer
     const timer = setTimeout(() => {
@@ -62,6 +68,9 @@ function spawnClaude({ bin, cwd, args, timeoutMs, env }) {
           if (typeof event.result === "string") resultText = event.result
           if (event.is_error === true) isError = true
           if (Number.isFinite(event.api_error_status)) apiErrorStatus = event.api_error_status
+          // Same event, one more field. A resumed run emits a result event per turn, so ACCUMULATE
+          // rather than overwrite: a run's cost is what the whole run spent, not its last turn.
+          if (Number.isFinite(event.total_cost_usd)) costUsd = (costUsd ?? 0) + event.total_cost_usd
         }
       } catch {
         // partial line / non-JSON noise
@@ -86,7 +95,17 @@ function spawnClaude({ bin, cwd, args, timeoutMs, env }) {
       // The stream can end without a trailing newline; the unterminated line may
       // be the `result` event itself.
       if (buffer.trim()) take(buffer.trim())
-      resolve({ timedOut, code, resultText, sessionId, stderr, lastText, isError, apiErrorStatus })
+      resolve({
+        timedOut,
+        code,
+        resultText,
+        sessionId,
+        stderr,
+        lastText,
+        isError,
+        apiErrorStatus,
+        costUsd,
+      })
     })
     child.on("error", (err) => {
       clearTimeout(timer)
@@ -102,6 +121,9 @@ function spawnClaude({ bin, cwd, args, timeoutMs, env }) {
         // A spawn failure (missing binary, missing cwd) never reached the
         // service — deterministic, so it must not look retryable.
         apiErrorStatus: null,
+        // Nothing ran, so nothing was spent. Still null rather than 0: "cost nothing" and "never
+        // found out" are different facts and only one of them belongs in a sum.
+        costUsd: null,
       })
     })
   })

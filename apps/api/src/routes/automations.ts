@@ -22,6 +22,7 @@ import {
 import { overBudget } from "../lib/budget"
 import { mintToken, safeEqual, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_MAX_RETRIES, retryDelayMs } from "../lib/run-lifecycle"
 import { materializeDueRuns } from "../lib/schedule"
 
@@ -93,6 +94,19 @@ export const automationRoutes = (ctx: AppContext) => {
   } = ctx
   const app = new Hono()
 
+  /**
+   * BETA GATE: `automateBeta`, the workspace's own opt-in, OFF by default.
+   *
+   * Applied to the lanes that CREATE or RUN work, never to reads or deletes, so a workspace that
+   * made automations before the gate can still see and remove them. 404 rather than 403, because
+   * an un-enabled surface should not confirm it exists.
+   *
+   * NOTE for upgrades: automations ran before this gate existed, so an existing deployment stops
+   * running them until each workspace opts in.
+   */
+  const automateOff = async (orgId: string): Promise<boolean> =>
+    !(await meta.getOrgSettings(orgId))?.automateBeta
+
   // The run lane reads "no run scope" as "a standing polling runner", which is the only
   // thing entitled to claim a BATCH, tick the schedule and sweep the queue. A session
   // capability token also has no run scope — so without this guard it inherited every one
@@ -106,10 +120,30 @@ export const automationRoutes = (ctx: AppContext) => {
   // lane never got it. Check kind explicitly, at the door, on every run-lane endpoint.
   const isSessionBearer = (c: Context): boolean => agentSessionScope(c) !== null
 
+  /** Can anything pay for a run of this automation? Checked BEFORE queuing, so a workspace with
+   *  no connected plan gets a clear refusal instead of a run that is created, dispatched, and
+   *  then fails from inside an executor that had to boot to find out. The chain (initiator →
+   *  owner-lend → workspace pool) is the same one the executor resolves later — see lib/payer.ts,
+   *  which exists so the two cannot drift. */
+  const canPay = async (a: AutomationRecord, initiatorId: string | null): Promise<boolean> => {
+    // An operator-configured gateway means THIS DEPLOY pays, so there is no chain to walk and
+    // no plan for anyone to connect. Without this the guard refuses every run on exactly the
+    // self-host deployments DERIVE_MODEL_BASE_URL exists to serve — the loop substrate would
+    // happily execute them, and they could never be created. Same fix, and the same reasoning,
+    // as the attended lane in routes/contexts.ts; found by running both end to end.
+    if (ctx.callModel) return true
+    return canPayForAgent(meta, {
+      orgId: a.org_id,
+      agentId: a.agent_id,
+      initiator: initiatorId ? { userId: initiatorId, source: "initiator" } : null,
+    })
+  }
+
   // ---- Owner surface: define / list / delete ---------------------------------
   app.post("/v1/automations", async (c) => {
     const org = await requireWorkspace(c, "manage")
     if (org instanceof Response) return org
+    if (await automateOff(org)) return fail(c, 404, "not found")
     const b = await readJson(
       c,
       z.object({
@@ -291,6 +325,7 @@ export const automationRoutes = (ctx: AppContext) => {
   app.post("/v1/automations/:id/run", async (c) => {
     const org = await requireWorkspace(c, "publish")
     if (org instanceof Response) return org
+    if (await automateOff(org)) return fail(c, 404, "not found")
     const me = await requireUser(c)
     if (me instanceof Response) return me
     const a = await meta.getAutomation(c.req.param("id"))
@@ -300,6 +335,11 @@ export const automationRoutes = (ctx: AppContext) => {
     if (a.enabled !== 1) return fail(c, 400, "automation is disabled")
     // Budget guard at enqueue (invariant 2): a run-now bills to the requester.
     if (await overBudget(meta, org, me.id)) return fail(c, 429, "monthly run budget reached")
+    // PAYER guard: never queue work nothing can pay for. Without it the run is created,
+    // dispatch boots an executor, and the executor discovers there is no plan — so the
+    // workspace pays container time to learn something knowable here, and the person who
+    // pressed the button gets a failed run in the ledger that never had a chance.
+    if (!(await canPay(a, me.id))) return fail(c, 402, NO_PAYER_MESSAGE)
     const rec = await meta.createRun({
       id: newId("run"),
       org_id: org,
@@ -329,6 +369,9 @@ export const automationRoutes = (ctx: AppContext) => {
     if (!a) return fail(c, 404, "not found")
     const trigger = parseTrigger(a.trigger)
     if (trigger.on !== "webhook" || !trigger.secret_hash) return fail(c, 404, "not found")
+    // Same 404 as above, and for the same reason: a fire URL minted before the gate must stop
+    // creating work once the workspace is no longer enabled, and must not reveal that it exists.
+    if (await automateOff(a.org_id)) return fail(c, 404, "not found")
     // Constant-time check of the presented bearer against the stored hash.
     const presented = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "")
     if (!safeEqual(trigger.secret_hash, sha256(presented))) return fail(c, 401, "invalid secret")
@@ -337,6 +380,11 @@ export const automationRoutes = (ctx: AppContext) => {
     if (a.enabled !== 1) return fail(c, 400, "automation is disabled")
     // Budget guard at enqueue (invariant 2): a fire bills to the workspace pool (no user).
     if (await overBudget(meta, a.org_id, null)) return fail(c, 429, "monthly run budget reached")
+    // PAYER guard. A fire has no person behind it, so it can only reach the owner-lend and pool
+    // tiers — and a webhook that keeps firing into a workspace with no plan would otherwise
+    // queue a run every time, each one booting an executor to fail. Refusing here also tells
+    // the CALLER, which is the only party positioned to stop retrying.
+    if (!(await canPay(a, null))) return fail(c, 402, NO_PAYER_MESSAGE)
     // Read the body under a hard cap, then parse. An empty body fires with an empty payload.
     const raw = await c.req.text()
     if (raw.length > MAX_FIRE_BODY_BYTES) return fail(c, 413, "payload too large")
@@ -547,6 +595,9 @@ export const automationRoutes = (ctx: AppContext) => {
           agent.id,
           {
             scheduledFor: new Date(Date.now() + retryDelayMs(attempt)).toISOString(),
+            // The attempt that just failed still spent money. Bank it now: this row is what the
+            // retry reuses, so a cost dropped here never reaches the workspace budget at all.
+            costMicroUsd: b.cost_micro_usd ?? null,
             // MERGE onto the run's existing meta, never replace it — the rule run-meta.ts
             // states and reclaimStaleRuns already follows. Replacing dropped two things that
             // live there: the fire-URL `payloads` (so a retried webhook run executed with no

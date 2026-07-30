@@ -299,6 +299,21 @@ const VIEW_WINDOW_MS = 30 * 86400_000
  * definition, dialect-correct SQL generated for us); the analytics aggregations
  * stay raw `pool.query` where GROUP BY / DISTINCT read clearer.
  */
+
+/**
+ * Cost ACCUMULATES onto whatever the run already banked — it never replaces it.
+ *
+ * A retry reuses the SAME run row (requeueRun), so a run that burned an expensive failed attempt
+ * and then settled cheaply would report only the cheap number, undercounting exactly the runs
+ * that cost the most in the column the monthly budget sums. A missing value leaves the column
+ * untouched rather than nulling it, so a provider that reports nothing (Codex plain-text, an
+ * older CLI) cannot erase what an earlier attempt recorded.
+ *
+ * Shared by finishRun and requeueRun, and mirrored in the other driver — the two must agree.
+ */
+const addRunCost = (micros: number | null | undefined) =>
+  micros == null ? {} : { cost_micro_usd: sql`coalesce(${run.cost_micro_usd}, 0) + ${micros}` }
+
 export class PgMetaStore implements MetaStore {
   private constructor(
     private pool: Pool,
@@ -2257,6 +2272,8 @@ export class PgMetaStore implements MetaStore {
     const sRows = await this.db.select().from(contextSession).where(eq(contextSession.id, id))
     const s = sRows[0]
     if (!s) return null
+    // No context ⇒ no owning agent ⇒ not agent-claimable (see the sqlite driver).
+    if (!s.context_id) return null
     const cRows = await this.db.select().from(context).where(eq(context.id, s.context_id))
     if (cRows[0]?.agent_id !== agentId) return null
     const now = new Date().toISOString()
@@ -2343,6 +2360,28 @@ export class PgMetaStore implements MetaStore {
       })
       .where(eq(contextSession.id, m.session_id))
     return one(rows)
+  }
+  async claimAttendedSession(id: string, leaseUntil: string): Promise<SessionRecord | null> {
+    const now = new Date().toISOString()
+    // Mirror of the sqlite driver: contextless only, and the status predicate is the exclusion.
+    const rows = await this.db
+      .update(contextSession)
+      .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
+      .where(
+        and(
+          eq(contextSession.id, id),
+          isNull(contextSession.context_id),
+          or(
+            eq(contextSession.state, "open"),
+            and(
+              eq(contextSession.state, "working"),
+              or(lte(contextSession.lease_until, now), isNull(contextSession.lease_until)),
+            ),
+          ),
+        ),
+      )
+      .returning()
+    return rows[0] ?? null
   }
   async setSessionState(id: string, state: SessionState): Promise<SessionRecord | null> {
     const rows = await this.db
@@ -2725,7 +2764,7 @@ export class PgMetaStore implements MetaStore {
   async requeueRun(
     id: string,
     agentId: string,
-    fields: { scheduledFor: string; meta?: string | null },
+    fields: { scheduledFor: string; meta?: string | null; costMicroUsd?: number | null },
     expectedStartedAt?: string | null,
   ): Promise<RunRecord | null> {
     // Strict running → queued, only for the claiming agent: the status guard stops a duplicate
@@ -2739,6 +2778,7 @@ export class PgMetaStore implements MetaStore {
         status: "queued",
         started_at: null,
         scheduled_for: fields.scheduledFor,
+        ...addRunCost(fields.costMicroUsd),
         ...(fields.meta === undefined ? {} : { meta: fields.meta }),
       })
       .where(
@@ -2836,7 +2876,7 @@ export class PgMetaStore implements MetaStore {
       .set({
         status: fields.status,
         finished_at: fields.finishedAt,
-        cost_micro_usd: fields.costMicroUsd ?? null,
+        ...addRunCost(fields.costMicroUsd),
         meta: fields.meta ?? null,
       })
       .where(

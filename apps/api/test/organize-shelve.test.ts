@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 // SHELVING on `organize` — the authoring path for removal, and the way back.
@@ -204,8 +204,29 @@ describe("organize state — retire an artifact and put it back", () => {
       actor: "an-admin",
       detail: null,
     })
-    await meta.createAuditLog(row("takedown", "au_test_2"))
-    await meta.createAuditLog(row("reinstate", "au_test_3"))
+    // TWO MODERATION ACTIONS AT TWO STATED TIMES, rather than two writes racing one clock.
+    //
+    // The store owns `created_at` (no `New*` port type accepts one) and stamps it with a
+    // MILLISECOND ISO string. These two inserts land about a quarter of a millisecond apart, so
+    // left to the real clock they routinely share a millisecond — measured here at roughly one
+    // run in four. `listAuditLog` orders on that column alone, and Postgres breaks the tie in
+    // physical scan order, which is insertion order: the takedown comes back first, the guard
+    // reads it as the STANDING decision, and the restore is refused. SQLite's sorter happens to
+    // break the identical tie the other way, which is why this only ever failed on the pg lane
+    // and why it moved around between files run to run instead of pointing at itself.
+    //
+    // The ORDER IS THE FIXTURE here — "reinstated after a takedown" is the entire subject of the
+    // test — so it is set rather than hoped for. Only `Date` is faked: the awaits below are real
+    // Postgres round trips and still need real timers.
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"))
+      await meta.createAuditLog(row("takedown", "au_test_2"))
+      vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"))
+      await meta.createAuditLog(row("reinstate", "au_test_3"))
+    } finally {
+      vi.useRealTimers()
+    }
 
     await call(app, token, "organize", { short_ids: [pub.short_id], state: "removed" })
     const back = await call(app, token, "organize", { short_ids: [pub.short_id], state: "live" })

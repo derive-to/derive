@@ -182,7 +182,11 @@ export function AutomationForm({
     // through this form, and a change from either must refresh both views.
     invalidate: [automationsQuery().queryKey, runsQuery().queryKey],
     onSuccess: (a) => {
-      if (!automation) setInstruction(defaultInstruction ?? "")
+      // NOT reset. Blanking the instruction back to its default left a filled-in create form
+      // sitting behind the token panel, which reads as "that did not take, press it again" —
+      // an invitation to create the same automation twice. The form either closes (onDone) or
+      // holds on the token panel, and in both cases what was typed should stay on screen.
+      //
       // An auto-minted runner token arrives exactly once — hold the form open on
       // its panel; onDone fires from its Done button instead.
       const token = (a as { agent_token?: string }).agent_token

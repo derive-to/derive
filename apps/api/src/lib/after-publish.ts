@@ -32,8 +32,10 @@ export interface VersionBumpDeps {
   meta: MetaStore
   blobs: BlobStore
   bus: Backplane
-  /** Fire-and-forget preview render. Optional so a caller without render access (a test) omits it. */
-  notifyRender?: (a: ArtifactRecord, n: number) => void
+  /** Preview render. Kept off the request path by the CALLER's `background()` (waitUntil on
+   *  Workers, inline on Node), so awaiting here costs a deployment nothing and stops the write
+   *  being orphaned. Optional so a caller without render access (a test) omits it. */
+  notifyRender?: (a: ArtifactRecord, n: number) => void | Promise<void>
   /** The optional dense/semantic search index (Cloudflare edge). When bound, every version
    *  bump keeps it current alongside the lexical FTS — best-effort, in indexArtifactVersion. */
   search?: SearchIndex
@@ -46,7 +48,7 @@ export const emitVersionBump = async (
 ): Promise<void> => {
   const { meta, blobs, bus, notifyRender } = deps
   bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
-  notifyRender?.(artifact, version.n)
+  await notifyRender?.(artifact, version.n)
   await publishSweepEvents(meta, blobs, bus, artifact.id, version)
   // Keep the workspace search index current for the new live version. Best-effort:
   // a search-index hiccup must never fail a publish that already succeeded, so log

@@ -44,6 +44,10 @@ export interface Substrate {
 
 export interface DispatchDeps {
   meta: MetaStore
+  /** Where BOTH lanes execute. There is no session-specific substrate: every substrate in scope
+   *  serves an ask as well as a run, because an ask and a schedule are the same
+   *  (context, instruction) call. The CLI runner branches on the token prefix (`dksess_` vs
+   *  `dkrun_`), and so does the loop. */
   substrate: Substrate
   /** The API base URL handed to each executor. */
   server: string
@@ -76,7 +80,8 @@ export interface DispatchResult {
 
 /** Mint the capability token for a work item and hand it to the substrate. Runs and sessions
  *  differ only in the token's kind and the id the executor is told to serve — the substrate
- *  boots the same image either way, which is the whole point of unifying the two lanes. */
+ *  boots the same image either way, which is the whole point of unifying the two lanes, and the
+ *  token's prefix is how the executor knows which claim endpoint it belongs to. */
 const startOne = async (
   deps: DispatchDeps,
   kind: "run" | "session",
@@ -283,6 +288,9 @@ const dispatchSessions = async (
         )
       if (hostedOff.get(s.org_id)) continue
       // A session's acting agent lives on its CONTEXT (sessions carry no agent column).
+      // A contextless session is the DEFAULT agent's and is served in-process by the API, so
+      // dispatch must skip it — there is no runner to dispatch to and no context to bill through.
+      if (!s.context_id) continue
       const cx = await deps.meta.getContext(s.context_id)
       if (!cx) continue
 

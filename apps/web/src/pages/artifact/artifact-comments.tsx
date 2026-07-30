@@ -3,6 +3,7 @@ import type { Comment, DirUser, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { RailTabs } from "./artifact-chat"
 import { MobileComments, OpenPanel } from "./comment-panels"
 import { CommentScopeProvider } from "./lib/comment-scope"
 import { type CommentTree, CommentTreeProvider } from "./lib/comment-tree"
@@ -27,6 +28,16 @@ import {
 export function ArtifactComments(p: {
   shortId: string
   isMobile: boolean
+  /** THE RAIL. Comments and chat are two bodies behind one tab strip, and this component
+   *  owns that strip on BOTH platforms — the desktop aside header and the mobile peek bar
+   *  are the same control in two places. Chat is passed in as an element rather than built
+   *  here so this file keeps knowing only about comments. */
+  rail?: "comments" | "chat"
+  onRail?: (r: "comments" | "chat") => void
+  /** Beta: when false the strip is not rendered at all and this is the comments panel it
+   *  has always been. */
+  chatBeta?: boolean
+  chatPanel?: ReactNode
   isAnon: boolean
   /** May the caller create comments here (commenter+)? Gates every write affordance;
    *  reading stays open to any authenticated viewer. */
@@ -142,7 +153,17 @@ export function ArtifactComments(p: {
             )}
             style={{ width: p.asideWidth, flexBasis: p.asideWidth }}
           >
-            {panel !== "hidden" && (
+            {/* The strip sits INSIDE the aside, above whichever body is showing — the same
+                control the mobile peek bar renders, just at the top of a column instead of
+                the top of a sheet. */}
+            {panel !== "hidden" && p.chatBeta && p.rail && p.onRail && (
+              <div className="flex shrink-0 items-center border-b border-border px-2 py-1.5">
+                <RailTabs tab={p.rail} commentCount={p.openCount} onTab={p.onRail} />
+              </div>
+            )}
+            {panel !== "hidden" && p.rail === "chat" && p.chatBeta ? (
+              p.chatPanel
+            ) : panel !== "hidden" ? (
               <OpenPanel
                 openCount={p.openCount}
                 frameRef={p.frameRef}
@@ -158,7 +179,7 @@ export function ArtifactComments(p: {
                 onCancelNew={cancelNew}
                 reviewCard={p.reviewCard}
               />
-            )}
+            ) : null}
           </aside>
         )}
         {/* Phones: comments live in a slide-up sheet that takes the bottom half, so
@@ -175,6 +196,12 @@ export function ArtifactComments(p: {
             onCancelNew={cancelNew}
             reviewCard={p.reviewCard}
             onHeightChange={p.onSheetHeight}
+            // The peek bar IS the tab strip on a phone: always docked, so comments never
+            // lose their entry point and chat is one thumb-reach away.
+            rail={p.chatBeta ? p.rail : undefined}
+            onRail={p.onRail}
+            chatPanel={p.chatPanel}
+            openCount={p.openCount}
           />
         )}
         {/* Desktop: the anchored action menu above the selection (the mouse can
