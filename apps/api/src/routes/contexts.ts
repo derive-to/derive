@@ -23,6 +23,7 @@ import {
   brokerFor,
   callTool,
   connectionBindError,
+  mcpAuthFor,
   parseConnectionIds,
   toolsForRun,
 } from "../lib/broker"
@@ -389,7 +390,7 @@ export const contextRoutes = (ctx: AppContext) => {
     // The router rides along with the broker for the same reason the broker does: the proxy has
     // to EXECUTE through whatever listed the tool, or an `mcp:` tool would be listed by the MCP
     // broker and run by the plan's.
-    const route = refRouter(broker)
+    const route = refRouter(broker, mcpAuthFor(meta, x.org_id, deps.encryptionKey))
     return { broker, route, tools: await toolsForRun(meta, broker, x.org_id, ids, route) }
   }
 

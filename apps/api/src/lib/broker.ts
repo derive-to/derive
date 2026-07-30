@@ -1,5 +1,5 @@
 import type { BrokerToolDef, ToolBroker } from "@derive/broker"
-import { makeBroker, refRouter } from "@derive/broker"
+import { type McpAuthResolver, makeBroker, refRouter } from "@derive/broker"
 import type { ConnectionKind, ConnectionRecord, MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
 import { installationToken } from "./github-app"
@@ -31,6 +31,9 @@ export const toolsForRun = async (
    *  claim), so every run's MCP lookups reuse one client and one set of sessions instead of
    *  re-handshaking per run. Omitted, each call gets its own. */
   router?: (ref: string) => ToolBroker,
+  /** Needed only to decrypt an MCP connection's bearer. Omitted, MCP servers that require
+   *  authentication simply contribute no tools rather than being called without a credential. */
+  encryptionKey?: string,
 ): Promise<RunTool[]> => {
   if (connectionIds.length === 0) return []
   const conns = await meta.getConnectionsByIds(connectionIds)
@@ -48,7 +51,7 @@ export const toolsForRun = async (
   // workspace's broker plan is (it needs no vendor account at all), everything else keeps the
   // plan's broker. Sharing the router across this resolution is what lets the MCP client reuse
   // its session instead of re-handshaking per connection.
-  const route = router ?? refRouter(broker)
+  const route = router ?? refRouter(broker, mcpAuthFor(meta, orgId, encryptionKey))
   const out: RunTool[] = []
   // Dedupe by ref before listing. Two connection rows can point at the same broker_ref (the same
   // MCP server bound twice, a re-connect that kept the ref), and listing it twice is two extra
@@ -82,6 +85,33 @@ export const toolsForRun = async (
  *  path (which refuses an unknown ref) instead of silently into ours. */
 const DIRECT_KINDS = new Set<ConnectionKind>(["secret", "github_app", "slack"])
 export const isDirect = (kind: ConnectionKind): boolean => DIRECT_KINDS.has(kind)
+
+/**
+ * The bearer resolver an MCP client uses, built from the connections already in hand.
+ *
+ * Keyed by REF rather than by URL, because two connections can point at the same server with
+ * different credentials — a personal one per member, say — and resolving by URL would hand one
+ * member's run the other member's token.
+ *
+ * Decrypts at CALL time, never at bind time, and never stores the plaintext on anything that
+ * outlives the call. Same rule as `bearerFor`: a credential revoked a second ago must stop
+ * working now, not whenever something happens to re-read it.
+ */
+export const mcpAuthFor = (
+  meta: MetaStore,
+  orgId: string,
+  encryptionKey: string | undefined,
+): McpAuthResolver => {
+  // Fetched at most once per router, and only if an MCP ref is actually reached — a workspace
+  // with no MCP connection pays nothing. Memoised on the promise so concurrent refs share it.
+  let all: Promise<ConnectionRecord[]> | null = null
+  return async (target: string) => {
+    if (!encryptionKey || !target.startsWith("mcp:")) return undefined
+    all ??= meta.listConnections(orgId)
+    const cn = (await all).find((x) => x.broker_ref === target && x.secret_enc)
+    return cn?.secret_enc ? decryptSecret(cn.secret_enc, encryptionKey) : undefined
+  }
+}
 
 /** The tools a direct connection exposes. Named `<toolkit>.<verb>` to match the broker's
  *  convention, so the runner's shim treats every kind of connection identically. */

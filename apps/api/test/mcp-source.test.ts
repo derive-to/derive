@@ -123,15 +123,17 @@ describe("MCP as a source: connect, list, call", () => {
     expect(await toolsForRun(meta, new LocalBroker(), "default", [id])).toHaveLength(0)
   })
 
-  it("an unreachable server stores as pending and contributes no tools", async () => {
-    // Nothing listens on this port. `pending` rather than a throw, matching how every other
-    // broker reports a not-yet-usable account — and only ACTIVE connections reach a run.
+  it("an unreachable server is refused at the door, not stored as pending", async () => {
+    // This USED to store a pending row, on the reasoning that every other broker reports a
+    // not-yet-usable account that way. For MCP that reasoning does not hold: there is no
+    // authorization round trip to wait on, so nothing will ever flip the row to active — and a
+    // failed connect mints an UNPINNED ref, which `toolsFor` now refuses outright. The row was
+    // therefore permanently useless AND looked like a connection that might come good.
+    //
+    // So: say so now, while a human is watching, and name the likely fix.
     const created = await connect({ toolkit: "down", mcp_url: "http://localhost:1/mcp" })
-    expect(created.status).toBe(201)
-    expect(created.body.status).toBe("pending")
-    expect(
-      await toolsForRun(meta, new LocalBroker(), "default", [created.body.id as string]),
-    ).toHaveLength(0)
+    expect(created.status).toBe(400)
+    expect(String(created.body.error)).toMatch(/did not answer|mcp_secret/)
   })
 
   it("refuses a plaintext URL that is not localhost", async () => {

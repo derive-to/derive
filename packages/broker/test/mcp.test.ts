@@ -19,6 +19,8 @@ const fakeServer = (opts: {
   fail?: boolean
   /** Serve `tools` across this many pages, so the cursor loop is exercised rather than assumed. */
   pages?: number
+  /** 401 unless this exact bearer arrives — the shape of nearly every real MCP server. */
+  requireBearer?: string
   onCall?: (name: string, args: unknown) => unknown
 }) => {
   const calls: { method: string; params: unknown; headers: Record<string, string> }[] = []
@@ -30,6 +32,12 @@ const fakeServer = (opts: {
       params: body.params,
       headers: (init?.headers ?? {}) as Record<string, string>,
     })
+    if (
+      opts.requireBearer &&
+      (init?.headers as Record<string, string> | undefined)?.authorization !==
+        `Bearer ${opts.requireBearer}`
+    )
+      return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })
     const reply = (result: unknown) => {
       const payload = JSON.stringify({ jsonrpc: "2.0", id: body.id, result })
       // A streamable-HTTP server may answer either way to the same request; both must parse.
@@ -147,6 +155,48 @@ describe("MCP broker: connect + list + call", () => {
     const after = server.calls.filter((c) => c.method !== "initialize")
     expect(after.length).toBeGreaterThan(0)
     for (const c of after) expect(c.headers["mcp-protocol-version"]).toBe("2025-11-25")
+  })
+
+  it("sends a bearer, so an auth-required server is reachable at all", async () => {
+    // Without this, every server worth connecting to 401s at connect, mints an UNPINNED ref, and
+    // is dead on arrival — Derive could not even talk to Derive's own MCP server.
+    const server = fakeServer({ tools: TOOLS, requireBearer: "s3cret" })
+    const broker = new McpBroker(server.impl, () => "s3cret")
+    const link = await broker.connect({ orgId: "o1", userId: "u1", toolkit: "https://a.test/mcp" })
+    expect(link.status).toBe("active")
+    expect(await broker.toolsFor([link.ref])).toHaveLength(2)
+    for (const call of server.calls) expect(call.headers.authorization).toBe("Bearer s3cret")
+  })
+
+  it("a wrong or missing credential fails honestly rather than half-working", async () => {
+    const server = fakeServer({ tools: TOOLS, requireBearer: "right" })
+    const none = new McpBroker(server.impl)
+    expect(
+      (await none.connect({ orgId: "o1", userId: "u1", toolkit: "https://a.test/mcp" })).status,
+    ).toBe("pending")
+    const wrong = new McpBroker(server.impl, () => "wrong")
+    expect(
+      (await wrong.connect({ orgId: "o1", userId: "u1", toolkit: "https://a.test/mcp" })).status,
+    ).toBe("pending")
+  })
+
+  it("resolves the credential per REF, so two connections cannot share one token", async () => {
+    // Same server URL, two members, two tokens. Resolving by URL would hand one member's run the
+    // other member's credential — and the session must not be shared either.
+    const server = fakeServer({ tools: TOOLS, requireBearer: "alice-token" })
+    const refAlice = encodeMcpRef("https://shared.test/mcp", "s256-alice")
+    const refBob = encodeMcpRef("https://shared.test/mcp", "s256-bob")
+    const broker = new McpBroker(server.impl, (target) =>
+      target === refAlice ? "alice-token" : "bob-token",
+    )
+    // Bob's token is refused by the server, so his ref contributes nothing...
+    expect(await broker.toolsFor([refBob])).toEqual([])
+    expect(broker.quiet.get(refBob)).toBe("unreachable")
+    // ...and Alice's still authenticates on the very next call, rather than riding Bob's session.
+    const seen = server.calls
+      .filter((c) => c.headers.authorization)
+      .map((c) => c.headers.authorization)
+    expect(seen).toContain("Bearer bob-token")
   })
 
   it("refuses a non-https URL (localhost excepted for development)", async () => {

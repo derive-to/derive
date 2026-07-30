@@ -1,10 +1,11 @@
 import { ComposioBroker } from "./composio"
 import { LocalBroker } from "./local"
-import { McpBroker, parseMcpRef } from "./mcp"
+import { type McpAuthResolver, McpBroker, parseMcpRef } from "./mcp"
 import type { ToolBroker } from "./types"
 
 export { ComposioBroker } from "./composio"
 export { LocalBroker } from "./local"
+export type { McpAuthResolver } from "./mcp"
 export { encodeMcpRef, McpBroker, parseMcpRef, pinTools } from "./mcp"
 export type { BrokerConnection, BrokerToolDef, ConnectResult, ToolBroker } from "./types"
 
@@ -36,12 +37,17 @@ export const makeBroker = (plan: { provider: string; key: string } | null): Tool
  *
  * One router per REQUEST is the intended lifetime: long enough for a claim resolving several
  * runs, or a tool call validating against several bound servers, to share sessions and the memo;
- * short enough that nothing is cached across requests. It holds no credentials — an MCP session
- * id belongs to the client-server pair, not to a tenant.
+ * short enough that nothing is cached across requests. It caches no credentials — `authFor` is
+ * consulted per request, so a token revoked a moment ago does not keep working, and an MCP session
+ * id belongs to the client-server pair rather than to a tenant.
  *
  * `fallback` is the plan-derived broker (Composio or Local) that every non-MCP ref keeps using.
+ * `authFor` resolves the bearer for a ref; omit it for servers that need none.
  */
-export const refRouter = (fallback: ToolBroker): ((ref: string) => ToolBroker) => {
-  const mcp = new McpBroker()
+export const refRouter = (
+  fallback: ToolBroker,
+  authFor?: McpAuthResolver,
+): ((ref: string) => ToolBroker) => {
+  const mcp = new McpBroker(undefined, authFor)
   return (ref: string) => (parseMcpRef(ref) ? mcp : fallback)
 }

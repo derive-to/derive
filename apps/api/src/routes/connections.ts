@@ -82,6 +82,12 @@ export const connectionRoutes = (ctx: AppContext) => {
          *  URL rather than the workspace's plan, so it is orthogonal to `kind` below (an MCP
          *  server still authenticates however it chooses; Derive holds no credential for it). */
         mcp_url: z.string().url().max(2000).optional(),
+        /** Bearer token for an MCP server that requires one — which is most of the useful ones,
+         *  and the reason a connection to them used to be impossible. Sent as
+         *  `Authorization: Bearer`, the only scheme the MCP authorization spec defines; a server
+         *  wanting some other header is an escalation, not a config field. Write-only: encrypted
+         *  at rest, spent server-side, never present in any response. */
+        mcp_secret: z.string().min(8).max(4096).optional(),
         // "personal" (default) = the caller's own account. "workspace" = org
         // infrastructure — requires manage, because whoever can add a workspace
         // credential decides what every context bound to it can reach.
@@ -176,8 +182,12 @@ export const connectionRoutes = (ctx: AppContext) => {
     // built per request (it holds only a session map, no credential) so nothing is cached across
     // tenants. Everything else resolves a plan: a workspace connection from the pool (it must not
     // ride — and die with — one member's personal plan), a personal one from the caller.
+    // An MCP server that needs a credential gets it HERE, at connect, so the tool list it is
+    // pinned against is the one it serves to an authenticated caller. Without this the connect
+    // 401s, mints an UNPINNED ref, and the connection is dead on arrival — which is the state
+    // every auth-required server used to land in.
     const broker = b.mcp_url
-      ? new McpBroker()
+      ? new McpBroker(undefined, () => b.mcp_secret)
       : await brokerFor(meta, org, b.scope === "workspace" ? null : me.id, deps.encryptionKey)
     // `toolkit` stays the human label on the row either way; for MCP the SERVER URL is what the
     // broker connects to, and the ref it mints (`mcp:<pin>:<url>`) is what routing keys on.
@@ -186,6 +196,17 @@ export const connectionRoutes = (ctx: AppContext) => {
       userId: me.id,
       toolkit: b.mcp_url ?? b.toolkit,
     })
+    // A server that refuses to authenticate must not be stored as a usable connection. `connect`
+    // reports `pending` for both "unreachable" and "unauthorized", and a pending row is filtered
+    // out of every run — so the useful thing to do is say so now, while a human is watching.
+    if (b.mcp_url && link.status !== "active")
+      return fail(
+        c,
+        400,
+        b.mcp_secret
+          ? "that MCP server did not accept the credential (or is unreachable)"
+          : "that MCP server did not answer — if it requires authentication, pass `mcp_secret`",
+      )
     const rec = await meta.createConnection({
       id: newId("conn"),
       org_id: org,
@@ -194,7 +215,13 @@ export const connectionRoutes = (ctx: AppContext) => {
       broker: broker.provider,
       toolkit: b.toolkit,
       broker_ref: link.ref,
-      scopes_label: b.scopes_label ?? null,
+      // Write-only, exactly as `kind: "secret"` stores a pasted key: encrypted at rest, spent
+      // server-side by the tool proxy, and absent from `present()` so no role and no minted
+      // token can ever read it back.
+      ...(b.mcp_url && b.mcp_secret && deps.encryptionKey
+        ? { secret_enc: encryptSecret(b.mcp_secret, deps.encryptionKey) }
+        : {}),
+      scopes_label: b.scopes_label ?? (b.mcp_secret ? `…${b.mcp_secret.slice(-4)}` : null),
       status: link.status,
     })
     // The auth URL rides this response (empty for the local broker's auto-authorized case).

@@ -70,6 +70,21 @@ const CLIENT_PROTOCOL_VERSION = "2025-11-25"
 const MAX_PAGES = 50
 
 /**
+ * Resolves the bearer token for one target — a REF when listing or executing, the bare URL at
+ * connect time, when no ref exists yet. Returns undefined for a server that needs no credential.
+ *
+ * A resolver rather than a stored field because the token must never live on the ref (refs are
+ * persisted and handed around) and must be fetched at CALL time, the same rule `bearerFor`
+ * already applies to the direct kinds: a credential revoked a second ago should not still work
+ * because something decrypted it a minute ago.
+ *
+ * Deliberately `Authorization: Bearer` ONLY. That is what the MCP authorization spec mandates,
+ * and a server wanting some other header is an escalation, not a config option — an arbitrary
+ * header-name field is how a credential ends up somewhere it is not expected.
+ */
+export type McpAuthResolver = (target: string) => Promise<string | undefined> | string | undefined
+
+/**
  * Canonical JSON: object keys sorted at every depth, no incidental whitespace.
  *
  * `JSON.stringify` preserves insertion order, so a server that serialized an identical schema
@@ -168,11 +183,42 @@ export class McpBroker implements ToolBroker {
    */
   readonly quiet = new Map<string, "unpinned" | "unreachable" | "pin_mismatch">()
 
-  constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+  constructor(
+    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly authFor: McpAuthResolver = () => undefined,
+  ) {}
 
-  private async rpc(url: string, method: string, params?: unknown): Promise<RpcResult> {
-    const session = this.sessions.get(url)
-    const version = this.versions.get(url)
+  /** Opaque per-credential ids, so a session key can be scoped to a credential without the
+   *  credential itself ever becoming a map key (keys get logged, iterated and dumped). */
+  private readonly credIds = new Map<string, number>()
+
+  /** Sessions and negotiated versions are keyed by SERVER + CREDENTIAL, not by URL alone.
+   *
+   *  Two connections can point at the same server with different tokens — one personal
+   *  connection per member is the ordinary case — and sharing a session between them would be one
+   *  member's run riding the other's authentication. Scoping by URL alone allows exactly that;
+   *  scoping by ref would be safe but would also stop `connect` (which has no ref yet) from
+   *  handing its session to the listing that follows, costing a handshake every time. */
+  private sessionKey(url: string, bearer: string | undefined): string {
+    if (!bearer) return `${url}|anon`
+    let id = this.credIds.get(bearer)
+    if (id === undefined) {
+      id = this.credIds.size + 1
+      this.credIds.set(bearer, id)
+    }
+    return `${url}|c${id}`
+  }
+
+  private async rpc(
+    target: string,
+    url: string,
+    method: string,
+    params?: unknown,
+  ): Promise<RpcResult> {
+    const bearer = await this.authFor(target)
+    const key = this.sessionKey(url, bearer)
+    const session = this.sessions.get(key)
+    const version = this.versions.get(key)
     const res = await this.fetchImpl(url, {
       method: "POST",
       headers: {
@@ -183,13 +229,14 @@ export class McpBroker implements ToolBroker {
         // to assume 2025-03-26 — which is what this client used to negotiate by accident.
         ...(version ? { "mcp-protocol-version": version } : {}),
         ...(session ? { "mcp-session-id": session } : {}),
+        ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
       },
       body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params: params ?? {} }),
       // A hung MCP server must never wedge a dispatch tick or a claim.
       signal: AbortSignal.timeout(20_000),
     })
     const sid = res.headers.get("mcp-session-id")
-    if (sid) this.sessions.set(url, sid)
+    if (sid) this.sessions.set(key, sid)
     if (!res.ok) throw new Error(`MCP ${method} failed: HTTP ${res.status}`)
     const body = (await readRpc(res)) as RpcResult | null
     if (!body) throw new Error(`MCP ${method} returned an empty response`)
@@ -207,9 +254,10 @@ export class McpBroker implements ToolBroker {
    *
    *  Keyed on having a session rather than a "did I initialize" flag, because a server that
    *  issues no session is exactly the one that may need the handshake each time. */
-  private async listTools(url: string): Promise<BrokerToolDef[]> {
-    if (!this.sessions.has(url)) {
-      const hello = await this.rpc(url, "initialize", {
+  private async listTools(target: string, url: string): Promise<BrokerToolDef[]> {
+    const key = this.sessionKey(url, await this.authFor(target))
+    if (!this.sessions.has(key)) {
+      const hello = await this.rpc(target, url, "initialize", {
         protocolVersion: CLIENT_PROTOCOL_VERSION,
         capabilities: {},
         clientInfo: { name: "derive", version: "1" },
@@ -217,7 +265,7 @@ export class McpBroker implements ToolBroker {
       // Declare what the server ANSWERED with, not what we asked for: it is free to negotiate
       // down, and a header disagreeing with the negotiated version is its own error.
       const negotiated = hello.result?.protocolVersion
-      this.versions.set(url, typeof negotiated === "string" ? negotiated : CLIENT_PROTOCOL_VERSION)
+      this.versions.set(key, typeof negotiated === "string" ? negotiated : CLIENT_PROTOCOL_VERSION)
     }
     // `tools/list` is PAGINATED. Reading page one and stopping loses every tool after it —
     // silently, since a short list looks exactly like a small server — and pins only the part we
@@ -225,7 +273,7 @@ export class McpBroker implements ToolBroker {
     const out: BrokerToolDef[] = []
     let cursor: string | undefined
     for (let page = 0; page < MAX_PAGES; page++) {
-      const body = await this.rpc(url, "tools/list", cursor ? { cursor } : {})
+      const body = await this.rpc(target, url, "tools/list", cursor ? { cursor } : {})
       const raw = (body.result?.tools ?? []) as {
         name?: string
         title?: string
@@ -262,7 +310,7 @@ export class McpBroker implements ToolBroker {
     if (!/^https:\/\//i.test(url) && !/^http:\/\/localhost[:/]/i.test(url))
       throw new Error("an MCP server URL must be https (or http://localhost for development)")
     try {
-      const tools = await this.listTools(url)
+      const tools = await this.listTools(url, url)
       // Pin at connect: this exact tool list is what a human is approving. A later change makes
       // the connection go quiet rather than silently feeding new prompt text to every run.
       return { url, ref: encodeMcpRef(url, await pinTools(tools)), status: "active" }
@@ -300,7 +348,7 @@ export class McpBroker implements ToolBroker {
       }
       let tools: BrokerToolDef[]
       try {
-        tools = await this.listTools(parsed.url)
+        tools = await this.listTools(ref, parsed.url)
       } catch {
         this.quiet.set(ref, "unreachable")
         continue
@@ -324,7 +372,7 @@ export class McpBroker implements ToolBroker {
     if (!parsed) throw new Error("not an MCP connection")
     const host = safeHost(parsed.url)
     const bare = opts.tool.startsWith(`${host}.`) ? opts.tool.slice(host.length + 1) : opts.tool
-    const body = await this.rpc(parsed.url, "tools/call", {
+    const body = await this.rpc(opts.ref, parsed.url, "tools/call", {
       name: bare,
       arguments: opts.args ?? {},
     })
