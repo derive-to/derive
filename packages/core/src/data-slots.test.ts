@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { MAX_SLOT_BYTES, MAX_SLOTS_PER_VERSION, parseDataSlots } from "./data-slots"
+import {
+  MAX_SLOT_BYTES,
+  MAX_SLOTS_PER_VERSION,
+  missingDataSlotAdvisory,
+  parseDataSlots,
+} from "./data-slots"
 
 const html = (body: string) => `<!doctype html><html><body>${body}</body></html>`
 const slot = (name: string, json: string) =>
@@ -158,6 +163,56 @@ describe("parseDataSlots — markdown", () => {
   it("does not treat an ordinary code fence as a data block", () => {
     const src = '```json\n{"a":1}\n```'
     expect(parseDataSlots(src, "text/markdown").slots).toEqual([])
+  })
+})
+
+// The nudge that keeps slots from depending on the author remembering. Its whole value is
+// precision: a missed nudge costs nothing, a false one trains the reader to skip
+// advisories, and that channel is load-bearing for everything else here.
+describe("missingDataSlotAdvisory", () => {
+  const table = (rows: number) =>
+    html(`<table>${"<tr><td>Passing</td><td>44</td></tr>".repeat(rows)}</table>`)
+
+  it("nudges a page whose table carries figures and no slot", () => {
+    const note = missingDataSlotAdvisory(table(4), "text/html")
+    expect(note).toContain("no data slot")
+    expect(note).toContain("versions")
+  })
+
+  it("says nothing when the page already carries a slot", () => {
+    const src = table(4) + slot("checks", '{"pass":44}')
+    expect(missingDataSlotAdvisory(src, "text/html")).toBeNull()
+  })
+
+  it("says nothing when a derive-data block exists but failed to parse", () => {
+    // That case has its own, more specific advisory; two notes about one block is noise.
+    expect(missingDataSlotAdvisory(table(4) + slot("bad", "{oops}"), "text/html")).toBeNull()
+  })
+
+  it("stays quiet on prose that merely mentions numbers", () => {
+    const prose = html(
+      "<p>We shipped 3 fixes in 2026, up from 2 the year before, across 14 repos.</p>",
+    )
+    expect(missingDataSlotAdvisory(prose, "text/html")).toBeNull()
+  })
+
+  it("stays quiet on a table of words rather than figures", () => {
+    const words = html("<table><tr><td>Alice</td><td>Editor</td></tr></table>".repeat(6))
+    expect(missingDataSlotAdvisory(words, "text/html")).toBeNull()
+  })
+
+  it("stays quiet below the threshold — one or two figures is not a dataset", () => {
+    expect(missingDataSlotAdvisory(table(1), "text/html")).toBeNull()
+  })
+
+  it("reads markdown tables too", () => {
+    const md = ["| metric | value |", "| --- | --- |", "| pass | 44 |", "| fail | 0 |"].join("\n")
+    // Four numeric cells across the two data rows (the alignment row has none).
+    expect(missingDataSlotAdvisory(`${md}\n${md}`, "text/markdown")).toContain("no data slot")
+  })
+
+  it("ignores content types with no slot grammar", () => {
+    expect(missingDataSlotAdvisory(table(8), "text/x-derive-deck")).toBeNull()
   })
 })
 

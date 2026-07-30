@@ -129,6 +129,57 @@ const markdownBlocks = (source: string): RawBlock[] => {
  * body, or a slot past the per-version cap each yields an advisory and is skipped. Pure and
  * total — safe to call twice (once to advise, once to persist) with identical results.
  */
+/** How many numeric table cells make a page "carrying data" rather than "mentioning a
+ *  number". Deliberately conservative: a missed nudge costs nothing, a false one trains
+ *  the reader to skip advisories, and that channel is load-bearing everywhere else. */
+const DATA_TABLE_MIN_CELLS = 4
+
+// A numeric cell: an HTML <td> or a markdown table cell whose whole content is a number
+// (with optional %, $, commas, decimals, sign). Prose containing a figure never matches,
+// because the CELL has to be the number.
+const HTML_NUM_CELL = /<td[^>]*>\s*[-+$]?\d[\d,]*\.?\d*\s*%?\s*<\/td>/gi
+const MD_TABLE_ROW = /^\s*\|.+\|\s*$/gm
+const MD_NUM_CELL = /\|\s*[-+$]?\d[\d,]*\.?\d*\s*%?\s*(?=\|)/g
+
+/**
+ * Does this page carry FIGURES that no slot makes queryable? The nudge that turns slots
+ * from a thing you must remember into a thing you get told about at the moment you would
+ * have wanted it — the same move as every other advisory here, and the reason those exist:
+ * correct-by-construction beats correct-by-vigilance.
+ *
+ * Written after watching an agent (me) build slots and then publish fifteen versions of
+ * pages full of numbers without emitting a single one. The gap was never knowing how; it
+ * was that nothing asked at the moment of publishing.
+ *
+ * Returns null when the page already carries a slot, when it has no tabular figures, or
+ * when the content type has no slot grammar at all.
+ */
+export const missingDataSlotAdvisory = (source: string, contentType: string): string | null => {
+  const ct = contentType.toLowerCase()
+  const isHtml = ct.includes("html")
+  if (!isHtml && !ct.includes("markdown")) return null
+  // Already carries data (or tried to — a malformed block gets its own advisory).
+  if (parseDataSlots(source, contentType).slots.length > 0) return null
+  if (/derive-data/.test(source)) return null
+
+  let cells = 0
+  if (isHtml) {
+    cells = (source.match(HTML_NUM_CELL) ?? []).length
+  } else {
+    for (const row of source.match(MD_TABLE_ROW) ?? [])
+      cells += (row.match(MD_NUM_CELL) ?? []).length
+  }
+  if (cells < DATA_TABLE_MIN_CELLS) return null
+
+  return (
+    `This page carries ${cells} numeric table cells but no data slot, so those figures are ` +
+    `readable only by parsing this markup — including by you, later, on every past version. ` +
+    `A \`derive-data\` block (see the publishing skill) stores them per version, so ` +
+    `read(data:"<name>", versions:"all") answers "how did this change over time" in one call. ` +
+    `Ignorable: plenty of pages are prose that happens to contain a table.`
+  )
+}
+
 export const parseDataSlots = (source: string, contentType: string): DataSlotResult => {
   const ct = contentType.toLowerCase()
   const raw = ct.includes("html")

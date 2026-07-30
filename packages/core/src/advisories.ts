@@ -6,7 +6,7 @@
 // looking at the render afterward: correct-by-construction beats
 // correct-by-vigilance.
 
-import { parseDataSlots } from "./data-slots"
+import { missingDataSlotAdvisory, parseDataSlots } from "./data-slots"
 import type { BlobStore } from "./ports"
 import { needsReflow } from "./reflow"
 
@@ -18,6 +18,11 @@ export const publishAdvisories = (content: string, contentType: string): string[
   // duplicate, over the per-version cap). The SAME parser persists the good slots in the
   // version-bump chain, so what's advised here and what's stored can never disagree.
   out.push(...parseDataSlots(content, contentType).advisories)
+
+  // A page full of figures with no slot: the nudge that keeps slots from depending on the
+  // author remembering. Last, so it never crowds out something that is actually wrong.
+  const noSlot = missingDataSlotAdvisory(content, contentType)
+  if (noSlot) out.push(noSlot)
 
   // A temporary asset UPLOAD url (the mint-and-curl target) embedded as if it were
   // the permanent asset URL — it expires in minutes, so every image breaks shortly
