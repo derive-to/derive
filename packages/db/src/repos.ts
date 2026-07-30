@@ -1959,6 +1959,10 @@ export function makeRepos(db: SqliteDb) {
   const listSlackInstallsByTeam = async (teamId: string): Promise<SlackInstallRecord[]> =>
     await db.select().from(slackInstall).where(eq(slackInstall.team_id, teamId)).all()
   const deleteSlackInstall = async (orgId: string): Promise<void> => {
+    // Disconnecting forgets WHERE to post as well as how. Otherwise the routing outlives the
+    // credentials, and reconnecting to a different Slack team resumes posting to the old team's
+    // channel ids — which is what the single default_channel used to do implicitly.
+    await db.delete(slackSubscription).where(eq(slackSubscription.org_id, orgId)).run()
     await db.delete(slackInstall).where(eq(slackInstall.org_id, orgId)).run()
   }
 
@@ -2056,8 +2060,9 @@ export function makeRepos(db: SqliteDb) {
       created_by: null,
       ...sub,
     }
-    // The identity columns and the creation stamp are not editable by an upsert.
-    const { id: _i, org_id: _o, ...set } = row
+    // Identity and provenance are not editable by an upsert — a second admin re-subscribing a
+    // channel must not re-stamp who created it.
+    const { id: _i, org_id: _o, created_by: _c, ...set } = row
     await db
       .insert(slackSubscription)
       .values(row)

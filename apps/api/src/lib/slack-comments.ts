@@ -29,7 +29,7 @@ import {
   section,
 } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
-import { authorKind, resolveChannels } from "./slack-subscriptions"
+import { authorKind, channelIsSubscribed, resolveChannels } from "./slack-subscriptions"
 
 /** The Slack message payload an enqueued slack_app delivery carries (self-contained). */
 interface SlackCommentPayload {
@@ -385,6 +385,10 @@ export const makeSlackIngestSender =
     const p = JSON.parse(d.payload) as SlackIngestPayload
     const link = await meta.getSlackThreadLinkByTs(p.channel, p.threadTs)
     if (!link) return { ok: true, status: "skipped: no thread link" }
+    // A thread link outlives an unsubscribe (nothing deletes them), so the subscription is what
+    // says whether this channel is still connected — in BOTH directions.
+    if (!(await channelIsSubscribed(meta, link.org_id, p.channel)))
+      return { ok: true, status: "skipped: channel not subscribed" }
     const bot = await resolveBotToken(meta, link.org_id, encryptionKey)
     if (!bot) return { ok: true, status: "skipped: slack not connected" }
     const name = await slackUserName(bot.token, p.userId)

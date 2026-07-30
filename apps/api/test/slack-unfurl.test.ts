@@ -69,14 +69,32 @@ describe("decideUnfurl — the broadcast gate", () => {
 
   // The unfurl is seen by the whole channel, so a private draft gets a card that confirms
   // nothing beyond what the pasted URL already did — no title, no counts.
-  it("renders a title-less locked card for a private artifact", async () => {
-    const { deps, url } = await setup("unfurl-private", "none")
+  // The title has to be absent in EVERY form it can take, not just verbatim. The canonical
+  // share URL is `<slugified-title>-<short_id>`, so an earlier version of this test passed while
+  // the card's href read `…/artifacts/q4-plan-vs8g8mh6` — the title was right there, lowercased
+  // and hyphenated, recoverable by hovering the link.
+  it("renders a locked card that leaks the title in no form, including the slug", async () => {
+    const { deps, url, artifact } = await setup("unfurl-private", "none")
     const d = await decideUnfurl(deps, url, "u-1")
     expect(d.kind).toBe("card")
-    if (d.kind === "card") {
-      expect(JSON.stringify(d.blocks)).not.toContain("Q4 plan")
-      expect(JSON.stringify(d.blocks)).toContain("private Derive artifact")
-    }
+    if (d.kind !== "card") return
+    const json = JSON.stringify(d.blocks)
+    expect(json).toContain("private Derive artifact")
+    expect(json).not.toContain("Q4 plan")
+    expect(json).not.toContain("q4-plan")
+    expect(json).not.toMatch(/q4/i)
+    // It links to the bare short id, which the canonical redirect resolves.
+    expect(json).toContain(`/artifacts/${artifact.short_id}`)
+  })
+
+  // A stale or bare-id link is the sharper case: the slug is re-derived from the CURRENT title
+  // on every rename, so building the href from the record would add a title the channel never
+  // had — even though the pasted URL carried none.
+  it("does not add a title the pasted URL never carried", async () => {
+    const { deps, artifact } = await setup("unfurl-private-bare", "none")
+    const d = await decideUnfurl(deps, `${BASE}/artifacts/${artifact.short_id}`, "u-1")
+    expect(d.kind).toBe("card")
+    if (d.kind === "card") expect(JSON.stringify(d.blocks)).not.toMatch(/q4/i)
   })
 
   it("skips an artifact the sharer cannot read", async () => {
@@ -91,6 +109,16 @@ describe("decideUnfurl — the broadcast gate", () => {
     const { deps, url } = await setup("unfurl-other-org", "workspace")
     const d = await decideUnfurl({ ...deps, orgId: "some-other-org" }, url, "u-1")
     expect(d.kind).toBe("skip")
+  })
+
+  it("skips a URL with a malformed percent escape instead of throwing", async () => {
+    // This used to raise URIError out of decodeURIComponent, which runAfterAck swallowed —
+    // silently killing every OTHER preview in the same message.
+    const { deps } = await setup("unfurl-badescape", "workspace")
+    expect(artifactRefFromUrl(BASE, `${BASE}/artifacts/%zz`)).toBe(null)
+    expect((await decideUnfurl(deps, `${BASE}/artifacts/100%-done-abc12345`, "u-1")).kind).toBe(
+      "skip",
+    )
   })
 
   it("skips a URL that isn't an artifact link", async () => {

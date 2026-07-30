@@ -64,13 +64,19 @@ export const unfurlBlocks = (
   return blocks
 }
 
-/** The card for an artifact the sharer can read but which is NOT feed-visible. Deliberately
- *  says nothing about it — no title, no counts. The bare URL is already in the channel, so
- *  confirming "this is a private Derive artifact" leaks nothing further, while rendering
- *  nothing at all just reads as the integration being broken. */
-export const lockedUnfurlBlocks = (pageUrl: string): unknown[] => [
+/** The card for an artifact the sharer can read but which is NOT feed-visible. Says nothing
+ *  about it — no title, no counts — because everyone in the channel sees this, including people
+ *  who cannot open it.
+ *
+ *  It links to the BARE short id, never `artifactUrl`. The canonical share URL is
+ *  `<slugified-title>-<short_id>`, so linking to it would smuggle the title into the href of a
+ *  card whose whole point is not to reveal one — recoverable by hover, copy-link, or reading the
+ *  message back from the API. Worse for a stale link: the slug is re-derived on every rename, so
+ *  a card for a link pasted as a bare id, or before a rename, would ADD a title the channel
+ *  never had. The canonical redirect resolves the bare id for anyone who may actually open it. */
+export const lockedUnfurlBlocks = (baseUrl: string, shortId: string): unknown[] => [
   section(
-    `:lock: *<${pageUrl}|A private Derive artifact>*\nOnly people it's shared with can open it.`,
+    `:lock: *<${baseUrl}/artifacts/${encodeURIComponent(shortId)}|A private Derive artifact>*\nOnly people it's shared with can open it.`,
   ),
   context("Derive"),
 ]
@@ -122,10 +128,12 @@ export const decideUnfurl = async (
   if (artifact.org_id !== deps.orgId) return { kind: "skip" }
   if (!(await deps.canRead(viewerId, artifact))) return { kind: "skip" }
 
-  const info = await unfurlInfoFor(deps.meta, deps.baseUrl, artifact)
+  // Build the locked card BEFORE unfurlInfoFor: it needs none of that, and the whole point is
+  // to touch as little of the artifact as possible.
   if (artifact.listed === "none")
-    return { kind: "card", url, blocks: lockedUnfurlBlocks(info.pageUrl) }
+    return { kind: "card", url, blocks: lockedUnfurlBlocks(deps.baseUrl, artifact.short_id) }
 
+  const info = await unfurlInfoFor(deps.meta, deps.baseUrl, artifact)
   const open = await deps.meta.listProposals(artifact.id, { state: "open" })
   return {
     kind: "card",
@@ -149,6 +157,14 @@ export const artifactRefFromUrl = (baseUrl: string, url: string): string | null 
   // Same host, or a subdomain of it — vanity subdomains serve the same artifacts.
   const sameHost = u.hostname === base.hostname || u.hostname.endsWith(`.${base.hostname}`)
   if (!sameHost) return null
-  const m = u.pathname.match(/^\/artifacts\/([^/]+)\/?$/)
-  return m?.[1] ? decodeURIComponent(m[1]) : null
+  const raw = u.pathname.match(/^\/artifacts\/([^/]+)\/?$/)?.[1]
+  if (!raw) return null
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    // A malformed escape (`%zz`) throws URIError. Outside a try that propagated all the way to
+    // runAfterAck's blanket catch, so one such URL pasted alongside real ones silently killed
+    // EVERY preview in the message. It simply isn't one of our refs.
+    return null
+  }
 }

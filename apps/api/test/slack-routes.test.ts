@@ -114,10 +114,17 @@ const proposalAction = (artifactId: string, proposalId: string, actionId: string
 })
 
 // "T1" matches the team_id seedResolvable stores on the install (the acting-team authz bind).
-const threadAction = (artifactId: string, threadId: string, actionId: string, teamId = "T1") => ({
+const threadAction = (
+  artifactId: string,
+  threadId: string,
+  actionId: string,
+  teamId = "T1",
+  channelId = "C1",
+) => ({
   type: "block_actions",
   response_url: "https://hooks.slack.test/response",
   team: { id: teamId },
+  channel: { id: channelId },
   user: { username: "dana" },
   actions: [{ action_id: actionId, value: JSON.stringify({ a: artifactId, t: threadId }) }],
   message: { blocks: [{ type: "section", text: { type: "mrkdwn", text: "a comment" } }] },
@@ -381,6 +388,11 @@ describe("slack events endpoint", () => {
       bot_token: encryptSecret("xoxb-1", KEY),
       bot_user_id: "UBOT",
       created_at: new Date().toISOString(),
+    })
+    await meta.upsertSlackSubscription({
+      id: `sub-${ids.thread}`,
+      org_id: "default",
+      channel_id: "C1",
     })
     await meta.setSlackThreadLink({
       id: `stl-${ids.thread}`,
@@ -753,6 +765,159 @@ describe("slack events endpoint", () => {
   })
 })
 
+describe("a click only acts on the channel it came from", () => {
+  // The whole point of keying links (thread, channel): a thread mirrored into #eng must not be
+  // resolvable by a click that claims to come from somewhere it was never posted.
+  const seedFor = async (meta: MetaStore) => {
+    const artifact = await meta.createArtifact({
+      id: "a-wc",
+      short_id: "wc000001",
+      org_id: "default",
+      slug: null,
+      title: "Doc",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+      kind: "file",
+      spa: 0,
+    })
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    await meta.upsertSlackSubscription({ id: "sub-wc", org_id: "default", channel_id: "C1" })
+    await meta.setSlackThreadLink({
+      id: "stl-wc",
+      org_id: "default",
+      artifact_id: artifact.id,
+      thread_id: "th-wc",
+      channel: "C1",
+      message_ts: "1700000000.9",
+      created_at: new Date().toISOString(),
+    })
+    await meta.createComment({
+      id: "c-wc",
+      artifact_id: artifact.id,
+      thread_id: "th-wc",
+      base_version: 0,
+      path: null,
+      anchor: null,
+      body_md: "root",
+      author: "Ada",
+      author_id: owner.id,
+    })
+    return artifact
+  }
+
+  it("refuses a Resolve click whose channel isn't where the thread is mirrored", async () => {
+    const { app, meta } = make("int-wrong-channel")
+    const artifact = await seedFor(meta)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 })),
+    )
+    const r = await postInteract(
+      app,
+      threadAction(artifact.id, "th-wc", SLACK_THREAD_ACTION.resolve, "T1", "C-ELSEWHERE"),
+    )
+    expect(r.status).toBe(200)
+    expect((await meta.getComment("c-wc"))?.state).toBe("open")
+  })
+})
+
+describe("unsubscribing really disconnects a channel", () => {
+  // Deleting the workspace-wide `slackPost` toggle removed the only kill switch for INBOUND
+  // Slack writes. Thread links outlive an unsubscribe — nothing deletes them — so both of these
+  // kept working in a channel an admin had deliberately cut off, while /derive unsubscribe
+  // answered "Derive won't post here".
+  const seed = async (meta: MetaStore, name: string) => {
+    const artifact = await meta.createArtifact({
+      id: `a-${name}`,
+      short_id: `s${name}`.slice(0, 8),
+      org_id: "default",
+      slug: null,
+      title: "Doc",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+      kind: "file",
+      spa: 0,
+    })
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    await meta.setSlackThreadLink({
+      id: `stl-${name}`,
+      org_id: "default",
+      artifact_id: artifact.id,
+      thread_id: `th-${name}`,
+      channel: "C1",
+      message_ts: "1700000000.1",
+      created_at: new Date().toISOString(),
+    })
+    await meta.createComment({
+      id: `c-${name}`,
+      artifact_id: artifact.id,
+      thread_id: `th-${name}`,
+      base_version: 0,
+      path: null,
+      anchor: null,
+      body_md: "root",
+      author: "Ada",
+      author_id: owner.id,
+    })
+    return artifact
+  }
+
+  it("stops ingesting replies once no channel subscription remains", async () => {
+    const { app, meta } = make("unsub-ingest")
+    const artifact = await seed(meta, "ing")
+    const before = (await meta.listComments(artifact.id)).length
+    await postEvent(
+      app,
+      JSON.stringify({
+        type: "event_callback",
+        team_id: "T1",
+        event: {
+          type: "message",
+          user: "U9",
+          text: "a reply",
+          channel: "C1",
+          ts: "1700000001.5",
+          thread_ts: "1700000000.1",
+        },
+      }),
+    )
+    await drainIngest(meta)
+    // No subscription was ever created, so the reply must not become a Derive comment.
+    expect((await meta.listComments(artifact.id)).length).toBe(before)
+  })
+
+  it("stops honouring Resolve clicks once no channel subscription remains", async () => {
+    const { app, meta } = make("unsub-click")
+    const artifact = await seed(meta, "clk")
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 })),
+    )
+    const r = await postInteract(
+      app,
+      threadAction(artifact.id, "th-clk", SLACK_THREAD_ACTION.resolve),
+    )
+    expect(r.status).toBe(200)
+    expect((await meta.getComment("c-clk"))?.state).toBe("open")
+  })
+})
+
 describe("/derive subscription subcommands", () => {
   const linked = async (meta: Awaited<ReturnType<typeof make>>["meta"], role = "owner") => {
     await meta.setSlackInstall({
@@ -981,6 +1146,11 @@ describe("slack interactivity endpoint (resolve/reopen from a button)", () => {
       bot_user_id: "UBOT",
       created_at: new Date().toISOString(),
     })
+    await meta.upsertSlackSubscription({
+      id: `sub-${ids.thread}`,
+      org_id: "default",
+      channel_id: "C1",
+    })
     await meta.setSlackThreadLink({
       id: `stl-${ids.thread}`,
       org_id: "default",
@@ -1193,8 +1363,19 @@ describe("slack interactivity endpoint (resolve/reopen from a button)", () => {
 })
 
 describe("slack slash command (/derive)", () => {
-  const link = (meta: MetaStore, slackUserId = "U777", userId = owner.id) =>
-    meta.setSlackUserLink({
+  // An account link alone is no longer enough: the command also requires Slack to still be
+  // CONNECTED, because disconnecting drops the install while leaving every member's link, and
+  // a disconnected workspace was still answering /derive.
+  const link = async (meta: MetaStore, slackUserId = "U777", userId = owner.id) => {
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    await meta.setSlackUserLink({
       id: `sul-${slackUserId}`,
       org_id: "default",
       user_id: userId,
@@ -1202,6 +1383,7 @@ describe("slack slash command (/derive)", () => {
       slack_user_id: slackUserId,
       created_at: new Date().toISOString(),
     })
+  }
 
   const seedArtifact = (
     meta: MetaStore,

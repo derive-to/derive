@@ -71,13 +71,36 @@ export const resolveChannels = async (
   return wanted.filter((s) => s.scope_kind === "workspace" || collections.has(s.scope_id))
 }
 
-/** Normalize a requested event list to the stored encoding: a comma-separated list of
- *  subscribable events, or "*" when everything (or nothing recognizable) was asked for. Mirrors
- *  how routes/webhooks.ts treats `webhook.events`. */
+/** Does this workspace still want anything to do with this channel?
+ *
+ *  Deleting `slackPost` removed the only kill switch for INBOUND Slack writes — reply-back and
+ *  the Resolve button gated on it too. Without this, `/derive unsubscribe` answered "Derive
+ *  won't post here" while replies in that channel kept creating Derive comments and the buttons
+ *  kept working, because both gate only on a thread link that nothing ever deletes. A
+ *  subscription is the switch in both directions. */
+export const channelIsSubscribed = async (
+  meta: MetaStore,
+  orgId: string,
+  channelId: string,
+): Promise<boolean> =>
+  (await meta.listSlackSubscriptions(orgId)).some(
+    (s) => s.active === 1 && s.channel_id === channelId,
+  )
+
+/** Normalize a requested event list to the stored encoding, the way `routes/webhooks.ts` does:
+ *  omitted means "no filter" (`"*"`), and anything else is the recognized subset — which may be
+ *  EMPTY, meaning nothing matches.
+ *
+ *  Empty must not become `"*"`. It used to: unticking the last checkbox in Settings sent `[]`,
+ *  which fell into the same branch as "unspecified" and silently subscribed the channel to
+ *  everything — every box came back ticked and the channel started receiving all five events.
+ *  An unrecognized name did the same. Fail closed in both cases; a subscription that matches
+ *  nothing is a paused one, which is what the user asked for. */
 export const subscribableEvents = (events?: string[]): string => {
-  if (!events?.length) return "*"
-  const kept = events.filter((e): e is (typeof SLACK_SUBSCRIBABLE_EVENTS)[number] =>
+  if (!events) return "*"
+  const kept = [...new Set(events)].filter((e): e is (typeof SLACK_SUBSCRIBABLE_EVENTS)[number] =>
     (SLACK_SUBSCRIBABLE_EVENTS as readonly string[]).includes(e),
   )
-  return kept.length && kept.length < SLACK_SUBSCRIBABLE_EVENTS.length ? kept.join(",") : "*"
+  // Deduped before the count compare, so five copies of one event can't look like "all of them".
+  return kept.length === SLACK_SUBSCRIBABLE_EVENTS.length ? "*" : kept.join(",")
 }

@@ -5,7 +5,6 @@
 import { type ArtifactRecord, artifactUrl } from "@derive/core"
 import type { SearchHit } from "./search"
 import { context, mrkdwnLabel, section } from "./slack-cards"
-import { truncate } from "./text"
 
 // A `<url|text>` link with the (untrusted) title escaped so it can't break out of the link.
 const artifactLink = (url: string, title: string | null, shortId: string): string =>

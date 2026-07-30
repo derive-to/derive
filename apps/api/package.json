@@ -20,6 +20,7 @@
     "migrate:auth": "tsx migrate-auth-d1.ts",
     "deploy": "pnpm build:web && pnpm deploy:schema && tsx migrate-auth-d1.ts --apply && pnpm deploy:pg-schema && wrangler deploy",
     "deploy:pg-schema": "tsx scripts/apply-pg-schema.ts",
+    "slack:probe": "tsx scripts/slack-live-probe.ts",
     "deploy:smoke": "gh workflow run e2e-smoke.yml --ref main || echo 'post-deploy smoke not triggered (gh CLI unavailable) — run: gh workflow run e2e-smoke.yml'",
     "typecheck": "tsgo --noEmit && tsgo --noEmit -p tsconfig.worker.json",
     "typecheck:tsc": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",

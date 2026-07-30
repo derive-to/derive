@@ -950,7 +950,14 @@ BEGIN
   SELECT c.conname INTO stale
   FROM pg_constraint c
   JOIN pg_class t ON t.oid = c.conrelid
-  WHERE t.relname = 'slack_thread_link'
+  JOIN pg_namespace n ON n.oid = t.relnamespace
+  -- Schema-qualified. The ALTER below resolves through search_path and hits ONE table, so an
+  -- unqualified scan that matched a same-named table in another schema (a second Derive schema,
+  -- a pg_dump staging copy, a backup schema) would try to drop a constraint that is not on the
+  -- table it alters. PG_SCHEMA_STATEMENTS has no per-statement try/catch, so that is a hard
+  -- boot failure on EVERY boot rather than a skipped migration.
+  WHERE n.nspname = current_schema()
+    AND t.relname = 'slack_thread_link'
     AND c.contype = 'u'
     AND array_length(c.conkey, 1) = 1
     AND (SELECT a.attname FROM pg_attribute a

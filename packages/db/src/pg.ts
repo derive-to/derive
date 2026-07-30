@@ -1751,6 +1751,8 @@ export class PgMetaStore implements MetaStore {
     return await this.db.select().from(slackInstall).where(eq(slackInstall.team_id, teamId))
   }
   async deleteSlackInstall(orgId: string): Promise<void> {
+    // See the repos.ts twin: disconnect forgets where to post, not just how.
+    await this.db.delete(slackSubscription).where(eq(slackSubscription.org_id, orgId))
     await this.db.delete(slackInstall).where(eq(slackInstall.org_id, orgId))
   }
   async getModelCredential(
@@ -1844,8 +1846,9 @@ export class PgMetaStore implements MetaStore {
       created_by: null,
       ...sub,
     }
-    // The identity columns and the creation stamp are not editable by an upsert.
-    const { id: _i, org_id: _o, ...set } = row
+    // Identity and provenance are not editable by an upsert — a second admin re-subscribing a
+    // channel must not re-stamp who created it.
+    const { id: _i, org_id: _o, created_by: _c, ...set } = row
     await this.db
       .insert(slackSubscription)
       .values(row)

@@ -147,14 +147,20 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       }
     }
   } catch (e) {
-    // Only "the table isn't there yet" is tolerable, matched BY NAME — every other failure is
-    // rethrown, because the rollback above has already restored the original table and booting
-    // on a schema we know is wrong is worse than not booting. Same reasoning as the relaxation.
+    // ALWAYS rethrow. The sibling context_session migration carries a long comment about a
+    // filter that swallowed the one error its rebuild was most likely to produce; this had the
+    // same shape and would have repeated it. `ALTER TABLE ... RENAME TO slack_thread_link`
+    // re-parses every dependent object, and a dangling view or trigger fails with
+    // "no such table: main.slack_thread_link" - the exact string a /no such table/ filter
+    // tolerates. It would have booted on the un-rekeyed schema and thrown UNIQUE constraint
+    // failures far from here.
+    //
+    // There is no legitimate case to tolerate either: SCHEMA_STATEMENTS above always creates
+    // slack_thread_link before this runs, so "the table isn't there yet" cannot happen. The
+    // rollback has already restored the original table, so failing to start beats serving on a
+    // schema we know is wrong.
     const msg = e instanceof Error ? e.message : String(e)
-    if (!/no such table:\s*(main\.)?slack_thread_link\b/i.test(msg))
-      throw new Error(`slack_thread_link re-key failed (schema left unchanged): ${msg}`, {
-        cause: e,
-      })
+    throw new Error(`slack_thread_link re-key failed (schema left unchanged): ${msg}`, { cause: e })
   }
   const db = drizzle(raw, { schema })
   const repos = makeRepos(db)

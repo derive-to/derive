@@ -245,6 +245,7 @@ const landInProcess =
     await afterPublish(deps, input.artifact, version, {
       isNew: false,
       onBehalf: input.onBehalf?.id ?? null,
+      actorId: input.onBehalf?.id ?? null,
     })
     return {
       outcome: "published",
