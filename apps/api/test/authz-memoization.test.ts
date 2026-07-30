@@ -62,8 +62,8 @@ describe("actor resolution is memoized per request", () => {
     // Each permission row: fetched once, however many times the handler authorizes.
     expect(counts.artifactMember).toBe(1)
     expect(counts.collectionRoles).toBe(1)
-    // Membership is also read directly by the route (a membership check that is not an
-    // authorize), so one resolution plus that explicit read.
-    expect(counts.membership).toBeLessThanOrEqual(2)
+    // Membership too: the route's own member check now reads the resolved actor instead of
+    // querying again, so ONE read covers the authorize and the check.
+    expect(counts.membership).toBe(1)
   })
 })

@@ -1159,8 +1159,24 @@ export const contextRoutes = (ctx: AppContext) => {
       // chat-enabled workspace and spend the operator's model key — 201 and a running turn, from
       // outside the workspace entirely. Reading a shared document is not standing to run an
       // agent inside the workspace that owns it.
-      if (!(await meta.getMembership(art.org_id, me.id).catch(() => null)))
-        return bail(fail(c, 404, "not found"))
+      //
+      // Answered from the RESOLVED ACTOR where that is the same question, re-queried where it is
+      // not. For a signed-in human, `actorFor` derives `orgRole` from exactly this row —
+      // getMembership(art.org_id, me.id), same arguments — and it is memoized per request, so the
+      // authorize() above has already paid for it; querying again made this the third read of one
+      // row in a single request.
+      //
+      // The fallback is not defensive padding. `resolvePrincipal` checks the static operator
+      // token BEFORE the session, so a request carrying both resolves to `kind: "token"` and its
+      // actor says nothing about whether the HUMAN is a member. Treating that as "not a member"
+      // would have quietly denied a case that works today. The guard is `userId === me.id`, so
+      // the cache is only trusted when it is describing this request's user.
+      const actor = await ctx.actorFor(c, art)
+      const isMember =
+        actor.kind === "user" && actor.userId === me.id
+          ? !!actor.orgRole
+          : !!(await meta.getMembership(art.org_id, me.id).catch(() => null))
+      if (!isMember) return bail(fail(c, 404, "not found"))
       const wantsPublish = b.mode === "publish"
       if (wantsPublish && !(await authorize(c, "publish", art)))
         return bail(fail(c, 403, "you cannot publish to that artifact"))
