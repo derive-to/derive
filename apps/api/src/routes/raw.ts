@@ -4,7 +4,7 @@ import { Hono } from "hono"
 import type { AppContext } from "../context"
 import { crossDocTransform } from "../lib/cross-doc"
 import { verifyState } from "../lib/crypto"
-import { cacheControlFor, TOMBSTONE } from "../lib/http"
+import { cacheControlFor, fail, TOMBSTONE } from "../lib/http"
 import { verifyPreviewToken } from "../lib/preview-token"
 import { serveContent } from "../lib/serve-content"
 
@@ -38,6 +38,45 @@ export const rawRoutes = (ctx: AppContext) => {
       "Content-Type": "text/javascript; charset=utf-8",
       "Cache-Control": "public, max-age=300",
     }),
+  )
+
+  // A version's data slot as JSON, for everything that isn't an MCP client: a fetch()
+  // from the artifact's own page (a chart reading its own history), a curl in a shell,
+  // a script with a bearer. Same slots the `read` tool returns, same authorization and
+  // anon-history gate as the bytes — a slot is part of the version, so it can never be
+  // more readable than the page carrying it.
+  //
+  // Registered BEFORE the `/raw/:shortId/v/:n/*` catch-all, whose trailing wildcard would
+  // otherwise swallow `data/checks.json` as a file path inside the artifact; the more
+  // specific route has to win the match, exactly like the `/t/:token/` route above.
+  // `.json` is optional so both spellings work rather than one 404ing mysteriously.
+  const serveSlot = async (c: Context, shortId: string, n: number | null, slotRaw: string) => {
+    const slot = slotRaw.replace(/\.json$/i, "")
+    const artifact = await meta.getByShortId(shortId)
+    if (!artifact) return fail(c, 404, "not found")
+    if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
+    const v = n ?? artifact.current_version
+    if (!Number.isInteger(v) || v < 1 || v > artifact.current_version)
+      return fail(c, 404, `no version ${v}`)
+    if (!(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    if (await anonHistoryBlocked(c, artifact, v)) return fail(c, 404, "not found")
+    const rows = await meta.getVersionData(artifact.id, v, slot)
+    const row = rows[0]
+    if (!row) return fail(c, 404, `no data slot "${slot}" in v${v}`)
+    // The stored bytes verbatim, not a re-serialization: what was published is what a
+    // caller gets, and it's already valid JSON (validated at publish).
+    return c.body(row.json, 200, {
+      "Content-Type": "application/json; charset=utf-8",
+      // A version is immutable, so its slot is too — cache it hard. The current-version
+      // alias can't be, since the next publish changes what it points at.
+      "Cache-Control": n === null ? "no-cache" : "public, max-age=31536000, immutable",
+    })
+  }
+  app.get("/raw/:shortId/v/:n/data/:slot", (c) =>
+    serveSlot(c, c.req.param("shortId"), Number(c.req.param("n")), c.req.param("slot")),
+  )
+  app.get("/raw/:shortId/data/:slot", (c) =>
+    serveSlot(c, c.req.param("shortId"), null, c.req.param("slot")),
   )
 
   // Shared by both entry points below (cookie-authorized and token-authorized): once

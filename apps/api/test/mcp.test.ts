@@ -420,6 +420,101 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(missText).toContain("checks")
   })
 
+  it("reads a data slot across a range of versions in ONE call (the trend read)", async () => {
+    const { app, token } = appWithGrant("dataseries", "openid derive:read derive:publish")
+    const page = (day: number, pass: number) =>
+      `<!doctype html><html><body><h1>Night ${day}</h1>` +
+      `<script type="application/derive-data" data-slot="checks">{"day":${day},"pass":${pass}}</script>` +
+      "</body></html>"
+    // v1..v4, one "nightly run" each — versions ARE the time axis.
+    const first = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Nightly", content: page(1, 41) })),
+    )
+    const shortId = first.short_id as string
+    for (const [day, pass] of [
+      [2, 42],
+      [3, 40],
+      [4, 44],
+    ]) {
+      await call(app, token, "publish", {
+        short_id: shortId,
+        content: page(day as number, pass as number),
+      })
+    }
+
+    const series = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "all" }),
+      ),
+    )
+    expect(series.count).toBe(4)
+    expect(series.series.map((p: { n: number }) => p.n)).toEqual([1, 2, 3, 4])
+    // Oldest first, and each point carries the version's own value — the trend.
+    expect(series.series.map((p: { data: { pass: number } }) => p.data.pass)).toEqual([
+      41, 42, 40, 44,
+    ])
+    expect(series.series[0].at).toBeTruthy()
+
+    // A sub-range reads only those versions.
+    const sub = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "2-3" }),
+      ),
+    )
+    expect(sub.count).toBe(2)
+    expect(sub.series.map((p: { n: number }) => p.n)).toEqual([2, 3])
+
+    // A single version, and the "to the end" form.
+    const one = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "3" }),
+      ),
+    )
+    expect(one.series.map((p: { n: number }) => p.n)).toEqual([3])
+    const tail = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "3-" }),
+      ),
+    )
+    expect(tail.series.map((p: { n: number }) => p.n)).toEqual([3, 4])
+  })
+
+  it("reports coverage when versions in the range carry no slot, and rejects a bad range", async () => {
+    const { app, token } = appWithGrant("datacoverage", "openid derive:read derive:publish")
+    const withSlot =
+      '<!doctype html><html><body><script type="application/derive-data" data-slot="checks">{"pass":1}</script></body></html>'
+    const without = "<!doctype html><html><body><p>no slot</p></body></html>"
+    const created = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Sparse", content: withSlot })),
+    )
+    const shortId = created.short_id as string
+    await call(app, token, "publish", { short_id: shortId, content: without })
+
+    const series = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "all" }),
+      ),
+    )
+    // v1 has it, v2 does not — the response says so instead of pretending or inventing a gap.
+    expect(series.count).toBe(1)
+    expect(series.note).toContain('no "checks" slot')
+
+    // A malformed range names the real version count rather than returning nothing.
+    const bad = await call(app, token, "read", {
+      short_id: shortId,
+      data: "checks",
+      versions: "nope",
+    })
+    const badText =
+      (bad.parsed?.result as { content?: { text: string }[] }).content?.[0]?.text ?? ""
+    expect(badText).toContain("1..2")
+    // `versions` needs a named slot, not the "*" listing.
+    const star = await call(app, token, "read", { short_id: shortId, data: "*", versions: "all" })
+    const starText =
+      (star.parsed?.result as { content?: { text: string }[] }).content?.[0]?.text ?? ""
+    expect(starText).toContain("single slot")
+  })
+
   it("advises about a data slot it could not store, without failing the publish", async () => {
     const { app, token } = appWithGrant("dataslotbad", "openid derive:read derive:publish")
     const page =

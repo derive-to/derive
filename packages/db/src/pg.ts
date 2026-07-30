@@ -469,6 +469,27 @@ export class PgMetaStore implements MetaStore {
       )
       .orderBy(asc(versionData.slot))
   }
+  async getVersionDataSeries(
+    artifactId: string,
+    slot: string,
+    from: number,
+    to: number,
+    limit: number,
+  ): Promise<VersionDataRecord[]> {
+    return this.db
+      .select()
+      .from(versionData)
+      .where(
+        and(
+          eq(versionData.artifact_id, artifactId),
+          eq(versionData.slot, slot),
+          gte(versionData.n, from),
+          lte(versionData.n, to),
+        ),
+      )
+      .orderBy(asc(versionData.n))
+      .limit(limit)
+  }
   async reclassifyVersion(artifactId: string, n: number, contentType: string): Promise<void> {
     await this.db
       .update(version)

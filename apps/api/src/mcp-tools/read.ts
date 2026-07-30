@@ -18,6 +18,7 @@ import { log } from "../log"
 import type { ToolContext } from "../mcp-tool-context"
 import {
   clipDoc,
+  DATA_SERIES_MAX,
   doc,
   err,
   FULL_DOC_MAX,
@@ -27,6 +28,8 @@ import {
   manifestOf,
   PAGE_MAP_MAX,
   parseLineRange,
+  parseVersionRange,
+  safeJson,
   sleep,
   toBase64,
 } from "../mcp-util"
@@ -88,10 +91,27 @@ export function registerReadTool(tc: ToolContext): void {
           .describe(
             'A version\'s structured DATA slot: the JSON a `derive-data` block on the page stored under this name (see the publishing skill), so you can read back data you published instead of re-parsing old markup. Pass "*" to list the slots this version carries. Reads the current version unless `version` is set.',
           ),
+        versions: z
+          .string()
+          .optional()
+          .describe(
+            'With `data`: read that slot across a RANGE of versions in ONE call — the trend read. "1-30", "12" (one), "20-" (to the current version), or "all". Versions are the time axis, so this answers "how did this change over time" without fetching each version. Returns oldest first; versions that carry no such slot are simply absent, and the response says how many.',
+          ),
         workspace: wsArg,
       },
     },
-    async ({ short_id, section, format, version, lines, render, wait, data, workspace }) => {
+    async ({
+      short_id,
+      section,
+      format,
+      version,
+      lines,
+      render,
+      wait,
+      data,
+      versions,
+      workspace,
+    }) => {
       const fmt: ReadFormat = format ?? "markdown"
       // `derive://brandprint/*` URIs are readable through `read`, not only as MCP
       // resources — the exact strings the server instructions name, reachable by every
@@ -257,6 +277,53 @@ export function registerReadTool(tc: ToolContext): void {
           return err(
             "`data` reads a version's stored slots — pass it alone (with `version` for history), not with section/lines/render.",
           )
+        // The TREND read: one slot across a range of versions, in one call and one query.
+        // Versions are already the time axis, so this is the whole reason slots exist —
+        // "how did this move over thirty days" without fetching thirty versions.
+        if (versions !== undefined) {
+          if (data === "*")
+            return err(
+              'Name a single slot to read across versions (data:"checks"); `data:"*"` lists one version\'s slots.',
+            )
+          const range = parseVersionRange(versions, a.current_version)
+          if (!range)
+            return err(
+              `Bad \`versions\` "${versions}" for "${short_id}" (it has 1..${a.current_version}) — use "1-30", "12", "20-", or "all".`,
+            )
+          const rows = await ctx.meta.getVersionDataSeries(
+            a.id,
+            data,
+            range.from,
+            range.to,
+            DATA_SERIES_MAX + 1,
+          )
+          const truncated = rows.length > DATA_SERIES_MAX
+          const kept = truncated ? rows.slice(0, DATA_SERIES_MAX) : rows
+          const span = range.to - range.from + 1
+          const missing = span - kept.length
+          return json({
+            short_id,
+            slot: data,
+            versions: `${range.from}-${range.to} of ${a.current_version}`,
+            count: kept.length,
+            series: kept.map((r) => ({
+              n: r.n,
+              at: r.created_at,
+              // Stored JSON was validated at publish, so the parsed value is the useful
+              // shape; the raw text is the honest fallback if a row ever predates that.
+              data: safeJson(r.json),
+            })),
+            ...(truncated
+              ? {
+                  note: `More than ${DATA_SERIES_MAX} versions in this range carry "${data}" — this is the oldest ${DATA_SERIES_MAX}. Narrow the range (e.g. versions:"${range.to - DATA_SERIES_MAX + 1}-${range.to}") for the most recent.`,
+                }
+              : missing > 0
+                ? {
+                    note: `${missing} version(s) in this range carry no "${data}" slot — they predate slots or omitted the block.`,
+                  }
+                : {}),
+          })
+        }
         if (data === "*") {
           const rows = await ctx.meta.getVersionData(a.id, n)
           return json({
@@ -280,15 +347,7 @@ export function registerReadTool(tc: ToolContext): void {
               : `"${short_id}" v${n} carries no data slots — embed a derive-data block to add one.`,
           )
         }
-        // Stored JSON was validated at publish, so parse is the useful shape; fall back to
-        // the raw text on the off chance a row predates validation.
-        let parsed: unknown
-        try {
-          parsed = JSON.parse(row.json)
-        } catch {
-          parsed = row.json
-        }
-        return json({ short_id, version: n, slot: row.slot, data: parsed })
+        return json({ short_id, version: n, slot: row.slot, data: safeJson(row.json) })
       }
       const manifest = await manifestOf(ctx, v)
 

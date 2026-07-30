@@ -619,6 +619,28 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(asc(versionData.slot))
       .all()
 
+  const getVersionDataSeries = async (
+    artifactId: string,
+    slot: string,
+    from: number,
+    to: number,
+    limit: number,
+  ): Promise<VersionDataRecord[]> =>
+    db
+      .select()
+      .from(versionData)
+      .where(
+        and(
+          eq(versionData.artifact_id, artifactId),
+          eq(versionData.slot, slot),
+          gte(versionData.n, from),
+          lte(versionData.n, to),
+        ),
+      )
+      .orderBy(asc(versionData.n))
+      .limit(limit)
+      .all()
+
   const reclassifyVersion = async (
     artifactId: string,
     n: number,
@@ -3624,6 +3646,7 @@ export function makeRepos(db: SqliteDb) {
     getVersion,
     setVersionData,
     getVersionData,
+    getVersionDataSeries,
     reclassifyVersion,
     setVersionPreview,
     setVersionPreviewVariant,

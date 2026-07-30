@@ -161,6 +161,38 @@ export function runStoreContract(
       expect(await store.getVersionData(a.id, v.n)).toEqual([])
     })
 
+    it("reads one slot across a version range, oldest first, in one query", async () => {
+      const a = await store.createArtifact(newArtifact())
+      // Five versions, each carrying "checks"; only some carry "other".
+      for (let day = 1; day <= 5; day++) {
+        const v = await store.addVersion(a.id, newVersion())
+        const rows = [
+          { id: uuid(), slot: "checks", json: `{"day":${day}}`, size_bytes: 11, gen: 1 },
+          ...(day % 2 === 1
+            ? [{ id: uuid(), slot: "other", json: `${day}`, size_bytes: 1, gen: 1 }]
+            : []),
+        ]
+        await store.setVersionData(a.id, v.n, rows)
+      }
+
+      const all = await store.getVersionDataSeries(a.id, "checks", 1, 5, 100)
+      expect(all.map((r) => r.n)).toEqual([1, 2, 3, 4, 5])
+      expect(all.map((r) => r.json)).toEqual([1, 2, 3, 4, 5].map((d) => `{"day":${d}}`))
+      // Scoped to the named slot only.
+      expect((await store.getVersionDataSeries(a.id, "other", 1, 5, 100)).map((r) => r.n)).toEqual([
+        1, 3, 5,
+      ])
+      // Sub-range, and a range covering versions that carry nothing.
+      expect((await store.getVersionDataSeries(a.id, "checks", 2, 3, 100)).map((r) => r.n)).toEqual(
+        [2, 3],
+      )
+      expect(await store.getVersionDataSeries(a.id, "nosuch", 1, 5, 100)).toEqual([])
+      // The limit bounds the payload and keeps the OLDEST, so paging is predictable.
+      expect((await store.getVersionDataSeries(a.id, "checks", 1, 5, 2)).map((r) => r.n)).toEqual([
+        1, 2,
+      ])
+    })
+
     it("filters listArtifacts by title search and by id set (empty ⇒ none)", async () => {
       const a = await store.createArtifact(newArtifact({ title: "Quarterly Report XYZ" }))
       expect((await store.listArtifacts({ q: "quarterly report xyz" })).map((x) => x.id)).toContain(

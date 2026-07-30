@@ -125,6 +125,47 @@ export const toBase64 = (bytes: Uint8Array): string => {
   return out
 }
 
+/** Most versions a single data-slot series read returns. A trend read must stay one
+ *  bounded response: past this the caller narrows the range, and is told so rather than
+ *  silently getting a prefix. */
+export const DATA_SERIES_MAX = 200
+
+/**
+ * A version range for the data-slot trend read: "1-30", "12" (one), "20-" (to the
+ * current version), or "all". Deliberately the same shape as `parseLineRange` — one
+ * range grammar across the tool, so an agent that learned `lines` already knows this —
+ * with `all` added because "every version" is the common ask here and "1-" reads oddly.
+ * Clamped to the artifact's real version count; null when malformed or inverted.
+ */
+export const parseVersionRange = (
+  spec: string,
+  current: number,
+): { from: number; to: number } | null => {
+  const cleaned = spec
+    .trim()
+    .replace(/^['"]+|['"]+$/g, "")
+    .trim()
+    .toLowerCase()
+  if (cleaned === "all" || cleaned === "*") return { from: 1, to: current }
+  const m = cleaned.match(/^(\d+)(?:-(\d*))?$/)
+  if (!m) return null
+  const from = Number(m[1])
+  if (from < 1 || from > current) return null
+  const to = m[2] === undefined ? from : m[2] === "" ? current : Number(m[2])
+  if (to < from) return null
+  return { from, to: Math.min(to, current) }
+}
+
+/** Parse stored JSON, falling back to the raw text. Slot bodies are validated at publish,
+ *  so this only bends for a row written before that guarantee existed. */
+export const safeJson = (raw: string): unknown => {
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return raw
+  }
+}
+
 // A 1-indexed, inclusive line range for windowed reads: "40-120", "40" (one line),
 // or "40-" (from 40 to the end). Returns null on a malformed, inverted, or
 // out-of-range start (a `from` past the end has no valid window — the caller errors

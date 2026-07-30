@@ -379,6 +379,19 @@ export interface ArtifactStore {
   /** A version's data slots: one named `slot`, or all of them (slot omitted), in slot
    *  order. Empty when the version carries none. */
   getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]>
+  /** One slot's value across a RANGE of versions, oldest first — the trend read. ONE
+   *  indexed query, never a per-version loop: a thirty-version series must cost one round
+   *  trip, which is the entire point of slots. Versions in the range carrying no such slot
+   *  are simply absent from the result (they predate slots, or omitted the block), so the
+   *  caller reports coverage rather than inventing gaps. `limit` caps the rows returned so
+   *  a thousand-version artifact can never answer with an unbounded payload. */
+  getVersionDataSeries(
+    artifactId: string,
+    slot: string,
+    from: number,
+    to: number,
+    limit: number,
+  ): Promise<VersionDataRecord[]>
   /** Correct a version's stored content_type in place (no new version). Also
    *  updates the artifact's current_content_type when n is the current version.
    *  Used to repair mis-classified content (e.g. HTML that was tagged markdown). */
