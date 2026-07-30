@@ -12,6 +12,7 @@ import {
   DEFAULT_VERSION_WINDOW_MS,
   isAuthenticated,
   isBundleContentType,
+  type MembershipRecord,
   type MetaStore,
   maxRole,
   newId,
@@ -720,13 +721,41 @@ export function buildContext(deps: AppDeps) {
     (await meta.storageBytes(orgId)) + (await meta.assetStorageBytes(orgId)) + incoming >
       deps.maxBytes
 
+  // MEMOIZED PER REQUEST + (org, user), same technique as `actorCache` below and for the
+  // same reason: `activeWorkspace`'s cookie-validation branch and `ensureMembership` (called
+  // from `workspaceRole` and the `/v1/me` route) both ask `getMembership` for the identical
+  // pair within one request — every call that resolves a workspace + role paid for it twice.
+  // Caches the PROMISE, not the value, so two callers racing before the first resolves still
+  // de-dupe to one query.
+  const membershipCache = new WeakMap<Context, Map<string, Promise<MembershipRecord | null>>>()
+  const cachedMembership = (
+    c: Context,
+    orgId: string,
+    userId: string,
+  ): Promise<MembershipRecord | null> => {
+    let perRequest = membershipCache.get(c)
+    if (!perRequest) {
+      perRequest = new Map()
+      membershipCache.set(c, perRequest)
+    }
+    const key = `${orgId}:${userId}`
+    const hit = perRequest.get(key)
+    if (hit) return hit
+    const pending = meta.getMembership(orgId, userId)
+    perRequest.set(key, pending)
+    return pending
+  }
+
   // Lazy provisioning: the first member of a workspace is its owner; everyone
   // else joins at the default role. Returns the caller's role in that workspace.
-  const ensureMembership = async (orgId: string, userId: string): Promise<Role> => {
-    const existing = await meta.getMembership(orgId, userId)
+  const ensureMembership = async (c: Context, orgId: string, userId: string): Promise<Role> => {
+    const existing = await cachedMembership(c, orgId, userId)
     if (existing) return existing.role
     const role: Role = (await meta.countMemberships(orgId)) === 0 ? "owner" : defaultRole
     await meta.setMembership({ id: newId("m"), org_id: orgId, user_id: userId, role })
+    // Drop the memoized "no membership" miss — a later read in this same request must see
+    // the row just provisioned, not the stale null.
+    membershipCache.get(c)?.delete(`${orgId}:${userId}`)
     return role
   }
 
@@ -779,7 +808,7 @@ export function buildContext(deps: AppDeps) {
       ws = getCookie(c, WS_COOKIE) || defaultOrg
     } else {
       const ck = getCookie(c, WS_COOKIE)
-      if (ck && (await meta.getMembership(ck, me.id))) ws = ck
+      if (ck && (await cachedMembership(c, ck, me.id))) ws = ck
       else {
         const mine = await meta.listWorkspaces(me.id)
         ws = mine[0]?.id ?? (await provisionPersonal(me))
@@ -1001,7 +1030,7 @@ export function buildContext(deps: AppDeps) {
     if (ag) return ag.role
     const me = await currentUser(c)
     if (!me) return null
-    return ensureMembership(await activeWorkspace(c), me.id)
+    return ensureMembership(c, await activeWorkspace(c), me.id)
   }
   const workspaceCan = async (c: Context, action: Action): Promise<boolean> => {
     const r = await workspaceRole(c)

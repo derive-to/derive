@@ -1694,6 +1694,139 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: round-2 batched reads`, () => {
+    it("collectionRolesForUser folds explicit membership and workspace-seat access (higher wins), one call", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Round2")
+      const seated = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Seated",
+        created_by: "amy",
+        workspace_access: "member",
+      })
+      const inviteOnly = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Invite-only",
+        created_by: "amy",
+        workspace_access: "none",
+      })
+      const untouched = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Untouched",
+        created_by: "amy",
+        workspace_access: "none",
+      })
+      await store.setMembership({ id: uuid(), org_id: org, user_id: "bob", role: "viewer" })
+      // Explicit share on the invite-only collection, at a HIGHER role than bob's seat
+      // would ever grant on the seated one — proves fold-by-max, not last-write-wins.
+      await store.setCollectionMember({
+        id: uuid(),
+        collection_id: inviteOnly.id,
+        user_id: "bob",
+        role: "owner",
+      })
+      expect(await store.collectionRolesForUser([], "bob")).toEqual({})
+      const roles = await store.collectionRolesForUser(
+        [seated.id, inviteOnly.id, untouched.id],
+        "bob",
+      )
+      expect(roles[seated.id]).toBe("viewer") // seat only
+      expect(roles[inviteOnly.id]).toBe("owner") // explicit share only
+      expect(roles[untouched.id]).toBeUndefined() // neither
+    })
+
+    it("notificationsPage matches listNotifications + unreadNotificationCount, and unread counts the WHOLE history not just the page", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const base = {
+        actor: "bob",
+        kind: "mention" as const,
+        artifact_id: a.id,
+        artifact_short_id: a.short_id,
+        artifact_title: "Doc",
+        thread_id: uuid(),
+        comment_id: uuid(),
+        preview: "hey",
+      }
+      const user = `u_${uuid()}`
+      for (let i = 0; i < 5; i++)
+        await store.createNotification({ id: uuid(), user_id: user, ...base })
+      // Page of 2, but all 5 are unread — `unread` must reflect the full 5, not the page.
+      const page = await store.notificationsPage(user, 2)
+      expect(page.notifications).toHaveLength(2)
+      expect(page.unread).toBe(5)
+      expect(page.notifications).toEqual(await store.listNotifications(user, 2))
+      expect(page.unread).toBe(await store.unreadNotificationCount(user))
+      await store.markNotificationsRead(user, "all")
+      expect((await store.notificationsPage(user, 2)).unread).toBe(0)
+    })
+
+    it("automationsWithExecutors joins each automation's agent liveness, one call; a deleted/missing agent ⇒ null", async () => {
+      const org = `org_${uuid()}`
+      const agent = await store.createAgent({
+        id: uuid(),
+        org_id: org,
+        name: "bot",
+        token: `tok_${uuid()}`,
+        role: "editor",
+      })
+      await store.touchAgentRunsSeen(agent.id, "2026-01-01T00:00:00.000Z")
+      const live = await store.createAutomation({
+        id: uuid(),
+        org_id: org,
+        agent_id: agent.id,
+        trigger: JSON.stringify({ kind: "manual" }),
+        instruction: "has a live executor",
+      })
+      const orphaned = await store.createAutomation({
+        id: uuid(),
+        org_id: org,
+        agent_id: `ag_${uuid()}`, // no such agent row
+        trigger: JSON.stringify({ kind: "manual" }),
+        instruction: "agent never existed",
+      })
+      const rows = await store.automationsWithExecutors(org)
+      expect(rows.find((r) => r.id === live.id)?.executor_seen_at).toBe("2026-01-01T00:00:00.000Z")
+      expect(rows.find((r) => r.id === orphaned.id)?.executor_seen_at).toBeNull()
+      // Same rows listAutomations would return, just decorated.
+      expect(rows.map((r) => r.id).sort()).toEqual(
+        (await store.listAutomations(org)).map((r) => r.id).sort(),
+      )
+    })
+
+    it("collectionsOverview matches listCollections + listRepoSources for the same org", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Overview")
+      const col = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Repo mirror",
+        created_by: "amy",
+      })
+      await store.createRepoSource({
+        id: uuid(),
+        org_id: org,
+        collection_id: col.id,
+        repo: "acme/derive",
+        ref: "main",
+        includes: "**/*.md",
+        pr_number: null,
+        created_by: "amy",
+      })
+      const overview = await store.collectionsOverview(org)
+      expect(overview.collections.map((c) => c.id)).toEqual(
+        (await store.listCollections(org)).map((c) => c.id),
+      )
+      expect(overview.sources).toEqual(await store.listRepoSources(org))
+      expect(overview.sources).toHaveLength(1)
+      // An org with nothing yields both empty, not an error.
+      const empty = await store.collectionsOverview(`org_${uuid()}`)
+      expect(empty).toEqual({ collections: [], sources: [] })
+    })
+  })
+
   describe(`${label}: agents`, () => {
     it("creates an agent, resolves it by token, queues + acks mentions", async () => {
       const a = await store.createArtifact(newArtifact())

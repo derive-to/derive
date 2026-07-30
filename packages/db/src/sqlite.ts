@@ -10,7 +10,12 @@ import type {
 import Database from "better-sqlite3"
 import { and, eq, inArray } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/better-sqlite3"
-import { composeListEnrichment } from "./list-enrichment"
+import {
+  composeAutomationsWithExecutors,
+  composeCollectionsOverview,
+  composeListEnrichment,
+  composeNotificationsPage,
+} from "./list-enrichment"
 import { makeRepos, schema } from "./repos"
 import {
   agentMention,
@@ -126,7 +131,10 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
 
   // Embedded round trips are free, so `listEnrichment` composes the individual
   // queries (attached after the literal — it needs the finished store to call).
-  const store: Omit<MetaStore, "listEnrichment"> & { close(): void } = {
+  const store: Omit<
+    MetaStore,
+    "listEnrichment" | "notificationsPage" | "automationsWithExecutors" | "collectionsOverview"
+  > & { close(): void } = {
     ...repos,
 
     // Synchronous transaction: a concurrent increment can't interleave between
@@ -574,7 +582,14 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
 
     close: () => raw.close(),
   }
-  return { ...store, listEnrichment: (opts) => composeListEnrichment(store, opts) }
+  return {
+    ...store,
+    listEnrichment: (opts) => composeListEnrichment(store, opts),
+    notificationsPage: (userId, limit) => composeNotificationsPage(store, userId, limit),
+    automationsWithExecutors: (orgId, limit) =>
+      composeAutomationsWithExecutors(store, orgId, limit),
+    collectionsOverview: (orgId) => composeCollectionsOverview(store, orgId),
+  }
 }
 
 /**

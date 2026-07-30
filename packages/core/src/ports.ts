@@ -735,6 +735,12 @@ export interface CollectionStore {
   deleteCollection(id: string): Promise<void>
   /** Collections with their item counts, newest first; scoped to a workspace when orgId is given. */
   listCollections(orgId?: string): Promise<(CollectionRecord & { count: number })[]>
+  /** `listCollections` + `listRepoSources` for the SAME org, in one call — the list route's
+   *  two independent org-scoped reads collapsed to one round trip on the edge tier. */
+  collectionsOverview(orgId: string): Promise<{
+    collections: (CollectionRecord & { count: number })[]
+    sources: RepoSourceRecord[]
+  }>
   /** Artifact ids in a collection (drives ?collection= browse). */
   collectionArtifactIds(collectionId: string): Promise<string[]>
   /** Collection ids containing an artifact (for the artifact's "add to" UI). */
@@ -1144,8 +1150,19 @@ export interface DirectoryStore {
   createNotifications(rows: NewNotification[]): Promise<void>
   listNotifications(userId: string, limit: number): Promise<NotificationRecord[]>
   unreadNotificationCount(userId: string): Promise<number>
+  /** The bell's whole payload — the page of notifications AND the total unread count
+   *  (over every notification the user has, not just this page) — in one call. On the
+   *  edge tier `listNotifications`+`unreadNotificationCount` are two round trips for the
+   *  same `user_id`; a store that can answer both from one query should. */
+  notificationsPage(userId: string, limit: number): Promise<NotificationsPage>
   /** Mark the given ids read, or all of the user's notifications when "all". */
   markNotificationsRead(userId: string, ids: string[] | "all"): Promise<void>
+}
+
+/** See `DirectoryStore.notificationsPage`. */
+export interface NotificationsPage {
+  notifications: NotificationRecord[]
+  unread: number
 }
 
 export interface AgentStore {
@@ -1170,6 +1187,14 @@ export interface AgentStore {
   getAutomationsByIds(ids: string[]): Promise<AutomationRecord[]>
   /** A workspace's automations, newest first. Default 100. */
   listAutomations(orgId: string, limit?: number): Promise<AutomationRecord[]>
+  /** `listAutomations` with each row's agent's `runs_seen_at` folded in (the honesty badge
+   *  — null means no executor has ever polled). The list route used to fetch automations
+   *  and the workspace's whole agent roster as two separate round trips and join them in
+   *  memory; same org, same page, one query. */
+  automationsWithExecutors(
+    orgId: string,
+    limit?: number,
+  ): Promise<(AutomationRecord & { executor_seen_at: string | null })[]>
   /** Partial update, org-scoped (id + orgId must both match). Undefined fields are
    *  untouched; refs null clears. Returns the updated row, or null when not found. */
   updateAutomation(

@@ -74,6 +74,7 @@ import type {
   NewView,
   NewWebhook,
   NotificationRecord,
+  NotificationsPage,
   OAuthGrant,
   OAuthGrantSummary,
   OrgSettings,
@@ -1764,6 +1765,38 @@ export class PgMetaStore implements MetaStore {
     const cmap = new Map(counts.map((r) => [r.id, Number(r.c)]))
     return rows.map((r) => ({ ...r, count: cmap.get(r.id) ?? 0 }))
   }
+  async collectionsOverview(orgId: string): Promise<{
+    collections: (CollectionRecord & { count: number })[]
+    sources: RepoSourceRecord[]
+  }> {
+    // The list route used to run listCollections + listRepoSources as two independent
+    // org-scoped round trips; a UNION ALL discriminated by `kind` answers both in one,
+    // each branch's full row carried as JSON so the shapes don't have to be reconciled
+    // into a single column set.
+    const { rows } = await this.pool.query<{ kind: string; doc: unknown }>(
+      `SELECT 'collection' kind, row_to_json(t) doc FROM (
+         SELECT c.*, COALESCE(ci.cnt, 0)::int AS count
+         FROM collection c
+         LEFT JOIN (
+           SELECT collection_id, count(*)::int cnt FROM collection_item GROUP BY collection_id
+         ) ci ON ci.collection_id = c.id
+         WHERE c.org_id = $1
+       ) t
+       UNION ALL
+       SELECT 'source', row_to_json(r) FROM repo_source r WHERE r.org_id = $1`,
+      [orgId],
+    )
+    const collections: (CollectionRecord & { count: number })[] = []
+    const sources: RepoSourceRecord[] = []
+    for (const r of rows) {
+      if (r.kind === "collection") collections.push(r.doc as CollectionRecord & { count: number })
+      else sources.push(r.doc as RepoSourceRecord)
+    }
+    collections.sort((a, b) =>
+      a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0,
+    )
+    return { collections, sources }
+  }
   // ---- Folders (organize a collection's artifacts) -----------------------
   async createFolder(f: NewFolder): Promise<FolderRecord> {
     const rows = await this.db.insert(folder).values(f).returning()
@@ -1927,30 +1960,20 @@ export class PgMetaStore implements MetaStore {
     userId: string,
   ): Promise<Record<string, Role>> {
     if (collectionIds.length === 0) return {}
-    // Same two sources as collectionRolesForArtifact, keyed per collection: the
-    // user's explicit member rows, and their SEAT on each workspace-open collection.
-    const explicit = await this.db
-      .select({ id: collectionMember.collection_id, role: collectionMember.role })
-      .from(collectionMember)
-      .where(
-        and(
-          inArray(collectionMember.collection_id, collectionIds),
-          eq(collectionMember.user_id, userId),
-        ),
-      )
-    const seat = await this.db
-      .select({ id: collection.id, role: membership.role })
-      .from(collection)
-      .innerJoin(membership, eq(membership.org_id, collection.org_id))
-      .where(
-        and(
-          inArray(collection.id, collectionIds),
-          eq(collection.workspace_access, "member"),
-          eq(membership.user_id, userId),
-        ),
-      )
+    // Same two sources as collectionRolesForArtifact, keyed per collection: the user's
+    // explicit member rows, and their SEAT on each workspace-open collection — a UNION ALL
+    // instead of two sequential awaits, since both are scoped to the same collectionIds.
+    const { rows } = await this.pool.query<{ id: string; role: Role }>(
+      `SELECT collection_id id, role FROM collection_member
+        WHERE collection_id = ANY($1) AND user_id = $2
+       UNION ALL
+       SELECT c.id, m.role FROM collection c
+       JOIN membership m ON m.org_id = c.org_id
+       WHERE c.id = ANY($1) AND c.workspace_access = 'member' AND m.user_id = $2`,
+      [collectionIds, userId],
+    )
     const out: Record<string, Role> = {}
-    for (const r of [...explicit, ...seat]) out[r.id] = maxRole(out[r.id] ?? null, r.role) as Role
+    for (const r of rows) out[r.id] = maxRole(out[r.id] ?? null, r.role) as Role
     return out
   }
 
@@ -2871,6 +2894,22 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(notification.user_id, userId), eq(notification.read, 0)))
     return rows[0]?.n ?? 0
   }
+  async notificationsPage(userId: string, limit: number): Promise<NotificationsPage> {
+    // A window function computes `unread` over every row this user has (WHERE is applied
+    // before the window, ORDER BY/LIMIT after) — one query answers both the page and the
+    // true total unread count, not just the unread count within the returned page.
+    const { rows } = await this.pool.query<NotificationRecord & { unread_total: number }>(
+      `SELECT *, count(*) FILTER (WHERE read = 0) OVER ()::int AS unread_total
+         FROM notification WHERE user_id = $1
+        ORDER BY created_at DESC LIMIT $2`,
+      [userId, limit],
+    )
+    const unread = rows[0]?.unread_total ?? 0
+    return {
+      notifications: rows.map(({ unread_total, ...n }) => n),
+      unread,
+    }
+  }
   async markNotificationsRead(userId: string, ids: string[] | "all"): Promise<void> {
     const where =
       ids === "all"
@@ -2932,6 +2971,26 @@ export class PgMetaStore implements MetaStore {
       .where(eq(automation.org_id, orgId))
       .orderBy(desc(automation.created_at))
       .limit(limit)
+  }
+  async automationsWithExecutors(
+    orgId: string,
+    limit = 100,
+  ): Promise<(AutomationRecord & { executor_seen_at: string | null })[]> {
+    // The route used to fetch the org's automations AND its whole agent roster as two
+    // round trips and join `runs_seen_at` in memory by agent_id; a LEFT JOIN answers it
+    // in one query (an automation's agent can in principle be deleted out from under it,
+    // hence LEFT not INNER).
+    const rows = await this.db
+      .select({ automation, executor_seen_at: agent.runs_seen_at })
+      .from(automation)
+      .leftJoin(agent, eq(agent.id, automation.agent_id))
+      .where(eq(automation.org_id, orgId))
+      .orderBy(desc(automation.created_at))
+      .limit(limit)
+    return rows.map((r) => ({
+      ...(r.automation as AutomationRecord),
+      executor_seen_at: r.executor_seen_at ?? null,
+    }))
   }
   async updateAutomation(
     id: string,

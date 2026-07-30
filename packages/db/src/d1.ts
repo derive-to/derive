@@ -9,7 +9,12 @@ import type {
 } from "@derive/core"
 import { sql } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/d1"
-import { composeListEnrichment } from "./list-enrichment"
+import {
+  composeAutomationsWithExecutors,
+  composeCollectionsOverview,
+  composeListEnrichment,
+  composeNotificationsPage,
+} from "./list-enrichment"
 import { makeRepos, schema } from "./repos"
 
 const VIEW_WINDOW_MS = 30 * 86400_000
@@ -34,7 +39,10 @@ export function createD1Store(d1: D1Database): MetaStore {
 
   // Embedded round trips are (near-)free, so `listEnrichment` composes the
   // individual queries (attached after the literal — it needs the finished store).
-  const store: Omit<MetaStore, "listEnrichment"> = {
+  const store: Omit<
+    MetaStore,
+    "listEnrichment" | "notificationsPage" | "automationsWithExecutors" | "collectionsOverview"
+  > = {
     ...repos,
 
     // ---- View analytics (raw SQL) ----------------------------------------
@@ -282,7 +290,14 @@ export function createD1Store(d1: D1Database): MetaStore {
       }
     },
   }
-  return { ...store, listEnrichment: (opts) => composeListEnrichment(store, opts) }
+  return {
+    ...store,
+    listEnrichment: (opts) => composeListEnrichment(store, opts),
+    notificationsPage: (userId, limit) => composeNotificationsPage(store, userId, limit),
+    automationsWithExecutors: (orgId, limit) =>
+      composeAutomationsWithExecutors(store, orgId, limit),
+    collectionsOverview: (orgId) => composeCollectionsOverview(store, orgId),
+  }
 }
 
 /**

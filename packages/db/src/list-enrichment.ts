@@ -1,12 +1,20 @@
-import type { ListEnrichment, ListEnrichmentOpts, MetaStore } from "@derive/core"
+import type {
+  AutomationRecord,
+  CollectionRecord,
+  ListEnrichment,
+  ListEnrichmentOpts,
+  MetaStore,
+  NotificationsPage,
+  RepoSourceRecord,
+} from "@derive/core"
 
 /**
- * `listEnrichment` composed from the individual queries, for the embedded drivers
- * (better-sqlite3, D1) where a round trip costs nothing. The Postgres driver
- * overrides this with a single UNION ALL round trip (see pg.ts) — on the edge tier
- * each of these calls is ~80ms of pure wire time, and this method exists so the
- * list pays that once instead of seven times. Both shapes are held to the same
- * assertions by the store contract suite.
+ * Batched MetaStore methods, composed from their individual queries, for the embedded
+ * drivers (better-sqlite3, D1) where a round trip costs nothing. The Postgres driver
+ * overrides each of these with a single round trip of its own (see pg.ts) — on the edge
+ * tier every round trip is ~80ms of pure wire time, and these methods exist so a route
+ * pays that once instead of several times. Both shapes are held to the same assertions
+ * by the store contract suite.
  */
 export const composeListEnrichment = async (
   store: Pick<
@@ -38,4 +46,46 @@ export const composeListEnrichment = async (
   const proposals = await store.openProposalCounts(opts.ids)
   const shareRoles = opts.memberId ? await store.artifactRolesFor(opts.memberId, opts.ids) : {}
   return { views, tags, previews, handles, bylines, signals, proposals, shareRoles }
+}
+
+/** See `composeListEnrichment` — the notifications-bell twin (page + true total unread). */
+export const composeNotificationsPage = async (
+  store: Pick<MetaStore, "listNotifications" | "unreadNotificationCount">,
+  userId: string,
+  limit: number,
+): Promise<NotificationsPage> => {
+  const [notifications, unread] = await Promise.all([
+    store.listNotifications(userId, limit),
+    store.unreadNotificationCount(userId),
+  ])
+  return { notifications, unread }
+}
+
+/** See `composeListEnrichment` — the automations list's executor-liveness join. */
+export const composeAutomationsWithExecutors = async (
+  store: Pick<MetaStore, "listAutomations" | "listAgents">,
+  orgId: string,
+  limit?: number,
+): Promise<(AutomationRecord & { executor_seen_at: string | null })[]> => {
+  const [autos, agents] = await Promise.all([
+    store.listAutomations(orgId, limit),
+    store.listAgents(orgId),
+  ])
+  const seen = new Map(agents.map((a) => [a.id, a.runs_seen_at]))
+  return autos.map((a) => ({ ...a, executor_seen_at: seen.get(a.agent_id) ?? null }))
+}
+
+/** See `composeListEnrichment` — the collections list's org-scoped pair. */
+export const composeCollectionsOverview = async (
+  store: Pick<MetaStore, "listCollections" | "listRepoSources">,
+  orgId: string,
+): Promise<{
+  collections: (CollectionRecord & { count: number })[]
+  sources: RepoSourceRecord[]
+}> => {
+  const [collections, sources] = await Promise.all([
+    store.listCollections(orgId),
+    store.listRepoSources(orgId),
+  ])
+  return { collections, sources }
 }

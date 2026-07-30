@@ -140,18 +140,27 @@ export const collectionRoutes = (ctx: AppContext) => {
       // token) see them. A non-member (incl. anon in open mode) gets an empty list, so
       // a workspace's collections can't be enumerated via a public artifact's workspace.
       if (!(await isMember(c, org))) return c.json({ collections: [] })
-      const [cols, sources] = await Promise.all([
-        meta.listCollections(org),
-        meta.listRepoSources(org),
-      ])
+      const { collections: cols, sources } = await meta.collectionsOverview(org)
       const { srcByCollection, branchByRepo } = sourceMaps(sources)
       // Same share experience as an artifact: an invite-only collection
       // (workspace_access=none) only lists for its creator or an explicit
-      // collectionMember — collectionRole is the single source of truth for that,
-      // shared with the members endpoint's own visibility gate.
-      const roles = await Promise.all(cols.map((col) => collectionRole(c, col)))
+      // collectionMember — collectionRole (the single source of truth, shared with the
+      // members endpoint's own visibility gate) applies that per-collection, but calling
+      // it once per row cost up to two round trips PER collection. Same rule, computed
+      // from ONE batched `collectionRolesForUser` call: the operator token is owner on
+      // everything; otherwise the creator is owner, else the batched map (explicit
+      // membership or a seat on a workspace-open collection, higher wins) decides.
+      const roleMap =
+        me && !isToken(c)
+          ? await meta.collectionRolesForUser(
+              cols.map((col) => col.id),
+              me.id,
+            )
+          : {}
+      const roleFor = (col: (typeof cols)[number]): Role | null =>
+        isToken(c) ? "owner" : col.created_by === me?.id ? "owner" : (roleMap[col.id] ?? null)
       const collections = cols
-        .map((col, i) => ({ col, role: roles[i] ?? null }))
+        .map((col) => ({ col, role: roleFor(col) }))
         .filter(({ role }) => role !== null)
         .map(({ col, role }) => enrich({ ...col, my_role: role }, srcByCollection, branchByRepo))
       return c.json({ collections })

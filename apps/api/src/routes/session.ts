@@ -134,7 +134,7 @@ export const sessionRoutes = (ctx: AppContext) => {
     async (c) => {
       const u = await requireUser(c)
       if (u instanceof Response) return bail(u)
-      const role = await ensureMembership(await activeWorkspace(c), u.id) // provisions on first load
+      const role = await ensureMembership(c, await activeWorkspace(c), u.id) // provisions on first load
       return c.json({ user: { ...u, role }, multi: true })
     },
   )

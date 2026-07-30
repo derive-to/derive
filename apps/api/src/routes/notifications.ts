@@ -61,10 +61,7 @@ export const notificationRoutes = (ctx: AppContext) => {
     async (c) => {
       const me = await requireUser(c)
       if (me instanceof Response) return bail(me)
-      const [notifications, unread] = await Promise.all([
-        meta.listNotifications(me.id, 50),
-        meta.unreadNotificationCount(me.id),
-      ])
+      const { notifications, unread } = await meta.notificationsPage(me.id, 50)
       return c.json({ notifications, unread })
     },
   )
