@@ -219,4 +219,4 @@ Both auto-detect their assigned URL for auth cookies and share links; set `BASE_
 
 ## License
 
-[Functional Source License (FSL-1.1-ALv2)](LICENSE), fair source. Run, modify, and self-host Derive freely for any purpose except offering it as a competing commercial product or service. Each release automatically converts to Apache-2.0 two years after it ships.
+[Functional Source License (FSL-1.1-ALv2)](LICENSE), fair source. Run, modify, and self-host Derive freely for any purpose except offering it as a competing commercial product or service. Each release automatically converts to Apache-2.0 two years after it ships. The plain-English version: [LICENSING.md](LICENSING.md).
