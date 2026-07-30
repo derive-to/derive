@@ -140,4 +140,12 @@ describe("billing routes", () => {
     const r = await hook(app, { type: "ignored.event" })
     expect(r.status).toBe(200)
   })
+
+  it("an active subscription is never beta, even before enforcement", async () => {
+    const { app } = boot("br_active_not_beta")
+    await hook(app, { type: "customer.subscription.updated", snapshot: SNAP })
+    const body = await (await app.request("/v1/billing", { headers: as("u1@x.test") })).json()
+    expect(body.subscribed).toBe(true)
+    expect(body.beta).toBe(false)
+  })
 })

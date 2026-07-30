@@ -40,9 +40,8 @@ export const billingRoutes = (ctx: AppContext) => {
     ])
     const seats = members.filter((m) => m.role === "editor" || m.role === "owner").length
     const enforceAt = deps.billingEnforceAt ? new Date(deps.billingEnforceAt) : null
-    // Beta = the free-tier boundaries aren't enforced yet, regardless of this
-    // workspace's own state: no enforce date at all, or one still in the future.
-    const beta = !enforceAt || enforceAt.getTime() > Date.now()
+    const enforced = !!enforceAt && enforceAt.getTime() <= Date.now()
+    const beta = !enforced && !state.subscriptionActive
     return c.json({
       tier: state.tier,
       status: sub?.status ?? null,
