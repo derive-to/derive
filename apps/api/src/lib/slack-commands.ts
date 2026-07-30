@@ -47,3 +47,33 @@ export const deriveRecentBlocks = (baseUrl: string, artifacts: ArtifactRecord[])
     context("Only you can see this · run `/derive <query>` to search"),
   ]
 }
+
+/** `/derive settings`, run in a channel: what Derive posts here, if anything. */
+export const subscriptionBlocks = (
+  baseUrl: string,
+  subs: { scope_kind: string; scope_id: string; events: string; authors: string; active: 0 | 1 }[],
+): unknown[] => {
+  if (!subs.length)
+    return [
+      section("Derive doesn't post in this channel."),
+      context("Run `/derive subscribe` here to change that."),
+    ]
+  return [
+    section("*Derive posts here*"),
+    ...subs.map((s) =>
+      section(
+        [
+          s.scope_kind === "collection"
+            ? `Collection \`${mrkdwnLabel(s.scope_id, 60)}\``
+            : "The whole workspace",
+          s.events === "*" ? "all events" : s.events.split(",").join(" · "),
+          s.authors === "all" ? "people and agents" : `${s.authors}s only`,
+          ...(s.active ? [] : ["*paused*"]),
+        ].join(" — "),
+      ),
+    ),
+    context(
+      `Manage these at ${baseUrl}/settings/integrations · \`/derive unsubscribe\` stops them`,
+    ),
+  ]
+}

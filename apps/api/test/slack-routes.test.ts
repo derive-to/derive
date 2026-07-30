@@ -753,6 +753,94 @@ describe("slack events endpoint", () => {
   })
 })
 
+describe("/derive subscription subcommands", () => {
+  const linked = async (meta: Awaited<ReturnType<typeof make>>["meta"], role = "owner") => {
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    await meta.setSlackUserLink({
+      id: newId("sul"),
+      org_id: "default",
+      user_id: role === "owner" ? owner.id : editor.id,
+      team_id: "T1",
+      slack_user_id: "U1",
+      created_at: new Date().toISOString(),
+    })
+  }
+  const cmd = (app: Parameters<typeof postCommand>[0], text: string) =>
+    postCommand(app, {
+      team_id: "T1",
+      user_id: "U1",
+      channel_id: "C-eng",
+      channel_name: "eng",
+      text,
+      response_url: "https://hooks.slack.test/r",
+    })
+
+  // Run in the channel it acts on, so there is never a raw channel id to type — the reason
+  // GitHub's `/github subscribe` reads better than pasting one into a settings form.
+  it("subscribes the channel it was run in", async () => {
+    const { app, meta } = make("cmd-subscribe")
+    await linked(meta)
+    const r = await (await cmd(app, "subscribe")).json()
+    expect(String(r.text)).toContain("whole workspace")
+    const subs = await meta.listSlackSubscriptions("default")
+    expect(subs).toHaveLength(1)
+    expect(subs[0]).toMatchObject({
+      channel_id: "C-eng",
+      channel_name: "eng",
+      scope_kind: "workspace",
+    })
+  })
+
+  it("scopes to a collection by name", async () => {
+    const { app, meta } = make("cmd-subscribe-col")
+    await linked(meta)
+    await meta.createCollection({
+      id: "col_brand",
+      org_id: "default",
+      title: "Brand",
+      created_by: owner.id,
+    })
+    const r = await (await cmd(app, "subscribe Brand")).json()
+    expect(String(r.text)).toContain("Brand")
+    expect((await meta.listSlackSubscriptions("default"))[0]).toMatchObject({
+      scope_kind: "collection",
+      scope_id: "col_brand",
+    })
+    // An unknown name is a clear refusal, not a silent workspace-wide subscribe.
+    const miss = await (await cmd(app, "subscribe Nope")).json()
+    expect(String(miss.text)).toContain("No collection")
+    expect(await meta.listSlackSubscriptions("default")).toHaveLength(1)
+  })
+
+  it("unsubscribes the channel, and reports settings", async () => {
+    const { app, meta } = make("cmd-unsubscribe")
+    await linked(meta)
+    await cmd(app, "subscribe")
+    const shown = await (await cmd(app, "settings")).json()
+    expect(JSON.stringify(shown.blocks)).toContain("whole workspace")
+    await cmd(app, "unsubscribe")
+    expect(await meta.listSlackSubscriptions("default")).toHaveLength(0)
+    const empty = await (await cmd(app, "settings")).json()
+    expect(JSON.stringify(empty.blocks)).toContain("doesn't post in this channel")
+  })
+
+  // Changing what a channel receives is an admin action, so being linked is not enough.
+  it("refuses a non-admin", async () => {
+    const { app, meta } = make("cmd-nonadmin")
+    await linked(meta, "editor")
+    const r = await (await cmd(app, "subscribe")).json()
+    expect(String(r.text)).toContain("admin")
+    expect(await meta.listSlackSubscriptions("default")).toHaveLength(0)
+  })
+})
+
 describe("slack link unfurls", () => {
   // The route-level wiring: a signed link_shared reaches chat.unfurl with the right target.
   // The decision ladder itself is unit-tested in slack-unfurl.test.ts.

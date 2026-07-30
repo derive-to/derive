@@ -3251,6 +3251,164 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/slack/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the workspace's Slack channel subscriptions (Admin only). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The workspace's subscriptions, plus the event types one can carry — the server is the source of that list so the client can't drift from it. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            subscriptions: components["schemas"]["SlackSubscription"][];
+                            event_options: ("comment.created" | "version.published" | "proposal.created" | "proposal.approved" | "proposal.changes_requested")[];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Subscribe a channel to workspace activity (Admin only). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The created (or updated) subscription. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SlackSubscription"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/slack/subscriptions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a channel subscription (Admin only). */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The subscription was removed. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Update a channel subscription (Admin only). */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The updated subscription. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SlackSubscription"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/v1/slack/channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List public Slack channels for the subscription picker (Admin only). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Public channels in the connected workspace. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            channels: {
+                                id: string;
+                                name: string;
+                            }[];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/vitals": {
         parameters: {
             query?: never;
@@ -6149,6 +6307,30 @@ export interface components {
             slack_dm: boolean;
             /** @description Whether the caller has linked their Slack identity for the connected team */
             linked: boolean;
+        };
+        SlackSubscription: {
+            id: string;
+            /** @description Slack channel id, e.g. C0123ABC456 */
+            channel_id: string;
+            /** @description The channel's #name for display, or null if unknown */
+            channel_name: string | null;
+            /**
+             * @description Whether this covers the whole workspace or one collection
+             * @enum {string}
+             */
+            scope_kind: "workspace" | "collection";
+            /** @description The collection id when scope_kind is "collection"; empty for a workspace scope */
+            scope_id: string;
+            /** @description Comma-separated event types to deliver, or "*" for all events */
+            events: string;
+            /**
+             * @description Whose activity reaches this channel: everyone, only people, or only agents
+             * @enum {string}
+             */
+            authors: "all" | "human" | "agent";
+            /** @description Whether deliveries are enabled (1) or paused (0) */
+            active: 0 | 1;
+            created_at: string;
         };
         Report: {
             id: string;

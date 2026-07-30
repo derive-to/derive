@@ -1,4 +1,4 @@
-import { newId, type SlackInstallRecord } from "@derive/core"
+import { newId, roleAllows, type SlackInstallRecord } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
@@ -9,6 +9,7 @@ import { searchMatcher, searchWorkspace, toSearchHits } from "../lib/search"
 import {
   exchangeSlackOAuth,
   exchangeSlackOidc,
+  listSlackChannels,
   postSlackResponseUrl,
   slackAuthorizeUrl,
   slackOidcAuthorizeUrl,
@@ -16,7 +17,12 @@ import {
   unfurlSlackLinks,
   verifySlackSignature,
 } from "../lib/slack"
-import { deriveRecentBlocks, deriveResultsBlocks, notLinkedBlocks } from "../lib/slack-commands"
+import {
+  deriveRecentBlocks,
+  deriveResultsBlocks,
+  notLinkedBlocks,
+  subscriptionBlocks,
+} from "../lib/slack-commands"
 import {
   decodeProposalAction,
   decodeThreadAction,
@@ -28,6 +34,7 @@ import {
 import { flagSlackReauth, resolveBotToken } from "../lib/slack-delivery"
 import { enqueueSlackDm, wantsSlackDm } from "../lib/slack-dm"
 import { runSlackProposalAction } from "../lib/slack-proposal"
+import { SLACK_SUBSCRIBABLE_EVENTS, subscribableEvents } from "../lib/slack-subscriptions"
 import { artifactRefFromUrl, decideUnfurl } from "../lib/slack-unfurl"
 import { resolveThreadAction } from "../lib/thread-actions"
 import { log } from "../log"
@@ -529,6 +536,65 @@ export const slackRoutes = (ctx: AppContext) => {
     const link = await meta.getSlackUserLinkBySlackId(teamId, slackUserId)
     if (!link) return c.json({ response_type: "ephemeral", blocks: notLinkedBlocks(deps.baseUrl) })
 
+    // Subscription subcommands, run IN the channel they act on — which is why there is no
+    // channel id to type. Managing a channel's subscription is a workspace-admin action, so it
+    // is gated on the linked user's membership role rather than on merely being linked.
+    const [verb, ...rest] = text.split(/\s+/)
+    if (verb === "subscribe" || verb === "unsubscribe" || verb === "settings") {
+      const channelId = form.get("channel_id")
+      const channelName = form.get("channel_name")
+      if (!channelId)
+        return c.json({ response_type: "ephemeral", text: "Run this inside a channel." })
+      const seat = await meta.getMembership(link.org_id, link.user_id)
+      if (!seat || !roleAllows(seat.role, "manage"))
+        return c.json({
+          response_type: "ephemeral",
+          text: "Only a workspace admin can change what Derive posts here.",
+        })
+      if (verb === "unsubscribe") {
+        await meta.deleteSlackSubscriptionsByChannel(link.org_id, channelId)
+        return c.json({ response_type: "ephemeral", text: "Done — Derive won't post here." })
+      }
+      if (verb === "settings") {
+        const subs = (await meta.listSlackSubscriptions(link.org_id)).filter(
+          (x) => x.channel_id === channelId,
+        )
+        return c.json({
+          response_type: "ephemeral",
+          blocks: subscriptionBlocks(deps.baseUrl, subs),
+        })
+      }
+      // `/derive subscribe [collection name]` — the collection is matched by name so nobody has
+      // to know an id; omit it to subscribe the whole workspace.
+      const wanted = rest.join(" ").trim()
+      let collection: { id: string; title: string } | null = null
+      if (wanted) {
+        const all = await meta.listCollections(link.org_id)
+        const hit = all.find((x) => x.title.toLowerCase() === wanted.toLowerCase())
+        if (!hit)
+          return c.json({
+            response_type: "ephemeral",
+            text: `No collection called "${wanted}" in this workspace.`,
+          })
+        collection = { id: hit.id, title: hit.title }
+      }
+      await meta.upsertSlackSubscription({
+        id: newId("sub"),
+        org_id: link.org_id,
+        channel_id: channelId,
+        channel_name: channelName ?? null,
+        scope_kind: collection ? "collection" : "workspace",
+        scope_id: collection?.id ?? "",
+        created_by: link.user_id,
+      })
+      return c.json({
+        response_type: "ephemeral",
+        text: collection
+          ? `Subscribed this channel to *${collection.title}*.`
+          : "Subscribed this channel to the whole workspace.",
+      })
+    }
+
     const publicOnly = !(await meta.getMembership(link.org_id, link.user_id))
     // Bare /derive: one indexed listArtifacts query — fast enough to answer inline.
     if (!text) {
@@ -659,6 +725,202 @@ export const slackRoutes = (ctx: AppContext) => {
     deps.pokeWebhooks?.()
     return c.json({ ok: true })
   })
+
+  // ---- Channel subscriptions -------------------------------------------------------------
+  // Which channels hear about what. Replaces the single default channel; modelled on
+  // routes/webhooks.ts, which is the house shape for workspace-scoped list CRUD.
+  const SlackSubscription = z
+    .object({
+      id: z.string(),
+      channel_id: z.string().describe("Slack channel id, e.g. C0123ABC456"),
+      channel_name: z
+        .string()
+        .nullable()
+        .describe("The channel's #name for display, or null if unknown"),
+      scope_kind: z
+        .enum(["workspace", "collection"])
+        .describe("Whether this covers the whole workspace or one collection"),
+      scope_id: z
+        .string()
+        .describe('The collection id when scope_kind is "collection"; empty for a workspace scope'),
+      events: z.string().describe('Comma-separated event types to deliver, or "*" for all events'),
+      authors: z
+        .enum(["all", "human", "agent"])
+        .describe("Whose activity reaches this channel: everyone, only people, or only agents"),
+      active: z
+        .union([z.literal(0), z.literal(1)])
+        .describe("Whether deliveries are enabled (1) or paused (0)"),
+      created_at: z.string(),
+    })
+    .openapi("SlackSubscription")
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/slack/subscriptions",
+      tags: ["Slack"],
+      summary: "List the workspace's Slack channel subscriptions (Admin only).",
+      responses: {
+        200: {
+          description:
+            "The workspace's subscriptions, plus the event types one can carry — the server is the source of that list so the client can't drift from it.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                subscriptions: z.array(SlackSubscription),
+                event_options: z.array(z.enum(SLACK_SUBSCRIBABLE_EVENTS)),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      return c.json({
+        subscriptions: await meta.listSlackSubscriptions(org),
+        event_options: [...SLACK_SUBSCRIBABLE_EVENTS],
+      })
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/slack/subscriptions",
+      tags: ["Slack"],
+      summary: "Subscribe a channel to workspace activity (Admin only).",
+      responses: {
+        201: {
+          description: "The created (or updated) subscription.",
+          content: { "application/json": { schema: SlackSubscription } },
+        },
+      },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      const b = await readJson(
+        c,
+        z.object({
+          channel_id: z.string(),
+          channel_name: z.string().optional(),
+          collection: z.string().optional(),
+          events: z.array(z.string()).optional(),
+          authors: z.enum(["all", "human", "agent"]).optional(),
+        }),
+      )
+      if (b instanceof Response) return bail(b)
+      const channelId = b.channel_id.trim()
+      if (!channelId) return bail(fail(c, 400, "channel_id is required"))
+      // A collection scope must name a collection in THIS workspace.
+      if (b.collection) {
+        const col = await meta.getCollection(b.collection)
+        if (!col || col.org_id !== org) return bail(fail(c, 404, "collection not found"))
+      }
+      const me = await requireUser(c)
+      const created = await meta.upsertSlackSubscription({
+        id: newId("sub"),
+        org_id: org,
+        channel_id: channelId,
+        channel_name: b.channel_name ?? null,
+        scope_kind: b.collection ? "collection" : "workspace",
+        scope_id: b.collection ?? "",
+        events: subscribableEvents(b.events),
+        authors: b.authors ?? "all",
+        created_by: me instanceof Response ? null : me.id,
+      })
+      return c.json(created, 201)
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "patch",
+      path: "/v1/slack/subscriptions/{id}",
+      tags: ["Slack"],
+      summary: "Update a channel subscription (Admin only).",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The updated subscription.",
+          content: { "application/json": { schema: SlackSubscription } },
+        },
+      },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      const b = await readJson(
+        c,
+        z.object({
+          events: z.array(z.string()).optional(),
+          authors: z.enum(["all", "human", "agent"]).optional(),
+          active: z.boolean().optional(),
+        }),
+      )
+      if (b instanceof Response) return bail(b)
+      const updated = await meta.updateSlackSubscription(c.req.param("id"), org, {
+        ...(b.events ? { events: subscribableEvents(b.events) } : {}),
+        ...(b.authors ? { authors: b.authors } : {}),
+        ...(b.active === undefined ? {} : { active: b.active ? (1 as const) : (0 as const) }),
+      })
+      if (!updated) return bail(fail(c, 404, "subscription not found"))
+      return c.json(updated)
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "delete",
+      path: "/v1/slack/subscriptions/{id}",
+      tags: ["Slack"],
+      summary: "Remove a channel subscription (Admin only).",
+      request: { params: z.object({ id: z.string() }) },
+      responses: { 204: { description: "The subscription was removed." } },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      await meta.deleteSlackSubscription(c.req.param("id"), org)
+      return c.body(null, 204)
+    },
+  )
+
+  // The channels the bot can see, so the picker never asks anyone to paste a raw id.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/slack/channels",
+      tags: ["Slack"],
+      summary: "List public Slack channels for the subscription picker (Admin only).",
+      responses: {
+        200: {
+          description: "Public channels in the connected workspace.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                channels: z.array(z.object({ id: z.string(), name: z.string() })),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      const bot = await resolveBotToken(meta, org, deps.encryptionKey)
+      if (!bot) return bail(fail(c, 404, "Slack is not connected"))
+      try {
+        return c.json({ channels: await listSlackChannels(bot.token) })
+      } catch (err) {
+        log.warn("slack channel list failed", { error: String(err) })
+        return bail(fail(c, 502, "could not list Slack channels"))
+      }
+    },
+  )
 
   // Disconnect Slack (admin). Drops the install; thread links are left inert.
   app.openapi(

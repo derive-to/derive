@@ -287,6 +287,39 @@ export const unfurlSlackLinks = async (
   if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
 }
 
+/** The public channels the bot can see, for the subscription picker — so nobody has to paste a
+ *  raw channel id. Paginated; capped rather than exhaustive, because a picker only needs enough
+ *  to choose from and a huge workspace would otherwise page for a long time. This is what
+ *  `channels:read` is for. */
+export const listSlackChannels = async (
+  token: string,
+  cap = 400,
+): Promise<{ id: string; name: string }[]> => {
+  const out: { id: string; name: string }[] = []
+  let cursor = ""
+  do {
+    const q = new URLSearchParams({
+      exclude_archived: "true",
+      limit: "200",
+      types: "public_channel",
+      ...(cursor ? { cursor } : {}),
+    })
+    const res = await fetch(`${API}/conversations.list?${q}`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+    const data = (await res.json()) as {
+      ok: boolean
+      error?: string
+      channels?: { id?: string; name?: string }[]
+      response_metadata?: { next_cursor?: string }
+    }
+    if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
+    for (const c of data.channels ?? []) if (c.id && c.name) out.push({ id: c.id, name: c.name })
+    cursor = data.response_metadata?.next_cursor ?? ""
+  } while (cursor && out.length < cap)
+  return out.slice(0, cap)
+}
+
 /** Join a public channel so the bot can post to it (best-effort; private channels must
  *  invite the bot manually). Returns true on success. */
 export const joinSlackChannel = async (token: string, channel: string): Promise<boolean> => {

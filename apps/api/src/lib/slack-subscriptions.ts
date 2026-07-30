@@ -11,6 +11,18 @@
 import type { ArtifactRecord, MetaStore, SlackSubscriptionRecord } from "@derive/core"
 import type { WebhookEvent } from "../events"
 
+/** Every event a channel subscription can carry. The single source for the API's enum and the
+ *  Settings picker, so the two can't drift the way the webhook event list did. `comment.created`
+ *  is here because it reaches a channel too — just threaded, via the comment mirror rather than
+ *  as a top-level card. */
+export const SLACK_SUBSCRIBABLE_EVENTS = [
+  "comment.created",
+  "version.published",
+  "proposal.created",
+  "proposal.approved",
+  "proposal.changes_requested",
+] as const satisfies readonly WebhookEvent[]
+
 /** Whether an author id belongs to an agent. Two shapes count: a registered agent row, and the
  *  synthetic `oauth:<client>` id an OAuth grant authors under (lib/oauth-agent.ts), which is
  *  never a row in the agents table. Anything else — including an unknown or absent id — is
@@ -57,4 +69,15 @@ export const resolveChannels = async (
   if (!wanted.some((s) => s.scope_kind === "collection")) return wanted
   const collections = new Set(await meta.collectionIdsForArtifact(artifact.id))
   return wanted.filter((s) => s.scope_kind === "workspace" || collections.has(s.scope_id))
+}
+
+/** Normalize a requested event list to the stored encoding: a comma-separated list of
+ *  subscribable events, or "*" when everything (or nothing recognizable) was asked for. Mirrors
+ *  how routes/webhooks.ts treats `webhook.events`. */
+export const subscribableEvents = (events?: string[]): string => {
+  if (!events?.length) return "*"
+  const kept = events.filter((e): e is (typeof SLACK_SUBSCRIBABLE_EVENTS)[number] =>
+    (SLACK_SUBSCRIBABLE_EVENTS as readonly string[]).includes(e),
+  )
+  return kept.length && kept.length < SLACK_SUBSCRIBABLE_EVENTS.length ? kept.join(",") : "*"
 }

@@ -1851,6 +1851,79 @@
           "linked"
         ]
       },
+      "SlackSubscription": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "channel_id": {
+            "type": "string",
+            "description": "Slack channel id, e.g. C0123ABC456"
+          },
+          "channel_name": {
+            "type": "string",
+            "nullable": true,
+            "description": "The channel's #name for display, or null if unknown"
+          },
+          "scope_kind": {
+            "type": "string",
+            "enum": [
+              "workspace",
+              "collection"
+            ],
+            "description": "Whether this covers the whole workspace or one collection"
+          },
+          "scope_id": {
+            "type": "string",
+            "description": "The collection id when scope_kind is \"collection\"; empty for a workspace scope"
+          },
+          "events": {
+            "type": "string",
+            "description": "Comma-separated event types to deliver, or \"*\" for all events"
+          },
+          "authors": {
+            "type": "string",
+            "enum": [
+              "all",
+              "human",
+              "agent"
+            ],
+            "description": "Whose activity reaches this channel: everyone, only people, or only agents"
+          },
+          "active": {
+            "anyOf": [
+              {
+                "type": "number",
+                "enum": [
+                  0
+                ]
+              },
+              {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              }
+            ],
+            "description": "Whether deliveries are enabled (1) or paused (0)"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "channel_id",
+          "channel_name",
+          "scope_kind",
+          "scope_id",
+          "events",
+          "authors",
+          "active",
+          "created_at"
+        ]
+      },
       "Report": {
         "type": "object",
         "properties": {
@@ -5951,6 +6024,163 @@
         "responses": {
           "204": {
             "description": "Slack was disconnected."
+          }
+        }
+      }
+    },
+    "/v1/slack/subscriptions": {
+      "get": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "List the workspace's Slack channel subscriptions (Admin only).",
+        "responses": {
+          "200": {
+            "description": "The workspace's subscriptions, plus the event types one can carry — the server is the source of that list so the client can't drift from it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "subscriptions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SlackSubscription"
+                      }
+                    },
+                    "event_options": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "comment.created",
+                          "version.published",
+                          "proposal.created",
+                          "proposal.approved",
+                          "proposal.changes_requested"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "subscriptions",
+                    "event_options"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "Subscribe a channel to workspace activity (Admin only).",
+        "responses": {
+          "201": {
+            "description": "The created (or updated) subscription.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackSubscription"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/slack/subscriptions/{id}": {
+      "patch": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "Update a channel subscription (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated subscription.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackSubscription"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "Remove a channel subscription (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The subscription was removed."
+          }
+        }
+      }
+    },
+    "/v1/slack/channels": {
+      "get": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "List public Slack channels for the subscription picker (Admin only).",
+        "responses": {
+          "200": {
+            "description": "Public channels in the connected workspace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "channels": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "channels"
+                  ]
+                }
+              }
+            }
           }
         }
       }
