@@ -361,7 +361,32 @@ export const makeAuthedApp = (
       }
     },
   })
-  return { app: gated, meta: m }
+  // THE STORE IS GATED ON THE SAME PROMISE, and it has to be.
+  //
+  // `planReady` does a READ-MODIFY-WRITE of org settings (it reads the row, then writes it back
+  // with automateBeta on). A test that writes settings directly — comment-fanout's "email
+  // toggle off", say — goes through the store, which was NOT gated, so the two raced: when the
+  // seed's write landed second it put back the copy it had read BEFORE the test's write, and
+  // the toggle the test had just switched off came back on. The test then failed asserting on
+  // behaviour it had correctly configured, in a file nobody had touched.
+  //
+  // It is timing-dependent, so it hid locally and surfaced on CI's parallel runner. Gating both
+  // ends orders the seed first and leaves the test's write as the one that survives, which is
+  // what every one of these tests already assumes.
+  //
+  // Only string-keyed methods are wrapped, and `then` is passed through untouched: on the
+  // Postgres lane the store is itself a deferring Proxy that answers every property with a
+  // function, and wrapping `then` would make this object thenable — `await`ing it anywhere
+  // would then resolve to something that is not the store.
+  const gatedMeta = new Proxy(m, {
+    get: (target, prop, recv) => {
+      const value = Reflect.get(target, prop, recv)
+      if (typeof prop !== "string" || prop === "then" || typeof value !== "function") return value
+      const fn = value as (...a: unknown[]) => unknown
+      return (...args: unknown[]) => planReady.then(() => fn.apply(target, args))
+    },
+  })
+  return { app: gated, meta: gatedMeta }
 }
 
 export const as = (email: string) => ({ "x-test-user": email })
