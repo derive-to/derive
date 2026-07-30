@@ -22,6 +22,9 @@ interface Recorded {
   finishes: Record<string, unknown>[]
   /** Artifact content GETs — the run lane must read its target before revising it. */
   reads: string[]
+  /** GETs of the artifact RECORD. Should stay EMPTY: the document's type rides a header on
+   *  the content read, so wanting it must not cost a second request. */
+  recordReads: string[]
   /** Every `/v1/agent/model-credential` query the substrate made, in order. WHICH PROVIDER it
    *  asks about, and whether it asks a second time, is behaviour under test. */
   credentialQueries: string[]
@@ -56,6 +59,7 @@ const stubApi = (opts: {
     writes: [],
     finishes: [],
     reads: [],
+    recordReads: [],
     credentialQueries: [],
   }
   let server: Server
@@ -97,15 +101,22 @@ const stubApi = (opts: {
           rec.reads.push(url)
           const status = opts.contentStatus ?? 200
           if (status >= 400) return send(status, { error: "nope" })
-          // AS PRODUCTION SERVES IT. /content returns text/plain for EVERY artifact so the bytes
-          // render as text instead of executing in a browser — the header is the transport's,
-          // not the document's. This stub used to answer text/markdown, which made a fix that
-          // read the header look correct here while doing nothing at all in production.
-          res.writeHead(200, { "content-type": "text/plain; charset=utf-8" })
+          // AS PRODUCTION SERVES IT. `Content-Type` is text/plain for EVERY artifact so the
+          // bytes render as text instead of executing in a browser — it is the transport's, not
+          // the document's. The DOCUMENT's type rides X-Derive-Content-Type alongside the other
+          // X-Derive-* headers the route already emits. This stub used to answer text/markdown
+          // on Content-Type, which made a fix that read the wrong header look correct here while
+          // doing nothing at all in production.
+          res.writeHead(200, {
+            "content-type": "text/plain; charset=utf-8",
+            "x-derive-content-type": opts.artifactContentType ?? "text/markdown",
+          })
           return res.end(opts.content ?? "# Roadmap\n\n## Now\nShip the thing.\n")
         }
-        // The artifact RECORD, which carries the type the document is actually stored as.
+        // A read of the artifact RECORD. Recorded so a test can assert the loop does NOT need
+        // one: the type comes back on the content read, which the run already makes.
         if (/\/v1\/artifacts\/[^/]+$/.test(url) && req.method === "GET") {
+          rec.recordReads.push(url)
           return send(200, {
             short_id: "art_1",
             current_content_type: opts.artifactContentType ?? "text/markdown",
@@ -1129,6 +1140,43 @@ describe("what filename the model is SHOWN", () => {
       })
       expect(systemSeen).toContain("its filename is art_1.md")
       expect(systemSeen).not.toContain("its filename is art_1\n")
+    } finally {
+      await api.close()
+    }
+  })
+})
+
+describe("what the run READS to learn the document's format", () => {
+  // The type is needed to preserve it on the write. The first working version of that fix
+  // fetched the artifact RECORD for it — a whole extra request per run, re-running auth and
+  // re-reading a row the content route already had in hand and used six lines later. It also
+  // answered with the artifact's CURRENT type, which is the wrong answer for a `?v=N` read.
+  //
+  // It rides X-Derive-Content-Type on the content read instead, next to the X-Derive-* headers
+  // that route already emits. This pins that it stays free.
+  it("learns it from the content read, without a second request", async () => {
+    const api = stubApi({ run: baseRun, artifactContentType: "text/markdown" })
+    const url = await api.url
+    try {
+      const settled = await runToSettle(
+        url,
+        api.rec,
+        answerTurn(
+          `<revision>${JSON.stringify({
+            content: "# Roadmap\n\n## Now\nShip it.\n\n## Status\nDone.\n",
+            filename: "index.html",
+            confidence: 0.95,
+            message: "m",
+          })}</revision>`,
+        ),
+      )
+      expect(settled).toBeTruthy()
+      // It read the content exactly once...
+      expect(api.rec.reads.length).toBe(1)
+      // ...never asked for the record...
+      expect(api.rec.recordReads).toEqual([])
+      // ...and still preserved the format.
+      for (const w of api.rec.writes) expect(w.name).toMatch(/\.md$/i)
     } finally {
       await api.close()
     }

@@ -705,22 +705,23 @@ const sourceOf = async (
     if (!res.ok) throw new Error(`artifact ${shortId} → ${res.status}`)
     const body = await res.text()
     if (!body.trim()) throw new Error(`artifact ${shortId} → 200 with an empty body`)
-    // THE RECORDED TYPE, from the artifact record — NOT from this response's Content-Type
-    // header. That header is the transport's, and `/content` serves every document as
-    // `text/plain; charset=utf-8` so the bytes render as text rather than executing in a
-    // browser. Reading it here looked correct and returned "text/plain" for every artifact,
-    // which matches neither branch downstream, so the format-preserving write silently became
-    // a no-op in production while its test — against a stub that answered `text/markdown` —
-    // stayed green.
+    // THE DOCUMENT'S type, from `X-Derive-Content-Type` — NOT from `Content-Type`, which is
+    // the transport's and is always `text/plain; charset=utf-8` here so the bytes render as
+    // text rather than executing in a browser. Reading the wrong one returned "text/plain" for
+    // every artifact, matched neither branch downstream, and made the format-preserving write a
+    // silent no-op in production while its test stayed green against a stub I had invented.
     //
-    // Best-effort: a document whose record cannot be read still gets revised, it just falls
-    // back to naming the file the way the model asked.
-    const meta = await call(`/v1/artifacts/${shortId}`)
-      .then((r) => (r.ok ? (r.json() as Promise<{ current_content_type?: string | null }>) : null))
-      .catch(() => null)
+    // ONE REQUEST. The route already had the version row loaded and used it six lines later,
+    // so this costs nothing: no extra round trip, no second auth, no second query. Asking the
+    // artifact record instead — which is what the first working version of this did — bought
+    // the same answer for a whole additional request per run, and would have reported the
+    // CURRENT type for a `?v=N` read of an older version.
+    //
+    // Best-effort: an older deploy that does not send the header just falls back to naming the
+    // file the way the model asked.
     return {
       text: body.slice(0, MAX_ARTIFACT_CHARS),
-      contentType: meta?.current_content_type ?? null,
+      contentType: res.headers.get("x-derive-content-type")?.split(";")[0]?.trim() || null,
     }
   } catch (e) {
     log.warn("loop substrate: could not read the run's target", {

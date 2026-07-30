@@ -1860,6 +1860,15 @@ export const artifactRoutes = (ctx: AppContext) => {
     c.header("X-Content-Type-Options", "nosniff")
     c.header("X-Derive-Version", String(v))
     c.header("X-Derive-Kind", artifact.kind)
+    // The DOCUMENT'S type, which `Content-Type` deliberately cannot carry: that stays
+    // `text/plain` so a browser renders these bytes rather than executing them (see nosniff
+    // above). Without it, a caller that needs to know whether it is holding Markdown or HTML
+    // must fetch the artifact record separately — a second request that re-runs auth and
+    // re-reads the very row this handler already has in hand and uses six lines below.
+    //
+    // Per VERSION, not the artifact's current one: `?v=N` can select a version whose type
+    // differs from the live document's, and this has to describe the bytes actually returned.
+    c.header("X-Derive-Content-Type", version.content_type)
 
     const manifest = await manifestOf(blobs, version)
     if (!manifest) {
