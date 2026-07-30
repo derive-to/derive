@@ -1792,12 +1792,21 @@ export class PgMetaStore implements MetaStore {
       .from(modelCredential)
       .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
   }
-  async getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null> {
+  async getSlackThreadLink(
+    threadId: string,
+    channel: string,
+  ): Promise<SlackThreadLinkRecord | null> {
     const rows = await this.db
       .select()
       .from(slackThreadLink)
-      .where(eq(slackThreadLink.thread_id, threadId))
+      .where(and(eq(slackThreadLink.thread_id, threadId), eq(slackThreadLink.channel, channel)))
     return rows[0] ?? null
+  }
+  async listSlackThreadLinksByThread(threadId: string): Promise<SlackThreadLinkRecord[]> {
+    return await this.db
+      .select()
+      .from(slackThreadLink)
+      .where(eq(slackThreadLink.thread_id, threadId))
   }
   async getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null> {
     const rows = await this.db
@@ -1807,11 +1816,11 @@ export class PgMetaStore implements MetaStore {
     return rows[0] ?? null
   }
   async setSlackThreadLink(l: SlackThreadLinkRecord): Promise<void> {
-    const { thread_id: _t, created_at: _c, ...set } = l
+    const { thread_id: _t, channel: _ch, created_at: _c, ...set } = l
     await this.db
       .insert(slackThreadLink)
       .values(l)
-      .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
+      .onConflictDoUpdate({ target: [slackThreadLink.thread_id, slackThreadLink.channel], set })
   }
   async getSlackUserLinkBySlackId(
     teamId: string,

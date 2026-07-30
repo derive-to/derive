@@ -716,7 +716,10 @@ export const slackThreadLink = sqliteTable(
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [
-    uniqueIndex("slack_thread_link_thread").on(t.thread_id),
+    // One Slack message per (Derive thread, channel): a thread mirrors into every channel
+    // subscribed to its artifact, so the same thread legitimately has several messages.
+    // Reply-back still resolves uniquely off (channel, message_ts) below.
+    uniqueIndex("slack_thread_link_thread").on(t.thread_id, t.channel),
     uniqueIndex("slack_thread_link_msg").on(t.channel, t.message_ts),
   ],
 )
@@ -1159,6 +1162,38 @@ export const MIGRATION_STATEMENTS: string[] = ddl.alters
  * Column order matches the CREATE in ddl.ts; `subject_ref` is last because it was the most
  * recent add.
  */
+/**
+ * Re-key `slack_thread_link` from UNIQUE(thread_id) to UNIQUE(thread_id, channel).
+ *
+ * A Derive thread now mirrors into every channel subscribed to its artifact, so one thread
+ * legitimately has several Slack messages. The old single-column constraint makes the second
+ * one fail with `UNIQUE constraint failed` — and unlike a new column, a constraint change has
+ * no additive form: `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table and
+ * MIGRATION_STATEMENTS only ever emits ADD COLUMN. So an upgraded database would silently keep
+ * the old constraint and break the moment a second channel subscribed.
+ *
+ * Hence the documented SQLite create-copy-drop-rename, same as CONTEXT_SESSION_RELAX_SQLITE.
+ * Applied only when a stale single-column unique on thread_id is actually present (see
+ * sqlite.ts), so it runs once and is a no-op on a fresh database.
+ */
+export const SLACK_THREAD_LINK_REKEY_SQLITE: string[] = [
+  `CREATE TABLE slack_thread_link__new (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  artifact_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  message_ts TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (thread_id, channel),
+  UNIQUE (channel, message_ts)
+)`,
+  `INSERT INTO slack_thread_link__new (id, org_id, artifact_id, thread_id, channel, message_ts, created_at)
+   SELECT id, org_id, artifact_id, thread_id, channel, message_ts, created_at FROM slack_thread_link`,
+  `DROP TABLE slack_thread_link`, // schema-ignore: middle step of the rebuild above
+  `ALTER TABLE slack_thread_link__new RENAME TO slack_thread_link`,
+]
+
 export const CONTEXT_SESSION_RELAX_SQLITE: string[] = [
   `CREATE TABLE context_session__new (
   id TEXT PRIMARY KEY,

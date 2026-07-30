@@ -584,7 +584,10 @@ export const slackThreadLink = pgTable(
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [
-    uniqueIndex("slack_thread_link_thread").on(t.thread_id),
+    // One Slack message per (Derive thread, channel): a thread mirrors into every channel
+    // subscribed to its artifact, so the same thread legitimately has several messages.
+    // Reply-back still resolves uniquely off (channel, message_ts) below.
+    uniqueIndex("slack_thread_link_thread").on(t.thread_id, t.channel),
     uniqueIndex("slack_thread_link_msg").on(t.channel, t.message_ts),
   ],
 )
@@ -904,6 +907,24 @@ const RUN_SCHEDULE_OCCURRENCE_UNIQUE_PG =
   `(automation_id, scheduled_for) WHERE reason = 'schedule' AND automation_id IS NOT NULL ` +
   `AND scheduled_for IS NOT NULL`
 
+const SLACK_THREAD_LINK_REKEY_PG = `DO $$
+DECLARE stale text;
+BEGIN
+  SELECT c.conname INTO stale
+  FROM pg_constraint c
+  JOIN pg_class t ON t.oid = c.conrelid
+  WHERE t.relname = 'slack_thread_link'
+    AND c.contype = 'u'
+    AND array_length(c.conkey, 1) = 1
+    AND (SELECT a.attname FROM pg_attribute a
+         WHERE a.attrelid = t.oid AND a.attnum = c.conkey[1]) = 'thread_id';
+  IF stale IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE slack_thread_link DROP CONSTRAINT %I', stale);
+    ALTER TABLE slack_thread_link
+      ADD CONSTRAINT slack_thread_link_thread_channel_key UNIQUE (thread_id, channel);
+  END IF;
+END $$`
+
 export const buildPgSchemaStatements = (): string[] => {
   const { creates, alters } = generateDdl(TABLES, getTableConfig, {
     ifNotExists: true,
@@ -924,6 +945,14 @@ export const buildPgSchemaStatements = (): string[] => {
     // run on every boot. SQLite needs a table rebuild instead — see CONTEXT_SESSION_RELAX_SQLITE.
     `ALTER TABLE context_session ALTER COLUMN context_id DROP NOT NULL`,
     `ALTER TABLE context_session ALTER COLUMN context_version DROP NOT NULL`,
+    // A Derive thread mirrors into every subscribed channel, so slack_thread_link is keyed
+    // (thread_id, channel). A fresh database gets that from the CREATE above; an existing one
+    // still carries the old single-column unique, which would reject the second channel's
+    // message. Fires ONLY when that stale constraint is present, so it is a no-op everywhere
+    // else — including on a fresh DB, where adding a second equivalent constraint would just
+    // be litter. SQLite has no ALTER CONSTRAINT and needs a rebuild instead — see
+    // SLACK_THREAD_LINK_REKEY_SQLITE.
+    SLACK_THREAD_LINK_REKEY_PG,
   ]
 }
 

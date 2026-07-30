@@ -471,7 +471,13 @@ export const slackRoutes = (ctx: AppContext) => {
     // Re-establish trust from data (never the button value alone): the thread link maps this
     // thread to this artifact + org, the acting Slack team owns that org's install, and the
     // org's channel mirror is on. Any miss → ack and no-op (a click that changes nothing).
-    const link = await meta.getSlackThreadLinkByThread(threadId)
+    // Links are keyed (thread, channel) now that one thread can mirror into several channels,
+    // so resolve the one for the channel this click came from. Falling back to the thread's
+    // first link keeps a payload without a channel (there shouldn't be one for block_actions in
+    // a conversation) behaving as before.
+    const link = payload.channel?.id
+      ? await meta.getSlackThreadLink(threadId, payload.channel.id)
+      : (await meta.listSlackThreadLinksByThread(threadId))[0]
     if (link && link.artifact_id === artifactId) {
       const install = await meta.getSlackInstall(link.org_id)
       const teamOwnsThread = !!install && !!payload.team?.id && install.team_id === payload.team.id
@@ -747,6 +753,8 @@ interface SlackInteractionPayload {
   response_url?: string
   /** The workspace the click came from; bound to the thread's org install for authz. */
   team?: { id?: string }
+  /** The conversation the click came from — which of a thread's mirrored messages it was. */
+  channel?: { id?: string }
   user?: { id?: string; username?: string; name?: string }
   actions?: Array<{ action_id?: string; value?: string }>
   message?: { blocks?: unknown[] }

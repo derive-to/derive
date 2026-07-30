@@ -32,6 +32,7 @@ import {
   report,
   reviewRound,
   SCHEMA_STATEMENTS,
+  SLACK_THREAD_LINK_REKEY_SQLITE,
   sessionMessage,
   slackThreadLink,
   version,
@@ -116,6 +117,42 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     const msg = e instanceof Error ? e.message : String(e)
     if (!/no such table:\s*(main\.)?context_session\b/i.test(msg))
       throw new Error(`context_session relaxation failed (schema left unchanged): ${msg}`, {
+        cause: e,
+      })
+  }
+  // Re-key slack_thread_link to UNIQUE(thread_id, channel). Same shape as the relaxation above
+  // and for the same reason: a constraint change has no additive form, so an existing database
+  // keeps the old single-column unique forever and rejects the second channel a thread mirrors
+  // into. Gated on the stale constraint actually being present, so it runs at most once and
+  // never touches a fresh database.
+  try {
+    const idx = raw.pragma("index_list(slack_thread_link)") as { name: string; unique: number }[]
+    const stale = idx.some((i) => {
+      if (!i.unique) return false
+      const cols = raw.pragma(`index_info(${JSON.stringify(i.name)})`) as { name: string }[]
+      return cols.length === 1 && cols[0]?.name === "thread_id"
+    })
+    if (stale) {
+      const fkWasOn = (raw.pragma("foreign_keys", { simple: true }) as number) === 1
+      if (fkWasOn) raw.pragma("foreign_keys = OFF")
+      raw.exec("BEGIN")
+      try {
+        for (const stmt of SLACK_THREAD_LINK_REKEY_SQLITE) raw.exec(stmt)
+        raw.exec("COMMIT")
+      } catch (e) {
+        raw.exec("ROLLBACK")
+        throw e
+      } finally {
+        if (fkWasOn) raw.pragma("foreign_keys = ON")
+      }
+    }
+  } catch (e) {
+    // Only "the table isn't there yet" is tolerable, matched BY NAME — every other failure is
+    // rethrown, because the rollback above has already restored the original table and booting
+    // on a schema we know is wrong is worse than not booting. Same reasoning as the relaxation.
+    const msg = e instanceof Error ? e.message : String(e)
+    if (!/no such table:\s*(main\.)?slack_thread_link\b/i.test(msg))
+      throw new Error(`slack_thread_link re-key failed (schema left unchanged): ${msg}`, {
         cause: e,
       })
   }

@@ -423,7 +423,7 @@ CREATE TABLE IF NOT EXISTS slack_thread_link (
   channel TEXT NOT NULL,
   message_ts TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  UNIQUE (thread_id),
+  UNIQUE (thread_id, channel),
   UNIQUE (channel, message_ts)
 );
 

@@ -293,7 +293,11 @@ export const makeSlackSender =
     const p = JSON.parse(d.payload) as SlackCommentPayload
     const bot = await resolveBotToken(meta, p.orgId, encryptionKey)
     if (!bot?.install.default_channel) return { ok: true, status: "skipped: slack not connected" }
-    const existing = await meta.getSlackThreadLinkByThread(p.threadId)
+    // A thread can now be mirrored into several channels, so links are keyed (thread, channel).
+    // Until subscriptions land there is still at most one, and taking the first reproduces
+    // exactly what the old thread-keyed lookup returned — including the "keep posting to the
+    // channel this thread started in, even if the default moved" behaviour.
+    const existing = (await meta.listSlackThreadLinksByThread(p.threadId))[0]
     const channel = existing?.channel ?? bot.install.default_channel
 
     const res = await postWithRecovery(

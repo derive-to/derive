@@ -317,6 +317,23 @@ runs the same rebuild guarded at boot. Check whether you need it with:
 wrangler d1 execute <db> --remote --command "SELECT sql FROM sqlite_master WHERE name='context_session'"
 ```
 
+An existing D1 database also still keys `slack_thread_link` on `thread_id` alone. A Derive
+comment thread now mirrors into every channel subscribed to its artifact, so one thread has one
+Slack message **per channel** — the old constraint rejects the second one, and only once someone
+actually subscribes a second channel. Re-key it once:
+
+```
+wrangler d1 execute <db> --remote --file=deploy/rekey-slack-thread-link-d1.sql
+```
+
+Safe to re-run, and unnecessary on a new database. Postgres and self-host SQLite need no manual
+step here either: the former swaps the constraint during `deploy:pg-schema` (only when the stale
+one is present), the latter rebuilds the table guarded at boot. Check with:
+
+```
+wrangler d1 execute <db> --remote --command "SELECT sql FROM sqlite_master WHERE name='slack_thread_link'"
+```
+
 ### Chat (beta, off by default)
 
 Chat is gated per workspace by `chatBeta` and ships **off**, enforced server-side — the

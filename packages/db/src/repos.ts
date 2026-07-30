@@ -2004,14 +2004,17 @@ export function makeRepos(db: SqliteDb) {
       .from(modelCredential)
       .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
       .all()
-  const getSlackThreadLinkByThread = async (
+  const getSlackThreadLink = async (
     threadId: string,
+    channel: string,
   ): Promise<SlackThreadLinkRecord | null> =>
     (await db
       .select()
       .from(slackThreadLink)
-      .where(eq(slackThreadLink.thread_id, threadId))
+      .where(and(eq(slackThreadLink.thread_id, threadId), eq(slackThreadLink.channel, channel)))
       .get()) ?? null
+  const listSlackThreadLinksByThread = async (threadId: string): Promise<SlackThreadLinkRecord[]> =>
+    await db.select().from(slackThreadLink).where(eq(slackThreadLink.thread_id, threadId)).all()
   const getSlackThreadLinkByTs = async (
     channel: string,
     ts: string,
@@ -2022,11 +2025,11 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(slackThreadLink.channel, channel), eq(slackThreadLink.message_ts, ts)))
       .get()) ?? null
   const setSlackThreadLink = async (l: SlackThreadLinkRecord): Promise<void> => {
-    const { thread_id: _t, created_at: _c, ...set } = l
+    const { thread_id: _t, channel: _ch, created_at: _c, ...set } = l
     await db
       .insert(slackThreadLink)
       .values(l)
-      .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
+      .onConflictDoUpdate({ target: [slackThreadLink.thread_id, slackThreadLink.channel], set })
       .run()
   }
   const getSlackUserLinkBySlackId = async (
@@ -3755,7 +3758,8 @@ export function makeRepos(db: SqliteDb) {
     setModelCredential,
     deleteModelCredential,
     listModelCredentials,
-    getSlackThreadLinkByThread,
+    getSlackThreadLink,
+    listSlackThreadLinksByThread,
     getSlackThreadLinkByTs,
     setSlackThreadLink,
     getSlackUserLinkBySlackId,

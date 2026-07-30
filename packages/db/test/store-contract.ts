@@ -1952,7 +1952,7 @@ export function runStoreContract(
       expect(await store.artifactIdsByTag("del-tag")).not.toContain(a.id)
       // The Slack thread link is thread-keyed, not artifact_id-obvious — regression guard
       // that it's cleaned too (it was orphaned before).
-      expect(await store.getSlackThreadLinkByThread(thread)).toBeNull()
+      expect(await store.listSlackThreadLinksByThread(thread)).toHaveLength(0)
     })
   })
 
@@ -2004,7 +2004,7 @@ export function runStoreContract(
       // The whole dead thread is gone — no ghost, no dangling notification or Slack link.
       const comments = await store.listComments(a.id)
       expect(comments.map((c) => c.thread_id)).toEqual([kept])
-      expect(await store.getSlackThreadLinkByThread(dead)).toBeNull()
+      expect(await store.listSlackThreadLinksByThread(dead)).toHaveLength(0)
       const notifs = await store.listNotifications("bob", 50)
       expect(notifs.map((n) => n.thread_id)).toEqual([kept]) // the sibling's survives
     })
@@ -2270,7 +2270,7 @@ export function runStoreContract(
       expect(await store.getSlackInstall(ORG)).toBeNull()
     })
 
-    it("links a Slack thread to an artifact, found by thread id or by channel+ts", async () => {
+    it("links a Slack thread to an artifact per channel, found by (thread, channel) or channel+ts", async () => {
       const a = await store.createArtifact(newArtifact())
       const link = {
         id: uuid(),
@@ -2282,7 +2282,7 @@ export function runStoreContract(
         created_at: "2026-06-20T00:00:00.000Z",
       }
       await store.setSlackThreadLink(link)
-      expect(await store.getSlackThreadLinkByThread(link.thread_id)).toMatchObject({
+      expect(await store.getSlackThreadLink(link.thread_id, "C9")).toMatchObject({
         artifact_id: a.id,
         channel: "C9",
         message_ts: "1700000000.000100",
@@ -2290,8 +2290,20 @@ export function runStoreContract(
       expect(await store.getSlackThreadLinkByTs("C9", "1700000000.000100")).toMatchObject({
         thread_id: link.thread_id,
       })
-      // Misses return null on both lookups.
-      expect(await store.getSlackThreadLinkByThread(`missing_${uuid()}`)).toBeNull()
+      // The same thread mirrored into a SECOND channel is a second link, not a conflict —
+      // that is the whole point of keying on (thread_id, channel).
+      await store.setSlackThreadLink({
+        ...link,
+        id: uuid(),
+        channel: "C8",
+        message_ts: "1700000000.000200",
+      })
+      expect(
+        (await store.listSlackThreadLinksByThread(link.thread_id)).map((l) => l.channel).sort(),
+      ).toEqual(["C8", "C9"])
+      // Misses return null / empty.
+      expect(await store.getSlackThreadLink(link.thread_id, "C-nope")).toBeNull()
+      expect(await store.listSlackThreadLinksByThread(`missing_${uuid()}`)).toHaveLength(0)
       expect(await store.getSlackThreadLinkByTs("C9", "nope")).toBeNull()
     })
 

@@ -753,7 +753,11 @@ export interface IntegrationStore {
   /** A user's connected credentials (all providers) — for the settings hint list. */
   listModelCredentials(orgId: string, userId: string): Promise<ModelCredentialRecord[]>
   /** The Slack message a Derive thread is mirrored to (for threading replies), or null. */
-  getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null>
+  /** The Slack message mirroring a Derive thread INTO one channel, or null. A thread mirrors
+   *  into every channel subscribed to its artifact, so the channel is part of the key. */
+  getSlackThreadLink(threadId: string, channel: string): Promise<SlackThreadLinkRecord | null>
+  /** Every channel a Derive thread has been mirrored into. */
+  listSlackThreadLinksByThread(threadId: string): Promise<SlackThreadLinkRecord[]>
   /** The Derive thread a Slack message maps to (for reply-back), or null. */
   getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null>
   /** Record the Slack message ↔ Derive thread mapping (idempotent on thread_id). */
