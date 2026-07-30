@@ -67,6 +67,7 @@ import type {
   NewSession,
   NewSessionMessage,
   NewSignupAttribution,
+  NewSlackSubscription,
   NewVersion,
   NewView,
   NewWebhook,
@@ -93,7 +94,9 @@ import type {
   SessionRecord,
   SessionState,
   SignupAttributionRecord,
+  SlackAuthorFilter,
   SlackInstallRecord,
+  SlackSubscriptionRecord,
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
   TakedownInput,
@@ -171,6 +174,7 @@ import {
   sessionMessage,
   signupAttribution,
   slackInstall,
+  slackSubscription,
   slackThreadLink,
   slackUserLink,
   userNotificationPref,
@@ -1821,6 +1825,83 @@ export class PgMetaStore implements MetaStore {
       .insert(slackThreadLink)
       .values(l)
       .onConflictDoUpdate({ target: [slackThreadLink.thread_id, slackThreadLink.channel], set })
+  }
+  async listSlackSubscriptions(orgId: string): Promise<SlackSubscriptionRecord[]> {
+    return await this.db
+      .select()
+      .from(slackSubscription)
+      .where(eq(slackSubscription.org_id, orgId))
+      .orderBy(desc(slackSubscription.created_at))
+  }
+  async upsertSlackSubscription(sub: NewSlackSubscription): Promise<SlackSubscriptionRecord> {
+    const row = {
+      scope_kind: "workspace" as const,
+      scope_id: "",
+      events: "*",
+      authors: "all" as const,
+      active: 1 as const,
+      channel_name: null,
+      created_by: null,
+      ...sub,
+    }
+    // The identity columns and the creation stamp are not editable by an upsert.
+    const { id: _i, org_id: _o, ...set } = row
+    await this.db
+      .insert(slackSubscription)
+      .values(row)
+      .onConflictDoUpdate({
+        target: [
+          slackSubscription.org_id,
+          slackSubscription.channel_id,
+          slackSubscription.scope_kind,
+          slackSubscription.scope_id,
+        ],
+        set,
+      })
+    const rows = await this.db
+      .select()
+      .from(slackSubscription)
+      .where(
+        and(
+          eq(slackSubscription.org_id, row.org_id),
+          eq(slackSubscription.channel_id, row.channel_id),
+          eq(slackSubscription.scope_kind, row.scope_kind),
+          eq(slackSubscription.scope_id, row.scope_id),
+        ),
+      )
+    const found = rows[0]
+    if (!found) throw new Error("slack subscription upsert did not persist")
+    return found
+  }
+  async updateSlackSubscription(
+    id: string,
+    orgId: string,
+    fields: {
+      events?: string
+      authors?: SlackAuthorFilter
+      active?: 0 | 1
+      channel_name?: string | null
+    },
+  ): Promise<SlackSubscriptionRecord | null> {
+    await this.db
+      .update(slackSubscription)
+      .set(fields)
+      .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+    const rows = await this.db
+      .select()
+      .from(slackSubscription)
+      .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+    return rows[0] ?? null
+  }
+  async deleteSlackSubscription(id: string, orgId: string): Promise<void> {
+    await this.db
+      .delete(slackSubscription)
+      .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+  }
+  async deleteSlackSubscriptionsByChannel(orgId: string, channelId: string): Promise<void> {
+    await this.db
+      .delete(slackSubscription)
+      .where(and(eq(slackSubscription.org_id, orgId), eq(slackSubscription.channel_id, channelId)))
   }
   async getSlackUserLinkBySlackId(
     teamId: string,

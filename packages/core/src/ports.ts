@@ -739,6 +739,26 @@ export interface IntegrationStore {
   listSlackInstallsByTeam(teamId: string): Promise<SlackInstallRecord[]>
   /** Disconnect Slack for a workspace. */
   deleteSlackInstall(orgId: string): Promise<void>
+  // ---- Slack channel subscriptions ---------------------------------------
+  /** Every subscription for a workspace, newest first. */
+  listSlackSubscriptions(orgId: string): Promise<SlackSubscriptionRecord[]>
+  /** Create a subscription, or update the existing one for the same (org, channel, scope). */
+  upsertSlackSubscription(sub: NewSlackSubscription): Promise<SlackSubscriptionRecord>
+  /** Partial update, org-scoped so a caller can't reach across tenants. Null on no match. */
+  updateSlackSubscription(
+    id: string,
+    orgId: string,
+    fields: {
+      events?: string
+      authors?: SlackAuthorFilter
+      active?: 0 | 1
+      channel_name?: string | null
+    },
+  ): Promise<SlackSubscriptionRecord | null>
+  /** Remove a subscription, org-scoped. */
+  deleteSlackSubscription(id: string, orgId: string): Promise<void>
+  /** Remove every subscription pointing at a channel (used by `/derive unsubscribe`). */
+  deleteSlackSubscriptionsByChannel(orgId: string, channelId: string): Promise<void>
   // ---- Per-user model-plan credentials -----------------------------------
   /** A user's own model credential for a provider (encrypted `secret`), or null. */
   getModelCredential(
@@ -2538,6 +2558,51 @@ export interface SlackUserLinkRecord {
   team_id: string
   slack_user_id: string
   created_at: string
+}
+
+/** Where a subscription's events come from: the whole workspace, or one collection. */
+export type SlackScopeKind = "workspace" | "collection"
+/** Which authors' activity a subscription carries. `agent` is the axis unique to Derive —
+ *  agents are first-class authors here, and a channel usually wants one or the other. */
+export type SlackAuthorFilter = "all" | "human" | "agent"
+
+/**
+ * A Slack channel subscribed to a workspace's activity. Replaces the one-channel-per-workspace
+ * `slack_install.default_channel`: several channels, each scoped and filtered independently.
+ *
+ * `events` uses the same encoding as `webhook.events` — comma-separated types, or "*" for all —
+ * so the two subscription surfaces read the same way.
+ */
+export interface SlackSubscriptionRecord {
+  id: string
+  org_id: string
+  channel_id: string
+  /** Denormalized `#name` for display. Never authoritative; the id is the key. */
+  channel_name: string | null
+  scope_kind: SlackScopeKind
+  /** The collection id when `scope_kind` is "collection"; the empty string for a workspace
+   *  scope. Empty rather than NULL because SQL treats NULLs as distinct in a UNIQUE
+   *  constraint — nullable here would silently allow duplicate workspace subscriptions. */
+  scope_id: string
+  events: string
+  authors: SlackAuthorFilter
+  /** Paused (0) subscriptions keep their config but deliver nothing. */
+  active: 0 | 1
+  created_by: string | null
+  created_at: string
+}
+
+export interface NewSlackSubscription {
+  id: string
+  org_id: string
+  channel_id: string
+  channel_name?: string | null
+  scope_kind?: SlackScopeKind
+  scope_id?: string
+  events?: string
+  authors?: SlackAuthorFilter
+  active?: 0 | 1
+  created_by?: string | null
 }
 
 export interface GitHubAppRecord {

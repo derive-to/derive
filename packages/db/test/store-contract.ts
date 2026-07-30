@@ -2307,6 +2307,85 @@ export function runStoreContract(
       expect(await store.getSlackThreadLinkByTs("C9", "nope")).toBeNull()
     })
 
+    it("subscribes channels to a workspace, scoped and filtered, and upserts by target", async () => {
+      const org = `org_sub_${uuid()}`
+      const ws = await store.upsertSlackSubscription({
+        id: uuid(),
+        org_id: org,
+        channel_id: "C-eng",
+        channel_name: "#eng",
+        created_by: "u-1",
+      })
+      // Defaults: the whole workspace, every event, either author, live.
+      expect(ws).toMatchObject({
+        scope_kind: "workspace",
+        scope_id: "",
+        events: "*",
+        authors: "all",
+        active: 1,
+      })
+
+      // A collection scope on the SAME channel is a different subscription, not a conflict.
+      const coll = await store.upsertSlackSubscription({
+        id: uuid(),
+        org_id: org,
+        channel_id: "C-eng",
+        scope_kind: "collection",
+        scope_id: "col_1",
+        events: "version.published",
+        authors: "human",
+      })
+      expect(coll.id).not.toBe(ws.id)
+      expect(await store.listSlackSubscriptions(org)).toHaveLength(2)
+
+      // The same TARGET upserts in place rather than duplicating. This is the case a nullable
+      // scope_id would have broken: SQL treats NULLs as distinct, so the workspace-scoped row
+      // would have inserted a second time and the upsert would never have matched.
+      const again = await store.upsertSlackSubscription({
+        id: uuid(),
+        org_id: org,
+        channel_id: "C-eng",
+        events: "comment.created",
+      })
+      expect(again.id).toBe(ws.id)
+      expect(again.events).toBe("comment.created")
+      expect(await store.listSlackSubscriptions(org)).toHaveLength(2)
+    })
+
+    it("updates and deletes subscriptions, org-scoped", async () => {
+      const org = `org_sub2_${uuid()}`
+      const other = `org_sub3_${uuid()}`
+      const sub = await store.upsertSlackSubscription({
+        id: uuid(),
+        org_id: org,
+        channel_id: "C-design",
+      })
+      expect(
+        await store.updateSlackSubscription(sub.id, org, { active: 0, authors: "agent" }),
+      ).toMatchObject({ active: 0, authors: "agent" })
+      // A caller in another workspace can neither read nor write it.
+      expect(await store.updateSlackSubscription(sub.id, other, { active: 1 })).toBeNull()
+      await store.deleteSlackSubscription(sub.id, other)
+      expect(await store.listSlackSubscriptions(org)).toHaveLength(1)
+      await store.deleteSlackSubscription(sub.id, org)
+      expect(await store.listSlackSubscriptions(org)).toHaveLength(0)
+    })
+
+    it("removes every subscription for a channel (the /derive unsubscribe path)", async () => {
+      const org = `org_sub4_${uuid()}`
+      await store.upsertSlackSubscription({ id: uuid(), org_id: org, channel_id: "C-x" })
+      await store.upsertSlackSubscription({
+        id: uuid(),
+        org_id: org,
+        channel_id: "C-x",
+        scope_kind: "collection",
+        scope_id: "col_9",
+      })
+      await store.upsertSlackSubscription({ id: uuid(), org_id: org, channel_id: "C-keep" })
+      await store.deleteSlackSubscriptionsByChannel(org, "C-x")
+      expect((await store.listSlackSubscriptions(org)).map((x) => x.channel_id)).toEqual(["C-keep"])
+    })
+
     it("deleteUserData: removes the user's rows, anonymizes authorship, keeps others' content", async () => {
       const org = `org_del_${uuid()}`
       const leaver = `leaver_${uuid()}`

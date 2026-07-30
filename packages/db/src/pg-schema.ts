@@ -24,6 +24,8 @@ import type {
   RunStatus,
   SessionMessageAuthor,
   SessionState,
+  SlackAuthorFilter,
+  SlackScopeKind,
   VersionSource,
   WebhookKind,
   WorkspaceAccess,
@@ -606,6 +608,41 @@ export const slackUserLink = pgTable(
     index("slack_user_link_user").on(t.team_id, t.user_id),
   ],
 )
+// A Slack channel subscribed to a workspace's activity. Replaces the single
+// `slack_install.default_channel`: a team routes design docs to one channel and specs to
+// another, scoped to a collection and filtered by event — and by whether the author was a
+// HUMAN or an AGENT, which is the axis no other product's integration needs.
+export const slackSubscription = pgTable(
+  "slack_subscription",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    channel_id: text("channel_id").notNull(),
+    /** Denormalized `#name` for display; refreshed opportunistically, never authoritative. */
+    channel_name: text("channel_name"),
+    /** "workspace" (everything in the org) or "collection" (only its artifacts). */
+    scope_kind: text("scope_kind").notNull().default("workspace").$type<SlackScopeKind>(),
+    /** The collection id, or "" for a workspace scope. NOT NULL and empty-as-sentinel on
+     *  purpose: SQL treats NULLs as DISTINCT in a UNIQUE constraint, so a nullable column here
+     *  would let the same channel be subscribed to the workspace twice and would stop the
+     *  upsert from ever matching — the common case, silently broken. Measured, not assumed. */
+    scope_id: text("scope_id").notNull().default(""),
+    /** Comma-separated event types, or "*" for all — the same encoding `webhook.events` uses. */
+    events: text("events").notNull().default("*"),
+    /** "all" | "human" | "agent" — which authors' activity reaches this channel. */
+    authors: text("authors").notNull().default("all").$type<SlackAuthorFilter>(),
+    active: integer("active").notNull().default(1).$type<0 | 1>(),
+    created_by: text("created_by"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [
+    // One subscription per channel per scope: subscribing the same channel to the same
+    // collection twice is the same subscription, edited.
+    uniqueIndex("slack_subscription_target").on(t.org_id, t.channel_id, t.scope_kind, t.scope_id),
+    index("slack_subscription_org").on(t.org_id, t.active),
+  ],
+)
+
 export const githubApp = pgTable("github_app", {
   id: text("id").primaryKey(),
   app_id: text("app_id").notNull(),
@@ -855,6 +892,7 @@ const TABLES = [
   slackInstall,
   slackThreadLink,
   slackUserLink,
+  slackSubscription,
   userNotificationPref,
   githubApp,
   githubInstallation,

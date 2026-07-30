@@ -65,6 +65,7 @@ import type {
   NewSession,
   NewSessionMessage,
   NewSignupAttribution,
+  NewSlackSubscription,
   NewVersion,
   NewWebhook,
   NotificationRecord,
@@ -90,7 +91,9 @@ import type {
   SessionRecord,
   SessionState,
   SignupAttributionRecord,
+  SlackAuthorFilter,
   SlackInstallRecord,
+  SlackSubscriptionRecord,
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
   SortMode,
@@ -176,6 +179,7 @@ import {
   sessionMessage,
   signupAttribution,
   slackInstall,
+  slackSubscription,
   slackThreadLink,
   slackUserLink,
   userNotificationPref,
@@ -2032,6 +2036,94 @@ export function makeRepos(db: SqliteDb) {
       .onConflictDoUpdate({ target: [slackThreadLink.thread_id, slackThreadLink.channel], set })
       .run()
   }
+  const listSlackSubscriptions = async (orgId: string): Promise<SlackSubscriptionRecord[]> =>
+    await db
+      .select()
+      .from(slackSubscription)
+      .where(eq(slackSubscription.org_id, orgId))
+      .orderBy(desc(slackSubscription.created_at))
+      .all()
+  const upsertSlackSubscription = async (
+    sub: NewSlackSubscription,
+  ): Promise<SlackSubscriptionRecord> => {
+    const row = {
+      scope_kind: "workspace" as const,
+      scope_id: "",
+      events: "*",
+      authors: "all" as const,
+      active: 1 as const,
+      channel_name: null,
+      created_by: null,
+      ...sub,
+    }
+    // The identity columns and the creation stamp are not editable by an upsert.
+    const { id: _i, org_id: _o, ...set } = row
+    await db
+      .insert(slackSubscription)
+      .values(row)
+      .onConflictDoUpdate({
+        target: [
+          slackSubscription.org_id,
+          slackSubscription.channel_id,
+          slackSubscription.scope_kind,
+          slackSubscription.scope_id,
+        ],
+        set,
+      })
+      .run()
+    const found = await db
+      .select()
+      .from(slackSubscription)
+      .where(
+        and(
+          eq(slackSubscription.org_id, row.org_id),
+          eq(slackSubscription.channel_id, row.channel_id),
+          eq(slackSubscription.scope_kind, row.scope_kind),
+          eq(slackSubscription.scope_id, row.scope_id),
+        ),
+      )
+      .get()
+    if (!found) throw new Error("slack subscription upsert did not persist")
+    return found
+  }
+  const updateSlackSubscription = async (
+    id: string,
+    orgId: string,
+    fields: {
+      events?: string
+      authors?: SlackAuthorFilter
+      active?: 0 | 1
+      channel_name?: string | null
+    },
+  ): Promise<SlackSubscriptionRecord | null> => {
+    await db
+      .update(slackSubscription)
+      .set(fields)
+      .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+      .run()
+    return (
+      (await db
+        .select()
+        .from(slackSubscription)
+        .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+        .get()) ?? null
+    )
+  }
+  const deleteSlackSubscription = async (id: string, orgId: string): Promise<void> => {
+    await db
+      .delete(slackSubscription)
+      .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+      .run()
+  }
+  const deleteSlackSubscriptionsByChannel = async (
+    orgId: string,
+    channelId: string,
+  ): Promise<void> => {
+    await db
+      .delete(slackSubscription)
+      .where(and(eq(slackSubscription.org_id, orgId), eq(slackSubscription.channel_id, channelId)))
+      .run()
+  }
   const getSlackUserLinkBySlackId = async (
     teamId: string,
     slackUserId: string,
@@ -3760,6 +3852,11 @@ export function makeRepos(db: SqliteDb) {
     listModelCredentials,
     getSlackThreadLink,
     listSlackThreadLinksByThread,
+    listSlackSubscriptions,
+    upsertSlackSubscription,
+    updateSlackSubscription,
+    deleteSlackSubscription,
+    deleteSlackSubscriptionsByChannel,
     getSlackThreadLinkByTs,
     setSlackThreadLink,
     getSlackUserLinkBySlackId,
