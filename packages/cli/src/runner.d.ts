@@ -11,7 +11,10 @@ export interface ClaimedRun {
   instruction: string
   targets: unknown[]
   tools: { def: { name: string; description: string }; ref: string }[]
-  flags: { agentKillswitch: boolean; agentAutoEnabled: boolean }
+  /** `credentialed` is OPTIONAL here on purpose: this describes the WIRE, and a runner newer
+   *  than the server it polls will not receive it. Absent means "not credentialed", which is
+   *  the pre-rung behavior — an older server never demoted these runs either. */
+  flags: { agentKillswitch: boolean; agentAutoEnabled: boolean; credentialed?: boolean }
 }
 
 /** Runner config as serveRun/runOnce consume it (a plain object, not a class). */

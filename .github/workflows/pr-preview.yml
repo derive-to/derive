@@ -1,0 +1,187 @@
+name: PR preview
+
+# A deployed preview per pull request, on its own workers.dev URL.
+#
+# WHY A SEPARATELY-NAMED WORKER rather than Cloudflare's version preview URLs — which would be
+# strictly better, because a version runs on the SAME script and therefore inherits its secrets
+# with nothing to copy:
+#
+#   Cloudflare does not issue version preview URLs for a Worker with Durable Objects. Uploading
+#   a version of one whose migrations are NOT yet applied fails outright:
+#
+#     [code: 10211] You attempted to upload a version of a Worker that includes a Durable Object
+#     migration, but migrations must be fully applied via a non-versioned deployment.
+#     → /workers/configuration/versions-and-deployments/gradual-deployments/#gradual-deployments-for-durable-objects
+#
+#   and uploading one whose migrations ARE applied (this Worker) succeeds while silently
+#   returning `preview_url: null` with no aliases. Confirmed on wrangler 4.80 and 4.115, with
+#   the account subdomain registered and previews_enabled set on the script. A throwaway Worker
+#   with no bindings, on the same account and token, DOES get a working preview URL — and gets
+#   none the moment a Durable Object is added. derive declares five DO classes, so this is a
+#   permanent constraint, not a configuration mistake.
+#
+# A separately-named Worker is therefore the mechanism, and it is what derive-staging uses. The
+# cost is that secrets are per-script, so CI has to push them (below) instead of inheriting.
+#
+# THE PREVIEW SHARES PRODUCTION'S DATA. Same D1, same Hyperdrive → Neon, same R2. That is
+# deliberate: a preview you cannot sign into, or that shows an empty library, cannot tell you
+# whether a change is right. It is also why this never runs for a fork — see the `if` below.
+# What it does NOT share is anything that would let it act as production: no routes, no cron,
+# no queue consumer (scripts/preview-config.mjs enforces all three and fails the build if any
+# survives).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+concurrency:
+  group: pr-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  preview:
+    # SAME-REPO PULL REQUESTS ONLY. A preview holds production's bindings and secrets, so a fork
+    # PR could read and write real data by editing this workflow. GitHub does not expose secrets
+    # to fork PRs by default; this makes the intent explicit rather than relying on that.
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build web client
+        run: pnpm --filter @derive/api build:web
+
+      # wrangler.toml ships all-zero placeholder ids so the public tree carries no production
+      # identifiers. Same substitution the deploy job makes, for the same reason.
+      - name: Inject binding ids
+        env:
+          D1_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
+          HD_ID: ${{ secrets.CLOUDFLARE_HYPERDRIVE_ID }}
+        run: |
+          : "${D1_ID:?CLOUDFLARE_D1_DATABASE_ID is unset — refusing to build a preview against the placeholder id}"
+          : "${HD_ID:?CLOUDFLARE_HYPERDRIVE_ID is unset — refusing to build a preview against the placeholder id}"
+          sed -i \
+            -e "s/^database_id = \"00000000-0000-0000-0000-000000000000\"$/database_id = \"$D1_ID\"/" \
+            -e "s/^id = \"00000000000000000000000000000000\"$/id = \"$HD_ID\"/" \
+            apps/api/wrangler.toml
+
+      - name: Generate the preview config
+        id: cfg
+        run: |
+          NAME="derive-pr-${{ github.event.pull_request.number }}"
+          URL="https://$NAME.${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN || 'derive-to' }}.workers.dev"
+          node apps/api/scripts/preview-config.mjs "$NAME" "$URL" > apps/api/wrangler.preview.toml
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy the preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm --filter @derive/api exec wrangler deploy --config wrangler.preview.toml
+
+      # Secrets are per-Worker, so a freshly-created preview has none and every authenticated
+      # route 500s without them.
+      #
+      # DERIVE_AUTH_SECRET MUST MATCH PRODUCTION'S. Better Auth encrypts its JWKS private key
+      # with this secret and stores it in the shared database; a preview with a different one
+      # signs in fine and then throws "Failed to decrypt private key" on the first getSession.
+      # Reproduced locally (two instances, one database, two secrets) before writing this.
+      - name: Push preview secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AUTH_SECRET: ${{ secrets.DERIVE_AUTH_SECRET }}
+          MODEL_KEY: ${{ secrets.DERIVE_MODEL_API_KEY }}
+          MODEL_BASE_URL: ${{ vars.DERIVE_MODEL_BASE_URL }}
+          MODEL_NAME: ${{ vars.DERIVE_MODEL_NAME }}
+        run: |
+          : "${AUTH_SECRET:?DERIVE_AUTH_SECRET is unset. Add it as a repo secret with the SAME
+             value the production Worker uses, or every signed-in page of the preview 500s.}"
+          put() { printf '%s' "$2" | pnpm --filter @derive/api exec wrangler secret put "$1" --config wrangler.preview.toml; }
+          put DERIVE_AUTH_SECRET "$AUTH_SECRET"
+          # `if`, not `[ -n "$X" ] && put ...`. Actions runs `bash -e`, so a false test is a
+          # non-zero exit and kills the step — which is exactly how the first run of this
+          # workflow failed, on an unset optional variable rather than on anything real.
+          if [ -n "$MODEL_KEY" ]; then put DERIVE_MODEL_API_KEY "$MODEL_KEY"; fi
+          if [ -n "$MODEL_BASE_URL" ]; then put DERIVE_MODEL_BASE_URL "$MODEL_BASE_URL"; fi
+          if [ -n "$MODEL_NAME" ]; then put DERIVE_MODEL_NAME "$MODEL_NAME"; fi
+          # A preview with no model answers "no model is configured" in chat, which looks like a
+          # regression rather than missing config. Say so once, here.
+          if [ -z "$MODEL_BASE_URL" ] || [ -z "$MODEL_NAME" ] || [ -z "$MODEL_KEY" ]; then
+            echo "::warning::Preview has no model gateway. Set repo variables DERIVE_MODEL_BASE_URL"\
+                 "and DERIVE_MODEL_NAME plus the DERIVE_MODEL_API_KEY secret, or chat and"\
+                 "automations will report that no model is connected."
+          fi
+
+      # A preview that boots but 500s on the first authenticated request is worse than none,
+      # because the URL looks fine. Prove both an anonymous and a database-backed route.
+      - name: Smoke the preview
+        run: |
+          URL="${{ steps.cfg.outputs.url }}"
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/healthz" || true)
+            [ "$code" = "200" ] && break
+            sleep 6
+          done
+          [ "$code" = "200" ] || { echo "preview never served /healthz (last: $code)"; exit 1; }
+          ready=$(curl -s -o /dev/null -w '%{http_code}' "$URL/readyz" || true)
+          [ "$ready" = "200" ] || { echo "preview reached /healthz but /readyz returned $ready — bindings are wrong"; exit 1; }
+          echo "preview healthy: $URL"
+
+      - name: Comment the preview URL
+        uses: actions/github-script@v7
+        env:
+          PREVIEW_URL: ${{ steps.cfg.outputs.url }}
+          PREVIEW_NAME: ${{ steps.cfg.outputs.name }}
+        with:
+          script: |
+            const url = process.env.PREVIEW_URL
+            const marker = '<!-- derive-pr-preview -->'
+            const body = `${marker}\n### Preview\n\n${url}\n\n` +
+              `Deployed from \`${context.sha.slice(0, 7)}\` as \`${process.env.PREVIEW_NAME}\`.\n\n` +
+              `It shares **production's database** — sign in with your real account, and treat ` +
+              `anything you change here as changed for real. It has no routes, no cron and no ` +
+              `queue consumer, so it cannot serve derive.to or run scheduled work.`
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.issue.number,
+            })
+            const existing = comments.find((c) => c.body?.startsWith(marker))
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body })
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body })
+            }
+
+  # A preview per PR is only affordable if it goes away again.
+  teardown:
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Delete the preview Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          NAME="derive-pr-${{ github.event.pull_request.number }}"
+          pnpm --filter @derive/api exec wrangler delete --name "$NAME" --force || \
+            echo "no preview Worker named $NAME (already gone)"

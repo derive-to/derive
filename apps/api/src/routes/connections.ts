@@ -30,6 +30,20 @@ const present = (cn: ConnectionRecord) => ({
   created_at: cn.created_at,
 })
 
+// Where the machineless lane may send a pasted credential: https anywhere, or plain http ONLY
+// to the loopback host for local development. Compared on the parsed hostname, because a
+// string prefix test on "http://localhost" also accepts http://localhost.evil.com — a
+// cleartext bearer sent to somebody else's server.
+const isAllowedBase = (raw: string): boolean => {
+  try {
+    const u = new URL(raw)
+    if (u.protocol === "https:") return true
+    return u.protocol === "http:" && (u.hostname === "localhost" || u.hostname === "127.0.0.1")
+  } catch {
+    return false
+  }
+}
+
 // What to say when someone wires up an integration Derive isn't connected to yet. The fix
 // is the integration's own setup flow, not this endpoint — so the message points there.
 const installMissing: Record<"github_app" | "slack", string> = {
@@ -98,7 +112,10 @@ export const connectionRoutes = (ctx: AppContext) => {
         kind: z.enum(["oauth", "secret", "github_app", "slack"]).default("oauth"),
         // kind "secret" only:
         secret: z.string().min(8).max(4096).optional(),
-        base_url: z.string().url().max(500).optional(),
+        // nullish, not optional: GET /v1/connections renders an absent host as `base_url: null`,
+        // and round-tripping that object straight back into this route is the obvious client
+        // pattern — it should not 400 on the shape we just handed out.
+        base_url: z.string().url().max(500).nullish(),
       }),
     )
     if (b instanceof Response) return bail(b)
@@ -151,9 +168,17 @@ export const connectionRoutes = (ctx: AppContext) => {
     if (b.mcp_url && !/^(https:\/\/|http:\/\/localhost[:/])/i.test(b.mcp_url))
       return fail(c, 400, "mcp_url must be https (or http://localhost for dev)")
     if (b.kind === "secret") {
-      if (!b.secret || !b.base_url)
-        return fail(c, 400, "a secret connection needs `secret` and `base_url`")
-      if (!b.base_url.startsWith("https://") && !b.base_url.startsWith("http://localhost"))
+      if (!b.secret) return fail(c, 400, "a secret connection needs `secret`")
+      // base_url is OPTIONAL. Credentials are delivered into runs, so nothing confines a
+      // pasted key to a host and there is no boundary for this field to express: a
+      // recognized vendor's host is ours to know, and an unrecognized key gets a free-text
+      // note instead. It stays supported because the machineless lane (no container, so the
+      // agent cannot run code) resolves paths against it and confines to it — see httpTools.
+      // When present it is still held to https, since that lane will send a credential there.
+      // The dev escape hatch is the LOCALHOST HOST, not the prefix: `startsWith("http://localhost")`
+      // also accepts http://localhost.evil.com, which would send a decrypted bearer to someone
+      // else's box in cleartext. Parse and compare the hostname instead.
+      if (b.base_url && !isAllowedBase(b.base_url))
         return fail(c, 400, "base_url must be https (or http://localhost for dev)")
       if (!deps.encryptionKey) return fail(c, 502, "secret connections need an encryption key")
       const rec = await meta.createConnection({
@@ -163,8 +188,8 @@ export const connectionRoutes = (ctx: AppContext) => {
         scope: b.scope,
         kind: "secret",
         secret_enc: encryptSecret(b.secret, deps.encryptionKey),
-        // Stored without a trailing slash; executeSecretTool adds one when it resolves a path.
-        base_url: b.base_url.replace(/\/+$/, ""),
+        // Stored without a trailing slash; executeHttpTool adds one when it resolves a path.
+        base_url: b.base_url ? b.base_url.replace(/\/+$/, "") : null,
         broker: "none",
         toolkit: b.toolkit,
         // There is no vendor account behind this, but a run still identifies its tools by

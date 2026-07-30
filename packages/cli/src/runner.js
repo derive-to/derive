@@ -722,6 +722,10 @@ export function decideWrite({ autonomy, confidence, flags, confidenceFloor }) {
   const floor = confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR
   if (flags.agentKillswitch) return "proposal"
   if (autonomy === "shadow") return "shadow"
+  // A run that resolved a bound connection can spend a real credential, so it files for a
+  // human rather than publishing — below shadow, above every consent rung. Kept in lockstep
+  // with core's copy by packages/cli/test/gate-parity.test.js.
+  if (flags.credentialed) return "proposal"
   if (autonomy === "suggest") return "proposal"
   if (!flags.agentAutoEnabled) return "proposal"
   if (confidence === null || confidence === undefined || confidence < floor) return "proposal"
@@ -1373,7 +1377,10 @@ export async function serveRun(client, run, manifest, cfg) {
   const hasTools = run.tools?.length > 0
   if (hasTools) writeToolShim(cfg.cwd)
   // The spawn env: the model-plan overlay (session parity) plus the shim's server/token/run-id
-  // when the run has sources, so the shim authenticates without the model holding the token.
+  // when the run has sources. NOTE: these ride the model's OWN environment, so the model does
+  // hold this token — the shim is a convenience, not a confidentiality boundary (runAgent's
+  // header comment says the same about cwd). Anything the token authorizes, an injected model
+  // can call directly, which is why the write gate is defense-in-depth and not a guarantee.
   const shimEnv = hasTools
     ? { DERIVE_SERVER: cfg.server, DERIVE_TOKEN: cfg.token, DERIVE_RUN_ID: run.id }
     : {}

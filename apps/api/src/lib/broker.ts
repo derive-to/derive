@@ -7,7 +7,15 @@ import { installationToken } from "./github-app"
 /** One tool a hosted run may call, paired with the connected-account ref it executes through.
  *  `kind` and `connectionId` are how the tool proxy routes the call without a second lookup;
  *  the connection RECORD is deliberately not here — it carries secret_enc, and this struct
- *  flows toward the claim response. */
+ *  flows toward the claim response, which is the last stop before the wire.
+ *
+ *  That rule still holds, but its REASON has narrowed: keeping a credential out of the
+ *  executor is no longer the product's safety story (a run with a machine is given the real
+ *  keys its context was bound to, and writes ordinary code with them — see the "keys to the
+ *  run" decision). What this struct protects is narrower and still worth protecting: a claim
+ *  must hand over exactly the access the work item was granted and no routing detail beyond
+ *  it, so a bug here can't widen one run's reach into another's. */
+
 /** One bound connection that contributed nothing, and why — the difference between an outage
  *  and a server that rewrote its tools after someone approved them. */
 export interface SourceQuiet {
@@ -23,6 +31,34 @@ export interface RunTool {
   ref: string
   kind: ConnectionKind
   connectionId: string
+}
+
+/**
+ * The connections a work item may actually SPEND: its bound ids, narrowed to the ones in THIS
+ * org that are active, and — for a personal connection, which acts as its owner — whose owner
+ * is still a member. An offboarded member's credential stops resolving on the very next run,
+ * the same live-membership recheck a minted API token gets at spend time; workspace
+ * connections are the org's and survive.
+ *
+ * Separate from `toolsForRun` on purpose. "Can this run spend a credential?" and "what HTTP
+ * tools does it get?" are DIFFERENT questions, and conflating them fails open: a connection
+ * with no base_url yields no tools (see below) yet is still a real credential the run may be
+ * handed. The write gate's `credentialed` rung must count THESE, never the tool list.
+ */
+export const spendableConnections = async (
+  meta: MetaStore,
+  orgId: string,
+  connectionIds: string[],
+): Promise<ConnectionRecord[]> => {
+  if (connectionIds.length === 0) return []
+  const conns = await meta.getConnectionsByIds(connectionIds)
+  const active = conns.filter((cn) => cn.org_id === orgId && cn.status === "active")
+  const owners = [...new Set(active.filter((cn) => cn.scope === "personal").map((c) => c.user_id))]
+  const seats = await Promise.all(
+    owners.map(async (uid) => [uid, await meta.getMembership(orgId, uid)] as const),
+  )
+  const stillMembers = new Set(seats.filter(([, seat]) => seat !== null).map(([uid]) => uid))
+  return active.filter((cn) => cn.scope === "workspace" || stillMembers.has(cn.user_id))
 }
 
 /**
@@ -50,22 +86,18 @@ export const toolsForRun = async (
    *  a source and nobody knowing whether the server is down or its tools were rewritten. */
   quiet?: SourceQuiet[],
 ): Promise<RunTool[]> => {
-  if (connectionIds.length === 0) return []
-  const conns = await meta.getConnectionsByIds(connectionIds)
-  const active = conns.filter((cn) => cn.org_id === orgId && cn.status === "active")
-  // A personal connection acts as its owner, so it must not outlive them: an offboarded
-  // member's credential stops resolving on the next run, the same live-membership recheck
-  // a minted API token gets at spend time. Workspace connections are the org's and survive.
-  const owners = [...new Set(active.filter((cn) => cn.scope === "personal").map((c) => c.user_id))]
-  const seats = await Promise.all(
-    owners.map(async (uid) => [uid, await meta.getMembership(orgId, uid)] as const),
-  )
-  const stillMembers = new Set(seats.filter(([, seat]) => seat !== null).map(([uid]) => uid))
-  const usable = active.filter((cn) => cn.scope === "workspace" || stillMembers.has(cn.user_id))
+  const spendable = await spendableConnections(meta, orgId, connectionIds)
+  // A direct connection is called by resolving a path against its base_url and refusing
+  // anything that escapes it, so one without a base_url has nothing to call: base_url is
+  // optional now (nobody types a host — such a connection is spent by DELIVERY into a run
+  // that writes its own code), and advertising `x.get`/`x.post` for it would hand the model
+  // two tools that throw on every call. Expose none instead — but note it is still SPENDABLE,
+  // which is why the gate counts spendableConnections and not this list.
+  const usable = spendable.filter((cn) => !isDirect(cn.kind) || !!cn.base_url)
   // Per-CONNECTION routing through ONE router: an `mcp:` ref reaches the MCP broker whatever the
   // workspace's broker plan is (it needs no vendor account at all), everything else keeps the
   // plan's broker. Sharing the router across this resolution is what lets the MCP client reuse
-  // its session instead of re-handshaking per connection.
+  // its session instead of re-handshaking per connection, and carries the per-ref bearer.
   const route = router ?? refRouter(broker, mcpAuthFor(meta, orgId, encryptionKey))
   const out: RunTool[] = []
   // Dedupe by ref before listing. Two connection rows can point at the same broker_ref (the same
@@ -136,7 +168,18 @@ export const mcpAuthFor = (
 }
 
 /** The tools a direct connection exposes. Named `<toolkit>.<verb>` to match the broker's
- *  convention, so the runner's shim treats every kind of connection identically. */
+ *  convention, so the runner's shim treats every kind of connection identically.
+ *
+ *  FROZEN SURFACE — do not grow this. Its only remaining consumer is the MACHINELESS lane:
+ *  the in-process Workers loop (lib/substrate-loop.ts, the run and session `toolProxy` call
+ *  sites), which has no container and therefore cannot run code. Everywhere a machine exists,
+ *  a context's credentials are DELIVERED to the run and the agent uses ordinary libraries —
+ *  which is both more capable and less for us to maintain.
+ *
+ *  So: a new credential shape (a database URL, an MCP server, a webhook, a key that rides a
+ *  custom header) must NOT arrive here as another tool kind or another verb. That road ends in
+ *  a zoo of hand-written connectors, each a dialect no model was trained on, replacing the
+ *  interface models are already best at. Add it to delivery instead. */
 export const httpTools = (toolkit: string): BrokerToolDef[] => [
   {
     name: `${toolkit}.get`,
@@ -194,6 +237,10 @@ export const bearerFor = async (
  * Execute one tool call for a direct connection: resolve the requested path under the
  * connection's base_url, attach its bearer, return status + body. The caller has already
  * verified the tool is on this run's least-privilege list.
+ *
+ * Serves the machineless lane only (see httpTools' FROZEN SURFACE note). The confinement
+ * below is genuinely load-bearing THERE — it is the only boundary that lane has — which is
+ * why the checks stay exactly as strict as when they were written.
  *
  * The path is attacker-influenced (it comes from the model, which may have read hostile
  * content), so confinement is the load-bearing part: the credential must only ever be

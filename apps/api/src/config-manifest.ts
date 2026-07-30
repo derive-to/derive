@@ -327,7 +327,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_MODEL_BASE_URL",
     group: "advanced",
-    doc: "Root of an OPENAI-COMPATIBLE model endpoint (Fireworks, OpenRouter, Together, a\nself-hosted gateway); `/chat/completions` is appended. Setting it points every in-process\nrun on this deploy at that endpoint instead of the Anthropic Messages API.\n\nIt BYPASSES THE PAYER CHAIN on purpose: one ambient key means the operator pays for\neveryone on the instance, which is right for a single-tenant box and wrong for a\nmulti-tenant host — so derive.to does not set it. Requires DERIVE_MODEL_API_KEY and\nDERIVE_MODEL_NAME; all three or none.",
+    doc: "Root of an OPENAI-COMPATIBLE model endpoint (Fireworks, OpenRouter, Together, a\nself-hosted gateway); `/chat/completions` is appended. Setting it points every in-process\nrun AND attended chat on this deploy at that endpoint instead of the Anthropic Messages API.\n\nIt BYPASSES THE PAYER CHAIN on purpose: this deployment holds the key and spends it for\nevery workspace on it, so there is no chain to walk and no plan for anyone to connect.\nThat is the HOSTED posture — derive.to sets all three — and the workspace is metered\nagainst its tier allowance rather than billed to a credential it never supplied. It is\nequally right for a single-tenant box, where the operator is the only user.\n\n(This entry used to say derive.to does not set it. That was wrong, and it was read as\nintent: the schedule materializer kept walking a payer chain that cannot resolve on a\nhosted deploy, so scheduled automations silently never fired.)\n\nRequires DERIVE_MODEL_API_KEY and DERIVE_MODEL_NAME; all three or none.",
     example: "https://api.fireworks.ai/inference/v1",
   },
   {
