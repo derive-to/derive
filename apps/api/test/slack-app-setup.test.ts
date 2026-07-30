@@ -54,8 +54,10 @@ describe("buildSlackManifest", () => {
   })
 
   it("declares private-channel history scopes to match the message.groups subscription", () => {
-    // groups:* is what makes reply-back work in a private channel the bot is invited to;
-    // subscribing to message.groups without it (the old gap) silently dropped those replies.
+    // groups:history is what gates DELIVERY of message.groups, so reply-back works in a private
+    // channel the bot is invited to; subscribing without it (the old gap) silently dropped those
+    // replies. groups:read is held alongside it but backs no call Derive makes — see the
+    // SLACK_BOT_SCOPES docstring for why it is kept rather than trimmed.
     expect(m.oauth_config.scopes.bot).toEqual(
       expect.arrayContaining(["groups:read", "groups:history"]),
     )
