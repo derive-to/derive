@@ -147,7 +147,14 @@ const materializeFor = async (
   return created
 }
 
-/** The POLLING tick: due schedule runs for one agent's automations (claim-time). */
+/** The POLLING tick: due schedule runs for one agent's automations (claim-time).
+ *
+ *  Deliberately does NOT take `operatorPays`, and that is not an oversight. A polling runner is
+ *  the user's own machine draining its own queue; the gateway is this deployment's key for work
+ *  this deployment executes. Where hosted dispatch is on, the hosted tick materializes across
+ *  every enabled automation anyway, so this path is redundant there. Where it is off, a gateway
+ *  serves attended chat only and an unattended run really does have to resolve its own
+ *  credential — so demanding a payer here is the correct answer, not the bug fixed above. */
 export const materializeDueRuns = async (
   meta: MetaStore,
   agent: { id: string; org_id: string },
