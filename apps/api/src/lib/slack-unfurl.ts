@@ -21,8 +21,16 @@ import { context, mrkdwnLabel, section } from "./slack-cards"
 import { encodeProposalAction, SLACK_PROPOSAL_ACTION } from "./slack-comments"
 import { unfurlInfoFor } from "./unfurl-info"
 
-/** The card for an artifact the channel may see. `imageUrl` is Derive's own OG endpoint, which
- *  serves an anonymous crawler a title-less locked card — so even the image can't leak. */
+/** The card for an artifact the channel may see: title, one-line description, and — for an open
+ *  proposal — the buttons to decide it.
+ *
+ *  Deliberately NO image, even though `UnfurlInfo` carries one and Derive's OG screenshot is the
+ *  best-looking thing it has. Slack fetches an unfurl's image ANONYMOUSLY, and `/v1/og/:ref`
+ *  answers an anonymous fetch by the artifact's link role: a workspace-listed artifact with no
+ *  world link — the common shape for internal docs — returns the title-less LOCKED card. So the
+ *  image would be a padlock placeholder on precisely the cards people paste most, next to a
+ *  title we are already showing. A broken-looking card is worse than none. Revisit if the OG
+ *  endpoint ever accepts a signed, short-lived token an unfurl could carry. */
 export const unfurlBlocks = (
   info: UnfurlInfo,
   hasOpenProposal: boolean,

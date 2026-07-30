@@ -3,6 +3,7 @@ import { DEFAULT_ORG_SETTINGS, newId } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { commentCreatedAction } from "../src/lib/comment-actions"
 import { makeSlackSender } from "../src/lib/slack-comments"
+import { runDeliveryTick } from "../src/webhooks"
 import { as, jsonAs, makeAuthedApp, pub, type TestUser } from "./helpers"
 
 // The other interrupt-worthy emails ride the same outbox: a review request (the
@@ -164,6 +165,75 @@ describe("comment channel fan-out", () => {
     await comment(app, shortId, owner.email)
     // Private draft (listed "none") → its title + comment body never reach the org-wide channel.
     expect((await claim(meta)).map((d) => d.kind)).not.toContain("slack_app")
+  })
+
+  // The headline behaviour of subscriptions, and the reason the outbox row carries its own
+  // channel: three subscribed channels produce three INDEPENDENT deliveries, so an archived
+  // channel or one the bot was removed from fails and dead-letters on its own instead of taking
+  // the others down with it.
+  it("fans one comment out to every subscribed channel, one delivery each", async () => {
+    const { app, meta } = makeAuthedApp("fanout-multi", [owner], "editor")
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: "xoxb-stored",
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    for (const ch of ["C-eng", "C-design", "C-all"])
+      await meta.upsertSlackSubscription({ id: newId("sub"), org_id: "default", channel_id: ch })
+    const shortId = await newArtifact(app)
+    await comment(app, shortId, owner.email)
+    const rows = (await claim(meta)).filter((d) => d.kind === "slack_app")
+    expect(rows.map((d) => JSON.parse(d.payload).channel).sort()).toEqual([
+      "C-all",
+      "C-design",
+      "C-eng",
+    ])
+  })
+
+  // Each channel threads on its OWN root message — the reason thread links are keyed
+  // (thread_id, channel) rather than by thread alone.
+  it("threads independently per channel", async () => {
+    const { app, meta } = makeAuthedApp("fanout-threading", [owner], "editor")
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: "xoxb-stored",
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    for (const ch of ["C-a", "C-b"])
+      await meta.upsertSlackSubscription({ id: newId("sub"), org_id: "default", channel_id: ch })
+    const shortId = await newArtifact(app)
+    const artifact = await meta.getByShortId(shortId)
+    const first = await (await comment(app, shortId, owner.email)).json()
+
+    // Drain both root posts, so each channel records its own thread link.
+    let ts = 100
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_u: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body)) as { channel: string }
+        ts += 1
+        return new Response(
+          JSON.stringify({ ok: true, ts: `17000000${ts}.1`, channel: body.channel }),
+          { status: 200 },
+        )
+      }),
+    )
+    await runDeliveryTick(
+      meta,
+      { precheck: async () => null },
+      { slack_app: makeSlackSender(meta, "k") },
+    )
+    const links = await meta.listSlackThreadLinksByThread(first.thread_id)
+    expect(links.map((l) => l.channel).sort()).toEqual(["C-a", "C-b"])
+    // Distinct Slack messages, one per channel — not one message reused.
+    expect(new Set(links.map((l) => l.message_ts)).size).toBe(2)
+    expect(links.every((l) => l.artifact_id === artifact?.id)).toBe(true)
   })
 
   // The mirrors are gated on a COLLABORATOR author: it keeps a signed-in holder of a
