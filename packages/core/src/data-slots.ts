@@ -48,6 +48,25 @@ export interface DataSlotResult {
 
 const byteLength = (s: string): number => new TextEncoder().encode(s).length
 
+/**
+ * Does this text end inside an unterminated JSON string? An odd number of unescaped
+ * double quotes means the block was cut mid-string — which, for an HTML data block, is
+ * almost always a literal `</script>` in the JSON: the HTML parser ends the script there
+ * no matter what a JSON string wanted, exactly as a browser does. Worth detecting because
+ * the raw "not valid JSON" verdict is actively misleading in that case — the author is
+ * looking at JSON that IS valid, and nothing points at the real cause or the fix.
+ */
+const endsInsideString = (s: string): boolean => {
+  let quotes = 0
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] !== '"') continue
+    let backslashes = 0
+    for (let j = i - 1; j >= 0 && s[j] === "\\"; j--) backslashes++
+    if (backslashes % 2 === 0) quotes++
+  }
+  return quotes % 2 === 1
+}
+
 /** Read one double- or single-quoted attribute value out of a raw tag's attribute text. */
 const attr = (attrs: string, name: string): string | null => {
   const m = new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)')`, "i").exec(attrs)
@@ -75,9 +94,12 @@ const htmlBlocks = (source: string): RawBlock[] => {
   m = SCRIPT_RE.exec(source)
   while (m) {
     const attrs = m[1] ?? ""
-    const type = attr(attrs, "type")
+    // TRIMMED, like a browser reads a type attribute: `type="application/derive-data "`
+    // is the same script to the HTML parser, and without the trim it was silently not a
+    // data block at all — no slot, no advisory, nothing to notice.
+    const type = attr(attrs, "type")?.trim()
     if (type?.toLowerCase() === DATA_SCRIPT_TYPE) {
-      const slot = attr(attrs, "data-slot")
+      const slot = attr(attrs, "data-slot")?.trim()
       // A data-typed script with no data-slot is a usage error worth naming, but with no
       // name there's nothing to key it on — surface it as a synthetic empty name so the
       // validation pass below advises about it uniformly.
@@ -145,7 +167,11 @@ export const parseDataSlots = (source: string, contentType: string): DataSlotRes
     try {
       JSON.parse(json)
     } catch {
-      advisories.push(`Data slot "${name}" is not valid JSON — nothing stored for it.`)
+      advisories.push(
+        endsInsideString(json)
+          ? `Data slot "${name}" ends inside an unterminated string, which usually means its JSON contains a literal </script> — HTML ends the block there (a browser does the same), so only the text before it arrived. Escape it as <\\/script>. Nothing stored for this slot.`
+          : `Data slot "${name}" is not valid JSON — nothing stored for it.`,
+      )
       continue
     }
     const bytes = byteLength(json)

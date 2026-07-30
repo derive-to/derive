@@ -83,6 +83,59 @@ describe("parseDataSlots — HTML", () => {
   it("returns nothing for a page with no data blocks", () => {
     expect(parseDataSlots(html("<p>hi</p>"), "text/html")).toEqual({ slots: [], advisories: [] })
   })
+
+  // A literal </script> inside a JSON string ends the block right there — the HTML parser
+  // does not care that a JSON string wanted it, and neither does a browser. The plain
+  // "not valid JSON" verdict is actively misleading here (the author is looking at JSON
+  // that IS valid), so the advisory names the real cause and the escape.
+  it("blames </script>, not the JSON, when a block is cut mid-string", () => {
+    const { slots, advisories } = parseDataSlots(html(slot("x", '{"h": "</script>"}')), "text/html")
+    expect(slots).toEqual([])
+    expect(advisories[0]).toContain("</script>")
+    expect(advisories[0]).toContain("<\\/script>")
+  })
+
+  it("keeps the plain message for ordinary bad JSON (no false </script> blame)", () => {
+    const { advisories } = parseDataSlots(html(slot("x", "{bad}")), "text/html")
+    expect(advisories[0]).toContain("not valid JSON")
+    expect(advisories[0]).not.toContain("unterminated")
+  })
+
+  it("escaping the closing tag as <\\/script> stores the slot", () => {
+    const { slots } = parseDataSlots(html(slot("x", '{"h": "<\\/script>"}')), "text/html")
+    expect(slots).toHaveLength(1)
+  })
+
+  // Browsers trim the type attribute; without the trim this was a SILENT no-op — no slot
+  // stored and no advisory to notice, the worst of both.
+  it("trims the type and data-slot attributes", () => {
+    const src = html(`<script type="application/derive-data " data-slot=" a ">1</script>`)
+    expect(parseDataSlots(src, "text/html").slots).toEqual([{ slot: "a", json: "1", bytes: 1 }])
+  })
+
+  it("counts the size cap in BYTES, not characters", () => {
+    // 11K multibyte chars is ~33KB encoded — over the cap even though it is well under
+    // 32K characters.
+    const multibyte = JSON.stringify({ s: "日".repeat(11 * 1024) })
+    const { slots, advisories } = parseDataSlots(html(slot("a", multibyte)), "text/html")
+    expect(slots).toEqual([])
+    expect(advisories[0]).toContain("over the")
+  })
+
+  it("skips only the offending slot, keeping good ones on the same page", () => {
+    const src = html(slot("big", JSON.stringify({ s: "x".repeat(33 * 1024) })) + slot("ok", "1"))
+    const { slots, advisories } = parseDataSlots(src, "text/html")
+    expect(slots.map((s) => s.slot)).toEqual(["ok"])
+    expect(advisories).toHaveLength(1)
+  })
+
+  it("stays fast on a large page full of decoy scripts", () => {
+    const src = html(`${"<script>noop()</script>".repeat(5000)}${slot("a", "1")}`)
+    const started = performance.now()
+    const { slots } = parseDataSlots(src, "text/html")
+    expect(slots).toHaveLength(1)
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
 })
 
 describe("parseDataSlots — markdown", () => {
