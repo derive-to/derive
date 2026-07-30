@@ -26,15 +26,6 @@ import { Client, type Pool, type PoolClient } from "pg"
 /** The slice of `pg.Pool` drizzle + Kysely actually call. */
 export type PgConn = Pick<Pool, "query" | "connect" | "end">
 
-// TEMPORARY — perf program trip-count profiler (akvf8ga9). Revert before merge.
-// When bound (worker.ts's fetch, gated on HYPERDRIVE), every query on this request's
-// single client is timed and appended here; the response carries the total as headers.
-export interface QueryLogEntry {
-  sql: string
-  ms: number
-}
-export const queryProfile = new AsyncLocalStorage<QueryLogEntry[]>()
-
 /** Pool-shaped facade over a SINGLE client — Hyperdrive multiplexes, so one socket
  *  is all we open, and `connect()` hands back that same socket (release is a no-op:
  *  there is no pool to return it to). */
@@ -49,22 +40,8 @@ const pgFacade = (client: Client): PgConn => {
   // biome-ignore lint/suspicious/noExplicitAny: pass args straight to node-postgres's overloaded query().
   const query = (async (...args: any[]) => {
     await ensure()
-    const log = queryProfile.getStore()
-    if (!log)
-      // biome-ignore lint/suspicious/noExplicitAny: same passthrough.
-      return (client.query as (...a: any[]) => unknown)(...args)
-    const startedAt = performance.now()
-    try {
-      // biome-ignore lint/suspicious/noExplicitAny: same passthrough.
-      return await (client.query as (...a: any[]) => unknown)(...args)
-    } finally {
-      const raw = args[0]
-      const sql = typeof raw === "string" ? raw : ((raw as { text?: string })?.text ?? "?")
-      log.push({
-        sql: sql.replace(/\s+/g, " ").trim().slice(0, 160),
-        ms: performance.now() - startedAt,
-      })
-    }
+    // biome-ignore lint/suspicious/noExplicitAny: same passthrough.
+    return (client.query as (...a: any[]) => unknown)(...args)
   }) as Pool["query"]
   const connect = (async () => {
     await ensure()
