@@ -23,6 +23,7 @@ import {
   callTool,
   connectionBindError,
   parseConnectionIds,
+  spendableConnections,
   toolsForRun,
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
@@ -381,11 +382,19 @@ export const contextRoutes = (ctx: AppContext) => {
   // context reaches the same things however it was triggered. The broker rides along
   // because the proxy needs it to execute a non-direct tool; nothing bound means no
   // broker is built at all.
+  // `credentialed` rides along because it is a DIFFERENT question from "what tools": a
+  // connection with no base_url yields no tools yet is still a credential this context may
+  // spend, so the write gate must count spendable connections (see spendableConnections).
   const contextTools = async (x: ContextRecord) => {
     const ids = parseConnectionIds(x.connection_ids)
-    if (ids.length === 0) return { broker: null, tools: [] }
+    if (ids.length === 0) return { broker: null, tools: [], credentialed: false }
     const broker = await brokerFor(meta, x.org_id, null, deps.encryptionKey)
-    return { broker, tools: await toolsForRun(meta, broker, x.org_id, ids) }
+    const spendable = await spendableConnections(meta, x.org_id, ids)
+    return {
+      broker,
+      tools: await toolsForRun(meta, broker, x.org_id, ids),
+      credentialed: spendable.length > 0,
+    }
   }
 
   const contextJson = (x: ContextRecord, manifestShortId: string | null) => ({
@@ -1616,9 +1625,21 @@ export const contextRoutes = (ctx: AppContext) => {
       }))
       // The same list the hosted claim returns. A context's reach must not depend on
       // which kind of executor picked its session up.
+      const reach = await contextTools(x)
+      const settings = await meta.getOrgSettings(x.org_id)
       return c.json({
         sessions: out,
-        tools: (await contextTools(x)).tools.map((t) => ({ def: t.def, ref: t.ref })),
+        tools: reach.tools.map((t) => ({ def: t.def, ref: t.ref })),
+        // The gate's inputs, which this endpoint did NOT send before — so a polling runner had
+        // nothing to gate on while the hosted claim did, and the same ask could land live on one
+        // executor and as a review on the other. Sending them makes the lanes symmetrical in
+        // what they KNOW. Note the CLI's ask path does not consult them yet (serveSession
+        // publishes directly); that half is tracked separately, and this is its prerequisite.
+        flags: {
+          agentKillswitch: settings.agentKillswitch,
+          agentAutoEnabled: settings.agentAutoEnabled,
+          credentialed: reach.credentialed,
+        },
       })
     },
   )
@@ -1667,6 +1688,9 @@ export const contextRoutes = (ctx: AppContext) => {
     // with no flags to gate on would have to either ignore the switch or invent a policy of its
     // own, and both are worse than one more read here.
     const settings = await meta.getOrgSettings(x.org_id)
+    // Resolved ONCE: the same read answers what the executor may call and whether the write
+    // gate must demote this ask. Two reads could disagree.
+    const reach = await contextTools(x)
     return c.json({
       session: {
         ...sessionJson(claimed),
@@ -1676,16 +1700,27 @@ export const contextRoutes = (ctx: AppContext) => {
       flags: {
         agentKillswitch: settings.agentKillswitch,
         agentAutoEnabled: settings.agentAutoEnabled,
+        // Same rung as the run lane: an ask that can spend a credential files its page for
+        // review instead of publishing it live (@derive/core decideWrite, rung 3).
+        credentialed: reach.credentialed,
       },
       // Projected def + ref only, as the run claim is: RunTool's routing fields, and the
       // connection behind them, stay server-side.
-      tools: (await contextTools(x)).tools.map((t) => ({ def: t.def, ref: t.ref })),
+      tools: reach.tools.map((t) => ({ def: t.def, ref: t.ref })),
     })
   })
 
   // Execute one of the session's tools — the ask lane's mirror of the run proxy. The
   // executor holds a capability token and no credential, so the call comes back here to
   // be re-checked against this context's list and run server-side.
+  //
+  // Reached today ONLY by the in-process Workers loop (lib/substrate-loop.ts) — the lane with
+  // no container, which therefore cannot run code. The CLI runner deliberately does not call
+  // it: `queue()` drops the tools array and serveSessionOnce ignores `claimed.tools`, because
+  // a runner HAS a machine, so its contexts get their credentials delivered and use ordinary
+  // libraries instead. That asymmetry is intended, not an unfinished wiring job — the endpoint
+  // is not dead code, and it is also not the road new credential shapes travel (see the
+  // FROZEN SURFACE note on httpTools).
   app.post("/v1/agent/sessions/:id/tool", async (c) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
