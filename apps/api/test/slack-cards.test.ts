@@ -174,3 +174,30 @@ describe("mrkdwnBody — a URL-ish label may not name a DIFFERENT destination", 
     expect(mrkdwnBody("[//derive.to/x](https://evil.example)")).toBe("<https://evil.example>")
   })
 })
+
+// Fidelity gaps found by rendering a real review comment into a live workspace: our own
+// escaping killed markdown block quotes (mrkdwn supports them), and markdown's `~~x~~` is not
+// mrkdwn's `~x~`.
+describe("mrkdwnBody — constructs mrkdwn supports but escaping was eating", () => {
+  it("keeps a line-leading block quote", () => {
+    expect(mrkdwnBody("> quoted line")).toBe("> quoted line")
+    expect(mrkdwnBody("a\n> quoted\nb")).toBe("a\n> quoted\nb")
+  })
+
+  it("still escapes a > that is NOT a block-quote marker", () => {
+    expect(mrkdwnBody("a > b")).toBe("a &gt; b")
+    expect(mrkdwnBody("Foo<Bar> x")).toBe("Foo&lt;Bar&gt; x")
+  })
+
+  it("converts markdown strikethrough to mrkdwn's single tilde", () => {
+    expect(mrkdwnBody("~~struck~~ ok")).toBe("~struck~ ok")
+  })
+
+  // The safety argument for unescaping a line-leading `>`: every `<` is escaped, so a lone `>`
+  // has nothing to close. Control syntax must stay inert next to, and inside, a quote.
+  it("keeps control syntax inert around a block quote", () => {
+    expect(mrkdwnBody("<!channel>\n> quote")).toBe("&lt;!channel&gt;\n> quote")
+    expect(mrkdwnBody("> <!channel>")).toBe("> &lt;!channel&gt;")
+    expect(mrkdwnBody("> <@U1> and <!here>")).toBe("> &lt;@U1&gt; and &lt;!here&gt;")
+  })
+})

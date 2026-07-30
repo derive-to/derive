@@ -19,6 +19,12 @@ export const MAX_SECTION = 2900
  *  `<url|label>` link nor reach Slack's control syntax (`<!channel>`, `<!here>`, `<@U…>`).
  *  Slack unescapes them back to literals when it renders.
  *
+ *  Apply it to the WHOLE body, with no exceptions carved out for code. A ``` fence is not a
+ *  safe harbour in mrkdwn: a raw `<!channel>` inside one still notified the channel when
+ *  tested against the live API. There is no region of a comment body where escaping is
+ *  optional. It is also lossless — a mrkdwn section unescapes entities everywhere, inside code
+ *  spans and fences included, so an escaped `&lt;div&gt;` renders as `<div>` in a code sample.
+ *
  *  NEVER apply this to a URL we build: it rewrites `&` to `&amp;` and corrupts the query. */
 export const escapeMrkdwn = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -31,13 +37,39 @@ const MD_LINK = /\[([^\]\n]*)\]\((https?:\/\/[^\s<>|)]+)\)/g
 
 /** Convert the markdown subset Slack has an equivalent for. Runs on text that is ALREADY
  *  escaped, so no rule here can be confused by a `<` or `&` in the source. Conservative on
- *  purpose: it only rewrites constructs that would otherwise render as literal characters. */
+ *  purpose: it only rewrites constructs that would otherwise render as literal characters.
+ *
+ *  Slack's native `markdown` block (Feb 2025) would replace this and render far more — code
+ *  fences with syntax highlighting, tables, ordered lists, task lists, block quotes. It was
+ *  measured against the live API rather than assumed, and it does not fit untrusted text:
+ *    - a raw `<!channel>` in a markdown block DOES broadcast, so escaping is still required;
+ *    - but a markdown block does NOT unescape entities inside code spans or fences, so that
+ *      same escaping renders `&lt;div&gt;` literally in every code sample — and code is most
+ *      of what these comments carry;
+ *    - escaping only OUTSIDE code regions would need a Markdown tokenizer agreeing with
+ *      Slack's fence semantics exactly, where any divergence is either a mangled code sample
+ *      or an unescaped mention;
+ *    - it also builds links for non-http schemes (`javascript:`, `data:`) and rejects
+ *      `verbatim` outright (internal_error).
+ *  A mrkdwn section takes one unconditional escape and unescapes everywhere, so it is both
+ *  safe and lossless here. Revisit only if Slack documents entity handling inside code. */
 const renderProse = (s: string): string =>
   s
     .replace(/\*\*(.+?)\*\*/g, "*$1*")
     .replace(/__(.+?)__/g, "*$1*")
+    // Markdown's strikethrough is `~~x~~`; mrkdwn's is a single tilde.
+    .replace(/~~(.+?)~~/g, "~$1~")
     .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
     .replace(/^\s*[-*]\s+/gm, "• ")
+    // Restore a line-leading block quote, which mrkdwn supports and the escape pass above had
+    // been eating — quoting the text you are commenting on is bread and butter for a review
+    // comment, and it was arriving as a literal ">".
+    //
+    // Safe because it is the ONLY `>` we let back through, and a `>` alone is inert: every
+    // control sequence has the form `<…>`, and there is no unescaped `<` left anywhere in
+    // prose for it to close. Links are emitted as complete `<url|label>` tokens, so there is no
+    // half-open one for a later `>` to terminate either.
+    .replace(/^&gt;(\s?)/gm, ">$1")
 
 /** Cut rendered PROSE to `max` without splitting something indivisible.
  *
