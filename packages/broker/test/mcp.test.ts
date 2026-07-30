@@ -145,6 +145,25 @@ describe("MCP broker: connect + list + call", () => {
     expect(cursors).toContain("2")
   })
 
+  it("refuses a server with too many tools rather than truncating the list", async () => {
+    // Every tool's description lands in EVERY run's prompt for a bound connection, so an
+    // unbounded server is unbounded cost. Truncating would be worse than refusing: the agent
+    // silently cannot see tools the human believes are connected, and the pin would cover only
+    // the part we happened to fetch.
+    const many: Tool[] = Array.from({ length: 250 }, (_, i) => ({
+      name: `tool${i}`,
+      description: "x",
+    }))
+    const broker = new McpBroker(fakeServer({ tools: many, pages: 5 }).impl)
+    const link = await broker.connect({
+      orgId: "o1",
+      userId: "u1",
+      toolkit: "https://big.test/mcp",
+    })
+    // Refused, so nothing usable is stored — not a partial list that looks complete.
+    expect(link.status).toBe("pending")
+  })
+
   it("declares the negotiated protocol version on every request after initialize", async () => {
     // A client that omits this header tells the server to assume 2025-03-26. This one used to
     // omit it AND ask for 2025-03-26, negotiating as a 16-month-old revision by accident.

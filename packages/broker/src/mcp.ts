@@ -70,6 +70,21 @@ const CLIENT_PROTOCOL_VERSION = "2025-11-25"
 const MAX_PAGES = 50
 
 /**
+ * Ceiling on how many tools one server may contribute.
+ *
+ * Every tool's name and description lands in EVERY run's prompt for a bound connection, so an
+ * unbounded server is unbounded cost on work that has nothing to do with it — two real tools from
+ * a public server measured 2.5KB. Published guidance puts tool-selection degradation past roughly
+ * 30-50 tools, so this is deliberately generous: a sanity ceiling against a pathological or
+ * hostile server, not a curation policy.
+ *
+ * REFUSED at connect, never truncated. A truncated list is the worst outcome available: the agent
+ * silently cannot see tools the human believes are connected, and the pin covers only the part we
+ * happened to fetch. Refusing names the number and lets a human decide.
+ */
+const MAX_TOOLS = 200
+
+/**
  * Resolves the bearer token for one target — a REF when listing or executing, the bare URL at
  * connect time, when no ref exists yet. Returns undefined for a server that needs no credential.
  *
@@ -293,6 +308,12 @@ export class McpBroker implements ToolBroker {
           ...(t.annotations ? { annotations: t.annotations } : {}),
         })
       }
+      // Checked as we go, so a runaway server is refused rather than paged through in full.
+      if (out.length > MAX_TOOLS)
+        throw new Error(
+          `MCP server exposes more than ${MAX_TOOLS} tools — refusing rather than truncating, ` +
+            "because a truncated list silently hides tools a human thinks are connected",
+        )
       const next = body.result?.nextCursor
       if (typeof next !== "string" || next.length === 0) return out
       cursor = next
