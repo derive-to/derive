@@ -44,6 +44,9 @@ compatible client. Messages are tagged with a `source` field.
 | `anchor-click` | `{ id }` | user clicked a painted highlight |
 | `open-external` | `{ href }` | a link that must not navigate the frame (anything but an in-page `#` or a same-origin `/raw/…` bundle page); the host validates the scheme, routes its own `/artifacts/…` in-app, and opens the rest in a new tab |
 | `esc` | — | Escape pressed while focus was inside the frame; the host applies its own dismissals (e.g. exiting focus mode) |
+| `edit-state` | `{ dirty }` | inline edit mode: how many blocks currently differ from the pre-edit snapshot |
+| `edit-edits` | `{ edits: [{ quote: { exact, prefix, suffix }, new_text }] }` | reply to `edit-collect`: each changed text run as a quote-scoped edit, built from the PRE-edit document text |
+| `edit-blocked` | `{ reason }` | a click landed where inline editing can't reach (`"control"` = a form control/media, `"dynamic"` = content the page's own script created after the snapshot) |
 
 ### Host → artifact frame (`source: "derive-host"`)
 
@@ -51,6 +54,9 @@ compatible client. Messages are tagged with a `source` field.
 |---|---|---|
 | `anchors` | `{ anchors: [{ id, exact, prefix, suffix }] }` | paint these anchors as highlights; reply with `anchors-resolved` |
 | `focus-anchor` | `{ id }` | scroll to + flash that anchor |
+| `edit-mode` | `{ on }` | enter/leave inline edit mode: on entry the client snapshots the document text (quotes are built from it); a click then lands a caret in the nearest text block (`contenteditable`, plain text only — Enter blocked, paste flattened); leaving restores anything unsaved |
+| `edit-collect` | — | reply with `edit-edits`: the changed runs diffed against the snapshot, word-snapped, as quote-scoped edits |
+| `edit-restore` | — | revert every edited block to its snapshot (the Discard verb); dirty drops to 0 |
 
 ### Resolution
 

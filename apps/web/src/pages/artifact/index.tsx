@@ -30,6 +30,7 @@ import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact
 import { ArtifactTopBar } from "./artifact-top-bar"
 import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
+import { EditBar } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
 import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
@@ -45,6 +46,7 @@ import { useArtifactFrame } from "./use-artifact-frame"
 import { useArtifactLive } from "./use-artifact-live"
 import { useArtifactRoute } from "./use-artifact-route"
 import { useCommentsPanel } from "./use-comments-panel"
+import { useInlineEdit } from "./use-inline-edit"
 import { useVersionDiff } from "./use-version-diff"
 import { WorkbenchSkeleton } from "./workbench-skeleton"
 
@@ -195,6 +197,10 @@ export function Artifact() {
   // resubscribe every time the user opens the editor.
   const editingRef = useRef(editing)
   editingRef.current = editing
+  // Same read-through-a-ref pattern for INLINE editing (set after the hook below):
+  // while it's active the frame is version-frozen, so the live update must warn
+  // instead of quietly swapping the document out from under typed text.
+  const inlineEditRef = useRef(false)
   const pinnedRef = useRef(version)
   pinnedRef.current = version
   const onVersionLive = useCallback(
@@ -202,7 +208,12 @@ export function Artifact() {
       load()
       if (pinnedRef.current !== undefined) return
       const v = n !== undefined ? `v${n}` : "A new version"
-      if (editingRef.current) {
+      if (inlineEditRef.current) {
+        toast.warning(`${v} was just published. Saving will re-check your edits against it.`, {
+          id: `stale-edit-${shortId}`,
+          duration: 8000,
+        })
+      } else if (editingRef.current) {
         toast.warning(`${v} was just published — publishing this edit will replace it.`, {
           id: `stale-edit-${shortId}`,
           duration: 8000,
@@ -411,6 +422,24 @@ export function Artifact() {
     setActiveThread,
   })
 
+  // Inline (click-to-type) editing: the frame owns the caret and the diffs, this
+  // hook owns the mode + save/propose. Entering clears any parked selection so the
+  // comment grammar and the edit grammar never overlap; the raw source editor is
+  // the fallback when a quote can't be applied (formatted spans).
+  const inlineEdit = useInlineEdit({
+    shortId,
+    art,
+    post,
+    load,
+    onOpenSourceEditor: startEdit,
+    onEnter: () => {
+      setSel(null)
+      setComposer(null)
+      setActiveThread(null)
+    },
+  })
+  inlineEditRef.current = inlineEdit.active
+
   // Reinstate a removed artifact (owner-only, from the tombstone) and lock/unlock the
   // current version — page-level writes, hoisted above the load guards like the actions
   // hook so the primitive can govern them.
@@ -459,7 +488,9 @@ export function Artifact() {
       />
     )
 
-  const shown = version ?? art.current_version
+  // While inline editing, the shown version stays frozen at the mode-entry head so
+  // a concurrent publish can't reload the frame and wipe typed-but-unsaved text.
+  const shown = version ?? inlineEdit.frozenVersion ?? art.current_version
   // The public-history gate, client half: an anonymous @vN link on an artifact whose
   // owner kept history private is a 404, not a downgrade — the server already
   // refuses the old version's bytes (raw.ts), so render the same not-found the
@@ -722,6 +753,21 @@ export function Artifact() {
               openCount={openCount}
               showEdit={editable && canPropose && !editing && !art.managed}
               editLabel={effectiveCanPublish ? "Edit source (dev)" : "Propose change (dev)"}
+              // Inline editing: desktop, current version, single file, not a deck
+              // (slides present their own surface), not GitHub-managed. Commenters
+              // get the same affordance as a suggestion (it lands as a proposal).
+              showInlineEdit={
+                editable &&
+                canPropose &&
+                !editing &&
+                !inlineEdit.active &&
+                !art.managed &&
+                !isMobile &&
+                !deck &&
+                art.current_content_type !== "text/x-derive-deck"
+              }
+              inlineEditLabel={effectiveCanPublish ? "Edit" : "Suggest edits"}
+              onInlineEdit={inlineEdit.start}
               isDeck={!!deck || art.current_content_type === "text/x-derive-deck"}
               canLock={canLock}
               canMove={canMove}
@@ -812,6 +858,18 @@ export function Artifact() {
                   ? `${openCount} comment${openCount === 1 ? "" : "s"}`
                   : "Show comments"}
               </DocFab>
+            )}
+            {/* Inline edit mode's one piece of chrome: the floating Done / Discard·Save
+                bar. The document itself is the editor — click a block, type. */}
+            {inlineEdit.active && !editing && !focus && (
+              <EditBar
+                dirty={inlineEdit.dirty}
+                canPublish={effectiveCanPublish}
+                saving={inlineEdit.saving}
+                onSave={inlineEdit.save}
+                onDiscard={inlineEdit.discard}
+                onDone={inlineEdit.done}
+              />
             )}
             {/* Focus mode: the one way back (the header is hidden). Esc also exits. */}
             {focus && (

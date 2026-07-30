@@ -55,6 +55,10 @@ export function ArtifactTopBar(props: {
   openCount: number
   showEdit: boolean
   editLabel: string
+  /** Inline (click-to-type) editing — the primary edit affordance, shown as a real
+   *  button ahead of Share. The ⋯ "Edit source" item stays the raw fallback. */
+  showInlineEdit: boolean
+  inlineEditLabel: string
   /** This artifact is a slide deck — offer Present (fullscreen) in the ⋯ menu. */
   isDeck: boolean
   /** Caller may toggle the change-lock (editor/owner). */
@@ -75,6 +79,7 @@ export function ArtifactTopBar(props: {
   onHistory: () => void
   onReview: () => void
   onStartEdit: () => void
+  onInlineEdit: () => void
   onToggleComments: () => void
   onPresent: () => void
   onLockToggle: () => void
@@ -95,6 +100,20 @@ export function ArtifactTopBar(props: {
           star (glanceable state), then the overflow. Tight within; the collaboration
           cluster and comments toggle are held apart by spacing, not vertical rules. */}
       <div className="flex items-center gap-0.5">
+        {/* Inline editing leads the cluster as a labeled ghost verb — the calm
+            counterpart to the filled Share. Editors see Edit; commenters (and
+            locked artifacts) see Suggest edits, which lands as a proposal. */}
+        {props.showInlineEdit && (
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="artifact-inline-edit"
+            onClick={props.onInlineEdit}
+          >
+            <Icon name="edit" size={16} className="text-muted-foreground" />
+            {props.inlineEditLabel}
+          </Button>
+        )}
         <ShareButton
           shortId={shortId}
           myRole={props.myRole}
