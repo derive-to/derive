@@ -69,14 +69,30 @@ export interface LoopSubstrateOptions {
    *  gateway). When set, every run on this deploy calls it with this key instead of resolving a
    *  per-run credential.
    *
-   *  That BYPASSES THE PAYER CHAIN by design, and it is why this is a self-host/dev affordance
-   *  rather than something derive.to sets: one ambient key means the operator pays for everyone
-   *  on the instance, which is the correct model for a single-tenant box and the wrong one for a
-   *  multi-tenant host. See the Node caveat in the status doc. */
+   *  It BYPASSES THE PAYER CHAIN by design: one operator key means this deployment pays for
+   *  every workspace on it, so there is nothing for a chain to resolve and no plan for anyone to
+   *  connect. That is the HOSTED posture, not a self-host-only affordance — derive.to sets these
+   *  three, and the workspace is metered against its tier allowance instead of billing a
+   *  credential it never supplied. An earlier version of this comment said the opposite; it was
+   *  read as intent and cost a release. */
   gateway?: { baseUrl: string; apiKey: string; model: string }
   /** Cloudflare's `ctx.waitUntil`, so a Worker does not tear the isolate down mid-run. Absent on
    *  Node, where nothing collects the process out from under us. */
   waitUntil?: (p: Promise<unknown>) => void
+  /** How the client REACHES the API. Defaults to global `fetch`, which is right on Node, where
+   *  the loop and the API are the same process reachable over loopback.
+   *
+   *  On Workers it must not be. This substrate calls its own deployment, so a global `fetch` at
+   *  `server` leaves the isolate, crosses the edge, and comes back to the same Worker. One run
+   *  survives that; the cron tick starting three at once does not — each self-subrequest sat
+   *  until it timed out and every scheduled run died on `/v1/agent/runs/claim failed (522)`
+   *  while a single run booted from the queue nudge succeeded. Passing the Worker's own handler
+   *  here keeps the request identical — same route, same bearer, same middleware, same
+   *  authorization — and removes only the trip through the network.
+   *
+   *  It stays an injected function rather than a platform branch so there is still ONE
+   *  implementation, which is the property this substrate exists to have. */
+  fetchImpl?: (req: Request) => Promise<Response>
   /** Bound the model loop. */
   maxTurns?: number
 }
@@ -107,20 +123,26 @@ const NO_FLAGS: AutonomyFlags = { agentKillswitch: false, agentAutoEnabled: fals
  *  truncated rather than sent whole and rejected by the provider. */
 const MAX_MANIFEST_CHARS = 100_000
 
-const api = (server: string, token: string) => {
+const api = (
+  server: string,
+  token: string,
+  fetchImpl: (req: Request) => Promise<Response> = fetch,
+) => {
   const call = async (path: string, init?: RequestInit): Promise<Response> =>
-    fetch(`${server}${path}`, {
-      ...init,
-      headers: {
-        authorization: `Bearer ${token}`,
-        ...(init?.body && typeof init.body === "string"
-          ? { "content-type": "application/json" }
-          : {}),
-        ...(init?.headers ?? {}),
-      },
-      // A blackholed host must not pin the loop open forever.
-      signal: AbortSignal.timeout(60_000),
-    })
+    fetchImpl(
+      new Request(`${server}${path}`, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(init?.body && typeof init.body === "string"
+            ? { "content-type": "application/json" }
+            : {}),
+          ...(init?.headers ?? {}),
+        },
+        // A blackholed host must not pin the loop open forever.
+        signal: AbortSignal.timeout(60_000),
+      }),
+    )
   return {
     call,
     json: async <T>(path: string, init?: RequestInit): Promise<T> => {
@@ -366,7 +388,7 @@ const serveOneRun = async (
   server: string,
   opts: LoopSubstrateOptions,
 ): Promise<void> => {
-  const client = api(server, token)
+  const client = api(server, token, opts.fetchImpl)
 
   // CLAIM. The token is scoped to this run, so the claim returns it and nothing else — the same
   // status-guarded transition the container executor makes, which is what stops a double-dispatch
@@ -479,7 +501,7 @@ const serveOneSession = async (
   server: string,
   opts: LoopSubstrateOptions,
 ): Promise<void> => {
-  const client = api(server, token)
+  const client = api(server, token, opts.fetchImpl)
 
   // CLAIM — a DIFFERENT shape from the run lane's, deliberately not papered over. The token
   // already names the one session it may touch, so the server claims that session and hands back

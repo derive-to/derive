@@ -957,3 +957,58 @@ describe("loop substrate: resolving the model credential", () => {
     await api.close()
   })
 })
+
+describe("how the loop REACHES the API", () => {
+  // THE REGRESSION. This substrate is an HTTP client of its own deployment. On Node that is a
+  // loopback call and global fetch is right; on Workers it exits the isolate, crosses the edge
+  // and comes back to the SAME Worker. One run survived that. The cron tick starting three at
+  // once did not: every self-subrequest sat until it timed out, so each scheduled run died on
+  // `/v1/agent/runs/claim failed (522)` while a run booted from the queue nudge succeeded —
+  // which is exactly the shape that makes it look like the schedule lane is broken.
+  //
+  // Guarded by making global fetch a landmine: if anything in the loop stops honouring
+  // `fetchImpl`, the run cannot complete.
+  it("uses the injected transport for EVERY call, never global fetch", async () => {
+    const api = stubApi({ run: baseRun })
+    const url = await api.url
+    const realFetch = globalThis.fetch
+    const seen: string[] = []
+    globalThis.fetch = (async () => {
+      throw new Error("global fetch used: on Workers this is a self-subrequest and times out")
+    }) as typeof fetch
+    try {
+      await loopSubstrate({
+        callModel: answerTurn(revision()),
+        fetchImpl: (req) => {
+          seen.push(new URL(req.url).pathname)
+          return realFetch(req)
+        },
+      }).start({ runId: "run_1", token: "tok", server: url })
+
+      const deadline = Date.now() + 10_000
+      while (api.rec.finishes.length === 0 && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 20))
+
+      // It ran to completion without global fetch ever being reachable...
+      expect(api.rec.finishes).toHaveLength(1)
+      // ...and the claim in particular — the call that 522'd in production — went through the
+      // injected transport.
+      expect(seen).toContain("/v1/agent/runs/claim")
+      expect(seen.length).toBeGreaterThan(1)
+    } finally {
+      globalThis.fetch = realFetch
+      await api.close()
+    }
+  })
+
+  it("falls back to global fetch when no transport is injected — Node keeps working", async () => {
+    const api = stubApi({ run: baseRun })
+    const url = await api.url
+    try {
+      const settled = await runToSettle(url, api.rec, answerTurn(revision()))
+      expect(settled).toBeTruthy()
+    } finally {
+      await api.close()
+    }
+  })
+})

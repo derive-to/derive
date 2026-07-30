@@ -459,7 +459,7 @@ export default {
       },
       // Same reason as the cron tick: on the loop substrate the run happens here, so the consumer
       // invocation has to be kept alive past the ack.
-      ctx ? (p) => ctx.waitUntil(p) : undefined,
+      ctx,
     )
   },
 }
@@ -485,8 +485,12 @@ function workerGateway(env: Env): { baseUrl: string; apiKey: string; model: stri
 async function withHostedDispatch(
   env: Env,
   fn: (deps: DispatchDeps) => Promise<void>,
-  waitUntil?: (p: Promise<unknown>) => void,
+  ctx?: ExecutionContext,
 ): Promise<void> {
+  // Two things come from the ExecutionContext, and both are why hosted runs work at all here:
+  // `waitUntil` keeps the isolate alive past dispatch, and `handle` lets the loop reach this
+  // API without leaving the isolate (see `fetchImpl` on the substrate).
+  const waitUntil = ctx ? (p: Promise<unknown>) => ctx.waitUntil(p) : undefined
   // WHICH SUBSTRATE, mirroring node.ts. `DERIVE_LOOP_RUNS=1` runs the work in this isolate — a
   // model and fetch, which is all "read a document, write a revision" needs, and the only runner
   // in scope. It is the SAME file Node uses; the entire platform difference is the `waitUntil`
@@ -510,7 +514,19 @@ async function withHostedDispatch(
   const gateway = workerGateway(env)
   const substrate =
     env.DERIVE_LOOP_RUNS === "1"
-      ? loopSubstrate({ model: env.DERIVE_LOOP_MODEL, gateway, waitUntil })
+      ? loopSubstrate({
+          model: env.DERIVE_LOOP_MODEL,
+          gateway,
+          waitUntil,
+          // Reach this API WITHOUT leaving the isolate. The loop is an HTTP client of its own
+          // deployment; on Workers a global fetch at BASE_URL exits to the edge and comes back
+          // to this same Worker, and the cron tick starting several runs at once made every one
+          // of those self-subrequests time out (522 on the claim). `handle` is the exact entry a
+          // real request takes, so the route, the bearer, the middleware and the authorization
+          // are unchanged — only the network hop is gone. Needs the ExecutionContext, which is
+          // why withHostedDispatch takes `ctx` rather than a bare waitUntil.
+          ...(ctx ? { fetchImpl: (req: Request) => Promise.resolve(handle(req, env, ctx)) } : {}),
+        })
       : containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
   const secret = env.DERIVE_AUTH_SECRET
   if (!substrate || !secret) return
@@ -541,5 +557,5 @@ const hostedRunTick = (env: Env, ctx?: ExecutionContext): Promise<void> =>
     // work has begun. Without handing it waitUntil, the cron invocation finishes and Cloudflare
     // tears the isolate down mid-run: the run stays `running` until the reclaim sweep requeues it,
     // which looks like a hang rather than the truncation it is.
-    ctx ? (p) => ctx.waitUntil(p) : undefined,
+    ctx,
   )
