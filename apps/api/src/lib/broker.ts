@@ -118,12 +118,14 @@ export const toolsForRun = async (
     if (isDirect(cn.kind)) defs = httpTools(cn.toolkit)
     else {
       const via = route(cn.broker_ref)
-      defs = await via.toolsFor([cn.broker_ref]).catch(() => [])
+      // Addressed by ref AND connection: the ref routes, the id says whose credential.
+      const target = authTarget(cn.broker_ref, cn.id)
+      defs = await via.toolsFor([target]).catch(() => [])
       if (defs.length === 0)
         quiet?.push({
           connection_id: cn.id,
           toolkit: cn.toolkit,
-          reason: quietReason(via, cn.broker_ref) ?? "no_tools",
+          reason: quietReason(via, target) ?? "no_tools",
         })
     }
     for (const def of defs) out.push({ def, ...entry })
@@ -156,16 +158,34 @@ export const mcpAuthFor = (
   orgId: string,
   encryptionKey: string | undefined,
 ): McpAuthResolver => {
-  // Fetched at most once per router, and only if an MCP ref is actually reached — a workspace
-  // with no MCP connection pays nothing. Memoised on the promise so concurrent refs share it.
-  let all: Promise<ConnectionRecord[]> | null = null
+  // Keyed by CONNECTION ID, which the caller appends to the target as `<ref>#<id>`.
+  //
+  // Resolving by ref alone is not merely imprecise, it is a cross-user credential leak: a ref is
+  // `mcp:<pin>:<url>` and the pin is a hash of the tool list, so two members who connect the SAME
+  // server produce the SAME ref. "The row with this ref that has a secret" then hands one
+  // member's run whatever token the other stored — the exact fallback that "identity never falls
+  // back" forbids. A connection id cannot collide, and the org check keeps a guessed id from
+  // reaching another tenant's row.
+  const cache = new Map<string, Promise<ConnectionRecord | null>>()
   return async (target: string) => {
-    if (!encryptionKey || !target.startsWith("mcp:")) return undefined
-    all ??= meta.listConnections(orgId)
-    const cn = (await all).find((x) => x.broker_ref === target && x.secret_enc)
-    return cn?.secret_enc ? decryptSecret(cn.secret_enc, encryptionKey) : undefined
+    if (!encryptionKey) return undefined
+    const hash = target.indexOf("#")
+    if (hash < 0) return undefined
+    const id = target.slice(hash + 1)
+    let row = cache.get(id)
+    if (!row) {
+      row = meta.getConnection(id)
+      cache.set(id, row)
+    }
+    const cn = await row
+    if (!cn || cn.org_id !== orgId || !cn.secret_enc) return undefined
+    return decryptSecret(cn.secret_enc, encryptionKey)
   }
 }
+
+/** The target string an MCP call is resolved against: the ref (routing) plus the connection id
+ *  (whose credential). Two members on one server share a ref and must not share a token. */
+export const authTarget = (ref: string, connectionId: string): string => `${ref}#${connectionId}`
 
 /** The tools a direct connection exposes. Named `<toolkit>.<verb>` to match the broker's
  *  convention, so the runner's shim treats every kind of connection identically.
@@ -341,8 +361,19 @@ export const callTool = async (opts: {
       return { ok: true, result: await executeHttpTool(meta, cn, tool, args ?? {}, encryptionKey) }
     }
     if (!broker) return { ok: false, status: 502, message: "no broker for this workspace" }
-    const via = (opts.route ?? refRouter(broker))(match.ref)
-    return { ok: true, result: await via.execute({ ref: match.ref, tool, args: args ?? {} }) }
+    // Execute must spend the SAME connection's credential the listing used, so it addresses by
+    // (ref, connection) too. A shared router built without this run's connections resolves no
+    // credential, which fails closed — an unauthenticated call the server refuses — rather than
+    // silently reaching for whichever token happens to match the ref.
+    const via = (opts.route ?? refRouter(broker, mcpAuthFor(meta, orgId, encryptionKey)))(match.ref)
+    return {
+      ok: true,
+      result: await via.execute({
+        ref: authTarget(match.ref, match.connectionId),
+        tool,
+        args: args ?? {},
+      }),
+    }
   } catch (e) {
     return { ok: false, status: 502, message: e instanceof Error ? e.message : "tool failed" }
   }

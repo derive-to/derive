@@ -55,7 +55,13 @@ export const parseMcpRef = (ref: string): McpRef | null => {
   const rest = ref.slice(REF_PREFIX.length)
   const sep = rest.indexOf(":")
   if (sep < 0) return null
-  return { pin: rest.slice(0, sep), url: rest.slice(sep + 1) }
+  // A caller may append `#<connectionId>` to say WHOSE credential this call spends: two members
+  // who connect the same server produce the same ref (the pin is a hash of the tool list), so the
+  // ref alone cannot identify a credential. Routing ignores the suffix; `authFor` receives the
+  // whole target and keys on it.
+  const url = rest.slice(sep + 1)
+  const hash = url.indexOf("#")
+  return { pin: rest.slice(0, sep), url: hash < 0 ? url : url.slice(0, hash) }
 }
 
 /** Pins carry their algorithm, so a pin written by an older build fails LOUDLY on sight rather

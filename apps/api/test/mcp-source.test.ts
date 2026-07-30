@@ -29,13 +29,19 @@ type Tool = { name: string; description: string; inputSchema?: Record<string, un
 /** A real MCP server on a real port. `tools` is mutable so a test can change what it advertises
  *  after a connection was approved, which is the tool-poisoning case the pin exists for. */
 const startServer = async (tools: Tool[]) => {
-  const state = { tools, calls: [] as { name: string; args: unknown }[] }
+  const state = {
+    tools,
+    calls: [] as { name: string; args: unknown }[],
+    /** Every Authorization header the server saw — how a test proves WHOSE credential was spent. */
+    auth: [] as (string | undefined)[],
+  }
   const server: Server = createServer((req, res) => {
     let raw = ""
     req.on("data", (c) => {
       raw += c
     })
     req.on("end", () => {
+      state.auth.push(req.headers.authorization)
       const msg = JSON.parse(raw || "{}") as { id?: number; method?: string; params?: never }
       const result =
         msg.method === "initialize"
@@ -59,7 +65,11 @@ const startServer = async (tools: Tool[]) => {
 }
 
 const owner: TestUser = { id: "u_mcps_own", email: "mcpsown@derive.test", name: "O" }
-const { app, meta } = makeAuthedApp("mcp-source", [owner], "editor")
+/** Secrets are encrypted at rest, so the app needs a key for `mcp_secret` to round-trip. */
+const KEY = "test-encryption-key-for-mcp-sources"
+const { app, meta } = makeAuthedApp("mcp-source", [owner], "editor", {
+  deps: { encryptionKey: KEY },
+})
 
 const servers: Server[] = []
 afterAll(() => {
@@ -182,6 +192,44 @@ describe("MCP as a source: connect, list, call", () => {
     expect(decideWrite({ ...gate, flags: { ...gate.flags, credentialed: false } })).toBe(
       "live_publish_with_review",
     )
+  })
+
+  it("two members on the SAME server never spend each other's credential", async () => {
+    // The refs are IDENTICAL here — `mcp:<pin>:<url>`, and the pin is a hash of the tool list —
+    // so two members connecting the same server produce the same ref. Resolving a credential by
+    // ref alone therefore cannot tell them apart, and would hand one member's run the other's
+    // token. `toolsForRun` even documents that refs collide, a few lines above the resolution.
+    const mcp = await startServer([{ name: "read", description: "Read a doc." }])
+    servers.push(mcp.server)
+    const a = await connect({ toolkit: "shared-a", mcp_url: mcp.url, mcp_secret: "alice-token-1" })
+    const b = await connect({ toolkit: "shared-b", mcp_url: mcp.url, mcp_secret: "bob-token-22" })
+    const [rowA] = await meta.getConnectionsByIds([a.body.id as string])
+    const [rowB] = await meta.getConnectionsByIds([b.body.id as string])
+    expect(rowA?.broker_ref).toBe(rowB?.broker_ref)
+
+    // BOTH directions, because a resolver that happens to pick the newest row would pass one of
+    // them by luck and leak on the other.
+    for (const [who, conn, want, other] of [
+      ["bob", b, "Bearer bob-token-22", "Bearer alice-token-1"],
+      ["alice", a, "Bearer alice-token-1", "Bearer bob-token-22"],
+    ] as const) {
+      mcp.state.auth.length = 0
+      await toolsForRun(
+        meta,
+        new LocalBroker(),
+        "default",
+        [conn.body.id as string],
+        undefined,
+        KEY,
+      )
+      const seen = mcp.state.auth.filter(Boolean)
+      expect(seen.length, `${who}: server saw a credential`).toBeGreaterThan(0)
+      expect(
+        seen.every((h) => h === want),
+        `${who} spends ${who}'s token, saw ${seen[0]}`,
+      ).toBe(true)
+      expect(seen).not.toContain(other)
+    }
   })
 
   it("is stored as its own kind, not as oauth", async () => {
