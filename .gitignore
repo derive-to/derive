@@ -71,3 +71,4 @@ apps/api/wrangler.staging.toml
 
 # Generated preview/staging Worker configs: carry REAL binding ids, never committed.
 apps/api/wrangler.preview.toml
+apps/api/wrangler.perf.toml
