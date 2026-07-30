@@ -76,7 +76,12 @@ const must = (cond, msg) => {
 must(!out.includes("[[routes]]"), "routes survived — the preview would serve production hostnames")
 must(!out.includes("[triggers]"), "cron survived — a second scheduler on production's rows")
 must(!out.includes("queues.consumers"), "queue consumer survived — it would steal run messages")
-must(new RegExp(`^name = "${name}"$`, "m").test(out), "worker name was not replaced")
+// A plain line match, NOT `new RegExp(...${name}...)`. The name arrives on argv, so building a
+// pattern out of it is regex injection — a name containing regex metacharacters would change
+// what this guard tests, and the guard is the thing standing between a preview and production's
+// hostnames. CodeQL flags it (js/regex-injection) and is right to: "CI only ever passes
+// derive-pr-<number>" is an argument about today's caller, not about the code.
+must(out.split("\n").includes(`name = "${name}"`), "worker name was not replaced")
 must(!/^name = "derive"$/m.test(out), "the production worker name is still present")
 
 process.stdout.write(out)
