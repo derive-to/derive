@@ -28,6 +28,7 @@ import { type Auth, mcpAudiences } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
 import type { AgentLoopInput } from "./lib/agent-loop"
 import { isApiToken, verifyApiToken } from "./lib/api-token"
+import type { BillingDriver } from "./lib/billing"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
@@ -145,6 +146,10 @@ export interface AppDeps {
    */
   maxArtifacts?: number
   maxBytes?: number
+  /** Stripe access, injected so tests fake it and self-host omits it. */
+  billing?: BillingDriver
+  /** ISO instant when free-tier boundaries enforce; unset = beta grace. */
+  billingEnforceAt?: string
   /**
    * Per-actor (signed-in user or agent, falling back to IP) write rate limits,
    * in actions per minute. Applied only when rateLimit is on; identity-keyed so

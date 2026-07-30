@@ -34,6 +34,7 @@ const GROUPS: Group[] = [
   },
   { id: "slack", title: "Slack (connect + reply-back)" },
   { id: "search", title: "Semantic search (pgvector)" },
+  { id: "billing", title: "Billing (Stripe)" },
   { id: "advanced", title: "Advanced" },
 ]
 
@@ -292,6 +293,26 @@ const CONFIG_VARS: ConfigVar[] = [
   },
   { name: "DERIVE_EMBED_CF_ACCOUNT_ID", group: "search", doc: "", example: "" },
   { name: "DERIVE_EMBED_CF_API_TOKEN", group: "search", doc: "", example: "" },
+
+  // -- billing --
+  {
+    name: "STRIPE_SECRET_KEY",
+    group: "billing",
+    doc: "Stripe secret key (sk_test_/sk_live_). Unset disables the billing routes\nentirely; self-host never needs it.",
+    example: "",
+  },
+  {
+    name: "STRIPE_WEBHOOK_SECRET",
+    group: "billing",
+    doc: "Signing secret for the Stripe webhook endpoint (whsec_...). Required for\n/v1/billing/webhook to accept events.",
+    example: "",
+  },
+  {
+    name: "DERIVE_BILLING_ENFORCE_AT",
+    group: "billing",
+    doc: "ISO instant after which free-tier boundaries enforce (3 editor seats, 1 GB).\nUnset = beta grace: nothing is blocked and white-label stays free.",
+    example: "2026-09-01T00:00:00Z",
+  },
 
   // -- advanced --
   {

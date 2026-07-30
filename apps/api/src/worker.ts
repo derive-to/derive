@@ -24,6 +24,7 @@ import type { SendEmailBinding } from "./email-cf"
 import { bindingEmbedder, EMBED_DIMENSIONS, type WorkersAiLike } from "./embedder"
 import { workspacesBlockingDeletion } from "./lib/account"
 import { signupAttributionHook } from "./lib/attribution"
+import { stripeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
@@ -160,6 +161,12 @@ export interface Env {
   SLACK_CLIENT_ID?: string
   SLACK_CLIENT_SECRET?: string
   SLACK_SIGNING_SECRET?: string
+  // Stripe (billing rail). STRIPE_SECRET_KEY set ⇒ the billing routes light up;
+  // STRIPE_WEBHOOK_SECRET is required for /v1/billing/webhook to accept events.
+  STRIPE_SECRET_KEY?: string
+  STRIPE_WEBHOOK_SECRET?: string
+  // ISO instant after which free-tier boundaries enforce; unset = beta grace.
+  DERIVE_BILLING_ENFORCE_AT?: string
 }
 
 /** A cached one-shot fetch of a static asset's text (a marketing page) from the
@@ -302,6 +309,15 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // Encrypt stored GitHub PATs at rest with the edge auth secret.
         encryptionKey: secret,
         slack: slackFromEnv(env),
+        // Billing routes are dark until a Stripe secret key is bound; self-host
+        // (and any deploy without one) never needs to set it.
+        billing: env.STRIPE_SECRET_KEY
+          ? stripeBillingDriver({
+              secretKey: env.STRIPE_SECRET_KEY,
+              webhookSecret: env.STRIPE_WEBHOOK_SECRET,
+            })
+          : undefined,
+        billingEnforceAt: env.DERIVE_BILLING_ENFORCE_AT,
         superAdmins: superAdminsFromEnv(env),
         defaultOrgId: "default",
         subdomainBase: subdomainBaseFromEnv(env),

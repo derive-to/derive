@@ -60,6 +60,10 @@ export interface Config {
   maxBytes?: number
   publishRate?: number
   commentRate?: number
+  stripeSecretKey?: string
+  stripeWebhookSecret?: string
+  /** ISO instant after which the free-tier boundaries enforce. Unset = beta grace. */
+  billingEnforceAt?: string
   webOrigins: string[]
   retentionDays: number
   objectStoreUrl?: string
@@ -190,6 +194,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxBytes: posInt("DERIVE_MAX_BYTES", env.DERIVE_MAX_BYTES),
     publishRate: posInt("DERIVE_PUBLISH_RATE", env.DERIVE_PUBLISH_RATE),
     commentRate: posInt("DERIVE_COMMENT_RATE", env.DERIVE_COMMENT_RATE),
+    stripeSecretKey: env.STRIPE_SECRET_KEY,
+    stripeWebhookSecret: env.STRIPE_WEBHOOK_SECRET,
+    billingEnforceAt: env.DERIVE_BILLING_ENFORCE_AT,
     webOrigins,
     retentionDays: numOr(
       "DERIVE_ANALYTICS_RETENTION_DAYS",

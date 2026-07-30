@@ -18,6 +18,7 @@ import { restEmbedder } from "./embedder"
 import { loadLocalEmbedder } from "./embedder-local"
 import { workspacesBlockingDeletion } from "./lib/account"
 import { signupAttributionHook } from "./lib/attribution"
+import { stripeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
@@ -449,6 +450,15 @@ const app = createApp({
   // Storage backstops: unset = unlimited (self-host stays open).
   maxArtifacts: cfg.maxArtifacts,
   maxBytes: cfg.maxBytes,
+  // Billing routes are dark until a Stripe secret key is configured; self-host
+  // never needs to set one.
+  billing: cfg.stripeSecretKey
+    ? stripeBillingDriver({
+        secretKey: cfg.stripeSecretKey,
+        webhookSecret: cfg.stripeWebhookSecret,
+      })
+    : undefined,
+  billingEnforceAt: cfg.billingEnforceAt,
   // Per-actor write rate limits (per minute); unset = built-in defaults.
   publishRate: cfg.publishRate,
   commentRate: cfg.commentRate,
