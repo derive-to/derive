@@ -4,6 +4,7 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
+import { mdToHtml } from "./lib/markdown"
 
 // CHAT WITH THIS DOCUMENT — the right-rail sibling of the comments panel.
 //
@@ -130,14 +131,18 @@ function Bubble({ msg }: { msg: ChatMessage }) {
   const mine = msg.author_kind === "asker"
   return (
     <div className={cn("flex", mine ? "justify-end" : "justify-start")}>
+      {/* The SAME renderer the comments rail uses. Rendering body_md raw showed the model's
+          `**bold**` as literal asterisks in the one panel whose whole job is reading its prose,
+          while the ask view beside it rendered the identical text correctly. mdToHtml escapes
+          before it transforms, and it turns newlines into <br/>, so no pre-wrap here. */}
       <div
         className={cn(
-          "max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm",
+          "cmt-body max-w-[85%] rounded-lg px-3 py-2 text-sm [word-break:break-word]",
           mine ? "bg-primary text-primary-foreground" : "bg-muted text-foreground",
         )}
-      >
-        {msg.body_md}
-      </div>
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
+        dangerouslySetInnerHTML={{ __html: mdToHtml(msg.body_md) }}
+      />
     </div>
   )
 }
