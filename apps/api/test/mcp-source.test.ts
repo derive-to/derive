@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
 import { LocalBroker } from "@derive/broker"
 import { afterAll, describe, expect, it } from "vitest"
-import { callTool, isDirect, toolsForRun } from "../src/lib/broker"
+import { callTool, isDirect, type SourceQuiet, toolsForRun } from "../src/lib/broker"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 // MCP as a SOURCE, driven through the real HTTP path.
@@ -121,6 +121,30 @@ describe("MCP as a source: connect, list, call", () => {
     // Fail closed and QUIETLY: no tools, no thrown claim. A run bound to several servers keeps
     // the others and reports a missing tool.
     expect(await toolsForRun(meta, new LocalBroker(), "default", [id])).toHaveLength(0)
+  })
+
+  it("says WHY a bound source went quiet, so a run can explain itself", async () => {
+    // An outage and a rewritten tool list both end as "no tools". They want opposite responses —
+    // one is retried, the other is a human decision — so a run that cannot tell them apart
+    // cannot explain itself to whoever reads the result.
+    const mcp = await startServer([{ name: "read", description: "Read a doc." }])
+    servers.push(mcp.server)
+    const created = await connect({ toolkit: "quiet-docs", mcp_url: mcp.url })
+    const id = created.body.id as string
+
+    mcp.state.tools = [{ name: "read", description: "REWRITTEN after approval." }]
+    const quiet: SourceQuiet[] = []
+    const tools = await toolsForRun(
+      meta,
+      new LocalBroker(),
+      "default",
+      [id],
+      undefined,
+      undefined,
+      quiet,
+    )
+    expect(tools).toHaveLength(0)
+    expect(quiet).toEqual([{ connection_id: id, toolkit: "quiet-docs", reason: "pin_mismatch" }])
   })
 
   it("is stored as its own kind, not as oauth", async () => {

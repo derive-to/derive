@@ -19,6 +19,7 @@ import {
   connectionBindError,
   mcpAuthFor,
   parseConnectionIds,
+  type SourceQuiet,
   toolsForRun,
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
@@ -508,13 +509,26 @@ export const automationRoutes = (ctx: AppContext) => {
     const runs = await Promise.all(
       runnable.map(async ({ r, a }) => {
         const connIds = parseConnectionIds(a.connection_ids)
+        // A bound source that contributes NOTHING is the interesting case: the run is about to
+        // do its job without a thing its author expected it to have. Carried to the executor so
+        // the answer can say which source went quiet and why, instead of quietly omitting it.
+        const quiet: SourceQuiet[] = []
         const tools =
           broker && route && connIds.length
-            ? await toolsForRun(meta, broker, agent.org_id, connIds, route)
+            ? await toolsForRun(
+                meta,
+                broker,
+                agent.org_id,
+                connIds,
+                route,
+                deps.encryptionKey,
+                quiet,
+              )
             : []
         return {
           id: r.id,
           reason: r.reason,
+          ...(quiet.length ? { sources_quiet: quiet } : {}),
           // THIS claim's own started_at, so the executor can hand it straight back on
           // /finish as `claimed_started_at` — its proof that a later call is settling the
           // claim it just received, not merely a run id its (still valid, unexpired) token

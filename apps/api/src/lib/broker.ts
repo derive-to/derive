@@ -1,5 +1,5 @@
 import type { BrokerToolDef, ToolBroker } from "@derive/broker"
-import { type McpAuthResolver, makeBroker, refRouter } from "@derive/broker"
+import { type McpAuthResolver, makeBroker, quietReason, refRouter } from "@derive/broker"
 import type { ConnectionKind, ConnectionRecord, MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
 import { installationToken } from "./github-app"
@@ -8,6 +8,16 @@ import { installationToken } from "./github-app"
  *  `kind` and `connectionId` are how the tool proxy routes the call without a second lookup;
  *  the connection RECORD is deliberately not here — it carries secret_enc, and this struct
  *  flows toward the claim response. */
+/** One bound connection that contributed nothing, and why — the difference between an outage
+ *  and a server that rewrote its tools after someone approved them. */
+export interface SourceQuiet {
+  connection_id: string
+  toolkit: string
+  /** unpinned | unreachable | pin_mismatch from the MCP broker; `no_tools` when the broker
+   *  offers no explanation (a plan broker with nothing connected, say). */
+  reason: string
+}
+
 export interface RunTool {
   def: BrokerToolDef
   ref: string
@@ -34,6 +44,11 @@ export const toolsForRun = async (
   /** Needed only to decrypt an MCP connection's bearer. Omitted, MCP servers that require
    *  authentication simply contribute no tools rather than being called without a credential. */
   encryptionKey?: string,
+  /** Filled with one entry per connection that contributed NOTHING, and why. An out-param
+   *  rather than a wider return type so every existing caller is untouched — but a caller that
+   *  wants to explain itself ("I could not read X") now can, instead of a run silently missing
+   *  a source and nobody knowing whether the server is down or its tools were rewritten. */
+  quiet?: SourceQuiet[],
 ): Promise<RunTool[]> => {
   if (connectionIds.length === 0) return []
   const conns = await meta.getConnectionsByIds(connectionIds)
@@ -67,11 +82,18 @@ export const toolsForRun = async (
     // One unreachable or hostile server must not take down the whole tool list: a run bound to
     // three connections still gets the other two, and sees the failure as a missing tool rather
     // than a failed claim.
-    const defs = isDirect(cn.kind)
-      ? httpTools(cn.toolkit)
-      : await route(cn.broker_ref)
-          .toolsFor([cn.broker_ref])
-          .catch(() => [])
+    let defs: BrokerToolDef[]
+    if (isDirect(cn.kind)) defs = httpTools(cn.toolkit)
+    else {
+      const via = route(cn.broker_ref)
+      defs = await via.toolsFor([cn.broker_ref]).catch(() => [])
+      if (defs.length === 0)
+        quiet?.push({
+          connection_id: cn.id,
+          toolkit: cn.toolkit,
+          reason: quietReason(via, cn.broker_ref) ?? "no_tools",
+        })
+    }
     for (const def of defs) out.push({ def, ...entry })
   }
   return out

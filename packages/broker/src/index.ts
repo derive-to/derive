@@ -55,6 +55,12 @@ export const makeBroker = (
  * `fallback` is the plan-derived broker (Composio or Local) that every non-MCP ref keeps using.
  * `authFor` resolves the bearer for a ref; omit it for servers that need none.
  */
+/** Why a ref contributed no tools, when the broker behind it knows. Only the MCP broker does;
+ *  everything else returns undefined, which reads as "no explanation available" rather than
+ *  "nothing was wrong". */
+export const quietReason = (broker: ToolBroker, ref: string): string | undefined =>
+  broker instanceof McpBroker ? broker.quiet.get(ref) : undefined
+
 export const refRouter = (
   fallback: ToolBroker,
   authFor?: McpAuthResolver,

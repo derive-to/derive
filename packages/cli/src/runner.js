@@ -1266,6 +1266,24 @@ function buildRunPrompt(run, before) {
       `You have these SOURCE TOOLS. Call one by running \`node derive-source.mjs <toolName> '<jsonArgs>'\` in bash; it prints the tool's JSON result:\n${list}`,
     )
   }
+  // A bound source that contributed no tools. Say so plainly rather than letting the run behave
+  // as though the source was never configured: "the numbers are missing because Stripe is
+  // unreachable" is a usable answer, and silently omitting them is not.
+  if (run.sources_quiet?.length) {
+    const why = {
+      unreachable: "the server could not be reached",
+      pin_mismatch:
+        "the server's tool descriptions CHANGED since a human approved them, so it is being ignored until someone re-approves it",
+      unpinned: "the connection was never successfully approved",
+      no_tools: "it exposed no tools",
+    }
+    const lost = run.sources_quiet
+      .map((q) => `- ${q.toolkit}: ${why[q.reason] ?? q.reason}`)
+      .join("\n")
+    lines.push(
+      `These sources are UNAVAILABLE for this run:\n${lost}\n\nDo not guess or invent what they would have returned. Do the rest of the job and say plainly, in your answer, which source was missing and why.`,
+    )
+  }
   // What fired this run, when a webhook sent a body. The server coalesces a burst into one
   // run carrying several payloads, so this is a list and the newest is last. Untrusted input
   // by definition — it is whatever the caller POSTed — so it is framed as data to read, never
