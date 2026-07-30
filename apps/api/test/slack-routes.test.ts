@@ -4,6 +4,7 @@ import {
   DEFAULT_ORG_SETTINGS,
   type MetaStore,
   type NewComment,
+  newId,
   type SlackThreadLinkRecord,
 } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -783,6 +784,122 @@ describe("slack events endpoint", () => {
     )
     expect(r.status).toBe(200)
     expect((await meta.getSlackInstall("default"))?.needs_reauth).toBe(0)
+  })
+})
+
+describe("slack link unfurls", () => {
+  // The route-level wiring: a signed link_shared reaches chat.unfurl with the right target.
+  // The decision ladder itself is unit-tested in slack-unfurl.test.ts.
+  it("unfurls a shared artifact link for a linked sharer", async () => {
+    const { app, meta } = make("slack-unfurl-route")
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      default_channel: "C1",
+      created_at: new Date().toISOString(),
+    })
+    await meta.setSlackUserLink({
+      id: newId("sul"),
+      org_id: "default",
+      user_id: owner.id,
+      team_id: "T1",
+      slack_user_id: "U1",
+      created_at: new Date().toISOString(),
+    })
+    const artifact = await meta.createArtifact({
+      id: newId("a"),
+      short_id: newId("s").slice(0, 8),
+      org_id: "default",
+      slug: null,
+      title: "Q4 roadmap",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "workspace",
+      kind: "file",
+      spa: 0,
+    })
+
+    // The unfurl runs behind the ack (runAfterAck), so settle on the stub rather than a sleep.
+    let fired: (v: unknown) => void = () => {}
+    const called = new Promise((r) => {
+      fired = r
+    })
+    const seen: Record<string, unknown>[] = []
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      if (String(url).includes("chat.unfurl")) {
+        seen.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+        fired(null)
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    })
+
+    const r = await postEvent(
+      app,
+      JSON.stringify({
+        type: "event_callback",
+        team_id: "T1",
+        event: {
+          type: "link_shared",
+          user: "U1",
+          channel: "C9",
+          message_ts: "1700000000.1",
+          links: [{ url: `http://derive.test/artifacts/${artifact.short_id}` }],
+        },
+      }),
+    )
+    expect(r.status).toBe(200)
+    await called
+    expect(seen[0]?.channel).toBe("C9")
+    expect(seen[0]?.ts).toBe("1700000000.1")
+    expect(JSON.stringify(seen[0]?.unfurls)).toContain("Q4 roadmap")
+  })
+
+  // An unlinked sharer gets Slack's own sign-in prompt instead of a card — the only per-person
+  // surface chat.unfurl offers, and the first proactive nudge to link an account.
+  it("prompts an unlinked sharer to connect, with no cards", async () => {
+    const { app, meta } = make("slack-unfurl-unlinked-route")
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      default_channel: "C1",
+      created_at: new Date().toISOString(),
+    })
+    let fired: (v: unknown) => void = () => {}
+    const called = new Promise((r) => {
+      fired = r
+    })
+    const seen: Record<string, unknown>[] = []
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      if (String(url).includes("chat.unfurl")) {
+        seen.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+        fired(null)
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    })
+    await postEvent(
+      app,
+      JSON.stringify({
+        type: "event_callback",
+        team_id: "T1",
+        event: {
+          type: "link_shared",
+          user: "U-NOTLINKED",
+          channel: "C9",
+          message_ts: "1700000000.2",
+          links: [{ url: "http://derive.test/artifacts/whatever1" }],
+        },
+      }),
+    )
+    await called
+    expect(seen[0]?.user_auth_required).toBe(true)
+    expect(String(seen[0]?.user_auth_url)).toContain("/v1/slack/link")
+    expect(seen[0]?.unfurls).toEqual({})
   })
 })
 

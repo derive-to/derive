@@ -13,6 +13,7 @@ import {
   slackAuthorizeUrl,
   slackOidcAuthorizeUrl,
   slackOidcUserinfo,
+  unfurlSlackLinks,
   verifySlackSignature,
 } from "../lib/slack"
 import { deriveRecentBlocks, deriveResultsBlocks, notLinkedBlocks } from "../lib/slack-commands"
@@ -24,9 +25,10 @@ import {
   SLACK_THREAD_ACTION,
   threadStateBlocks,
 } from "../lib/slack-comments"
-import { flagSlackReauth } from "../lib/slack-delivery"
+import { flagSlackReauth, resolveBotToken } from "../lib/slack-delivery"
 import { enqueueSlackDm, wantsSlackDm } from "../lib/slack-dm"
 import { runSlackProposalAction } from "../lib/slack-proposal"
+import { artifactRefFromUrl, decideUnfurl } from "../lib/slack-unfurl"
 import { resolveThreadAction } from "../lib/thread-actions"
 import { log } from "../log"
 import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
@@ -39,7 +41,7 @@ import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
  *  the web client's type; the OAuth redirects and the Slack Events webhook stay plain
  *  routes (not typed JSON). */
 export const slackRoutes = (ctx: AppContext) => {
-  const { meta, deps, bus, notify, requireUser } = ctx
+  const { meta, deps, bus, notify, requireUser, authorizeUserStanding } = ctx
   const { activeWorkspace, workspaceCan, requireWorkspace } = ctx
   const { blobs, sourceText, search, notifyRender } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -84,6 +86,65 @@ export const slackRoutes = (ctx: AppContext) => {
     } catch {
       void guarded // Node has no executionCtx; the promise runs in-process
     }
+  }
+
+  // Render previews for the Derive links in one `link_shared` event.
+  //
+  // The unfurl is attached to the MESSAGE and seen by the whole channel (Slack has no per-viewer
+  // variant), so the gate is "may this be broadcast" — decideUnfurl owns that ladder. The one
+  // per-person surface is the sign-in prompt, which Slack shows only to the person who posted
+  // the link; that's what an unlinked sharer gets, since without a link there is no principal to
+  // authorize against.
+  const unfurlSharedLinks = async (teamId: string, ev: SlackEventPayload): Promise<void> => {
+    const links = (ev.links ?? []).slice(0, 10) // one paste shouldn't fan out unbounded
+    if (!links.length || !ev.user) return
+    const installs = await meta.listSlackInstallsByTeam(teamId)
+    if (!installs.length) return
+    const userLink = await meta.getSlackUserLinkBySlackId(teamId, ev.user)
+    // One Slack team can back more than one Derive workspace; unfurl into the sharer's own when
+    // we know it, else the sole/first install for the team.
+    const install = installs.find((i) => i.org_id === userLink?.org_id) ?? installs[0]
+    if (!install) return
+    const bot = await resolveBotToken(meta, install.org_id, deps.encryptionKey)
+    if (!bot) return
+    const target = {
+      channel: ev.channel,
+      ts: ev.message_ts,
+      unfurlId: ev.unfurl_id,
+      source: ev.source,
+    }
+
+    // Not linked: prompt once, and only when they actually shared an artifact link — a paste of
+    // some other page on our domain shouldn't nag them to connect an account.
+    if (!userLink) {
+      if (!links.some((l) => artifactRefFromUrl(deps.baseUrl, l.url))) return
+      await unfurlSlackLinks(
+        bot.token,
+        target,
+        {},
+        {
+          url: new URL("/v1/slack/link", deps.baseUrl).toString(),
+          message: "Connect your Derive account to preview links here.",
+        },
+      )
+      return
+    }
+
+    const unfurls: Record<string, unknown> = {}
+    for (const l of links) {
+      const d = await decideUnfurl(
+        {
+          meta,
+          baseUrl: deps.baseUrl,
+          orgId: install.org_id,
+          canRead: (userId, artifact) => authorizeUserStanding(userId, "read", artifact),
+        },
+        l.url,
+        userLink.user_id,
+      )
+      if (d.kind === "card") unfurls[d.url] = { blocks: d.blocks }
+    }
+    if (Object.keys(unfurls).length) await unfurlSlackLinks(bot.token, target, unfurls)
   }
 
   interface ConnectState {
@@ -297,6 +358,13 @@ export const slackRoutes = (ctx: AppContext) => {
             continue
           await flagSlackReauth(meta, install.org_id)
         }
+      return c.json({ ok: true })
+    }
+    // A Derive link was pasted (or is being typed). Render a preview for it. Deferred behind the
+    // ack like every other slow path here: resolving each link reads the artifact, its versions
+    // and its comments, and Slack still wants a reply inside 3s.
+    if (body.type === "event_callback" && ev?.type === "link_shared" && body.team_id && ev.user) {
+      runAfterAck(c, unfurlSharedLinks(body.team_id, ev))
       return c.json({ ok: true })
     }
     // Only human thread replies: a message with a thread_ts, no bot_id, not an edit/delete.
@@ -646,20 +714,29 @@ interface SlackEventEnvelope {
   /** The Slack workspace the event came from. The only workspace identifier on an
    *  app_uninstalled / tokens_revoked event — those carry no channel to key on. */
   team_id?: string
-  event?: {
-    type?: string
-    subtype?: string
-    bot_id?: string
-    user?: string
-    text?: string
-    channel?: string
-    ts?: string
-    thread_ts?: string
-    /** On `tokens_revoked` only: which token classes were revoked, as arrays of user ids.
-     *  `oauth` = per-user tokens (a member's "Sign in with Slack" grant); `bot` = the bot's own,
-     *  the only class that invalidates the install. Either key may be absent. */
-    tokens?: { oauth?: string[]; bot?: string[] }
-  }
+  event?: SlackEventPayload
+}
+
+/** The `event` object of an Events API envelope — only the fields the handlers below read. */
+interface SlackEventPayload {
+  type?: string
+  subtype?: string
+  bot_id?: string
+  user?: string
+  text?: string
+  channel?: string
+  ts?: string
+  thread_ts?: string
+  /** On `tokens_revoked` only: which token classes were revoked, as arrays of user ids.
+   *  `oauth` = per-user tokens (a member's "Sign in with Slack" grant); `bot` = the bot's own,
+   *  the only class that invalidates the install. Either key may be absent. */
+  tokens?: { oauth?: string[]; bot?: string[] }
+  /** On `link_shared` only. `message_ts` + `channel` locate a posted message; `unfurl_id` +
+   *  `source` are the alternative handle Slack gives for a link still in the composer. */
+  links?: { url: string; domain?: string }[]
+  message_ts?: string
+  unfurl_id?: string
+  source?: string
 }
 
 /** The Block Kit interactivity payload (the JSON inside the form's `payload` field). Only the

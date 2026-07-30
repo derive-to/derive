@@ -199,13 +199,10 @@ export const postSlackMessage = async (
       channel: args.channel,
       text: args.text,
       // The bot's own posts already render the artifact as a card, so don't let Slack
-      // ALSO unfurl a link in the text — that repeats the same card right below it.
-      // A link a PERSON pastes may still unfurl, but by a different route than this flag:
-      // Slackbot crawls the page and reads its OG tags (packages/core/src/unfurl.ts). That is
-      // Slack's own crawler, not this app — Derive subscribes to no `link_shared` event, requests
-      // no `links:read` scope, and never calls chat.unfurl. Which also means it only works for a
-      // link an ANONYMOUS fetch can read: the meta is emitted behind the same `readable()` gate as
-      // the page (routes/embeds.ts), so a workspace-only artifact shows Slack nothing.
+      // ALSO unfurl a link in the text — that repeats the same card right below it. Belt and
+      // braces: Slack does not dispatch `link_shared` for a message posted by an app either,
+      // so our own cards can't round-trip through the unfurl handler (lib/slack-unfurl.ts).
+      // A link a PERSON pastes is the case that handler exists for.
       unfurl_links: false,
       unfurl_media: false,
       ...(args.blocks ? { blocks: args.blocks } : {}),
@@ -241,6 +238,53 @@ export const postSlackResponseUrl = async (
   } catch {
     return false
   }
+}
+
+/** Where an unfurl attaches. Slack accepts either the message coordinates (`channel` + `ts`) or
+ *  the opaque pair from the event (`unfurl_id` + `source`); `source` is "composer" when the link
+ *  is still being typed and "conversations_history" once posted. The two forms are mutually
+ *  exclusive, so pass through whichever the event gave us. */
+export interface SlackUnfurlTarget {
+  channel?: string
+  ts?: string
+  unfurlId?: string
+  source?: string
+}
+
+/** Attach unfurl cards to the links in a message (chat.unfurl).
+ *
+ *  `unfurls` maps each URL to its card. There is deliberately NO per-viewer variant: Slack
+ *  renders one unfurl for the message and everyone in the channel sees it, which is why the
+ *  caller gates on "may this be broadcast" rather than "may this viewer read it".
+ *
+ *  `auth` switches to the sign-in prompt instead: Slack shows an ephemeral message — to the
+ *  person who POSTED the link, not to viewers — inviting them to connect their account, with
+ *  built-in "Not now" / "Never ask me again" buttons. Sent with no cards, since we have nothing
+ *  to show until they link. */
+export const unfurlSlackLinks = async (
+  token: string,
+  target: SlackUnfurlTarget,
+  unfurls: Record<string, unknown>,
+  auth?: { url: string; message: string },
+): Promise<void> => {
+  const res = await fetch(`${API}/chat.unfurl`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({
+      ...(target.channel && target.ts
+        ? { channel: target.channel, ts: target.ts }
+        : { unfurl_id: target.unfurlId, source: target.source }),
+      unfurls: auth ? {} : unfurls,
+      ...(auth
+        ? { user_auth_required: true, user_auth_url: auth.url, user_auth_message: auth.message }
+        : {}),
+    }),
+  })
+  const data = (await res.json()) as { ok: boolean; error?: string }
+  if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
 }
 
 /** Join a public channel so the bot can post to it (best-effort; private channels must
@@ -317,6 +361,8 @@ export const openSlackDm = async (token: string, userId: string): Promise<string
  *
  *    chat:write        chat.postMessage — the comment mirror, event cards, DMs
  *    commands          the /derive slash command (Slack rejects the manifest without it)
+ *    links:read        delivery of link_shared — a Derive link pasted into a channel
+ *    links:write       chat.unfurl — attaching the preview card to it
  *    channels:join     conversations.join, so the bot can self-add to a public channel
  *    channels:history  delivery of message.channels — public-channel reply-back
  *    groups:history    delivery of message.groups — private-channel reply-back
@@ -346,6 +392,8 @@ export const SLACK_BOT_SCOPES = [
   // did not accompany it until #558. An install predating that fix lacks it, and its slash
   // command stays dead until the workspace reconnects.
   "commands",
+  "links:read",
+  "links:write",
   "channels:read", // backs no call today — see the note above
   "channels:join",
   "channels:history",

@@ -45,6 +45,16 @@ describe("buildSlackManifest", () => {
     expect(m.oauth_config.scopes.bot).toContain("commands")
   })
 
+  // Link unfurls. The domain entry is what makes Slack deliver link_shared at all, and it
+  // covers every vanity SUBDOMAIN of the instance host as well. Unlike the events, a change
+  // here only lands after the app is reinstalled in each workspace.
+  it("registers the instance host as an unfurl domain and subscribes to link_shared", () => {
+    expect(m.features.unfurl_domains).toEqual(["api.derive.example.com"])
+    expect(m.features.unfurl_domains.length).toBeLessThanOrEqual(5)
+    expect(m.settings.event_subscriptions.bot_events).toContain("link_shared")
+    expect(m.oauth_config.scopes.bot).toEqual(expect.arrayContaining(["links:read", "links:write"]))
+  })
+
   // Without these, a removed app or a revoked token is invisible until a delivery happens to
   // fail — so an idle workspace keeps claiming "connected". Neither event requires a scope.
   it("subscribes to the install-lifecycle events that invalidate the bot token", () => {

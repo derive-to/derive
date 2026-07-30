@@ -138,9 +138,9 @@ https://derive.example.com/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>
 
 ### Slack app (optional)
 
-To connect Slack workspaces (Derive comments mirrored to a channel with two-way
-reply-back and a Resolve/Reopen button on each comment card, plus top-level cards for
-publishes and proposal updates — with Approve / Request-changes buttons on a proposal
+To connect Slack workspaces (Derive links unfurling as rich previews, comments mirrored to a
+channel with two-way reply-back and a Resolve/Reopen button on each comment card, plus
+top-level cards for publishes and proposal updates — with Approve / Request-changes buttons on a proposal
 card, authorized as the clicker's linked Derive account — plus DMs to a member for
 mentions, review requests and shares (reliable once a member links their Slack account),
 create one Slack app for this instance:
@@ -151,7 +151,14 @@ create one Slack app for this instance:
 
 An app created from an older manifest won't have the newer features enabled — **interactivity** (the Resolve/Reopen buttons), the **"Sign in with Slack" redirect URL** (so members can link their account from **Settings → Integrations → Link account**), the **`/derive` slash command** (`/derive <query>` searches your artifacts; bare `/derive` lists your recent ones — results scoped to what the linking member can see), and the **`app_uninstalled` / `tokens_revoked` events** (without them, removing the app or revoking its bot token prompts no reconnect until some delivery happens to fail — which never happens on a workspace with no Slack traffic). Re-apply the manifest to your app — Slack app config → **App Manifest** → paste the updated one from `/v1/slack/manifest.json` — to turn them on. These are app-config changes, not scope changes, so they need no per-workspace reconnect.
 
-Scope changes are the exception — scopes are granted at install, so a re-apply can't backfill them and the workspace must **Add to Slack** again. That applies to the `groups:*` scopes noted above, and to the `commands` scope the `/derive` command requires, which the manifest omitted until recently: a workspace that installed before that fix has a dead slash command until it reconnects.
+Link previews need one extra step beyond a manifest re-apply: the **app unfurl domain** is
+registered on the app, and Slack only picks up a change to it when the app is **reinstalled** in
+each workspace. The manifest registers this instance's host, which also covers every vanity
+subdomain under it — but a workspace serving artifacts on its own BYO custom domain is out of
+reach, because Slack caps an app at five unfurl domains and those hosts aren't known when the
+manifest is built. Links on such a domain simply won't preview; share the instance URL instead.
+
+Scope changes are the exception — scopes are granted at install, so a re-apply can't backfill them and the workspace must **Add to Slack** again. That applies to the `links:read` / `links:write` scopes link previews need, to the `groups:*` scopes noted above, and to the `commands` scope the `/derive` command requires, which the manifest omitted until recently: a workspace that installed before that fix has a dead slash command until it reconnects.
 
 Linking is per-user and optional: without it, DMs fall back to matching a member by their Derive account email; with it, DMs and Slack-reply attribution resolve to the member's exact Slack identity (so a Derive email that differs from the Slack email no longer drops the DM).
 

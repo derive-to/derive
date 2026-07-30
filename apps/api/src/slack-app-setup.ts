@@ -29,6 +29,13 @@ export const buildSlackManifest = (baseUrl: string) => {
     },
     features: {
       bot_user: { display_name: "Derive", always_online: true },
+      // The domains whose links this app unfurls. A registered domain matches all of its
+      // SUBDOMAINS and paths, so one entry covers the instance host and every vanity
+      // subdomain under it. Slack caps this at 5 and — unlike the events below — a change
+      // here only takes effect after the app is REINSTALLED in each workspace. A workspace
+      // on its own BYO custom domain is therefore out of reach: those hosts aren't known at
+      // manifest time and there is no room to enumerate them.
+      unfurl_domains: [hostOf(baseUrl)],
       slash_commands: [
         {
           command: "/derive",
@@ -58,7 +65,13 @@ export const buildSlackManifest = (baseUrl: string) => {
         // app_uninstalled / tokens_revoked need no scope, and they are the only way to learn
         // that the stored bot token died without waiting for a delivery to fail — which never
         // happens on a workspace with no Slack traffic, leaving Settings claiming "connected".
-        bot_events: ["message.channels", "message.groups", "app_uninstalled", "tokens_revoked"],
+        bot_events: [
+          "message.channels",
+          "message.groups",
+          "link_shared",
+          "app_uninstalled",
+          "tokens_revoked",
+        ],
       },
       // Buttons on comment cards (resolve / reopen a thread) POST here.
       interactivity: {

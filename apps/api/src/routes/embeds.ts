@@ -20,6 +20,7 @@ import {
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
 import { fail, toBody } from "../lib/http"
+import { unfurlInfoFor } from "../lib/unfurl-info"
 
 /**
  * Unfurl + embed surface. Turns a `/artifacts/:ref` share link into a rich card and an
@@ -42,26 +43,10 @@ export const embedRoutes = (ctx: AppContext) => {
   const rawBase = ctx.deps.sandboxOrigin ?? baseUrl
   const app = new Hono()
 
-  // Everything an unfurl/embed surface needs for one artifact, plus the absolute
-  // URLs of the sibling endpoints. Counts come from the live version + comment list.
-  const infoFor = async (artifact: ArtifactRecord): Promise<UnfurlInfo> => {
-    const [versions, comments, version] = await Promise.all([
-      meta.listVersions(artifact.id),
-      meta.listComments(artifact.id),
-      meta.getVersion(artifact.id, artifact.current_version),
-    ])
-    const ref = artifactUrl(baseUrl, artifact).slice(`${baseUrl}/artifacts/`.length)
-    return {
-      title: artifact.title ?? "Untitled",
-      kindLabel: kindLabel(version?.content_type, artifact.kind === "bundle"),
-      versionCount: versions.length,
-      commentCount: comments.length,
-      pageUrl: artifactUrl(baseUrl, artifact),
-      imageUrl: `${baseUrl}/v1/og/${artifact.short_id}`,
-      oembedUrl: `${baseUrl}/v1/oembed?url=${encodeURIComponent(artifactUrl(baseUrl, artifact))}`,
-      embedUrl: `${baseUrl}/v1/embed/${ref}`,
-    }
-  }
+  // Everything an unfurl/embed surface needs for one artifact (lib/unfurl-info.ts — shared with
+  // the Slack link-unfurl builder so the two can't describe the same artifact differently).
+  const infoFor = (artifact: ArtifactRecord): Promise<UnfurlInfo> =>
+    unfurlInfoFor(meta, baseUrl, artifact)
 
   // Resolve `:ref` → an artifact the *request actor* may read. `null` means "render
   // a generic card" (missing, removed, or gated to an anonymous crawler).
