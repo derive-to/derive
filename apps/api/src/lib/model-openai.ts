@@ -45,9 +45,24 @@ interface ToolCall {
   function?: { name?: string; arguments?: string }
 }
 
-/** Same stance as the Anthropic client: usage is reported, cost is not, and a hardcoded rate
- *  table drifts silently. Null means UNKNOWN, which the budget skips. */
-const costOf = (): number | null => null
+/**
+ * What the turn cost, when the endpoint says so.
+ *
+ * Deliberately NOT a rate table, unlike the Anthropic client's. "OpenAI-compatible" is a wire
+ * format, not a provider: this one adapter reaches Fireworks, OpenRouter, Together, vLLM and any
+ * self-hosted gateway, and the same model id prices differently on each — so a table here would
+ * be a guess about somebody else's price list, which is worse than saying nothing.
+ *
+ * Several of those hosts (OpenRouter among them) DO report `usage.cost` in USD, so read it when
+ * it is there. Absent or unparseable, null means UNKNOWN, which the budget skips — and this is
+ * the GATEWAY lane, where one ambient key means the operator pays for the whole instance and the
+ * payer chain is bypassed by design, so an unpriced turn matters far less here than on the
+ * per-run credential path (which is priced — see model-anthropic.ts).
+ */
+const costOf = (usage: { cost?: unknown } | undefined): number | null => {
+  const cost = usage?.cost
+  return typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : null
+}
 
 const asTools = (tools: LoopTool[]) =>
   tools.map((t) => ({
@@ -116,6 +131,7 @@ export const openAiCompatModel = (opts: OpenAiCompatOptions): AgentLoopInput["ca
         message?: { content?: string | null; tool_calls?: ToolCall[] }
         finish_reason?: string
       }[]
+      usage?: { cost?: unknown }
     }
     const choice = body.choices?.[0]
     const calls = choice?.message?.tool_calls ?? []
@@ -137,7 +153,7 @@ export const openAiCompatModel = (opts: OpenAiCompatOptions): AgentLoopInput["ca
           name: t.function?.name as string,
           input: parseArgs(t.function?.arguments),
         })),
-      costUsd: costOf(),
+      costUsd: costOf(body.usage),
       done: choice?.finish_reason !== "tool_calls" && calls.length === 0,
     }
   }

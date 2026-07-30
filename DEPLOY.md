@@ -327,6 +327,12 @@ This key pays for every attended turn on the deployment, so it is an operator de
 rather than a per-user one. Unattended automation runs are unaffected — they still resolve
 their own credential through the payer chain.
 
+> `DERIVE_MODEL_NAME` is your **gateway's** model id and belongs only with the two vars
+> above. Unattended in-process runs (`DERIVE_LOOP_RUNS=1`) talk to the Anthropic Messages
+> API on each run's own resolved plan, so they take an **Anthropic** model id from the
+> separate `DERIVE_LOOP_MODEL` (unset = `claude-sonnet-5`). Do not set `DERIVE_LOOP_MODEL`
+> to a gateway path — `api.anthropic.com` answers `model_not_found`.
+
 ### Semantic search (optional)
 
 Workspace search is lexical (SQLite/D1 FTS + Postgres tsvector) everywhere by default. You can add a

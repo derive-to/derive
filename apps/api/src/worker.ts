@@ -139,6 +139,10 @@ export interface Env {
   /** "1" runs automations in this isolate via the loop substrate instead of booting a container.
    *  Off by default, so derive.to keeps its current behaviour until it is set deliberately. */
   DERIVE_LOOP_RUNS?: string
+  /** ANTHROPIC model id for in-process runs on a resolved per-run plan. Deliberately NOT
+   *  DERIVE_MODEL_NAME, which is the GATEWAY's id and 404s against api.anthropic.com. Unset =
+   *  the loop's own Anthropic default. */
+  DERIVE_LOOP_MODEL?: string
   DERIVE_SANDBOX_URL?: string
   DERIVE_SUPERADMIN_EMAILS?: string
   // Base domain for vanity subdomains (domain mode); unset = off.
@@ -266,14 +270,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // message, and answers "no model is configured" — the surface works and the product
         // does not. Same three vars as self-host, delivered as Worker secrets. Unattended runs
         // are unaffected: they still resolve their own credential through the payer chain.
-        callModel:
-          env.DERIVE_MODEL_BASE_URL && env.DERIVE_MODEL_API_KEY && env.DERIVE_MODEL_NAME
-            ? openAiCompatModel({
-                baseUrl: env.DERIVE_MODEL_BASE_URL,
-                apiKey: env.DERIVE_MODEL_API_KEY,
-                model: env.DERIVE_MODEL_NAME,
-              })
-            : undefined,
+        callModel: (() => {
+          const gw = workerGateway(env)
+          return gw ? openAiCompatModel(gw) : undefined
+        })(),
         // Multi-tenant, so the allowlist matters here more than anywhere: without it any
         // workspace owner could enable chat and spend Derive's key.
         chatAllowlist: (env.DERIVE_CHAT_ALLOWLIST ?? "")
@@ -464,6 +464,19 @@ export default {
   },
 }
 
+/** The operator-configured OpenAI-compatible gateway, or undefined. ALL THREE vars or none: a
+ *  base URL with no key 401s every call and a key with no model id sends an empty model, so an
+ *  incomplete set is treated as unset. The Node twin is node.ts's `modelGateway`; read once here
+ *  so attended chat and the loop substrate can never disagree about whether one is configured. */
+function workerGateway(env: Env): { baseUrl: string; apiKey: string; model: string } | undefined {
+  const {
+    DERIVE_MODEL_BASE_URL: baseUrl,
+    DERIVE_MODEL_API_KEY: apiKey,
+    DERIVE_MODEL_NAME: model,
+  } = env
+  return baseUrl && apiKey && model ? { baseUrl, apiKey, model } : undefined
+}
+
 /** Run something with hosted-dispatch deps, inside a request-scoped DB context (a binding
  *  captured outside one goes stale — see lib/request-d1.ts). The single place the edge decides
  *  whether hosted execution is configured at all: no container binding or no auth secret means
@@ -484,9 +497,19 @@ async function withHostedDispatch(
   // BOTH LANES, one substrate. The loop used to serve runs only, so a deployment that opted into
   // it had to keep sessions on the container or lose them; it now branches on the work token and
   // serves an ask through the session claim, so there is nothing left to split.
+  //
+  // THE MODEL ID IS `DERIVE_LOOP_MODEL`, NOT `DERIVE_MODEL_NAME`. The latter names the model on
+  // the operator's OpenAI-compatible GATEWAY — DEPLOY.md tells operators to set it, for chat —
+  // and it was being handed to the loop as the ANTHROPIC model id, which 404s `model_not_found`
+  // on 100% of hosted runs for any deploy that had configured chat. Unset is the right default:
+  // the loop falls back to its own Anthropic model id.
+  //
+  // The gateway rides along when the operator configured one, exactly as node.ts does — the two
+  // entries are meant to differ only in `waitUntil`, and this was the one place they silently
+  // did not. derive.to sets none of the three, so nothing changes there.
   const substrate =
     env.DERIVE_LOOP_RUNS === "1"
-      ? loopSubstrate({ model: env.DERIVE_MODEL_NAME, waitUntil })
+      ? loopSubstrate({ model: env.DERIVE_LOOP_MODEL, gateway: workerGateway(env), waitUntil })
       : containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
   const secret = env.DERIVE_AUTH_SECRET
   if (!substrate || !secret) return

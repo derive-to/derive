@@ -319,6 +319,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "1",
   },
   {
+    name: "DERIVE_LOOP_MODEL",
+    group: "advanced",
+    doc: "ANTHROPIC model id for in-process runs (DERIVE_LOOP_RUNS) that resolve a per-run model\nplan through the payer chain. Unset = claude-sonnet-5, which is the right default for\nautomations: they are latency- and tool-call-bound, so depth buys less than turnaround.\n\nThis is NOT DERIVE_MODEL_NAME. That one names the model on your OpenAI-compatible\ngateway and is only meaningful alongside DERIVE_MODEL_BASE_URL; sending it to\napi.anthropic.com returns `model_not_found` on every run. They are separate vars because\nthe two ids look interchangeable and are not — passing the gateway's id on the\ncredential path is what broke every hosted run before this existed.",
+    example: "claude-sonnet-5",
+  },
+  {
     name: "DERIVE_MODEL_BASE_URL",
     group: "advanced",
     doc: "Root of an OPENAI-COMPATIBLE model endpoint (Fireworks, OpenRouter, Together, a\nself-hosted gateway); `/chat/completions` is appended. Setting it points every in-process\nrun on this deploy at that endpoint instead of the Anthropic Messages API.\n\nIt BYPASSES THE PAYER CHAIN on purpose: one ambient key means the operator pays for\neveryone on the instance, which is right for a single-tenant box and wrong for a\nmulti-tenant host — so derive.to does not set it. Requires DERIVE_MODEL_API_KEY and\nDERIVE_MODEL_NAME; all three or none.",

@@ -385,7 +385,11 @@ const hostedDispatch = cfg.hostedRuns
       substrate:
         process.env.DERIVE_LOOP_RUNS === "1"
           ? loopSubstrate({
-              model: process.env.DERIVE_MODEL_NAME,
+              // DERIVE_LOOP_MODEL, not DERIVE_MODEL_NAME: this field is the ANTHROPIC model id
+              // used on the per-run resolved-credential path, while DERIVE_MODEL_NAME names the
+              // model on the GATEWAY below. Passing the gateway's id here pointed a Fireworks
+              // path at api.anthropic.com and 404'd every run that resolved a real plan.
+              model: process.env.DERIVE_LOOP_MODEL,
               gateway: modelGateway() ?? undefined,
             })
           : nodeSubstrate({ bin: cfg.runnerBin }),

@@ -57,7 +57,13 @@ export interface LoopSubstrateOptions {
    *  each run resolves its OWN credential through the payer chain — the same endpoint and the
    *  same chain the container executor uses, so who pays does not depend on where it ran. */
   callModel?: AgentLoopInput["callModel"]
-  /** Model id for the resolved-credential path. */
+  /** ANTHROPIC model id for the resolved-credential path (`DERIVE_LOOP_MODEL`); unset falls back
+   *  to model-anthropic.ts's DEFAULT_ANTHROPIC_MODEL.
+   *
+   *  NOT `DERIVE_MODEL_NAME`. That one names the model on the operator's OpenAI-compatible
+   *  GATEWAY and belongs in `gateway.model` below; handing it to this field points a Fireworks
+   *  path at api.anthropic.com and 404s every run. The two ids look interchangeable and are not,
+   *  which is exactly why they are separate fields. */
   model?: string
   /** An OPERATOR-CONFIGURED OpenAI-compatible endpoint (Fireworks, OpenRouter, a self-hosted
    *  gateway). When set, every run on this deploy calls it with this key instead of resolving a
@@ -170,14 +176,54 @@ const toolProxy =
     }
   }
 
+/** The model-credential endpoint's reply: the decrypted secret plus its KIND, or null with a
+ *  reason. `kind` is the field this substrate used to drop on the floor. */
+interface CredentialReply {
+  credential: { kind: string; value: string } | null
+  reason?: string
+}
+
 /**
- * WHOSE PLAN PAYS: resolved per work item through the payer chain (initiator → owner-lend →
- * pool), over the same endpoint the container executor calls. Work with nothing to bill fails
- * rather than silently running on someone else's key.
+ * The ONE provider this executor can drive.
+ *
+ * It speaks the Anthropic Messages API over `fetch` and nothing else. A Codex plan is either an
+ * OpenAI api key (a different wire protocol AND a model-id namespace this deploy has no business
+ * guessing) or a self-rotating `auth.json` login blob, which needs the CLI runner's filesystem to
+ * be usable at all. Naming the limit here, once, is what lets the failure below say something
+ * true instead of misrouting a Codex credential into an Anthropic request.
+ */
+const LOOP_PROVIDER = "claude-code"
+
+/** Everything the payer preflight will happily approve that this executor cannot then run. The
+ *  preflight is provider-agnostic on purpose (it asks "can anything pay", not "with what"), so
+ *  the mismatch is real and has to be reported rather than hidden. */
+const OTHER_PROVIDERS = ["codex"] as const
+
+const UNSUPPORTED_PROVIDER =
+  "this deployment executes runs in-process, which can only drive a Claude (claude-code) plan, " +
+  "and the connected plan is Codex. Connect a Claude plan, or run a `derive runner` so the " +
+  "Codex CLI can execute it."
+
+/**
+ * WHOSE PLAN PAYS, and HOW to spend it: resolved per work item through the payer chain
+ * (initiator → owner-lend → pool), over the same endpoint the container executor calls. Work
+ * with nothing to bill fails rather than silently running on someone else's key.
  *
  * UNLESS the operator configured a gateway, which is the single-tenant escape hatch: one ambient
  * key for the whole box, no per-run resolution and no chain. Checked BEFORE the credential call
  * so a self-host with no connected plan still works at all.
+ *
+ * THREE THINGS THIS GETS RIGHT that it used to get wrong — none an edge case, each of them 100%
+ * of hosted runs on some deployment:
+ *
+ *   - THE CREDENTIAL KIND. `oauth` (a `claude setup-token` plan token) is the DEFAULT choice in
+ *     the connect UI and is a BEARER credential; it was sent as `x-api-key`, which 401s. The
+ *     mapping now mirrors the CLI runner's `credentialEnv` exactly.
+ *   - THE MODEL ID. `opts.model` is an ANTHROPIC id. It was fed `DERIVE_MODEL_NAME`, which is the
+ *     GATEWAY's id (`accounts/fireworks/models/...`), so every request 404'd `model_not_found`.
+ *   - THE PROVIDER. Hardcoding `claude-code` while the preflight is provider-agnostic let a
+ *     Codex-only workspace queue runs forever that could never execute. It now fails loudly,
+ *     naming the real reason and the two ways out.
  */
 const resolveModel = async (
   opts: LoopSubstrateOptions,
@@ -196,17 +242,47 @@ const resolveModel = async (
         model: opts.gateway.model,
       }),
     }
-  const cred = await json<{ credential: { kind: string; value: string } | null; reason?: string }>(
-    `/v1/agent/model-credential?provider=claude-code&${scope}`,
+  const cred = await json<CredentialReply>(
+    `/v1/agent/model-credential?provider=${LOOP_PROVIDER}&${scope}`,
   )
-  if (!cred.credential)
+  if (!cred.credential) return { why: await whyNoCredential(json, scope, cred.reason) }
+  // Kind → transport. An unknown kind FAILS rather than defaulting: `login` is Codex's rotating
+  // auth.json blob, and an unrecognized future kind is by definition one we do not know how to
+  // send. Guessing produces a 401 dressed up as a model error, three retries later.
+  const kind = cred.credential.kind
+  if (kind !== "oauth" && kind !== "api_key")
     return {
       why:
-        cred.reason === "unreadable"
-          ? "the connected plan could not be read (reconnect it)"
-          : "no model plan connected for this work's initiator",
+        `the connected Claude plan is a "${kind}" credential, which this in-process executor ` +
+        "cannot send (it drives an api_key or an oauth plan token). Reconnect the plan as a " +
+        "subscription token or an API key, or run a `derive runner`.",
     }
-  return { callModel: anthropicModel({ apiKey: cred.credential.value, model: opts.model }) }
+  return {
+    callModel: anthropicModel({
+      credential: { kind, value: cred.credential.value },
+      model: opts.model,
+    }),
+  }
+}
+
+/** Why there is no usable credential. The DISTINCTION matters because the cases need different
+ *  actions, and a Codex-only workspace is indistinguishable from an unconnected one if you only
+ *  ever ask about claude-code — which is how one could pass the payer preflight and then fail
+ *  every run with "no model plan connected", a message its owner could only read as a lie. */
+const whyNoCredential = async (
+  json: Api["json"],
+  scope: string,
+  reason: string | undefined,
+): Promise<string> => {
+  for (const provider of OTHER_PROVIDERS) {
+    const other = await json<CredentialReply>(
+      `/v1/agent/model-credential?provider=${provider}&${scope}`,
+    ).catch(() => null)
+    if (other?.credential) return UNSUPPORTED_PROVIDER
+  }
+  return reason === "unreadable"
+    ? "the connected plan could not be read (reconnect it)"
+    : "no model plan connected for this work's initiator"
 }
 
 /**
@@ -564,12 +640,21 @@ const manifestFor = async ({ call }: Api, claimed: ClaimedSession): Promise<stri
  * Returns null on ANY failure, and the caller fails the run rather than proceeding. Continuing
  * without the source is precisely the bug: the model cannot tell "no document" from "a document
  * I was not shown", so it fabricates either way.
+ *
+ * AN EMPTY BODY COUNTS AS A FAILURE, for that same reason. A 200 with nothing in it took the
+ * success path, and `""` then flowed into `documentContract(source)` as a document — the model
+ * was asked to keep every existing section of a document with no sections, which is the
+ * fabricating prompt again, arrived at from the other direction. There is no legitimate reason
+ * for a published artifact's content to be empty (`current_version === 0` is filtered upstream),
+ * so an empty read is a read that did not work: fail closed, retryable, same as a 500.
  */
 const sourceOf = async ({ call }: Api, shortId: string): Promise<string | null> => {
   try {
     const res = await call(`/v1/artifacts/${shortId}/content`)
     if (!res.ok) throw new Error(`artifact ${shortId} → ${res.status}`)
-    return (await res.text()).slice(0, MAX_ARTIFACT_CHARS)
+    const body = await res.text()
+    if (!body.trim()) throw new Error(`artifact ${shortId} → 200 with an empty body`)
+    return body.slice(0, MAX_ARTIFACT_CHARS)
   } catch (e) {
     log.warn("loop substrate: could not read the run's target", {
       artifact: shortId,

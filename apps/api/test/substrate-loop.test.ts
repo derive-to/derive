@@ -18,7 +18,13 @@ interface Recorded {
   finishes: Record<string, unknown>[]
   /** Artifact content GETs — the run lane must read its target before revising it. */
   reads: string[]
+  /** Every `/v1/agent/model-credential` query the substrate made, in order. WHICH PROVIDER it
+   *  asks about, and whether it asks a second time, is behaviour under test. */
+  credentialQueries: string[]
 }
+
+/** What `/v1/agent/model-credential` hands back for one provider. `null` = nothing connected. */
+type StubCredential = { kind: string; value: string } | null
 
 /** A stub Derive: serves one claimable run, echoes tools, and records what the substrate did. */
 const stubApi = (opts: {
@@ -26,12 +32,26 @@ const stubApi = (opts: {
   /** Status for artifact writes — 403 exercises the refused-write path. */
   writeStatus?: number
   toolStatus?: number
-  /** The target artifact's current source, as GET /v1/artifacts/:id/content serves it. */
+  /** The target artifact's current source, as GET /v1/artifacts/:id/content serves it. A
+   *  published artifact always HAS content, so the default is some — `""` is the deliberately
+   *  broken case (a 200 with an empty body) and is exercised on its own below. */
   content?: string
   /** Status for that read — 404/500 exercises the unreadable-target path. */
   contentStatus?: number
+  /** Per-provider credentials. Default: a claude-code api key, which is what every pre-existing
+   *  test in this file implicitly assumed while injecting `callModel` over the top of it. */
+  credentials?: Record<string, StubCredential>
+  /** `reason` on an absent credential — "unreadable" vs nothing connected. */
+  credentialReason?: string
 }) => {
-  const rec: Recorded = { claims: 0, tools: [], writes: [], finishes: [], reads: [] }
+  const rec: Recorded = {
+    claims: 0,
+    tools: [],
+    writes: [],
+    finishes: [],
+    reads: [],
+    credentialQueries: [],
+  }
   let server: Server
   const ready = new Promise<string>((resolve) => {
     server = createServer((req, res) => {
@@ -50,7 +70,14 @@ const stubApi = (opts: {
           return send(200, { runs: [opts.run] })
         }
         if (url.includes("/model-credential")) {
-          return send(200, { credential: { kind: "api_key", value: "sk-stub" } })
+          rec.credentialQueries.push(url)
+          const provider = new URL(url, "http://x").searchParams.get("provider") ?? ""
+          const table = opts.credentials ?? { "claude-code": { kind: "api_key", value: "sk-stub" } }
+          const credential = table[provider] ?? null
+          return send(
+            200,
+            credential ? { credential } : { credential: null, reason: opts.credentialReason },
+          )
         }
         if (url.endsWith("/tool")) {
           const parsed = JSON.parse(body || "{}")
@@ -65,7 +92,7 @@ const stubApi = (opts: {
           const status = opts.contentStatus ?? 200
           if (status >= 400) return send(status, { error: "nope" })
           res.writeHead(200, { "content-type": "text/markdown" })
-          return res.end(opts.content ?? "")
+          return res.end(opts.content ?? "# Roadmap\n\n## Now\nShip the thing.\n")
         }
         if (url.endsWith("/finish")) {
           rec.finishes.push(JSON.parse(body || "{}"))
@@ -201,6 +228,26 @@ describe("loop substrate: the run SEES the document it is revising", () => {
     // so proceeding on a failed read reproduces the bug exactly. Retryable, because a 5xx is
     // transient and the alternative is a fabricated document in somebody's version history.
     const api = stubApi({ run: baseRun, contentStatus: 500 })
+    const url = await api.url
+    let called = false
+    const fin = await runToSettle(url, api.rec, async () => {
+      called = true
+      return { text: revision(), toolUses: [], costUsd: null, done: true }
+    })
+    expect(called).toBe(false)
+    expect(api.rec.writes).toEqual([])
+    expect(fin?.status).toBe("failed")
+    expect(fin?.meta).toMatchObject({ retryable: true })
+    await api.close()
+  })
+
+  it("an EMPTY body is unreadable too — a 200 with nothing in it is not a document", async () => {
+    // The same bug arrived at from the other direction. A 200 with an empty body took the
+    // success path, and `""` then flowed in as the document: the model was told to keep every
+    // existing section of a document with no sections, and produced a fabricated one. There is
+    // no legitimate empty published artifact (current_version === 0 is filtered upstream), so
+    // an empty read is a read that did not work — fail closed, retryable, same as a 500.
+    const api = stubApi({ run: baseRun, content: "   \n" })
     const url = await api.url
     let called = false
     const fin = await runToSettle(url, api.rec, async () => {
@@ -698,6 +745,215 @@ describe("loop substrate: an ask is served AS ITS CONTEXT", () => {
     // The ask contract, not the automation one: "you are not answering a person" would be a lie.
     expect(seenSystem).toContain("Someone ASKED you this")
     expect(api.rec.tools).toEqual([{ tool: "warehouse.query", args: { sql: "select 1" } }])
+    await api.close()
+  })
+})
+
+// ---- THE CREDENTIAL PATH -----------------------------------------------------------------------
+//
+// Every test above this line injects `callModel`, which short-circuits `resolveModel` entirely —
+// so the whole of "which provider, which credential kind, which model id" shipped with no test at
+// all, and shipped broken three separate ways: an `oauth` plan token (the DEFAULT choice in the
+// connect UI) was sent as `x-api-key`, the ANTHROPIC model id was fed the GATEWAY's model id, and
+// the provider was hardcoded while the payer preflight is provider-agnostic. Each of those is
+// 100% of hosted runs on some deployment, not an edge case.
+//
+// These tests therefore inject NOTHING. The substrate resolves a real credential from the stub
+// API and builds a real Anthropic client; only `globalThis.fetch` is intercepted, and only for
+// api.anthropic.com — every Derive call still goes over the loopback server, as before. That is
+// the smallest possible seam: anything less and the code under test is the mock again.
+
+interface ModelCall {
+  headers: Record<string, string>
+  body: { model?: string; max_tokens?: number }
+}
+
+/** Intercept api.anthropic.com; delegate everything else to the real fetch. Returns the
+ *  recorded calls and a restore function. */
+const interceptAnthropic = (reply?: unknown) => {
+  const calls: ModelCall[] = []
+  const real = globalThis.fetch
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const href = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+    if (!href.startsWith("https://api.anthropic.com")) return real(input as RequestInfo, init)
+    const headers: Record<string, string> = {}
+    new Headers(init?.headers).forEach((v, k) => {
+      headers[k.toLowerCase()] = v
+    })
+    calls.push({ headers, body: JSON.parse(String(init?.body ?? "{}")) })
+    return new Response(
+      JSON.stringify(
+        reply ?? {
+          content: [{ type: "text", text: revision() }],
+          stop_reason: "end_turn",
+          usage: { input_tokens: 1_000, output_tokens: 500 },
+        },
+      ),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )
+  }) as typeof fetch
+  const restore = () => {
+    globalThis.fetch = real
+  }
+  return { calls, restore }
+}
+
+/** Drive one run with NO injected model, and hand back what the model call looked like. */
+const runWithRealCredential = async (
+  stub: ReturnType<typeof stubApi>,
+  opts: { model?: string } = {},
+  reply?: unknown,
+) => {
+  const url = await stub.url
+  const probe = interceptAnthropic(reply)
+  try {
+    await loopSubstrate(opts).start({ runId: "run_1", token: "tok", server: url })
+    const deadline = Date.now() + 10_000
+    while (stub.rec.finishes.length === 0 && Date.now() < deadline)
+      await new Promise((r) => setTimeout(r, 20))
+  } finally {
+    probe.restore()
+  }
+  return { calls: probe.calls, finish: stub.rec.finishes[0] ?? null }
+}
+
+describe("loop substrate: resolving the model credential", () => {
+  it("sends an OAUTH plan token as a bearer, with the oauth beta — never as x-api-key", async () => {
+    // The bug this exists for. `oauth` is a `claude setup-token` plan token and the DEFAULT
+    // option in the connect UI (apps/web settings/model-plan-manager.tsx); it was sent as
+    // `x-api-key`, which 401s. The CLI runner has always mapped kind → CLAUDE_CODE_OAUTH_TOKEN;
+    // this is that mapping on the wire.
+    const api = stubApi({
+      run: { ...baseRun, targets: [] },
+      credentials: { "claude-code": { kind: "oauth", value: "sk-ant-oat01-plan" } },
+    })
+    const { calls, finish } = await runWithRealCredential(api)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.headers.authorization).toBe("Bearer sk-ant-oat01-plan")
+    expect(calls[0]?.headers["anthropic-beta"]).toBe("oauth-2025-04-20")
+    expect(calls[0]?.headers["x-api-key"]).toBeUndefined()
+    // And it actually completed — the point is a working run, not merely a well-formed header.
+    expect(finish?.status).toBe("succeeded")
+    await api.close()
+  })
+
+  it("sends an API KEY as x-api-key, with no bearer", async () => {
+    const api = stubApi({
+      run: { ...baseRun, targets: [] },
+      credentials: { "claude-code": { kind: "api_key", value: "sk-ant-api03-key" } },
+    })
+    const { calls, finish } = await runWithRealCredential(api)
+    expect(calls[0]?.headers["x-api-key"]).toBe("sk-ant-api03-key")
+    expect(calls[0]?.headers.authorization).toBeUndefined()
+    expect(calls[0]?.headers["anthropic-beta"]).toBeUndefined()
+    expect(finish?.status).toBe("succeeded")
+    await api.close()
+  })
+
+  it("asks for claude-code and sends an ANTHROPIC model id, not the gateway's", async () => {
+    // DERIVE_MODEL_NAME is the gateway's model id (`accounts/fireworks/models/...`) and used to
+    // arrive here as the Anthropic model id, which 404s `model_not_found` on every hosted run of
+    // every deploy that had configured chat. Unset must fall back to a real Anthropic id.
+    const api = stubApi({ run: { ...baseRun, targets: [] } })
+    const { calls } = await runWithRealCredential(api)
+    expect(api.rec.credentialQueries[0]).toContain("provider=claude-code")
+    expect(api.rec.credentialQueries[0]).toContain("run=run_1")
+    expect(calls[0]?.body.model).toBe("claude-sonnet-5")
+    expect(calls[0]?.body.model).not.toMatch(/fireworks|\//)
+    await api.close()
+  })
+
+  it("honours an explicit model override", async () => {
+    const api = stubApi({ run: { ...baseRun, targets: [] } })
+    const { calls } = await runWithRealCredential(api, { model: "claude-opus-4-8" })
+    expect(calls[0]?.body.model).toBe("claude-opus-4-8")
+    await api.close()
+  })
+
+  it("prices the turn from the reported usage, so the budget has something to sum", async () => {
+    // `costOf` was `() => null` unconditionally, so sumRunCostSince summed zero and overBudget
+    // returned false for every workspace on every check. 1M in + 0.5M out on Sonnet 5 is
+    // 1×$3 + 0.5×$15 = $10.50 → 10,500,000 micro-USD, reported on the settle.
+    const api = stubApi({ run: { ...baseRun, targets: [] } })
+    const { finish } = await runWithRealCredential(
+      api,
+      {},
+      {
+        content: [{ type: "text", text: revision() }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 1_000_000, output_tokens: 500_000 },
+      },
+    )
+    expect(finish?.cost_micro_usd).toBe(10_500_000)
+    await api.close()
+  })
+
+  it("reports UNKNOWN rather than zero for a model it cannot price", async () => {
+    // Null for THAT model only. "Cost nothing" and "never found out" are different facts and
+    // only one of them belongs in a sum.
+    const api = stubApi({ run: { ...baseRun, targets: [] } })
+    const { finish } = await runWithRealCredential(
+      api,
+      { model: "some-private-deployment" },
+      {
+        content: [{ type: "text", text: revision() }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 1_000_000, output_tokens: 500_000 },
+      },
+    )
+    expect(finish?.cost_micro_usd).toBeNull()
+    await api.close()
+  })
+
+  it("fails LOUDLY on a Codex-only workspace instead of misrouting it to Anthropic", async () => {
+    // The payer preflight is provider-agnostic — it asks "can anything pay", not "with what" —
+    // so a Codex-only workspace passes it, queues runs, and could never execute them. The old
+    // code asked only about claude-code and reported "no model plan connected", which its owner
+    // could only read as a lie: they had connected one.
+    const api = stubApi({
+      run: { ...baseRun, targets: [] },
+      credentials: { codex: { kind: "api_key", value: "sk-openai" } },
+    })
+    const { calls, finish } = await runWithRealCredential(api)
+    expect(calls).toHaveLength(0) // nothing was sent to Anthropic
+    expect(api.rec.credentialQueries.map((q) => q.includes("provider=codex"))).toContain(true)
+    expect(finish?.status).toBe("failed")
+    const meta = finish?.meta as { why: string; retryable: boolean }
+    expect(meta.why).toContain("Codex")
+    expect(meta.why).toContain("derive runner")
+    expect(meta.retryable).toBe(false)
+    await api.close()
+  })
+
+  it("fails loudly on a credential kind it cannot send", async () => {
+    // `login` is Codex's rotating auth.json blob and needs a filesystem. Anything unrecognized
+    // gets the same treatment: guessing produces a 401 dressed up as a model error.
+    const api = stubApi({
+      run: { ...baseRun, targets: [] },
+      credentials: { "claude-code": { kind: "login", value: "{}" } },
+    })
+    const { calls, finish } = await runWithRealCredential(api)
+    expect(calls).toHaveLength(0)
+    expect(finish?.status).toBe("failed")
+    expect((finish?.meta as { why: string }).why).toContain('"login"')
+    await api.close()
+  })
+
+  it("still distinguishes an unreadable plan from no plan at all", async () => {
+    const api = stubApi({
+      run: { ...baseRun, targets: [] },
+      credentials: {},
+      credentialReason: "unreadable",
+    })
+    const { finish } = await runWithRealCredential(api)
+    expect((finish?.meta as { why: string }).why).toContain("reconnect")
+    await api.close()
+  })
+
+  it("says nothing is connected when nothing is, for any provider", async () => {
+    const api = stubApi({ run: { ...baseRun, targets: [] }, credentials: {} })
+    const { finish } = await runWithRealCredential(api)
+    expect((finish?.meta as { why: string }).why).toContain("no model plan connected")
     await api.close()
   })
 })
