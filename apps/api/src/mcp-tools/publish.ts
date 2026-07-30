@@ -88,6 +88,13 @@ export function registerPublishTool(tc: ToolContext): void {
         error:
           "This workspace has no Brandprint profile yet, and only an Admin/Owner can set one up. Ask an Admin to publish to derive://brandprint/profile once (that scaffolds it); after that anyone with publish rights can propose revisions.",
       }
+    // The scaffold below is a real live write (a collection create + a placeholder
+    // publish) — unlike the profile's own reveal/revision, which always routes to a
+    // human-approved proposal (see `profileForReview` in the caller) and so stays free
+    // of this gate. A billing-blocked workspace must refuse the scaffold exactly like
+    // any other live publish, and BEFORE any of it writes.
+    const billingBlock = await ctx.billingBlocked(targetOrg)
+    if (billingBlock) return { error: BILLING_BLOCK_COPY[billingBlock].message }
     // Reuse an in-tenant collection pointer; otherwise create the conventions collection
     // (workspace-open so teammates read the docs + the reveal).
     let collectionId = bp?.collectionId
