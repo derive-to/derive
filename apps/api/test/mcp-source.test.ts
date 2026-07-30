@@ -232,6 +232,27 @@ describe("MCP as a source: connect, list, call", () => {
     }
   })
 
+  it("an MCP bearer is write-only: it never comes back out", async () => {
+    // The existing leak tests cover `kind: "secret"`. MCP stores a bearer through a DIFFERENT
+    // field on a different code path, so it needs its own assertion — a token that leaks is not
+    // less leaked for having arrived by an untested route. Asserted on the raw response TEXT,
+    // because a structural check passes happily on a serializer that spreads the record.
+    const mcp = await startServer([{ name: "read", description: "Read a doc." }])
+    servers.push(mcp.server)
+    const secret = "sk-live-must-never-be-echoed-back"
+    const created = await connect({ toolkit: "writeonly", mcp_url: mcp.url, mcp_secret: secret })
+    expect(created.status).toBe(201)
+    expect(JSON.stringify(created.body)).not.toContain(secret)
+    expect(JSON.stringify(created.body)).not.toContain("secret_enc")
+
+    const listed = await app.request("/v1/connections", { headers: as(owner.email) })
+    const text = await listed.text()
+    expect(text).not.toContain(secret)
+    expect(text).not.toContain("secret_enc")
+    // The last four characters ARE shown, deliberately, so a human can tell which key they pasted.
+    expect(text).toContain(secret.slice(-4))
+  })
+
   it("is stored as its own kind, not as oauth", async () => {
     // It was stored as `oauth` — already loose, and an outright lie once it carries a
     // `secret_enc`, which only a `secret` connection was ever meant to have. Anything reasoning
