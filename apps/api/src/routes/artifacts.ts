@@ -37,7 +37,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import { setCookie } from "hono/cookie"
 import type { BlankEnv } from "hono/types"
-import type { AppContext } from "../context"
+import { type AppContext, BILLING_BLOCK_COPY } from "../context"
 import { afterPublish } from "../lib/after-publish"
 import { authorProfile, resolveHandles, resolveUserBylines } from "../lib/author"
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
@@ -136,6 +136,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     collectionRole,
     limited,
     overStorage,
+    billingBlocked,
     publishLimiter,
     unlockLimiter,
     sourceText,
@@ -535,6 +536,11 @@ export const artifactRoutes = (ctx: AppContext) => {
     // org, a new artifact against the caller's active workspace (or, for a
     // tokened create, the workspace the token was minted for).
     const org = existing ? existing.org_id : tokenAuth ? tokenAuth.org : await activeWorkspace(c)
+    const billingBlock = await billingBlocked(org)
+    if (billingBlock) {
+      const b = BILLING_BLOCK_COPY[billingBlock]
+      return fail(c, 402, b.message, { code: b.code })
+    }
     const rl = await limited(c, publishLimiter)
     if (rl) return rl
     // A new artifact counts against the artifact cap; republishes don't.

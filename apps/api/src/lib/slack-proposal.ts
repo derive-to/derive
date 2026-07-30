@@ -4,6 +4,7 @@
 // prerequisite. Runs the same proposal-actions pipeline the HTTP route does.
 
 import { type Actor, can, maxRole } from "@derive/core"
+import { BILLING_BLOCK_COPY } from "../context"
 import {
   approveProposalAction,
   type ProposalActionDeps,
@@ -11,6 +12,13 @@ import {
 } from "./proposal-actions"
 import { postSlackResponseUrl } from "./slack"
 import { context, mrkdwnLabel } from "./slack-cards"
+
+/** `ProposalActionDeps` plus what THIS surface needs beyond what approve/request-changes
+ *  themselves use: the billing gate, threaded in exactly like `meta` and the rest arrive —
+ *  the caller (routes/slack.ts) builds this object from its own `ctx` destructure. */
+export interface SlackProposalDeps extends ProposalActionDeps {
+  billingBlocked: (orgId: string) => Promise<"needs_team" | "lapsed" | null>
+}
 
 export interface SlackProposalArgs {
   teamId: string
@@ -28,7 +36,7 @@ export interface SlackProposalArgs {
  *  and update the Slack card / send an ephemeral error. All feedback rides `response_url` so this
  *  can run off the interaction ack path (approving publishes a version — not sub-3s work). */
 export const runSlackProposalAction = async (
-  deps: ProposalActionDeps,
+  deps: SlackProposalDeps,
   args: SlackProposalArgs,
 ): Promise<void> => {
   const eph = (text: string): Promise<boolean> =>
@@ -84,6 +92,13 @@ export const runSlackProposalAction = async (
   }
   try {
     if (args.op === "approve") {
+      // Approving publishes a version; request-changes doesn't, so it stays free the
+      // same way proposal CREATION does — only this branch is gated.
+      const billingBlock = await deps.billingBlocked(artifact.org_id)
+      if (billingBlock) {
+        await eph(BILLING_BLOCK_COPY[billingBlock].message)
+        return
+      }
       const version = await approveProposalAction(deps, artifact, proposal, who, null)
       await replaceCard(`:white_check_mark: Approved by ${display} — now v${version.n}`)
     } else {

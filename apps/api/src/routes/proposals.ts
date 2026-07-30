@@ -9,7 +9,7 @@ import {
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
-import type { AppContext } from "../context"
+import { type AppContext, BILLING_BLOCK_COPY } from "../context"
 import { markAddressed, releaseAddressed } from "../lib/addressed"
 import {
   EditConflictError,
@@ -48,6 +48,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     authorize,
     limited,
     overStorage,
+    billingBlocked,
     publishLimiter,
     sourceText,
   } = ctx
@@ -378,6 +379,11 @@ export const proposalRoutes = (ctx: AppContext) => {
       if (!r.ok) return bail(r.error)
       const { artifact, proposal } = r
       if (!(await authorize(c, "approve", artifact))) return bail(fail(c, 403, "forbidden"))
+      const billingBlock = await billingBlocked(artifact.org_id)
+      if (billingBlock) {
+        const b = BILLING_BLOCK_COPY[billingBlock]
+        return bail(fail(c, 402, b.message, { code: b.code }))
+      }
       if (proposal.state !== "open") return bail(fail(c, 409, `proposal is ${proposal.state}`))
       const me = await currentUser(c)
       const approver = me ? (me.name ?? me.username ?? me.email) : null

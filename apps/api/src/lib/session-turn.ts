@@ -22,6 +22,7 @@ import {
   type SessionRecord,
   toMicroUsd,
 } from "@derive/core"
+import { BILLING_BLOCK_COPY } from "../context"
 import { log } from "../log"
 import { type AfterPublishDeps, afterPublish } from "./after-publish"
 import type { AgentLoopInput } from "./agent-loop"
@@ -35,6 +36,10 @@ import {
 
 export interface TurnDeps extends AfterPublishDeps {
   callModel: AgentLoopInput["callModel"]
+  /** The billing gate — threaded through exactly like `meta`/`blobs` arrive, so the one
+   *  branch that actually lands a live publish (landInProcess) can refuse it. Proposals
+   *  stay free: only the live-publish branch checks this. */
+  billingBlocked: (orgId: string) => Promise<"needs_team" | "lapsed" | null>
 }
 
 /** What a turn did, for the transcript and the ledger. `reply` is always present —
@@ -88,8 +93,18 @@ const apologyFor = (failure: NonNullable<TurnOutcome["failure"]>): string => {
     return "That reply was cut off before it finished, so nothing has been changed. Try asking for a smaller change."
   if (failure.reason === "model")
     return "I could not reach the model just now. Nothing has been changed — try again."
-  if (failure.reason === "write")
+  if (failure.reason === "write") {
+    // landInProcess throws with the billing copy verbatim when the write is refused for
+    // billing, not a real write failure — surface that exact message (actionable: an owner
+    // can fix it in Settings, Billing) rather than the generic "try again", which would be
+    // dishonest advice here since retrying changes nothing until the plan is fixed.
+    const billingMessages: string[] = [
+      BILLING_BLOCK_COPY.needs_team.message,
+      BILLING_BLOCK_COPY.lapsed.message,
+    ]
+    if (billingMessages.includes(failure.error)) return failure.error
     return "I could not save that change, so nothing has been written."
+  }
   // The contract's own diagnostic when it had one — an edit that missed knows WHICH anchor
   // missed, and "nearest match was…" is the difference between a shrug and something the person
   // can act on.
@@ -228,6 +243,14 @@ const landInProcess =
           : revision.message || "Done — filed as a proposal.",
       }
     }
+
+    // This is the one branch that actually lands a live publish (the branch above files a
+    // proposal instead, which stays free) — gated here, after the org is known and before
+    // any bytes are recorded as a version. A refused write throws, same as landOverHttp's
+    // failed-request idiom (lib/substrate-loop.ts): the turn reports it as a failed write
+    // rather than a settled one.
+    const billingBlock = await deps.billingBlocked(input.artifact.org_id)
+    if (billingBlock) throw new Error(BILLING_BLOCK_COPY[billingBlock].message)
 
     const version = await deps.meta.addVersion(input.artifact.id, {
       id: newId("v"),

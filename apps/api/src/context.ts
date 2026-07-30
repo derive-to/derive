@@ -3,6 +3,7 @@ import {
   type Actor,
   type AgentRecord,
   type ArtifactRecord,
+  type BillingState,
   type BlobStore,
   type BundleManifest,
   type CollectionRecord,
@@ -19,6 +20,7 @@ import {
   principalActor,
   principalOwnerId,
   type Role,
+  resolveBillingState,
   roleAllows,
   type SearchIndex,
 } from "@derive/core"
@@ -46,6 +48,25 @@ import { log } from "./log"
 import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
+
+/** The refusal copy for a blocked publish/approve, keyed by `billingBlocked`'s reason.
+ *  Lives here (not lib/http.ts) because the MCP surfaces need it too, and both import
+ *  from context.ts already. No em dashes (support copy convention). */
+export const BILLING_BLOCK_COPY: Record<
+  "needs_team" | "lapsed",
+  { code: string; message: string }
+> = {
+  needs_team: {
+    code: "billing_required",
+    message:
+      "This workspace has more than 3 editor seats, which needs the Team plan. An owner can upgrade in Settings, Billing.",
+  },
+  lapsed: {
+    code: "billing_lapsed",
+    message:
+      "This workspace's plan has lapsed, so publishing is paused. Nothing was deleted. An owner can renew in Settings, Billing.",
+  },
+}
 
 export interface SessionUser {
   id: string
@@ -697,15 +718,43 @@ export function buildContext(deps: AppDeps) {
     if (r.ok) return null
     return rateLimited(c, r.retryAfter)
   }
+  const billingEnforceAt = deps.billingEnforceAt ? new Date(deps.billingEnforceAt) : null
+  // The whole billing decision from local state only: the webhook-fed subscription row
+  // plus a live editor-seat count. Never calls Stripe — resolveBillingState is pure and
+  // DB-free, this just feeds it.
+  const billingState = async (orgId: string): Promise<BillingState> => {
+    const [sub, members] = await Promise.all([
+      meta.getSubscription(orgId),
+      meta.listMemberships(orgId),
+    ])
+    return resolveBillingState({
+      subscription: sub,
+      seatCount: members.filter((m) => m.role === "editor" || m.role === "owner").length,
+      now: new Date(),
+      enforceAt: billingEnforceAt,
+      fallbackMaxBytes: deps.maxBytes,
+    })
+  }
+  // Null = free to publish/approve; otherwise the reason a caller looks up in
+  // BILLING_BLOCK_COPY for the code + message to surface.
+  const billingBlocked = async (orgId: string): Promise<"needs_team" | "lapsed" | null> => {
+    const s = await billingState(orgId)
+    return s.canPublishApprove ? null : (s.blockedReason ?? null)
+  }
+
   // Would storing `incoming` more bytes push THIS workspace over its storage cap?
   // Sums published content (storageBytes) and staged /v1/assets uploads
   // (assetStorageBytes) separately — an asset baked into a bundle can double-count
   // against its staged row, a deliberate over-count: a permanent public /blob/:hash
   // URL must count from the moment it exists, not just once some doc embeds it.
-  const overStorage = async (orgId: string, incoming: number): Promise<boolean> =>
-    !!deps.maxBytes &&
-    (await meta.storageBytes(orgId)) + (await meta.assetStorageBytes(orgId)) + incoming >
-      deps.maxBytes
+  // The cap itself is now plan-aware (billingState.storageCapBytes) rather than a flat
+  // deps.maxBytes comparison: an active subscription's tier cap replaces the operator's
+  // fallback, so a Team workspace isn't stuck on the self-host default.
+  const overStorage = async (orgId: string, incoming: number): Promise<boolean> => {
+    const cap = (await billingState(orgId)).storageCapBytes
+    if (!cap) return false
+    return (await meta.storageBytes(orgId)) + (await meta.assetStorageBytes(orgId)) + incoming > cap
+  }
 
   // Lazy provisioning: the first member of a workspace is its owner; everyone
   // else joins at the default role. Returns the caller's role in that workspace.
@@ -1100,6 +1149,8 @@ export function buildContext(deps: AppDeps) {
     oauthGrant,
     limited,
     overStorage,
+    billingState,
+    billingBlocked,
     ensureMembership,
     activeWorkspace,
     setWsCookie,
