@@ -1015,6 +1015,9 @@ const LOOP = [
   "approve",
   // Findability: one `tag` verb — vocabulary (no args), suggest (--suggest), or apply.
   "tag",
+  // Permanent delete, mirroring `organize` state:'deleted'. Ids come positionally, so it
+  // must also be exempt from the repo-pin requirement below.
+  "delete",
 ]
 if (LOOP.includes(cmd)) {
   let cfg = null
@@ -1040,7 +1043,10 @@ if (LOOP.includes(cmd)) {
     !flags.rm &&
     flags.set === undefined &&
     !flags.suggest
-  if (!r.id && !tagVocab) {
+  // `delete` names its targets positionally (and can take several), so a repo pin is not
+  // required when ids were given — unlike the single-artifact loop verbs above.
+  const positionalTargets = cmd === "delete" && positional.length > 0
+  if (!r.id && !tagVocab && !positionalTargets) {
     console.error(`error: no artifact id. Set "id" in ${CONFIG_FILE} (publish once), or pass --id.`)
     process.exit(1)
   }
