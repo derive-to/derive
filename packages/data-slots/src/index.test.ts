@@ -9,7 +9,7 @@ import {
   slotDriftAdvisories,
   slotShape,
   slotSummary,
-} from "./data-slots"
+} from "./index"
 
 const html = (body: string) => `<!doctype html><html><body>${body}</body></html>`
 const slot = (name: string, json: string) =>
