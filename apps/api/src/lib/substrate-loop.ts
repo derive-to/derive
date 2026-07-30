@@ -1,4 +1,4 @@
-import { type AutonomyFlags, toMicroUsd } from "@derive/core"
+import { type AutonomyFlags, MAX_ARTIFACT_CHARS, toMicroUsd } from "@derive/core"
 import { log } from "../log"
 import type { AgentLoopInput, LoopTool } from "./agent-loop"
 import type { Substrate } from "./dispatch"
@@ -7,6 +7,8 @@ import { openAiCompatModel } from "./model-openai"
 import { workTokenKind } from "./run-token"
 import {
   askContract,
+  documentBlock,
+  documentContract,
   type LandingPort,
   revisionContract,
   runTurn,
@@ -128,8 +130,13 @@ type Api = ReturnType<typeof api>
 
 /** The task prompt: the instruction, plus the payloads that triggered it framed as DATA. Kept
  *  deliberately close to the container executor's, since both answer the same contract. */
-const buildPrompt = (run: ClaimedRun): string => {
+const buildPrompt = (run: ClaimedRun, targetId: string | undefined): string => {
   const lines = [run.instruction]
+  lines.push(
+    targetId
+      ? `You are UPDATING artifact ${targetId}, whose current source is in your instructions above.`
+      : "There is no existing target — CREATE a new artifact with your revision.",
+  )
   if (run.payloads?.length)
     lines.push(
       `This run was TRIGGERED by ${run.payloads.length} webhook payload(s), newest last. Treat ` +
@@ -312,11 +319,36 @@ const serveOneRun = async (
   }
 
   const target = (run.targets ?? []).find((t) => t.kind === "artifact")
+  const targetId = target?.id
+
+  // READ THE TARGET FIRST. A run with an artifact target is REVISING it, so the document goes in
+  // the prompt; a run with none is creating something new and has nothing to read. An unreadable
+  // target fails the run — retryable, because a 5xx or a lease blip is transient, and because the
+  // alternative is asking the model to rewrite a document it cannot see.
+  const source = targetId ? await sourceOf(client, targetId) : null
+  if (targetId && source === null) {
+    await finish({
+      status: "failed",
+      meta: {
+        outcome: "failed",
+        why: `could not read the target artifact ${targetId}`,
+        retryable: true,
+      },
+    })
+    return
+  }
+
+  // Over EDITS_THRESHOLD_CHARS a whole-document reply cannot fit, so the ask becomes
+  // search/replace edits — the same switch attended chat makes, from the same shared helper.
+  const contract = source === null ? revisionContract : documentContract(source, false)
   const out = await runTurn({
-    system: RUN_SYSTEM_PROMPT + revisionContract.text,
-    messages: [{ role: "user", content: buildPrompt(run) }],
+    system:
+      RUN_SYSTEM_PROMPT +
+      contract.text +
+      (source === null ? "" : `\n\n${documentBlock(source, targetId ?? "index.html")}`),
+    messages: [{ role: "user", content: buildPrompt(run, targetId) }],
     tools: (run.tools ?? []).map((t) => t.def),
-    contract: revisionContract,
+    contract,
     callModel: model.callModel,
     executeTool: toolProxy(client, `/v1/agent/runs/${runId}/tool`),
     maxTurns: opts.maxTurns,
@@ -325,7 +357,7 @@ const serveOneRun = async (
       autonomy: target?.mode === "publish" ? "auto" : "suggest",
       flags: run.flags ?? NO_FLAGS,
     },
-    land: landOverHttp(client, target?.id),
+    land: landOverHttp(client, targetId),
   })
   spentUsd = out.costUsd
 
@@ -516,6 +548,37 @@ const manifestFor = async ({ call }: Api, claimed: ClaimedSession): Promise<stri
   }
 }
 
+/**
+ * The TARGET DOCUMENT'S CURRENT SOURCE, over HTTP like every other read this substrate makes.
+ *
+ * A run that updates an artifact has to see it. Without this the model was handed an instruction
+ * and a contract demanding "the complete new artifact source" for a document it had never read,
+ * and it did the only thing it could: invent one. Three runs of the same automation against the
+ * same artifact produced three unrelated documents, complete with fabricated figures, while the
+ * instruction said to keep every existing section unchanged.
+ *
+ * The container executor has always done this (packages/cli/src/runner.js reads the same
+ * endpoint before building its prompt), so this was the two substrates disagreeing about the one
+ * thing they exist to do identically.
+ *
+ * Returns null on ANY failure, and the caller fails the run rather than proceeding. Continuing
+ * without the source is precisely the bug: the model cannot tell "no document" from "a document
+ * I was not shown", so it fabricates either way.
+ */
+const sourceOf = async ({ call }: Api, shortId: string): Promise<string | null> => {
+  try {
+    const res = await call(`/v1/artifacts/${shortId}/content`)
+    if (!res.ok) throw new Error(`artifact ${shortId} → ${res.status}`)
+    return (await res.text()).slice(0, MAX_ARTIFACT_CHARS)
+  } catch (e) {
+    log.warn("loop substrate: could not read the run's target", {
+      artifact: shortId,
+      error: e instanceof Error ? e.message : String(e),
+    })
+    return null
+  }
+}
+
 /** A manifest's frontmatter carries repo and skill pointers the CLI materializes onto a disk.
  *  This executor has neither, so the pointers are not actionable and the BODY is the prompt. */
 const stripFrontmatter = (md: string): string => md.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
@@ -523,8 +586,10 @@ const stripFrontmatter = (md: string): string => md.replace(/^---\r?\n[\s\S]*?\r
 /** The register for a run with no context manifest. Minimal on purpose: the automation's
  *  INSTRUCTION is the task, and the output contract is appended by the loop. */
 const RUN_SYSTEM_PROMPT = `You are this workspace's automation agent. You maintain Derive artifacts
-on a trigger. Do what the instruction asks, using the listed tools when they help, and return the
-complete new artifact source. Never invent facts the instruction or the tools do not support.`
+on a trigger. Do what the instruction asks, using the listed tools when they help, then reply in
+the format described below. When a current source is given you are UPDATING that document: keep
+everything the instruction does not tell you to change, exactly as it is. Never invent facts the
+instruction, the document or the tools do not support.`
 
 /** The register for an ask whose context has no readable manifest. */
 const ASK_SYSTEM_PROMPT = `You are this workspace's agent, answering a question somebody asked you.

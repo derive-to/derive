@@ -7,6 +7,7 @@ import {
   applyEdits,
   decideWrite,
   EDITS_CONTRACT,
+  EDITS_THRESHOLD_CHARS,
   EditError,
   editsNudge,
   type GateDecision,
@@ -142,6 +143,46 @@ export const editsContract = (source: string): ReplyContract => ({
     return { miss: { detail: ed.error, nudge: editsNudge(ed.error) } }
   },
 })
+
+// ---- revising an EXISTING document -------------------------------------------------------------
+
+/**
+ * WHICH CONTRACT to ask for when the turn revises a document that already exists.
+ *
+ * A revision's reply is bounded by the DOCUMENT; an edit's by the CHANGE. Below the threshold,
+ * whole-document is the better ask — it cannot miss on an exact match. Above it a whole-document
+ * reply cannot fit in the model's output budget at all, so search/replace is not a preference but
+ * the only thing that works.
+ *
+ * `answerable` is the attended/unattended difference, and the only one. A person may be asking a
+ * QUESTION about the document, so a reply with no block is a perfectly good answer. An automation
+ * that "answered" instead of writing produced nothing, so its contract does not offer the option.
+ */
+export const documentContract = (source: string, answerable: boolean): ReplyContract =>
+  source.length > EDITS_THRESHOLD_CHARS
+    ? editsContract(source)
+    : answerable
+      ? answerContract(REVISION_CONTRACT)
+      : revisionContract
+
+/**
+ * THE DOCUMENT ITSELF, as a delimited block for the system prompt.
+ *
+ * Every lane that revises an existing artifact must include this, and the reason is not
+ * ergonomics. Asked for "the complete new source" of a document it was never shown, a model
+ * cannot comply and cannot tell you so — it writes a plausible document from nothing. An
+ * instruction like "keep every existing section unchanged" is then unsatisfiable by construction,
+ * and at `publish` the invented document replaces the real one.
+ *
+ * Kept separate from the transcript and from the instruction, so text that happens to contain
+ * markup can never be mistaken for the document.
+ */
+export const documentBlock = (source: string, filename: string): string =>
+  `The document's current source follows, and its filename is ${filename}.
+
+--- BEGIN DOCUMENT ---
+${source}
+--- END DOCUMENT ---`
 
 // ---- the landing port -----------------------------------------------------------------------
 

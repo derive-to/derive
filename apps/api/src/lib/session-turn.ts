@@ -13,12 +13,9 @@
 
 import {
   type ArtifactRecord,
-  EDITS_CONTRACT,
-  EDITS_THRESHOLD_CHARS,
   MAX_ARTIFACT_CHARS,
   NUDGE_LIMIT,
   newId,
-  REVISION_CONTRACT,
   type Revision,
   type Selector,
   type SessionMessageRecord,
@@ -29,8 +26,8 @@ import { log } from "../log"
 import { type AfterPublishDeps, afterPublish } from "./after-publish"
 import type { AgentLoopInput } from "./agent-loop"
 import {
-  answerContract,
-  editsContract,
+  documentBlock,
+  documentContract,
   type LandingPort,
   runTurn,
   type TurnOutcome,
@@ -117,17 +114,10 @@ export const runSessionTurn = async (deps: TurnDeps, input: TurnInput): Promise<
       costMicroUsd: null,
     }
 
-  // WHICH CONTRACT. A revision's reply is bounded by the DOCUMENT; an edit's by the CHANGE. Below
-  // the threshold, whole-document is the better ask — it cannot miss on an exact match. Above it,
-  // a whole-document reply cannot fit at all, so search/replace is not a preference but the only
-  // thing that works.
-  //
-  // Either way the contract is ANSWERABLE: a reply with no block is a perfectly good answer to a
-  // question, not a failure to follow the contract. That is the difference from an unattended
-  // automation run, and it is a property of the READING, not of the words we ask in — so the
-  // prompt below is unchanged and only the parse is shared.
-  const big = src.text.length > EDITS_THRESHOLD_CHARS
-  const contract = big ? editsContract(src.text) : answerContract(REVISION_CONTRACT)
+  // ANSWERABLE, which is the one way an attended contract differs from a run's: a reply with no
+  // block is a perfectly good answer to a question, not a failure to follow the contract. The
+  // whole-document-vs-edits choice is shared with the run lane and lives in turn-core.
+  const contract = documentContract(src.text, true)
 
   const system = `You are helping someone edit a document they are looking at right now.
 
@@ -135,13 +125,9 @@ If they are asking you to CHANGE the document, reply with the revision block des
 If they are asking a QUESTION, or thinking out loud, just answer them in prose — do NOT emit a
 revision block, and do not change the document. Most messages are one or the other; decide which.
 
-${big ? EDITS_CONTRACT : REVISION_CONTRACT}
+${contract.text}
 
-The document's current source follows, and its filename is ${input.artifact.short_id}.
-
---- BEGIN DOCUMENT ---
-${src.text}
---- END DOCUMENT ---`
+${documentBlock(src.text, input.artifact.short_id)}`
 
   const out = await runTurn({
     system,
@@ -156,7 +142,6 @@ ${src.text}
       // disagree.
       autonomy: input.subject.mode === "publish" ? "auto" : "suggest",
       flags: input.flags,
-      // Nothing external was read: the model saw this document and this conversation, both of
     },
     land: landInProcess(deps, input, src.version),
   })

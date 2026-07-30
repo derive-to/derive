@@ -16,6 +16,8 @@ interface Recorded {
   tools: { tool: string; args: unknown }[]
   writes: { path: string }[]
   finishes: Record<string, unknown>[]
+  /** Artifact content GETs — the run lane must read its target before revising it. */
+  reads: string[]
 }
 
 /** A stub Derive: serves one claimable run, echoes tools, and records what the substrate did. */
@@ -24,8 +26,12 @@ const stubApi = (opts: {
   /** Status for artifact writes — 403 exercises the refused-write path. */
   writeStatus?: number
   toolStatus?: number
+  /** The target artifact's current source, as GET /v1/artifacts/:id/content serves it. */
+  content?: string
+  /** Status for that read — 404/500 exercises the unreadable-target path. */
+  contentStatus?: number
 }) => {
-  const rec: Recorded = { claims: 0, tools: [], writes: [], finishes: [] }
+  const rec: Recorded = { claims: 0, tools: [], writes: [], finishes: [], reads: [] }
   let server: Server
   const ready = new Promise<string>((resolve) => {
     server = createServer((req, res) => {
@@ -52,6 +58,14 @@ const stubApi = (opts: {
           if (opts.toolStatus && opts.toolStatus !== 200)
             return send(opts.toolStatus, { error: "tool refused" })
           return send(200, { result: { rows: 3, echo: parsed.args } })
+        }
+        // The target's current source. GET only: a POST to an artifact path is a WRITE.
+        if (url.includes("/content") && req.method === "GET") {
+          rec.reads.push(url)
+          const status = opts.contentStatus ?? 200
+          if (status >= 400) return send(status, { error: "nope" })
+          res.writeHead(200, { "content-type": "text/markdown" })
+          return res.end(opts.content ?? "")
         }
         if (url.endsWith("/finish")) {
           rec.finishes.push(JSON.parse(body || "{}"))
@@ -124,6 +138,103 @@ describe("loop substrate: the happy path", () => {
     // 0.004 USD → 4000 micro-USD, rounded up. Reported on the SETTLE, not merely computed.
     expect(fin?.cost_micro_usd).toBe(4000)
     expect(api.rec.writes.some((w) => w.path.includes("/proposals"))).toBe(true)
+  })
+})
+
+describe("loop substrate: the run SEES the document it is revising", () => {
+  // THE REGRESSION. A live run against a real artifact produced a wholly invented document —
+  // three runs of one automation, three unrelated results, fabricated figures, and an instruction
+  // ("keep every existing section unchanged") that was unsatisfiable because the model had never
+  // been shown the document. The contract still demanded "the complete new artifact source", so
+  // the model wrote a plausible one from nothing. At mode=publish that silently destroys the doc.
+  //
+  // The container executor had always read the target first. This is the loop substrate being
+  // held to the same behaviour.
+
+  const EXISTING = "# Roadmap\n\n## Q3\nShip the thing.\n\n## Q4\nShip the other thing.\n"
+
+  it("puts the target's CURRENT SOURCE in the prompt, so a preserve instruction can be obeyed", async () => {
+    const api = stubApi({
+      run: { ...baseRun, instruction: "Add a Q5 section. Keep every existing section unchanged." },
+      content: EXISTING,
+    })
+    const url = await api.url
+    let system = ""
+    // The model here does what a real one can only do when it HAS the document: echo it back with
+    // the addition. Without the fix the prompt contains no document, this assertion on `system`
+    // fails, and the "revision preserves the original" assertion fails with it.
+    const fin = await runToSettle(url, api.rec, async (input) => {
+      system = input.system
+      const kept = system.includes("## Q4") ? EXISTING : "# Something Else Entirely\n"
+      return {
+        text: revision(`${kept}\n## Q5\nShip more.\n`),
+        toolUses: [],
+        costUsd: null,
+        done: true,
+      }
+    })
+    // It READ the target, over HTTP, before asking the model anything.
+    expect(api.rec.reads).toContain("/v1/artifacts/art_1/content")
+    // And the document reached the prompt, delimited and whole.
+    expect(system).toContain("--- BEGIN DOCUMENT ---")
+    expect(system).toContain("## Q3")
+    expect(system).toContain("## Q4")
+    expect(fin?.status).toBe("succeeded")
+  })
+
+  it("a run with NO artifact target reads nothing — it is creating, not revising", async () => {
+    const api = stubApi({ run: { ...baseRun, targets: [] }, content: EXISTING })
+    const url = await api.url
+    let system = ""
+    const fin = await runToSettle(url, api.rec, async (input) => {
+      system = input.system
+      return { text: revision(), toolUses: [], costUsd: null, done: true }
+    })
+    expect(api.rec.reads).toEqual([])
+    expect(system).not.toContain("--- BEGIN DOCUMENT ---")
+    expect(fin?.status).toBe("succeeded")
+    await api.close()
+  })
+
+  it("an UNREADABLE target fails the run rather than letting the model invent one", async () => {
+    // The whole point. "No document" and "a document I was not shown" look identical to a model,
+    // so proceeding on a failed read reproduces the bug exactly. Retryable, because a 5xx is
+    // transient and the alternative is a fabricated document in somebody's version history.
+    const api = stubApi({ run: baseRun, contentStatus: 500 })
+    const url = await api.url
+    let called = false
+    const fin = await runToSettle(url, api.rec, async () => {
+      called = true
+      return { text: revision(), toolUses: [], costUsd: null, done: true }
+    })
+    expect(called).toBe(false)
+    expect(api.rec.writes).toEqual([])
+    expect(fin?.status).toBe("failed")
+    expect(fin?.meta).toMatchObject({ retryable: true })
+    await api.close()
+  })
+
+  it("a LARGE document switches the ask to search/replace edits", async () => {
+    // Past EDITS_THRESHOLD_CHARS a whole-document reply cannot fit in the output budget, so the
+    // contract changes shape — the same switch attended chat makes, from the same helper. Without
+    // it a run against a big artifact hits the token ceiling and truncates mid-document.
+    const big = `# Big\n\n${"filler paragraph. ".repeat(1200)}\n## Keep Me\nimportant\n`
+    expect(big.length).toBeGreaterThan(12_000)
+    const api = stubApi({ run: baseRun, content: big })
+    const url = await api.url
+    let system = ""
+    await runToSettle(url, api.rec, async (input) => {
+      system = input.system
+      return {
+        text: `<edits>${JSON.stringify({ edits: [], confidence: 0.9 })}</edits>`,
+        toolUses: [],
+        costUsd: null,
+        done: true,
+      }
+    })
+    expect(system).toContain("<edits>")
+    expect(system).not.toContain("<revision>")
+    await api.close()
   })
 })
 
