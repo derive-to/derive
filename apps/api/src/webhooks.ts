@@ -9,6 +9,7 @@ import {
 } from "@derive/core"
 import type { WebhookEvent } from "./events"
 import { isPrivateAddress } from "./lib/net"
+import { escapeMrkdwn, mrkdwnBody } from "./lib/slack-cards"
 import { truncate } from "./lib/text"
 import { log } from "./log"
 
@@ -83,34 +84,47 @@ export function buildPayload(
   }
 }
 
-/** Format a normalized payload as a Slack incoming-webhook message. */
+/** Format a normalized payload as a Slack incoming-webhook message.
+ *
+ *  Untrusted text gets exactly the treatment the connected Slack App gives it (see
+ *  lib/slack-cards.ts): identity fields are labels → `escapeMrkdwn`, and authored prose →
+ *  `mrkdwnBody` (escaped, then its markdown rendered). This path carries the same fields from
+ *  the same sources, so it needs the same discipline: an artifact title or comment body that
+ *  reached `<!channel>` verbatim would ping the entire channel, and a hand-written
+ *  `<url|label>` renders as a link whose visible text the author chose — indistinguishable
+ *  from one of ours. The artifact URL is the one thing built by us, so it is interpolated raw;
+ *  escaping it would rewrite `&` and corrupt the query string. */
 export function slackMessage(p: EventPayload): unknown {
-  const title = p.artifact.title ?? p.artifact.short_id
+  const title = escapeMrkdwn(p.artifact.title ?? p.artifact.short_id)
   const link = `<${p.artifact.url}|${title}>`
+  const author = escapeMrkdwn(String(p.data.author ?? "someone"))
+  const quoteLine = () =>
+    p.data.quote ? `> _${escapeMrkdwn(truncate(String(p.data.quote), 140))}_` : null
   let head = ""
-  const lines: string[] = []
+  const lines: (string | null)[] = []
   if (p.event === "comment.created") {
-    const author = String(p.data.author ?? "someone")
     head = `:speech_balloon: *${author}* commented on ${link}`
-    if (p.data.quote) lines.push(`> _${truncate(String(p.data.quote), 140)}_`)
-    if (p.data.body) lines.push(truncate(String(p.data.body), 280))
+    lines.push(quoteLine())
+    if (p.data.body) lines.push(mrkdwnBody(String(p.data.body), 280))
   } else if (p.event === "comment.mention") {
-    const author = String(p.data.author ?? "someone")
-    const who = Array.isArray(p.data.mentioned) ? (p.data.mentioned as string[]).join(", ") : ""
+    const who = Array.isArray(p.data.mentioned)
+      ? (p.data.mentioned as unknown[]).map((m) => escapeMrkdwn(String(m))).join(", ")
+      : ""
     head = `:wave: *${author}* mentioned ${who ? `*${who}*` : "you"} on ${link}`
-    if (p.data.quote) lines.push(`> _${truncate(String(p.data.quote), 140)}_`)
-    if (p.data.body) lines.push(truncate(String(p.data.body), 280))
+    lines.push(quoteLine())
+    if (p.data.body) lines.push(mrkdwnBody(String(p.data.body), 280))
   } else if (p.event === "comment.resolved") {
     head = `:white_check_mark: A thread was ${p.data.state === "open" ? "reopened" : "resolved"} on ${link}`
   } else {
-    head = `:package: ${link} — *v${p.data.version}* published`
-    if (p.data.message) lines.push(truncate(String(p.data.message), 200))
-    if (p.data.author) lines.push(`by ${p.data.author}`)
+    head = `:package: ${link} — *v${escapeMrkdwn(String(p.data.version))}* published`
+    if (p.data.message) lines.push(mrkdwnBody(String(p.data.message), 200))
+    if (p.data.author) lines.push(`by ${author}`)
   }
+  const body = [head, ...lines.filter((l): l is string => l !== null)].join("\n")
   return {
     text: head,
     blocks: [
-      { type: "section", text: { type: "mrkdwn", text: [head, ...lines].join("\n") } },
+      { type: "section", text: { type: "mrkdwn", text: body } },
       { type: "context", elements: [{ type: "mrkdwn", text: `Derive · ${p.event}` }] },
     ],
   }
