@@ -445,6 +445,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
           user_id: existingId,
           role: b.role,
         })
+        await syncSeats({ meta, billing }, org)
         if (user.email) await meta.deletePendingInvitationsFor(org, user.email.toLowerCase())
         return c.json(
           {

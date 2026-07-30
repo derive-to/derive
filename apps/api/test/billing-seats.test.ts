@@ -80,4 +80,54 @@ describe("seat sync", () => {
     expect((await r.json()).quantity).toBe(3)
     expect(fake.quantityCalls.at(-1)).toEqual({ subscriptionId: "sub_1", quantity: 3 })
   })
+
+  it("invite direct-add of an existing account syncs seats", async () => {
+    const fake = new FakeBilling()
+    // Same isolated shape as "adding an editor…" above: u4 must exist as a real
+    // Derive user (so resolveUserRef finds it by email) but must NOT be a member
+    // yet, so the invite's existing-account branch is a genuine direct-add.
+    const { app, meta } = makeAuthedApp("ss_invite_add", [u(1), u(2), u(3), u(4)], "editor", {
+      isolated: true,
+      deps: { billing: fake },
+    })
+    await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
+    await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
+    await meta.setMembership({ id: "m_u2", org_id: "default", user_id: "u2", role: "editor" })
+    await meta.setMembership({ id: "m_u3", org_id: "default", user_id: "u3", role: "editor" })
+    await meta.upsertSubscription(activeSub(3))
+
+    // POST /v1/workspace/invites with u4's email — an existing account, so this
+    // takes the direct-add branch (not the pending-invite branch).
+    const r = await app.request("/v1/workspace/invites", {
+      ...jsonAs(as("u1@x.test"), { email: "u4@x.test", role: "editor" }),
+      method: "POST",
+    })
+    expect(r.status).toBe(201)
+    expect((await r.json()).kind).toBe("member")
+    expect(fake.quantityCalls.at(-1)).toEqual({ subscriptionId: "sub_1", quantity: 4 })
+    expect((await meta.getSubscription("default"))?.quantity).toBe(4)
+  })
+
+  it("no net billable change makes no Stripe call", async () => {
+    const fake = new FakeBilling()
+    const { app, meta } = makeAuthedApp("ss_invite_nobill", [u(1), u(2), u(3)], "editor", {
+      isolated: true,
+      deps: { billing: fake },
+    })
+    await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
+    await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
+    await meta.setMembership({ id: "m_u2", org_id: "default", user_id: "u2", role: "editor" })
+    await meta.upsertSubscription(activeSub(2))
+
+    const before = fake.quantityCalls.length
+    // u3 is added as "commenter" — a non-billable role, so billableSeatCount stays
+    // at 2 (== the subscription's live quantity) and syncSeats' no-op guard holds.
+    const r = await app.request("/v1/workspace/invites", {
+      ...jsonAs(as("u1@x.test"), { email: "u3@x.test", role: "commenter" }),
+      method: "POST",
+    })
+    expect(r.status).toBe(201)
+    expect((await r.json()).kind).toBe("member")
+    expect(fake.quantityCalls).toHaveLength(before)
+  })
 })
