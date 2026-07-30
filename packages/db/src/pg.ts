@@ -505,6 +505,24 @@ export class PgMetaStore implements MetaStore {
       .orderBy(asc(versionData.n))
       .limit(limit)
   }
+  async listWorkspaceSlots(orgId: string) {
+    // The workspace's slot vocabulary, counted over each artifact's CURRENT version only.
+    // ::int because pg returns count() as a bigint string through the driver.
+    return this.db
+      .select({
+        slot: versionData.slot,
+        artifacts: sql<number>`count(distinct ${versionData.artifact_id})::int`,
+        latest_at: sql<string>`max(${versionData.created_at})`,
+      })
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
+      .groupBy(versionData.slot)
+      .orderBy(desc(sql`count(distinct ${versionData.artifact_id})`), asc(versionData.slot))
+  }
   async listSlotAcrossArtifacts(
     orgId: string,
     slot: string,

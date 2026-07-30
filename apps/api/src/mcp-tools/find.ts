@@ -8,7 +8,7 @@ import {
   toSearchHits,
 } from "../lib/search"
 import type { ToolContext } from "../mcp-tool-context"
-import { err, json, runnerOnline, summarizeArtifact, text } from "../mcp-util"
+import { err, json, runnerOnline, safeJson, summarizeArtifact, text } from "../mcp-util"
 
 // FIND — one tool over BROWSE (list_artifacts) + GREP/SEARCH (search) + the askable
 // CONTEXTS (list_contexts), discriminated by argument. The mode is decided by what's
@@ -68,7 +68,15 @@ export function registerFindTool(tc: ToolContext): void {
         tag: z
           .string()
           .optional()
-          .describe("Browse only: artifacts carrying this browse tag (case-insensitive)."),
+          .describe(
+            "Browse only: artifacts carrying this browse tag (case-insensitive). Also narrows `data` to that tagged set.",
+          ),
+        data: z
+          .string()
+          .optional()
+          .describe(
+            'Read one DATA SLOT across every artifact in the workspace that carries it — "where does this metric stand everywhere", the cross-artifact companion to read(data, versions) which answers "how did this ONE page change over time". Each row is that artifact\'s CURRENT version. Combine with `tag` to scope it to a set (e.g. data:"checks", tag:"nightly"). Pass "*" to list which slots exist in the workspace and how many artifacts carry each.',
+          ),
         skills: z
           .boolean()
           .optional()
@@ -103,6 +111,7 @@ export function registerFindTool(tc: ToolContext): void {
       query,
       short_id,
       tag,
+      data,
       skills,
       case_sensitive,
       in: scope,
@@ -174,11 +183,61 @@ export function registerFindTool(tc: ToolContext): void {
         })
       }
 
-      // MODE 3 — BROWSE the library: list_artifacts rows (skills:/tag facets), plus every
-      // askable context. A tag filter resolves to an id set first (mirrors the HTTP ?tag=
-      // path); viewerId keeps private rows scoped to the agent's human (mirrors `reach`).
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
+
+      // MODE 3 — CROSS-ARTIFACT DATA. read(data, versions) answers "how did this ONE page
+      // change over time"; this answers "where does this metric stand everywhere", which
+      // is the question a workspace of nightly reports actually gets asked. Every row is
+      // an artifact's CURRENT version, joined at the store so a superseded row can never
+      // be reported as the present state.
+      if (data !== undefined) {
+        if (query || short_id)
+          return err(
+            "`data` reads slots across the workspace — pass it with `tag` (to scope the set) but not with `query`/`short_id`, which grep one artifact or search text.",
+          )
+        if (data === "*") {
+          const catalog = await ctx.meta.listWorkspaceSlots(t.org)
+          return json({
+            workspace: t.org,
+            count: catalog.length,
+            slots: catalog,
+            ...(catalog.length
+              ? {
+                  next: `Read one across the workspace with find(data:"${catalog[0]?.slot}"), or one artifact's history with read(short_id, data:"${catalog[0]?.slot}", versions:"all").`,
+                }
+              : {
+                  note: "No data slots in this workspace yet. A page carries one as a `derive-data` block (see derive://skills/publishing); it becomes queryable the moment it publishes.",
+                }),
+          })
+        }
+        const rows = await ctx.meta.listSlotAcrossArtifacts(t.org, data, {
+          tag: tag?.trim().toLowerCase(),
+          limit: 200,
+        })
+        return json({
+          workspace: t.org,
+          slot: data,
+          ...(tag ? { tag } : {}),
+          count: rows.length,
+          results: rows.map((r) => ({
+            short_id: r.short_id,
+            title: r.title,
+            version: r.n,
+            at: r.at,
+            data: safeJson(r.json),
+          })),
+          ...(rows.length
+            ? {}
+            : {
+                note: `No artifact${tag ? ` tagged "${tag}"` : ""} carries a "${data}" slot on its current version. Pass data:"*" to see which slots exist.`,
+              }),
+        })
+      }
+
+      // MODE 4 — BROWSE the library: list_artifacts rows (skills:/tag facets), plus every
+      // askable context. A tag filter resolves to an id set first (mirrors the HTTP ?tag=
+      // path); viewerId keeps private rows scoped to the agent's human (mirrors `reach`).
       const ids = tag ? await ctx.meta.artifactIdsByTag(tag.trim().toLowerCase()) : undefined
       const arts =
         ids && ids.length === 0

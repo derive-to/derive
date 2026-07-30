@@ -398,6 +398,13 @@ export interface ArtifactStore {
    *  workspace of nightly reports actually gets asked. Optionally narrowed by browse tag,
    *  since a tag is already how a set of artifacts is named. ONE query, joined to each
    *  artifact's current version so it can never report a superseded row. */
+  /** The workspace's slot VOCABULARY: which slot names exist on any artifact's current
+   *  version, how many artifacts carry each, and when one last changed. The discovery
+   *  half of cross-artifact reads — you cannot query a slot whose name you do not know,
+   *  and nothing else in the surface lists them. */
+  listWorkspaceSlots(
+    orgId: string,
+  ): Promise<{ slot: string; artifacts: number; latest_at: string }[]>
   listSlotAcrossArtifacts(
     orgId: string,
     slot: string,

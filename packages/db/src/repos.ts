@@ -655,6 +655,23 @@ export function makeRepos(db: SqliteDb) {
       .limit(limit)
       .all()
 
+  const listWorkspaceSlots = async (orgId: string) =>
+    db
+      .select({
+        slot: versionData.slot,
+        artifacts: sql<number>`count(distinct ${versionData.artifact_id})`,
+        latest_at: sql<string>`max(${versionData.created_at})`,
+      })
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
+      .groupBy(versionData.slot)
+      .orderBy(desc(sql`count(distinct ${versionData.artifact_id})`), asc(versionData.slot))
+      .all()
+
   const listSlotAcrossArtifacts = async (
     orgId: string,
     slot: string,
@@ -3740,6 +3757,7 @@ export function makeRepos(db: SqliteDb) {
     setVersionData,
     getVersionData,
     getVersionDataSeries,
+    listWorkspaceSlots,
     listSlotAcrossArtifacts,
     reclassifyVersion,
     setVersionPreview,

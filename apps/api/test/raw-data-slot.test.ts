@@ -124,3 +124,58 @@ describe("raw data-slot route", () => {
     expect([200, 404]).toContain(r.status)
   })
 })
+
+// The JSONL export: the whole history of one slot, one object per version. This is the
+// substrate the querying story is built on (a page charts itself, an agent pulls a
+// series, jq/DuckDB read it) — so it must be correct, ordered, and gated exactly like
+// the per-version route.
+describe("raw data-slot JSONL export", () => {
+  it("serves the full series oldest-first, one JSON object per line", async () => {
+    await seed("jl1", "public", 3)
+    const r = await app.request("/raw/jl1/data/checks.jsonl", {
+      headers: { authorization: "Bearer tok" },
+    })
+    expect(r.status).toBe(200)
+    expect(r.headers.get("content-type")).toContain("application/x-ndjson")
+    const lines = (await r.text()).trim().split("\n")
+    expect(lines).toHaveLength(3)
+    const points = lines.map((l) => JSON.parse(l))
+    expect(points.map((p) => p.n)).toEqual([1, 2, 3])
+    expect(points.map((p) => p.data.day)).toEqual([1, 2, 3])
+    expect(points[0].at).toBeTruthy()
+  })
+
+  it("accepts the slot name with or without the .jsonl suffix", async () => {
+    await seed("jl2", "public", 2)
+    const bare = await app.request("/raw/jl2/data/checks.jsonl", {
+      headers: { authorization: "Bearer tok" },
+    })
+    expect(bare.status).toBe(200)
+  })
+
+  it("404s an unknown slot and an unknown artifact", async () => {
+    await seed("jl3", "public")
+    expect((await app.request("/raw/jl3/data/nosuch.jsonl")).status).toBe(404)
+    expect((await app.request("/raw/nope/data/checks.jsonl")).status).toBe(404)
+  })
+
+  it("does not leak a private artifact's series to an anonymous caller", async () => {
+    await seed("jl4", "none", 2)
+    expect((await app.request("/raw/jl4/data/checks.jsonl")).status).toBe(404)
+    const ok = await app.request("/raw/jl4/data/checks.jsonl", {
+      headers: { authorization: "Bearer tok" },
+    })
+    expect(ok.status).toBe(200)
+  })
+
+  it("gives an anonymous caller only the CURRENT point when history is not public", async () => {
+    // The export must not be a way around the public-history gate: without it, an old
+    // version's data would be readable here while its bytes are not.
+    await seed("jl5", "public", 3)
+    const anon = await app.request("/raw/jl5/data/checks.jsonl")
+    expect(anon.status).toBe(200)
+    const lines = (await anon.text()).trim().split("\n")
+    expect(lines).toHaveLength(1)
+    expect(JSON.parse(lines[0] as string).data.day).toBe(3)
+  })
+})

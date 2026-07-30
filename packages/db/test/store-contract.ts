@@ -193,6 +193,50 @@ export function runStoreContract(
       ])
     })
 
+    it("reads one slot across artifacts, and only from each one's CURRENT version", async () => {
+      // Two artifacts carry "xchecks"; one of them moves on to a new version, and the
+      // cross-artifact read must report the NEW value — reporting a superseded row as the
+      // present state is the failure that would make this quietly wrong.
+      const a = await store.createArtifact(newArtifact({ title: "Nightly A" }))
+      const v1 = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, v1.n, [
+        { id: uuid(), slot: "xchecks", json: '{"pass":1}', size_bytes: 11, gen: 1 },
+      ])
+      const v2 = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, v2.n, [
+        { id: uuid(), slot: "xchecks", json: '{"pass":2}', size_bytes: 11, gen: 1 },
+      ])
+      const b = await store.createArtifact(newArtifact({ title: "Nightly B" }))
+      const bv = await store.addVersion(b.id, newVersion())
+      await store.setVersionData(b.id, bv.n, [
+        { id: uuid(), slot: "xchecks", json: '{"pass":9}', size_bytes: 11, gen: 1 },
+        { id: uuid(), slot: "xother", json: "1", size_bytes: 1, gen: 1 },
+      ])
+
+      const rows = await store.listSlotAcrossArtifacts(ORG, "xchecks")
+      const byId = new Map(rows.map((r) => [r.short_id, r]))
+      expect(byId.get(a.short_id)?.json).toBe('{"pass":2}') // the current version, not v1
+      expect(byId.get(a.short_id)?.n).toBe(v2.n)
+      expect(byId.get(b.short_id)?.json).toBe('{"pass":9}')
+      // A slot nobody carries is empty, not an error.
+      expect(await store.listSlotAcrossArtifacts(ORG, "nosuch")).toEqual([])
+      // The limit bounds the payload.
+      expect((await store.listSlotAcrossArtifacts(ORG, "xchecks", { limit: 1 })).length).toBe(1)
+    })
+
+    it("lists the workspace's slot vocabulary with artifact counts", async () => {
+      const catalog = await store.listWorkspaceSlots(ORG)
+      const checks = catalog.find((c) => c.slot === "xchecks")
+      // Both artifacts from the previous case carry it; "other" is on one.
+      expect(checks?.artifacts).toBeGreaterThanOrEqual(2)
+      expect(catalog.find((c) => c.slot === "xother")?.artifacts).toBe(1)
+      expect(checks?.latest_at).toBeTruthy()
+      // Ordered by reach, so the most-used slot leads.
+      expect(catalog[0]?.artifacts).toBeGreaterThanOrEqual(
+        catalog[catalog.length - 1]?.artifacts ?? 0,
+      )
+    })
+
     it("filters listArtifacts by title search and by id set (empty ⇒ none)", async () => {
       const a = await store.createArtifact(newArtifact({ title: "Quarterly Report XYZ" }))
       expect((await store.listArtifacts({ q: "quarterly report xyz" })).map((x) => x.id)).toContain(
