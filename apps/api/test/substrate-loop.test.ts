@@ -160,28 +160,6 @@ describe("loop substrate: the gate decides the write", () => {
     await api.close()
   })
 
-  it("a TAINTED run cannot publish, whatever the target's mode says", async () => {
-    // The structural injection defense, at the substrate: taint comes from the CLAIM (the
-    // server's view), so an executor cannot talk its way out of it.
-    const api = stubApi({
-      run: {
-        ...baseRun,
-        tainted: true,
-        targets: [{ kind: "artifact", id: "art_1", mode: "publish" }],
-      },
-    })
-    const url = await api.url
-    const fin = await runToSettle(url, api.rec, async () => ({
-      text: revision(),
-      toolUses: [],
-      costUsd: null,
-      done: true,
-    }))
-    expect(fin?.meta).toMatchObject({ outcome: "proposed" })
-    expect(api.rec.writes[0]?.path).toContain("/proposals")
-    await api.close()
-  })
-
   it("the killswitch demotes to a proposal", async () => {
     const api = stubApi({
       run: {
@@ -265,7 +243,7 @@ describe("loop substrate: failures", () => {
 })
 
 describe("loop substrate: tools go through the run's endpoint", () => {
-  it("a tool call is proxied, not made directly — so least-privilege and taint still apply", async () => {
+  it("a tool call is proxied, not made directly — so least-privilege still applies", async () => {
     const api = stubApi({
       run: {
         ...baseRun,

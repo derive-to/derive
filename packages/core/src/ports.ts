@@ -1087,13 +1087,6 @@ export interface AgentStore {
    *  started_at the caller's OWN claim began with closes that: a newer claim changes it, so a
    *  late request from an old one matches nothing and is refused rather than silently honored.
    *  Optional for callers with no claim identity to fence on (a human retry, a migration). */
-  /** Replace a run's meta blob mid-flight, with no status transition — the writer for facts
-   *  discovered WHILE a run is running (today: taint, stamped when the server proxies a source
-   *  tool). Deliberately status-agnostic: the run is `running` at the time, and adding a guard
-   *  here would silently drop the stamp if the run were reclaimed in the same instant, which is
-   *  exactly when recording it matters most. Callers pass an already-merged blob (mergeRunMeta),
-   *  never a replacement, because run.meta has several independent writers. */
-  updateRunMeta(id: string, meta: string | null): Promise<RunRecord | null>
   requeueRun(
     id: string,
     agentId: string,

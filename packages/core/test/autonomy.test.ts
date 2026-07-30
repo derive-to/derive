@@ -20,35 +20,31 @@ describe("decideWrite", () => {
     // precedence here and both tables must change with it; if the CLI's IMPLEMENTATION is not
     // updated too, its parity test fails. That is the only thing standing between two copies of
     // a safety gate and a silent divergence.
-    const rows: Array<[AutonomyLevel, number | null, boolean, boolean, boolean, GateDecision]> = []
+    const rows: Array<[AutonomyLevel, number | null, boolean, boolean, GateDecision]> = []
     for (const autonomy of ["shadow", "suggest", "auto"] as const)
       for (const confidence of [null, 0.5, 1])
         for (const killswitch of [false, true])
-          for (const autoEnabled of [false, true])
-            for (const tainted of [false, true]) {
-              const expected: GateDecision = killswitch
-                ? "proposal"
-                : autonomy === "shadow"
-                  ? "shadow"
-                  : tainted
+          for (const autoEnabled of [false, true]) {
+            const expected: GateDecision = killswitch
+              ? "proposal"
+              : autonomy === "shadow"
+                ? "shadow"
+                : autonomy === "suggest"
+                  ? "proposal"
+                  : !autoEnabled || confidence === null || confidence < DEFAULT_CONFIDENCE_FLOOR
                     ? "proposal"
-                    : autonomy === "suggest"
-                      ? "proposal"
-                      : !autoEnabled || confidence === null || confidence < DEFAULT_CONFIDENCE_FLOOR
-                        ? "proposal"
-                        : "live_publish_with_review"
-              rows.push([autonomy, confidence, killswitch, autoEnabled, tainted, expected])
-            }
-    expect(rows).toHaveLength(72)
-    for (const [autonomy, confidence, killswitch, autoEnabled, tainted, expected] of rows) {
+                    : "live_publish_with_review"
+            rows.push([autonomy, confidence, killswitch, autoEnabled, expected])
+          }
+    expect(rows).toHaveLength(36)
+    for (const [autonomy, confidence, killswitch, autoEnabled, expected] of rows) {
       expect(
         decideWrite({
           autonomy,
           confidence,
-          tainted,
           flags: { agentKillswitch: killswitch, agentAutoEnabled: autoEnabled },
         }),
-        `${autonomy}/conf=${confidence}/kill=${killswitch}/auto=${autoEnabled}/taint=${tainted}`,
+        `${autonomy}/conf=${confidence}/kill=${killswitch}/auto=${autoEnabled}`,
       ).toBe(expected)
     }
   })

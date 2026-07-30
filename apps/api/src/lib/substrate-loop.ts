@@ -1,4 +1,4 @@
-import { type AutonomyFlags, parseRunMeta, runTainted, toMicroUsd } from "@derive/core"
+import { type AutonomyFlags, toMicroUsd } from "@derive/core"
 import { log } from "../log"
 import type { AgentLoopInput, LoopTool } from "./agent-loop"
 import type { Substrate } from "./dispatch"
@@ -30,7 +30,7 @@ import {
  *   - It runs unchanged on Node and on Workers, because `fetch` is all it needs. No platform
  *     branch, so there is no second implementation to keep in step.
  *   - It goes through the SAME authorization the container executor does. Least-privilege tool
- *     lists, the taint stamp, the payer chain and the capability-token scope all apply without
+ *     lists, the payer chain and the capability-token scope all apply without
  *     being re-implemented — and cannot be accidentally bypassed by being in-process.
  *   - It is exercised by the same endpoints everything else uses, so a break shows up in the
  *     existing tests rather than only here.
@@ -80,7 +80,6 @@ interface ClaimedRun {
   targets?: { kind: string; id?: string; tag?: string; mode?: string }[]
   tools?: { def: LoopTool; ref: string }[]
   payloads?: unknown[]
-  tainted?: boolean
   flags?: AutonomyFlags
   meta?: string | null
 }
@@ -146,7 +145,7 @@ const buildPrompt = (run: ClaimedRun): string => {
 }
 
 /** Tool calls go through the WORK ITEM'S OWN endpoint: least-privilege is re-checked
- *  server-side and the taint stamp lands there, exactly as it does for the container
+ *  server-side, exactly as it does for the container
  *  executor's shim. */
 const toolProxy =
   ({ call }: Api, path: string): NonNullable<AgentLoopInput["executeTool"]> =>
@@ -325,9 +324,6 @@ const serveOneRun = async (
       // Consent is per target and never the model's to give.
       autonomy: target?.mode === "publish" ? "auto" : "suggest",
       flags: run.flags ?? NO_FLAGS,
-      // Taint comes from the claim (the SERVER's view), so a run that read untrusted content
-      // lands as a proposal whatever the workspace's autonomy setting says.
-      tainted: run.tainted === true || runTainted(parseRunMeta(run.meta)),
     },
     land: landOverHttp(client, target?.id),
   })
@@ -428,11 +424,6 @@ const serveOneSession = async (
       // rather than putting it in front of everyone.
       autonomy: "auto",
       flags: claimed.flags ?? NO_FLAGS,
-      // No taint stamp exists for the ask lane: the server records taint on RUNS (a webhook
-      // payload at claim time, a source tool when it proxies one) and there is no session
-      // equivalent yet. Stating that plainly beats inventing a rule here — the executor is the
-      // last place that should be deciding what it read.
-      tainted: false,
     },
     land: landOverHttp(client, undefined),
   })

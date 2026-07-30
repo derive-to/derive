@@ -9,45 +9,40 @@ import { DEFAULT_CONFIDENCE_FLOOR, decideWrite, runRevisionAgent } from "../src/
 // autonomy gate, so a disagreement is not a cosmetic bug. It decides whether an agent's write
 // goes live or waits for a human.
 //
-// The concrete risk is a rung added to one copy and not the other. That already nearly happened
-// with `tainted`: a taint rung present in core but missing here would let a run that consumed
-// untrusted webhook content live-publish from the container substrate while the same run was
-// correctly demoted everywhere else.
+// The concrete risk is a rung added to one copy and not the other: a rung present in core but
+// missing here would let the container substrate live-publish a write that is correctly demoted
+// everywhere else.
 //
 // The table below is derived by the SAME precedence block as packages/core/test/autonomy.test.ts.
 // Both are the spec; each holds its own implementation to it. Changing the precedence means
 // changing both tables, and forgetting either implementation fails loudly here.
 describe("decideWrite: parity with @derive/core", () => {
-  it("the full truth table — 72 combinations, identical to core's", () => {
+  it("the full truth table — 36 combinations, identical to core's", () => {
     const rows = []
     for (const autonomy of ["shadow", "suggest", "auto"])
       for (const confidence of [null, 0.5, 1])
         for (const killswitch of [false, true])
-          for (const autoEnabled of [false, true])
-            for (const tainted of [false, true]) {
-              const expected = killswitch
-                ? "proposal"
-                : autonomy === "shadow"
-                  ? "shadow"
-                  : tainted
+          for (const autoEnabled of [false, true]) {
+            const expected = killswitch
+              ? "proposal"
+              : autonomy === "shadow"
+                ? "shadow"
+                : autonomy === "suggest"
+                  ? "proposal"
+                  : !autoEnabled || confidence === null || confidence < DEFAULT_CONFIDENCE_FLOOR
                     ? "proposal"
-                    : autonomy === "suggest"
-                      ? "proposal"
-                      : !autoEnabled || confidence === null || confidence < DEFAULT_CONFIDENCE_FLOOR
-                        ? "proposal"
-                        : "live_publish_with_review"
-              rows.push([autonomy, confidence, killswitch, autoEnabled, tainted, expected])
-            }
-    expect(rows).toHaveLength(72)
-    for (const [autonomy, confidence, killswitch, autoEnabled, tainted, expected] of rows) {
+                    : "live_publish_with_review"
+            rows.push([autonomy, confidence, killswitch, autoEnabled, expected])
+          }
+    expect(rows).toHaveLength(36)
+    for (const [autonomy, confidence, killswitch, autoEnabled, expected] of rows) {
       expect(
         decideWrite({
           autonomy,
           confidence,
-          tainted,
           flags: { agentKillswitch: killswitch, agentAutoEnabled: autoEnabled },
         }),
-        `${autonomy}/conf=${confidence}/kill=${killswitch}/auto=${autoEnabled}/taint=${tainted}`,
+        `${autonomy}/conf=${confidence}/kill=${killswitch}/auto=${autoEnabled}`,
       ).toBe(expected)
     }
   })

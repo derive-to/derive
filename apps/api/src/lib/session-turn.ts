@@ -157,8 +157,6 @@ ${src.text}
       autonomy: input.subject.mode === "publish" ? "auto" : "suggest",
       flags: input.flags,
       // Nothing external was read: the model saw this document and this conversation, both of
-      // which the asker can already see. Taint returns the moment a turn can call a tool.
-      tainted: false,
     },
     land: landInProcess(deps, input, src.version),
   })

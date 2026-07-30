@@ -7,7 +7,6 @@ import {
   normalizeSelectors,
   parseRunMeta,
   runCounter,
-  runTainted,
 } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { type Context, Hono } from "hono"
@@ -503,9 +502,6 @@ export const automationRoutes = (ctx: AppContext) => {
         const connIds = parseConnectionIds(a.connection_ids)
         const tools =
           broker && connIds.length ? await toolsForRun(meta, broker, agent.org_id, connIds) : []
-        // Parsed ONCE — the payload list and the taint flag both come out of the same blob, and
-        // this runs per run on every claim.
-        const runMeta = parseRunMeta(r.meta)
         return {
           id: r.id,
           reason: r.reason,
@@ -540,13 +536,7 @@ export const automationRoutes = (ctx: AppContext) => {
           // validated, capped, coalesced and CAS-appended, and then no consumer ever read
           // them, so a webhook-triggered run executed as though a clock had started it. Empty
           // for schedule and manual runs.
-          payloads: runMeta.payloads ?? [],
-          // TAINT, as the SERVER knows it at claim time. A webhook payload is untrusted content
-          // by definition (it is whatever the caller POSTed), so a run carrying one starts
-          // tainted and can never live-publish — its writes land as proposals. A source-tool
-          // call stamps the same flag mid-run, from the tool endpoint. Sent to the executor so
-          // its local gate agrees with the server's view; the executor cannot clear it.
-          tainted: runTainted(runMeta),
+          payloads: parseRunMeta(r.meta).payloads ?? [],
           flags,
         }
       }),
@@ -706,20 +696,7 @@ export const automationRoutes = (ctx: AppContext) => {
       args: b.args,
       ref: b.ref,
     })
-    if (!out.ok) return fail(c, out.status, out.message)
-    // TAINT, stamped BEFORE the result is handed over. This run has now read data from an
-    // outside system, so it can no longer live-publish (see decideWrite): its writes become
-    // proposals a human approves. Recorded here rather than trusted from the executor, because
-    // this endpoint is the only place that KNOWS a tool ran — the executor is the party a prompt
-    // injection would already have captured, so its word on whether it read anything is worth
-    // nothing.
-    //
-    // It lives HERE rather than inside callTool because taint belongs to a RUN, and callTool now
-    // serves the context lane too, where there is no run to stamp. Ordered before the response
-    // deliberately: if the stamp fails we would rather fail the tool call than hand back external
-    // data the gate does not know about. Merged, never replaced, like every other writer of meta.
-    await meta.updateRunMeta(run.id, mergeRunMeta(run.meta, { tainted: true }))
-    return c.json({ result: out.result })
+    return out.ok ? c.json({ result: out.result }) : fail(c, out.status, out.message)
   })
 
   // Record an already-finished run straight into the ledger — the host's best-effort write

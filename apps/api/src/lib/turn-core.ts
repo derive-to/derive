@@ -183,7 +183,7 @@ export interface TurnInput {
   executeTool?: AgentLoopInput["executeTool"]
   maxTurns?: number
   /** The gate's inputs. decideWrite runs HERE, above the port, in every lane. */
-  gate: { autonomy: AutonomyLevel; flags: AutonomyFlags; tainted: boolean }
+  gate: { autonomy: AutonomyLevel; flags: AutonomyFlags }
   land: LandingPort
 }
 
@@ -249,7 +249,6 @@ export const runTurn = async (input: TurnInput): Promise<TurnOutcome> => {
     autonomy: input.gate.autonomy,
     confidence: revision.confidence,
     flags: input.gate.flags,
-    tainted: input.gate.tainted,
   })
   if (decision === "shadow")
     return { outcome: "shadow", reply: prose || revision.message || "", wrote: null, ...base }

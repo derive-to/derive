@@ -718,16 +718,10 @@ export const RETRY_DELAY_MS = 30_000
 // import the TS core at runtime), so this is a faithful copy. The MODEL never chooses the write
 // mode — this does, from the target's consent (mode), the workspace flags, and confidence.
 export const DEFAULT_CONFIDENCE_FLOOR = 0.8
-export function decideWrite({ autonomy, confidence, flags, confidenceFloor, tainted }) {
+export function decideWrite({ autonomy, confidence, flags, confidenceFloor }) {
   const floor = confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR
   if (flags.agentKillswitch) return "proposal"
   if (autonomy === "shadow") return "shadow"
-  // TAINTED: this run read untrusted external content (a webhook payload, a source-tool result),
-  // so it cannot live-publish however the workspace is configured. Below shadow, because shadow
-  // files nothing at all and is therefore already safer than a proposal. The flag is the
-  // SERVER's, sent on the claim — the executor never computes it, since a prompt injection would
-  // already own the party doing the computing.
-  if (tainted) return "proposal"
   if (autonomy === "suggest") return "proposal"
   if (!flags.agentAutoEnabled) return "proposal"
   if (confidence === null || confidence === undefined || confidence < floor) return "proposal"
@@ -1404,10 +1398,6 @@ export async function serveRun(client, run, manifest, cfg) {
     autonomy: mode ? (mode === "publish" ? "auto" : "suggest") : "suggest",
     confidence: rev.confidence,
     flags: run.flags ?? {},
-    // Server-recorded, never inferred here: a webhook payload taints at claim time, a source
-    // tool taints when the server proxies it. Absent on an older server ⇒ falsy ⇒ today's
-    // behaviour, so a new CLI against an old deployment is unchanged rather than broken.
-    tainted: run.tainted === true,
   })
   const revInput = {
     content: rev.content,

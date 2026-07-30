@@ -21,7 +21,7 @@ import { type AskFields, addCostUsd, NUDGE_LIMIT, type Revision } from "@derive/
  * ask for the same output in the same words.
  *
  * The loop does NOT decide how a write lands. It returns what the model produced; the caller
- * runs decideWrite with the workspace flags and the run's taint, exactly as the container path
+ * runs decideWrite with the workspace flags, exactly as the container path
  * does.
  */
 
