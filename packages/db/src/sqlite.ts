@@ -11,6 +11,7 @@ import Database from "better-sqlite3"
 import { and, eq, inArray } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/better-sqlite3"
 import {
+  composeArtifactDetail,
   composeAutomationsWithExecutors,
   composeCollectionsOverview,
   composeListEnrichment,
@@ -133,7 +134,11 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
   // queries (attached after the literal — it needs the finished store to call).
   const store: Omit<
     MetaStore,
-    "listEnrichment" | "notificationsPage" | "automationsWithExecutors" | "collectionsOverview"
+    | "listEnrichment"
+    | "artifactDetail"
+    | "notificationsPage"
+    | "automationsWithExecutors"
+    | "collectionsOverview"
   > & { close(): void } = {
     ...repos,
 
@@ -585,6 +590,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
   return {
     ...store,
     listEnrichment: (opts) => composeListEnrichment(store, opts),
+    artifactDetail: (opts) => composeArtifactDetail(store, opts),
     notificationsPage: (userId, limit) => composeNotificationsPage(store, userId, limit),
     automationsWithExecutors: (orgId, limit) =>
       composeAutomationsWithExecutors(store, orgId, limit),

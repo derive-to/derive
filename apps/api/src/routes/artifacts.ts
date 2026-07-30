@@ -1310,7 +1310,17 @@ export const artifactRoutes = (ctx: AppContext) => {
           removed: true,
           managed: false,
         })
-      const allVersions = await meta.listVersions(artifact.id)
+      // The detail response's whole artifact-scoped context — versions, tags, the
+      // collections it sits in, its proposals, the open-thread count, the viewer's
+      // favorite, the workspace's settings, and whether it is a read-only GitHub mirror
+      // — in ONE store call. These were eight sequential round trips (~80ms each on the
+      // edge, see edge-pg.ts) all keyed on this one artifact or its org.
+      const detail = await meta.artifactDetail({
+        artifactId: artifact.id,
+        orgId: artifact.org_id,
+        viewerId: actor.kind === "user" ? (actor.userId ?? null) : null,
+      })
+      const allVersions = detail.versions
       // The public-history gate: unless the owner opted the public page in, an
       // anonymous caller's history collapses to the current version — the payload
       // must not leak what the page won't show (version messages and author names
@@ -1321,9 +1331,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           ? allVersions.filter((v) => v.n === artifact.current_version)
           : allVersions
       const me = actor.kind === "user" ? actor.userId : null
-      const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
-      const favorite = me ? (await meta.listUserFavoriteIds(me)).includes(artifact.id) : false
-      const collections = await meta.collectionIdsForArtifact(artifact.id)
+      const tags = detail.tags
+      const favorite = detail.favorite
+      const collections = detail.collectionIds
       const myRole = effectiveRole(actor, artifact.workspace_access, artifact.link_role)
       // The share dialog's disclosure rows: which collections' sharing REACHES this
       // artifact (a workspace-open collection propagates every seat; an invite-only
@@ -1388,7 +1398,7 @@ export const artifactRoutes = (ctx: AppContext) => {
             owner_name: creatorNames[col.created_by]?.name ?? null,
           }))
       }
-      const proposals = await meta.listProposals(artifact.id)
+      const proposals = detail.proposals
       // A markdown bundle (a skill — entry SKILL.md — or a docs folder) gets a `bundle`
       // block: the entry + file tree (so the client can render the doc and navigate
       // siblings) plus skill identity when it is one. One manifest read, on the detail
@@ -1450,7 +1460,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         // Show the Made-with-Derive mark on this artifact's public surfaces? False
         // only for white-label workspaces; the viewer reads this single boolean so
         // workspace settings never travel to anonymous clients.
-        badge: !(await meta.getOrgSettings(artifact.org_id)).whiteLabel,
+        badge: !detail.settings.whiteLabel,
         // Owner opt-in: the anonymous public page shows version history. The
         // client uses it to render the byline dropdown; the server enforces it
         // above (trimmed versions) and in raw.ts (old-version bytes).
@@ -1463,10 +1473,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         // viewer — the whole point of the pill is what signing in would unlock.
         ...(actor.kind === "anon" &&
         (artifact.link_role === "commenter" || artifact.link_role === "editor")
-          ? {
-              open_comment_count:
-                (await meta.commentSignals([artifact.id], null))[artifact.id]?.open_threads ?? 0,
-            }
+          ? { open_comment_count: detail.openThreads }
           : {}),
         // The artifact's current workspace — the move dialog needs this to exclude
         // it from the destination picker.
@@ -1485,7 +1492,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         removed: !!artifact.removed_at,
         // Mirrored from a GitHub sync source → read-only in Derive (the client hides
         // Edit/Propose; the publish/propose routes also refuse it server-side).
-        managed: (await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id),
+        managed: detail.managed,
         // The content iframe is sandboxed with no `allow-same-origin` (opaque origin —
         // it must not be able to touch derive.to cookies/storage), which means it also has
         // no origin of its own to send OUR session cookie back on, and Chrome refuses to

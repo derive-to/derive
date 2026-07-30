@@ -1796,6 +1796,149 @@ export function runStoreContract(
       )
     })
 
+    it("artifactDetail matches every individual call it replaces", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Detail")
+      const viewer = `u_${uuid()}`
+      const a = await store.createArtifact(newArtifact({ org_id: org }))
+      await store.addVersion(a.id, newVersion())
+      await store.addVersion(a.id, newVersion())
+      await store.setArtifactTags(a.id, ["zeta", "alpha"])
+      await store.setFavorite(a.id, viewer)
+      const col = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Holder",
+        created_by: "amy",
+      })
+      await store.addCollectionItem(col.id, a.id)
+      await store.createProposal({
+        id: uuid(),
+        artifact_id: a.id,
+        blob_key: `blob_${uuid()}`,
+        content_type: "text/html",
+        kind: "file",
+        author: "amy",
+        base_version: 1,
+      })
+      // Two comments in ONE open thread + one resolved thread: openThreads counts
+      // DISTINCT open threads, so this must be 1, not 2 and not 3.
+      const openThread = uuid()
+      for (const body of ["first", "second"])
+        await store.createComment({
+          id: uuid(),
+          artifact_id: a.id,
+          thread_id: openThread,
+          base_version: 1,
+          body_md: body,
+          author: "amy",
+        })
+      const doneThread = uuid()
+      await store.createComment({
+        id: uuid(),
+        artifact_id: a.id,
+        thread_id: doneThread,
+        base_version: 1,
+        body_md: "done",
+        author: "amy",
+      })
+      await store.setThreadState(a.id, doneThread, "resolved")
+      await store.setOrgSettings(org, { ...DEFAULT_ORG_SETTINGS, whiteLabel: true })
+
+      const detail = await store.artifactDetail({ artifactId: a.id, orgId: org, viewerId: viewer })
+      // Indistinguishable from the calls it replaces.
+      expect(detail.versions).toEqual(await store.listVersions(a.id))
+      expect(detail.tags).toEqual((await store.tagsForArtifacts([a.id]))[a.id] ?? [])
+      expect(detail.collectionIds).toEqual(await store.collectionIdsForArtifact(a.id))
+      expect(detail.proposals).toEqual(await store.listProposals(a.id))
+      expect(detail.openThreads).toBe(
+        (await store.commentSignals([a.id], null))[a.id]?.open_threads ?? 0,
+      )
+      expect(detail.favorite).toBe((await store.listUserFavoriteIds(viewer)).includes(a.id))
+      expect(detail.settings).toEqual(await store.getOrgSettings(org))
+      expect(detail.managed).toBe((await store.managedArtifactIds(org)).includes(a.id))
+      // Populated, not vacuously equal-empty — and ORDER matters: the route indexes its
+      // mapped array against `versions[i]`, so ascending-by-n is part of the contract.
+      expect(detail.versions.map((v) => v.n)).toEqual([1, 2])
+      expect(detail.tags).toEqual(["alpha", "zeta"])
+      expect(detail.collectionIds).toEqual([col.id])
+      expect(detail.proposals).toHaveLength(1)
+      expect(detail.openThreads).toBe(1)
+      expect(detail.favorite).toBe(true)
+      expect(detail.settings.whiteLabel).toBe(true)
+      expect(detail.managed).toBe(false)
+
+      // An anonymous viewer has no favorite; everything else is unchanged.
+      const anon = await store.artifactDetail({ artifactId: a.id, orgId: org, viewerId: null })
+      expect(anon.favorite).toBe(false)
+      expect(anon.versions).toEqual(detail.versions)
+      expect(anon.openThreads).toBe(1)
+      // A DIFFERENT user's favorite must not leak into this viewer's answer.
+      const stranger = await store.artifactDetail({
+        artifactId: a.id,
+        orgId: org,
+        viewerId: `u_${uuid()}`,
+      })
+      expect(stranger.favorite).toBe(false)
+    })
+
+    it("artifactDetail on a bare artifact returns empties + settings defaults, no crash", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Bare")
+      const a = await store.createArtifact(newArtifact({ org_id: org }))
+      const detail = await store.artifactDetail({
+        artifactId: a.id,
+        orgId: org,
+        viewerId: `u_${uuid()}`,
+      })
+      expect(detail.versions).toEqual([])
+      expect(detail.tags).toEqual([])
+      expect(detail.collectionIds).toEqual([])
+      expect(detail.proposals).toEqual([])
+      expect(detail.openThreads).toBe(0)
+      expect(detail.favorite).toBe(false)
+      expect(detail.managed).toBe(false)
+      // No org_settings row ⇒ the parsed defaults, same as getOrgSettings would give.
+      expect(detail.settings).toEqual(await store.getOrgSettings(org))
+    })
+
+    it("artifactDetail scopes to ITS artifact — a sibling's versions/tags/proposals never bleed in", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Scoping")
+      const mine = await store.createArtifact(newArtifact({ org_id: org }))
+      const other = await store.createArtifact(newArtifact({ org_id: org }))
+      await store.addVersion(mine.id, newVersion())
+      await store.addVersion(other.id, newVersion())
+      await store.addVersion(other.id, newVersion())
+      await store.setArtifactTags(other.id, ["not-mine"])
+      await store.createProposal({
+        id: uuid(),
+        artifact_id: other.id,
+        blob_key: `blob_${uuid()}`,
+        content_type: "text/html",
+        kind: "file",
+        author: "amy",
+        base_version: 1,
+      })
+      await store.createComment({
+        id: uuid(),
+        artifact_id: other.id,
+        thread_id: uuid(),
+        base_version: 1,
+        body_md: "on the other one",
+        author: "amy",
+      })
+      const detail = await store.artifactDetail({
+        artifactId: mine.id,
+        orgId: org,
+        viewerId: null,
+      })
+      expect(detail.versions).toHaveLength(1)
+      expect(detail.tags).toEqual([])
+      expect(detail.proposals).toEqual([])
+      expect(detail.openThreads).toBe(0)
+    })
+
     it("collectionsOverview matches listCollections + listRepoSources for the same org", async () => {
       const org = `org_${uuid()}`
       await store.setWorkspace(org, "Overview")

@@ -1,4 +1,6 @@
 import type {
+  ArtifactDetail,
+  ArtifactDetailOpts,
   AutomationRecord,
   CollectionRecord,
   ListEnrichment,
@@ -46,6 +48,45 @@ export const composeListEnrichment = async (
   const proposals = await store.openProposalCounts(opts.ids)
   const shareRoles = opts.memberId ? await store.artifactRolesFor(opts.memberId, opts.ids) : {}
   return { views, tags, previews, handles, bylines, signals, proposals, shareRoles }
+}
+
+/** See `composeListEnrichment` — the artifact-detail twin. */
+export const composeArtifactDetail = async (
+  store: Pick<
+    MetaStore,
+    | "listVersions"
+    | "tagsForArtifacts"
+    | "collectionIdsForArtifact"
+    | "listProposals"
+    | "commentSignals"
+    | "listUserFavoriteIds"
+    | "getOrgSettings"
+    | "managedArtifactIds"
+  >,
+  opts: ArtifactDetailOpts,
+): Promise<ArtifactDetail> => {
+  const { artifactId, orgId, viewerId } = opts
+  const [versions, tagsById, collectionIds, proposals, signals, favIds, settings, managedIds] =
+    await Promise.all([
+      store.listVersions(artifactId),
+      store.tagsForArtifacts([artifactId]),
+      store.collectionIdsForArtifact(artifactId),
+      store.listProposals(artifactId),
+      store.commentSignals([artifactId], null),
+      viewerId ? store.listUserFavoriteIds(viewerId) : Promise.resolve<string[]>([]),
+      store.getOrgSettings(orgId),
+      store.managedArtifactIds(orgId),
+    ])
+  return {
+    versions,
+    tags: tagsById[artifactId] ?? [],
+    collectionIds,
+    proposals,
+    openThreads: signals[artifactId]?.open_threads ?? 0,
+    favorite: favIds.includes(artifactId),
+    settings,
+    managed: managedIds.includes(artifactId),
+  }
 }
 
 /** See `composeListEnrichment` — the notifications-bell twin (page + true total unread). */

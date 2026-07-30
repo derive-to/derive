@@ -10,6 +10,7 @@ import type {
 import { sql } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/d1"
 import {
+  composeArtifactDetail,
   composeAutomationsWithExecutors,
   composeCollectionsOverview,
   composeListEnrichment,
@@ -41,7 +42,11 @@ export function createD1Store(d1: D1Database): MetaStore {
   // individual queries (attached after the literal — it needs the finished store).
   const store: Omit<
     MetaStore,
-    "listEnrichment" | "notificationsPage" | "automationsWithExecutors" | "collectionsOverview"
+    | "listEnrichment"
+    | "artifactDetail"
+    | "notificationsPage"
+    | "automationsWithExecutors"
+    | "collectionsOverview"
   > = {
     ...repos,
 
@@ -293,6 +298,7 @@ export function createD1Store(d1: D1Database): MetaStore {
   return {
     ...store,
     listEnrichment: (opts) => composeListEnrichment(store, opts),
+    artifactDetail: (opts) => composeArtifactDetail(store, opts),
     notificationsPage: (userId, limit) => composeNotificationsPage(store, userId, limit),
     automationsWithExecutors: (orgId, limit) =>
       composeAutomationsWithExecutors(store, orgId, limit),

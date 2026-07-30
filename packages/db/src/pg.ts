@@ -1,6 +1,8 @@
 import type {
   AgentMentionRecord,
   AgentRecord,
+  ArtifactDetail,
+  ArtifactDetailOpts,
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
@@ -454,6 +456,88 @@ export class PgMetaStore implements MetaStore {
       .from(version)
       .where(eq(version.artifact_id, artifactId))
       .orderBy(asc(version.n))
+  }
+
+  async artifactDetail(opts: ArtifactDetailOpts): Promise<ArtifactDetail> {
+    const { artifactId, orgId, viewerId } = opts
+    // Seven sequential ~80ms round trips (versions, tags, collection ids, proposals,
+    // open threads, favorite, settings, managed) collapsed into one UNION ALL. Whole
+    // rows ride as JSON in `doc` so branches with different column sets can share the
+    // union; the scalar branches carry a count or a marker row.
+    const { rows } = await this.pool.query<{ kind: string; doc: unknown }>(
+      `SELECT 'version' kind, row_to_json(v) doc FROM version v WHERE v.artifact_id = $1
+       UNION ALL
+       SELECT 'tag', to_json(t.tag) FROM artifact_tag t WHERE t.artifact_id = $1
+       UNION ALL
+       SELECT 'collection', to_json(ci.collection_id) FROM collection_item ci WHERE ci.artifact_id = $1
+       UNION ALL
+       SELECT 'proposal', row_to_json(p) FROM proposal p WHERE p.artifact_id = $1
+       UNION ALL
+       SELECT 'threads', to_json(count(DISTINCT c.thread_id)::int) FROM comment c
+        WHERE c.artifact_id = $1 AND c.state = 'open'
+       UNION ALL
+       SELECT 'favorite', to_json(count(*)::int) FROM artifact_favorite f
+        WHERE f.artifact_id = $1 AND $2::text IS NOT NULL AND f.user_id = $2
+       UNION ALL
+       SELECT 'settings', to_json(s.settings) FROM org_settings s WHERE s.org_id = $3
+       UNION ALL
+       SELECT 'source', to_json(r.files) FROM repo_source r WHERE r.org_id = $3`,
+      [artifactId, viewerId, orgId],
+    )
+    const versions: VersionRecord[] = []
+    const tags: string[] = []
+    const collectionIds: string[] = []
+    const proposals: ProposalRecord[] = []
+    const sourceFiles: { files: string }[] = []
+    let openThreads = 0
+    let favorite = false
+    let settingsJson: string | null = null
+    for (const r of rows) {
+      switch (r.kind) {
+        case "version":
+          versions.push(r.doc as VersionRecord)
+          break
+        case "tag":
+          tags.push(r.doc as string)
+          break
+        case "collection":
+          collectionIds.push(r.doc as string)
+          break
+        case "proposal":
+          proposals.push(r.doc as ProposalRecord)
+          break
+        case "threads":
+          openThreads = (r.doc as number) ?? 0
+          break
+        case "favorite":
+          favorite = ((r.doc as number) ?? 0) > 0
+          break
+        case "settings":
+          settingsJson = (r.doc as string | null) ?? null
+          break
+        case "source":
+          if (typeof r.doc === "string") sourceFiles.push({ files: r.doc })
+          break
+      }
+    }
+    // Same orderings the individual queries guaranteed: versions ascending by n (the
+    // detail route indexes `versions[i]` against its own mapped array), proposals newest
+    // first, tags sorted.
+    versions.sort((a, b) => a.n - b.n)
+    proposals.sort((a, b) =>
+      a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0,
+    )
+    tags.sort()
+    return {
+      versions,
+      tags,
+      collectionIds,
+      proposals,
+      openThreads,
+      favorite,
+      settings: parseOrgSettings(settingsJson),
+      managed: collectManagedIds(sourceFiles).includes(artifactId),
+    }
   }
 
   async getVersion(artifactId: string, n: number): Promise<VersionRecord | null> {

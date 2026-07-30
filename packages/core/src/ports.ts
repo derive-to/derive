@@ -206,6 +206,29 @@ export interface ListArtifactsOpts {
   excludeRemoved?: boolean
 }
 
+export interface ArtifactDetailOpts {
+  artifactId: string
+  /** The artifact's workspace — settings + managed-mirror status are keyed on it. */
+  orgId: string
+  /** The signed-in viewer, or null (anonymous). Null skips the favorite lookup. */
+  viewerId: string | null
+}
+
+/** One page's worth of artifact-detail context — see `ArtifactQueryStore.artifactDetail`. */
+export interface ArtifactDetail {
+  versions: VersionRecord[]
+  tags: string[]
+  /** Ids of the collections containing this artifact. */
+  collectionIds: string[]
+  proposals: ProposalRecord[]
+  /** Distinct OPEN comment threads on this artifact (the public viewer's pill count). */
+  openThreads: number
+  favorite: boolean
+  settings: OrgSettings
+  /** True when this artifact is mirrored from a GitHub sync source (read-only in Derive). */
+  managed: boolean
+}
+
 export interface ListEnrichmentOpts {
   /** The page of artifact ids being decorated. */
   ids: string[]
@@ -532,6 +555,19 @@ export interface ArtifactQueryStore {
    * `ids` array matches nothing.
    */
   listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]>
+  /**
+   * Everything the artifact DETAIL response needs about one artifact, in ONE store call:
+   * its versions, tags, the collections it sits in, its proposals, its open-thread count,
+   * whether the viewer has favorited it, its workspace's settings, and whether it is a
+   * read-only GitHub mirror. Same motivation as `listEnrichment` — these were seven
+   * sequential ~80ms round trips on the edge tier, all keyed on the same artifact (or its
+   * org). `viewerId` null skips the favorite check (anonymous readers can't have one).
+   *
+   * `managed` and `favorite` are answered as booleans about THIS artifact rather than by
+   * fetching the org's whole managed-id set / the user's whole favorite list and calling
+   * `.includes()`, which is what the route used to do.
+   */
+  artifactDetail(opts: ArtifactDetailOpts): Promise<ArtifactDetail>
   /**
    * Everything the library list decorates a page of rows with, in ONE store call:
    * view counts, tags, preview readiness, author handle + byline directory rows,
