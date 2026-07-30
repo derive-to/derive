@@ -11,6 +11,7 @@ export function EditBar({
   dirty,
   canPublish,
   saving,
+  bottomInset = 0,
   onSave,
   onDiscard,
   onDone,
@@ -18,6 +19,9 @@ export function EditBar({
   dirty: number
   canPublish: boolean
   saving: boolean
+  /** Extra bottom offset (px) — phones pass the comments sheet's height so the bar
+   *  floats above it instead of hiding behind it. */
+  bottomInset?: number
   onSave: () => void
   onDiscard: () => void
   onDone: () => void
@@ -25,7 +29,8 @@ export function EditBar({
   return (
     <div
       data-testid="inline-edit-bar"
-      className="absolute bottom-4.5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-lg bg-popover py-1 pr-1 pl-3 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10"
+      className="absolute left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-lg bg-popover py-1 pr-1 pl-3 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10"
+      style={{ bottom: bottomInset + 18 }}
     >
       {dirty === 0 ? (
         <>

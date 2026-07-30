@@ -753,16 +753,16 @@ export function Artifact() {
               openCount={openCount}
               showEdit={editable && canPropose && !editing && !art.managed}
               editLabel={effectiveCanPublish ? "Edit source (dev)" : "Propose change (dev)"}
-              // Inline editing: desktop, current version, single file, not a deck
-              // (slides present their own surface), not GitHub-managed. Commenters
-              // get the same affordance as a suggestion (it lands as a proposal).
+              // Inline editing: current version, single file, not a deck (slides
+              // present their own surface), not GitHub-managed. Commenters get the
+              // same affordance as a suggestion (it lands as a proposal). Phones
+              // included: tap a block, type on the keyboard, save from the bar.
               showInlineEdit={
                 editable &&
                 canPropose &&
                 !editing &&
                 !inlineEdit.active &&
                 !art.managed &&
-                !isMobile &&
                 !deck &&
                 art.current_content_type !== "text/x-derive-deck"
               }
@@ -860,12 +860,14 @@ export function Artifact() {
               </DocFab>
             )}
             {/* Inline edit mode's one piece of chrome: the floating Done / Discard·Save
-                bar. The document itself is the editor — click a block, type. */}
+                bar. The document itself is the editor — click a block, type. On phones
+                it floats above the comments sheet (the column reserves that space). */}
             {inlineEdit.active && !editing && !focus && (
               <EditBar
                 dirty={inlineEdit.dirty}
                 canPublish={effectiveCanPublish}
                 saving={inlineEdit.saving}
+                bottomInset={isMobile ? sheetInset : 0}
                 onSave={inlineEdit.save}
                 onDiscard={inlineEdit.discard}
                 onDone={inlineEdit.done}

@@ -110,7 +110,7 @@ export function ArtifactTopBar(props: {
             data-testid="artifact-inline-edit"
             onClick={props.onInlineEdit}
           >
-            <Icon name="edit" size={16} className="text-muted-foreground" />
+            <Icon name="pencil" size={16} className="text-muted-foreground" />
             {props.inlineEditLabel}
           </Button>
         )}

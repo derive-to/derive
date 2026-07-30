@@ -1433,7 +1433,18 @@ interface ElReg {
   const restoreEdits = () => {
     for (const t of editTargets) {
       if (document.contains(t.el)) {
-        if (concatText(t.el) !== t.origValues.join("")) t.el.innerHTML = t.origHtml
+        if (concatText(t.el) !== t.origValues.join("")) {
+          t.el.innerHTML = t.origHtml
+          // innerHTML rebuilt the block's text nodes as NEW objects — re-register
+          // them at their original offsets, or a Discarded block would refuse every
+          // later click as "dynamic" (its nodes missing from the mode-entry map).
+          if (editBase) {
+            const fresh = textNodes(t.el)
+            if (fresh.length === t.origValues.length)
+              for (let i = 0; i < fresh.length; i++)
+                editBase.starts.set(fresh[i] as Text, t.origStarts[i] as number)
+          }
+        }
         disableTarget(t)
       }
     }
@@ -1529,8 +1540,12 @@ interface ElReg {
       if (cand.contentEditable !== "plaintext-only") cand.setAttribute("contenteditable", "true")
     }
     target.el.focus({ preventScroll: true })
+    // Place the caret at the click point — but never fight the browser's own
+    // selection gestures: a double/triple click just selected a word/paragraph
+    // (e.detail > 1), and collapsing that to a caret would break the most natural
+    // typo gesture there is (double-click the word, type the fix).
     const sel2 = window.getSelection()
-    if (sel2 && c) {
+    if (sel2 && c && e.detail <= 1 && (sel2.isCollapsed || sel2.rangeCount === 0)) {
       try {
         const r = document.createRange()
         r.setStart(c.node, Math.min(c.offset, node.nodeValue?.length ?? 0))

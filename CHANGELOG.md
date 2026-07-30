@@ -9,7 +9,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
 ### Added
 - **Inline text editing.** An **Edit** button on the artifact workbench turns the
   rendered document itself into the editor: click any text, type, hit Save — a
-  typo fix no longer needs the raw source or an agent round-trip. Editors publish
+  typo fix no longer needs the raw source or an agent round-trip. Works on phones
+  too (the save bar floats above the comments sheet). Editors publish
   a new version directly; commenters (and locked artifacts) get **Suggest edits**,
   which files the same change as a proposal for review. Under the hood each
   changed run travels as a **quote-scoped edit** (`{ quote: { exact, prefix,
