@@ -39,15 +39,54 @@ const renderProse = (s: string): string =>
     .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
     .replace(/^\s*[-*]\s+/gm, "• ")
 
-/** Clamp rendered mrkdwn to `max` without leaving a half-written entity (`&am`) or link
- *  (`<https://…` with no closing `>`) at the boundary. Both render as garbage, and Slack
- *  rejects a truncated link outright with invalid_blocks. */
-const clampMrkdwn = (s: string, max: number): string => {
+/** Cut rendered PROSE to `max` without splitting something indivisible.
+ *
+ *  Only ever call this on text we escaped ourselves. It assumes every `&` starts an entity we
+ *  wrote, which is true of escaped prose and false of the output as a whole — a URL's `&` is
+ *  raw by design. Scanning the whole assembled string was the bug this replaced: an ordinary
+ *  comment like "R&D … [tab](…?a=1&v=2)" made the URL's `&` look like a half-written entity,
+ *  and trimming back to it sliced a COMPLETE link in half, leaving a dangling `<` and
+ *  collapsing a 646-char message to 49. Links are now indivisible units in mrkdwnBody, so
+ *  they never reach here. */
+const cutProse = (s: string, max: number): string => {
   if (s.length <= max) return s
-  let cut = s.slice(0, max - 1)
-  if (cut.lastIndexOf("<") > cut.lastIndexOf(">")) cut = cut.slice(0, cut.lastIndexOf("<"))
-  if (cut.lastIndexOf("&") > cut.lastIndexOf(";")) cut = cut.slice(0, cut.lastIndexOf("&"))
-  return `${cut}…`
+  let cut = s.slice(0, max)
+  const amp = cut.lastIndexOf("&")
+  if (amp > cut.lastIndexOf(";")) cut = cut.slice(0, amp)
+  // A lone surrogate would reach the wire as invalid UTF-16.
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1)
+  return cut
+}
+
+/** Bound and escape a short identity field (an artifact title, an author name).
+ *
+ *  Bounds the ESCAPED length, which is the one that counts: escaping expands up to 5x (`&` ->
+ *  `&amp;`), so these were escaped but never truncated and a single long title pushed a section
+ *  past Slack's hard 3000-char cap. Slack answers that with invalid_blocks, and the comment
+ *  mirror posts without a text fallback, so the comment dead-lettered instead of degrading. */
+export const mrkdwnLabel = (s: string, max = 200): string => cutProse(escapeMrkdwn(s), max)
+
+/** Bidi controls — a label can otherwise render right-to-left and visually impersonate another
+ *  destination even after escaping. */
+const BIDI = /[‪-‮⁦-⁩]/g
+
+/** A label that is itself a URL or a bare domain. Such a label claims to BE the destination, so
+ *  we refuse to hide the real one behind it (see renderLink). */
+const LABEL_IS_URLISH =
+  /^(?:[a-z][a-z0-9+.-]*:)?\/\/|^(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:[/?#]|$)/i
+
+/** Render one markdown link as mrkdwn.
+ *
+ *  Rendering `[text](url)` at all means the author chooses the visible text — that is what a
+ *  markdown link IS, and Derive's own UI renders comment bodies the same way, so Slack is just
+ *  another renderer of the same content. What we refuse is the case where the label
+ *  impersonates a destination: a label that looks like a URL or a bare domain, pointing
+ *  somewhere else, is indistinguishable from a genuine link to the reader. There we drop the
+ *  label and show where it actually goes. */
+const renderLink = (url: string, rawLabel: string): string => {
+  const plain = rawLabel.replace(BIDI, "").trim()
+  if (!plain || plain === url || LABEL_IS_URLISH.test(plain)) return `<${url}>`
+  return `<${url}|${escapeMrkdwn(plain)}>`
 }
 
 /** Render an untrusted markdown body as Slack mrkdwn — safe first, pretty second.
@@ -61,17 +100,32 @@ const clampMrkdwn = (s: string, max: number): string => {
  *  EXPANDS text — `&` becomes 5 chars, so a body inside the cap can render well past it. */
 export const mrkdwnBody = (md: string, max = MAX_SECTION): string => {
   const src = truncate(md, max)
+  // Reserve one char so an ellipsis always fits without a second, unsafe pass over the result.
+  const limit = max - 1
   let out = ""
+  let dropped = false
+  // Assemble token by token against a budget. A link is INDIVISIBLE — it goes in whole or not
+  // at all — so no clamp can ever emit a half-written one. Prose is the only thing cut, and
+  // cutProse is safe on prose because we escaped it.
+  const push = (rendered: string, atomic: boolean): boolean => {
+    if (out.length + rendered.length <= limit) {
+      out += rendered
+      return true
+    }
+    if (!atomic) out += cutProse(rendered, limit - out.length)
+    dropped = true
+    return false
+  }
   let last = 0
   for (const m of src.matchAll(MD_LINK)) {
     const at = m.index ?? 0
-    const label = escapeMrkdwn(m[1] ?? "")
-    out += renderProse(escapeMrkdwn(src.slice(last, at)))
-    out += label ? `<${m[2]}|${label}>` : `<${m[2]}>`
+    if (!push(renderProse(escapeMrkdwn(src.slice(last, at))), false)) break
+    if (!push(renderLink(m[2] ?? "", m[1] ?? ""), true)) break
     last = at + m[0].length
   }
-  out += renderProse(escapeMrkdwn(src.slice(last)))
-  return clampMrkdwn(out.trim(), max)
+  if (!dropped) push(renderProse(escapeMrkdwn(src.slice(last))), false)
+  const body = out.trim()
+  return dropped ? `${body}…` : body
 }
 
 // Block Kit primitives, shared by every Slack message builder (the comment mirror, DMs)

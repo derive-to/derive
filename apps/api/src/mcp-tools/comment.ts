@@ -130,6 +130,13 @@ export function registerCommentTool(tc: ToolContext): void {
       }
       if (set_state) {
         if (!thread) return err("`set_state` needs `reply_to` (the thread id to resolve/reopen).")
+        // The HTTP resolve route 404s on a thread that isn't on this artifact; this path has to
+        // check too, because resolveThreadAction discards its update count and fans
+        // comment.resolved out regardless. Without it an agent could emit unbounded "a thread was
+        // resolved" events — into every webhook subscriber and any connected Slack channel — for
+        // threads that never existed.
+        const known = (await ctx.meta.listComments(a.id)).some((c) => c.thread_id === thread)
+        if (!known) return err(`No thread "${thread}" on "${short_id}".`)
         // Shared with the HTTP resolve route and the Slack Resolve button (lib/thread-actions.ts)
         // — it flips the thread, publishes on the bus AND fans comment.resolved out to webhooks.
         // The hand-rolled pair of calls this replaced skipped that last step.

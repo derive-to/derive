@@ -19,7 +19,15 @@ import type { WebhookEvent } from "../events"
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
 import { commentDeepLink, parseMeta } from "./comments"
 import { slackUserName } from "./slack"
-import { actionButton, actions, context, escapeMrkdwn, mrkdwnBody, section } from "./slack-cards"
+import {
+  actionButton,
+  actions,
+  context,
+  escapeMrkdwn,
+  mrkdwnBody,
+  mrkdwnLabel,
+  section,
+} from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
 
 /** The Slack message payload an enqueued slack_app delivery carries (self-contained). */
@@ -148,8 +156,8 @@ export const enqueueSlackChannelEvent = async (
 /** Block Kit for a channel event card. Untrusted text (title, author, message) is escaped so
  *  it can't break out of a `<url|text>` link or inject markup. */
 const eventBlocks = (p: SlackEventPayload): unknown[] => {
-  const link = `<${p.link}|${escapeMrkdwn(p.title)}>`
-  const who = escapeMrkdwn(p.author)
+  const link = `<${p.link}|${mrkdwnLabel(p.title)}>`
+  const who = mrkdwnLabel(p.author)
   let head: string
   switch (p.event) {
     case "version.published":
@@ -221,7 +229,7 @@ export const threadStateBlocks = (
 ): unknown[] => {
   // `who` is the acting Slack user's display name (attacker-controllable) landing in a mrkdwn
   // context block — escape it like every other untrusted field so a name can't inject markup.
-  const w = who ? escapeMrkdwn(who) : undefined
+  const w = who ? mrkdwnLabel(who) : undefined
   return state === "resolved"
     ? [
         actions([actionButton(SLACK_THREAD_ACTION.reopen, "Reopen thread", value)]),
@@ -244,7 +252,7 @@ export const threadStateBlocks = (
  *  out of the link — same treatment eventBlocks gives its fields. */
 const blocksFor = (p: SlackCommentPayload): unknown[] => [
   section(
-    `:speech_balloon: *${escapeMrkdwn(p.author)}* commented on <${p.link}|${escapeMrkdwn(p.title)}>\n${mrkdwnBody(p.text, 600)}`,
+    `:speech_balloon: *${mrkdwnLabel(p.author)}* commented on <${p.link}|${mrkdwnLabel(p.title)}>\n${mrkdwnBody(p.text, 600)}`,
   ),
   ...threadStateBlocks("open", encodeThreadAction(p.artifactId, p.threadId)),
 ]
@@ -276,7 +284,7 @@ export const makeSlackSender =
           // could ping the channel via the fallback even though the blocks escape it.
           // Every interpolated field is escaped, `event` included — eventBlocks already escapes
           // it, and a uniform rule is what keeps this correct if the event vocabulary widens.
-          text: `${escapeMrkdwn(e.author)}: ${escapeMrkdwn(e.event)} · ${escapeMrkdwn(e.title)}`,
+          text: `${mrkdwnLabel(e.author)}: ${escapeMrkdwn(e.event)} · ${mrkdwnLabel(e.title)}`,
           blocks: eventBlocks(e),
         },
         { autoJoin: true, textFallback: true },
@@ -294,7 +302,7 @@ export const makeSlackSender =
       bot.token,
       {
         channel,
-        text: `${escapeMrkdwn(p.author)} commented on ${escapeMrkdwn(p.title)}`,
+        text: `${mrkdwnLabel(p.author)} commented on ${mrkdwnLabel(p.title)}`,
         blocks: blocksFor(p),
         threadTs: existing?.message_ts,
       },

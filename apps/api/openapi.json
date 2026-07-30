@@ -1827,7 +1827,7 @@
           },
           "needs_reauth": {
             "type": "boolean",
-            "description": "Whether the stored bot token needs a re-auth (an auth error since connecting)"
+            "description": "Whether the stored bot token needs a re-auth — a failed auth/scope call, or Slack reporting the app uninstalled or its token revoked"
           },
           "slack_dm": {
             "type": "boolean",

@@ -10,17 +10,8 @@ import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { commentCreatedAction } from "../lib/comment-actions"
-import {
-  commentJson,
-  type Mention,
-  parseMentions,
-  parseMeta,
-  quoteOf,
-  REACTIONS,
-} from "../lib/comments"
+import { commentJson, parseMentions, parseMeta, REACTIONS } from "../lib/comments"
 import { bail, fail, readJson } from "../lib/http"
-import { notifyMentions as notifyMentionsShared } from "../lib/mentions"
-import { notifyCommentBells } from "../lib/notify-comment"
 import { resolveThreadAction } from "../lib/thread-actions"
 import { Mention as MentionSchema } from "../schemas"
 
@@ -96,16 +87,6 @@ export const commentRoutes = (ctx: AppContext) => {
         .describe("Users or agents @mentioned in the comment body."),
     })
     .openapi("Comment")
-
-  // Mention fan-out (bell + realtime + agent inbox) lives in ../lib/mentions so the
-  // Slack reply path reuses the same collaborator-gated logic. Bound to this request's
-  // meta + bus here.
-  const notifyMentions = (
-    a: ArtifactRecord,
-    cm: CommentRecord,
-    mentions: Mention[],
-    actorId: string | null,
-  ) => notifyMentionsShared({ meta, bus }, a, cm, mentions, actorId)
 
   // Loads (artifact, comment) for a mutation, 404ing on mismatch. Tagged union so
   // the @hono/zod-openapi handler return type narrows cleanly on `!r.ok`.

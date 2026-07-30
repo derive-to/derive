@@ -450,6 +450,44 @@ describe("channel fan-out parity (the MCP path)", () => {
     expect(rows.some((r) => r.body_md === "a note")).toBe(true)
   })
 
+  // resolveThreadAction fans comment.resolved out to every webhook subscriber and discards its
+  // update count, so without the HTTP route's existence check an agent could emit unbounded
+  // "a thread was resolved" events — including into a Slack channel — for threads that never
+  // existed. Before the shared action this path emitted no webhooks at all, so the regression
+  // came in with it.
+  it("refuses to resolve a thread that isn't on the artifact, and emits nothing", async () => {
+    const { app, meta, token } = loopApp("mcp-resolve-ghost")
+    const created = await listedDoc(app, token)
+    const artifact = await meta.getByShortId(created.short_id as string)
+    await meta.createWebhook({
+      id: "wh_mcp3",
+      org_id: artifact?.org_id ?? "",
+      artifact_id: null,
+      url: "http://example.com/hook",
+      secret: "s",
+      kind: "generic",
+      events: "comment.resolved",
+    })
+    const raw = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 7,
+      method: "tools/call",
+      params: {
+        name: "comment",
+        arguments: {
+          short_id: created.short_id,
+          reply_to: "th_does_not_exist",
+          set_state: "resolved",
+        },
+      },
+    })
+    const out = raw?.result as { isError?: boolean; content?: { text: string }[] } | undefined
+    expect(out?.isError).toBe(true)
+    expect(out?.content?.[0]?.text ?? "").toMatch(/thread/i)
+    const rows = await drain(meta)
+    expect(rows.some((d) => d.event_type === "comment.resolved")).toBe(false)
+  })
+
   it("an agent resolving a thread fans out comment.resolved", async () => {
     const { app, meta, token } = loopApp("mcp-resolve-fanout")
     const created = await listedDoc(app, token)

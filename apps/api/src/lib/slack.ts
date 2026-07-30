@@ -200,10 +200,12 @@ export const postSlackMessage = async (
       text: args.text,
       // The bot's own posts already render the artifact as a card, so don't let Slack
       // ALSO unfurl a link in the text — that repeats the same card right below it.
-      // A link a PERSON pastes still unfurls, but by a different route than this flag: Slackbot
-      // crawls the page and reads its OG tags (packages/core/src/unfurl.ts). That is Slack's own
-      // crawler, not this app — Derive subscribes to no `link_shared` event, requests no
-      // `links:read` scope, and never calls chat.unfurl.
+      // A link a PERSON pastes may still unfurl, but by a different route than this flag:
+      // Slackbot crawls the page and reads its OG tags (packages/core/src/unfurl.ts). That is
+      // Slack's own crawler, not this app — Derive subscribes to no `link_shared` event, requests
+      // no `links:read` scope, and never calls chat.unfurl. Which also means it only works for a
+      // link an ANONYMOUS fetch can read: the meta is emitted behind the same `readable()` gate as
+      // the page (routes/embeds.ts), so a workspace-only artifact shows Slack nothing.
       unfurl_links: false,
       unfurl_media: false,
       ...(args.blocks ? { blocks: args.blocks } : {}),

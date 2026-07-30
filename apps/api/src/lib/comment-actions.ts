@@ -54,7 +54,13 @@ export const commentCreatedAction = async (
      *  row in the agents table — so the collaborator check can't see it, even though the grant
      *  runs under a member's authority and is role-capped by that member's seat
      *  (lib/oauth-agent.ts). Without this, comments from the standard remote-MCP connector
-     *  (the main way agents reach Derive) mirror nowhere. */
+     *  (the main way agents reach Derive) mirror nowhere.
+     *
+     *  CONTRACT: the caller must already have authorized the request AS this principal for THIS
+     *  artifact. Nothing here re-checks that — it is an id, not a proof, and passing one the
+     *  caller didn't authenticate would widen the mirror. The MCP tool satisfies it because
+     *  `reach` resolves the artifact through the grant's own workspaces + membership before any
+     *  write. Any new caller owes the same guarantee. */
     onBehalfOf?: string | null
   },
 ): Promise<void> => {
@@ -94,9 +100,12 @@ export const commentCreatedAction = async (
   // The mirrors need a collaborator author, so an anonymous commenter on a public artifact
   // can't push text into a connected repo or channel. The author counts if it is itself a
   // collaborator, or if it is acting for one (see `onBehalfOf`).
+  // onBehalfOf first when present: for an OAuth grant it is a plain membership hit, whereas
+  // the synthetic author id misses three lookups (membership, artifact member, then a full
+  // listAgents scan) before failing.
   const trustedAuthor =
-    (await isCollaboratorAuthor(meta, artifact, actorId)) ||
-    (!!onBehalfOf && (await isCollaboratorAuthor(meta, artifact, onBehalfOf)))
+    (!!onBehalfOf && (await isCollaboratorAuthor(meta, artifact, onBehalfOf))) ||
+    (await isCollaboratorAuthor(meta, artifact, actorId))
   if (trustedAuthor && settings.githubPostComments)
     await enqueueGithubPrComment({ meta, blobs, baseUrl }, artifact, comment)
   if (trustedAuthor && settings.slackPost)

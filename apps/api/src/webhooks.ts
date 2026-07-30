@@ -9,8 +9,7 @@ import {
 } from "@derive/core"
 import type { WebhookEvent } from "./events"
 import { isPrivateAddress } from "./lib/net"
-import { escapeMrkdwn, mrkdwnBody } from "./lib/slack-cards"
-import { truncate } from "./lib/text"
+import { escapeMrkdwn, mrkdwnBody, mrkdwnLabel } from "./lib/slack-cards"
 import { log } from "./log"
 
 // Event names live in one place (./events) so the webhook list and the bus list
@@ -87,19 +86,19 @@ export function buildPayload(
 /** Format a normalized payload as a Slack incoming-webhook message.
  *
  *  Untrusted text gets exactly the treatment the connected Slack App gives it (see
- *  lib/slack-cards.ts): identity fields are labels → `escapeMrkdwn`, and authored prose →
- *  `mrkdwnBody` (escaped, then its markdown rendered). This path carries the same fields from
+ *  lib/slack-cards.ts): identity fields are labels → `mrkdwnLabel` (escaped and length-bounded),
+ *  and authored prose → `mrkdwnBody` (escaped, then its markdown rendered). This path carries
+ *  the same fields from
  *  the same sources, so it needs the same discipline: an artifact title or comment body that
  *  reached `<!channel>` verbatim would ping the entire channel, and a hand-written
  *  `<url|label>` renders as a link whose visible text the author chose — indistinguishable
  *  from one of ours. The artifact URL is the one thing built by us, so it is interpolated raw;
  *  escaping it would rewrite `&` and corrupt the query string. */
 export function slackMessage(p: EventPayload): unknown {
-  const title = escapeMrkdwn(p.artifact.title ?? p.artifact.short_id)
+  const title = mrkdwnLabel(p.artifact.title ?? p.artifact.short_id)
   const link = `<${p.artifact.url}|${title}>`
-  const author = escapeMrkdwn(String(p.data.author ?? "someone"))
-  const quoteLine = () =>
-    p.data.quote ? `> _${escapeMrkdwn(truncate(String(p.data.quote), 140))}_` : null
+  const author = mrkdwnLabel(String(p.data.author ?? "someone"))
+  const quoteLine = () => (p.data.quote ? `> _${mrkdwnLabel(String(p.data.quote), 140)}_` : null)
   let head = ""
   const lines: (string | null)[] = []
   if (p.event === "comment.created") {
@@ -108,7 +107,7 @@ export function slackMessage(p: EventPayload): unknown {
     if (p.data.body) lines.push(mrkdwnBody(String(p.data.body), 280))
   } else if (p.event === "comment.mention") {
     const who = Array.isArray(p.data.mentioned)
-      ? (p.data.mentioned as unknown[]).map((m) => escapeMrkdwn(String(m))).join(", ")
+      ? (p.data.mentioned as unknown[]).map((m) => mrkdwnLabel(String(m), 80)).join(", ")
       : ""
     head = `:wave: *${author}* mentioned ${who ? `*${who}*` : "you"} on ${link}`
     lines.push(quoteLine())
