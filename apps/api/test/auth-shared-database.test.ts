@@ -86,13 +86,17 @@ describe("a second deployment on the same database", () => {
     expect(await res.json()).toMatchObject({ user: { email } })
   })
 
-  it("DIFFERENT secret: signs in fine, then every authenticated request fails", async () => {
+  it("DIFFERENT secret: signs in fine, then never actually authenticates", async () => {
     const preview = appWith(OTHER_SECRET)
     // The trap: this succeeds, so a smoke test that stops at the login page reports healthy.
     const signIn = await post(preview, "/api/auth/sign-in/email", { email, password })
     expect(signIn.status).toBe(200)
-    // And this does not.
+    // And this does not. 401, not 500: getSession throwing means this request has no readable
+    // credential, which is the caller's problem to fix by signing in again — and a 500 here was
+    // sticky, since a client with a bad cookie has no reason to re-authenticate and just loops.
+    // The JWKS decrypt error itself is not lost; context.ts logs it at error level, which is
+    // where this misconfiguration has to stay findable.
     const res = await me(preview, cookiesOf(signIn))
-    expect(res.status).toBe(500)
+    expect(res.status).toBe(401)
   })
 })

@@ -370,7 +370,25 @@ export function buildContext(deps: AppDeps) {
   const userCache = new WeakMap<Context, SessionUser | null>()
   const currentUser = async (c: Context): Promise<SessionUser | null> => {
     if (userCache.has(c)) return userCache.get(c) ?? null
-    const s = deps.auth ? await deps.auth.api.getSession({ headers: c.req.raw.headers }) : null
+    // A BROKEN CREDENTIAL IS NOT A SERVER FAULT. getSession throws on input it cannot make sense
+    // of, and with the session cookie cache on there is now a second cookie that can be
+    // malformed: a `session_data` of `{}` threw "Error parsing JSON" and every authenticated
+    // request 500'd for as long as the client kept sending it. A 500 is both wrong (the caller's
+    // cookie is bad, not the server) and sticky — the client has no reason to re-authenticate,
+    // so it loops. Unauthenticated is the honest answer and it self-heals: the next sign-in
+    // replaces the cookie.
+    //
+    // Logged at error, not swallowed. This same throw is how a deployment whose secret cannot
+    // decrypt the shared JWKS row announces itself, and that diagnosis has to stay findable —
+    // it just should not be a 500 on every page.
+    const s = deps.auth
+      ? await deps.auth.api.getSession({ headers: c.req.raw.headers }).catch((e: unknown) => {
+          log.error("session could not be read; treating the request as signed out", {
+            error: e instanceof Error ? e.message : String(e),
+          })
+          return null
+        })
+      : null
     // `username`/`discoverable` ride the session via Better Auth additionalFields
     // (see auth-config.ts); read them through a narrow cast (optional extras).
     const su = s?.user as

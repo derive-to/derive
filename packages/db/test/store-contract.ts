@@ -3201,4 +3201,90 @@ export function runStoreContract(
       for (const u of [owner, stranger]) expect(await fast(other, u)).toEqual(await slow(other, u))
     })
   })
+  // CHAOS: the same question, asked both ways, over randomly-shaped access graphs.
+  //
+  // The curated case above covers the shapes I thought of. This covers the ones I did not: a
+  // seeded random walk over memberships, per-artifact shares, open and closed collections, and
+  // artifacts that sit in several collections at once — the arrangement where a join would
+  // multiply rows and the two paths would quietly disagree.
+  //
+  // Seeded so a failure reproduces: the seed is printed with the mismatch.
+  describe(`${label}: artifactGrants survives randomised access graphs`, () => {
+    it("agrees with the four reads across 40 random configurations", async () => {
+      if (!store.artifactGrants) return
+
+      // xorshift32 — small, deterministic, and dependency-free.
+      let seed = 0x9e3779b9
+      const rnd = () => {
+        seed ^= seed << 13
+        seed ^= seed >>> 17
+        seed ^= seed << 5
+        return Math.abs(seed) / 2 ** 31
+      }
+      const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)] as T
+      const ROLES = ["owner", "admin", "editor", "commenter", "viewer"] as const
+
+      for (let round = 0; round < 40; round++) {
+        const startSeed = seed
+        const org = `org_fz_${uuid()}`
+        await store.setWorkspace(org, "Fuzz")
+        const art = newArtifact({
+          org_id: org,
+          workspace_access: pick(["member", "none"]),
+          link_role: pick(["none", "viewer"]),
+        })
+        await store.createArtifact(art)
+
+        const users = Array.from({ length: 4 }, () => `u_fz_${uuid()}`)
+        for (const u of users) {
+          // Each user independently may hold: a seat, a direct share, and membership of
+          // collections that may or may not contain the artifact.
+          if (rnd() < 0.6)
+            await store.setMembership({ id: uuid(), org_id: org, user_id: u, role: pick(ROLES) })
+          if (rnd() < 0.4)
+            await store.setArtifactMember({
+              id: uuid(),
+              artifact_id: art.id,
+              user_id: u,
+              role: pick(ROLES),
+            })
+        }
+        // Between zero and three collections, each independently workspace-open or not, each
+        // independently holding the artifact, each with a random subset of members.
+        const collections = Math.floor(rnd() * 4)
+        for (let ci = 0; ci < collections; ci++) {
+          const col = uuid()
+          await store.createCollection({
+            id: col,
+            org_id: org,
+            title: `C${ci}`,
+            created_by: users[0] as string,
+            workspace_access: rnd() < 0.5 ? "member" : "none",
+          })
+          if (rnd() < 0.75) await store.addCollectionItem(col, art.id)
+          for (const u of users)
+            if (rnd() < 0.35)
+              await store.setCollectionMember({
+                id: uuid(),
+                collection_id: col,
+                user_id: u,
+                role: pick(ROLES),
+              })
+        }
+
+        for (const u of users) {
+          const orgRole = (await store.getMembership(org, u))?.role ?? null
+          const am = await store.getArtifactMember(art.id, u)
+          const cRoles = await store.collectionRolesForArtifact(art.id, u)
+          const slow = { orgRole, artifactRole: maxRole(am?.role ?? null, ...cRoles) }
+          const g = await store.artifactGrants?.(art.id, org, u)
+          const fast = {
+            orgRole: g?.orgRole ?? null,
+            artifactRole: maxRole(null, ...(g?.artifactRoles ?? [])),
+          }
+          expect(fast, `round ${round} (seed ${startSeed}) disagreed for ${u}`).toEqual(slow)
+        }
+      }
+    })
+  })
 }
