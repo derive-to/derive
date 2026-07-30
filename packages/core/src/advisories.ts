@@ -6,7 +6,12 @@
 // looking at the render afterward: correct-by-construction beats
 // correct-by-vigilance.
 
-import { missingDataSlotAdvisory, parseDataSlots } from "./data-slots"
+import {
+  missingDataSlotAdvisory,
+  parseDataSlots,
+  shapeOfJson,
+  slotDriftAdvisories,
+} from "./data-slots"
 import type { BlobStore } from "./ports"
 import { needsReflow } from "./reflow"
 
@@ -110,6 +115,42 @@ export const heavyAssetsAdvisory = async (
     )
   } catch {
     return null
+  }
+}
+
+/**
+ * Slot shapes that drifted from the previous version — the quiet way a trend read goes
+ * wrong. Needs I/O (the previous version's stored rows), so it sits with the other I/O
+ * advisories rather than in the pure pass. Silent on a first version, a new slot, or a
+ * slot that simply went away; those are ordinary authoring.
+ *
+ * Never throws: a store hiccup must not fail a publish that already went live.
+ */
+export const slotShapeDriftAdvisories = async (
+  content: string,
+  contentType: string,
+  artifactId: string,
+  previousVersion: number,
+  meta: {
+    getVersionData(
+      artifactId: string,
+      n: number,
+      slot?: string,
+    ): Promise<{ slot: string; json: string }[]>
+  },
+): Promise<string[]> => {
+  if (previousVersion < 1) return []
+  try {
+    const { slots } = parseDataSlots(content, contentType)
+    if (!slots.length) return []
+    const prior = await meta.getVersionData(artifactId, previousVersion)
+    if (!prior.length) return []
+    return slotDriftAdvisories(
+      slots.map((s) => ({ slot: s.slot, json: s.json })),
+      prior.map((p) => ({ slot: p.slot, shape: shapeOfJson(p.json) })),
+    )
+  } catch {
+    return []
   }
 }
 

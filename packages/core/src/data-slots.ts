@@ -129,6 +129,76 @@ const markdownBlocks = (source: string): RawBlock[] => {
  * body, or a slot past the per-version cap each yields an advisory and is skipped. Pure and
  * total — safe to call twice (once to advise, once to persist) with identical results.
  */
+/**
+ * A slot's SHAPE: its sorted key paths with value kinds, e.g. `fail:number|pass:number`.
+ * Two versions with the same shape are comparable; two with different shapes are not,
+ * however similar they look.
+ *
+ * This exists because of the quiet way a trend read goes wrong. Nothing rejects a slot
+ * whose keys drift — rename `pass` to `passed` at v20 and `versions:"all"` still returns
+ * thirty happy-looking points that are silently two different metrics, with the break
+ * invisible unless you read every one. A series that gets LESS trustworthy the longer it
+ * runs is worse than no series, so the drift gets named at the moment it happens.
+ *
+ * Depth-limited and count-capped: a fingerprint is for comparison, not for describing an
+ * arbitrarily deep document, and this runs on the publish path.
+ */
+export const slotShape = (value: unknown, depth = 0, prefix = ""): string => {
+  const kind = (v: unknown): string => (v === null ? "null" : Array.isArray(v) ? "array" : typeof v)
+  if (depth >= 3 || value === null || typeof value !== "object" || Array.isArray(value))
+    return `${prefix}:${kind(value)}`
+  const keys = Object.keys(value as Record<string, unknown>)
+    .sort()
+    .slice(0, 40)
+  if (!keys.length) return `${prefix}:object`
+  return keys
+    .map((k) =>
+      slotShape((value as Record<string, unknown>)[k], depth + 1, prefix ? `${prefix}.${k}` : k),
+    )
+    .join("|")
+}
+
+/** The shape of a stored slot's JSON, or null when it can't be parsed. */
+export const shapeOfJson = (json: string): string | null => {
+  try {
+    return slotShape(JSON.parse(json))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Compare a version's slot shapes against the previous version's and describe any drift.
+ * Empty when nothing changed, when a slot is new, or when a slot simply went away (both
+ * are ordinary authoring, not a broken series). Pure: the caller supplies the previous
+ * shapes, so this stays testable and Workers-safe.
+ */
+export const slotDriftAdvisories = (
+  current: { slot: string; json: string }[],
+  previous: { slot: string; shape: string | null }[],
+): string[] => {
+  const before = new Map(previous.map((p) => [p.slot, p.shape]))
+  const out: string[] = []
+  for (const s of current) {
+    const was = before.get(s.slot)
+    if (was === undefined || was === null) continue // new slot, or an unparseable old row
+    const now = shapeOfJson(s.json)
+    if (!now || now === was) continue
+    const wasKeys = new Set(was.split("|"))
+    const nowKeys = new Set(now.split("|"))
+    const gone = [...wasKeys].filter((k) => !nowKeys.has(k))
+    const added = [...nowKeys].filter((k) => !wasKeys.has(k))
+    out.push(
+      `Data slot "${s.slot}" changed shape from the previous version` +
+        (gone.length ? ` (gone: ${gone.slice(0, 6).join(", ")})` : "") +
+        (added.length ? ` (new: ${added.slice(0, 6).join(", ")})` : "") +
+        `. Reading this slot across versions now mixes two shapes, and nothing else will ` +
+        `tell you — if this was a rename, past versions still carry the old keys.`,
+    )
+  }
+  return out
+}
+
 /** How many numeric table cells make a page "carrying data" rather than "mentioning a
  *  number". Deliberately conservative: a missed nudge costs nothing, a false one trains
  *  the reader to skip advisories, and that channel is load-bearing everywhere else. */

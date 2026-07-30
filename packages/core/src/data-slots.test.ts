@@ -4,6 +4,9 @@ import {
   MAX_SLOTS_PER_VERSION,
   missingDataSlotAdvisory,
   parseDataSlots,
+  shapeOfJson,
+  slotDriftAdvisories,
+  slotShape,
 } from "./data-slots"
 
 const html = (body: string) => `<!doctype html><html><body>${body}</body></html>`
@@ -213,6 +216,63 @@ describe("missingDataSlotAdvisory", () => {
 
   it("ignores content types with no slot grammar", () => {
     expect(missingDataSlotAdvisory(table(8), "text/x-derive-deck")).toBeNull()
+  })
+})
+
+// Shape drift is the quiet way a trend read goes wrong: rename a key at v20 and
+// versions:"all" still returns thirty happy-looking points that are two different
+// metrics. A series that gets LESS trustworthy the longer it runs is worse than none.
+describe("slotShape / slotDriftAdvisories", () => {
+  const shape = (o: unknown) => slotShape(o)
+
+  it("fingerprints keys and value kinds, order-independently", () => {
+    expect(shape({ pass: 1, fail: 0 })).toBe(shape({ fail: 0, pass: 1 }))
+    expect(shape({ pass: 1 })).not.toBe(shape({ passed: 1 }))
+    // A changed TYPE matters as much as a changed name.
+    expect(shape({ pass: 1 })).not.toBe(shape({ pass: "1" }))
+  })
+
+  it("treats a value change as the same shape", () => {
+    expect(shape({ pass: 41, fail: 2 })).toBe(shape({ pass: 48, fail: 0 }))
+  })
+
+  it("flags a renamed key, naming what went and what arrived", () => {
+    const notes = slotDriftAdvisories(
+      [{ slot: "checks", json: '{"passed":48}' }],
+      [{ slot: "checks", shape: shapeOfJson('{"pass":41}') }],
+    )
+    expect(notes).toHaveLength(1)
+    expect(notes[0]).toContain("gone: pass:number")
+    expect(notes[0]).toContain("new: passed:number")
+  })
+
+  it("says nothing when the shape holds", () => {
+    expect(
+      slotDriftAdvisories(
+        [{ slot: "checks", json: '{"pass":48,"fail":0}' }],
+        [{ slot: "checks", shape: shapeOfJson('{"pass":41,"fail":2}') }],
+      ),
+    ).toEqual([])
+  })
+
+  it("says nothing for a brand-new slot or a dropped one", () => {
+    // New: there is no prior shape to disagree with.
+    expect(
+      slotDriftAdvisories(
+        [{ slot: "fresh", json: "{}" }],
+        [{ slot: "checks", shape: "pass:number" }],
+      ),
+    ).toEqual([])
+    // Dropped: not publishing a slot is ordinary authoring, not a broken series.
+    expect(slotDriftAdvisories([], [{ slot: "checks", shape: "pass:number" }])).toEqual([])
+  })
+
+  it("is bounded on deep and wide payloads", () => {
+    let deep: Record<string, unknown> = { leaf: 1 }
+    for (let i = 0; i < 50; i++) deep = { nest: deep }
+    expect(() => shape(deep)).not.toThrow()
+    const wide = Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`k${i}`, i]))
+    expect(shape(wide).split("|").length).toBeLessThanOrEqual(40)
   })
 })
 

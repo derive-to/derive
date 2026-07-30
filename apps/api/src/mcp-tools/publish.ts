@@ -11,6 +11,7 @@ import {
   publish as publishVersion,
   type Role,
   roleAllows,
+  slotShapeDriftAdvisories,
 } from "@derive/core"
 import { z } from "zod"
 import { PROFILE_PLACEHOLDER_HTML } from "../brandprint-reference"
@@ -734,6 +735,18 @@ export function registerPublishTool(tc: ToolContext): void {
           typeof content === "string" && artifact.kind === "file"
             ? await heavyAssetsAdvisory(content, ctx.meta)
             : null
+        // Shape drift against the previous version — the quiet way a trend read splits
+        // into two metrics that look like one.
+        const driftAdvisories =
+          typeof content === "string" && artifact.kind === "file"
+            ? await slotShapeDriftAdvisories(
+                content,
+                version.content_type,
+                artifact.id,
+                version.n - 1,
+                ctx.meta,
+              )
+            : []
         const payload = {
           published: true,
           short_id: artifact.short_id,
@@ -774,6 +787,7 @@ export function registerPublishTool(tc: ToolContext): void {
                   ...publishAdvisories(content, version.content_type),
                   ...(blobAdvisory ? [blobAdvisory] : []),
                   ...(weightAdvisory ? [weightAdvisory] : []),
+                  ...driftAdvisories,
                 ]
                   .map((advisory) => ` ${advisory}`)
                   .join("")

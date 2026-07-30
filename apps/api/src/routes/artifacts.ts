@@ -29,6 +29,7 @@ import {
   renderMarkdown,
   roleAllows,
   sectionOf,
+  slotShapeDriftAdvisories,
   sortKeyOf,
   toJson,
   toMarkdown,
@@ -919,6 +920,16 @@ export const artifactRoutes = (ctx: AppContext) => {
         if (blobAdvisory) advisories.push(blobAdvisory)
         const weight = await heavyAssetsAdvisory(text, meta)
         if (weight) advisories.push(weight)
+        // A slot whose shape drifted from the previous version silently splits a series.
+        advisories.push(
+          ...(await slotShapeDriftAdvisories(
+            text,
+            version.content_type,
+            artifact.id,
+            version.n - 1,
+            meta,
+          )),
+        )
       }
       return c.json(
         {
