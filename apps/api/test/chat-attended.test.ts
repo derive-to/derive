@@ -543,20 +543,34 @@ describe("follow-ups are limited, budgeted, and gated", () => {
 
   it("refuses a follow-up over the monthly budget, before recording it", async () => {
     const { meta, session, followUp } = await chatApp("chat-followup-budget")
-    // Over budget, simulated at the store boundary exactly as hosted-dispatch.test.ts does it:
-    // a model plan with a monthly cap, and spend already past it. (The sum is only ever non-zero
-    // now that the model clients actually price a turn — see model-anthropic.ts.)
-    const realResolve = meta.resolvePlan.bind(meta)
-    const realSum = meta.sumRunCostSince.bind(meta)
-    meta.resolvePlan = async () => ({ limits: JSON.stringify({ monthlyMicroUsd: 1_000 }) }) as never
-    meta.sumRunCostSince = async () => 5_000
-    let res: Response
-    try {
-      res = await followUp("and again")
-    } finally {
-      meta.resolvePlan = realResolve
-      meta.sumRunCostSince = realSum
-    }
+    // REAL ROWS, not a stubbed store. Two reasons. The store cannot be stubbed by assignment
+    // anyway on the Postgres lane (helpers.ts hands back a Proxy with only a `get` trap, so the
+    // write lands on an empty target and every read still reaches the real driver). And the
+    // interesting half is precisely what a stub skips: `sumRunCostSince` doing real SUM
+    // arithmetic over a real cost column, which is a code path that only started carrying
+    // non-zero numbers when the model clients began pricing a turn at all.
+    //
+    // A workspace-pool plan (user_id null) capped at 1,000 micro-USD, and one finished run that
+    // already spent 5,000 of it.
+    await meta.createPlan({
+      id: newId("pl"),
+      org_id: "default",
+      user_id: null,
+      kind: "model",
+      provider: "anthropic",
+      secret_enc: "test",
+      limits: JSON.stringify({ monthlyMicroUsd: 1_000 }),
+    })
+    await meta.createRun({
+      id: newId("run"),
+      org_id: "default",
+      agent_id: "ag_budget_probe",
+      reason: "manual",
+      status: "succeeded",
+      cost_micro_usd: 5_000,
+    })
+    expect(await meta.sumRunCostSince("default", new Date(0).toISOString())).toBe(5_000)
+    const res = await followUp("and again")
     expect(res.status).toBe(429)
     // Refused BEFORE the append: a rejected follow-up must not reopen the session with nothing
     // willing to serve it.

@@ -171,12 +171,19 @@ describe("the schedule tick obeys the gate", () => {
     )
     expect(made.status).toBe(201)
 
-    const real = meta.getOrgSettings.bind(meta)
-    meta.getOrgSettings = () => Promise.reject(new Error("db blip"))
-    try {
-      expect(await materializeAllDueRuns(meta, new Date())).toBe(0)
-    } finally {
-      meta.getOrgSettings = real
-    }
+    // A DELEGATING WRAPPER, not an assignment onto `meta`.
+    //
+    // On the Postgres lane the store is itself a Proxy with only a `get` trap (helpers.ts
+    // defers every call until connect+migrate finishes), so `meta.getOrgSettings = fn` writes
+    // to an empty target that no read ever consults — the stub silently does nothing and the
+    // tick sails through on the real settings. Wrapping and passing the wrapper is the shape
+    // that behaves identically on both drivers, because it never mutates the store.
+    const blipping = new Proxy(meta, {
+      get: (t, prop, recv) =>
+        prop === "getOrgSettings"
+          ? () => Promise.reject(new Error("db blip"))
+          : Reflect.get(t, prop, recv),
+    })
+    expect(await materializeAllDueRuns(blipping, new Date())).toBe(0)
   })
 })
