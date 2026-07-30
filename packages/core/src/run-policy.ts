@@ -37,33 +37,6 @@ export const addCostUsd = (acc: number | null, next: number | null | undefined):
   typeof next === "number" && Number.isFinite(next) ? (acc ?? 0) + next : acc
 
 /**
- * Is a failed attempt worth paying to repeat?
- *
- * Only when the SERVICE failed, never when the request did. A 429 or 5xx often succeeds on a
- * second attempt; a reply that parsed cleanly but ignored the output contract will fail
- * identically, and retrying it spends the owner's plan twice for the same answer.
- *
- * The executor decides this; the server owns the policy that acts on it (how many retries, what
- * backoff). Keeping the judgement here means both executors make it the same way.
- */
-export const isRetryableFailure = (input: {
-  /** The model call itself failed to complete (network, 429, 5xx). */
-  transportFailed?: boolean
-  /** HTTP-ish status the provider reported, when it reported one. */
-  status?: number | null
-  /** The attempt ran to completion but produced no usable output. */
-  unparseable?: boolean
-}): boolean => {
-  if (input.transportFailed) return true
-  if (typeof input.status === "number") return input.status === 429 || input.status >= 500
-  // Everything else is deterministic and must NOT be retried. A clean run that simply did not
-  // follow the output contract fails identically on a second attempt, and paying twice for the
-  // same answer is the failure mode this function exists to prevent. `unparseable` is accepted so
-  // callers can be explicit about which case they are in, not because it changes the verdict.
-  return false
-}
-
-/**
  * USD (a float, as providers report it) → micro-USD (an integer, as the column stores it).
  *
  * Integer micros because money in a float sums badly and the budget SUMs this across a month.
