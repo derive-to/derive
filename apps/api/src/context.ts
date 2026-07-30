@@ -43,6 +43,7 @@ import {
   rateLimited,
 } from "./lib/rate-limit"
 import { verifyWorkToken, workTokenKind } from "./lib/run-token"
+import { syncSeats } from "./lib/seats"
 import { enqueueSlackChannelEvent } from "./lib/slack-comments"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
@@ -763,6 +764,7 @@ export function buildContext(deps: AppDeps) {
     if (existing) return existing.role
     const role: Role = (await meta.countMemberships(orgId)) === 0 ? "owner" : defaultRole
     await meta.setMembership({ id: newId("m"), org_id: orgId, user_id: userId, role })
+    await syncSeats({ meta, billing: deps.billing }, orgId)
     return role
   }
 

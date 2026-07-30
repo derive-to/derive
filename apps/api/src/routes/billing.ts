@@ -3,6 +3,7 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { recordFromSnapshot } from "../lib/billing"
 import { fail, readJson } from "../lib/http"
+import { syncSeats } from "../lib/seats"
 import { log } from "../log"
 
 const LOOKUP: Record<string, string> = {
@@ -27,10 +28,13 @@ export const billingRoutes = (ctx: AppContext) => {
   const billing = deps.billing
 
   // The workspace's billing truth, owner only. Also heals Stripe seat drift as a
-  // side effect (Task 6 wires syncSeats here, before the reads below).
+  // side effect: a membership write's own syncSeats call can be lost (a dropped
+  // response, a swallowed Stripe hiccup), so the next look here re-checks and
+  // pushes the correction before reading state, so the response reflects reality.
   app.get("/v1/billing", async (c) => {
     const org = await requireWorkspace(c, "manage")
     if (org instanceof Response) return org
+    await syncSeats({ meta, billing }, org)
     const [state, sub, stored, assets, members] = await Promise.all([
       billingState(org),
       meta.getSubscription(org),
