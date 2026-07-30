@@ -33,11 +33,29 @@ describe("pageTextWithMap", () => {
     "", // empty document
     "<p>", // unclosed tag
     "text &amp", // entity without semicolon: plain text
+    "a < b and c > d", // literal angle brackets in prose
+    "empty <> brackets stay literal",
+    "<!-- unclosed comment falls to the bare-tag rule > tail",
+    "<!-- unclosed, and no closing angle at all",
+    "<script>never closed but has > inside",
+    "<SCRIPT src=x>UPPER</Script> case-insensitive close",
+    "<scriptx>not a script tag</scriptx>",
+    'att with gt <img alt="a>b"> tail', // attrs stop at the FIRST >
   ]
   it("matches pageText on every fixture", () => {
     for (const html of FIXTURES) {
       expect(pageTextWithMap(html).text).toBe(pageText(html))
     }
+  })
+
+  it("stays linear (and equal) on a document built to make lazy regexes backtrack", () => {
+    // Thousands of unclosed "<!--" — the js/polynomial-redos shape. The scanner
+    // must both agree with pageText and finish promptly.
+    const hostile = `${"<!-- ".repeat(4000)}tail text`
+    const start = performance.now()
+    const mapped = pageTextWithMap(hostile)
+    expect(performance.now() - start).toBeLessThan(200)
+    expect(mapped.text).toBe(pageText(hostile))
   })
 
   it("maps a plain text span to identical raw offsets when there is no markup", () => {

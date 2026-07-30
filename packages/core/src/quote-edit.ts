@@ -61,12 +61,33 @@ interface Segment {
   rEnd: number
 }
 
-// The same patterns pageText strips, scanned in ONE left-to-right alternation pass
-// (invisible blocks, then comments, then any tag — the order pageText's sequential
-// replaces resolve to). Kept local rather than shared: a global RegExp object carries
-// lastIndex state, and the projection equality is asserted at apply time anyway.
-const STRIP = /<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>|<!--[\s\S]*?-->|<[^>]+>/gi
+// The same stripping pageText's regexes perform — invisible blocks, else comments,
+// else any tag, tried in that order at each "<" — but as an indexOf-driven scan
+// rather than lazy-quantifier regexes: a crafted document (thousands of unclosed
+// "<!--") makes those backtrack polynomially (CodeQL js/polynomial-redos), while
+// indexOf is strictly linear. The projection equality against pageText is still
+// asserted at apply time, so any semantic daylight degrades to a refusal.
 const ENTITY = /&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g
+
+const INVISIBLE_NAMES = ["script", "style", "noscript"]
+const isWordChar = (c: string): boolean => /[A-Za-z0-9_]/.test(c)
+
+/** Memoized left-to-right indexOf. During a forward scan, thousands of failed
+ *  searches for the same needle (unclosed "<!--" after unclosed "<!--") would each
+ *  rescan to the end of the string — quadratic in aggregate, the exact cost the
+ *  regexes had. The cursor only moves forward, so the last answer per needle stays
+ *  valid until the cursor passes it; re-searches only ever advance it, which makes
+ *  the total scan work linear per needle. */
+const makeFinder = (haystack: string) => {
+  const cache = new Map<string, number>()
+  return (needle: string, from: number): number => {
+    const c = cache.get(needle)
+    if (c !== undefined && (c === -1 || c >= from)) return c
+    const n = haystack.indexOf(needle, from)
+    cache.set(needle, n)
+    return n
+  }
+}
 
 interface PageTextMap {
   text: string
@@ -133,23 +154,57 @@ const pushTextRun = (
  * a divergence degrades to a clean refusal, never a mis-placed splice).
  */
 export function pageTextWithMap(html: string): PageTextMap {
+  const lower = html.toLowerCase()
+  const findRaw = makeFinder(html)
+  const findLower = makeFinder(lower)
+
+  /** The strip token starting exactly at html[i] (which is "<"), or null when this
+   *  "<" is literal text. Mirrors the regex alternation order and each alternative's
+   *  exact rules: attrs stop at the first ">", an invisible block closes at the
+   *  first literal "</name>" (case-insensitive), a comment at the first "-->", and
+   *  a bare tag needs at least one non-">" before its ">". */
+  const stripTokenAt = (i: number): number | null => {
+    // <!-- ... -->
+    if (lower.startsWith("<!--", i)) {
+      const close = findRaw("-->", i + 4)
+      if (close >= 0) return close + 3
+    }
+    // <script|style|noscript ...> ... </same>
+    for (const name of INVISIBLE_NAMES) {
+      if (!lower.startsWith(name, i + 1)) continue
+      const after = i + 1 + name.length
+      if (after < html.length && isWordChar(html[after] as string)) continue // \b
+      const open = findRaw(">", after)
+      if (open < 0) continue
+      const close = findLower(`</${name}>`, open + 1)
+      if (close >= 0) return close + name.length + 3
+      // No closer: this alternative fails; fall through to the bare-tag rule.
+    }
+    // <[^>]+>
+    const gt = findRaw(">", i + 1)
+    if (gt > i + 1) return gt + 1
+    return null
+  }
+
   const segments: Segment[] = []
   const parts: string[] = []
   let tLen = 0
-  let last = 0
-  STRIP.lastIndex = 0
-  for (let m = STRIP.exec(html); m; m = STRIP.exec(html)) {
-    if (m.index > last) tLen = pushTextRun(segments, parts, tLen, html, last, m.index)
-    segments.push({
-      kind: "gap",
-      tStart: tLen,
-      tEnd: tLen + 1,
-      rStart: m.index,
-      rEnd: m.index + m[0].length,
-    })
+  let last = 0 // start of the pending text run
+  let from = 0 // "<" search cursor
+  for (;;) {
+    const i = findRaw("<", from)
+    if (i < 0) break
+    const end = stripTokenAt(i)
+    if (end === null) {
+      from = i + 1 // a literal "<": it stays inside the text run
+      continue
+    }
+    if (i > last) tLen = pushTextRun(segments, parts, tLen, html, last, i)
+    segments.push({ kind: "gap", tStart: tLen, tEnd: tLen + 1, rStart: i, rEnd: end })
     parts.push(" ")
     tLen += 1
-    last = m.index + m[0].length
+    last = end
+    from = end
   }
   if (last < html.length) tLen = pushTextRun(segments, parts, tLen, html, last, html.length)
   return { text: parts.join(""), segments }
