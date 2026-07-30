@@ -17,7 +17,7 @@ export const notLinkedBlocks = (baseUrl: string): unknown[] => [
   section(
     "Link your Slack account to search Derive from here — results are scoped to what *you* can see.",
   ),
-  context(`Link it under ${baseUrl}/settings/integrations`),
+  context(`<${baseUrl}/settings/integrations|Link your account in Derive settings>`),
 ]
 
 /** Search results (visibility already applied by the caller). Titles link to the artifact. */

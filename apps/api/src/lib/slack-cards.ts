@@ -70,22 +70,41 @@ export const mrkdwnLabel = (s: string, max = 200): string => cutProse(escapeMrkd
  *  destination even after escaping. */
 const BIDI = /[‪-‮⁦-⁩]/g
 
-/** A label that is itself a URL or a bare domain. Such a label claims to BE the destination, so
- *  we refuse to hide the real one behind it (see renderLink). */
+/** A label that presents itself AS a destination: it carries a scheme (`https://`, or a
+ *  protocol-relative `//`), a `www.` prefix, or a domain followed by a path.
+ *
+ *  A positive URL signal is required on purpose. Matching any dotted token — the obvious rule —
+ *  swallows ordinary technical writing, because `.js`, `.md` and `.json` are real TLDs and a bare
+ *  dotted word is indistinguishable from a domain by shape alone: `[Node.js](…)`,
+ *  `[README.md](…)` and `[package.json](…)` all lost their labels and rendered as naked URLs.
+ *  For a docs product that is the common case and this is the rare one, so the trade runs the
+ *  other way: a bare-domain label like `derive.to` pointing elsewhere is left alone. It is the
+ *  weaker impersonation (no path, no scheme — it reads as a name, not a link target), and
+ *  separating it from `Node.js` would take a TLD list. */
 const LABEL_IS_URLISH =
-  /^(?:[a-z][a-z0-9+.-]*:)?\/\/|^(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:[/?#]|$)/i
+  /^(?:[a-z][a-z0-9+.-]*:)?\/\/|^www\.[a-z0-9-]|^[a-z0-9-]+(?:\.[a-z0-9-]+)+\//i
+
+/** The host a URL-ish string points at, for comparing a label against its destination. Lenient:
+ *  the label is prose that merely looks like a URL, so it may not parse. */
+const hostOf = (s: string): string | null => {
+  try {
+    return new URL(s.includes("//") ? s : `https://${s}`).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+}
 
 /** Render one markdown link as mrkdwn.
  *
  *  Rendering `[text](url)` at all means the author chooses the visible text — that is what a
  *  markdown link IS, and Derive's own UI renders comment bodies the same way, so Slack is just
- *  another renderer of the same content. What we refuse is the case where the label
- *  impersonates a destination: a label that looks like a URL or a bare domain, pointing
- *  somewhere else, is indistinguishable from a genuine link to the reader. There we drop the
- *  label and show where it actually goes. */
+ *  another renderer of the same content. What we refuse is narrower: a label that presents
+ *  itself as a destination and names a DIFFERENT one, which no reader can tell from a genuine
+ *  link. A URL-ish label that points where it says it does is kept — it is telling the truth. */
 const renderLink = (url: string, rawLabel: string): string => {
   const plain = rawLabel.replace(BIDI, "").trim()
-  if (!plain || plain === url || LABEL_IS_URLISH.test(plain)) return `<${url}>`
+  if (!plain || plain === url) return `<${url}>`
+  if (LABEL_IS_URLISH.test(plain) && hostOf(plain) !== hostOf(url)) return `<${url}>`
   return `<${url}|${escapeMrkdwn(plain)}>`
 }
 
@@ -130,8 +149,17 @@ export const mrkdwnBody = (md: string, max = MAX_SECTION): string => {
 
 // Block Kit primitives, shared by every Slack message builder (the comment mirror, DMs)
 // so block scaffolding lives in one place.
-export const section = (text: string) => ({ type: "section", text: { type: "mrkdwn", text } })
-export const context = (text: string) => ({ type: "context", elements: [{ type: "mrkdwn", text }] })
+//
+// `verbatim: true` on every mrkdwn object is Slack's own recommendation for text that contains
+// anything user-supplied. It defaults to FALSE, and with it false Slack auto-links URLs,
+// link-ifies conversation names, and parses certain mentions — a second route to a mention that
+// escaping cannot cover, because escaping only neutralizes sequences we can see (`<!channel>`),
+// and this one needs no `<…>` at all. Slack still renders all real formatting and our explicit
+// `<url|label>` links, so the only thing lost is auto-linking of a bare URL typed into a comment
+// (deliberate: build links explicitly — see slack-commands.ts).
+const mrkdwn = (text: string) => ({ type: "mrkdwn", text, verbatim: true })
+export const section = (text: string) => ({ type: "section", text: mrkdwn(text) })
+export const context = (text: string) => ({ type: "context", elements: [mrkdwn(text)] })
 export const actions = (elements: unknown[]) => ({ type: "actions", elements })
 export const openButton = (url: string, text = "Open in Derive") => ({
   type: "button",

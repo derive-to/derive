@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { MAX_SECTION, mrkdwnBody, mrkdwnLabel } from "../src/lib/slack-cards"
+import { context, MAX_SECTION, mrkdwnBody, mrkdwnLabel, section } from "../src/lib/slack-cards"
 
 const balanced = (s: string) => (s.match(/</g) ?? []).length === (s.match(/>/g) ?? []).length
 
@@ -134,5 +134,43 @@ describe("mrkdwnBody — a rendered link may not disguise where it goes", () => 
   it("strips bidi overrides from a label (visual spoofing)", () => {
     const out = mrkdwnBody("[‮moc.elpmaxe.live//:sptth](https://ok.example)")
     expect(out).not.toContain("‮")
+  })
+})
+
+// Slack's own guidance for user-supplied text. With verbatim unset (it defaults to false) Slack
+// auto-links URLs, link-ifies conversation names, and parses certain mentions — so untrusted text
+// can still produce a mention through a path our escaping never sees, because we never wrote a
+// `<…>` for it at all. Escaping covers the explicit form; verbatim covers the auto-parsed one.
+describe("block text objects opt out of Slack's automatic parsing", () => {
+  it("sets verbatim on every mrkdwn text object we build", () => {
+    expect(section("hi")).toMatchObject({ text: { type: "mrkdwn", verbatim: true } })
+    expect(context("hi")).toMatchObject({ elements: [{ type: "mrkdwn", verbatim: true }] })
+  })
+})
+
+describe("mrkdwnBody — a URL-ish label may not name a DIFFERENT destination", () => {
+  // The first cut of this rule treated ANY dotted token as a URL, which mangled ordinary
+  // technical writing — and `.js` / `.md` / `.json` really are TLDs, so a bare dotted word is
+  // indistinguishable from a domain by shape alone. Require a positive URL signal instead.
+  it("keeps ordinary technical labels that merely contain a dot", () => {
+    for (const label of ["Node.js", "Next.js", "README.md", "package.json", "CHANGELOG.md", "v1.2"])
+      expect(mrkdwnBody(`[${label}](https://real.example/x)`)).toBe(
+        `<https://real.example/x|${label}>`,
+      )
+  })
+
+  it("keeps a URL-ish label that truthfully names its own destination", () => {
+    expect(mrkdwnBody("[derive.to/a/x](https://derive.to/a/x)")).toBe(
+      "<https://derive.to/a/x|derive.to/a/x>",
+    )
+  })
+
+  it("drops a label presenting a destination it does not go to", () => {
+    expect(mrkdwnBody("[https://derive.to/a/real](https://evil.example/steal)")).toBe(
+      "<https://evil.example/steal>",
+    )
+    expect(mrkdwnBody("[derive.to/a/q7x2](https://evil.example)")).toBe("<https://evil.example>")
+    expect(mrkdwnBody("[www.derive.to](https://evil.example)")).toBe("<https://evil.example>")
+    expect(mrkdwnBody("[//derive.to/x](https://evil.example)")).toBe("<https://evil.example>")
   })
 })
