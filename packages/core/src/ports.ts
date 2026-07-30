@@ -2400,7 +2400,6 @@ export interface OrgSettings {
    *  pull request linking to the Derive preview of its docs. */
   githubPreviewLink: boolean
   /** Post Derive comment activity to the connected Slack workspace (the thread mirror). */
-  slackPost: boolean
   /** The access a NEW publish lands with when the publisher doesn't say (see
    *  access-model.md). Factory default is the "team draft": `workspace_access =
    *  member` (a pasted link opens for a teammate or an on-behalf agent at their
@@ -2475,7 +2474,6 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   githubPostComments: true,
   githubMirrorComments: true,
   githubPreviewLink: true,
-  slackPost: true,
   defaultWorkspaceAccess: "member",
   defaultLinkRole: "none",
   defaultListed: "none",
@@ -2492,7 +2490,10 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
 }
 
 /** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot
- *  token, AES-encrypted at rest. `default_channel` is where Derive posts when an artifact
+ *  token, AES-encrypted at rest. Where Derive posts is no longer a property of the install —
+ *  see `slack_subscription`, one row per subscribed channel. The `default_channel` COLUMN is
+ *  left in place unused (lint:schema forbids DROP COLUMN) but is no longer read or written.
+ *  Historically `default_channel` was where Derive posted when an artifact
  *  has no more specific channel. */
 /** A team member's own model-plan credential, encrypted at rest. `secret` is the AES-GCM
  *  blob (lib/crypto); `provider` matches a runner provider ("claude-code" | "codex"); `kind`
@@ -2518,7 +2519,6 @@ export interface SlackInstallRecord {
   team_name: string | null
   bot_token: string
   bot_user_id: string | null
-  default_channel: string | null
   /** 1 when a Slack call failed for auth/scope reasons (invalid_auth, token_revoked,
    *  missing_scope); the Settings UI shows a reconnect banner. Cleared on reconnect. */
   needs_reauth?: 0 | 1

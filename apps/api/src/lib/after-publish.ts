@@ -95,6 +95,7 @@ export const afterPublish = async (
     version: version.n,
     message: version.message,
     author: version.author,
+    actor_id: version.author_id,
   })
   // Fan out to the publisher's followers: "someone you follow published X". Gated to a
   // known HUMAN behind the publish (an agent publish fans out to the followers of the

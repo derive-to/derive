@@ -161,7 +161,6 @@ describe("hosted tool injection — least privilege (WO4)", () => {
       team_name: "Derive HQ",
       bot_token: encryptSecret("xoxb-real-bot-token", "k"),
       bot_user_id: "U1",
-      default_channel: null,
       needs_reauth: 0,
       created_at: new Date().toISOString(),
     })

@@ -137,38 +137,10 @@ describe("slack status + admin routes", () => {
       team_name: "Acme",
       bot_token: encryptSecret("xoxb-1", KEY),
       bot_user_id: "UBOT",
-      default_channel: "C1",
       created_at: new Date().toISOString(),
     })
     const after = await (await app.request("/v1/slack", { headers: as(owner.email) })).json()
-    expect(after).toMatchObject({ connected: true, team_name: "Acme", default_channel: "C1" })
-  })
-
-  it("an admin sets the default channel; a non-admin cannot", async () => {
-    const { app, meta } = make("slack-channel")
-    await meta.setSlackInstall({
-      org_id: "default",
-      team_id: "T1",
-      team_name: "Acme",
-      bot_token: encryptSecret("xoxb-1", KEY),
-      bot_user_id: "UBOT",
-      default_channel: null,
-      created_at: new Date().toISOString(),
-    })
-    const ok = await app.request("/v1/slack", {
-      method: "PATCH",
-      headers: { "content-type": "application/json", ...as(owner.email) },
-      body: JSON.stringify({ default_channel: "C0ABC" }),
-    })
-    expect(ok.status).toBe(200)
-    expect((await meta.getSlackInstall("default"))?.default_channel).toBe("C0ABC")
-
-    const denied = await app.request("/v1/slack", {
-      method: "PATCH",
-      headers: { "content-type": "application/json", ...as(editor.email) },
-      body: JSON.stringify({ default_channel: "C9" }),
-    })
-    expect(denied.status).toBe(403)
+    expect(after).toMatchObject({ connected: true, team_name: "Acme" })
   })
 
   it("an admin disconnects Slack", async () => {
@@ -179,7 +151,6 @@ describe("slack status + admin routes", () => {
       team_name: "Acme",
       bot_token: encryptSecret("xoxb-1", KEY),
       bot_user_id: "UBOT",
-      default_channel: "C1",
       created_at: new Date().toISOString(),
     })
     const r = await app.request("/v1/slack", { method: "DELETE", headers: as(owner.email) })
@@ -226,7 +197,6 @@ describe("slack DM prefs (email-resolved, no linking)", () => {
       team_name: "Acme",
       bot_token: encryptSecret("xoxb-1", KEY),
       bot_user_id: "UBOT",
-      default_channel: "C1",
       created_at: new Date().toISOString(),
     })
     const ok = await app.request("/v1/slack/test-dm", { method: "POST", headers: as(owner.email) })
@@ -248,7 +218,6 @@ describe("slack account linking (OIDC)", () => {
       team_name: "Acme",
       bot_token: encryptSecret("xoxb-1", KEY),
       bot_user_id: "UBOT",
-      default_channel: "C1",
       created_at: new Date().toISOString(),
     })
 
@@ -411,7 +380,6 @@ describe("slack events endpoint", () => {
       team_name: "Acme",
       bot_token: encryptSecret("xoxb-1", KEY),
       bot_user_id: "UBOT",
-      default_channel: "C1",
       created_at: new Date().toISOString(),
     })
     await meta.setSlackThreadLink({
@@ -676,9 +644,9 @@ describe("slack events endpoint", () => {
         team_name: "Acme",
         bot_token: encryptSecret("xoxb-1", KEY),
         bot_user_id: "UBOT",
-        default_channel: "C1",
         created_at: new Date().toISOString(),
       })
+      await meta.upsertSlackSubscription({ id: newId("sub"), org_id: "default", channel_id: "C1" })
       const r = await postEvent(
         app,
         JSON.stringify({ type: "event_callback", team_id: "T1", event }),
@@ -686,9 +654,9 @@ describe("slack events endpoint", () => {
       expect(r.status).toBe(200)
       const install = await meta.getSlackInstall("default")
       expect(install?.needs_reauth).toBe(1)
-      // Flagged, never deleted: the channel choice and the members' account links must
-      // survive a reconnect, and the banner is what prompts one.
-      expect(install?.default_channel).toBe("C1")
+      // Flagged, never deleted: the workspace's channel subscriptions and the members' account
+      // links must survive a reconnect, and the banner is what prompts one.
+      expect(await meta.listSlackSubscriptions("default")).toHaveLength(1)
     })
   }
 
@@ -709,7 +677,6 @@ describe("slack events endpoint", () => {
       team_name: "Acme",
       bot_token: encryptSecret("xoxb-1", KEY),
       bot_user_id: botUserId,
-      default_channel: "C1",
       created_at: new Date().toISOString(),
     })
 
@@ -771,7 +738,6 @@ describe("slack events endpoint", () => {
       team_name: "Acme",
       bot_token: encryptSecret("xoxb-1", KEY),
       bot_user_id: "UBOT",
-      default_channel: "C1",
       created_at: new Date().toISOString(),
     })
     const r = await postEvent(
@@ -798,7 +764,6 @@ describe("slack link unfurls", () => {
       team_name: "Acme",
       bot_token: encryptSecret("xoxb-1", KEY),
       bot_user_id: "UBOT",
-      default_channel: "C1",
       created_at: new Date().toISOString(),
     })
     await meta.setSlackUserLink({
@@ -867,7 +832,6 @@ describe("slack link unfurls", () => {
       team_name: "Acme",
       bot_token: encryptSecret("xoxb-1", KEY),
       bot_user_id: "UBOT",
-      default_channel: "C1",
       created_at: new Date().toISOString(),
     })
     let fired: (v: unknown) => void = () => {}
@@ -927,7 +891,6 @@ describe("slack interactivity endpoint (resolve/reopen from a button)", () => {
       team_name: "Acme",
       bot_token: encryptSecret("xoxb-1", KEY),
       bot_user_id: "UBOT",
-      default_channel: "C1",
       created_at: new Date().toISOString(),
     })
     await meta.setSlackThreadLink({
@@ -1087,30 +1050,6 @@ describe("slack interactivity endpoint (resolve/reopen from a button)", () => {
     expect(r.status).toBe(200)
     const cm = (await meta.listComments(artifact.id)).find((c) => c.id === "c-int-o")
     expect(cm?.state).toBe("open")
-  })
-
-  it("ignores the click when the org's channel mirror (slackPost) is off", async () => {
-    const { app, meta } = make("slack-int-off")
-    const artifact = await seedResolvable(meta, {
-      artifact: "a-int-f",
-      short: "intoff01",
-      thread: "c-int-f",
-    })
-    await meta.setOrgSettings("default", { ...DEFAULT_ORG_SETTINGS, slackPost: false })
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response("ok", { status: 200 })),
-    )
-
-    const r = await postInteract(
-      app,
-      threadAction(artifact.id, "c-int-f", SLACK_THREAD_ACTION.resolve),
-    )
-    expect(r.status).toBe(200)
-    // Trust gate closed → thread stays open, no message update sent.
-    const cm = (await meta.listComments(artifact.id)).find((c) => c.id === "c-int-f")
-    expect(cm?.state).toBe("open")
-    expect(vi.mocked(fetch)).not.toHaveBeenCalled()
   })
 
   it("acks a proposal Approve interaction (dispatched off the ack path)", async () => {

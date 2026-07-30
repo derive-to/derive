@@ -3248,29 +3248,7 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** Set the channel Derive posts to (Admin only). */
-        patch: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The new default channel (or null to clear it). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            default_channel: string | null;
-                        };
-                    };
-                };
-            };
-        };
+        patch?: never;
         trace?: never;
     };
     "/v1/vitals": {
@@ -5816,8 +5794,6 @@ export interface components {
             githubMirrorComments: boolean;
             /** @description When true, add a preview link to the linked GitHub PR. */
             githubPreviewLink: boolean;
-            /** @description When true, post events to Slack. */
-            slackPost: boolean;
             /**
              * @description Access a new publish lands with: none, or member (factory default).
              * @enum {string}
@@ -6167,8 +6143,6 @@ export interface components {
             connected: boolean;
             /** @description The connected Slack team's name, or null if not connected */
             team_name: string | null;
-            /** @description The channel Derive posts to, or null if unset */
-            default_channel: string | null;
             /** @description Whether the stored bot token needs a re-auth — a failed auth/scope call, or Slack reporting the app uninstalled or its token revoked */
             needs_reauth: boolean;
             /** @description The caller's "DM me for interrupts" preference (mentions, review requests, shares) */

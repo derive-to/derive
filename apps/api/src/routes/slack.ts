@@ -161,10 +161,6 @@ export const slackRoutes = (ctx: AppContext) => {
         .string()
         .nullable()
         .describe("The connected Slack team's name, or null if not connected"),
-      default_channel: z
-        .string()
-        .nullable()
-        .describe("The channel Derive posts to, or null if unset"),
       needs_reauth: z
         .boolean()
         .describe(
@@ -219,7 +215,8 @@ export const slackRoutes = (ctx: AppContext) => {
     if (!code || !state) return fail(c, 400, "invalid Slack callback")
     try {
       const r = await exchangeSlackOAuth(slack.clientId, slack.clientSecret, code, redirectUri)
-      // Preserve an existing default channel across a reconnect.
+      // A reconnect keeps the workspace's channel subscriptions (they live in their own table)
+      // and its created_at; only the credentials are replaced.
       const existing = await meta.getSlackInstall(state.org)
       await meta.setSlackInstall({
         org_id: state.org,
@@ -227,7 +224,6 @@ export const slackRoutes = (ctx: AppContext) => {
         team_name: r.teamName,
         bot_token: encryptSecret(r.botToken, deps.encryptionKey),
         bot_user_id: r.botUserId,
-        default_channel: existing?.default_channel ?? null,
         needs_reauth: 0,
         created_at: existing?.created_at ?? new Date().toISOString(),
       } satisfies SlackInstallRecord)
@@ -404,7 +400,7 @@ export const slackRoutes = (ctx: AppContext) => {
   // authenticates the request; (2) a slack_thread_link maps threadId→artifact→org; (3) the
   // ACTING Slack team must equal that org's connected install — so one signed workspace can't
   // act on another org's thread by carrying its ids (the events path is immune to this because
-  // it keys on Slack-assigned channel+ts, not a value). Then the org's slackPost opt-in gates it.
+  // it keys on Slack-assigned channel+ts, not a value).
   // Deliberately NOT gated on a Derive role: any member of the connected channel can resolve, the
   // same collaboration boundary reply-back already grants for posting — and resolve is reversible.
   // The state flip is applied + fanned out inline (durable before we ack); the cosmetic Slack
@@ -481,7 +477,7 @@ export const slackRoutes = (ctx: AppContext) => {
     if (link && link.artifact_id === artifactId) {
       const install = await meta.getSlackInstall(link.org_id)
       const teamOwnsThread = !!install && !!payload.team?.id && install.team_id === payload.team.id
-      if (teamOwnsThread && (await meta.getOrgSettings(link.org_id)).slackPost) {
+      if (teamOwnsThread) {
         const artifact = await meta.getArtifactById(artifactId)
         if (artifact) {
           await resolveThreadAction({ meta, bus, notify }, artifact, threadId, op)
@@ -617,7 +613,6 @@ export const slackRoutes = (ctx: AppContext) => {
         available: !!slack,
         connected: !!install,
         team_name: install?.team_name ?? null,
-        default_channel: install?.default_channel ?? null,
         needs_reauth: install?.needs_reauth === 1,
         slack_dm: wantsSlackDm(pref?.prefs),
         linked,
@@ -664,35 +659,6 @@ export const slackRoutes = (ctx: AppContext) => {
     deps.pokeWebhooks?.()
     return c.json({ ok: true })
   })
-
-  // Set the channel Derive posts to (Slack channel id, e.g. "C0123ABC"). Admin only.
-  app.openapi(
-    createRoute({
-      method: "patch",
-      path: "/v1/slack",
-      tags: ["Slack"],
-      summary: "Set the channel Derive posts to (Admin only).",
-      responses: {
-        200: {
-          description: "The new default channel (or null to clear it).",
-          content: {
-            "application/json": { schema: z.object({ default_channel: z.string().nullable() }) },
-          },
-        },
-      },
-    }),
-    async (c) => {
-      const org = await requireWorkspace(c, "manage")
-      if (org instanceof Response) return bail(org)
-      const install = await meta.getSlackInstall(org)
-      if (!install) return bail(fail(c, 404, "Slack is not connected"))
-      const b = await readJson(c, z.object({ default_channel: z.string().nullable() }))
-      if (b instanceof Response) return bail(b)
-      const channel = b.default_channel?.trim() ? b.default_channel.trim() : null
-      await meta.setSlackInstall({ ...install, default_channel: channel })
-      return c.json({ default_channel: channel })
-    },
-  )
 
   // Disconnect Slack (admin). Drops the install; thread links are left inert.
   app.openapi(

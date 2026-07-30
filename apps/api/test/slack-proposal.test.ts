@@ -43,7 +43,6 @@ const setup = async () => {
     team_name: "Acme",
     bot_token: "xoxb",
     bot_user_id: "UBOT",
-    default_channel: "C1",
     created_at: new Date().toISOString(),
   })
   // U1 → editor member; U2 → a linked user who is NOT a member of the workspace.

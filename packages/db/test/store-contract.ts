@@ -2219,7 +2219,6 @@ export function runStoreContract(
       await store.setOrgSettings(settingsOrg, {
         ...DEFAULT_ORG_SETTINGS,
         githubPostComments: false,
-        slackPost: false,
       })
       expect(await store.getOrgSettings(settingsOrg)).toMatchObject({
         emailNotifications: true,
@@ -2247,7 +2246,6 @@ export function runStoreContract(
         team_name: "Acme",
         bot_token: "xoxb-1",
         bot_user_id: "U1",
-        default_channel: "C1",
         created_at: "2026-06-20T00:00:00.000Z",
       })
       expect(await store.getSlackInstall(ORG)).toMatchObject({ team_id: "T1", bot_token: "xoxb-1" })
@@ -2258,13 +2256,11 @@ export function runStoreContract(
         team_name: "Acme Inc",
         bot_token: "xoxb-2",
         bot_user_id: "U1",
-        default_channel: "C2",
         created_at: "2026-06-21T00:00:00.000Z",
       })
       expect(await store.getSlackInstall(ORG)).toMatchObject({
         team_name: "Acme Inc",
         bot_token: "xoxb-2",
-        default_channel: "C2",
       })
       await store.deleteSlackInstall(ORG)
       expect(await store.getSlackInstall(ORG)).toBeNull()

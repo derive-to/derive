@@ -542,7 +542,6 @@ export const slackInstall = pgTable("slack_install", {
   team_name: text("team_name"),
   bot_token: text("bot_token").notNull(),
   bot_user_id: text("bot_user_id"),
-  default_channel: text("default_channel"),
   needs_reauth: integer("needs_reauth").notNull().default(0).$type<0 | 1>(),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })

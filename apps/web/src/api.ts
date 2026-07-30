@@ -946,11 +946,9 @@ export const api = {
   updateWorkspaceSettings: (patch: Partial<OrgSettings>): Promise<OrgSettings> =>
     f("/v1/workspace/settings", { ...opts(patch), method: "PATCH" }).then(j),
 
-  // Slack App: status, set default channel, disconnect. Connect is a redirect to
+  // Slack App: status, disconnect, per-user prefs. Connect is a redirect to
   // /v1/slack/install (a full-page navigation, not a fetch).
   getSlack: (): Promise<SlackStatus> => f("/v1/slack", opts()).then(j),
-  setSlackChannel: (default_channel: string | null): Promise<{ default_channel: string | null }> =>
-    f("/v1/slack", { ...opts({ default_channel }), method: "PATCH" }).then(j),
   disconnectSlack: (): Promise<void> =>
     f("/v1/slack", { method: "DELETE", credentials: "include" }).then(() => undefined),
   setSlackDm: (slack_dm: boolean): Promise<{ slack_dm: boolean }> =>

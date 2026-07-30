@@ -661,7 +661,6 @@ export const slackInstall = sqliteTable("slack_install", {
   team_name: text("team_name"),
   bot_token: text("bot_token").notNull(),
   bot_user_id: text("bot_user_id"),
-  default_channel: text("default_channel"),
   // Flipped to 1 when the stored bot token is known to be unusable: either Slack rejected a
   // call for auth/scope reasons (invalid_auth, token_revoked, missing_scope), or Slack told us
   // outright via app_uninstalled / tokens_revoked. The Settings UI shows a reconnect banner.

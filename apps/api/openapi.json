@@ -844,10 +844,6 @@
             "type": "boolean",
             "description": "When true, add a preview link to the linked GitHub PR."
           },
-          "slackPost": {
-            "type": "boolean",
-            "description": "When true, post events to Slack."
-          },
           "defaultWorkspaceAccess": {
             "type": "string",
             "enum": [
@@ -925,7 +921,6 @@
           "githubPostComments",
           "githubMirrorComments",
           "githubPreviewLink",
-          "slackPost",
           "defaultWorkspaceAccess",
           "defaultLinkRole",
           "defaultListed",
@@ -1834,11 +1829,6 @@
             "nullable": true,
             "description": "The connected Slack team's name, or null if not connected"
           },
-          "default_channel": {
-            "type": "string",
-            "nullable": true,
-            "description": "The channel Derive posts to, or null if unset"
-          },
           "needs_reauth": {
             "type": "boolean",
             "description": "Whether the stored bot token needs a re-auth — a failed auth/scope call, or Slack reporting the app uninstalled or its token revoked"
@@ -1856,7 +1846,6 @@
           "available",
           "connected",
           "team_name",
-          "default_channel",
           "needs_reauth",
           "slack_dm",
           "linked"
@@ -5948,33 +5937,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SlackStatus"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "Slack"
-        ],
-        "summary": "Set the channel Derive posts to (Admin only).",
-        "responses": {
-          "200": {
-            "description": "The new default channel (or null to clear it).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "default_channel": {
-                      "type": "string",
-                      "nullable": true
-                    }
-                  },
-                  "required": [
-                    "default_channel"
-                  ]
                 }
               }
             }

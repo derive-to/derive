@@ -275,6 +275,7 @@ export const proposalRoutes = (ctx: AppContext) => {
         await notify(artifact, "proposal.created", {
           proposal_id: proposal.id,
           author: proposal.author,
+          actor_id: proposal.author_id,
           message: proposal.message,
           base_version: proposal.base_version,
         })
@@ -390,6 +391,7 @@ export const proposalRoutes = (ctx: AppContext) => {
           proposal,
           approver,
           str(body.note) ?? null,
+          me?.id ?? null,
         )
         const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
         return c.json({ ...(await proposalJson(artifact, fresh)), published: version.n })
@@ -431,6 +433,7 @@ export const proposalRoutes = (ctx: AppContext) => {
         proposal,
         reviewer,
         str(body.note) ?? null,
+        me?.id ?? null,
       )
       const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
       return c.json(await proposalJson(artifact, fresh))

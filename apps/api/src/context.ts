@@ -310,7 +310,7 @@ export function buildContext(deps: AppDeps) {
       })
       .catch(logEnqueueError("webhook", a, event))
     // The connected Slack App's channel — a top-level card for artifact-lifecycle events
-    // (publish / proposal), gated inside the helper on visibility + connected channel + slackPost.
+    // (publish / proposal), gated inside the helper on visibility + the channel subscriptions.
     // Skipped entirely when no Slack app is configured on this instance (no wasted lookup).
     const channel = deps.slack
       ? enqueueSlackChannelEvent(meta, deps.baseUrl, a, event, data)

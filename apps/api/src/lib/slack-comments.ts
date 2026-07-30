@@ -29,9 +29,13 @@ import {
   section,
 } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
+import { authorKind, resolveChannels } from "./slack-subscriptions"
 
 /** The Slack message payload an enqueued slack_app delivery carries (self-contained). */
 interface SlackCommentPayload {
+  /** The channel this row delivers to. One outbox row per subscribed channel, so a failure in
+   *  one channel retries and dead-letters on its own. */
+  channel: string
   orgId: string
   artifactId: string
   threadId: string
@@ -47,31 +51,41 @@ export const enqueueSlackComment = async (
   deps: { meta: MetaStore; baseUrl: string },
   artifact: ArtifactRecord,
   cm: CommentRecord,
-): Promise<void> => {
+): Promise<number> => {
   const { meta, baseUrl } = deps
-  if (parseMeta(cm.meta).slack) return // came from Slack — don't echo back
-  // Only mirror feed-visible artifacts (same gate as the event cards): a comment on a private
-  // draft must not post its title + body to the org-wide channel where non-collaborators see it.
-  if (artifact.listed === "none") return
-  const install = await meta.getSlackInstall(artifact.org_id)
-  if (!install?.default_channel) return
+  if (parseMeta(cm.meta).slack) return 0 // came from Slack — don't echo back
+  // resolveChannels keeps the visibility gate (a private draft never reaches a channel) and
+  // applies each subscription's event + author filters.
+  const channels = await resolveChannels(
+    meta,
+    artifact,
+    "comment.created",
+    await authorKind(meta, artifact.org_id, cm.author_id),
+  )
+  if (!channels.length) return 0
   const link = commentDeepLink(baseUrl, artifact, cm.thread_id)
-  const payload: SlackCommentPayload = {
-    orgId: artifact.org_id,
-    artifactId: artifact.id,
-    threadId: cm.thread_id,
-    text: cm.body_md,
-    link,
-    title: artifact.title ?? artifact.short_id,
-    author: cm.author,
+  for (const sub of channels) {
+    const payload: SlackCommentPayload = {
+      channel: sub.channel_id,
+      orgId: artifact.org_id,
+      artifactId: artifact.id,
+      threadId: cm.thread_id,
+      text: cm.body_md,
+      link,
+      title: artifact.title ?? artifact.short_id,
+      author: cm.author,
+    }
+    await enqueueChannelDelivery(meta, "slack_app", "comment.created", payload)
   }
-  await enqueueChannelDelivery(meta, "slack_app", "comment.created", payload)
+  return channels.length
 }
 
 /** The self-contained payload for a channel EVENT card (publish / proposal lifecycle). Carried
  *  on a `slack_app` delivery whose `event_type` is the event — the sender routes on that, so
  *  event cards and the comment mirror share the kind without a payload discriminator. */
 interface SlackEventPayload {
+  /** As SlackCommentPayload.channel — one row per subscribed channel. */
+  channel: string
   orgId: string
   artifactId: string
   event: WebhookEvent
@@ -120,7 +134,7 @@ const CHANNEL_EVENTS = new Set<WebhookEvent>([
 ])
 
 /** Enqueue a top-level channel card for an artifact-lifecycle event, when the org has a
- *  connected channel and the mirror (slackPost) is on. Returns whether it enqueued (so the
+ *  matching channel subscription. Returns whether it enqueued (so the
  *  caller can poke the drainer). Cheap no-op for the common case — the event whitelist is
  *  checked before any DB lookup. */
 export const enqueueSlackChannelEvent = async (
@@ -131,25 +145,35 @@ export const enqueueSlackChannelEvent = async (
   data: Record<string, unknown>,
 ): Promise<boolean> => {
   if (!CHANNEL_EVENTS.has(event)) return false
-  // Only broadcast feed-visible artifacts. A private draft (listed "none") is visible to its
-  // owner + explicit shares — its publish/proposal title must not leak to the org-wide channel.
-  if (artifact.listed === "none") return false
-  const install = await meta.getSlackInstall(artifact.org_id)
-  if (!install?.default_channel) return false
-  if (!(await meta.getOrgSettings(artifact.org_id)).slackPost) return false
-  const actor = [data.author, data.approver, data.reviewer].find((v) => typeof v === "string")
-  const payload: SlackEventPayload = {
-    orgId: artifact.org_id,
-    artifactId: artifact.id,
+  // `actor_id` is the stable id of whoever caused this (notify's callers pass it alongside the
+  // display name), and is what the human/agent subscription filter keys on.
+  const channels = await resolveChannels(
+    meta,
+    artifact,
     event,
-    title: artifact.title ?? artifact.short_id,
-    link: artifactUrl(baseUrl, artifact),
-    author: typeof actor === "string" ? actor : "someone",
-    version: typeof data.version === "number" ? data.version : null,
-    message: typeof data.message === "string" ? data.message : null,
-    proposalId: typeof data.proposal_id === "string" ? data.proposal_id : null,
+    await authorKind(
+      meta,
+      artifact.org_id,
+      typeof data.actor_id === "string" ? data.actor_id : null,
+    ),
+  )
+  if (!channels.length) return false
+  const actor = [data.author, data.approver, data.reviewer].find((v) => typeof v === "string")
+  for (const sub of channels) {
+    const payload: SlackEventPayload = {
+      channel: sub.channel_id,
+      orgId: artifact.org_id,
+      artifactId: artifact.id,
+      event,
+      title: artifact.title ?? artifact.short_id,
+      link: artifactUrl(baseUrl, artifact),
+      author: typeof actor === "string" ? actor : "someone",
+      version: typeof data.version === "number" ? data.version : null,
+      message: typeof data.message === "string" ? data.message : null,
+      proposalId: typeof data.proposal_id === "string" ? data.proposal_id : null,
+    }
+    await enqueueChannelDelivery(meta, "slack_app", event, payload)
   }
-  await enqueueChannelDelivery(meta, "slack_app", event, payload)
   return true
 }
 
@@ -272,13 +296,13 @@ export const makeSlackSender =
       // guard against a future comment-shaped payload mis-routing here (no `event` → skip).
       if (typeof e.event !== "string") return { ok: true, status: "skipped: not an event payload" }
       const bot = await resolveBotToken(meta, e.orgId, encryptionKey)
-      if (!bot?.install.default_channel) return { ok: true, status: "skipped: slack not connected" }
+      if (!bot) return { ok: true, status: "skipped: slack not connected" }
       return postWithRecovery(
         meta,
         e.orgId,
         bot.token,
         {
-          channel: bot.install.default_channel,
+          channel: e.channel,
           // The fallback text is parsed as mrkdwn too (notifications, blocks-failed render), so
           // untrusted author/title must be escaped here as well — else a name like `<!channel>`
           // could ping the channel via the fallback even though the blocks escape it.
@@ -292,13 +316,11 @@ export const makeSlackSender =
     }
     const p = JSON.parse(d.payload) as SlackCommentPayload
     const bot = await resolveBotToken(meta, p.orgId, encryptionKey)
-    if (!bot?.install.default_channel) return { ok: true, status: "skipped: slack not connected" }
-    // A thread can now be mirrored into several channels, so links are keyed (thread, channel).
-    // Until subscriptions land there is still at most one, and taking the first reproduces
-    // exactly what the old thread-keyed lookup returned — including the "keep posting to the
-    // channel this thread started in, even if the default moved" behaviour.
-    const existing = (await meta.listSlackThreadLinksByThread(p.threadId))[0]
-    const channel = existing?.channel ?? bot.install.default_channel
+    if (!bot) return { ok: true, status: "skipped: slack not connected" }
+    // The row names its channel; the link tells us whether this thread already has a message
+    // THERE to thread under. A thread mirrored into three channels has three of each.
+    const channel = p.channel
+    const existing = await meta.getSlackThreadLink(p.threadId, channel)
 
     const res = await postWithRecovery(
       meta,
@@ -363,8 +385,6 @@ export const makeSlackIngestSender =
     const p = JSON.parse(d.payload) as SlackIngestPayload
     const link = await meta.getSlackThreadLinkByTs(p.channel, p.threadTs)
     if (!link) return { ok: true, status: "skipped: no thread link" }
-    if (!(await meta.getOrgSettings(link.org_id)).slackPost)
-      return { ok: true, status: "skipped: channel mirror off" }
     const bot = await resolveBotToken(meta, link.org_id, encryptionKey)
     if (!bot) return { ok: true, status: "skipped: slack not connected" }
     const name = await slackUserName(bot.token, p.userId)

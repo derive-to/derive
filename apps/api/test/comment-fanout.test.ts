@@ -100,7 +100,6 @@ describe("comment channel fan-out", () => {
       githubPostComments: true,
       githubMirrorComments: true,
       githubPreviewLink: true,
-      slackPost: true,
     })
     const shortId = await newArtifact(app)
     await comment(app, shortId, editor.email, [{ id: owner.id, name: "Owner" }])
@@ -116,16 +115,16 @@ describe("comment channel fan-out", () => {
       team_name: "Acme",
       bot_token: "xoxb-stored",
       bot_user_id: "UBOT",
-      default_channel: "C1",
       created_at: new Date().toISOString(),
     })
+    await meta.upsertSlackSubscription({ id: newId("sub"), org_id: "default", channel_id: "C1" })
     const shortId = await newArtifact(app)
     await comment(app, shortId, owner.email)
     const kinds = (await claim(meta)).map((d) => d.kind)
     expect(kinds).toContain("slack_app")
   })
 
-  it("does not post to Slack when the toggle is off", async () => {
+  it("does not post to Slack when no channel is subscribed", async () => {
     const { app, meta } = makeAuthedApp("fanout-slack-off", [owner, editor], "editor")
     await meta.setSlackInstall({
       org_id: "default",
@@ -133,16 +132,15 @@ describe("comment channel fan-out", () => {
       team_name: "Acme",
       bot_token: "xoxb-stored",
       bot_user_id: "UBOT",
-      default_channel: "C1",
       created_at: new Date().toISOString(),
     })
+    // Deliberately NO subscription: that is what "off" means now.
     await meta.setOrgSettings("default", {
       ...DEFAULT_ORG_SETTINGS,
       emailNotifications: true,
       githubPostComments: true,
       githubMirrorComments: true,
       githubPreviewLink: true,
-      slackPost: false,
     })
     const shortId = await newArtifact(app)
     await comment(app, shortId, owner.email)
@@ -158,9 +156,9 @@ describe("comment channel fan-out", () => {
       team_name: "Acme",
       bot_token: "xoxb-stored",
       bot_user_id: "UBOT",
-      default_channel: "C1",
       created_at: new Date().toISOString(),
     })
+    await meta.upsertSlackSubscription({ id: newId("sub"), org_id: "default", channel_id: "C1" })
     const r = await pub(app, "# Secret", { visibility: "private" }, undefined, as(owner.email))
     const shortId = (await r.json()).short_id as string
     await comment(app, shortId, owner.email)
@@ -183,8 +181,12 @@ describe("comment channel fan-out", () => {
         team_name: "Acme",
         bot_token: "xoxb-stored",
         bot_user_id: "UBOT",
-        default_channel: "C1",
         created_at: new Date().toISOString(),
+      })
+      await meta.upsertSlackSubscription({
+        id: newId("sub"),
+        org_id: "default",
+        channel_id: "C1",
       })
       const shortId = await newArtifact(app)
       const artifact = await meta.getByShortId(shortId)
@@ -242,16 +244,19 @@ describe("connected-channel event cards (publishes / proposals)", () => {
       deps: { slack: { clientId: "c", clientSecret: "s", signingSecret: "sig" } },
     })
 
-  const connect = (meta: Awaited<ReturnType<typeof makeAuthedApp>>["meta"]) =>
-    meta.setSlackInstall({
+  // "Connected" is now two things: an install (credentials) and at least one subscribed
+  // channel (where to post). The channel used to be a column on the install.
+  const connect = async (meta: Awaited<ReturnType<typeof makeAuthedApp>>["meta"]) => {
+    await meta.setSlackInstall({
       org_id: "default",
       team_id: "T1",
       team_name: "Acme",
       bot_token: "xoxb-plain",
       bot_user_id: "UBOT",
-      default_channel: "C1",
       created_at: new Date().toISOString(),
     })
+    await meta.upsertSlackSubscription({ id: newId("sub"), org_id: "default", channel_id: "C1" })
+  }
 
   it("a publish posts a version.published card to the connected channel", async () => {
     const { app, meta } = authed("chan-publish")
@@ -270,10 +275,12 @@ describe("connected-channel event cards (publishes / proposals)", () => {
     expect((await claim(meta)).map((d) => d.kind)).not.toContain("slack_app")
   })
 
-  it("posts no channel card when the mirror (slackPost) is off", async () => {
+  // "Off" is now the absence of a subscription rather than a workspace-wide toggle, so an
+  // install with no subscribed channel posts nothing.
+  it("posts no channel card when no channel is subscribed", async () => {
     const { app, meta } = authed("chan-off")
     await connect(meta)
-    await meta.setOrgSettings("default", { ...DEFAULT_ORG_SETTINGS, slackPost: false })
+    await meta.deleteSlackSubscriptionsByChannel("default", "C1")
     await newArtifact(app)
     expect((await claim(meta)).map((d) => d.kind)).not.toContain("slack_app")
   })
@@ -289,6 +296,7 @@ describe("connected-channel event cards (publishes / proposals)", () => {
       kind: "slack_app",
       event_type: "version.published",
       payload: JSON.stringify({
+        channel: "C1",
         orgId: "default",
         event: "version.published",
         title: "Doc",

@@ -84,10 +84,10 @@ export const runSlackProposalAction = async (
   }
   try {
     if (args.op === "approve") {
-      const version = await approveProposalAction(deps, artifact, proposal, who, null)
+      const version = await approveProposalAction(deps, artifact, proposal, who, null, link.user_id)
       await replaceCard(`:white_check_mark: Approved by ${display} — now v${version.n}`)
     } else {
-      await requestChangesAction(deps, artifact, proposal, who, null)
+      await requestChangesAction(deps, artifact, proposal, who, null, link.user_id)
       await replaceCard(`:leftwards_arrow_with_hook: Changes requested by ${display}`)
     }
   } catch {

@@ -399,8 +399,12 @@ describe("channel fan-out parity (the MCP path)", () => {
       team_name: "Acme",
       bot_token: "xoxb-stored",
       bot_user_id: "UBOT",
-      default_channel: "C1",
       created_at: new Date().toISOString(),
+    })
+    await meta.upsertSlackSubscription({
+      id: "sub_mcp",
+      org_id: artifact?.org_id ?? "",
+      channel_id: "C1",
     })
     await call(app, token, "comment", {
       short_id: created.short_id,
