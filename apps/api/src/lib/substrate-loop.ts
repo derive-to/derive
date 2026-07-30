@@ -9,6 +9,7 @@ import {
   askContract,
   documentBlock,
   documentContract,
+  documentName,
   type LandingPort,
   revisionContract,
   runTurn,
@@ -466,7 +467,9 @@ const serveOneRun = async (
     system:
       RUN_SYSTEM_PROMPT +
       contract.text +
-      (source === null ? "" : `\n\n${documentBlock(source, targetId ?? "index.html")}`),
+      (source === null
+        ? ""
+        : `\n\n${documentBlock(source, documentName(targetId ?? "index", targetDoc?.contentType))}`),
     messages: [{ role: "user", content: buildPrompt(run, targetId) }],
     tools: (run.tools ?? []).map((t) => t.def),
     contract,

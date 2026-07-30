@@ -28,6 +28,7 @@ import type { AgentLoopInput } from "./agent-loop"
 import {
   documentBlock,
   documentContract,
+  documentName,
   type LandingPort,
   runTurn,
   type TurnOutcome,
@@ -127,7 +128,7 @@ revision block, and do not change the document. Most messages are one or the oth
 
 ${contract.text}
 
-${documentBlock(src.text, input.artifact.short_id)}`
+${documentBlock(src.text, documentName(input.artifact.short_id, input.artifact.current_content_type))}`
 
   const out = await runTurn({
     system,

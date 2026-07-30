@@ -1094,3 +1094,29 @@ describe("the revised document KEEPS its own format", () => {
     }
   })
 })
+
+describe("what filename the model is SHOWN", () => {
+  // The upstream half of the content-type bug. Both lanes passed a bare short_id, so the prompt
+  // said "its filename is art_1" — no extension, no format signal. Asked to name its output the
+  // model guessed, and the edits contract's fallback made that guess index.html. That is why the
+  // flip was intermittent rather than constant: it depended on what the model felt like naming.
+  //
+  // Correcting the type on the way out (landOverHttp) is not a substitute. A model that believes
+  // it is editing an extensionless file will also write HTML into a Markdown document's BODY,
+  // and no amount of re-stamping the content type afterwards undoes that.
+  it("tells the model a markdown target's name ends in .md", async () => {
+    const api = stubApi({ run: baseRun, content: "# Roadmap\n\n## Now\nShip it.\n" })
+    const url = await api.url
+    let systemSeen = ""
+    try {
+      await runToSettle(url, api.rec, async (input) => {
+        systemSeen = input.system ?? ""
+        return { text: revision(), toolUses: [], costUsd: 0.001, done: true }
+      })
+      expect(systemSeen).toContain("its filename is art_1.md")
+      expect(systemSeen).not.toContain("its filename is art_1\n")
+    } finally {
+      await api.close()
+    }
+  })
+})
