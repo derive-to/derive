@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs"
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { Hono } from "hono"
-import { describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { API_PATHS, isApiPath, mountWeb, workerFirstGlobs } from "../src/lib/serve-web"
 
 const apiDir = join(import.meta.dirname, "..")
@@ -45,6 +45,61 @@ describe("serve-web: SPA vs API path contract", () => {
     const miss = await app.request("/v1/nope")
     expect(miss.status).toBe(404) // unknown API path → JSON 404, never the shell
     expect(await miss.json()).toEqual({ error: "not found" })
+  })
+})
+
+// The trust-signal static files (RFC 9116 security.txt, sitemap.xml). Both must
+// serve their real bytes rather than the SPA shell — a scanner that gets HTML from
+// /.well-known/security.txt reads it as a soft-404, which is the thing these were
+// added to fix. sitemap.xml is covered by the root-file route; security.txt needs
+// the dot-directory route, so this pins the one that is easy to regress.
+describe("serve-web: static trust-signal files are not swallowed by the shell", () => {
+  // serveStatic resolves `root` against process.cwd() (apps/api under vitest), so
+  // the fixture has to live on disk under it rather than in a system temp dir.
+  const rootRel = "test/.tmp-serve-web"
+  const rootAbs = join(apiDir, rootRel)
+
+  beforeAll(() => {
+    mkdirSync(join(rootAbs, ".well-known"), { recursive: true })
+    writeFileSync(join(rootAbs, ".well-known", "security.txt"), "Contact: mailto:security@x\n")
+    writeFileSync(join(rootAbs, "sitemap.xml"), '<?xml version="1.0"?><urlset/>')
+  })
+  afterAll(() => rmSync(rootAbs, { recursive: true, force: true }))
+
+  const app = () => {
+    const a = new Hono()
+    // A server-owned well-known, mounted before mountWeb exactly as node.ts does.
+    a.get("/.well-known/openid-configuration", (c) => c.json({ issuer: "https://x" }))
+    mountWeb(a, { webRoot: rootRel, shellHtml: "SHELL_MARKER" })
+    return a
+  }
+
+  it("serves security.txt and sitemap.xml as themselves", async () => {
+    const sec = await app().request("/.well-known/security.txt")
+    expect(sec.status).toBe(200)
+    expect(await sec.text()).toContain("Contact: mailto:security@x")
+
+    const map = await app().request("/sitemap.xml")
+    expect(map.status).toBe(200)
+    expect(await map.text()).toContain("<urlset/>")
+  })
+
+  it("does not shadow server-owned well-knowns", async () => {
+    const oidc = await app().request("/.well-known/openid-configuration")
+    expect(oidc.status).toBe(200)
+    expect(await oidc.json()).toEqual({ issuer: "https://x" })
+
+    // Unknown path under an API-owned well-known prefix stays a JSON 404 — the
+    // static route must fall through, never hand back the shell.
+    const miss = await app().request("/.well-known/skills/nope.json")
+    expect(miss.status).toBe(404)
+    expect(await miss.json()).toEqual({ error: "not found" })
+  })
+
+  it("still falls back to the shell for a missing dot-directory file", async () => {
+    const r = await app().request("/.well-known/nothing-here.txt")
+    expect(r.status).toBe(200)
+    expect(await r.text()).toContain("SHELL_MARKER")
   })
 })
 
