@@ -97,9 +97,27 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       }
     }
   } catch (e) {
-    // A fresh DB has no legacy table to relax; anything else is a real failure and must not
-    // be swallowed — a silently-skipped migration is how a deploy 500s in production instead.
-    if (!/no such table/i.test(String(e))) throw e
+    // ONLY the fresh-database case is tolerable: no legacy `context_session` to relax, so
+    // there is nothing to do. It is matched BY NAME.
+    //
+    // The old filter was a bare /no such table/, which is exactly the text a genuinely broken
+    // rebuild emits: `ALTER TABLE context_session__new RENAME TO context_session` re-parses
+    // every dependent object, and a dangling reference (session_message's foreign key, a view)
+    // fails with "no such table: <that object's target>". So the one error this migration is
+    // most likely to produce was the one error it treated as success — the deploy then booted
+    // on the un-relaxed schema, and every contextless chat session 500'd with
+    // `NOT NULL constraint failed` far away from here, with nothing in any log pointing back.
+    //
+    // Anything else is rethrown, wrapped so the boot failure names the migration rather than
+    // surfacing a bare SQLite string. There is no logger in this package (and `console` is
+    // lint-banned here), so the throw IS the report — and it is the correct response anyway:
+    // the rollback above already restored the original table, so failing to start beats
+    // serving on a schema we know is wrong.
+    const msg = e instanceof Error ? e.message : String(e)
+    if (!/no such table:\s*(main\.)?context_session\b/i.test(msg))
+      throw new Error(`context_session relaxation failed (schema left unchanged): ${msg}`, {
+        cause: e,
+      })
   }
   const db = drizzle(raw, { schema })
   const repos = makeRepos(db)
