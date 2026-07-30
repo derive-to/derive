@@ -6,6 +6,30 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
 
 ## [Unreleased]
 
+### Added
+- **Inline text editing.** An **Edit** button on the artifact workbench turns the
+  rendered document itself into the editor: click any text, type, hit Save — a
+  typo fix no longer needs the raw source or an agent round-trip. Works on phones
+  too (the save bar floats above the comments sheet). Editors publish
+  a new version directly; commenters (and locked artifacts) get **Suggest edits**,
+  which files the same change as a proposal for review. Under the hood each
+  changed run travels as a **quote-scoped edit** (`{ quote: { exact, prefix,
+  suffix }, new_text }`) — the write-side twin of the comment anchor — resolved
+  server-side against the stored source with a strict matcher (context match, else
+  a globally unique exact, else refuse), so an edit can never land on the wrong
+  occurrence. For HTML artifacts the resolved span maps back to raw bytes through
+  an offset-tracking projection that refuses to cross markup or split an entity;
+  replacements are escaped. The `edits` field on `POST /versions`, `/proposals`,
+  and the MCP `publish` tool accepts the new shape as an alternative to
+  `{old_str, new_str}` (one shape per batch — the two resolve against different
+  baselines, so mixing is refused rather than silently reordered), with the same
+  `base_version` conflict safety and an atomic all-or-nothing batch capped at 500
+  edits per request.
+  The shown version freezes while editing (a concurrent publish warns instead of
+  reloading typed text away), comment anchors re-sweep as usual — a surgical
+  inline edit keeps neighboring comments attached — and structural changes stay
+  where they belong: chat and the source editor.
+
 ### Changed
 - **Access is three single-purpose fields.** Replaced the overloaded `visibility`
   with `workspace_access` (does the artifact's workspace reach it, at each member's

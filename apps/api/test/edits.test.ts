@@ -3,6 +3,7 @@ import { EditError } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   EditConflictError,
+  MAX_EDITS_PER_BATCH,
   materializeEdits,
   parseBaseVersion,
   preservingFilename,
@@ -145,6 +146,106 @@ describe("materializeEdits: conflict diff (compactDiff / conflictDiffNote)", () 
       expect(loggedMsg).toContain("conflictDiffNote failed")
       expect(fields.error).toBe("simulated store failure")
     })
+  })
+})
+
+describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () => {
+  it("applies a quote edit to markdown and keeps the .md filename", async () => {
+    const deps = mkDeps({ 1: { text: "# T\n\nIt was teh best of times.\n" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ quote: { exact: "teh", prefix: "It was ", suffix: " best" }, new_text: "the" }],
+      1,
+    )
+    expect(out.content).toContain("It was the best of times.")
+    expect(out.filename).toBe("index.md")
+  })
+
+  it("applies a quote edit to html source via the projection map", async () => {
+    const deps = mkDeps({
+      1: {
+        text: "<p>The quick brown fox jumps over the lazy dog.</p>",
+        contentType: "text/html",
+      },
+    })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ quote: { exact: "lazy", prefix: "over the ", suffix: " dog" }, new_text: "sleepy" }],
+      1,
+    )
+    expect(out.content).toBe("<p>The quick brown fox jumps over the sleepy dog.</p>")
+    expect(out.filename).toBe("index.html")
+  })
+
+  it("refuses a batch that mixes quote edits with old_str edits", async () => {
+    // The two shapes resolve against different baselines (quotes all-at-once vs
+    // old_str sequentially) — a mixed batch would silently reorder, so it's refused.
+    const deps = mkDeps({ 1: { text: "alpha beta gamma" } })
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        [
+          { quote: { exact: "alpha", suffix: " beta" }, new_text: "ALPHA" },
+          { old_str: "gamma", new_str: "GAMMA" },
+        ],
+        1,
+      ),
+    ).rejects.toThrow(/mixes quote edits and old_str edits/)
+  })
+
+  it("a malformed quote edit (numeric prefix) is a clean EditError, not a TypeError 500", async () => {
+    const deps = mkDeps({ 1: { text: "the pricing page" } })
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        // isQuoteEdit rejects the shape, so it falls to applyEdits' old_str
+        // validation — either way the caller gets a 400-shaped EditError.
+        [{ quote: { exact: "pricing", prefix: 123 }, new_text: "cost" } as never],
+        1,
+      ),
+    ).rejects.toThrow(EditError)
+  })
+
+  it("caps the batch size with a clean EditError", async () => {
+    const deps = mkDeps({ 1: { text: "word ".repeat(10) } })
+    const edits = Array.from({ length: MAX_EDITS_PER_BATCH + 1 }, () => ({
+      quote: { exact: "word" },
+      new_text: "x",
+    }))
+    await expect(materializeEdits(deps, fileArtifact(1), edits, 1)).rejects.toThrow(
+      /maximum per request/,
+    )
+  })
+
+  it("a failing quote edit rejects the batch as a plain EditError (400-shaped)", async () => {
+    const deps = mkDeps({ 1: { text: "no such phrase here" } })
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        [{ quote: { exact: "vanished text" }, new_text: "x" }],
+        1,
+      ),
+    ).rejects.toThrow(/wasn't found/)
+  })
+
+  it("still enforces base_version for quote edits (409-shaped conflict)", async () => {
+    const deps = mkDeps({ 1: { text: "one" }, 2: { text: "two" } })
+    await expect(
+      materializeEdits(deps, fileArtifact(2), [{ quote: { exact: "one" }, new_text: "1" }], 1),
+    ).rejects.toThrow(EditConflictError)
+  })
+
+  it("a non-array edits payload is a clean EditError, not a TypeError-shaped 500", async () => {
+    const deps = mkDeps({ 1: { text: "one" } })
+    await expect(
+      // Simulates `edits: "{}"` on the wire — JSON.parse gives an object, not an array.
+      materializeEdits(deps, fileArtifact(1), {} as never, 1),
+    ).rejects.toThrow(EditError)
   })
 })
 
