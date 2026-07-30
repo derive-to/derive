@@ -405,12 +405,13 @@ export const openSlackDm = async (token: string, userId: string): Promise<string
  *                      im:history, which we deliberately do NOT request (see the
  *                      bot_events note in slack-app-setup.ts).
  *
- *  channels:read / groups:read back no call Derive makes today — they cover conversation
- *  metadata (conversations.list/info), which nothing here reads; the channel is configured by
- *  pasting its id. They are kept rather than trimmed on purpose: the cost of holding them is
- *  a line on the consent screen, while the cost of being wrong about an event-delivery
- *  dependency is silent (see the re-auth note below) — Slack would simply stop delivering
- *  private-channel replies with nothing to detect. Revisit only with a live check.
+ *  channels:read / groups:read back `conversations.list`, which is how the Settings channel
+ *  picker offers channels to subscribe instead of asking an admin to paste an id. They were
+ *  held speculatively for two releases before that — kept rather than trimmed because the cost
+ *  of holding a scope is a line on the consent screen, while the cost of being wrong about an
+ *  event-delivery dependency is SILENT (see the re-auth note below): Slack would just stop
+ *  delivering private-channel replies with nothing to detect. That bet paid off; do not read
+ *  it as licence to hoard scopes.
  *
  *  Re-auth on scope drift is only automatic for scopes an OUTBOUND call needs: a stale
  *  install hits `missing_scope`, which flags needs_reauth and shows the reconnect banner.
@@ -427,10 +428,10 @@ export const SLACK_BOT_SCOPES = [
   "commands",
   "links:read",
   "links:write",
-  "channels:read", // backs no call today — see the note above
+  "channels:read", // conversations.list, for the channel picker
   "channels:join",
   "channels:history",
-  "groups:read", // backs no call today — see the note above
+  "groups:read", // ditto, for private channels the bot is in
   "groups:history",
   "users:read",
   "users:read.email",
