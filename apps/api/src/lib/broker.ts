@@ -1,5 +1,5 @@
 import type { BrokerToolDef, ToolBroker } from "@derive/broker"
-import { makeBroker } from "@derive/broker"
+import { makeBroker, refRouter } from "@derive/broker"
 import type { ConnectionKind, ConnectionRecord, MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
 import { installationToken } from "./github-app"
@@ -27,6 +27,10 @@ export const toolsForRun = async (
   broker: ToolBroker,
   orgId: string,
   connectionIds: string[],
+  /** An optional SHARED ref router. Pass one when resolving several runs in a single request (a
+   *  claim), so every run's MCP lookups reuse one client and one set of sessions instead of
+   *  re-handshaking per run. Omitted, each call gets its own. */
+  router?: (ref: string) => ToolBroker,
 ): Promise<RunTool[]> => {
   if (connectionIds.length === 0) return []
   const conns = await meta.getConnectionsByIds(connectionIds)
@@ -40,12 +44,31 @@ export const toolsForRun = async (
   )
   const stillMembers = new Set(seats.filter(([, seat]) => seat !== null).map(([uid]) => uid))
   const usable = active.filter((cn) => cn.scope === "workspace" || stillMembers.has(cn.user_id))
+  // Per-CONNECTION routing through ONE router: an `mcp:` ref reaches the MCP broker whatever the
+  // workspace's broker plan is (it needs no vendor account at all), everything else keeps the
+  // plan's broker. Sharing the router across this resolution is what lets the MCP client reuse
+  // its session instead of re-handshaking per connection.
+  const route = router ?? refRouter(broker)
   const out: RunTool[] = []
+  // Dedupe by ref before listing. Two connection rows can point at the same broker_ref (the same
+  // MCP server bound twice, a re-connect that kept the ref), and listing it twice is two extra
+  // network round trips for a set of tools we already have.
+  const seen = new Set<string>()
   for (const cn of usable) {
+    if (seen.has(cn.broker_ref)) continue
+    seen.add(cn.broker_ref)
     const entry = { ref: cn.broker_ref, kind: cn.kind, connectionId: cn.id }
     // A direct connection has no vendor account, so its tools are ours to declare and
     // ours to execute (see executeHttpTool); the broker is never asked about it.
-    const defs = isDirect(cn.kind) ? httpTools(cn.toolkit) : await broker.toolsFor([cn.broker_ref])
+    //
+    // One unreachable or hostile server must not take down the whole tool list: a run bound to
+    // three connections still gets the other two, and sees the failure as a missing tool rather
+    // than a failed claim.
+    const defs = isDirect(cn.kind)
+      ? httpTools(cn.toolkit)
+      : await route(cn.broker_ref)
+          .toolsFor([cn.broker_ref])
+          .catch(() => [])
     for (const def of defs) out.push({ def, ...entry })
   }
   return out
@@ -201,6 +224,11 @@ export const callTool = async (opts: {
   tool: string
   args?: unknown
   ref?: string
+  /** The same SHARED ref router the allowed set was resolved with, when there is one. Routing
+   *  has to happen on BOTH halves or the pair disagrees: an `mcp:` tool would be listed by the
+   *  MCP broker and then executed by the plan's, which for the default LocalBroker means a stub
+   *  echo — a wrong ANSWER rather than an error, the worst failure of the two. */
+  route?: (ref: string) => ToolBroker
 }): Promise<ToolCallOutcome> => {
   const { meta, broker, orgId, encryptionKey, allowed, tool, args, ref } = opts
   const match = allowed.find((t) => t.def.name === tool && (!ref || t.ref === ref))
@@ -214,7 +242,8 @@ export const callTool = async (opts: {
       return { ok: true, result: await executeHttpTool(meta, cn, tool, args ?? {}, encryptionKey) }
     }
     if (!broker) return { ok: false, status: 502, message: "no broker for this workspace" }
-    return { ok: true, result: await broker.execute({ ref: match.ref, tool, args: args ?? {} }) }
+    const via = (opts.route ?? refRouter(broker))(match.ref)
+    return { ok: true, result: await via.execute({ ref: match.ref, tool, args: args ?? {} }) }
   } catch (e) {
     return { ok: false, status: 502, message: e instanceof Error ? e.message : "tool failed" }
   }

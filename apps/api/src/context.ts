@@ -28,6 +28,7 @@ import { type Auth, mcpAudiences } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
 import { isApiToken, verifyApiToken } from "./lib/api-token"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
+import type { Sandbox } from "./lib/code-sandbox"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import { makeOauthAgent } from "./lib/oauth-agent"
@@ -83,6 +84,12 @@ export interface AppDeps {
    *  The Node + Worker entries pass the auth secret. Unset (e.g. tests) ⇒ tokens
    *  are stored as-is; set ⇒ AES-256-GCM encrypted (see lib/crypto encryptSecret). */
   encryptionKey?: string
+  /** The isolate `derive_code` runs model-written JavaScript in. The Node entry passes a worker
+   *  thread; the Worker entry passes nothing until Cloudflare's Worker Loader is out of beta, and
+   *  the tool simply does not register without one — no runtime sniffing, no half-working tool.
+   *  Injected rather than imported so the API never drags `node:worker_threads` into a Workers
+   *  bundle, and so a test can supply a fake. */
+  codeSandbox?: Sandbox
   /** Operator (instance super-admin) emails: global moderation powers, on top of `token`. */
   superAdmins?: string[]
   /** Slack App credentials for the connect flow + inbound Events API. All three set ⇒

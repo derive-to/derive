@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { refRouter } from "@derive/broker"
 import {
   type AutomationRecord,
   type AutomationTrigger,
@@ -449,11 +450,17 @@ export const automationRoutes = (ctx: AppContext) => {
     const broker = runnable.length
       ? await brokerFor(meta, agent.org_id, null, deps.encryptionKey)
       : null
+    // ONE router for the whole claim. Runs in a batch routinely share an automation, and so the
+    // same bound connections: without a shared router each run built its own MCP client and
+    // re-handshook every server it touched.
+    const route = broker ? refRouter(broker) : null
     const runs = await Promise.all(
       runnable.map(async ({ r, a }) => {
         const connIds = parseConnectionIds(a.connection_ids)
         const tools =
-          broker && connIds.length ? await toolsForRun(meta, broker, agent.org_id, connIds) : []
+          broker && route && connIds.length
+            ? await toolsForRun(meta, broker, agent.org_id, connIds, route)
+            : []
         return {
           id: r.id,
           reason: r.reason,
@@ -633,10 +640,15 @@ export const automationRoutes = (ctx: AppContext) => {
     // Resolve the run's allowed (tool → ref) set once, least-privilege. The requested tool must
     // be one of them; if a ref is supplied it must match that tool's ref (never cross to another).
     const broker = await brokerFor(meta, agent.org_id, null, deps.encryptionKey)
-    const allowed = await toolsForRun(meta, broker, agent.org_id, connIds)
+    // One router for BOTH the least-privilege check and the execution below. They touch the same
+    // servers back to back, so sharing it means the MCP client handshakes once instead of twice
+    // per tool call — and this endpoint is called once per tool a composed script runs.
+    const route = refRouter(broker)
+    const allowed = await toolsForRun(meta, broker, agent.org_id, connIds, route)
     const out = await callTool({
       meta,
       broker,
+      route,
       orgId: agent.org_id,
       encryptionKey: deps.encryptionKey,
       allowed,

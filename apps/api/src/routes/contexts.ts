@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { refRouter } from "@derive/broker"
 import {
   type ContextAskerRecord,
   type ContextRecord,
@@ -186,9 +187,13 @@ export const contextRoutes = (ctx: AppContext) => {
   // broker is built at all.
   const contextTools = async (x: ContextRecord) => {
     const ids = parseConnectionIds(x.connection_ids)
-    if (ids.length === 0) return { broker: null, tools: [] }
+    if (ids.length === 0) return { broker: null, route: null, tools: [] }
     const broker = await brokerFor(meta, x.org_id, null, deps.encryptionKey)
-    return { broker, tools: await toolsForRun(meta, broker, x.org_id, ids) }
+    // The router rides along with the broker for the same reason the broker does: the proxy has
+    // to EXECUTE through whatever listed the tool, or an `mcp:` tool would be listed by the MCP
+    // broker and run by the plan's.
+    const route = refRouter(broker)
+    return { broker, route, tools: await toolsForRun(meta, broker, x.org_id, ids, route) }
   }
 
   const contextJson = (x: ContextRecord, manifestShortId: string | null) => ({
@@ -1247,10 +1252,11 @@ export const contextRoutes = (ctx: AppContext) => {
       }),
     )
     if (b instanceof Response) return bail(b)
-    const { broker, tools } = await contextTools(x)
+    const { broker, route, tools } = await contextTools(x)
     const out = await callTool({
       meta,
       broker,
+      route: route ?? undefined,
       orgId: x.org_id,
       encryptionKey: deps.encryptionKey,
       allowed: tools,
