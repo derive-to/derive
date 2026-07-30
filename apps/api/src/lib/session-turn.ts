@@ -53,6 +53,9 @@ type TurnInput = {
   artifact: ArtifactRecord
   transcript: SessionMessageRecord[]
   flags: { agentKillswitch: boolean; agentAutoEnabled: boolean }
+  /** Attended chat resolves NO tools (see maxTurns below), so it can never spend a
+   *  connection — the gate's credentialed rung is always off for this lane. Stated here
+   *  rather than threaded through, so wiring tools into chat later trips this comment. */
   /** The human this turn acts for — follower fan-out and version authorship. */
   onBehalf: { id: string; name: string } | null
 }
@@ -141,7 +144,7 @@ ${documentBlock(src.text, input.artifact.short_id)}`
       // same field that says what the session is about — one field, and the two can never
       // disagree.
       autonomy: input.subject.mode === "publish" ? "auto" : "suggest",
-      flags: input.flags,
+      flags: { ...input.flags, credentialed: false },
     },
     land: landInProcess(deps, input, src.version),
   })

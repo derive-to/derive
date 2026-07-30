@@ -100,7 +100,14 @@ interface ClaimedSession {
   flags?: AutonomyFlags
 }
 
-const NO_FLAGS: AutonomyFlags = { agentKillswitch: false, agentAutoEnabled: false }
+// The fallback when a claim carried no flags at all. Safe by construction rather than by
+// luck: agentAutoEnabled false already forces a proposal, so an executor talking to a server
+// that sent nothing cannot live-publish regardless of the credentialed rung.
+const NO_FLAGS: AutonomyFlags = {
+  agentKillswitch: false,
+  agentAutoEnabled: false,
+  credentialed: false,
+}
 
 /** A manifest becomes the system prompt, so it is bounded by what a system prompt can be rather
  *  than by what an artifact can be. Well past any real context manifest; a runaway one is
