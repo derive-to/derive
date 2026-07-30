@@ -80,7 +80,7 @@ export function registerFindTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe(
-            'Read one DATA SLOT across every artifact in the workspace that carries it — "where does this metric stand everywhere", the cross-artifact companion to read(data, versions) which answers "how did this ONE page change over time". Each row is that artifact\'s CURRENT version. Combine with `tag` to scope it to a set (e.g. data:"checks", tag:"nightly"). Pass "*" to list which slots exist in the workspace and how many artifacts carry each.',
+            'Read one DATA SLOT across every artifact in the workspace that carries it — "where does this metric stand everywhere", the cross-artifact companion to read(data, versions) which answers "how did this ONE page change over time". Each row is that artifact\'s CURRENT version. Combine with `tag` to scope it to a set (e.g. data:"checks", tag:"nightly"). Pass "*" to list which slots exist in the workspace and how many artifacts carry each. Reaches exactly what a search would: your own artifacts plus the workspace-listed ones, never a teammate\'s invite-only doc — so a count here is what YOU can see, not what the workspace holds.',
           ),
         skills: z
           .boolean()
