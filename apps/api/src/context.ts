@@ -820,7 +820,36 @@ export function buildContext(deps: AppDeps) {
     return clean ? `anon_${clean}` : anonViewerId(c)
   }
 
-  const actorFor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
+  // MEMOIZED PER REQUEST + ARTIFACT, exactly like `currentUser` above and for the same reason:
+  // handlers authorize the same artifact more than once, and every miss costs THREE round trips
+  // (membership, artifact member, collection roles).
+  //
+  // Opening a chat session authorizes twice — `read`, then `publish` — and separately reads the
+  // membership a third time, so ONE request made eleven sequential queries against Postgres, of
+  // which the same membership row was fetched three times and the artifact-member and
+  // collection-role rows twice each. On the hosted edge those cost ~100-900ms apiece.
+  //
+  // Safe because an Actor is a pure function of (principal, artifact), and both are fixed for
+  // the life of a request: nothing in a handler can change a role underneath itself, and a role
+  // changed by someone else is picked up by the next request. Keyed by Context, so it dies with
+  // the request rather than outliving a revoked share.
+  const actorCache = new WeakMap<Context, Map<string, Promise<Actor>>>()
+  const actorFor = (c: Context, a: ArtifactRecord): Promise<Actor> => {
+    let perArtifact = actorCache.get(c)
+    if (!perArtifact) {
+      perArtifact = new Map()
+      actorCache.set(c, perArtifact)
+    }
+    // Cache the PROMISE, not the resolved value: two authorize() calls that both start before
+    // the first resolves would otherwise both miss and both issue the three queries.
+    const hit = perArtifact.get(a.id)
+    if (hit) return hit
+    const pending = resolveActor(c, a)
+    perArtifact.set(a.id, pending)
+    return pending
+  }
+
+  const resolveActor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
     // A password on the artifact is a lock on its public link. Has this visitor
     // entered it? The unlock cookie's value is derived from the server-only
     // hash, so it can't be forged.
