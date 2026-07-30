@@ -1,5 +1,6 @@
 import { newId } from "@derive/core"
 import { describe, expect, it } from "vitest"
+import { inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, makeAuthedApp } from "./helpers"
 
 // CHAT, END TO END through the real routes: open a session on a document, send a message, and
@@ -366,5 +367,221 @@ describe("the allowlist, when the OPERATOR's key pays", () => {
   it("an EMPTY list means no restriction — a single-tenant box is not a shared host", async () => {
     const res = await setup("allow-empty", [])
     expect(res.status).toBe(201)
+  })
+})
+
+// A CHAT SESSION IS A WORKSPACE ACTION, not a document action.
+//
+// `authorize(c, "read", art)` is satisfied by a viewer LINK, so a signed-in stranger who was sent
+// one could POST /v1/artifacts/chat-session against a document in a chat-enabled workspace and
+// get 201 plus a live turn on the OPERATOR's model key — from outside the workspace entirely.
+describe("chat requires membership, not merely read access", () => {
+  const owner = { id: "u-own", email: "own@x.com", name: "Own" }
+  const stranger = { id: "u-str", email: "str@x.com", name: "Str" }
+
+  /** A workspace with chat on, a link-readable document, and a signed-in NON-MEMBER. */
+  const linkReadable = async (name: string) => {
+    // BOTH users exist and can sign in; the stranger's SEAT is removed below, which is the
+    // only difference between them. That is the whole point: authentication is not membership.
+    const { app, meta } = makeAuthedApp(name, [owner, stranger], "editor", {
+      deps: {
+        callModel: async () => ({
+          text: revision("# Rewritten"),
+          toolUses: [],
+          costUsd: null,
+          done: true,
+        }),
+      },
+    })
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatBeta: true,
+      agentAutoEnabled: true,
+    })
+    const made = await app.request("/v1/artifacts", {
+      method: "POST",
+      headers: as(owner.email),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new Blob(["# Public\n\nread me"], { type: "text/markdown" }), "p.md")
+        f.set("title", "Public")
+        // Anyone with the link can read it. This is a normal, supported sharing state.
+        f.set("link_role", "viewer")
+        f.set("listed", "public")
+        return f
+      })(),
+    })
+    expect(made.status).toBe(201)
+    const { short_id } = (await made.json()) as { short_id: string }
+    await meta.removeMembership("default", stranger.id)
+    return { app, meta, short_id }
+  }
+
+  it("refuses to open a chat session for a signed-in NON-MEMBER", async () => {
+    const { app, short_id } = await linkReadable("chat-nonmember")
+    const res = await app.request("/v1/artifacts/chat-session", {
+      method: "POST",
+      headers: { ...as(stranger.email), "content-type": "application/json" },
+      body: JSON.stringify({ short_id, body_md: "rewrite this for me" }),
+    })
+    // 404, matching every other un-entitled surface: it should not confirm what it refuses.
+    expect(res.status).toBe(404)
+  })
+
+  it("still lets a member open one on the same document", async () => {
+    // The positive control — without it "404" could just mean the fixture is broken.
+    const { app, short_id } = await linkReadable("chat-member-ok")
+    const res = await app.request("/v1/artifacts/chat-session", {
+      method: "POST",
+      headers: { ...as(owner.email), "content-type": "application/json" },
+      body: JSON.stringify({ short_id, body_md: "rewrite this for me" }),
+    })
+    expect(res.status).toBe(201)
+  })
+
+  it("stops serving turns to a member who is removed but keeps a viewer link", async () => {
+    // The one-turn-later version of the same hole: the per-turn ACL re-check folds in link_role,
+    // so losing the SEAT was not enough to stop a session that was already open.
+    const { app, meta, short_id } = await linkReadable("chat-removed-seat")
+    await meta.setMembership({
+      id: newId("mem"),
+      org_id: "default",
+      user_id: stranger.id,
+      role: "editor",
+    })
+    const opened = await app.request("/v1/artifacts/chat-session", {
+      method: "POST",
+      headers: { ...as(stranger.email), "content-type": "application/json" },
+      body: JSON.stringify({ short_id, body_md: "hello" }),
+    })
+    expect(opened.status).toBe(201)
+    const { session } = (await opened.json()) as { session: { id: string } }
+
+    await meta.removeMembership("default", stranger.id)
+    const before = (await meta.getByShortId(short_id))?.current_version
+
+    await app.request(`/v1/sessions/${session.id}/messages`, {
+      method: "POST",
+      headers: { ...as(stranger.email), "content-type": "application/json" },
+      body: JSON.stringify({ body_md: "now rewrite the whole thing" }),
+    })
+    for (let i = 0; i < 60; i++) {
+      const msgs = await meta.listSessionMessages(session.id)
+      if (msgs.filter((m) => m.author_kind === "agent").length > 1) break
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    // The document is untouched, and the transcript says why rather than going silent.
+    expect((await meta.getByShortId(short_id))?.current_version).toBe(before)
+    const last = (await meta.listSessionMessages(session.id)).at(-1)
+    expect(last?.body_md ?? "").toMatch(/not a member/i)
+  })
+})
+
+// FOLLOW-UPS ARE THE LANE THAT SPENDS, and they had no ceiling of any kind.
+//
+// `askLimiter` guarded session CREATION only, and dispatch's monthly budget only covers work
+// that goes through dispatch — an attended follow-up goes through neither. So one session, then
+// an unbounded loop of follow-ups through it, was a completely unmetered way to spend the
+// operator's model key. And the beta gate hung off `!s.context_id`, so chat wearing a context
+// (a session opened with a `subject`) kept serving turns after the flag came off.
+describe("follow-ups are limited, budgeted, and gated", () => {
+  const ed = { id: "u-ed", email: "ed@x.com", name: "Ed" }
+
+  const chatApp = async (name: string, deps: Record<string, unknown> = {}) => {
+    const { app, meta } = makeAuthedApp(name, [ed], undefined, {
+      deps: {
+        callModel: async () => ({
+          text: revision("# Rewritten"),
+          toolUses: [],
+          costUsd: null,
+          done: true,
+        }),
+        ...deps,
+      },
+    })
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatBeta: true,
+      agentAutoEnabled: true,
+    })
+    const made = await app.request("/v1/artifacts", {
+      method: "POST",
+      headers: as(ed.email),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new Blob(["# Doc\n\nbody"], { type: "text/markdown" }), "d.md")
+        f.set("title", "Doc")
+        return f
+      })(),
+    })
+    const { short_id } = (await made.json()) as { short_id: string }
+    const opened = await app.request("/v1/artifacts/chat-session", {
+      method: "POST",
+      headers: { ...as(ed.email), "content-type": "application/json" },
+      body: JSON.stringify({ short_id, body_md: "hello" }),
+    })
+    expect(opened.status).toBe(201)
+    const { session } = (await opened.json()) as { session: { id: string } }
+    const followUp = (text: string) =>
+      app.request(`/v1/sessions/${session.id}/messages`, {
+        method: "POST",
+        headers: { ...as(ed.email), "content-type": "application/json" },
+        body: JSON.stringify({ body_md: text }),
+      })
+    return { app, meta, session, followUp }
+  }
+
+  it("rate-limits follow-ups with the same limiter that guards session creation", async () => {
+    // askRate 2: opening the session spends one, so the second follow-up is the one over.
+    const { followUp } = await chatApp("chat-followup-rl", {
+      rateLimit: true,
+      rateLimiters: inMemoryRateLimiters({ askRate: 2 }),
+    })
+    expect((await followUp("one")).status).toBe(201)
+    expect((await followUp("two")).status).toBe(429)
+  })
+
+  it("refuses a follow-up over the monthly budget, before recording it", async () => {
+    const { meta, session, followUp } = await chatApp("chat-followup-budget")
+    // Over budget, simulated at the store boundary exactly as hosted-dispatch.test.ts does it:
+    // a model plan with a monthly cap, and spend already past it. (The sum is only ever non-zero
+    // now that the model clients actually price a turn — see model-anthropic.ts.)
+    const realResolve = meta.resolvePlan.bind(meta)
+    const realSum = meta.sumRunCostSince.bind(meta)
+    meta.resolvePlan = async () => ({ limits: JSON.stringify({ monthlyMicroUsd: 1_000 }) }) as never
+    meta.sumRunCostSince = async () => 5_000
+    let res: Response
+    try {
+      res = await followUp("and again")
+    } finally {
+      meta.resolvePlan = realResolve
+      meta.sumRunCostSince = realSum
+    }
+    expect(res.status).toBe(429)
+    // Refused BEFORE the append: a rejected follow-up must not reopen the session with nothing
+    // willing to serve it.
+    const msgs = await meta.listSessionMessages(session.id)
+    expect(msgs.some((m) => m.body_md === "and again")).toBe(false)
+  })
+
+  it("stops serving a SUBJECT-bearing context session once chatBeta is off", async () => {
+    // The gate used to hang off `!s.context_id`. Chat also wears a context: a session opened
+    // through POST /v1/contexts/:id/sessions with a `subject` is gated on chatBeta at creation
+    // and then, once open, served turns forever after the flag came off. A kill switch that
+    // leaves every existing conversation running is not a kill switch.
+    const { app, meta, session, followUp } = await chatApp("chat-followup-gate")
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatBeta: false,
+    })
+    const before = (await meta.listSessionMessages(session.id)).length
+    const res = await followUp("keep going")
+    // The message is recorded (the asker typed it) but NOTHING is served.
+    expect(res.status).toBe(201)
+    await new Promise((r) => setTimeout(r, 150))
+    const after = await meta.listSessionMessages(session.id)
+    expect(after.length).toBe(before + 1)
+    expect(after.at(-1)?.author_kind).toBe("asker")
+    void app
   })
 })

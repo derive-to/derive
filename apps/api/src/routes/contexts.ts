@@ -25,6 +25,7 @@ import {
   parseConnectionIds,
   toolsForRun,
 } from "../lib/broker"
+import { overBudget } from "../lib/budget"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
@@ -144,6 +145,24 @@ export const contextRoutes = (ctx: AppContext) => {
       )
       if (!role || !roleAllows(role, "read")) {
         await reply("You no longer have access to that document.", "failed")
+        return
+      }
+      // MEMBERSHIP, on top of read-access, for a CHAT session (one with no context behind it).
+      // `effectiveRole` folds in `artifact.link_role`, so a viewer LINK is enough to satisfy the
+      // read check above — which meant a signed-in non-member who was sent a link to a document
+      // in a chat-enabled workspace could hold a live session and spend the OPERATOR's model key,
+      // turn after turn, from outside the workspace entirely. Reading a shared document is not
+      // standing to run an agent inside the workspace that owns it.
+      //
+      // Chat only: the context lane has its own gate (canAskContext, which already requires
+      // membership or a roster invite), and its sessions are not on the operator's key by
+      // default. Refused in the TRANSCRIPT rather than at the door, like every other per-turn
+      // access refusal here — the asker sees why instead of a silent session.
+      if (!s.context_id && !seat) {
+        await reply(
+          "You are not a member of the workspace that owns this document, so I cannot answer here.",
+          "failed",
+        )
         return
       }
       // WRITING needs propose at minimum. `read` alone is not enough: the turn's proposal path
@@ -1135,22 +1154,56 @@ export const contextRoutes = (ctx: AppContext) => {
       // the user — so this only bites where it should.
       if (!chatAllowed(art.org_id))
         return bail(fail(c, 404, "chat is not enabled for this workspace"))
+      // MEMBERSHIP, not merely read-access. `authorize(c, "read", art)` is satisfied by a viewer
+      // LINK, so any signed-in stranger who was sent one could open a live session in a
+      // chat-enabled workspace and spend the operator's model key — 201 and a running turn, from
+      // outside the workspace entirely. Reading a shared document is not standing to run an
+      // agent inside the workspace that owns it.
+      if (!(await meta.getMembership(art.org_id, me.id).catch(() => null)))
+        return bail(fail(c, 404, "not found"))
       const wantsPublish = b.mode === "publish"
       if (wantsPublish && !(await authorize(c, "publish", art)))
         return bail(fail(c, 403, "you cannot publish to that artifact"))
-      const session = await meta.createSession({
-        id: newId("ses"),
-        // NO CONTEXT: this is the default agent, which is the absence of a packaged one.
-        context_id: null,
-        context_version: null,
-        org_id: art.org_id,
-        asker_id: me.id,
-        subject_ref: JSON.stringify({
-          kind: "artifact",
-          id: art.short_id,
-          ...(wantsPublish ? { mode: "publish" } : {}),
-        }),
-      })
+      // A CONTEXTLESS session needs the relaxed `context_session` shape (nullable context_id /
+      // context_version). Postgres and self-host SQLite get it automatically; D1's schema is
+      // applied out of band, so a database that predates the relaxation and has not run
+      // deploy/relax-context-session-d1.sql fails right here — and it used to fail as a bare
+      // `NOT NULL constraint failed` 500 with no clue as to which of the two operator actions
+      // was missing. Name the fix instead.
+      let session: SessionRecord
+      try {
+        session = await meta.createSession({
+          id: newId("ses"),
+          // NO CONTEXT: this is the default agent, which is the absence of a packaged one.
+          context_id: null,
+          context_version: null,
+          org_id: art.org_id,
+          asker_id: me.id,
+          subject_ref: JSON.stringify({
+            kind: "artifact",
+            id: art.short_id,
+            ...(wantsPublish ? { mode: "publish" } : {}),
+          }),
+        })
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        if (/NOT NULL constraint failed: context_session\.context_(id|version)/i.test(msg)) {
+          log.error("chat: context_session still requires a context — run the D1 relaxation", {
+            org: art.org_id,
+            error: msg,
+          })
+          return bail(
+            fail(
+              c,
+              503,
+              "chat is not available on this deployment yet: its database still requires every " +
+                "session to belong to a context. An operator needs to apply " +
+                "deploy/relax-context-session-d1.sql.",
+            ),
+          )
+        }
+        throw e
+      }
       const first = await meta.addSessionMessage(
         {
           id: newId("sm"),
@@ -1366,10 +1419,28 @@ export const contextRoutes = (ctx: AppContext) => {
       // too, so someone removed from the roster cannot keep querying through an old session.
       if (s.asker_id !== me.id || (linked && !(await canAskContext(c, linked.context))))
         return bail(fail(c, 404, "not found"))
+      // (Membership for the contextless CHAT lane is re-checked per turn inside serveAttended,
+      // alongside the document ACL, so the refusal lands in the transcript with a reason rather
+      // than as a bare 404 the asker cannot interpret. The context lane gets its equivalent from
+      // canAskContext above.)
       const gone = closed()
       if (gone) return bail(gone)
+      // RATE LIMIT. Every follow-up serves a full attended turn on somebody's model plan (the
+      // operator's, on the chat lane), and only session CREATION was limited — so one session,
+      // then an unbounded loop of follow-ups through it, was a completely unmetered way to
+      // spend the key that `askLimiter` exists to protect. Same limiter, same lane, the turn
+      // that was missing.
+      const rl = await limited(c, askLimiter)
+      if (rl) return bail(rl)
       const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
       if (b instanceof Response) return bail(b)
+      // THE MONTHLY BUDGET, for the same reason. Dispatch enforces it on every hosted run and
+      // every queued session; an attended follow-up bypassed dispatch entirely, so the one lane
+      // a person can drive by hand as fast as they can type was the one lane with no ceiling.
+      // Checked BEFORE the message is appended: refusing after the append would reopen the
+      // session with nothing willing to serve it.
+      if (await overBudget(meta, s.org_id, me.id).catch(() => false))
+        return bail(fail(c, 429, "monthly model budget reached"))
       // A follow-up mid-run must NOT vacate an active claim, and reopening must not race a
       // concurrent settle. appendFollowupReopen does both in one atomic compare-and-set:
       // a `working` session stays `working` (the runner sees the new turn on re-read, and its
@@ -1389,9 +1460,18 @@ export const contextRoutes = (ctx: AppContext) => {
       // what the surface follows, so closing the tab mid-turn loses nothing.
       // The beta gate again, on the lane that actually SPENDS the key. Gating only session
       // CREATION would mean turning the flag off leaves every existing conversation running —
-      // a kill switch that does not kill. A contextless (chat) session needs the opt-in; a
-      // context session is the pre-existing ask lane and is unaffected by it.
-      if (!s.context_id) {
+      // a kill switch that does not kill.
+      //
+      // It binds EVERY session chat can reach, which is the fix: the check used to hang off
+      // `!s.context_id`, and chat also wears a context — a session opened through
+      // `POST /v1/contexts/:id/sessions` with a `subject` is the chat feature with a packaged
+      // agent behind it, gated on `chatBeta` at creation (see above) and then, once open,
+      // serving turns forever after the flag came off. Mirroring the creation gate exactly is
+      // what makes the switch actually kill: contextless OR subject-bearing needs the opt-in;
+      // a plain context ask (no subject) is the pre-existing lane, predates chat, and is
+      // deliberately untouched — gating it would take contexts away from every workspace that
+      // never enabled chat.
+      if (!s.context_id || s.subject_ref) {
         const st = await meta.getOrgSettings(s.org_id).catch(() => null)
         if (!st?.chatBeta) return c.json({ message: messageJson(m) }, 201)
       }
