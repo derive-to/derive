@@ -173,3 +173,22 @@ describe("mrkdwnBody — constructs mrkdwn supports but escaping was eating", ()
     expect(mrkdwnBody("> <@U1> and <!here>")).toBe("> &lt;@U1&gt; and &lt;!here&gt;")
   })
 })
+
+// Found by posting a real review comment into Slack and looking at it: mrkdwn's ``` fence has
+// no info string, so a language tag becomes the code block's FIRST LINE. A ```ts block rendered
+// with a stray "ts" above the code. Agents write fenced code with a language constantly, so this
+// is the common case, not an edge one.
+describe("mrkdwnBody — fenced code language tags", () => {
+  it("drops the language tag, which mrkdwn renders as content", () => {
+    expect(mrkdwnBody("```ts\nconst a = 1\n```")).toBe("```\nconst a = 1\n```")
+    expect(mrkdwnBody("```python\nx = 1\n```")).toBe("```\nx = 1\n```")
+    expect(mrkdwnBody("```c++\nint x;\n```")).toBe("```\nint x;\n```")
+    expect(mrkdwnBody("```objective-c\nid x;\n```")).toBe("```\nid x;\n```")
+  })
+
+  it("leaves a bare fence and the code itself alone", () => {
+    expect(mrkdwnBody("```\nplain\n```")).toBe("```\nplain\n```")
+    // A line of code that merely starts with backticks-and-a-word is not an opening fence.
+    expect(mrkdwnBody("```\n```ts is how you open one\n```")).toContain("```ts is how you open one")
+  })
+})
