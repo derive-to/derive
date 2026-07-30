@@ -199,6 +199,19 @@ describe("MCP broker: connect + list + call", () => {
     expect(seen).toContain("Bearer bob-token")
   })
 
+  it("keeps a reason per connection when they are resolved one at a time", async () => {
+    // `toolsForRun` calls toolsFor([oneRef]) per connection through a SHARED router. Clearing the
+    // whole map per call would leave only the last connection's reason — the diagnostic would be
+    // silently wrong for exactly the multi-connection case it exists to explain.
+    const broker = new McpBroker(fakeServer({ tools: [], fail: true }).impl)
+    const unpinned = encodeMcpRef("https://a.test/mcp", "")
+    const down = encodeMcpRef("https://b.test/mcp", "s256-whatever")
+    await broker.toolsFor([unpinned])
+    await broker.toolsFor([down])
+    expect(broker.quiet.get(unpinned)).toBe("unpinned")
+    expect(broker.quiet.get(down)).toBe("unreachable")
+  })
+
   it("refuses a non-https URL (localhost excepted for development)", async () => {
     const broker = new McpBroker(fakeServer({ tools: TOOLS }).impl)
     await expect(

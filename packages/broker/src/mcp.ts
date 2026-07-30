@@ -335,8 +335,12 @@ export class McpBroker implements ToolBroker {
    */
   async toolsFor(refs: string[]): Promise<BrokerToolDef[]> {
     const out: BrokerToolDef[] = []
-    this.quiet.clear()
     for (const ref of refs) {
+      // Cleared PER REF, not per call. `toolsForRun` resolves one connection at a time through a
+      // shared router, so clearing the whole map here would wipe the previous connection's reason
+      // and leave only the last one — the diagnostic would be silently wrong for exactly the
+      // multi-connection case it exists to explain.
+      this.quiet.delete(ref)
       const parsed = parseMcpRef(ref)
       if (!parsed) continue
       // An UNPINNED ref is refused outright. `connect` mints one whenever it could not reach or
