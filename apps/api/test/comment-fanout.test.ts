@@ -1,6 +1,7 @@
 import type { DeliveryRecord } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS } from "@derive/core"
+import { DEFAULT_ORG_SETTINGS, newId } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { commentCreatedAction } from "../src/lib/comment-actions"
 import { makeSlackSender } from "../src/lib/slack-comments"
 import { as, jsonAs, makeAuthedApp, pub, type TestUser } from "./helpers"
 
@@ -165,6 +166,67 @@ describe("comment channel fan-out", () => {
     await comment(app, shortId, owner.email)
     // Private draft (listed "none") → its title + comment body never reach the org-wide channel.
     expect((await claim(meta)).map((d) => d.kind)).not.toContain("slack_app")
+  })
+
+  // The mirrors are gated on a COLLABORATOR author, so an anonymous commenter on a public
+  // artifact can't push text into a connected channel. That gate had no test, and it now has an
+  // extra branch (`onBehalfOf`, for an agent acting under a member's OAuth grant) — so pin both
+  // directions against the same store: the branch must decide the outcome, not decorate it.
+  describe("the collaborator-author gate on the mirror", () => {
+    const connected = async (name: string) => {
+      const { app, meta } = makeAuthedApp(name, [owner], "editor")
+      await meta.setSlackInstall({
+        org_id: "default",
+        team_id: "T1",
+        team_name: "Acme",
+        bot_token: "xoxb-stored",
+        bot_user_id: "UBOT",
+        default_channel: "C1",
+        created_at: new Date().toISOString(),
+      })
+      const shortId = await newArtifact(app)
+      const artifact = await meta.getByShortId(shortId)
+      const comment = await meta.createComment({
+        id: newId("c"),
+        artifact_id: artifact?.id ?? "",
+        thread_id: newId("th"),
+        base_version: 0,
+        path: null,
+        anchor: null,
+        body_md: "a note",
+        author: "An agent",
+        author_id: "oauth:cli",
+      })
+      return { meta, artifact, comment }
+    }
+    const run = (
+      d: Awaited<ReturnType<typeof connected>>,
+      onBehalfOf: string | null,
+    ): Promise<void> =>
+      commentCreatedAction(
+        {
+          meta: d.meta,
+          bus: { publish: () => {}, subscribe: () => () => {} } as never,
+          blobs: {} as never,
+          baseUrl: "http://derive.test",
+          notify: async () => {},
+        },
+        d.artifact as never,
+        d.comment as never,
+        { mentions: [], actorId: "oauth:cli", onBehalfOf },
+      )
+
+    it("skips the mirror for an author who is nobody (no principal behind it)", async () => {
+      const d = await connected("fanout-gate-untrusted")
+      await run(d, null)
+      expect((await claim(d.meta)).map((x) => x.kind)).not.toContain("slack_app")
+    })
+
+    it("mirrors when the author acts for a member — the OAuth-grant case", async () => {
+      const d = await connected("fanout-gate-onbehalf")
+      await run(d, owner.id)
+      expect((await claim(d.meta)).map((x) => x.kind)).toContain("slack_app")
+    })
   })
 })
 

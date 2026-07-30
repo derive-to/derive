@@ -1,12 +1,13 @@
 import { newId, roleAllows } from "@derive/core"
 import { z } from "zod"
+import { commentCreatedAction } from "../lib/comment-actions"
 import { parseMeta, REACTIONS } from "../lib/comments"
-import { notifyCommentBells } from "../lib/notify-comment"
+import { resolveThreadAction } from "../lib/thread-actions"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
 
 export function registerCommentTool(tc: ToolContext): void {
-  const { server, ctx, agent, reach, notFound, wsArg } = tc
+  const { server, ctx, agent, ownerId, reach, notFound, wsArg } = tc
 
   // COMMENT — leave / reply / resolve feedback --------------------------------
   server.registerTool(
@@ -74,15 +75,25 @@ export function registerCommentTool(tc: ToolContext): void {
           author_id: agent.id,
         })
         ctx.bus.publish(a.id, { type: "comment.created" })
-        // Same bell fan-out as the HTTP route: thread participants + the
-        // artifact's owners hear the agent's reply even with no tab open.
-        // (Previously this path belled no one.) The MCP tool has no mentions.
+        // The SAME fan-out the HTTP route runs (lib/comment-actions.ts): bells for thread
+        // participants + the artifact's owners, plus webhooks, email, and the GitHub and Slack
+        // mirrors. This path used to bell only, so an agent's comment reached no channel at
+        // all. The `comment` tool has no mentions of its own, so it passes none.
         const created = await ctx.meta.getComment(commentId)
         if (created)
-          await notifyCommentBells({ meta: ctx.meta, bus: ctx.bus }, a, created, {
-            mentionIds: new Set(),
-            actorId: agent.id,
-          })
+          await commentCreatedAction(
+            {
+              meta: ctx.meta,
+              bus: ctx.bus,
+              blobs: ctx.blobs,
+              baseUrl: ctx.deps.baseUrl,
+              notify: ctx.notify,
+              pokeWebhooks: ctx.deps.pokeWebhooks,
+            },
+            a,
+            created,
+            { mentions: [], actorId: agent.id, onBehalfOf: ownerId },
+          )
       }
       // The ack: land the emoji on the thread's newest comment by someone ELSE
       // (the human being acknowledged), falling back to its newest comment.
@@ -111,8 +122,15 @@ export function registerCommentTool(tc: ToolContext): void {
       }
       if (set_state) {
         if (!thread) return err("`set_state` needs `reply_to` (the thread id to resolve/reopen).")
-        await ctx.meta.setThreadState(a.id, thread, set_state)
-        ctx.bus.publish(a.id, { type: "comment.resolved", thread_id: thread, state: set_state })
+        // Shared with the HTTP resolve route and the Slack Resolve button (lib/thread-actions.ts)
+        // — it flips the thread, publishes on the bus AND fans comment.resolved out to webhooks.
+        // The hand-rolled pair of calls this replaced skipped that last step.
+        await resolveThreadAction(
+          { meta: ctx.meta, bus: ctx.bus, notify: ctx.notify },
+          a,
+          thread,
+          set_state,
+        )
       }
       return json({
         short_id,

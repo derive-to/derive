@@ -9,22 +9,18 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { commentCreatedAction } from "../lib/comment-actions"
 import {
   commentJson,
-  isCollaboratorAuthor,
   type Mention,
   parseMentions,
   parseMeta,
   quoteOf,
   REACTIONS,
 } from "../lib/comments"
-import { enqueueGithubPrComment } from "../lib/github-comments"
 import { bail, fail, readJson } from "../lib/http"
 import { notifyMentions as notifyMentionsShared } from "../lib/mentions"
 import { notifyCommentBells } from "../lib/notify-comment"
-import { enqueueCommentEmails } from "../lib/notify-email"
-import { enqueueSlackComment } from "../lib/slack-comments"
-import { enqueueSlackMentionDms } from "../lib/slack-dm"
 import { resolveThreadAction } from "../lib/thread-actions"
 import { Mention as MentionSchema } from "../schemas"
 
@@ -224,50 +220,12 @@ export const commentRoutes = (ctx: AppContext) => {
       // round-trips onto the post (the "couple of seconds to send" people felt).
       bus.publish(artifact.id, { type: "comment.created" })
       await background(
-        (async () => {
-          await notify(artifact, "comment.created", {
-            author: created.author,
-            body: created.body_md,
-            quote: quoteOf(created.anchor),
-            thread_id: created.thread_id,
-          })
-          const notified = await notifyMentions(artifact, created, mentions, acting?.id ?? null)
-          if (notified.length) {
-            await notify(artifact, "comment.mention", {
-              author: created.author,
-              mentioned: notified,
-              body: created.body_md,
-              quote: quoteOf(created.anchor),
-              thread_id: created.thread_id,
-            })
-            // DM opted-in teammates who were mentioned (resolved by email at delivery time).
-            await enqueueSlackMentionDms(
-              { meta, baseUrl: deps.baseUrl },
-              artifact,
-              created,
-              mentions.filter((m) => m.id !== acting?.id),
-            )
-          }
-          // Bell the comment's natural audience — thread participants + the
-          // artifact's owners (your content) — shared with the MCP path.
-          await notifyCommentBells({ meta, bus }, artifact, created, {
-            mentionIds: new Set(mentions.map((m) => m.id)),
-            actorId: acting?.id ?? null,
-          })
-          // Channel fan-out is gated per workspace (Settings -> integrations toggles).
-          const settings = await meta.getOrgSettings(artifact.org_id)
-          if (settings.emailNotifications)
-            await enqueueCommentEmails({ meta, baseUrl: deps.baseUrl }, artifact, created, {
-              mentionIds: new Set(mentions.map((m) => m.id)),
-              actorId: acting?.id ?? null,
-            })
-          const trustedAuthor = await isCollaboratorAuthor(meta, artifact, acting?.id ?? null)
-          if (trustedAuthor && settings.githubPostComments)
-            await enqueueGithubPrComment({ meta, blobs, baseUrl: deps.baseUrl }, artifact, created)
-          if (trustedAuthor && settings.slackPost)
-            await enqueueSlackComment({ meta, baseUrl: deps.baseUrl }, artifact, created)
-          deps.pokeWebhooks?.()
-        })(),
+        commentCreatedAction(
+          { meta, bus, blobs, baseUrl: deps.baseUrl, notify, pokeWebhooks: deps.pokeWebhooks },
+          artifact,
+          created,
+          { mentions, actorId: acting?.id ?? null },
+        ),
       )
       return c.json(commentJson(created), 201)
     },

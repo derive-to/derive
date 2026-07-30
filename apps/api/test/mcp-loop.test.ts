@@ -367,3 +367,89 @@ describe("comment bells (the MCP path)", () => {
     expect(rows.some((n) => n.kind === "comment")).toBe(true)
   })
 })
+
+// The MCP tool wrote the comment row and belled people, but never ran the CHANNEL fan-out the
+// HTTP route runs — so an agent's comment reached no Slack channel, no webhook, no email, no
+// GitHub PR. Not a deliberate quiet mode: isCollaboratorAuthor goes out of its way to return
+// true for a registered agent, i.e. the gate was built to let exactly these through. Both paths
+// now run one shared action, so they can't drift again.
+describe("channel fan-out parity (the MCP path)", () => {
+  const drain = (meta: ReturnType<typeof loopApp>["meta"]) =>
+    meta.claimDueDeliveries(
+      new Date(Date.now() + 60_000).toISOString(),
+      100,
+      new Date(Date.now() + 120_000).toISOString(),
+    )
+
+  const listedDoc = async (app: ReturnType<typeof loopApp>["app"], token: string) =>
+    await call(app, token, "publish", {
+      content: "<h1>Doc</h1>",
+      title: "Doc",
+      workspace_access: "member",
+      listed: "workspace",
+    })
+
+  it("an agent's comment posts to the connected Slack channel", async () => {
+    const { app, meta, token } = loopApp("mcp-slack-mirror")
+    const created = await listedDoc(app, token)
+    const artifact = await meta.getByShortId(created.short_id as string)
+    await meta.setSlackInstall({
+      org_id: artifact?.org_id ?? "",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: "xoxb-stored",
+      bot_user_id: "UBOT",
+      default_channel: "C1",
+      created_at: new Date().toISOString(),
+    })
+    await call(app, token, "comment", {
+      short_id: created.short_id,
+      body: "I have a question about the intro.",
+    })
+    const rows = await drain(meta)
+    expect(rows.some((d) => d.kind === "slack_app" && d.event_type === "comment.created")).toBe(
+      true,
+    )
+  })
+
+  it("an agent's comment reaches subscribed webhooks", async () => {
+    const { app, meta, token } = loopApp("mcp-webhook-fanout")
+    const created = await listedDoc(app, token)
+    const artifact = await meta.getByShortId(created.short_id as string)
+    await meta.createWebhook({
+      id: "wh_mcp1",
+      org_id: artifact?.org_id ?? "",
+      artifact_id: null,
+      url: "http://example.com/hook",
+      secret: "s",
+      kind: "generic",
+      events: "comment.created,comment.resolved",
+    })
+    await call(app, token, "comment", { short_id: created.short_id, body: "a note" })
+    const rows = await drain(meta)
+    expect(rows.some((d) => d.kind === "generic" && d.event_type === "comment.created")).toBe(true)
+  })
+
+  it("an agent resolving a thread fans out comment.resolved", async () => {
+    const { app, meta, token } = loopApp("mcp-resolve-fanout")
+    const created = await listedDoc(app, token)
+    const artifact = await meta.getByShortId(created.short_id as string)
+    await meta.createWebhook({
+      id: "wh_mcp2",
+      org_id: artifact?.org_id ?? "",
+      artifact_id: null,
+      url: "http://example.com/hook",
+      secret: "s",
+      kind: "generic",
+      events: "comment.resolved",
+    })
+    const c = await call(app, token, "comment", { short_id: created.short_id, body: "a note" })
+    await call(app, token, "comment", {
+      short_id: created.short_id,
+      reply_to: c.thread as string,
+      set_state: "resolved",
+    })
+    const rows = await drain(meta)
+    expect(rows.some((d) => d.kind === "generic" && d.event_type === "comment.resolved")).toBe(true)
+  })
+})
