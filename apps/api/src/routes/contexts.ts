@@ -386,7 +386,7 @@ export const contextRoutes = (ctx: AppContext) => {
   const contextTools = async (x: ContextRecord) => {
     const ids = parseConnectionIds(x.connection_ids)
     if (ids.length === 0) return { broker: null, route: null, tools: [] }
-    const broker = await brokerFor(meta, x.org_id, null, deps.encryptionKey)
+    const broker = await brokerFor(meta, x.org_id, null, deps.encryptionKey, deps.allowEchoStub)
     // The router rides along with the broker for the same reason the broker does: the proxy has
     // to EXECUTE through whatever listed the tool, or an `mcp:` tool would be listed by the MCP
     // broker and run by the plan's.

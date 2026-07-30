@@ -424,6 +424,8 @@ const app = createApp({
   token: cfg.token,
   // Encrypt stored third-party secrets (GitHub PATs) at rest with the auth secret.
   encryptionKey: authSecret,
+  allowEchoStub:
+    process.env.DERIVE_LOCAL_BROKER === "1" || process.env.DERIVE_LOCAL_BROKER === "true",
   // The isolate derive_code runs in. Node-only by construction: worker_threads does not exist on
   // Cloudflare, so the edge entry passes nothing and the tool does not register there.
   codeSandbox: nodeSandbox(),

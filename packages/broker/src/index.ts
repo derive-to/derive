@@ -1,12 +1,14 @@
 import { ComposioBroker } from "./composio"
 import { LocalBroker } from "./local"
 import { type McpAuthResolver, McpBroker, parseMcpRef } from "./mcp"
+import { RefusingBroker } from "./refusing"
 import type { ToolBroker } from "./types"
 
 export { ComposioBroker } from "./composio"
 export { LocalBroker } from "./local"
 export type { McpAuthResolver } from "./mcp"
 export { encodeMcpRef, McpBroker, parseMcpRef, pinTools } from "./mcp"
+export { RefusingBroker } from "./refusing"
 export type { BrokerConnection, BrokerToolDef, ConnectResult, ToolBroker } from "./types"
 
 /**
@@ -16,9 +18,18 @@ export type { BrokerConnection, BrokerToolDef, ConnectResult, ToolBroker } from 
  * the provider — the whole hosted flow runs on the LocalBroker in dev and tests, and swaps to
  * Composio in production by attaching a broker plan.
  */
-export const makeBroker = (plan: { provider: string; key: string } | null): ToolBroker => {
+export const makeBroker = (
+  plan: { provider: string; key: string } | null,
+  /** Opt in to the ECHO stub for a workspace with no plan (dev, tests, a self-host kicking the
+   *  tyres). Off, a workspace with no broker plan gets a broker that REFUSES.
+   *
+   *  This defaulted the other way once, and the failure was silent: LocalBroker.execute returns
+   *  the caller's own arguments, so a run "reads Stripe", gets its arguments back, and publishes
+   *  an artifact full of invented numbers without a single error anywhere. */
+  allowEchoStub = false,
+): ToolBroker => {
   if (plan?.provider === "composio" && plan.key) return new ComposioBroker(plan.key)
-  return new LocalBroker()
+  return allowEchoStub ? new LocalBroker() : new RefusingBroker()
 }
 
 /**

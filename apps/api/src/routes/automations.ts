@@ -497,7 +497,7 @@ export const automationRoutes = (ctx: AppContext) => {
     // automation's bound connections only. The runner's shim calls these back through the tool
     // endpoint below — credentials never leave the API.
     const broker = runnable.length
-      ? await brokerFor(meta, agent.org_id, null, deps.encryptionKey)
+      ? await brokerFor(meta, agent.org_id, null, deps.encryptionKey, deps.allowEchoStub)
       : null
     // ONE router for the whole claim. Runs in a batch routinely share an automation, and so the
     // same bound connections: without a shared router each run built its own MCP client and
@@ -693,7 +693,7 @@ export const automationRoutes = (ctx: AppContext) => {
     if (connIds.length === 0) return fail(c, 403, "run has no bound sources")
     // Resolve the run's allowed (tool → ref) set once, least-privilege. The requested tool must
     // be one of them; if a ref is supplied it must match that tool's ref (never cross to another).
-    const broker = await brokerFor(meta, agent.org_id, null, deps.encryptionKey)
+    const broker = await brokerFor(meta, agent.org_id, null, deps.encryptionKey, deps.allowEchoStub)
     // One router for BOTH the least-privilege check and the execution below. They touch the same
     // servers back to back, so sharing it means the MCP client handshakes once instead of twice
     // per tool call — and this endpoint is called once per tool a composed script runs.

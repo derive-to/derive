@@ -188,7 +188,13 @@ export const connectionRoutes = (ctx: AppContext) => {
     // every auth-required server used to land in.
     const broker = b.mcp_url
       ? new McpBroker(undefined, () => b.mcp_secret)
-      : await brokerFor(meta, org, b.scope === "workspace" ? null : me.id, deps.encryptionKey)
+      : await brokerFor(
+          meta,
+          org,
+          b.scope === "workspace" ? null : me.id,
+          deps.encryptionKey,
+          deps.allowEchoStub,
+        )
     // `toolkit` stays the human label on the row either way; for MCP the SERVER URL is what the
     // broker connects to, and the ref it mints (`mcp:<pin>:<url>`) is what routing keys on.
     const link = await broker.connect({
@@ -247,7 +253,7 @@ export const connectionRoutes = (ctx: AppContext) => {
     // broker ref, and removing an agent's access must never uninstall the integration
     // the workspace uses for everything else.
     if (!isDirect(cn.kind)) {
-      const broker = await brokerFor(meta, org, cn.user_id, deps.encryptionKey)
+      const broker = await brokerFor(meta, org, cn.user_id, deps.encryptionKey, deps.allowEchoStub)
       try {
         await broker.revoke(cn.broker_ref)
       } catch {

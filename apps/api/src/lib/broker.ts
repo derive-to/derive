@@ -320,6 +320,9 @@ export const brokerFor = async (
   orgId: string,
   ownerUserId: string | null,
   encryptionKey: string | undefined,
+  /** Dev/test opt-in to the echo stub. Omitted, a workspace with no plan gets a refusing
+   *  broker rather than one that fabricates plausible answers. */
+  allowEchoStub = false,
 ): Promise<ToolBroker> => {
   const plan = await meta.resolvePlan(orgId, ownerUserId, "broker")
   if (plan && encryptionKey) {
@@ -328,5 +331,5 @@ export const brokerFor = async (
       key: decryptSecret(plan.secret_enc, encryptionKey),
     })
   }
-  return makeBroker(null)
+  return makeBroker(null, allowEchoStub)
 }

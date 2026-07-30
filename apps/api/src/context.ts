@@ -85,6 +85,12 @@ export interface AppDeps {
    *  The Node + Worker entries pass the auth secret. Unset (e.g. tests) ⇒ tokens
    *  are stored as-is; set ⇒ AES-256-GCM encrypted (see lib/crypto encryptSecret). */
   encryptionKey?: string
+  /** Allow the ECHO broker stub for a workspace with no broker plan. Dev and tests only.
+   *
+   *  Off (the default), such a workspace gets a broker that REFUSES. On, it gets LocalBroker,
+   *  whose `execute` returns the caller's own arguments — which is a fixture, not an integration,
+   *  and in production is a run that reports success over data that never existed. */
+  allowEchoStub?: boolean
   /** The isolate `derive_code` runs model-written JavaScript in. The Node entry passes a worker
    *  thread; the Worker entry passes nothing until Cloudflare's Worker Loader is out of beta, and
    *  the tool simply does not register without one — no runtime sniffing, no half-working tool.
