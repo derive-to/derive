@@ -137,6 +137,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     limited,
     overStorage,
     billingBlocked,
+    billingState,
     publishLimiter,
     unlockLimiter,
     sourceText,
@@ -1441,9 +1442,13 @@ export const artifactRoutes = (ctx: AppContext) => {
         sessions: groupSessions(versions, versionWindowMs),
         my_role: myRole,
         // Show the Made-with-Derive mark on this artifact's public surfaces? False
-        // only for white-label workspaces; the viewer reads this single boolean so
-        // workspace settings never travel to anonymous clients.
-        badge: !(await meta.getOrgSettings(artifact.org_id)).whiteLabel,
+        // only for white-label workspaces that are also entitled to it (beta, or an
+        // active subscription); the viewer reads this single boolean so workspace
+        // settings and billing state never travel to anonymous clients.
+        badge: !(
+          (await meta.getOrgSettings(artifact.org_id)).whiteLabel &&
+          (await billingState(artifact.org_id)).whiteLabelEntitled
+        ),
         // Owner opt-in: the anonymous public page shows version history. The
         // client uses it to render the byline dropdown; the server enforces it
         // above (trimmed versions) and in raw.ts (old-version bytes).

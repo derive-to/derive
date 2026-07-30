@@ -125,6 +125,37 @@ describe("billing gate", () => {
     expect((await res.json()).code).toBe("billing_lapsed")
   })
 
+  it("white-label honors entitlement: beta yes, enforced-free no, subscribed yes", async () => {
+    const boot = async (name: string, enforce: boolean) => {
+      const made = makeAuthedApp(name, THREE, "editor", {
+        deps: { billing: new FakeBilling(), ...(enforce ? { billingEnforceAt: PAST } : {}) },
+      })
+      const settings = await made.meta.getOrgSettings("default")
+      await made.meta.setOrgSettings("default", { ...settings, whiteLabel: true })
+      const pub = await publishAs(made.app, "hello", {}, as("u2@x.test"))
+      const { short_id } = await pub.json()
+      return { ...made, short_id }
+    }
+    // Beta: the toggle works (badge false = no Made-with-Derive mark).
+    const beta = await boot("wl_beta", false)
+    const betaDetail = await (
+      await beta.app.request(`/v1/artifacts/${beta.short_id}`, { headers: as("u1@x.test") })
+    ).json()
+    expect(betaDetail.badge).toBe(false)
+    // Enforced without a sub: toggle set but not entitled, badge comes back.
+    const enforced = await boot("wl_enforced", true)
+    const enforcedDetail = await (
+      await enforced.app.request(`/v1/artifacts/${enforced.short_id}`, { headers: as("u1@x.test") })
+    ).json()
+    expect(enforcedDetail.badge).toBe(true)
+    // Same workspace with an active sub: entitled again.
+    await seedSub(enforced.meta, "active")
+    const paidDetail = await (
+      await enforced.app.request(`/v1/artifacts/${enforced.short_id}`, { headers: as("u1@x.test") })
+    ).json()
+    expect(paidDetail.badge).toBe(false)
+  })
+
   it("blocked destination workspace: anonymous draft claim refuses with 402", async () => {
     const { app: drafts, meta } = makeAuthedApp("bg_claim", THREE, "editor", {
       deps: {
