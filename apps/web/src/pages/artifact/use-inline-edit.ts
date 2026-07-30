@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { type RefObject, useEffect, useRef, useState } from "react"
 import { ApiError, type Artifact, api, type QuoteEditInput } from "@/api"
 import { toast } from "@/components/ui/sonner"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -13,6 +13,8 @@ const editMessage = (edits: QuoteEditInput[]): string => {
     : `Inline edits (${edits.length})`
 }
 
+type SaveOutcome = { kind: "published"; version: number } | { kind: "proposed" } | null
+
 /**
  * The host half of inline editing (click-to-type in the rendered artifact). The
  * frame owns the caret, the snapshots, and the diff→quote construction; this hook
@@ -25,10 +27,16 @@ const editMessage = (edits: QuoteEditInput[]): string => {
  *    again re-resolves them against the new version.
  *  - 400 (a quote didn't resolve — formatted markdown spans, markup-crossing
  *    selections): surface the server's precise reason, offer the source editor.
+ *
+ * The session is bounded by the FRAME's lifetime: `onFrameGone` (wired to the
+ * page's iframe onLoad) force-exits with a warning, because a reloaded frame boots
+ * with no edit state and silently saving nothing would read as success.
  */
 export function useInlineEdit(p: {
   shortId: string
   art: Artifact | undefined
+  /** The artifact iframe — inbound edit messages are accepted from THIS window only. */
+  frameRef: RefObject<HTMLIFrameElement | null>
   post: (msg: Record<string, unknown>) => void
   load: () => void
   /** The fallback surface when a quote can't be applied inline. */
@@ -36,29 +44,78 @@ export function useInlineEdit(p: {
   /** Clear selection/composer state the moment edit mode opens. */
   onEnter?: () => void
 }) {
-  const [active, setActive] = useState(false)
-  const [dirty, setDirty] = useState(0)
-  // The version the rendered frame is pinned to while editing. Freezing it keeps
-  // `rawSrc` stable, so a concurrent publish updates metadata without reloading the
-  // iframe out from under the user's typed-but-unsaved text.
+  // The version the rendered frame is pinned to while editing — the mode flag AND
+  // the freeze in one value (active ⇔ non-null), so no exit path can ever leave
+  // the two disagreeing. Freezing keeps `rawSrc` stable, so a concurrent publish
+  // updates metadata without reloading the iframe out from under typed text.
   const [frozenVersion, setFrozenVersion] = useState<number | null>(null)
-  const collectWait = useRef<{ resolve: (e: QuoteEditInput[]) => void; timer: number } | null>(null)
+  const [dirty, setDirty] = useState(0)
+  const active = frozenVersion !== null
+  const activeRef = useRef(false)
+  activeRef.current = active
+  const collectWait = useRef<{
+    nonce: number
+    resolve: (e: QuoteEditInput[] | { desync: true }) => void
+    timer: number
+  } | null>(null)
+  const nonceSeq = useRef(0)
+
+  // Every way out of the mode funnels through here. `restoreFrame` posts mode-off
+  // (the frame reverts unsaved text and re-arms its normal grammar) — right for
+  // Done/stale exits and for a filed PROPOSAL (nothing is live until approval, so
+  // the preview must not keep the suggested text painted); wrong for a PUBLISH,
+  // where the version bump reloads the frame onto the saved content anyway.
+  const exit = (restoreFrame: boolean) => {
+    setFrozenVersion(null)
+    setDirty(0)
+    if (restoreFrame) p.post({ type: "edit-mode", on: false })
+  }
+
+  // Leaving the artifact ends the session: without this, edit mode (and the frozen
+  // version) would ride along to the NEXT artifact the user navigates to, pinning
+  // its shown version to a number from a different document.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed to the artifact change.
+  useEffect(() => {
+    setFrozenVersion(null)
+    setDirty(0)
+  }, [p.shortId])
 
   // The frame's edit-* messages ride the same postMessage channel as the anchor
   // protocol; listening here keeps the central frame router untouched.
+  //
+  // Trust boundary, stated plainly: this is a WRITE path fed by the sandboxed
+  // frame, so inbound messages are accepted only from the artifact iframe's own
+  // window — a popup or a nested iframe inside the artifact can't speak here. What
+  // that check cannot do is distinguish the injected client from the artifact's OWN
+  // scripts (they share the window), which is the protocol's standing model for
+  // every message (select, anchor-click, deck…). The blast radius of a forged
+  // edit-edits is bounded: it can only alter TEXT of the artifact the author
+  // already controls (replacements are escaped / re-sanitized at render), the save
+  // still requires this signed-in user's deliberate Save click, and the version
+  // history records the exact spans changed.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: frameRef is a stable ref object; reading .current at event time is the point.
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
+      if (!p.frameRef.current?.contentWindow || e.source !== p.frameRef.current.contentWindow)
+        return
       const d = e.data
       if (!d || d.source !== "derive") return
       if (d.type === "edit-state") {
         setDirty(typeof d.dirty === "number" ? d.dirty : 0)
       } else if (d.type === "edit-edits") {
         const w = collectWait.current
-        if (w) {
-          collectWait.current = null
-          clearTimeout(w.timer)
-          w.resolve(Array.isArray(d.edits) ? (d.edits as QuoteEditInput[]) : [])
-        }
+        // The nonce pins the reply to THIS collect: a slow page can answer a
+        // timed-out collect after a newer one started, and those stale edits must
+        // not save (they'd be missing the user's latest typing).
+        if (!w || d.nonce !== w.nonce) return
+        collectWait.current = null
+        clearTimeout(w.timer)
+        const edits = Array.isArray(d.edits) ? (d.edits as QuoteEditInput[]) : []
+        // The frame counted changed blocks it could not express as edits (or the
+        // frame reloaded and lost them): saving "nothing" now would present data
+        // loss as success — surface it instead.
+        const frameDirty = typeof d.dirty === "number" ? d.dirty : 0
+        w.resolve(edits.length === 0 && frameDirty > 0 ? { desync: true } : edits)
       } else if (d.type === "edit-blocked") {
         // A click landed somewhere inline editing can't reach. Quiet + deduped —
         // information, not an alarm.
@@ -74,64 +131,98 @@ export function useInlineEdit(p: {
     return () => window.removeEventListener("message", onMsg)
   }, [])
 
-  const collect = (): Promise<QuoteEditInput[]> =>
+  const collect = (): Promise<QuoteEditInput[] | { desync: true }> =>
     new Promise((resolve, reject) => {
+      const nonce = ++nonceSeq.current
       const timer = window.setTimeout(() => {
         collectWait.current = null
         reject(new Error("The page didn't report its edits. Try again."))
       }, 4000)
-      collectWait.current = { resolve, timer }
-      p.post({ type: "edit-collect" })
+      collectWait.current = { nonce, resolve, timer }
+      p.post({ type: "edit-collect", nonce })
     })
 
   const start = () => {
     if (!p.art || active) return
     p.onEnter?.()
-    setFrozenVersion(p.art.current_version)
     setDirty(0)
-    setActive(true)
+    setFrozenVersion(p.art.current_version)
     p.post({ type: "edit-mode", on: true })
   }
   // Done only ever exits CLEAN (the bar swaps to Discard/Save once dirty); the
   // frame-side mode-off also restores any stragglers as a belt-and-suspenders.
-  const done = () => {
-    setActive(false)
-    setFrozenVersion(null)
-    setDirty(0)
-    p.post({ type: "edit-mode", on: false })
-  }
+  const done = () => exit(true)
   const discard = () => p.post({ type: "edit-restore" })
+  /** The frame reloaded (version swap, retry, source editor) — the edit session
+   *  died with it. Exit and say so if anything was pending. */
+  const onFrameGone = () => {
+    if (!activeRef.current) return
+    const hadEdits = dirty > 0
+    exit(false) // the frame is a fresh document; there is nothing to restore
+    if (hadEdits)
+      toast.warning("The document reloaded, so unsaved inline edits were discarded.", {
+        id: "inline-edit-stale",
+      })
+  }
 
   const save = useApiMutation({
-    mutationFn: async () => {
+    mutationFn: async (): Promise<SaveOutcome | { desync: true }> => {
       const art = p.art
       if (!art) throw new Error("save fired before the artifact loaded")
-      const edits = await collect()
-      if (!edits.length) return null
+      const collected = await collect()
+      if ("desync" in collected) return collected
+      if (!collected.length) return null
       // Base = the CURRENT head, not the frozen view: if a publish landed mid-edit,
       // the quotes re-resolve against the new source (the strict matcher refuses
       // anything that moved), which is the closest thing to a clean auto-merge.
       const base = art.current_version
-      const message = editMessage(edits)
+      const message = editMessage(collected)
       const canPublish = (art.my_role === "editor" || art.my_role === "owner") && !art.locked
       if (canPublish) {
-        const a = await api.publishEdits(p.shortId, edits, base, message)
-        return { kind: "published" as const, version: a.current_version }
+        const a = await api.publishEdits(p.shortId, collected, base, message)
+        return { kind: "published", version: a.current_version }
       }
-      await api.proposeEdits(p.shortId, edits, base, message)
-      return { kind: "proposed" as const, version: 0 }
+      await api.proposeEdits(p.shortId, collected, base, message)
+      return { kind: "proposed" }
     },
     errorToast: false,
     onSuccess: (r) => {
-      if (!r) {
-        done() // nothing actually changed — just leave edit mode
+      if (r && "desync" in r) {
+        // Changed blocks produced no expressible edits (typed into a spot with
+        // nothing to anchor on, or the page's own script churned the DOM). Keep
+        // the session so nothing is silently lost; point at the sure path.
+        toast.error("Those changes couldn't be captured as text edits.", {
+          id: "inline-edit-failed",
+          description: "Try editing the surrounding sentence too, or use the source editor.",
+          duration: 12_000,
+          action: {
+            label: "Open source editor",
+            onClick: () => {
+              exit(true)
+              p.onOpenSourceEditor()
+            },
+          },
+        })
         return
       }
-      setActive(false)
-      setFrozenVersion(null)
-      setDirty(0)
-      toast.success(r.kind === "published" ? `Saved v${r.version}` : "Suggestion sent for review")
-      p.load() // the refetch moves rawSrc to the new version; the frame reloads clean
+      if (!r) {
+        exit(true) // nothing actually changed — just leave edit mode
+        return
+      }
+      if (r.kind === "published") {
+        // The version bump reloads the frame onto the published content; posting
+        // mode-off here would flash the pre-edit text for a beat first.
+        exit(false)
+        toast.success(`Saved v${r.version}`)
+      } else {
+        // A proposal does NOT change the live document — no version bump, no frame
+        // reload. Mode-off restores the pre-edit text (the suggestion lives in the
+        // review queue now) and re-arms the normal read grammar; without it the
+        // frame stays edit-locked forever.
+        exit(true)
+        toast.success("Suggestion sent for review")
+      }
+      p.load()
     },
     onError: (err) => {
       if (err instanceof ApiError && err.status === 409) {
@@ -146,12 +237,20 @@ export function useInlineEdit(p: {
       }
       // Inside useApiMutation's onError (errorToast off): the server's EditError text is
       // the product copy (WHICH edit failed and why), plus a bespoke fallback action the
-      // global safety net can't carry.
+      // global safety net can't carry. Opening the source editor ends the inline session
+      // first — the editor unmounts the frame, and a phantom session pinned to a stale
+      // frozen version would otherwise survive underneath it.
       // biome-ignore format: the escape-hatch comment must stay on the toast line.
       toast.error(err instanceof ApiError ? err.message : "Couldn't save your edits.", { // mutation-ignore: bespoke server-message toast with a source-editor fallback action
         id: "inline-edit-failed",
         duration: 12_000,
-        action: { label: "Open source editor", onClick: p.onOpenSourceEditor },
+        action: {
+          label: "Open source editor",
+          onClick: () => {
+            exit(true)
+            p.onOpenSourceEditor()
+          },
+        },
       })
     },
   })
@@ -164,6 +263,7 @@ export function useInlineEdit(p: {
     start,
     done,
     discard,
+    onFrameGone,
     save: () => save.mutate(),
   }
 }

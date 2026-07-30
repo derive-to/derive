@@ -20,8 +20,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
   occurrence. For HTML artifacts the resolved span maps back to raw bytes through
   an offset-tracking projection that refuses to cross markup or split an entity;
   replacements are escaped. The `edits` field on `POST /versions`, `/proposals`,
-  and the MCP `publish` tool accepts the new shape alongside `{old_str, new_str}`,
-  with the same `base_version` conflict safety and atomic all-or-nothing batch.
+  and the MCP `publish` tool accepts the new shape as an alternative to
+  `{old_str, new_str}` (one shape per batch — the two resolve against different
+  baselines, so mixing is refused rather than silently reordered), with the same
+  `base_version` conflict safety and an atomic all-or-nothing batch capped at 500
+  edits per request.
   The shown version freezes while editing (a concurrent publish warns instead of
   reloading typed text away), comment anchors re-sweep as usual — a surgical
   inline edit keeps neighboring comments attached — and structural changes stay

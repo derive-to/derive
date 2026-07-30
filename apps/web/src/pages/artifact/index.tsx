@@ -429,6 +429,7 @@ export function Artifact() {
   const inlineEdit = useInlineEdit({
     shortId,
     art,
+    frameRef: frame,
     post,
     load,
     onOpenSourceEditor: startEdit,
@@ -543,6 +544,11 @@ export function Artifact() {
   const canMove = art.my_role === "owner"
   const isLocked = !!art.locked
   const effectiveCanPublish = canPublish && !isLocked
+  // The ONE eligibility base both edit affordances (inline + raw source) share, so
+  // a new rule can't land in one and not the other; the deck test likewise has a
+  // single spelling that the isDeck prop and the inline gate both read.
+  const canEditDoc = editable && canPropose && !editing && !art.managed
+  const isDeckLike = !!deck || art.current_content_type === "text/x-derive-deck"
   // A logged-out visitor on a public/link artifact: strictly view-only. They get
   // the document + live presence/cursors (Google-Docs style) and nothing else —
   // no favorite, tags, collections, share, report, comments, or version tools.
@@ -591,7 +597,11 @@ export function Artifact() {
   const documentEl = (
     <ArtifactDocument
       shown={shown}
-      currentVersion={art.current_version}
+      // While inline editing, the frozen view IS the working version: a concurrent
+      // publish must not surface the past-version strip mid-session (its Restore
+      // would publish over the head while edits are pending; the warning toast
+      // already announced the new version). Treating shown as current hides it.
+      currentVersion={inlineEdit.active ? shown : art.current_version}
       title={art.title ?? shortId}
       rawSrc={rawSrc}
       view={view}
@@ -604,7 +614,13 @@ export function Artifact() {
       presentWrapRef={presentWrap}
       cursor={live.cursor}
       onScrollDoc={scrollBy}
-      onFrameLoad={onFrameLoad}
+      // A frame (re)load while inline editing means the edit session's document is
+      // gone — the hook exits and warns rather than letting a later Save silently
+      // no-op over discarded edits.
+      onFrameLoad={() => {
+        onFrameLoad()
+        inlineEdit.onFrameGone()
+      }}
       onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
       onRestore={() => restore(shown)}
       onBackToCurrent={() =>
@@ -751,24 +767,18 @@ export function Artifact() {
               isMobile={isMobile}
               panelOpen={panel === "open"}
               openCount={openCount}
-              showEdit={editable && canPropose && !editing && !art.managed}
+              // The source editor unmounts the iframe — mid-inline-session that
+              // silently discards typed edits, so its entry hides while editing.
+              showEdit={canEditDoc && !inlineEdit.active}
               editLabel={effectiveCanPublish ? "Edit source (dev)" : "Propose change (dev)"}
               // Inline editing: current version, single file, not a deck (slides
               // present their own surface), not GitHub-managed. Commenters get the
               // same affordance as a suggestion (it lands as a proposal). Phones
               // included: tap a block, type on the keyboard, save from the bar.
-              showInlineEdit={
-                editable &&
-                canPropose &&
-                !editing &&
-                !inlineEdit.active &&
-                !art.managed &&
-                !deck &&
-                art.current_content_type !== "text/x-derive-deck"
-              }
+              showInlineEdit={canEditDoc && !inlineEdit.active && !isDeckLike}
               inlineEditLabel={effectiveCanPublish ? "Edit" : "Suggest edits"}
               onInlineEdit={inlineEdit.start}
-              isDeck={!!deck || art.current_content_type === "text/x-derive-deck"}
+              isDeck={isDeckLike}
               canLock={canLock}
               canMove={canMove}
               automateBeta={automateBeta}

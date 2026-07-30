@@ -5,19 +5,20 @@
 //
 // Two invariants distinguish it from the read-side matcher in `anchor-shared`:
 //   1. STRICT resolution. Painting a highlight may fall back to "the first place the
-//      words appear"; an EDIT must not — a context miss is only accepted when the
-//      exact text is globally unambiguous, otherwise the whole batch is rejected.
-//   2. RAW offsets. For HTML the quote matches the tag-stripped projection
-//      (`pageText`), so the resolved span must be mapped back to raw-source offsets
-//      through an offset-tracking twin of that projection — and an edit whose span
-//      would cross markup (or split a decoded entity) is refused, never guessed.
+//      words appear"; an EDIT must not — the context match must be UNIQUE, and a
+//      context miss is only accepted when the exact text is globally unambiguous.
+//   2. RAW offsets. For HTML the quote matches the page-text projection, so the
+//      resolved span is mapped back to raw-source offsets through the projection's
+//      own segment map (`pageTextParts` — the ONE implementation both sides read),
+//      and an edit whose span would cross markup (or split a decoded entity) is
+//      refused, never guessed.
 //
 // Like `applyEdits`, the batch is atomic: any failure applies NOTHING.
 
-import { decodeEntities, pageText } from "./anchor"
-import { findQuoteContextOnly, findQuoteMatches } from "./anchor-shared"
-import type { DocEdit } from "./doc-text"
-import { EditError } from "./doc-text"
+import { type PageTextSegment, pageTextParts } from "./anchor"
+import { clip, findQuoteContextUnique, findQuoteMatches } from "./anchor-shared"
+import { type DocEdit, EditError } from "./doc-text"
+import { escapeHtml } from "./md"
 
 /** A replacement located by quote — the wire shape the inline editor sends. */
 export interface QuoteEdit {
@@ -34,6 +35,10 @@ export interface QuoteEdit {
 /** Either edit shape the edits surfaces accept. */
 export type AnyDocEdit = DocEdit | QuoteEdit
 
+const optionalString = (v: unknown): boolean => v === undefined || typeof v === "string"
+
+/** True for a well-FORMED quote edit. Strict on every field (a numeric prefix must
+ *  be a clean 400 at the routes, not a TypeError-shaped 500 mid-resolution). */
 export const isQuoteEdit = (e: unknown): e is QuoteEdit => {
   const q = e as QuoteEdit
   return (
@@ -42,214 +47,53 @@ export const isQuoteEdit = (e: unknown): e is QuoteEdit => {
     !!q.quote &&
     typeof q.quote === "object" &&
     typeof q.quote.exact === "string" &&
+    optionalString(q.quote.prefix) &&
+    optionalString(q.quote.suffix) &&
     typeof q.new_text === "string"
   )
 }
 
-// ---------------------------------------------------------------------------------
-// Offset-tracking pageText
-
-/** One run of the projection: how a slice of visible text maps onto the raw source.
- *  `text` runs map 1:1; an `entity` run is one decoded character (or a surrogate
- *  pair) covering the entity's whole raw span; a `gap` is the single space a tag,
- *  comment, or invisible block collapsed to. */
-interface Segment {
-  kind: "text" | "entity" | "gap"
-  tStart: number
-  tEnd: number
-  rStart: number
-  rEnd: number
-}
-
-// The same stripping pageText's regexes perform — invisible blocks, else comments,
-// else any tag, tried in that order at each "<" — but as an indexOf-driven scan
-// rather than lazy-quantifier regexes: a crafted document (thousands of unclosed
-// "<!--") makes those backtrack polynomially (CodeQL js/polynomial-redos), while
-// indexOf is strictly linear. The projection equality against pageText is still
-// asserted at apply time, so any semantic daylight degrades to a refusal.
-const ENTITY = /&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g
-
-const INVISIBLE_NAMES = ["script", "style", "noscript"]
-const isWordChar = (c: string): boolean => /[A-Za-z0-9_]/.test(c)
-
-/** Memoized left-to-right indexOf. During a forward scan, thousands of failed
- *  searches for the same needle (unclosed "<!--" after unclosed "<!--") would each
- *  rescan to the end of the string — quadratic in aggregate, the exact cost the
- *  regexes had. The cursor only moves forward, so the last answer per needle stays
- *  valid until the cursor passes it; re-searches only ever advance it, which makes
- *  the total scan work linear per needle. */
-const makeFinder = (haystack: string) => {
-  const cache = new Map<string, number>()
-  return (needle: string, from: number): number => {
-    const c = cache.get(needle)
-    if (c !== undefined && (c === -1 || c >= from)) return c
-    const n = haystack.indexOf(needle, from)
-    cache.set(needle, n)
-    return n
-  }
-}
-
-interface PageTextMap {
-  text: string
-  segments: Segment[]
-}
-
-/** Append `raw[rFrom, rTo)` — a run with no tags in it — as text/entity segments. */
-const pushTextRun = (
-  out: Segment[],
-  parts: string[],
-  tLen: number,
-  raw: string,
-  rFrom: number,
-  rTo: number,
-): number => {
-  const run = raw.slice(rFrom, rTo)
-  let last = 0
-  ENTITY.lastIndex = 0
-  for (let m = ENTITY.exec(run); m; m = ENTITY.exec(run)) {
-    const decoded = decodeEntities(m[0])
-    if (decoded === m[0]) continue // unknown entity: passes through as plain text
-    if (m.index > last) {
-      const plain = run.slice(last, m.index)
-      out.push({
-        kind: "text",
-        tStart: tLen,
-        tEnd: tLen + plain.length,
-        rStart: rFrom + last,
-        rEnd: rFrom + m.index,
-      })
-      parts.push(plain)
-      tLen += plain.length
-    }
-    out.push({
-      kind: "entity",
-      tStart: tLen,
-      tEnd: tLen + decoded.length,
-      rStart: rFrom + m.index,
-      rEnd: rFrom + m.index + m[0].length,
-    })
-    parts.push(decoded)
-    tLen += decoded.length
-    last = m.index + m[0].length
-  }
-  if (last < run.length) {
-    const plain = run.slice(last)
-    out.push({
-      kind: "text",
-      tStart: tLen,
-      tEnd: tLen + plain.length,
-      rStart: rFrom + last,
-      rEnd: rTo,
-    })
-    parts.push(plain)
-    tLen += plain.length
-  }
-  return tLen
-}
-
-/**
- * `pageText`, but remembering where every visible character came from — so a span
- * resolved in the projection can be spliced into the raw source. `.text` is verified
- * equal to `pageText(html)` by the caller before any edit lands (belt and suspenders:
- * a divergence degrades to a clean refusal, never a mis-placed splice).
- */
-export function pageTextWithMap(html: string): PageTextMap {
-  const lower = html.toLowerCase()
-  const findRaw = makeFinder(html)
-  const findLower = makeFinder(lower)
-
-  /** The strip token starting exactly at html[i] (which is "<"), or null when this
-   *  "<" is literal text. Mirrors the regex alternation order and each alternative's
-   *  exact rules: attrs stop at the first ">", an invisible block closes at the
-   *  first literal "</name>" (case-insensitive), a comment at the first "-->", and
-   *  a bare tag needs at least one non-">" before its ">". */
-  const stripTokenAt = (i: number): number | null => {
-    // <!-- ... -->
-    if (lower.startsWith("<!--", i)) {
-      const close = findRaw("-->", i + 4)
-      if (close >= 0) return close + 3
-    }
-    // <script|style|noscript ...> ... </same>
-    for (const name of INVISIBLE_NAMES) {
-      if (!lower.startsWith(name, i + 1)) continue
-      const after = i + 1 + name.length
-      if (after < html.length && isWordChar(html[after] as string)) continue // \b
-      const open = findRaw(">", after)
-      if (open < 0) continue
-      const close = findLower(`</${name}>`, open + 1)
-      if (close >= 0) return close + name.length + 3
-      // No closer: this alternative fails; fall through to the bare-tag rule.
-    }
-    // <[^>]+>
-    const gt = findRaw(">", i + 1)
-    if (gt > i + 1) return gt + 1
-    return null
-  }
-
-  const segments: Segment[] = []
-  const parts: string[] = []
-  let tLen = 0
-  let last = 0 // start of the pending text run
-  let from = 0 // "<" search cursor
-  for (;;) {
-    const i = findRaw("<", from)
-    if (i < 0) break
-    const end = stripTokenAt(i)
-    if (end === null) {
-      from = i + 1 // a literal "<": it stays inside the text run
-      continue
-    }
-    if (i > last) tLen = pushTextRun(segments, parts, tLen, html, last, i)
-    segments.push({ kind: "gap", tStart: tLen, tEnd: tLen + 1, rStart: i, rEnd: end })
-    parts.push(" ")
-    tLen += 1
-    last = end
-    from = end
-  }
-  if (last < html.length) tLen = pushTextRun(segments, parts, tLen, html, last, html.length)
-  return { text: parts.join(""), segments }
-}
-
-/** The segment containing text offset `t` (binary search; segments are contiguous). */
-const segmentAt = (segments: Segment[], t: number): Segment | null => {
+/** The segment index containing text offset `t` (binary search; segments are
+ *  contiguous in `tStart` order). -1 when out of range. */
+const segmentIndexAt = (segments: PageTextSegment[], t: number): number => {
   let lo = 0
   let hi = segments.length - 1
   while (lo <= hi) {
     const mid = (lo + hi) >> 1
-    const s = segments[mid] as Segment
+    const s = segments[mid] as PageTextSegment
     if (t < s.tStart) hi = mid - 1
     else if (t >= s.tEnd) lo = mid + 1
-    else return s
+    else return mid
   }
-  return null
+  return -1
 }
 
 /**
  * Map a [start, end) span of the projection back to raw-source offsets. Refuses a
  * span that includes a `gap` (it would cross a tag — a structural change, not a text
  * edit) or that starts/ends INSIDE an entity's decoded characters (you can't splice
- * half of `&amp;#128064;`).
+ * half of a decoded character).
  */
 const spanToRaw = (
-  segments: Segment[],
+  segments: PageTextSegment[],
   start: number,
   end: number,
   label: string,
 ): { rStart: number; rEnd: number } => {
-  const first = segmentAt(segments, start)
-  const lastSeg = segmentAt(segments, end - 1)
-  if (!first || !lastSeg)
+  const firstIdx = segmentIndexAt(segments, start)
+  const lastIdx = segmentIndexAt(segments, end - 1)
+  if (firstIdx < 0 || lastIdx < 0)
     throw new EditError(`${label} failed: the matched text fell outside the document.`)
   // Every segment the span touches must be visible text — a gap inside means the
   // selection crosses an element boundary in the source.
-  for (let i = segments.indexOf(first); ; i++) {
-    const s = segments[i] as Segment
-    if (s.kind === "gap")
+  for (let i = firstIdx; i <= lastIdx; i++) {
+    if ((segments[i] as PageTextSegment).kind === "gap")
       throw new EditError(
         `${label} failed: the selection crosses formatting or element boundaries in the source — edit a smaller run of plain text, or open the source editor.`,
       )
-    if (s === lastSeg) break
   }
+  const first = segments[firstIdx] as PageTextSegment
+  const lastSeg = segments[lastIdx] as PageTextSegment
   if (first.kind === "entity" && start > first.tStart)
     throw new EditError(
       `${label} failed: the edit would split a character. Select the whole character.`,
@@ -263,36 +107,24 @@ const spanToRaw = (
   return { rStart, rEnd }
 }
 
-const escapeHtmlText = (s: string): string =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-
-const clip = (s: string, n = 60): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
-
 /**
  * Apply quote-scoped edits to `src` atomically. Every quote is resolved against the
- * ORIGINAL source (markdown: the source itself; HTML/deck: the tag-stripped
- * projection, mapped back to raw offsets), spans are checked for overlap, and the
- * splices land back-to-front — so one batch's edits can never shift each other's
- * targets. Any failure throws `EditError` (with which edit and why) and applies
- * nothing, matching `applyEdits`' contract.
+ * ORIGINAL source (markdown: the source itself; HTML/deck: the page-text projection,
+ * mapped back to raw offsets through its segment map), spans are checked for
+ * overlap, and the splices land back-to-front — so one batch's edits can never
+ * shift each other's targets. Any failure throws `EditError` (with which edit and
+ * why) and applies nothing, matching `applyEdits`' contract.
  */
 export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEdit[]): string {
   if (!edits.length) return src
   const ct = (contentType || "").split(";")[0]?.trim()
   const isHtml = ct === "text/html" || ct === "text/x-derive-deck"
   let text = src
-  let segments: Segment[] | null = null
+  let segments: PageTextSegment[] | null = null
   if (isHtml) {
-    const mapped = pageTextWithMap(src)
-    // The projection must be byte-identical to the one comment anchors resolve
-    // against — if the two scanners ever disagree, refuse rather than splice at
-    // offsets that mean something else.
-    if (mapped.text !== pageText(src))
-      throw new EditError(
-        "This document's text projection couldn't be mapped safely — open the source editor to make this change.",
-      )
-    text = mapped.text
-    segments = mapped.segments
+    const parts = pageTextParts(src)
+    text = parts.text
+    segments = parts.segments
   }
 
   const spans: { rStart: number; rEnd: number; replacement: string; label: string }[] = []
@@ -300,19 +132,26 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
     const label = `Edit ${i + 1} of ${edits.length}`
     const exact = e.quote.exact
     if (!exact.trim()) throw new EditError(`${label} failed: the quoted text is empty.`)
-    // Context first (prefix + exact + suffix pins WHICH occurrence); a context miss
-    // is acceptable only when the exact text appears exactly once in the document.
-    let span = findQuoteContextOnly(text, exact, e.quote.prefix, e.quote.suffix)
+    // Context first — and the context itself must pin exactly ONE spot. A context
+    // that matches twice (identical repeated cards) must refuse, not silently edit
+    // the first card when the user touched the second. A context miss is acceptable
+    // only when the exact text appears exactly once in the document.
+    const ctx = findQuoteContextUnique(text, exact, e.quote.prefix, e.quote.suffix)
+    if (ctx.matches > 1)
+      throw new EditError(
+        `${label} failed: "${clip(exact, 60)}" appears in ${ctx.matches} identical contexts — the edit can't be pinned to one. Open the source editor.`,
+      )
+    let span = ctx.span
     if (!span) {
       const all = findQuoteMatches(text, exact)
       if (all.length === 1) span = all[0] as { start: number; end: number }
       else if (all.length === 0)
         throw new EditError(
-          `${label} failed: "${clip(exact)}" wasn't found — the document may have changed. Re-read and retry.`,
+          `${label} failed: "${clip(exact, 60)}" wasn't found — the document may have changed. Re-read and retry.`,
         )
       else
         throw new EditError(
-          `${label} failed: "${clip(exact)}" appears ${all.length} times and the surrounding context didn't pin one down.`,
+          `${label} failed: "${clip(exact, 60)}" appears ${all.length} times and the surrounding context didn't pin one down.`,
         )
     }
     const raw = segments
@@ -320,7 +159,7 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
       : { rStart: span.start, rEnd: span.end }
     spans.push({
       ...raw,
-      replacement: isHtml ? escapeHtmlText(e.new_text) : e.new_text,
+      replacement: isHtml ? escapeHtml(e.new_text) : e.new_text,
       label,
     })
   }

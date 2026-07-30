@@ -3,6 +3,7 @@ import { EditError } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   EditConflictError,
+  MAX_EDITS_PER_BATCH,
   materializeEdits,
   parseBaseVersion,
   preservingFilename,
@@ -178,18 +179,46 @@ describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () 
     expect(out.filename).toBe("index.html")
   })
 
-  it("mixes quote edits with old_str edits in one atomic batch", async () => {
+  it("refuses a batch that mixes quote edits with old_str edits", async () => {
+    // The two shapes resolve against different baselines (quotes all-at-once vs
+    // old_str sequentially) — a mixed batch would silently reorder, so it's refused.
     const deps = mkDeps({ 1: { text: "alpha beta gamma" } })
-    const out = await materializeEdits(
-      deps,
-      fileArtifact(1),
-      [
-        { quote: { exact: "alpha", suffix: " beta" }, new_text: "ALPHA" },
-        { old_str: "gamma", new_str: "GAMMA" },
-      ],
-      1,
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        [
+          { quote: { exact: "alpha", suffix: " beta" }, new_text: "ALPHA" },
+          { old_str: "gamma", new_str: "GAMMA" },
+        ],
+        1,
+      ),
+    ).rejects.toThrow(/mixes quote edits and old_str edits/)
+  })
+
+  it("a malformed quote edit (numeric prefix) is a clean EditError, not a TypeError 500", async () => {
+    const deps = mkDeps({ 1: { text: "the pricing page" } })
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        // isQuoteEdit rejects the shape, so it falls to applyEdits' old_str
+        // validation — either way the caller gets a 400-shaped EditError.
+        [{ quote: { exact: "pricing", prefix: 123 }, new_text: "cost" } as never],
+        1,
+      ),
+    ).rejects.toThrow(EditError)
+  })
+
+  it("caps the batch size with a clean EditError", async () => {
+    const deps = mkDeps({ 1: { text: "word ".repeat(10) } })
+    const edits = Array.from({ length: MAX_EDITS_PER_BATCH + 1 }, () => ({
+      quote: { exact: "word" },
+      new_text: "x",
+    }))
+    await expect(materializeEdits(deps, fileArtifact(1), edits, 1)).rejects.toThrow(
+      /maximum per request/,
     )
-    expect(out.content).toBe("ALPHA beta GAMMA")
   })
 
   it("a failing quote edit rejects the batch as a plain EditError (400-shaped)", async () => {
@@ -209,6 +238,14 @@ describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () 
     await expect(
       materializeEdits(deps, fileArtifact(2), [{ quote: { exact: "one" }, new_text: "1" }], 1),
     ).rejects.toThrow(EditConflictError)
+  })
+
+  it("a non-array edits payload is a clean EditError, not a TypeError-shaped 500", async () => {
+    const deps = mkDeps({ 1: { text: "one" } })
+    await expect(
+      // Simulates `edits: "{}"` on the wire — JSON.parse gives an object, not an array.
+      materializeEdits(deps, fileArtifact(1), {} as never, 1),
+    ).rejects.toThrow(EditError)
   })
 })
 

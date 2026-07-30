@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
-import { pageText } from "../src/anchor"
+import { decodeEntities, pageText, pageTextParts } from "../src/anchor"
 import { EditError } from "../src/doc-text"
-import { applyQuoteEdits, isQuoteEdit, pageTextWithMap, type QuoteEdit } from "../src/quote-edit"
+import { applyQuoteEdits, isQuoteEdit, type QuoteEdit } from "../src/quote-edit"
 
 const qe = (
   exact: string,
@@ -12,10 +12,21 @@ const qe = (
 const MD = "text/markdown"
 const HTML = "text/html"
 
-// ---------------------------------------------------------------------------------
-// pageTextWithMap: the offset-tracking twin must produce pageText byte-for-byte.
+// The ORIGINAL regex-based projection, kept here as an independent oracle for the
+// linear scanner that replaced it (the lazy quantifiers backtracked polynomially —
+// CodeQL js/polynomial-redos — so production runs the scanner only).
+const legacyPageText = (html: string): string =>
+  decodeEntities(
+    html
+      .replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<!--[\s\S]*?-->/g, " ")
+      .replace(/<[^>]+>/g, " "),
+  )
 
-describe("pageTextWithMap", () => {
+// ---------------------------------------------------------------------------------
+// pageTextParts: the one projection, checked against the legacy regex oracle.
+
+describe("pageTextParts", () => {
   const FIXTURES = [
     "plain text with no markup at all",
     "<p>one</p><p>two</p>",
@@ -42,31 +53,50 @@ describe("pageTextWithMap", () => {
     "<scriptx>not a script tag</scriptx>",
     'att with gt <img alt="a>b"> tail', // attrs stop at the FIRST >
   ]
-  it("matches pageText on every fixture", () => {
+  it("matches the legacy regex projection on every fixture", () => {
     for (const html of FIXTURES) {
-      expect(pageTextWithMap(html).text).toBe(pageText(html))
+      expect(pageTextParts(html).text).toBe(legacyPageText(html))
     }
   })
 
-  it("stays linear (and equal) on a document built to make lazy regexes backtrack", () => {
-    // Thousands of unclosed "<!--" — the js/polynomial-redos shape. The scanner
-    // must both agree with pageText and finish promptly.
+  it("pageText IS the scanner's text (one implementation, no drift possible)", () => {
+    for (const html of FIXTURES) {
+      expect(pageText(html)).toBe(pageTextParts(html).text)
+    }
+  })
+
+  it("stays linear on a document built to make lazy regexes backtrack", () => {
+    // Thousands of unclosed "<!--" — the js/polynomial-redos shape.
     const hostile = `${"<!-- ".repeat(4000)}tail text`
     const start = performance.now()
-    const mapped = pageTextWithMap(hostile)
+    const mapped = pageTextParts(hostile)
     expect(performance.now() - start).toBeLessThan(200)
-    expect(mapped.text).toBe(pageText(hostile))
+    expect(mapped.text).toBe(legacyPageText(hostile))
+  })
+
+  it("documents the one known divergence from the legacy regexes: a comment wrapping a script opener", () => {
+    // Legacy ran the INVISIBLE pass over the whole string first, so a stray later
+    // </script> could pair with a <script> mentioned INSIDE an unclosed comment.
+    // The scanner resolves alternatives per position (comment first at "<!--"),
+    // which is the saner reading; this fixture pins the scanner's semantics.
+    const doc = "A<!-- <script> -->B</script>C"
+    expect(pageTextParts(doc).text).toBe("A B C")
+    // …and edits on such a document still work (no equality guard to trip).
+    const out = applyQuoteEdits(doc.replace("C", "C typo end"), HTML, [
+      qe("typo", "fixed", { prefix: "C ", suffix: " end" }),
+    ])
+    expect(out).toContain("fixed")
   })
 
   it("maps a plain text span to identical raw offsets when there is no markup", () => {
-    const { text, segments } = pageTextWithMap("just words")
+    const { text, segments } = pageTextParts("just words")
     expect(text).toBe("just words")
     expect(segments).toHaveLength(1)
     expect(segments[0]).toMatchObject({ kind: "text", rStart: 0, rEnd: 10 })
   })
 
   it("gives entities their own segments covering the raw span", () => {
-    const { text, segments } = pageTextWithMap("a &amp; b")
+    const { text, segments } = pageTextParts("a &amp; b")
     expect(text).toBe("a & b")
     const entity = segments.find((s) => s.kind === "entity")
     expect(entity).toMatchObject({ tStart: 2, tEnd: 3, rStart: 2, rEnd: 7 })
@@ -103,6 +133,18 @@ describe("applyQuoteEdits — markdown", () => {
     const dup = "alpha beta gamma. alpha beta delta."
     const out = applyQuoteEdits(dup, MD, [qe("alpha beta", "X", { suffix: " delta" })])
     expect(out).toBe("alpha beta gamma. X delta.")
+  })
+
+  it("refuses when even the CONTEXT repeats — identical cards must not edit the first one", () => {
+    // Two byte-identical cards: context matches both. A lenient matcher would
+    // silently edit the first card when the user touched the second.
+    const cards =
+      "Widget Alpha Learn more Buy now today MIDDLE Widget Alpha Learn more Buy now today"
+    expect(() =>
+      applyQuoteEdits(cards, MD, [
+        qe("Learn more", "Discover", { prefix: "Widget Alpha ", suffix: " Buy now today" }),
+      ]),
+    ).toThrow(/identical contexts/)
   })
 
   it("rejects a quote that no longer exists", () => {
@@ -149,6 +191,16 @@ describe("applyQuoteEdits — markdown", () => {
     const out = applyQuoteEdits(md, MD, [qe("teh", "the", { prefix: "| ", suffix: " | x" })])
     expect(out).toBe("| a | b |\n|---|---|\n| the | x |\n")
   })
+
+  it("a context window carrying node-seam newlines (the client's separator) still matches", () => {
+    // The frame joins its snapshot with "\n" at text-node seams; flexPattern turns
+    // that into \s+, which must match the source's real whitespace.
+    const md = "First line here.\nSecond line typo there."
+    const out = applyQuoteEdits(md, MD, [
+      qe("typo", "word", { prefix: "here.\nSecond line ", suffix: " there." }),
+    ])
+    expect(out).toContain("Second line word there.")
+  })
 })
 
 // ---------------------------------------------------------------------------------
@@ -181,7 +233,17 @@ describe("applyQuoteEdits — html", () => {
     const out = applyQuoteEdits("<p>safe text here</p>", HTML, [
       qe("safe text", '<img src=x onerror="pwn()"> &', { suffix: " here" }),
     ])
-    expect(out).toBe('<p>&lt;img src=x onerror="pwn()"&gt; &amp; here</p>')
+    expect(out).toBe("<p>&lt;img src=x onerror=&quot;pwn()&quot;&gt; &amp; here</p>")
+  })
+
+  it("a context crossing a NO-WHITESPACE tag boundary still pins the right spot", () => {
+    // "high.Set" in the DOM concat vs "high. Set" in the projection — the client
+    // sends seam whitespace ("\n"), and the flexible matcher spans the gap.
+    const doc = "<p>The value is high.</p><p>Set the value now.</p>"
+    const out = applyQuoteEdits(doc, HTML, [
+      qe("value", "number", { prefix: "high.\nSet the ", suffix: " now." }),
+    ])
+    expect(out).toBe("<p>The value is high.</p><p>Set the number now.</p>")
   })
 
   it("rejects a span that crosses an element boundary", () => {
@@ -200,7 +262,7 @@ describe("applyQuoteEdits — html", () => {
 
   it("refuses to split a decoded surrogate-pair entity", () => {
     const doc = "<p>look &#x1F440; here</p>"
-    const { text } = pageTextWithMap(doc)
+    const { text } = pageTextParts(doc)
     const eye = text.indexOf("\u{1F440}")
     // A span that starts INSIDE the two UTF-16 units of the decoded entity.
     const exact = text.slice(eye + 1, eye + 2 + 5)
@@ -237,6 +299,12 @@ describe("quote-edit shapes", () => {
     expect(isQuoteEdit({ old_str: "a", new_str: "b" })).toBe(false)
     expect(isQuoteEdit(null)).toBe(false)
     expect(isQuoteEdit({ quote: { exact: 1 }, new_text: "x" })).toBe(false)
+  })
+
+  it("rejects malformed context fields (a numeric prefix must not become a 500)", () => {
+    expect(isQuoteEdit({ quote: { exact: "a", prefix: 123 }, new_text: "x" })).toBe(false)
+    expect(isQuoteEdit({ quote: { exact: "a", suffix: {} }, new_text: "x" })).toBe(false)
+    expect(isQuoteEdit({ quote: { exact: "a", prefix: "ok" }, new_text: "x" })).toBe(true)
   })
 
   it("an empty batch is a no-op", () => {

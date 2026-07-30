@@ -846,9 +846,13 @@ interface ElReg {
     const w = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => {
         const p = n.parentNode ? n.parentNode.nodeName : ""
-        return p === "SCRIPT" || p === "STYLE" || p === "NOSCRIPT"
-          ? NodeFilter.FILTER_REJECT
-          : NodeFilter.FILTER_ACCEPT
+        if (p === "SCRIPT" || p === "STYLE" || p === "NOSCRIPT") return NodeFilter.FILTER_REJECT
+        // Our OWN injected UI (the comment chip, element-overlay badges) is not page
+        // text: it must never leak into quote context windows or edit snapshots — a
+        // suffix containing "💬 Comment" can't resolve against the stored source.
+        const el = (n as Text).parentElement
+        if (el?.closest?.(".derive-el-chip,.derive-el-hl")) return NodeFilter.FILTER_REJECT
+        return NodeFilter.FILTER_ACCEPT
       },
     })
     const out: Text[] = []
@@ -1305,7 +1309,13 @@ interface ElReg {
   document.addEventListener(
     "auxclick",
     (e) => {
-      if (editOn) return
+      if (editOn) {
+        // Same rule as editClick: no navigation while editing. Without this a
+        // middle-click would run the browser default — opening the raw sandbox
+        // origin in a tab, bypassing the host's scheme allowlist entirely.
+        if (asEl(e.target)?.closest("a[href],a[data-derive-nav]")) e.preventDefault()
+        return
+      }
       if (e.button === 1) {
         navLink(e)
         extLink(e)
@@ -1362,17 +1372,24 @@ interface ElReg {
     origHtml: string
     origValues: string[]
     origStarts: number[]
+    /** Cached origValues.join("") — the dirty compare runs per keystroke tick. */
+    origConcat: string
     structSig: string
   }
   let editOn = false
   let editTargets: EditTarget[] = []
+  // The pre-edit snapshot. Nodes are joined with "\n" separators (and starts offsets
+  // account for them) so a prefix/suffix window crossing a node seam carries
+  // whitespace there — matching the server projection, which renders a space for
+  // every tag. A bare concat ("high.Set") could never context-match "high. Set".
   let editBase: { text: string; starts: Map<Text, number> } | null = null
   let lastDirty = -1
 
   const structSigOf = (el: Element): string => {
-    const tags: string[] = []
-    for (const d2 of Array.from(el.querySelectorAll("*"))) tags.push(d2.tagName)
-    return tags.join(",")
+    const list = el.querySelectorAll("*")
+    let sig = ""
+    for (let i = 0; i < list.length; i++) sig += `${(list[i] as Element).tagName},`
+    return sig
   }
   const targetFor = (el: Element): EditTarget | null => {
     for (const t of editTargets) if (t.el === el) return t
@@ -1383,13 +1400,17 @@ interface ElReg {
     for (const n of textNodes(el)) out += n.nodeValue
     return out
   }
-  const postDirty = () => {
+  const countDirty = () => {
     let n = 0
     for (const t of editTargets) {
-      const changed = document.contains(t.el) && concatText(t.el) !== t.origValues.join("")
+      const changed = document.contains(t.el) && concatText(t.el) !== t.origConcat
       t.el.classList.toggle("derive-edited", changed)
       if (changed) n++
     }
+    return n
+  }
+  const postDirty = () => {
+    const n = countDirty()
     if (n !== lastDirty) {
       lastDirty = n
       post({ type: "edit-state", dirty: n })
@@ -1407,13 +1428,16 @@ interface ElReg {
     if (on) {
       // The pre-edit snapshot every quote is built from. normalize() first so the
       // per-node offsets recorded at enable time can't be split later by typing.
+      // "\n" between nodes: every node seam is a tag boundary in the source, which
+      // the server projection renders as a space — the separator makes context
+      // windows sliced across seams whitespace-flexible-matchable there.
       ;(document.body || document.documentElement).normalize()
       const nodes = textNodes(document.body)
       const starts = new Map<Text, number>()
       let full = ""
       for (const n of nodes) {
         starts.set(n, full.length)
-        full += n.nodeValue
+        full += `${n.nodeValue}\n`
       }
       editBase = { text: full, starts }
       setHover(null)
@@ -1433,7 +1457,7 @@ interface ElReg {
   const restoreEdits = () => {
     for (const t of editTargets) {
       if (document.contains(t.el)) {
-        if (concatText(t.el) !== t.origValues.join("")) {
+        if (concatText(t.el) !== t.origConcat) {
           t.el.innerHTML = t.origHtml
           // innerHTML rebuilt the block's text nodes as NEW objects — re-register
           // them at their original offsets, or a Discarded block would refuse every
@@ -1525,11 +1549,13 @@ interface ElReg {
         }
         origStarts.push(s)
       }
+      const origValues = nodes.map((n) => n.nodeValue ?? "")
       target = {
         el: cand,
         origHtml: cand.innerHTML,
-        origValues: nodes.map((n) => n.nodeValue ?? ""),
+        origValues,
         origStarts,
+        origConcat: origValues.join(""),
         structSig: structSigOf(cand),
       }
       editTargets.push(target)
@@ -1640,39 +1666,64 @@ interface ElReg {
       new_text: newText,
     }
   }
-  const collectEdits = (): Record<string, unknown>[] => {
-    const edits: Record<string, unknown>[] = []
+  /** The wire shape of one collected edit. */
+  interface WireEdit {
+    quote: { exact: string; prefix: string; suffix: string }
+    new_text: string
+  }
+  const wireEdit = (qe: {
+    exact: string
+    prefix: string
+    suffix: string
+    new_text: string
+  }): WireEdit => ({
+    quote: { exact: qe.exact, prefix: qe.prefix, suffix: qe.suffix },
+    new_text: qe.new_text,
+  })
+  // The whole-block span: both sides joined with the same "\n" separators the
+  // snapshot uses, so offsets line up with editBase.text; the replacement's seam
+  // separators collapse to single spaces (typed content never contains newlines —
+  // Enter is blocked and paste is flattened).
+  const blockEdit = (t: EditTarget, curVals: string[]): WireEdit | null => {
+    const qe = quoteEditFor(t.origValues.join("\n"), curVals.join("\n"), t.origStarts[0] ?? 0)
+    return qe ? wireEdit({ ...qe, new_text: qe.new_text.replace(/\s*\n\s*/g, " ") }) : null
+  }
+  const collectEdits = (): { edits: WireEdit[]; dirty: number } => {
+    const edits: WireEdit[] = []
+    let dirty = 0
     for (const t of editTargets) {
       if (!document.contains(t.el)) continue
       t.el.normalize()
       const curNodes = textNodes(t.el)
       const curVals = curNodes.map((n) => n.nodeValue ?? "")
-      if (curVals.join("") === t.origValues.join("")) continue
+      if (curVals.join("") === t.origConcat) continue
+      dirty++
       const aligned = curVals.length === t.origValues.length && structSigOf(t.el) === t.structSig
       if (aligned) {
+        // Per-node minimal edits — but if ANY changed node can't be captured (a
+        // whitespace-only node someone typed into has nothing to anchor on), fall
+        // back to one whole-block span rather than silently dropping that change.
+        const nodeEdits: WireEdit[] = []
+        let unrepresentable = false
         for (let i = 0; i < curVals.length; i++) {
           const o = t.origValues[i] as string
           const cNew = curVals[i] as string
           if (o === cNew) continue
           const qe = quoteEditFor(o, cNew, t.origStarts[i] as number)
-          if (qe)
-            edits.push({
-              quote: { exact: qe.exact, prefix: qe.prefix, suffix: qe.suffix },
-              new_text: qe.new_text,
-            })
+          if (qe) nodeEdits.push(wireEdit(qe))
+          else unrepresentable = true
         }
-      } else {
-        // Structure changed (a deletion crossed an inline element): one whole-block
-        // span. The server refuses it if the span would cross markup in the source.
-        const qe = quoteEditFor(t.origValues.join(""), curVals.join(""), t.origStarts[0] ?? 0)
-        if (qe)
-          edits.push({
-            quote: { exact: qe.exact, prefix: qe.prefix, suffix: qe.suffix },
-            new_text: qe.new_text,
-          })
+        if (!unrepresentable) {
+          edits.push(...nodeEdits)
+          continue
+        }
       }
+      // Structure changed, or a per-node edit was unrepresentable: one whole-block
+      // span. The server refuses it if the span would cross markup in the source.
+      const be = blockEdit(t, curVals)
+      if (be) edits.push(be)
     }
-    return edits
+    return { edits, dirty }
   }
 
   window.addEventListener("message", (e: MessageEvent) => {
@@ -1682,8 +1733,12 @@ interface ElReg {
     else if (d.type === "remeasure") reportRects()
     else if (d.type === "emphasize") setOn(d.id)
     else if (d.type === "edit-mode") setEditMode(!!d.on)
-    else if (d.type === "edit-collect") post({ type: "edit-edits", edits: collectEdits() })
-    else if (d.type === "edit-restore") restoreEdits()
+    else if (d.type === "edit-collect") {
+      // The nonce rides back untouched: a slow page can answer a TIMED-OUT collect
+      // after the host started a new one, and stale edits must not resolve it.
+      const { edits, dirty } = collectEdits()
+      post({ type: "edit-edits", edits, dirty, nonce: d.nonce })
+    } else if (d.type === "edit-restore") restoreEdits()
     else if (d.type === "scroll-by") window.scrollBy(0, d.dy || 0)
     else if (d.type === "focus-anchor") {
       const entry = textEntries.find((t) => t.id === d.id)

@@ -252,24 +252,40 @@ export function registerPublishTool(tc: ToolContext): void {
         workspace: wsArg,
         edits: z
           .array(
-            z.object({
-              old_str: z
-                .string()
-                .describe(
-                  "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once, unless `occurrence` picks one of several.",
-                ),
-              new_str: z.string().describe("Replacement text. Empty string deletes."),
-              occurrence: z.coerce
-                .number()
-                .optional()
-                .describe(
-                  "1-based index of WHICH match to replace, when old_str is intentionally non-unique (a phrase repeated verbatim). Omit when old_str already matches once.",
-                ),
-            }),
+            z.union([
+              z.object({
+                old_str: z
+                  .string()
+                  .describe(
+                    "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once, unless `occurrence` picks one of several.",
+                  ),
+                new_str: z.string().describe("Replacement text. Empty string deletes."),
+                occurrence: z.coerce
+                  .number()
+                  .optional()
+                  .describe(
+                    "1-based index of WHICH match to replace, when old_str is intentionally non-unique (a phrase repeated verbatim). Omit when old_str already matches once.",
+                  ),
+              }),
+              z.object({
+                quote: z
+                  .object({
+                    exact: z.string().describe("The VISIBLE text to replace, as a reader sees it."),
+                    prefix: z.string().optional().describe("Visible text just before it."),
+                    suffix: z.string().optional().describe("Visible text just after it."),
+                  })
+                  .describe(
+                    "Locates the edit by RENDERED text (the selector comment anchors use) instead of raw source — no format:'html' read needed. Strict resolution: the context must pin exactly one spot (or the exact be globally unique), the span may not cross markup, and a miss applies nothing.",
+                  ),
+                new_text: z
+                  .string()
+                  .describe("Replacement for the quoted span, as plain text. Empty deletes."),
+              }),
+            ]),
           )
           .optional()
           .describe(
-            "Surgical revision of a SINGLE-FILE artifact without resending it: exact-match search/replace against the current stored source, applied in order (each edit sees the previous one's result). Requires `short_id`; use INSTEAD of `content`, and read format:'html' first so old_str matches the raw source. See derive://skills/publishing. A miss applies nothing and returns why.",
+            "Surgical revision of a SINGLE-FILE artifact without resending it. Two shapes, not mixable in one batch: {old_str, new_str} — exact-match against the current stored source, applied in order (read format:'html' first so old_str matches the raw source); or {quote: {exact, prefix, suffix}, new_text} — located by VISIBLE text and resolved server-side, no raw read needed. Requires `short_id`; use INSTEAD of `content`. See derive://skills/publishing. A miss applies nothing and returns why.",
           ),
         base_version: z.coerce
           .number()

@@ -73,6 +73,9 @@ export interface MaterializedEdits {
   filename: string
 }
 
+/** Hard cap on edits per request — see the guard in materializeEdits. */
+export const MAX_EDITS_PER_BATCH = 500
+
 /** A filename that round-trips `contentType` through the publish sniffer (which types
  *  by filename first). Any revision of an existing single-file artifact that doesn't
  *  carry an explicit filename must go through this — an `index.html` default silently
@@ -170,6 +173,16 @@ export async function materializeEdits(
   // (agents — {old_str, new_str}). Quote edits resolve against the stored version's
   // source first, atomically; old_str edits then run on the result. Both halves are
   // all-or-nothing, so a failure in either applies nothing.
+  // The routes JSON.parse the field without shape-checking it — a non-array here
+  // must be a clean 400 (EditError), not a TypeError-shaped 500.
+  if (!Array.isArray(edits)) throw new EditError("`edits` must be a JSON array of edits.")
+  // A hard batch cap: each quote edit costs full-document regex scans, and the
+  // per-request write limiter bounds request COUNT, not per-request CPU. The inline
+  // editor emits one edit per changed text run — dozens at the outside.
+  if (edits.length > MAX_EDITS_PER_BATCH)
+    throw new EditError(
+      `\`edits\` has ${edits.length} entries — the maximum per request is ${MAX_EDITS_PER_BATCH}. Split the batch.`,
+    )
   const quoteEdits: QuoteEdit[] = []
   const strEdits: DocEdit[] = []
   for (const e of edits) {
@@ -178,8 +191,18 @@ export async function materializeEdits(
   }
   if (!quoteEdits.length && !strEdits.length)
     throw new EditError("`edits` is empty — provide at least one edit.")
-  let content = applyQuoteEdits(src, cur.content_type ?? "", quoteEdits)
-  if (strEdits.length) content = applyEdits(content, strEdits)
+  // The two shapes resolve against DIFFERENT baselines (quotes against the stored
+  // source all-at-once; old_str edits sequentially, each seeing the previous
+  // result). A mixed batch would silently reorder — a caller's old_str targeting
+  // text a quote edit rewrote would miss, or worse, match elsewhere — so mixing is
+  // refused outright rather than given order-dependent semantics.
+  if (quoteEdits.length && strEdits.length)
+    throw new EditError(
+      "`edits` mixes quote edits and old_str edits — send the two shapes as separate requests.",
+    )
+  const content = quoteEdits.length
+    ? applyQuoteEdits(src, cur.content_type ?? "", quoteEdits)
+    : applyEdits(src, strEdits)
   // Keep the artifact's content type: the sniffer types by filename first, and the
   // default index.html would silently re-type an edited markdown doc as HTML.
   return { content, filename: preservingFilename(cur.content_type) }
