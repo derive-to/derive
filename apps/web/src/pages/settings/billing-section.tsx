@@ -1,5 +1,5 @@
-import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useEffect, useRef, useState } from "react"
 import { api, type BillingInfo } from "@/api"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
@@ -26,10 +26,21 @@ const TIER_LABELS: Record<BillingInfo["tier"], string> = {
 // the one place it's spelled out; a future shared helper should replace it here too.
 const gb = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GB`
 
+// Mirrors LAPSED_SUBSCRIPTION_STATUSES in packages/core/src/billing.ts (not
+// imported at runtime, same reasoning as FREE_SEAT_LIMIT above): a formerly-live
+// subscription that ended, distinct from never having subscribed at all.
+const LAPSED_STATUSES = new Set(["canceled", "unpaid", "incomplete_expired"])
+
 const statusLine = (b: BillingInfo): string | null => {
-  if (!b.subscribed) return null
+  if (!b.subscribed) {
+    // `tier` already reports the current entitlement ("free") once a subscription
+    // lapses, so it can't distinguish "never subscribed" from "canceled" — only
+    // the raw status can, so the message is derived from status alone.
+    if (b.status && LAPSED_STATUSES.has(b.status))
+      return "Canceled. Publishing is paused until an owner renews."
+    return null
+  }
   if (b.status === "past_due") return "Payment past due, publishing continues while Stripe retries"
-  if (b.status === "canceled") return "Canceled"
   if (b.current_period_end) return `Renews ${new Date(b.current_period_end).toLocaleDateString()}`
   return null
 }
@@ -44,16 +55,66 @@ const storageLine = (b: BillingInfo): string => {
   return b.storage.cap_bytes == null ? `${used} used` : `${used} used of ${gb(b.storage.cap_bytes)}`
 }
 
+// How long a just-completed checkout keeps re-polling for the webhook to land
+// before giving up — Stripe's webhook is usually instant, but this covers the
+// tail. Same idea as welcome.tsx's WATCH_INTERVAL_MS.
+const CHECKOUT_POLL_INTERVAL_MS = 2000
+const CHECKOUT_POLL_TIMEOUT_MS = 30_000
+
 // Plan truth, upgrade, and the Stripe portal handoff. Owners (isAdmin) see the
 // buttons; every member sees the plan card. Structural skeleton borrowed from
 // general-section.tsx (the isAdmin gate, useQuery/useApiMutation idioms).
 export function BillingSection() {
+  const qc = useQueryClient()
   const { data: ws } = useQuery(workspaceQuery())
-  const { data: billing, isPending, isError, refetch } = useQuery(billingQuery())
+  const [showSuccessBanner, setShowSuccessBanner] = useState(false)
+  // A ref, not state: refetchInterval reads it synchronously on every tick, and
+  // a ref's .current is always current there without re-subscribing the query.
+  const pollDeadline = useRef<number | null>(null)
+
+  // ?checkout=success lands here fresh back from Stripe: the cached billing
+  // query may predate the webhook, so consume + strip the param (same one-shot
+  // idiom as general-section's ?new-workspace=1), force a refetch, and poll
+  // briefly until the webhook flips `subscribed` true.
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (url.searchParams.get("checkout") === "success") {
+      url.searchParams.delete("checkout")
+      window.history.replaceState(null, "", url)
+      setShowSuccessBanner(true)
+      pollDeadline.current = Date.now() + CHECKOUT_POLL_TIMEOUT_MS
+      void qc.invalidateQueries({ queryKey: billingQuery().queryKey })
+    }
+  }, [qc])
+
+  const {
+    data: billing,
+    isPending,
+    isError,
+    refetch,
+  } = useQuery({
+    ...billingQuery(),
+    refetchInterval: (q) => {
+      if (pollDeadline.current === null) return false
+      if (q.state.data?.subscribed) return false
+      if (Date.now() >= pollDeadline.current) return false
+      return CHECKOUT_POLL_INTERVAL_MS
+    },
+  })
   const isAdmin = ws?.role === "owner"
 
   return (
     <SettingsSection title="Billing" description="Your plan, seats, and storage.">
+      {showSuccessBanner && (
+        <div data-testid="billing-success-banner">
+          <StatusPanel
+            tone="success"
+            layout="inline"
+            title="Upgrade complete."
+            description="Your plan is active as soon as Stripe confirms payment, usually within seconds."
+          />
+        </div>
+      )}
       {isPending ? (
         <SettingsListSkeleton rows={1} trailing={false} />
       ) : isError ? (

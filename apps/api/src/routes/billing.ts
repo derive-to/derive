@@ -24,16 +24,27 @@ const LOOKUP: Record<string, string> = {
  */
 export const billingRoutes = (ctx: AppContext) => {
   const app = new Hono()
-  const { meta, deps, billingState, requireWorkspace, currentUser } = ctx
+  const {
+    meta,
+    deps,
+    billingState,
+    requireWorkspace,
+    currentUser,
+    workspaceRole,
+    activeWorkspace,
+  } = ctx
   const billing = deps.billing
 
-  // The workspace's billing truth, owner only. Also heals Stripe seat drift as a
-  // side effect: a membership write's own syncSeats call can be lost (a dropped
-  // response, a swallowed Stripe hiccup), so the next look here re-checks and
-  // pushes the correction before reading state, so the response reflects reality.
+  // The workspace's billing truth, any member (same split as GET /v1/workspace/settings:
+  // read is for everyone, the PATCH-equivalents here — checkout, portal — stay
+  // "manage" only). Also heals Stripe seat drift as a side effect: a membership
+  // write's own syncSeats call can be lost (a dropped response, a swallowed Stripe
+  // hiccup), so the next look here re-checks and pushes the correction before
+  // reading state, so the response reflects reality regardless of who's reading.
   app.get("/v1/billing", async (c) => {
-    const org = await requireWorkspace(c, "manage")
-    if (org instanceof Response) return org
+    const role = await workspaceRole(c)
+    if (role === null) return fail(c, 401, "unauthenticated")
+    const org = await activeWorkspace(c)
     await syncSeats({ meta, billing }, org)
     const [state, sub, stored, assets, members] = await Promise.all([
       billingState(org),

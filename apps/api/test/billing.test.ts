@@ -44,9 +44,15 @@ describe("billing routes", () => {
     expect(body.beta).toBe(true)
   })
 
-  it("GET /v1/billing: editor 403", async () => {
-    const { app } = boot("br_get403")
-    expect((await app.request("/v1/billing", { headers: as("u2@x.test") })).status).toBe(403)
+  it("GET /v1/billing: editor sees the same shape (any member can read)", async () => {
+    const { app } = boot("br_get_editor")
+    const r = await app.request("/v1/billing", { headers: as("u2@x.test") })
+    expect(r.status).toBe(200)
+    const body = await r.json()
+    expect(body.tier).toBe("free")
+    expect(body.seats).toBe(4)
+    expect(body.subscribed).toBe(false)
+    expect(body.beta).toBe(true)
   })
 
   it("checkout: owner gets a URL, quantity = live seats", async () => {
