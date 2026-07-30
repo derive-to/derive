@@ -42,6 +42,8 @@ const stubApi = (opts: {
   content?: string
   /** Status for that read — 404/500 exercises the unreadable-target path. */
   contentStatus?: number
+  /** What the artifact RECORD reports as its stored type (the thing a revision must preserve). */
+  artifactContentType?: string
   /** Per-provider credentials. Default: a claude-code api key, which is what every pre-existing
    *  test in this file implicitly assumed while injecting `callModel` over the top of it. */
   credentials?: Record<string, StubCredential>
@@ -95,8 +97,20 @@ const stubApi = (opts: {
           rec.reads.push(url)
           const status = opts.contentStatus ?? 200
           if (status >= 400) return send(status, { error: "nope" })
-          res.writeHead(200, { "content-type": "text/markdown" })
+          // AS PRODUCTION SERVES IT. /content returns text/plain for EVERY artifact so the bytes
+          // render as text instead of executing in a browser — the header is the transport's,
+          // not the document's. This stub used to answer text/markdown, which made a fix that
+          // read the header look correct here while doing nothing at all in production.
+          res.writeHead(200, { "content-type": "text/plain; charset=utf-8" })
           return res.end(opts.content ?? "# Roadmap\n\n## Now\nShip the thing.\n")
+        }
+        // The artifact RECORD, which carries the type the document is actually stored as.
+        if (/\/v1\/artifacts\/[^/]+$/.test(url) && req.method === "GET") {
+          return send(200, {
+            short_id: "art_1",
+            current_content_type: opts.artifactContentType ?? "text/markdown",
+            current_version: 1,
+          })
         }
         if (url.endsWith("/finish")) {
           rec.finishes.push(JSON.parse(body || "{}"))

@@ -705,10 +705,23 @@ const sourceOf = async (
     if (!res.ok) throw new Error(`artifact ${shortId} → ${res.status}`)
     const body = await res.text()
     if (!body.trim()) throw new Error(`artifact ${shortId} → 200 with an empty body`)
-    // The response header IS the document's recorded type, so keeping it here costs nothing and
-    // saves the write from having to guess one from a filename the model chose. See landOverHttp.
-    const contentType = res.headers.get("content-type")?.split(";")[0]?.trim() || null
-    return { text: body.slice(0, MAX_ARTIFACT_CHARS), contentType }
+    // THE RECORDED TYPE, from the artifact record — NOT from this response's Content-Type
+    // header. That header is the transport's, and `/content` serves every document as
+    // `text/plain; charset=utf-8` so the bytes render as text rather than executing in a
+    // browser. Reading it here looked correct and returned "text/plain" for every artifact,
+    // which matches neither branch downstream, so the format-preserving write silently became
+    // a no-op in production while its test — against a stub that answered `text/markdown` —
+    // stayed green.
+    //
+    // Best-effort: a document whose record cannot be read still gets revised, it just falls
+    // back to naming the file the way the model asked.
+    const meta = await call(`/v1/artifacts/${shortId}`)
+      .then((r) => (r.ok ? (r.json() as Promise<{ current_content_type?: string | null }>) : null))
+      .catch(() => null)
+    return {
+      text: body.slice(0, MAX_ARTIFACT_CHARS),
+      contentType: meta?.current_content_type ?? null,
+    }
   } catch (e) {
     log.warn("loop substrate: could not read the run's target", {
       artifact: shortId,
