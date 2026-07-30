@@ -36,11 +36,31 @@ apps/api/.localdata/
 # never repo content, and their nested configs break root tooling if scanned)
 .claude/worktrees/
 
-# Local dev scratch data (screenshot/walkthrough runs)
+# Local dev scratch data (screenshot/walkthrough runs).
+#
+# ANYWHERE, not only under apps/api: a run started from the repo root drops the same directory
+# there, and an apps/api-only glob does not catch it. These directories hold a live derive.db
+# AND the .auth-secret that decrypts the credentials stored inside it, and one of each was
+# committed on this branch before the pattern was widened. .gitignore is the first line of
+# defence; scripts/check-local-data.mjs (wired into `pnpm ci`) is the one that fails the build.
 apps/api/.localdata/
-# …and every suffixed variant (.localdata-rv, .localdata-ux, …). The unsuffixed glob
-# missed those and a run's derive.db plus its .auth-secret got committed.
-apps/api/.localdata-*/
+.localdata/
+.localdata-*/
+**/.localdata/
+**/.localdata-*/
+
+# Never commit a database or an auth secret, wherever it lands. The directories above already
+# cover the known cases; these catch the same files dropped somewhere new — a stray --data-dir,
+# a scratch copy, a fixture written to the wrong place.
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+.auth-secret
+**/.auth-secret
 
 # Coverage output. Untracked, but a FAILED `pnpm verify` leaves these behind, and the
 # next run's lint step then scans them and fails on generated files.

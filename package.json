@@ -65,7 +65,7 @@
     "format": "biome format --write",
     "check": "biome check",
     "check:fix": "biome check --write",
-    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:mutations && pnpm lint:reload && pnpm lint:surfaces && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:deadcode && pnpm lint:boundaries && pnpm lint:env && pnpm lint:api-types && pnpm lint:agent-skill && pnpm lint:agent-package-files && pnpm lint:skills && pnpm lint:mcp-coercion",
+    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:mutations && pnpm lint:reload && pnpm lint:surfaces && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:deadcode && pnpm lint:boundaries && pnpm lint:env && pnpm lint:api-types && pnpm lint:agent-skill && pnpm lint:agent-package-files && pnpm lint:skills && pnpm lint:mcp-coercion && pnpm lint:local-data",
     "verify": "pnpm run ci && pnpm typecheck && pnpm test:coverage",
     "precommit": "pnpm run ci",
     "prepare": "git config core.hooksPath .githooks || true",
@@ -78,7 +78,8 @@
     "lint:agent-package-files": "node scripts/check-agent-package-files.mjs",
     "lint:skills": "node scripts/gen-skills.mjs --check",
     "gen:skills": "node scripts/gen-skills.mjs",
-    "lint:mcp-coercion": "node scripts/check-mcp-coercion.mjs"
+    "lint:mcp-coercion": "node scripts/check-mcp-coercion.mjs",
+    "lint:local-data": "node scripts/check-local-data.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
