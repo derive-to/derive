@@ -776,7 +776,10 @@ export interface IntegrationStore {
   /** The Slack message mirroring a Derive thread INTO one channel, or null. A thread mirrors
    *  into every channel subscribed to its artifact, so the channel is part of the key. */
   getSlackThreadLink(threadId: string, channel: string): Promise<SlackThreadLinkRecord | null>
-  /** Every channel a Derive thread has been mirrored into. */
+  /** Every channel a Derive thread has been mirrored into. No production caller today — the
+   *  senders and the interactivity handler all resolve a specific (thread, channel) — but it is
+   *  what the contract tests and the fan-out tests assert against, and the natural query for
+   *  anything that needs to show or clean up a thread's mirrors. */
   listSlackThreadLinksByThread(threadId: string): Promise<SlackThreadLinkRecord[]>
   /** The Derive thread a Slack message maps to (for reply-back), or null. */
   getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null>
