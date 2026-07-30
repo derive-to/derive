@@ -1,4 +1,5 @@
 import {
+  type AnyDocEdit,
   type ArtifactRecord,
   artifactUrl,
   type BundleDoc,
@@ -558,7 +559,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (typeof editsField === "string") {
       if (!shortId || !existing)
         return fail(c, 400, "edits revises an EXISTING artifact — POST to its /versions endpoint")
-      let edits: { old_str: string; new_str: string }[]
+      let edits: AnyDocEdit[]
       try {
         edits = JSON.parse(editsField)
       } catch {

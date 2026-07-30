@@ -1,10 +1,14 @@
 import {
+  type AnyDocEdit,
   type ArtifactRecord,
   applyEdits,
+  applyQuoteEdits,
   type DiffOp,
   type DocEdit,
   diffLines,
   EditError,
+  isQuoteEdit,
+  type QuoteEdit,
   toMarkdown,
   type VersionRecord,
 } from "@derive/core"
@@ -142,7 +146,7 @@ const conflictDiffNote = async (
 export async function materializeEdits(
   deps: MaterializeEditsDeps,
   artifact: Pick<ArtifactRecord, "id" | "short_id" | "kind" | "current_version">,
-  edits: DocEdit[],
+  edits: AnyDocEdit[],
   baseVersion: number | undefined,
 ): Promise<MaterializedEdits> {
   if (artifact.kind !== "file")
@@ -161,7 +165,21 @@ export async function materializeEdits(
   const src = cur ? await deps.sourceText(cur) : null
   if (!cur || src === null)
     throw new EditError(`Couldn't load the current source of "${artifact.short_id}".`)
-  const content = applyEdits(src, edits)
+  // Two edit shapes share the batch: quote-scoped edits (the inline editor — located
+  // by {exact, prefix, suffix} against the RENDERED text) and exact-source edits
+  // (agents — {old_str, new_str}). Quote edits resolve against the stored version's
+  // source first, atomically; old_str edits then run on the result. Both halves are
+  // all-or-nothing, so a failure in either applies nothing.
+  const quoteEdits: QuoteEdit[] = []
+  const strEdits: DocEdit[] = []
+  for (const e of edits) {
+    if (isQuoteEdit(e)) quoteEdits.push(e)
+    else strEdits.push(e as DocEdit)
+  }
+  if (!quoteEdits.length && !strEdits.length)
+    throw new EditError("`edits` is empty — provide at least one edit.")
+  let content = applyQuoteEdits(src, cur.content_type ?? "", quoteEdits)
+  if (strEdits.length) content = applyEdits(content, strEdits)
   // Keep the artifact's content type: the sniffer types by filename first, and the
   // default index.html would silently re-type an edited markdown doc as HTML.
   return { content, filename: preservingFilename(cur.content_type) }

@@ -148,6 +148,70 @@ describe("materializeEdits: conflict diff (compactDiff / conflictDiffNote)", () 
   })
 })
 
+describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () => {
+  it("applies a quote edit to markdown and keeps the .md filename", async () => {
+    const deps = mkDeps({ 1: { text: "# T\n\nIt was teh best of times.\n" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ quote: { exact: "teh", prefix: "It was ", suffix: " best" }, new_text: "the" }],
+      1,
+    )
+    expect(out.content).toContain("It was the best of times.")
+    expect(out.filename).toBe("index.md")
+  })
+
+  it("applies a quote edit to html source via the projection map", async () => {
+    const deps = mkDeps({
+      1: {
+        text: "<p>The quick brown fox jumps over the lazy dog.</p>",
+        contentType: "text/html",
+      },
+    })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ quote: { exact: "lazy", prefix: "over the ", suffix: " dog" }, new_text: "sleepy" }],
+      1,
+    )
+    expect(out.content).toBe("<p>The quick brown fox jumps over the sleepy dog.</p>")
+    expect(out.filename).toBe("index.html")
+  })
+
+  it("mixes quote edits with old_str edits in one atomic batch", async () => {
+    const deps = mkDeps({ 1: { text: "alpha beta gamma" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [
+        { quote: { exact: "alpha", suffix: " beta" }, new_text: "ALPHA" },
+        { old_str: "gamma", new_str: "GAMMA" },
+      ],
+      1,
+    )
+    expect(out.content).toBe("ALPHA beta GAMMA")
+  })
+
+  it("a failing quote edit rejects the batch as a plain EditError (400-shaped)", async () => {
+    const deps = mkDeps({ 1: { text: "no such phrase here" } })
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        [{ quote: { exact: "vanished text" }, new_text: "x" }],
+        1,
+      ),
+    ).rejects.toThrow(/wasn't found/)
+  })
+
+  it("still enforces base_version for quote edits (409-shaped conflict)", async () => {
+    const deps = mkDeps({ 1: { text: "one" }, 2: { text: "two" } })
+    await expect(
+      materializeEdits(deps, fileArtifact(2), [{ quote: { exact: "one" }, new_text: "1" }], 1),
+    ).rejects.toThrow(EditConflictError)
+  })
+})
+
 describe("preservingFilename", () => {
   it("keeps a markdown artifact typed as markdown", () => {
     expect(preservingFilename("text/markdown")).toBe("index.md")

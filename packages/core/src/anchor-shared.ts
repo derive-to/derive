@@ -114,3 +114,64 @@ export function findQuoteWithContext(
     return i >= 0 ? { start: i, end: i + q.length } : null
   }
 }
+
+/**
+ * The CONTEXT phase of {@link findQuoteWithContext} alone — prefix + exact + suffix must
+ * all match, or null. No bare-exact fallback: a DESTRUCTIVE caller (applying an edit,
+ * not painting a highlight) must not fall back to "the first place the words appear",
+ * which for a repeated phrase is silently the wrong spot. Pair with
+ * {@link findQuoteMatches} to accept a context miss only when the exact is unambiguous.
+ */
+export function findQuoteContextOnly(
+  text: string,
+  exact: string,
+  prefix?: string,
+  suffix?: string,
+): { start: number; end: number } | null {
+  const q = exact.trim()
+  if (!q) return null
+  const pre = (prefix ?? "").trim()
+  const suf = (suffix ?? "").trim()
+  if (!pre && !suf) return null
+  try {
+    const joinPre = pre ? `${flexPattern(pre)}\\s+` : ""
+    const joinSuf = suf ? `\\s+${flexPattern(suf)}` : ""
+    const re = new RegExp(`${joinPre}(${flexPattern(q)})${joinSuf}`, "d")
+    const m = re.exec(text) as (RegExpExecArray & { indices?: Array<[number, number]> }) | null
+    const gi = m?.indices?.[1]
+    return gi ? { start: gi[0], end: gi[1] } : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Every whitespace-flexible match of `quote` in `text` (capped so a degenerate quote
+ * on a huge document stays bounded). Lets a destructive caller distinguish "matches
+ * once — safe to act on" from "matches many — ambiguous, refuse".
+ */
+export function findQuoteMatches(
+  text: string,
+  quote: string,
+  cap = 20,
+): { start: number; end: number }[] {
+  const q = quote.trim()
+  if (!q) return []
+  const out: { start: number; end: number }[] = []
+  try {
+    const re = new RegExp(flexPattern(q), "g")
+    for (let m = re.exec(text); m && out.length < cap; m = re.exec(text)) {
+      out.push({ start: m.index, end: m.index + m[0].length })
+      // A zero-width match can't happen (q is non-empty), but never trust lastIndex
+      // to advance on its own with pathological inputs.
+      if (re.lastIndex <= m.index) re.lastIndex = m.index + 1
+    }
+  } catch {
+    let i = text.indexOf(q)
+    while (i >= 0 && out.length < cap) {
+      out.push({ start: i, end: i + q.length })
+      i = text.indexOf(q, i + 1)
+    }
+  }
+  return out
+}
