@@ -1083,6 +1083,54 @@ export class PgMetaStore implements MetaStore {
   listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]> {
     return this.db.select().from(artifactMember).where(eq(artifactMember.artifact_id, artifactId))
   }
+  /**
+   * Every grant one user holds over one artifact, in ONE round trip — see MetaStore.
+   *
+   * A union of the four reads it replaces, tagged by source so the caller can tell an org role
+   * from an artifact role. Deliberately a union rather than joins: an artifact can sit in many
+   * collections, and joining would multiply the membership row across them, making the result
+   * depend on collection layout. Each arm returns its own rows; the caller reduces.
+   *
+   * The arms mirror, in order, getMembership, getArtifactMember, and the two halves of
+   * collectionRolesForArtifact — the explicit collection share, then the workspace-open
+   * collection that propagates the viewer's SEAT role. Change either of those and change this.
+   */
+  async artifactGrants(
+    artifactId: string,
+    orgId: string,
+    userId: string,
+  ): Promise<{ orgRole: Role | null; artifactRoles: Role[] }> {
+    const res = await this.db.execute(sql`
+      select 'org' as kind, m.role as role
+        from membership m
+       where m.org_id = ${orgId} and m.user_id = ${userId}
+      union all
+      select 'artifact' as kind, am.role as role
+        from artifact_member am
+       where am.artifact_id = ${artifactId} and am.user_id = ${userId}
+      union all
+      select 'artifact' as kind, cm.role as role
+        from collection_member cm
+        join collection_item ci on ci.collection_id = cm.collection_id
+       where ci.artifact_id = ${artifactId} and cm.user_id = ${userId}
+      union all
+      select 'artifact' as kind, m2.role as role
+        from collection_item ci2
+        join collection c on c.id = ci2.collection_id
+        join membership m2 on m2.org_id = c.org_id
+       where ci2.artifact_id = ${artifactId}
+         and c.workspace_access = 'member'
+         and m2.user_id = ${userId}
+    `)
+    const rows = (res as unknown as { rows?: { kind: string; role: Role }[] }).rows ?? []
+    let orgRole: Role | null = null
+    const artifactRoles: Role[] = []
+    for (const r of rows) {
+      if (r.kind === "org") orgRole = r.role
+      else artifactRoles.push(r.role)
+    }
+    return { orgRole, artifactRoles }
+  }
   async artifactRolesFor(userId: string, artifactIds: string[]): Promise<Record<string, Role>> {
     if (artifactIds.length === 0) return {}
     const rows = await this.db

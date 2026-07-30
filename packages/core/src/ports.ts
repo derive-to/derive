@@ -661,6 +661,31 @@ export interface CollectionStore {
    *  artifact — folded into their effective artifact role (collection sharing). */
   collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]>
 
+  /**
+   * OPTIONAL FAST PATH: every grant one user holds over one artifact, in ONE round trip.
+   *
+   * Narrowing a principal to an Actor needs the workspace membership, the per-artifact share and
+   * the collection shares — `getMembership` + `getArtifactMember` +
+   * `collectionRolesForArtifact` — and that last one is itself two queries. Four round trips to
+   * decide one boolean, on every authorize.
+   *
+   * Affordable when the database is local, ruinous when it is a region away: on the hosted edge
+   * each trip measured ~100-900ms, and one chat request spent most of a second on permission
+   * rows alone. A store that can answer this in a single statement implements it; one that
+   * cannot omits it and context.ts falls back to the four calls, so implementing it is always
+   * optional.
+   *
+   * It never changes the ANSWER. `can()` remains the only place a decision is made; this only
+   * changes how its inputs arrive. Returns exactly what the four calls would: the org role (null
+   * when not a member) and every artifact-level role — explicit and collection-derived —
+   * unreduced, so the caller folds them with maxRole as before.
+   */
+  artifactGrants?(
+    artifactId: string,
+    orgId: string,
+    userId: string,
+  ): Promise<{ orgRole: Role | null; artifactRoles: Role[] }>
+
   // ---- Folders (organize a collection's artifacts; inherit its access, grant nothing) --
   createFolder(f: NewFolder): Promise<FolderRecord>
   /** The folders belonging to a collection. Name order is a view concern. */

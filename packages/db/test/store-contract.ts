@@ -1,6 +1,6 @@
 import { randomUUID as uuid } from "node:crypto"
 import type { MetaStore, NewArtifact, NewRun, NewVersion, SortMode } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS } from "@derive/core"
+import { DEFAULT_ORG_SETTINGS, maxRole } from "@derive/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 /**
@@ -3113,6 +3113,92 @@ export function runStoreContract(
       // …and the rightful workspace can still remove it.
       await store.deletePlan(theirs.id, other)
       expect(await store.getPlan(theirs.id)).toBeNull()
+    })
+  })
+  // OPTIONAL FAST PATH. `artifactGrants` collapses four reads — membership, artifact share, and
+  // both halves of collectionRolesForArtifact — into one statement, and it is an authorization
+  // INPUT: a disagreement is not a slow page, it is someone seeing a document they should not,
+  // or losing one they own.
+  //
+  // So rather than assert hand-written expectations, run BOTH paths over the same fixtures and
+  // require them to agree. The four-read path is the specification. A store that does not
+  // implement the fast path skips this, which is what makes implementing it optional.
+  describe(`${label}: artifactGrants agrees with the four reads it replaces`, () => {
+    it("matches for a stranger, a member, a sharee, and both kinds of collection share", async () => {
+      if (!store.artifactGrants) return // dialect has no fast path — the fallback is the only path
+
+      const org = `org_grants_${uuid()}`
+      const other = `org_other_${uuid()}`
+      await store.setWorkspace(org, "Grants")
+      await store.setWorkspace(other, "Other")
+      const art = newArtifact({ org_id: org, workspace_access: "member", link_role: "none" })
+      await store.createArtifact(art)
+
+      const [owner, member, sharee, collab, stranger] = [
+        `u_own_${uuid()}`,
+        `u_mem_${uuid()}`,
+        `u_shr_${uuid()}`,
+        `u_col_${uuid()}`,
+        `u_str_${uuid()}`,
+      ]
+      for (const [u, role] of [
+        [owner, "owner"],
+        [member, "editor"],
+        [collab, "viewer"],
+      ] as const)
+        await store.setMembership({ id: uuid(), org_id: org, user_id: u, role })
+      // An explicit share held by a NON-member: artifact role present, org role must stay null.
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: art.id,
+        user_id: sharee,
+        role: "commenter",
+      })
+      // TWO collections holding the same artifact — one shared explicitly, one open to the
+      // workspace so members inherit their SEAT role. Several collections is precisely where a
+      // join would multiply the membership row.
+      const explicitCol = uuid()
+      const openCol = uuid()
+      await store.createCollection({
+        id: explicitCol,
+        org_id: org,
+        title: "Explicit",
+        created_by: owner,
+        workspace_access: "none",
+      })
+      await store.createCollection({
+        id: openCol,
+        org_id: org,
+        title: "Open",
+        created_by: owner,
+        workspace_access: "member",
+      })
+      await store.addCollectionItem(explicitCol, art.id)
+      await store.addCollectionItem(openCol, art.id)
+      await store.setCollectionMember({
+        id: uuid(),
+        collection_id: explicitCol,
+        user_id: collab,
+        role: "editor",
+      })
+
+      const slow = async (orgId: string, userId: string) => {
+        const orgRole = (await store.getMembership(orgId, userId))?.role ?? null
+        const am = await store.getArtifactMember(art.id, userId)
+        const cRoles = await store.collectionRolesForArtifact(art.id, userId)
+        return { orgRole, artifactRole: maxRole(am?.role ?? null, ...cRoles) }
+      }
+      const fast = async (orgId: string, userId: string) => {
+        const g = await store.artifactGrants?.(art.id, orgId, userId)
+        if (!g) throw new Error("artifactGrants vanished mid-test")
+        return { orgRole: g.orgRole, artifactRole: maxRole(null, ...g.artifactRoles) }
+      }
+
+      for (const u of [owner, member, sharee, collab, stranger])
+        expect(await fast(org, u), `grants disagree for ${u}`).toEqual(await slow(org, u))
+
+      // The org arm must key on the org PASSED IN, not on the artifact's own workspace.
+      for (const u of [owner, stranger]) expect(await fast(other, u)).toEqual(await slow(other, u))
     })
   })
 }

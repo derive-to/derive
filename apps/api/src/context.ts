@@ -892,6 +892,25 @@ export function buildContext(deps: AppDeps) {
     // shared link never auto-joins you into someone else's workspace; you only carry an org
     // role where you're explicitly a member.
     const me = p.user
+    // ONE ROUND TRIP WHERE THE STORE CAN, four where it cannot. The reads below are the
+    // membership, the per-artifact share and the collection shares — and the last is itself two
+    // queries, so this is four trips to decide one boolean, on every authorize. A store that can
+    // answer it in a single statement implements `artifactGrants`; the fallback is the original
+    // code, unchanged, so a store without it behaves exactly as before.
+    //
+    // Both paths feed the SAME maxRole/can(): the fast path changes how the inputs arrive, never
+    // what they are. artifact-grants-parity.test.ts asserts the two agree.
+    if (meta.artifactGrants) {
+      const g = await meta.artifactGrants(a.id, a.org_id, me.id)
+      return {
+        kind: "user",
+        userId: me.id,
+        artifactRole: maxRole(null, ...g.artifactRoles),
+        orgRole: g.orgRole,
+        locked,
+        unlocked,
+      }
+    }
     const orgRole = (await meta.getMembership(a.org_id, me.id))?.role ?? null
     const am = await meta.getArtifactMember(a.id, me.id)
     // A collection share grants its role on every artifact in the collection,
