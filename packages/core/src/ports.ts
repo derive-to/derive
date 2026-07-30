@@ -1380,6 +1380,12 @@ export interface AssetRecord {
   org_id: string
   content_type: string
   size_bytes: number
+  /** Pixel dimensions, read from the image header at upload. Null for fonts, for an image
+   *  whose header couldn't be read, and for rows predating the columns. Bytes alone never
+   *  say whether an upload is big because it carries detail or because it was exported at
+   *  twice the density it needed — and pixel count is the lever that would change it. */
+  width: number | null
+  height: number | null
   created_at: string
 }
 export interface NewAsset {
@@ -1387,6 +1393,9 @@ export interface NewAsset {
   org_id: string
   content_type: string
   size_bytes: number
+  /** Omitted for fonts and unreadable headers; nullable so the columns ALTER ADD cleanly. */
+  width?: number | null
+  height?: number | null
 }
 
 export interface AssetStore {

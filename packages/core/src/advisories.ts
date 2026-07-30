@@ -70,6 +70,44 @@ const BLOB_CHECK_CAP = 12
  *  captures the 64-hex key; the extension is display sugar, the key is the ref. */
 const BLOB_REF = /\/blob\/([0-9a-f]{64})(?:\.[a-z0-9]+)?/gi
 
+/** Total referenced asset weight past which a page is worth mentioning. Roughly "this
+ *  costs a second on a slow connection", not "this is wrong" — plenty of pages should be
+ *  heavy, and the point is that the author knows, not that they change it. */
+const HEAVY_PAGE_BYTES = 1024 * 1024
+
+/**
+ * What the assets this page references cost every viewer, every load. Sibling to
+ * {@link missingBlobAdvisory} (same I/O shape, same cap, same never-throws contract),
+ * and deliberately advisory rather than a transform: these are the USER'S bytes, so
+ * Derive names the cost instead of quietly re-encoding someone's image.
+ *
+ * Silent under the threshold. Never throws — a store hiccup must not fail a publish.
+ */
+export const heavyAssetsAdvisory = async (
+  content: string,
+  assets: { getAsset(hash: string): Promise<{ size_bytes: number } | null> },
+): Promise<string | null> => {
+  try {
+    const keys = [
+      ...new Set([...content.matchAll(BLOB_REF)].map((m) => (m[1] as string).toLowerCase())),
+    ].slice(0, BLOB_CHECK_CAP)
+    if (!keys.length) return null
+    const rows = await Promise.all(keys.map((k) => assets.getAsset(k)))
+    const total = rows.reduce((sum, r) => sum + (r?.size_bytes ?? 0), 0)
+    if (total < HEAVY_PAGE_BYTES) return null
+    const mb = (n: number) => `${(n / (1024 * 1024)).toFixed(1)}MB`
+    const found = rows.filter(Boolean).length
+    return (
+      `This page references ${mb(total)} of images across ${found} asset(s), which every ` +
+      `viewer downloads on every load. Nothing is re-encoded (they are your bytes) — but if ` +
+      `any were exported at twice the density they display at, halving that is the lever: it ` +
+      `cut Derive's own renders ~78%, where re-encoding bought 15%.`
+    )
+  } catch {
+    return null
+  }
+}
+
 /** The one advisory that needs I/O: embedded /blob/ URLs whose bytes don't exist —
  *  a hand-typed or mistranscribed hash renders as a 404 image. Only runs when the
  *  store can answer cheaply (`has` is a stat/HEAD); a store without `has` skips the

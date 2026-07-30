@@ -801,6 +801,9 @@ export const asset = pgTable(
     org_id: text("org_id").notNull(),
     content_type: text("content_type").notNull(),
     size_bytes: integer("size_bytes").notNull(),
+    // Header-read pixel dimensions; null for fonts/unreadable/legacy. Mirrors schema.ts.
+    width: integer("width"),
+    height: integer("height"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [index("asset_org").on(t.org_id)],

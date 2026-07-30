@@ -1,6 +1,7 @@
 import {
   artifactUrl,
   EditError,
+  heavyAssetsAdvisory,
   looksLikeHtmlDocument,
   missingBlobAdvisory,
   newId,
@@ -727,6 +728,12 @@ export function registerPublishTool(tc: ToolContext): void {
           typeof content === "string" && artifact.kind === "file"
             ? await missingBlobAdvisory(content, ctx.blobs)
             : null
+        // What this page's images cost every viewer, every load. Same I/O shape; named
+        // rather than silently re-encoded, because these are the user's bytes.
+        const weightAdvisory =
+          typeof content === "string" && artifact.kind === "file"
+            ? await heavyAssetsAdvisory(content, ctx.meta)
+            : null
         const payload = {
           published: true,
           short_id: artifact.short_id,
@@ -766,6 +773,7 @@ export function registerPublishTool(tc: ToolContext): void {
               ? [
                   ...publishAdvisories(content, version.content_type),
                   ...(blobAdvisory ? [blobAdvisory] : []),
+                  ...(weightAdvisory ? [weightAdvisory] : []),
                 ]
                   .map((advisory) => ` ${advisory}`)
                   .join("")

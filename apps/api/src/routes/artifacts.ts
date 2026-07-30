@@ -14,6 +14,7 @@ import {
   encodeCursor,
   formatDiff,
   groupSessions,
+  heavyAssetsAdvisory,
   isHtmlLike,
   isMarkdownBundle,
   missingBlobAdvisory,
@@ -916,6 +917,8 @@ export const artifactRoutes = (ctx: AppContext) => {
         advisories = publishAdvisories(text, version.content_type)
         const blobAdvisory = await missingBlobAdvisory(text, blobs)
         if (blobAdvisory) advisories.push(blobAdvisory)
+        const weight = await heavyAssetsAdvisory(text, meta)
+        if (weight) advisories.push(weight)
       }
       return c.json(
         {

@@ -996,6 +996,10 @@ export const asset = sqliteTable(
     org_id: text("org_id").notNull(),
     content_type: text("content_type").notNull(),
     size_bytes: integer("size_bytes").notNull(),
+    // Pixel dimensions read from the header at upload (see lib/image.ts). Null for fonts,
+    // unreadable headers, and rows predating the columns — so they ALTER ADD cleanly.
+    width: integer("width"),
+    height: integer("height"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [index("asset_org").on(t.org_id)],
