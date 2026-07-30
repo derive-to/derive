@@ -199,6 +199,119 @@ export const slotDriftAdvisories = (
   return out
 }
 
+/** At most this many fields appear in an unfurl summary — a share card has room for a
+ *  glance, not a dump, and the leading keys are almost always the headline ones. */
+const SUMMARY_MAX_FIELDS = 3
+/** Longest a single summarized value may be before it is dropped as unfit for a card. */
+const SUMMARY_MAX_VALUE = 16
+
+/**
+ * A one-line, card-sized summary of a version's slots: `pass 48 · fail 0 · flaky 1`.
+ *
+ * This is the incentive half of data slots, and the cheapest one available. The prior art
+ * is unambiguous that embedded-data conventions live or die on whether publishing is
+ * REWARDED at the moment of publishing: OpenGraph became near-universal because Facebook
+ * rendered a prettier card the instant you added four meta tags, while better-specified
+ * conventions with no rewarding consumer died unadopted. A slot that makes your shared
+ * link show its own numbers is that mechanic, applied to agent-emitted data.
+ *
+ * Deliberately shallow and lossy: scalars only (a nested object on a share card is noise),
+ * the first few fields, short values, numbers formatted plainly. Returns null when there
+ * is nothing card-worthy, so the caller falls back to the ordinary description rather than
+ * rendering an empty flourish.
+ */
+export const slotSummary = (rows: { slot: string; json: string }[]): string | null => {
+  const parts: string[] = []
+  for (const row of rows) {
+    let value: unknown
+    try {
+      value = JSON.parse(row.json)
+    } catch {
+      continue
+    }
+    // A bare scalar slot summarizes as `slotname value`; an object contributes its own
+    // leading scalar fields, which is the shape a metrics slot actually takes.
+    const fields: [string, unknown][] =
+      value !== null && typeof value === "object" && !Array.isArray(value)
+        ? Object.entries(value as Record<string, unknown>)
+        : [[row.slot, value]]
+    for (const [k, v] of fields) {
+      if (parts.length >= SUMMARY_MAX_FIELDS) break
+      if (v === null || typeof v === "object") continue
+      const text =
+        typeof v === "number" ? String(Number.isInteger(v) ? v : Number(v.toFixed(2))) : String(v)
+      if (!text || text.length > SUMMARY_MAX_VALUE) continue
+      parts.push(`${k} ${text}`)
+    }
+    if (parts.length >= SUMMARY_MAX_FIELDS) break
+  }
+  return parts.length ? parts.join(" · ") : null
+}
+
+/** Most deltas reported between two versions; past this the list stops being readable
+ *  and the reader should look at the data itself. */
+const MAX_DELTAS = 8
+
+/** Flatten a slot's scalar leaves to `key -> text`, so two versions can be compared
+ *  field by field without walking structure twice. Depth-limited like slotShape. */
+const scalarLeaves = (value: unknown, depth = 0, prefix = ""): Map<string, string> => {
+  const out = new Map<string, string>()
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    if (prefix) out.set(prefix, Array.isArray(value) ? JSON.stringify(value) : String(value))
+    return out
+  }
+  if (depth >= 3) return out
+  for (const [k, v] of Object.entries(value as Record<string, unknown>))
+    for (const [kk, vv] of scalarLeaves(v, depth + 1, prefix ? `${prefix}.${k}` : k))
+      out.set(kk, vv)
+  return out
+}
+
+/**
+ * What changed between two versions' slots, as readable lines: `checks.pass 41 → 44`.
+ *
+ * The review loop is where humans already are, so this is the cheapest way to put the
+ * numbers in front of them: a version diff that shows prose changes but not the figures
+ * the page is actually about is only half a diff. Scalar leaves only, capped, and it
+ * reports a slot appearing or disappearing as its own line since that is usually the more
+ * important event.
+ */
+export const slotDeltas = (
+  before: { slot: string; json: string }[],
+  after: { slot: string; json: string }[],
+): string[] => {
+  const parse = (rows: { slot: string; json: string }[]) => {
+    const m = new Map<string, Map<string, string>>()
+    for (const r of rows) {
+      try {
+        m.set(r.slot, scalarLeaves(JSON.parse(r.json), 0, ""))
+      } catch {
+        // An unparseable stored row simply has nothing to compare.
+      }
+    }
+    return m
+  }
+  const a = parse(before)
+  const b = parse(after)
+  const out: string[] = []
+  for (const [slot, now] of b) {
+    if (!a.has(slot)) {
+      out.push(`${slot} (new)`)
+      continue
+    }
+    const was = a.get(slot) as Map<string, string>
+    for (const [key, v] of now) {
+      if (out.length >= MAX_DELTAS) return out
+      const prev = was.get(key)
+      if (prev === undefined) out.push(`${slot}.${key} ${v} (new)`)
+      else if (prev !== v) out.push(`${slot}.${key} ${prev} → ${v}`)
+    }
+  }
+  for (const slot of a.keys())
+    if (!b.has(slot) && out.length < MAX_DELTAS) out.push(`${slot} (gone)`)
+  return out
+}
+
 /** How many numeric table cells make a page "carrying data" rather than "mentioning a
  *  number". Deliberately conservative: a missed nudge costs nothing, a false one trains
  *  the reader to skip advisories, and that channel is load-bearing everywhere else. */
