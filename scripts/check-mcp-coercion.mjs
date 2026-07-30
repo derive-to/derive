@@ -27,6 +27,17 @@ const TOOLS_DIR = join(process.cwd(), "apps/api/src/mcp-tools")
 // `z.coerce.number()` and a plain `number` in a comment both pass.
 const BARE_NUMBER = /(?<!coerce\.)\bz\.number\s*\(/g
 
+// A declaration can span lines:
+//
+//     wait: z
+//       .number()      <-- bare too, and a line-by-line regex never saw it
+//
+// That gap was LIVE: this check reported "ok" while seven such parameters sat in
+// catch-up.ts and find.ts — the precise stale-client bug it exists to prevent. A guard
+// that passes while the thing it guards against is present is worse than no guard,
+// because it is also a claim that the problem is handled. So a line ENDING in a bare `z`
+// is checked together with the lines that continue it, and still reported at its own
+// line number, which is where the reader has to edit.
 const offenders = []
 for (const file of readdirSync(TOOLS_DIR).filter((f) => f.endsWith(".ts"))) {
   const src = readFileSync(join(TOOLS_DIR, file), "utf8")
@@ -35,8 +46,18 @@ for (const file of readdirSync(TOOLS_DIR).filter((f) => f.endsWith(".ts"))) {
     // Skip comment lines: prose about z.number() is not a schema declaration.
     const t = line.trim()
     if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return
+    // A declaration that OPENS with a bare `z` continues on the following lines, so look
+    // at this line joined to the next few — that is where `.number()` actually lands.
+    // Collapse the whitespace INSIDE the chain (`z .number(` -> `z.number(`), or the
+    // joined window still hides the very thing being looked for.
+    const window = [line, ...lines.slice(i + 1, i + 4)]
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .replace(/\bz\s+\./g, "z.")
+      .replace(/\.\s+/g, ".")
+    const subject = /(^|[\s:([,])z\s*$/.test(line.replace(/\s+$/, "")) ? window : line
     BARE_NUMBER.lastIndex = 0
-    if (BARE_NUMBER.test(line)) offenders.push(`${file}:${i + 1}  ${t}`)
+    if (BARE_NUMBER.test(subject)) offenders.push(`${file}:${i + 1}  ${t}`)
   })
 }
 

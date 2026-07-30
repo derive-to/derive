@@ -801,9 +801,33 @@ export const asset = pgTable(
     org_id: text("org_id").notNull(),
     content_type: text("content_type").notNull(),
     size_bytes: integer("size_bytes").notNull(),
+    // Header-read pixel dimensions; null for fonts/unreadable/legacy. Mirrors schema.ts.
+    width: integer("width"),
+    height: integer("height"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [index("asset_org").on(t.org_id)],
+)
+
+// A structured data slot extracted from a version's source (see @derive/core data-slots).
+// Natural key (artifact_id, n, slot); rows are written once when a version goes live and
+// never mutated. `gen` (DEFAULT must equal @derive/core SLOT_GEN) marks which extraction
+// rules produced the row. Mirrors schema.ts.
+export const versionData = pgTable(
+  "version_data",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    n: integer("n").notNull(),
+    slot: text("slot").notNull(),
+    json: text("json").notNull(),
+    size_bytes: integer("size_bytes").notNull(),
+    gen: integer("gen").notNull().default(1),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("version_data_slot").on(t.artifact_id, t.n, t.slot)],
 )
 
 // Schema parity is enforced in pg.ts, where the pg `schema` object lives — it
@@ -821,6 +845,7 @@ const PG_TIMESTAMP_DEFAULT = `to_char((now() at time zone 'utc'), 'YYYY-MM-DD"T"
 const TABLES = [
   artifact,
   version,
+  versionData,
   comment,
   webhook,
   webhookDelivery,

@@ -32,11 +32,11 @@ export function registerCatchUpTool(tc: ToolContext): void {
           .describe(
             "Work-queue mode (no short_id): request ids you have HANDLED — acknowledges them off the queue. Ack after the work lands (a publish or a reply), not on read; an unknown or already-acked id is skipped, never an error.",
           ),
-        since_version: z
+        since_version: z.coerce
           .number()
           .optional()
           .describe("The version you last saw (the diff base). Defaults to to_version − 1."),
-        to_version: z
+        to_version: z.coerce
           .number()
           .optional()
           .describe("Compare up to this version instead of the current one (for an exact diff)."),
@@ -52,7 +52,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
           .describe(
             "'summary' (default, token-light) omits the line diff; 'detailed' includes it.",
           ),
-        wait: z
+        wait: z.coerce
           .number()
           .int()
           .min(1)

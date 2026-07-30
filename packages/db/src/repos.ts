@@ -66,6 +66,7 @@ import type {
   NewSessionMessage,
   NewSignupAttribution,
   NewVersion,
+  NewVersionData,
   NewWebhook,
   NotificationRecord,
   OAuthGrant,
@@ -97,6 +98,7 @@ import type {
   TakedownInput,
   UserNotificationPrefRecord,
   UserProfile,
+  VersionDataRecord,
   VersionRecord,
   WebhookRecord,
   WorkspaceAccess,
@@ -180,6 +182,7 @@ import {
   slackUserLink,
   userNotificationPref,
   version,
+  versionData,
   webhook,
   webhookDelivery,
   workspace,
@@ -279,6 +282,7 @@ export function artifactListOrder(
 export const schema = {
   artifact,
   version,
+  versionData,
   comment,
   webhook,
   webhookDelivery,
@@ -327,6 +331,7 @@ const _schemaExhaustive: Exhaustive<typeof schema> = true
 const _schemaShapes: Shapes<typeof schema> = {
   artifact: true,
   version: true,
+  versionData: true,
   comment: true,
   webhook: true,
   webhookDelivery: true,
@@ -591,6 +596,104 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(version.artifact_id, artifactId))
       .orderBy(asc(version.n))
       .all()
+
+  const setVersionData = async (
+    artifactId: string,
+    n: number,
+    rows: NewVersionData[],
+  ): Promise<void> => {
+    // Delete-then-insert so a re-extraction of the same version is idempotent (a fresh
+    // publish never has existing rows for its new n; restore/re-extract might).
+    await db
+      .delete(versionData)
+      .where(and(eq(versionData.artifact_id, artifactId), eq(versionData.n, n)))
+      .run()
+    if (rows.length === 0) return
+    await db
+      .insert(versionData)
+      .values(rows.map((r) => ({ ...r, artifact_id: artifactId, n })))
+      .run()
+  }
+
+  const getVersionData = async (
+    artifactId: string,
+    n: number,
+    slot?: string,
+  ): Promise<VersionDataRecord[]> =>
+    db
+      .select()
+      .from(versionData)
+      .where(
+        and(
+          eq(versionData.artifact_id, artifactId),
+          eq(versionData.n, n),
+          slot ? eq(versionData.slot, slot) : undefined,
+        ),
+      )
+      .orderBy(asc(versionData.slot))
+      .all()
+
+  const getVersionDataSeries = async (
+    artifactId: string,
+    slot: string,
+    from: number,
+    to: number,
+    limit: number,
+  ): Promise<VersionDataRecord[]> =>
+    db
+      .select()
+      .from(versionData)
+      .where(
+        and(
+          eq(versionData.artifact_id, artifactId),
+          eq(versionData.slot, slot),
+          gte(versionData.n, from),
+          lte(versionData.n, to),
+        ),
+      )
+      .orderBy(asc(versionData.n))
+      .limit(limit)
+      .all()
+
+  const listSlotAcrossArtifacts = async (
+    orgId: string,
+    slot: string,
+    opts?: { tag?: string; limit?: number },
+  ) => {
+    // Joined on artifact.current_version, so a SUPERSEDED row can never be reported as
+    // the current state — the failure that would make this quietly wrong rather than
+    // visibly broken. Retired artifacts are excluded: they are out of the library.
+    const tagged = opts?.tag
+      ? db
+          .select({ id: artifactTag.artifact_id })
+          .from(artifactTag)
+          .where(eq(artifactTag.tag, opts.tag.trim().toLowerCase()))
+      : null
+    return db
+      .select({
+        short_id: artifact.short_id,
+        title: artifact.title,
+        n: versionData.n,
+        json: versionData.json,
+        at: versionData.created_at,
+      })
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          eq(versionData.slot, slot),
+          isNull(artifact.removed_at),
+          tagged ? inArray(artifact.id, tagged) : undefined,
+        ),
+      )
+      .orderBy(desc(versionData.created_at))
+      .limit(opts?.limit ?? 100)
+      .all()
+  }
 
   const reclassifyVersion = async (
     artifactId: string,
@@ -3520,6 +3623,10 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
     await db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
     await db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
+    // Artifact-SCOPED webhooks only; a workspace-wide one has a null artifact_id and
+    // survives. Found by scripts/check-delete-cascade.mjs.
+    await db.delete(webhook).where(eq(webhook.artifact_id, id)).run()
+    await db.delete(versionData).where(eq(versionData.artifact_id, id)).run()
     await db.delete(version).where(eq(version.artifact_id, id)).run()
     await db.delete(comment).where(eq(comment.artifact_id, id)).run()
     await db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()
@@ -3630,6 +3737,10 @@ export function makeRepos(db: SqliteDb) {
     addVersion,
     listVersions,
     getVersion,
+    setVersionData,
+    getVersionData,
+    getVersionDataSeries,
+    listSlotAcrossArtifacts,
     reclassifyVersion,
     setVersionPreview,
     setVersionPreviewVariant,

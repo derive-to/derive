@@ -37,7 +37,12 @@ reference the result in `publish`.
 
    Use the matching MIME type for fonts or other image formats. One minted upload URL may
    accept multiple files until it expires; each POST returns its own asset result.
-4. Capture the upload response: `{ key, url, ref, type, size }`.
+4. Capture the upload response: `{ key, url, ref, type, size, width, height, cost }`.
+   - `cost` names what this asset costs every viewer on every load, with its pixel
+     dimensions. READ IT. Nothing is re-encoded (they are your bytes), but a screenshot
+     exported at twice the density it displays at is the common, invisible way a page
+     gets slow — and halving the density is the lever (~78% smaller, where re-encoding
+     buys ~15%). A publish whose page references more than ~1MB of assets says so too.
    - Use permanent `url` in single-file HTML `<img src>`, CSS `url()`, Markdown
      `![]()`, or anywhere a URL is required.
    - Use `ref` (the exact `asset:<hash>` value) as a binary entry in a bundle's

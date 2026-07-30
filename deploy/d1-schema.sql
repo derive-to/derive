@@ -61,6 +61,19 @@ CREATE TABLE IF NOT EXISTS version (
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
 );
 
+CREATE TABLE IF NOT EXISTS version_data (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL,
+  n INTEGER NOT NULL,
+  slot TEXT NOT NULL,
+  json TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  gen INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (artifact_id, n, slot),
+  FOREIGN KEY (artifact_id) REFERENCES artifact(id)
+);
+
 CREATE TABLE IF NOT EXISTS comment (
   id TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL,
@@ -605,6 +618,8 @@ CREATE TABLE IF NOT EXISTS asset (
   org_id TEXT NOT NULL,
   content_type TEXT NOT NULL,
   size_bytes INTEGER NOT NULL,
+  width INTEGER,
+  height INTEGER,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 

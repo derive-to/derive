@@ -1006,9 +1006,36 @@ export const asset = sqliteTable(
     org_id: text("org_id").notNull(),
     content_type: text("content_type").notNull(),
     size_bytes: integer("size_bytes").notNull(),
+    // Pixel dimensions read from the header at upload (see lib/image.ts). Null for fonts,
+    // unreadable headers, and rows predating the columns — so they ALTER ADD cleanly.
+    width: integer("width"),
+    height: integer("height"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [index("asset_org").on(t.org_id)],
+)
+
+// A structured data slot extracted from a version's source (see @derive/core data-slots):
+// a small named JSON payload the authoring agent can query back across versions without
+// re-parsing its own old markup. Natural key (artifact_id, n, slot); rows are written once
+// when a version goes live and never mutated. `gen` marks which extraction rules produced
+// the row (its DEFAULT must equal @derive/core SLOT_GEN) so a grammar change can re-extract
+// older versions lazily — the generation lever the derived-view cache uses.
+export const versionData = sqliteTable(
+  "version_data",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    n: integer("n").notNull(),
+    slot: text("slot").notNull(),
+    json: text("json").notNull(),
+    size_bytes: integer("size_bytes").notNull(),
+    gen: integer("gen").notNull().default(1),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("version_data_slot").on(t.artifact_id, t.n, t.slot)],
 )
 
 // user/session/account/verification tables are owned and migrated by Better Auth
@@ -1024,6 +1051,7 @@ const SQLITE_TIMESTAMP_DEFAULT = `(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
 const TABLES = [
   artifact,
   version,
+  versionData,
   comment,
   webhook,
   webhookDelivery,

@@ -123,6 +123,76 @@ export function runStoreContract(
       expect(await store.getVersion(a.id, 99)).toBeNull()
     })
 
+    it("stores and reads a version's data slots by name and all-at-once", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const v = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, v.n, [
+        { id: uuid(), slot: "checks", json: `{"pass":44}`, size_bytes: 11, gen: 1 },
+        { id: uuid(), slot: "budget", json: "[1,2]", size_bytes: 5, gen: 1 },
+      ])
+      // All slots, ordered by slot name.
+      const all = await store.getVersionData(a.id, v.n)
+      expect(all.map((r) => r.slot)).toEqual(["budget", "checks"])
+      expect(all[0]?.gen).toBe(1)
+      // One slot by name.
+      const one = await store.getVersionData(a.id, v.n, "checks")
+      expect(one).toHaveLength(1)
+      expect(one[0]?.json).toBe(`{"pass":44}`)
+      expect(one[0]?.size_bytes).toBe(11)
+      // A missing slot / version ⇒ empty.
+      expect(await store.getVersionData(a.id, v.n, "nope")).toEqual([])
+      expect(await store.getVersionData(a.id, 999)).toEqual([])
+    })
+
+    it("setVersionData replaces a version's slots idempotently (delete-then-insert)", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const v = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, v.n, [
+        { id: uuid(), slot: "x", json: "1", size_bytes: 1, gen: 1 },
+      ])
+      // Re-extract the same version with a different set — the old rows are gone.
+      await store.setVersionData(a.id, v.n, [
+        { id: uuid(), slot: "y", json: "2", size_bytes: 1, gen: 1 },
+      ])
+      const all = await store.getVersionData(a.id, v.n)
+      expect(all.map((r) => r.slot)).toEqual(["y"])
+      // Empty set clears them entirely.
+      await store.setVersionData(a.id, v.n, [])
+      expect(await store.getVersionData(a.id, v.n)).toEqual([])
+    })
+
+    it("reads one slot across a version range, oldest first, in one query", async () => {
+      const a = await store.createArtifact(newArtifact())
+      // Five versions, each carrying "checks"; only some carry "other".
+      for (let day = 1; day <= 5; day++) {
+        const v = await store.addVersion(a.id, newVersion())
+        const rows = [
+          { id: uuid(), slot: "checks", json: `{"day":${day}}`, size_bytes: 11, gen: 1 },
+          ...(day % 2 === 1
+            ? [{ id: uuid(), slot: "other", json: `${day}`, size_bytes: 1, gen: 1 }]
+            : []),
+        ]
+        await store.setVersionData(a.id, v.n, rows)
+      }
+
+      const all = await store.getVersionDataSeries(a.id, "checks", 1, 5, 100)
+      expect(all.map((r) => r.n)).toEqual([1, 2, 3, 4, 5])
+      expect(all.map((r) => r.json)).toEqual([1, 2, 3, 4, 5].map((d) => `{"day":${d}}`))
+      // Scoped to the named slot only.
+      expect((await store.getVersionDataSeries(a.id, "other", 1, 5, 100)).map((r) => r.n)).toEqual([
+        1, 3, 5,
+      ])
+      // Sub-range, and a range covering versions that carry nothing.
+      expect((await store.getVersionDataSeries(a.id, "checks", 2, 3, 100)).map((r) => r.n)).toEqual(
+        [2, 3],
+      )
+      expect(await store.getVersionDataSeries(a.id, "nosuch", 1, 5, 100)).toEqual([])
+      // The limit bounds the payload and keeps the OLDEST, so paging is predictable.
+      expect((await store.getVersionDataSeries(a.id, "checks", 1, 5, 2)).map((r) => r.n)).toEqual([
+        1, 2,
+      ])
+    })
+
     it("filters listArtifacts by title search and by id set (empty ⇒ none)", async () => {
       const a = await store.createArtifact(newArtifact({ title: "Quarterly Report XYZ" }))
       expect((await store.listArtifacts({ q: "quarterly report xyz" })).map((x) => x.id)).toContain(
@@ -1914,7 +1984,12 @@ export function runStoreContract(
     it("hard-deletes the artifact row and all FK-dependent rows", async () => {
       const a = await store.createArtifact(newArtifact())
       const thread = uuid()
-      await store.addVersion(a.id, newVersion())
+      const dv = await store.addVersion(a.id, newVersion())
+      // Data slots hang off the version by artifact_id — a delete that doesn't clear them
+      // first hits a FOREIGN KEY constraint (found by deleting a slot-bearing artifact live).
+      await store.setVersionData(a.id, dv.n, [
+        { id: uuid(), slot: "checks", json: `{"pass":1}`, size_bytes: 10, gen: 1 },
+      ])
       await store.createComment({
         id: uuid(),
         artifact_id: a.id,
@@ -1928,6 +2003,17 @@ export function runStoreContract(
         artifact_id: a.id,
         user_id: "bob",
         role: "viewer",
+      })
+      // An artifact-SCOPED webhook FKs to artifact.id too — the same trap as version_data,
+      // and it was live in the codebase until scripts/check-delete-cascade.mjs named it.
+      await store.createWebhook({
+        id: uuid(),
+        org_id: ORG,
+        artifact_id: a.id,
+        url: "https://example.test/hook",
+        secret: "s",
+        kind: "generic",
+        events: "*",
       })
       await store.setFavorite(a.id, "amy")
       await store.setArtifactTags(a.id, ["del-tag"])
@@ -1946,6 +2032,7 @@ export function runStoreContract(
       expect(await store.getByShortId(a.short_id)).toBeNull()
       expect(await store.getArtifactById(a.id)).toBeNull()
       expect(await store.listVersions(a.id)).toHaveLength(0)
+      expect(await store.getVersionData(a.id, dv.n)).toHaveLength(0)
       expect(await store.listComments(a.id)).toHaveLength(0)
       expect(await store.getArtifactMember(a.id, "bob")).toBeNull()
       expect(await store.listUserFavoriteIds("amy")).not.toContain(a.id)

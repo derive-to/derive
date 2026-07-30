@@ -1,6 +1,7 @@
 import {
   artifactUrl,
   EditError,
+  heavyAssetsAdvisory,
   looksLikeHtmlDocument,
   missingBlobAdvisory,
   newId,
@@ -10,6 +11,7 @@ import {
   publish as publishVersion,
   type Role,
   roleAllows,
+  slotShapeDriftAdvisories,
 } from "@derive/core"
 import { z } from "zod"
 import { PROFILE_PLACEHOLDER_HTML } from "../brandprint-reference"
@@ -257,7 +259,7 @@ export function registerPublishTool(tc: ToolContext): void {
                   "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once, unless `occurrence` picks one of several.",
                 ),
               new_str: z.string().describe("Replacement text. Empty string deletes."),
-              occurrence: z
+              occurrence: z.coerce
                 .number()
                 .optional()
                 .describe(
@@ -269,7 +271,7 @@ export function registerPublishTool(tc: ToolContext): void {
           .describe(
             "Surgical revision of a SINGLE-FILE artifact without resending it: exact-match search/replace against the current stored source, applied in order (each edit sees the previous one's result). Requires `short_id`; use INSTEAD of `content`, and read format:'html' first so old_str matches the raw source. See derive://skills/publishing. A miss applies nothing and returns why.",
           ),
-        base_version: z
+        base_version: z.coerce
           .number()
           .optional()
           .describe(
@@ -727,6 +729,24 @@ export function registerPublishTool(tc: ToolContext): void {
           typeof content === "string" && artifact.kind === "file"
             ? await missingBlobAdvisory(content, ctx.blobs)
             : null
+        // What this page's images cost every viewer, every load. Same I/O shape; named
+        // rather than silently re-encoded, because these are the user's bytes.
+        const weightAdvisory =
+          typeof content === "string" && artifact.kind === "file"
+            ? await heavyAssetsAdvisory(content, ctx.meta)
+            : null
+        // Shape drift against the previous version — the quiet way a trend read splits
+        // into two metrics that look like one.
+        const driftAdvisories =
+          typeof content === "string" && artifact.kind === "file"
+            ? await slotShapeDriftAdvisories(
+                content,
+                version.content_type,
+                artifact.id,
+                version.n - 1,
+                ctx.meta,
+              )
+            : []
         const payload = {
           published: true,
           short_id: artifact.short_id,
@@ -766,6 +786,8 @@ export function registerPublishTool(tc: ToolContext): void {
               ? [
                   ...publishAdvisories(content, version.content_type),
                   ...(blobAdvisory ? [blobAdvisory] : []),
+                  ...(weightAdvisory ? [weightAdvisory] : []),
+                  ...driftAdvisories,
                 ]
                   .map((advisory) => ` ${advisory}`)
                   .join("")

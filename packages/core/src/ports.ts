@@ -315,6 +315,29 @@ export interface NewVersion {
   name?: string | null
 }
 
+/** One structured data slot extracted from a version's source (see @derive/core
+ *  data-slots). The natural key is (artifact_id, n, slot); `json` is the block's stored
+ *  text, `gen` marks which extraction rules produced it. Rows are written once when a
+ *  version goes live and never mutated — a version is immutable, so its slots are too. */
+export interface VersionDataRecord {
+  id: string
+  artifact_id: string
+  n: number
+  slot: string
+  json: string
+  size_bytes: number
+  gen: number
+  created_at: string
+}
+
+export interface NewVersionData {
+  id: string
+  slot: string
+  json: string
+  size_bytes: number
+  gen: number
+}
+
 export interface ArtifactStore {
   createArtifact(a: NewArtifact): Promise<ArtifactRecord>
   /** Change an artifact's access: workspace access (member seats vs none), the
@@ -349,6 +372,37 @@ export interface ArtifactStore {
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   listVersions(artifactId: string): Promise<VersionRecord[]>
   getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
+  /** Replace a version's stored data slots with `rows` (delete-then-insert, so a
+   *  re-extraction is idempotent). Empty `rows` clears them. Keyed by the immutable
+   *  (artifact, n); called best-effort from the version-bump chain. */
+  setVersionData(artifactId: string, n: number, rows: NewVersionData[]): Promise<void>
+  /** A version's data slots: one named `slot`, or all of them (slot omitted), in slot
+   *  order. Empty when the version carries none. */
+  getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]>
+  /** One slot's value across a RANGE of versions, oldest first — the trend read. ONE
+   *  indexed query, never a per-version loop: a thirty-version series must cost one round
+   *  trip, which is the entire point of slots. Versions in the range carrying no such slot
+   *  are simply absent from the result (they predate slots, or omitted the block), so the
+   *  caller reports coverage rather than inventing gaps. `limit` caps the rows returned so
+   *  a thousand-version artifact can never answer with an unbounded payload. */
+  getVersionDataSeries(
+    artifactId: string,
+    slot: string,
+    from: number,
+    to: number,
+    limit: number,
+  ): Promise<VersionDataRecord[]>
+  /** One slot's CURRENT value across every artifact in a workspace that carries it — the
+   *  cross-artifact read. `getVersionDataSeries` answers "how did this ONE page change over
+   *  time"; this answers "where does this metric stand everywhere", which is what a
+   *  workspace of nightly reports actually gets asked. Optionally narrowed by browse tag,
+   *  since a tag is already how a set of artifacts is named. ONE query, joined to each
+   *  artifact's current version so it can never report a superseded row. */
+  listSlotAcrossArtifacts(
+    orgId: string,
+    slot: string,
+    opts?: { tag?: string; limit?: number },
+  ): Promise<{ short_id: string; title: string | null; n: number; json: string; at: string }[]>
   /** Correct a version's stored content_type in place (no new version). Also
    *  updates the artifact's current_content_type when n is the current version.
    *  Used to repair mis-classified content (e.g. HTML that was tagged markdown). */
@@ -1350,6 +1404,12 @@ export interface AssetRecord {
   org_id: string
   content_type: string
   size_bytes: number
+  /** Pixel dimensions, read from the image header at upload. Null for fonts, for an image
+   *  whose header couldn't be read, and for rows predating the columns. Bytes alone never
+   *  say whether an upload is big because it carries detail or because it was exported at
+   *  twice the density it needed — and pixel count is the lever that would change it. */
+  width: number | null
+  height: number | null
   created_at: string
 }
 export interface NewAsset {
@@ -1357,6 +1417,9 @@ export interface NewAsset {
   org_id: string
   content_type: string
   size_bytes: number
+  /** Omitted for fonts and unreadable headers; nullable so the columns ALTER ADD cleanly. */
+  width?: number | null
+  height?: number | null
 }
 
 export interface AssetStore {
