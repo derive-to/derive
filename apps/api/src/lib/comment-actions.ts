@@ -39,8 +39,12 @@ export interface CommentActionDeps {
  * `background()`), so a lookup failure here must never reach the request.
  *
  * The per-workspace Settings toggles gate the noisy channels, and the GitHub + Slack mirrors
- * additionally require a *collaborator* author, so an anonymous commenter on a public artifact
- * can't push text into a connected repo or channel.
+ * additionally require a *collaborator* author. Note what that gate does and does NOT do:
+ * anonymous callers cannot comment at all — the global anon-write lockdown (app.ts) 403s them,
+ * and effectiveRole clamps an anonymous link holder to viewer — so the principal this actually
+ * excludes is a SIGNED-IN user holding only a commenter/editor link, with no share and no seat.
+ * An invited outsider's comment stays in Derive instead of being relayed into a connected repo
+ * or channel.
  */
 export const commentCreatedAction = async (
   deps: CommentActionDeps,
@@ -97,9 +101,9 @@ export const commentCreatedAction = async (
   const settings = await meta.getOrgSettings(artifact.org_id)
   if (settings.emailNotifications)
     await enqueueCommentEmails({ meta, baseUrl }, artifact, comment, { mentionIds, actorId })
-  // The mirrors need a collaborator author, so an anonymous commenter on a public artifact
-  // can't push text into a connected repo or channel. The author counts if it is itself a
-  // collaborator, or if it is acting for one (see `onBehalfOf`).
+  // The mirrors need a collaborator author — which excludes a signed-in holder of a
+  // commenter/editor LINK (no share, no seat), not an anonymous visitor: those can't comment at
+  // all. The author counts if it is itself a collaborator, or acting for one (see `onBehalfOf`).
   // onBehalfOf first when present: for an OAuth grant it is a plain membership hit, whereas
   // the synthetic author id misses three lookups (membership, artifact member, then a full
   // listAgents scan) before failing.

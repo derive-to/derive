@@ -168,9 +168,11 @@ describe("comment channel fan-out", () => {
     expect((await claim(meta)).map((d) => d.kind)).not.toContain("slack_app")
   })
 
-  // The mirrors are gated on a COLLABORATOR author, so an anonymous commenter on a public
-  // artifact can't push text into a connected channel. That gate had no test, and it now has an
-  // extra branch (`onBehalfOf`, for an agent acting under a member's OAuth grant) — so pin both
+  // The mirrors are gated on a COLLABORATOR author: it keeps a signed-in holder of a
+  // commenter LINK — an invited outsider with no share and no seat — from relaying text into
+  // the workspace's channel. (Anonymous visitors never reach here; they cannot comment at all.)
+  // That gate had no test, and it now has an extra branch (`onBehalfOf`, for an agent acting
+  // under a member's OAuth grant) — so pin both
   // directions against the same store: the branch must decide the outcome, not decorate it.
   describe("the collaborator-author gate on the mirror", () => {
     const connected = async (name: string) => {

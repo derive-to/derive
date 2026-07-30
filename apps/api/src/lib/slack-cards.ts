@@ -98,46 +98,24 @@ const cutProse = (s: string, max: number): string => {
  *  mirror posts without a text fallback, so the comment dead-lettered instead of degrading. */
 export const mrkdwnLabel = (s: string, max = 200): string => cutProse(escapeMrkdwn(s), max)
 
-/** Bidi controls — a label can otherwise render right-to-left and visually impersonate another
- *  destination even after escaping. */
-const BIDI = /[‪-‮⁦-⁩]/g
-
-/** A label that presents itself AS a destination: it carries a scheme (`https://`, or a
- *  protocol-relative `//`), a `www.` prefix, or a domain followed by a path.
+/** Render one markdown link as mrkdwn: the label the author wrote, escaped, pointing where
+ *  they pointed it.
  *
- *  A positive URL signal is required on purpose. Matching any dotted token — the obvious rule —
- *  swallows ordinary technical writing, because `.js`, `.md` and `.json` are real TLDs and a bare
- *  dotted word is indistinguishable from a domain by shape alone: `[Node.js](…)`,
- *  `[README.md](…)` and `[package.json](…)` all lost their labels and rendered as naked URLs.
- *  For a docs product that is the common case and this is the rare one, so the trade runs the
- *  other way: a bare-domain label like `derive.to` pointing elsewhere is left alone. It is the
- *  weaker impersonation (no path, no scheme — it reads as a name, not a link target), and
- *  separating it from `Node.js` would take a TLD list. */
-const LABEL_IS_URLISH =
-  /^(?:[a-z][a-z0-9+.-]*:)?\/\/|^www\.[a-z0-9-]|^[a-z0-9-]+(?:\.[a-z0-9-]+)+\//i
-
-/** The host a URL-ish string points at, for comparing a label against its destination. Lenient:
- *  the label is prose that merely looks like a URL, so it may not parse. */
-const hostOf = (s: string): string | null => {
-  try {
-    return new URL(s.includes("//") ? s : `https://${s}`).hostname.toLowerCase()
-  } catch {
-    return null
-  }
-}
-
-/** Render one markdown link as mrkdwn.
+ *  Deliberately faithful. An earlier version refused a label that "impersonated" a destination
+ *  (a URL-ish label naming a different host). It is dropped, because choosing the visible text
+ *  is what a markdown link IS: Derive's own comment UI renders `[label](url)` exactly this way,
+ *  as does GitHub, as does Slack when a person types one. Policing it only in the Slack mirror
+ *  defended one surface out of several against authors who are already collaborators, and the
+ *  rule cost more than it bought — classifying a label by "contains a dot" swallowed
+ *  `[Node.js](…)`, `[README.md](…)` and `[package.json](…)`, because `.js` and `.md` are real
+ *  TLDs and a bare dotted word is indistinguishable from a domain by shape alone.
  *
- *  Rendering `[text](url)` at all means the author chooses the visible text — that is what a
- *  markdown link IS, and Derive's own UI renders comment bodies the same way, so Slack is just
- *  another renderer of the same content. What we refuse is narrower: a label that presents
- *  itself as a destination and names a DIFFERENT one, which no reader can tell from a genuine
- *  link. A URL-ish label that points where it says it does is kept — it is telling the truth. */
+ *  What still holds is the part that is ours to hold: the label is escaped, so it cannot break
+ *  out of the wrapper or reach control syntax, and MD_LINK admits only http(s) URLs with no
+ *  mrkdwn delimiters in them. */
 const renderLink = (url: string, rawLabel: string): string => {
-  const plain = rawLabel.replace(BIDI, "").trim()
-  if (!plain || plain === url) return `<${url}>`
-  if (LABEL_IS_URLISH.test(plain) && hostOf(plain) !== hostOf(url)) return `<${url}>`
-  return `<${url}|${escapeMrkdwn(plain)}>`
+  const label = escapeMrkdwn(rawLabel.trim())
+  return label ? `<${url}|${label}>` : `<${url}>`
 }
 
 /** Render an untrusted markdown body as Slack mrkdwn — safe first, pretty second.
