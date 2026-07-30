@@ -525,7 +525,23 @@ async function withHostedDispatch(
           // real request takes, so the route, the bearer, the middleware and the authorization
           // are unchanged — only the network hop is gone. Needs the ExecutionContext, which is
           // why withHostedDispatch takes `ctx` rather than a bare waitUntil.
-          ...(ctx ? { fetchImpl: (req: Request) => Promise.resolve(handle(req, env, ctx)) } : {}),
+          //
+          // EACH SUB-REQUEST GETS ITS OWN CONNECTION, exactly as `fetch` above gives every real
+          // request one. Calling `handle` bare inherits the DISPATCH's pg context, so every call
+          // from every concurrently-started run shares a single pg Client — the driver serializes
+          // them, statement_timeout (30s) starts firing, and the loop's own 60s abort trips:
+          // "The operation was aborted due to timeout" on runs that had worked moments before.
+          // One run never showed it; three at once did, which is the same trap as the 522.
+          ...(ctx
+            ? {
+                fetchImpl: (req: Request): Promise<Response> =>
+                  env.HYPERDRIVE
+                    ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), async () =>
+                        handle(req, env, ctx),
+                      )
+                    : Promise.resolve(handle(req, env, ctx)),
+              }
+            : {}),
         })
       : containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
   const secret = env.DERIVE_AUTH_SECRET
