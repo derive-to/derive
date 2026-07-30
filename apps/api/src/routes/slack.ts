@@ -348,8 +348,9 @@ export const slackRoutes = (ctx: AppContext) => {
     const ev = body.event
     // Install lifecycle: the app was removed, or a token was revoked. Flag the affected installs
     // for re-auth and let the Settings banner ask for a reconnect. Flag rather than delete — the
-    // default channel and the members' account links must survive, and a reconnect then restores
-    // service without redoing setup. Slack names the workspace by team_id only, hence the
+    // members' account links must survive, and a reconnect then restores service without redoing
+    // setup. (Channel subscriptions are keyed by org_id in their own table, so they survive
+    // either way; it is the install row and its links that deleting would cost.) Slack names the workspace by team_id only, hence the
     // by-team lookup, and one Slack team can back more than one Derive workspace.
     if (
       body.type === "event_callback" &&
@@ -681,8 +682,10 @@ export const slackRoutes = (ctx: AppContext) => {
     return c.json({ response_type: "ephemeral", text: "Searching…" })
   })
 
-  // Connection status for the Settings UI: whether Slack is configured at all, whether
-  // this workspace has connected one, and its team + default channel.
+  // Connection status for the Settings UI: whether Slack is configured at all, whether this
+  // workspace has connected one, its team name, and whether the token needs a re-auth. Where
+  // Derive posts is no longer part of the connection — that is one slack_subscription row per
+  // channel, read from GET /v1/slack/subscriptions.
   app.openapi(
     createRoute({
       method: "get",
@@ -691,7 +694,7 @@ export const slackRoutes = (ctx: AppContext) => {
       summary: "Slack connection status for the signed-in user's workspace.",
       responses: {
         200: {
-          description: "Whether Slack is available + connected, and the team + default channel.",
+          description: "Whether Slack is available + connected, the team name, and re-auth state.",
           content: { "application/json": { schema: SlackStatus } },
         },
       },
@@ -774,6 +777,12 @@ export const slackRoutes = (ctx: AppContext) => {
       scope_id: z
         .string()
         .describe('The collection id when scope_kind is "collection"; empty for a workspace scope'),
+      scope_title: z
+        .string()
+        .nullable()
+        .describe(
+          "The scoped collection's title, resolved for display. Null for a workspace scope, and also when the collection has been deleted — the subscription then matches nothing, and saying so is more useful than a bare id.",
+        ),
       events: z.string().describe('Comma-separated event types to deliver, or "*" for all events'),
       authors: z
         .enum(["all", "human", "agent"])
@@ -816,8 +825,19 @@ export const slackRoutes = (ctx: AppContext) => {
     async (c) => {
       const org = await requireWorkspace(c, "manage")
       if (org instanceof Response) return bail(org)
+      const subs = await meta.listSlackSubscriptions(org)
+      // Resolve collection titles so a scoped row can NAME its collection. Without this the UI
+      // can only render the scope_kind, and two collection subscriptions on one channel are
+      // indistinguishable — you cannot tell which one you are about to remove. One extra query,
+      // and only when something is actually scoped.
+      const titles = new Map<string, string>()
+      if (subs.some((x) => x.scope_kind === "collection"))
+        for (const col of await meta.listCollections(org)) titles.set(col.id, col.title)
       return c.json({
-        subscriptions: (await meta.listSlackSubscriptions(org)).map(publicSubscription),
+        subscriptions: subs.map((x) => ({
+          ...publicSubscription(x),
+          scope_title: x.scope_kind === "collection" ? (titles.get(x.scope_id) ?? null) : null,
+        })),
         event_options: [...SLACK_SUBSCRIBABLE_EVENTS],
       })
     },
@@ -857,9 +877,11 @@ export const slackRoutes = (ctx: AppContext) => {
       if (!/^[CGD][A-Z0-9]{6,}$/.test(channelId))
         return bail(fail(c, 400, "channel_id must be a Slack channel id like C0123ABC456"))
       // A collection scope must name a collection in THIS workspace.
+      let scopeTitle: string | null = null
       if (b.collection) {
         const col = await meta.getCollection(b.collection)
         if (!col || col.org_id !== org) return bail(fail(c, 404, "collection not found"))
+        scopeTitle = col.title
       }
       const me = await requireUser(c)
       const created = await meta.upsertSlackSubscription({
@@ -873,7 +895,7 @@ export const slackRoutes = (ctx: AppContext) => {
         authors: b.authors ?? "all",
         created_by: me instanceof Response ? null : me.id,
       })
-      return c.json(publicSubscription(created), 201)
+      return c.json({ ...publicSubscription(created), scope_title: scopeTitle }, 201)
     },
   )
 
@@ -909,7 +931,11 @@ export const slackRoutes = (ctx: AppContext) => {
         ...(b.active === undefined ? {} : { active: b.active ? (1 as const) : (0 as const) }),
       })
       if (!updated) return bail(fail(c, 404, "subscription not found"))
-      return c.json(publicSubscription(updated))
+      // PATCH cannot move a subscription between scopes, but the response must still carry
+      // scope_title or a client that re-renders from it would drop the collection's name.
+      const scoped =
+        updated.scope_kind === "collection" ? await meta.getCollection(updated.scope_id) : null
+      return c.json({ ...publicSubscription(updated), scope_title: scoped?.title ?? null })
     },
   )
 

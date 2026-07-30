@@ -16,7 +16,7 @@ import {
   SLACK_THREAD_ACTION,
 } from "../src/lib/slack-comments"
 import { runDeliveryTick } from "../src/webhooks"
-import { as, quotaApp, type TestUser } from "./helpers"
+import { as, jsonAs, quotaApp, type TestUser } from "./helpers"
 
 const KEY = "enc-key-slack-routes-123456"
 const SIGNING = "slack-signing-secret"
@@ -1476,5 +1476,146 @@ describe("slack slash command (/derive)", () => {
     // The search runs off the ack path — the immediate reply is just the placeholder.
     expect(body.text).toBe("Searching…")
     expect(body.blocks).toBeUndefined()
+  })
+})
+
+// The REST surface the Settings page drives. The slash-command path had tests from the start
+// and the store layer has its contract, but the HTTP endpoints in between had none — so the
+// admin gate, the channel-id validation and the cross-workspace collection check were all
+// asserted only through code review.
+describe("subscription CRUD over REST", () => {
+  const install = async (meta: Awaited<ReturnType<typeof make>>["meta"]) => {
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+  }
+  const post = (app: ReturnType<typeof make>["app"], body: unknown, who = owner.email) =>
+    app.request("/v1/slack/subscriptions", jsonAs(as(who), body))
+  const list = async (app: ReturnType<typeof make>["app"], who = owner.email) =>
+    (await (await app.request("/v1/slack/subscriptions", { headers: as(who) })).json()) as {
+      subscriptions: Array<Record<string, unknown>>
+      event_options: string[]
+    }
+
+  it("creates, lists, patches and deletes", async () => {
+    const { app, meta } = make("sub-crud")
+    await install(meta)
+    const created = await post(app, { channel_id: "C0ENG123", channel_name: "eng" })
+    expect(created.status).toBe(201)
+    const sub = (await created.json()) as Record<string, string>
+    // created_by is an internal user id and has no business on a config row the client renders.
+    expect(sub.created_by).toBeUndefined()
+
+    const shown = await list(app)
+    expect(shown.subscriptions).toHaveLength(1)
+    // The client must not carry its own copy of the event list — it would drift.
+    expect(shown.event_options.length).toBeGreaterThan(0)
+    expect(shown.subscriptions[0]).toMatchObject({
+      channel_id: "C0ENG123",
+      scope_kind: "workspace",
+      authors: "all",
+      active: 1,
+    })
+
+    const patched = await app.request(`/v1/slack/subscriptions/${sub.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      // `active` goes in as a boolean and comes back as 0|1 — the stored shape mirrors
+      // webhook.active, and the Switch that drives this hands over a boolean.
+      body: JSON.stringify({ authors: "agent", events: ["comment.created"], active: false }),
+    })
+    expect(patched.status).toBe(200)
+    expect(await patched.json()).toMatchObject({
+      authors: "agent",
+      events: "comment.created",
+      active: 0,
+    })
+
+    const gone = await app.request(`/v1/slack/subscriptions/${sub.id}`, {
+      method: "DELETE",
+      headers: as(owner.email),
+    })
+    expect(gone.status).toBe(204)
+    expect((await list(app)).subscriptions).toHaveLength(0)
+  })
+
+  it("names the scoped collection so two rows on one channel can be told apart", async () => {
+    const { app, meta } = make("sub-crud-scope")
+    await install(meta)
+    await meta.createCollection({
+      id: "col_api",
+      org_id: "default",
+      title: "API docs",
+      created_by: owner.id,
+    })
+    await post(app, { channel_id: "C0ENG123", channel_name: "eng", collection: "col_api" })
+    await post(app, { channel_id: "C0ENG123", channel_name: "eng" })
+    const rows = (await list(app)).subscriptions
+    expect(rows).toHaveLength(2)
+    expect(rows.map((r) => r.scope_title).sort()).toEqual(["API docs", null])
+    // And the create response carries it too, so the UI needn't refetch to render the new row.
+    const again = await post(app, { channel_id: "C0DES123", collection: "col_api" })
+    expect(await again.json()).toMatchObject({ scope_title: "API docs" })
+  })
+
+  it("refuses a collection from another workspace", async () => {
+    const { app, meta } = make("sub-crud-xorg")
+    await install(meta)
+    await meta.createCollection({
+      id: "col_other",
+      org_id: "someone-else",
+      title: "Theirs",
+      created_by: owner.id,
+    })
+    const r = await post(app, { channel_id: "C0ENG123", collection: "col_other" })
+    expect(r.status).toBe(404)
+    expect(await meta.listSlackSubscriptions("default")).toHaveLength(0)
+  })
+
+  it("rejects a #name where a channel id belongs", async () => {
+    const { app, meta } = make("sub-crud-name")
+    await install(meta)
+    // Storing "#general" would make every threading lookup miss forever — links are written
+    // with the id Slack echoes back — so each comment would post a new top-level message.
+    const r = await post(app, { channel_id: "#general" })
+    expect(r.status).toBe(400)
+    expect(await meta.listSlackSubscriptions("default")).toHaveLength(0)
+  })
+
+  it("is admin-only, on every verb", async () => {
+    const { app, meta } = make("sub-crud-role")
+    await install(meta)
+    const created = await post(app, { channel_id: "C0ENG123" })
+    const sub = (await created.json()) as Record<string, string>
+    expect((await post(app, { channel_id: "C0OPS123" }, editor.email)).status).toBe(403)
+    expect(
+      (await app.request("/v1/slack/subscriptions", { headers: as(editor.email) })).status,
+    ).toBe(403)
+    expect(
+      (
+        await app.request(`/v1/slack/subscriptions/${sub.id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json", ...as(editor.email) },
+          body: JSON.stringify({ active: 0 }),
+        })
+      ).status,
+    ).toBe(403)
+    expect(
+      (
+        await app.request(`/v1/slack/subscriptions/${sub.id}`, {
+          method: "DELETE",
+          headers: as(editor.email),
+        })
+      ).status,
+    ).toBe(403)
+    // Nothing an editor sent may have taken effect.
+    const rows = await meta.listSlackSubscriptions("default")
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ channel_id: "C0ENG123", active: 1 })
   })
 })

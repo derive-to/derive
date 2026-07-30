@@ -59,7 +59,13 @@ export function SlackSubscriptionRow({
         <span className="font-medium text-sm">
           {sub.channel_name ? `#${sub.channel_name}` : sub.channel_id}
         </span>
-        <Badge>{sub.scope_kind === "collection" ? "collection" : "workspace"}</Badge>
+        {/* Name the collection. A channel can carry several scoped subscriptions, and a row that
+            just says "collection" gives an admin no way to tell which one Remove would delete. */}
+        <Badge>
+          {sub.scope_kind === "collection"
+            ? (sub.scope_title ?? "deleted collection")
+            : "workspace"}
+        </Badge>
         <div className="flex-1" />
         <Select
           value={sub.authors}

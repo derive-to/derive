@@ -3214,7 +3214,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Whether Slack is available + connected, and the team + default channel. */
+                /** @description Whether Slack is available + connected, the team name, and re-auth state. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -6321,6 +6321,8 @@ export interface components {
             scope_kind: "workspace" | "collection";
             /** @description The collection id when scope_kind is "collection"; empty for a workspace scope */
             scope_id: string;
+            /** @description The scoped collection's title, resolved for display. Null for a workspace scope, and also when the collection has been deleted — the subscription then matches nothing, and saying so is more useful than a bare id. */
+            scope_title: string | null;
             /** @description Comma-separated event types to deliver, or "*" for all events */
             events: string;
             /**

@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { slackChannelsQuery, slackSubscriptionsQuery } from "@/lib/queries"
+import { collectionsQuery, slackChannelsQuery, slackSubscriptionsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SlackSubscriptionRow } from "./slack-subscription-row"
@@ -71,19 +71,24 @@ export function SlackSubscriptionsSection() {
 /** The composer. Channels come from the connected workspace, so there is no id to paste. */
 function NewSubscription({ onCreated }: { onCreated: () => void }) {
   const [channel, setChannel] = useState("")
+  // "" is the whole workspace, matching the scope_id encoding the API stores.
+  const [collection, setCollection] = useState("")
   // Lazily fetched: the list pages through the Slack API, so it loads when the picker opens.
   const [open, setOpen] = useState(false)
   const { data: channels, isError } = useQuery({ ...slackChannelsQuery(), enabled: open })
+  const { data: collections } = useQuery(collectionsQuery())
 
   const create = useApiMutation({
     mutationFn: () =>
       api.createSlackSubscription({
         channel_id: channel,
         channel_name: channels?.find((c) => c.id === channel)?.name,
+        collection: collection || undefined,
       }),
     success: "Channel subscribed",
     onSuccess: () => {
       setChannel("")
+      setCollection("")
       onCreated()
     },
   })
@@ -116,6 +121,31 @@ function NewSubscription({ onCreated }: { onCreated: () => void }) {
           )}
         </SelectContent>
       </Select>
+      {/* Scope. A channel can hold several subscriptions, so this is how #eng gets one row for
+          the API collection and another for the whole workspace. Only offered when the workspace
+          HAS collections — an empty picker is worse than no picker. */}
+      {collections?.length ? (
+        <Select
+          value={collection || "__all"}
+          onValueChange={(v) => setCollection(v === "__all" ? "" : v)}
+        >
+          <SelectTrigger
+            data-testid="slack-sub-scope"
+            aria-label="What this channel gets"
+            className="w-56"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all">Everything in the workspace</SelectItem>
+            {collections.map((col) => (
+              <SelectItem key={col.id} value={col.id}>
+                {col.title}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : null}
       <Button
         data-testid="slack-sub-add"
         variant="secondary"
