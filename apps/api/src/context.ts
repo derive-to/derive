@@ -370,7 +370,25 @@ export function buildContext(deps: AppDeps) {
   const userCache = new WeakMap<Context, SessionUser | null>()
   const currentUser = async (c: Context): Promise<SessionUser | null> => {
     if (userCache.has(c)) return userCache.get(c) ?? null
-    const s = deps.auth ? await deps.auth.api.getSession({ headers: c.req.raw.headers }) : null
+    // A BROKEN CREDENTIAL IS NOT A SERVER FAULT. getSession throws on input it cannot make sense
+    // of, and with the session cookie cache on there is now a second cookie that can be
+    // malformed: a `session_data` of `{}` threw "Error parsing JSON" and every authenticated
+    // request 500'd for as long as the client kept sending it. A 500 is both wrong (the caller's
+    // cookie is bad, not the server) and sticky — the client has no reason to re-authenticate,
+    // so it loops. Unauthenticated is the honest answer and it self-heals: the next sign-in
+    // replaces the cookie.
+    //
+    // Logged at error, not swallowed. This same throw is how a deployment whose secret cannot
+    // decrypt the shared JWKS row announces itself, and that diagnosis has to stay findable —
+    // it just should not be a 500 on every page.
+    const s = deps.auth
+      ? await deps.auth.api.getSession({ headers: c.req.raw.headers }).catch((e: unknown) => {
+          log.error("session could not be read; treating the request as signed out", {
+            error: e instanceof Error ? e.message : String(e),
+          })
+          return null
+        })
+      : null
     // `username`/`discoverable` ride the session via Better Auth additionalFields
     // (see auth-config.ts); read them through a narrow cast (optional extras).
     const su = s?.user as
@@ -820,7 +838,36 @@ export function buildContext(deps: AppDeps) {
     return clean ? `anon_${clean}` : anonViewerId(c)
   }
 
-  const actorFor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
+  // MEMOIZED PER REQUEST + ARTIFACT, exactly like `currentUser` above and for the same reason:
+  // handlers authorize the same artifact more than once, and every miss costs THREE round trips
+  // (membership, artifact member, collection roles).
+  //
+  // Opening a chat session authorizes twice — `read`, then `publish` — and separately reads the
+  // membership a third time, so ONE request made eleven sequential queries against Postgres, of
+  // which the same membership row was fetched three times and the artifact-member and
+  // collection-role rows twice each. On the hosted edge those cost ~100-900ms apiece.
+  //
+  // Safe because an Actor is a pure function of (principal, artifact), and both are fixed for
+  // the life of a request: nothing in a handler can change a role underneath itself, and a role
+  // changed by someone else is picked up by the next request. Keyed by Context, so it dies with
+  // the request rather than outliving a revoked share.
+  const actorCache = new WeakMap<Context, Map<string, Promise<Actor>>>()
+  const actorFor = (c: Context, a: ArtifactRecord): Promise<Actor> => {
+    let perArtifact = actorCache.get(c)
+    if (!perArtifact) {
+      perArtifact = new Map()
+      actorCache.set(c, perArtifact)
+    }
+    // Cache the PROMISE, not the resolved value: two authorize() calls that both start before
+    // the first resolves would otherwise both miss and both issue the three queries.
+    const hit = perArtifact.get(a.id)
+    if (hit) return hit
+    const pending = resolveActor(c, a)
+    perArtifact.set(a.id, pending)
+    return pending
+  }
+
+  const resolveActor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
     // A password on the artifact is a lock on its public link. Has this visitor
     // entered it? The unlock cookie's value is derived from the server-only
     // hash, so it can't be forged.
@@ -863,6 +910,25 @@ export function buildContext(deps: AppDeps) {
     // shared link never auto-joins you into someone else's workspace; you only carry an org
     // role where you're explicitly a member.
     const me = p.user
+    // ONE ROUND TRIP WHERE THE STORE CAN, four where it cannot. The reads below are the
+    // membership, the per-artifact share and the collection shares — and the last is itself two
+    // queries, so this is four trips to decide one boolean, on every authorize. A store that can
+    // answer it in a single statement implements `artifactGrants`; the fallback is the original
+    // code, unchanged, so a store without it behaves exactly as before.
+    //
+    // Both paths feed the SAME maxRole/can(): the fast path changes how the inputs arrive, never
+    // what they are. artifact-grants-parity.test.ts asserts the two agree.
+    if (meta.artifactGrants) {
+      const g = await meta.artifactGrants(a.id, a.org_id, me.id)
+      return {
+        kind: "user",
+        userId: me.id,
+        artifactRole: maxRole(null, ...g.artifactRoles),
+        orgRole: g.orgRole,
+        locked,
+        unlocked,
+      }
+    }
     const orgRole = (await meta.getMembership(a.org_id, me.id))?.role ?? null
     const am = await meta.getArtifactMember(a.id, me.id)
     // A collection share grants its role on every artifact in the collection,

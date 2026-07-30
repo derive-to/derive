@@ -65,3 +65,10 @@ apps/api/.localdata/
 # Coverage output. Untracked, but a FAILED `pnpm verify` leaves these behind, and the
 # next run's lint step then scans them and fails on generated files.
 coverage/
+
+# Generated staging Worker config: carries REAL binding ids, never committed.
+apps/api/wrangler.staging.toml
+
+# Generated preview/staging Worker configs: carry REAL binding ids, never committed.
+apps/api/wrangler.preview.toml
+apps/api/wrangler.perf.toml

@@ -184,6 +184,26 @@ export const documentBlock = (source: string, filename: string): string =>
 ${source}
 --- END DOCUMENT ---`
 
+/**
+ * The name to SHOW the model for a document it is about to revise.
+ *
+ * Both lanes passed a bare short_id ("wa68nr6q"), which carries no format signal at all. Asked
+ * to name its output the model then guessed, and the edits contract's fallback turned that guess
+ * into `index.html` — which is how a Markdown document intermittently came back as HTML.
+ *
+ * The landing port no longer trusts the model's filename either (it keeps the document's
+ * recorded type), and the two fixes are not redundant: this one stops the model being misled,
+ * that one stops a misled model doing damage. A model told "this file is called wa68nr6q" can
+ * also write HTML into a Markdown document's BODY, which no amount of correcting the content
+ * type afterwards would undo.
+ */
+export const documentName = (shortId: string, contentType: string | null | undefined): string =>
+  contentType === "text/markdown"
+    ? `${shortId}.md`
+    : contentType === "text/html"
+      ? `${shortId}.html`
+      : shortId
+
 // ---- the landing port -----------------------------------------------------------------------
 
 /** What landed, named so the transcript and the ledger can both point at it. */

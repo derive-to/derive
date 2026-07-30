@@ -395,6 +395,10 @@ const hostedDispatch = cfg.hostedRuns
           : nodeSubstrate({ bin: cfg.runnerBin }),
       server: cfg.baseUrl,
       secret: authSecret,
+      // Same gateway the substrate just took: when the operator holds the key, the schedule
+      // materializer must not walk a payer chain that cannot exist. The Worker twin sets this
+      // from workerGateway(env) for the same reason.
+      operatorPays: modelGateway() !== null,
     }
   : null
 
