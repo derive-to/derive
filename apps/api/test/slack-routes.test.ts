@@ -653,6 +653,62 @@ describe("slack events endpoint", () => {
     )
     expect(rows.some((d) => d.kind === "slack_ingest")).toBe(false)
   })
+
+  // Removing the app in Slack, or revoking its token, kills the bot token — but Derive only
+  // found out the next time a delivery failed. A workspace with no Slack traffic showed
+  // "connected" indefinitely and its Settings page offered no reconnect. Slack tells us
+  // directly if we subscribe, and neither event costs a scope.
+  const uninstallCases = [
+    { type: "app_uninstalled", label: "the app is removed from the workspace" },
+    { type: "tokens_revoked", label: "the bot token is revoked" },
+  ]
+  for (const { type, label } of uninstallCases) {
+    it(`flags the install for re-auth when ${label}`, async () => {
+      const { app, meta } = make(`slack-ev-${type}`)
+      await meta.setSlackInstall({
+        org_id: "default",
+        team_id: "T1",
+        team_name: "Acme",
+        bot_token: encryptSecret("xoxb-1", KEY),
+        bot_user_id: "UBOT",
+        default_channel: "C1",
+        created_at: new Date().toISOString(),
+      })
+      const r = await postEvent(
+        app,
+        JSON.stringify({ type: "event_callback", team_id: "T1", event: { type } }),
+      )
+      expect(r.status).toBe(200)
+      const install = await meta.getSlackInstall("default")
+      expect(install?.needs_reauth).toBe(1)
+      // Flagged, never deleted: the channel choice and the members' account links must
+      // survive a reconnect, and the banner is what prompts one.
+      expect(install?.default_channel).toBe("C1")
+    })
+  }
+
+  it("leaves another workspace's install alone", async () => {
+    const { app, meta } = make("slack-ev-uninstall-scope")
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      default_channel: "C1",
+      created_at: new Date().toISOString(),
+    })
+    const r = await postEvent(
+      app,
+      JSON.stringify({
+        type: "event_callback",
+        team_id: "T-OTHER",
+        event: { type: "app_uninstalled" },
+      }),
+    )
+    expect(r.status).toBe(200)
+    expect((await meta.getSlackInstall("default"))?.needs_reauth).toBe(0)
+  })
 })
 
 describe("slack interactivity endpoint (resolve/reopen from a button)", () => {

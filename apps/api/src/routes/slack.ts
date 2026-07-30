@@ -269,6 +269,20 @@ export const slackRoutes = (ctx: AppContext) => {
     if (body.type === "url_verification") return c.json({ challenge: body.challenge })
 
     const ev = body.event
+    // Install lifecycle: the app was removed, or its token revoked. Either way the stored bot
+    // token is dead, so flag every install on that team for re-auth and let the Settings banner
+    // ask for a reconnect. Flag rather than delete — the default channel and the members'
+    // account links must survive, and a reconnect restores service without re-doing them.
+    // Slack names the workspace by team_id only, hence the by-team lookup.
+    if (
+      body.type === "event_callback" &&
+      (ev?.type === "app_uninstalled" || ev?.type === "tokens_revoked") &&
+      body.team_id
+    ) {
+      for (const install of await meta.listSlackInstallsByTeam(body.team_id))
+        if (install.needs_reauth !== 1) await meta.setSlackInstall({ ...install, needs_reauth: 1 })
+      return c.json({ ok: true })
+    }
     // Only human thread replies: a message with a thread_ts, no bot_id, not an edit/delete.
     if (
       body.type === "event_callback" &&
@@ -613,6 +627,9 @@ export const slackRoutes = (ctx: AppContext) => {
 interface SlackEventEnvelope {
   type?: string
   challenge?: string
+  /** The Slack workspace the event came from. The only workspace identifier on an
+   *  app_uninstalled / tokens_revoked event — those carry no channel to key on. */
+  team_id?: string
   event?: {
     type?: string
     subtype?: string

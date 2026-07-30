@@ -55,7 +55,10 @@ export const buildSlackManifest = (baseUrl: string) => {
         // im:history"). Dropping the event fixes that without asking to READ users' DMs for
         // a path that ignores them. When the assistant increment lands, add the event and
         // im:history together.
-        bot_events: ["message.channels", "message.groups"],
+        // app_uninstalled / tokens_revoked need no scope, and they are the only way to learn
+        // that the stored bot token died without waiting for a delivery to fail — which never
+        // happens on a workspace with no Slack traffic, leaving Settings claiming "connected".
+        bot_events: ["message.channels", "message.groups", "app_uninstalled", "tokens_revoked"],
       },
       // Buttons on comment cards (resolve / reopen a thread) POST here.
       interactivity: {
