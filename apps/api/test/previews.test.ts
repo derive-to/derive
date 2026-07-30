@@ -12,6 +12,7 @@ import type {
 import { sha256Hex } from "@derive/core"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
+  assertNavigationOk,
   enqueueRender,
   MAX_ATTEMPTS,
   runRenderTick,
@@ -308,6 +309,46 @@ const seedArtifact = async (
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+describe("previews: refusing to screenshot an error page", () => {
+  // A browser pointed at a 404 renders the 404, and the screenshot SUCCEEDS. Without this
+  // guard the job stored a picture of the words "not found" and marked itself ready: the
+  // card permanently wrong, nothing retrying (nothing failed), the dead-render self-heal
+  // never firing (a render exists), and republishing the only cure. Seen twice in one
+  // afternoon on two different artifacts, 4.5KB where a real render is 70-110KB.
+  it("throws on an error status, so the job fails and retries instead of storing the 404", () => {
+    const url = "https://x.test/raw/ab12cd34/v/7/pv/SIGNED.TOKEN/index.html"
+    expect(() => assertNavigationOk({ status: () => 404 }, url)).toThrow(/HTTP 404/)
+    expect(() => assertNavigationOk({ status: () => 500 }, url)).toThrow(/HTTP 500/)
+    // The shapes that are NOT errors: a real page, a redirect already followed, and a
+    // same-document navigation that legitimately yields no response at all.
+    expect(() => assertNavigationOk({ status: () => 200 }, url)).not.toThrow()
+    expect(() => assertNavigationOk({ status: () => 304 }, url)).not.toThrow()
+    expect(() => assertNavigationOk(null, url)).not.toThrow()
+  })
+
+  it("redacts the preview capability token out of the message it logs and stores", () => {
+    // The URL carries a short-lived pv token that authorizes reading a PRIVATE artifact,
+    // and this message lands in both the log and a stored DB column. Naming the failure
+    // must not become how the credential escapes.
+    let msg = ""
+    try {
+      assertNavigationOk(
+        { status: () => 404 },
+        "https://x.test/raw/ab12cd34/v/7/pv/eyJhbGciOi.SECRETSIG/index.html",
+      )
+    } catch (e) {
+      msg = e instanceof Error ? e.message : String(e)
+    }
+    expect(msg).toContain("HTTP 404")
+    expect(msg).toContain("/pv/<redacted>/")
+    expect(msg).not.toContain("SECRETSIG")
+    expect(msg).not.toContain("eyJhbGciOi")
+    // Still names WHICH artifact and version, which is the part that makes it diagnosable.
+    expect(msg).toContain("ab12cd34")
+    expect(msg).toContain("/v/7/")
+  })
+})
 
 describe("previews: enqueueRender + runRenderTick", () => {
   it("Test A: renders a queued job → stores PNG → marks version ready + job done", async () => {
