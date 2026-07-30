@@ -14,6 +14,7 @@ import {
   SKILL_CONTENT_TYPE,
   type VersionRecord,
 } from "@derive/core"
+import { z } from "zod"
 import type { AppContext } from "./context"
 import { cleanPath, manifestOf as sharedManifestOf } from "./lib/bundle"
 import { MAX_CHARS } from "./lib/clip"
@@ -124,6 +125,51 @@ export const toBase64 = (bytes: Uint8Array): string => {
   }
   return out
 }
+
+/**
+ * A numeric tool parameter that COERCES (a stale client sends numbers as strings — see
+ * scripts/check-mcp-coercion.mjs) and, when that happens, records which parameter it was.
+ *
+ * A string arriving where the schema says number is PROOF that the client validated
+ * against a cached tool schema predating this parameter. That proof is worth surfacing:
+ * until now the server just quietly coerced, so an agent could hold a stale surface for
+ * its whole life with no signal — and every fix so far has been the server bending
+ * further around old clients, which works and does not scale.
+ *
+ * The tracker is per-REQUEST (this server builds a fresh McpServer and ToolContext per
+ * request), so the schema closure and the response that reports it always agree.
+ *
+ * NOT yet paired with a `notifications/tools/list_changed` push. That was the other half
+ * of the design, and it is gated on an unrun experiment: whether real clients act on that
+ * notification when it arrives on a POST response stream is a question about client
+ * implementations, not about the spec, and shipping a nudge whose effect nobody has
+ * observed would be indistinguishable from shipping nothing. The note below is the part
+ * that provably reaches the agent.
+ */
+export const staleAwareNumber = (
+  record: (param: string) => void,
+  param: string,
+  // Bounds ride HERE rather than being .pipe()d on by the caller, so `z.coerce.number()`
+  // stays the only numeric schema in the tool surface — a caller-side `.pipe(z.number())`
+  // is textually a bare z.number() and check-mcp-coercion.mjs is right to reject it, since
+  // it cannot see that something upstream already coerced.
+  bounds?: { int?: boolean; min?: number; max?: number },
+) => {
+  let inner = z.coerce.number()
+  if (bounds?.int) inner = inner.int()
+  if (bounds?.min !== undefined) inner = inner.min(bounds.min)
+  if (bounds?.max !== undefined) inner = inner.max(bounds.max)
+  return z.preprocess((v) => {
+    if (typeof v === "string") record(param)
+    return v
+  }, inner)
+}
+
+/** The note appended when a call proved its client's schema is stale. Names the parameter
+ *  (so the agent knows WHICH capability it may be missing) and the one action that fixes
+ *  it, which is the agent's to take, not the server's. */
+export const staleSchemaNote = (params: string[]): string =>
+  `Your client sent ${params.map((p) => `\`${p}\``).join(", ")} as text where this tool expects a number, which means it validated against a tool schema cached before ${params.length > 1 ? "those parameters" : "that parameter"} existed. It worked (the server coerces), but your cached surface is out of date and other capabilities added since may be invisible to you: reconnect to refresh it.`
 
 /** Most versions a single data-slot series read returns. A trend read must stay one
  *  bounded response: past this the caller narrows the range, and is told so rather than

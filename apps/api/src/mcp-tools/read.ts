@@ -37,7 +37,7 @@ import { enqueueRender } from "../previews"
 import { CORE_SKILLS } from "../skills-reference.gen"
 
 export function registerReadTool(tc: ToolContext): void {
-  const { server, ctx, bpProfile, profileArt, reach, notFound, wsArg } = tc
+  const { server, ctx, bpProfile, profileArt, reach, notFound, wsArg, num, staleNote } = tc
 
   // READ CONTENT --------------------------------------------------------------
   server.registerTool(
@@ -75,16 +75,12 @@ export function registerReadTool(tc: ToolContext): void {
           .describe(
             'SEE the published page instead of reading its text — what a viewer actually sees, catching visual breakage (a failed font, a broken layout) no text read can. "top": the 1200x630 crop (fastest, what an og:image unfurl shows). "full": the whole page, fullPage screenshot — catches below-the-fold breakage "top" misses. "marked": "full" again with the region map\'s @N refs drawn on it — pairs with a no-heading page\'s region map so what you SEE lines up with what you READ. All three computed a few seconds after each publish; pass alone (optionally with `version`).',
           ),
-        wait: z.coerce
-          .number()
-          .int()
-          .min(1)
-          .max(30)
+        wait: num("wait", { int: true, min: 1, max: 30 })
           .optional()
           .describe(
             "With `render`: when the screenshot isn't computed yet (a publish is seconds old), block up to this many seconds (max 30) for it to land instead of returning the not-ready message. Returns at once when it's already ready or has failed.",
           ),
-        version: z.coerce.number().optional().describe("Defaults to the current version."),
+        version: num("version").optional().describe("Defaults to the current version."),
         data: z
           .string()
           .optional()
@@ -347,7 +343,14 @@ export function registerReadTool(tc: ToolContext): void {
               : `"${short_id}" v${n} carries no data slots — embed a derive-data block to add one.`,
           )
         }
-        return json({ short_id, version: n, slot: row.slot, data: safeJson(row.json) })
+        const stale = staleNote()
+        return json({
+          short_id,
+          version: n,
+          slot: row.slot,
+          data: safeJson(row.json),
+          ...(stale ? { note: stale } : {}),
+        })
       }
       const manifest = await manifestOf(ctx, v)
 
