@@ -158,11 +158,20 @@ export const stripeBillingDriver = (a: {
         proration_behavior: "create_prorations",
       })
     },
+    // Null means the subscription genuinely doesn't exist on Stripe (a bad or
+    // stale id); every other failure (auth, network, rate limit) rethrows so
+    // callers never mistake an outage for a canceled plan.
     getSubscription: async (subscriptionId) => {
       try {
         return toSnapshot(await stripe.subscriptions.retrieve(subscriptionId))
-      } catch {
-        return null
+      } catch (err) {
+        if (
+          err instanceof Stripe.errors.StripeInvalidRequestError &&
+          (err.statusCode === 404 || err.code === "resource_missing")
+        ) {
+          return null
+        }
+        throw err
       }
     },
     verifyWebhook: async (payload, signature) => {
