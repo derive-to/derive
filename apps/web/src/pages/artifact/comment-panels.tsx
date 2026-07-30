@@ -45,6 +45,7 @@ export function MobileComments({
   onRail,
   chatPanel,
   openCount,
+  editing = false,
 }: {
   open: boolean
   openThreads: Comment[][]
@@ -54,6 +55,9 @@ export function MobileComments({
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
   reviewCard?: ReactNode
+  /** Inline edit mode is on: selecting text edits rather than quotes it, so the
+   *  empty state must not tell the reader to select text for a comment. */
+  editing?: boolean
   /** How much of the viewport bottom the sheet currently occupies, in px (0 when
    *  closed). The page reserves exactly this under the document so no black band
    *  is left below it. */
@@ -368,7 +372,11 @@ export function MobileComments({
                 className="p-8"
                 icon={<Icon name="comments" strokeWidth={1.75} />}
                 title="Start the conversation."
-                description="Select text in the document, or add a general comment."
+                description={
+                  editing
+                    ? "Selecting text edits it while you're editing. Finish or leave editing to comment on a passage."
+                    : "Select text in the document, or add a general comment."
+                }
                 action={
                   canComment ? (
                     <Button
@@ -439,6 +447,8 @@ export function OpenPanel(props: {
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
   reviewCard?: ReactNode
+  /** See MobileComments.editing. */
+  editing?: boolean
 }) {
   const {
     openCount,
@@ -454,6 +464,7 @@ export function OpenPanel(props: {
     onSubmitNew,
     onCancelNew,
     reviewCard,
+    editing = false,
   } = props
   const { canComment } = useCommentScope()
   const { activeThread, onJump } = useCommentTree()
@@ -581,7 +592,11 @@ export function OpenPanel(props: {
               className="p-0"
               icon={<Icon name="comments" strokeWidth={1.75} />}
               title="Start the conversation."
-              description="Select text in the document, or add a general comment."
+              description={
+                editing
+                  ? "Selecting text edits it while you're editing. Finish or leave editing to comment on a passage."
+                  : "Select text in the document, or add a general comment."
+              }
               action={
                 canComment ? (
                   <Button

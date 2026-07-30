@@ -18,6 +18,22 @@
 // data production does. Weigh that before opening previews to untrusted PRs — see the fork guard
 // in .github/workflows/pr-preview.yml.
 //
+// WHAT IT UNSETS: DERIVE_SANDBOX_URL. Production serves artifact bytes from a separate
+// registrable domain (raw.derive.page) and 302s /raw/* there from the app host. A preview
+// inherits that var verbatim unless it is stripped — so the preview's /raw/* requests,
+// INCLUDING the injected /raw/derive-client.js, are answered by the PRODUCTION deployment.
+// The consequence is silent and expensive: any change to the in-iframe client (comment
+// anchoring, live cursors, the deck protocol, inline editing) is invisible in every preview,
+// because the frame is running production's copy. You review a page that is half the branch
+// and half main with nothing on screen saying which half is which.
+//
+// Unsetting it puts the preview in the single-origin mode DERIVE_SANDBOX_URL itself documents
+// as supported ("Unset = single-origin self-host (the iframe sandbox is the wall)"). The two
+// inner walls are untouched: the viewer's iframe carries no allow-same-origin, and every
+// /raw/* response carries a `Content-Security-Policy: sandbox` header, so artifact HTML still
+// lands in an opaque origin with no reach into cookies or storage. The audience is same-repo
+// pull requests (the fork guard above), and the entire point is watching your own code run.
+//
 //   node scripts/preview-config.mjs <name> <base-url> > wrangler.preview.toml
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
@@ -64,6 +80,14 @@ for (const b of blocks) {
 let out = kept.map((b) => b.join("\n")).join("\n")
 out = out.replace(/^name = "derive"$/m, `name = "${name}"`)
 out = out.replace(/^BASE_URL = "https:\/\/derive\.to"$/m, `BASE_URL = "${baseUrl}"`)
+// Serve /raw/* from THIS preview instead of 302-ing it to production's sandbox origin —
+// otherwise the in-iframe client the preview injects is production's, not the branch's.
+// See the header comment for why that is safe here and what it costs.
+out = out.replace(
+  /^DERIVE_SANDBOX_URL = "[^"]*"$/m,
+  "# DERIVE_SANDBOX_URL intentionally unset for previews (preview-config.mjs): /raw/* must be\n" +
+    "# served by THIS deployment so the branch's own iframe client is what the frame runs.",
+)
 // Serve on workers.dev — a preview with no hostname is not a preview.
 out = out.replace(/^main = "src\/worker\.ts"$/m, 'main = "src/worker.ts"\nworkers_dev = true')
 
@@ -83,5 +107,11 @@ must(!out.includes("queues.consumers"), "queue consumer survived — it would st
 // derive-pr-<number>" is an argument about today's caller, not about the code.
 must(out.split("\n").includes(`name = "${name}"`), "worker name was not replaced")
 must(!/^name = "derive"$/m.test(out), "the production worker name is still present")
+// A live sandbox origin here sends the preview's /raw/* — and therefore its injected iframe
+// client — to production, which silently hides every frame-side change under review.
+must(
+  !/^DERIVE_SANDBOX_URL = /m.test(out),
+  "DERIVE_SANDBOX_URL survived — the preview would serve production's iframe client, hiding frame-side changes",
+)
 
 process.stdout.write(out)
