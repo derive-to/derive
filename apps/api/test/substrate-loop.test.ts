@@ -14,7 +14,11 @@ import { loopSubstrate } from "../src/lib/substrate-loop"
 interface Recorded {
   claims: number
   tools: { tool: string; args: unknown }[]
-  writes: { path: string }[]
+  /** What the substrate actually uploaded. `name` is the one that MATTERS: publish.ts derives
+   *  the stored content type from the filename EXTENSION and ignores the part's MIME type, so a
+   *  test that only checks `type` passes while the artifact still flips to HTML. Both are
+   *  recorded so the assertion is on the field the server reads. */
+  writes: { path: string; type: string | null; name: string | null }[]
   finishes: Record<string, unknown>[]
   /** Artifact content GETs — the run lane must read its target before revising it. */
   reads: string[]
@@ -99,7 +103,13 @@ const stubApi = (opts: {
           return send(200, { ok: true })
         }
         // Artifact writes: proposals, versions, create.
-        rec.writes.push({ path: url })
+        // Pull the file part's Content-Type straight out of the multipart body.
+        const part = /name="file"; filename="([^"]*)"[\s\S]*?Content-Type:\s*([^\r\n]+)/i.exec(body)
+        rec.writes.push({
+          path: url,
+          name: part?.[1] ?? null,
+          type: part?.[2]?.trim() ?? null,
+        })
         const status = opts.writeStatus ?? 201
         return send(status, status < 400 ? { short_id: "art_new" } : { error: "forbidden" })
       })
@@ -1007,6 +1017,78 @@ describe("how the loop REACHES the API", () => {
     try {
       const settled = await runToSettle(url, api.rec, answerTurn(revision()))
       expect(settled).toBeTruthy()
+    } finally {
+      await api.close()
+    }
+  })
+})
+
+describe("the revised document KEEPS its own format", () => {
+  // THE REGRESSION, and the third lane to need the same fix. Attended chat already learned this
+  // (lib/session-turn.ts): deriving the content type from the model's filename converts a
+  // Markdown document to HTML the moment the model omits or mangles the name, because the edits
+  // contract falls back to `index.html` — correct when CREATING an artifact, wrong when REVISING
+  // one. Observed on production, same document, same approval flow:
+  //
+  //     v1  text/markdown   upload
+  //     v2  text/markdown   chat edit          (already fixed)
+  //     v3  text/html       automation run     (this)
+  //
+  // At v3 the document stops rendering as markdown and reads as one unformatted blob, and
+  // nothing reports an error.
+  it("writes text/markdown for a markdown target even when the model says index.html", async () => {
+    const api = stubApi({ run: baseRun, content: "# Roadmap\n\n## Now\nShip it.\n" })
+    const url = await api.url
+    try {
+      // `filename: "index.html"` is exactly what the edits contract falls back to.
+      const settled = await runToSettle(
+        url,
+        api.rec,
+        answerTurn(
+          `<revision>${JSON.stringify({
+            content: "# Roadmap\n\n## Now\nShip it.\n\n## Status\nReviewed.\n",
+            filename: "index.html",
+            confidence: 0.95,
+            message: "m",
+          })}</revision>`,
+        ),
+      )
+      expect(settled).toBeTruthy()
+      expect(api.rec.writes.length).toBeGreaterThan(0)
+      // The target was served as text/markdown, so the revision must be written as markdown.
+      // The FILENAME is the assertion that matters — publish.ts reads the extension and ignores
+      // the part's MIME type, so checking only `type` would pass with the bug still present.
+      for (const w of api.rec.writes) {
+        expect(w.name).toMatch(/\.md$/i)
+        expect(w.type).toBe("text/markdown")
+      }
+    } finally {
+      await api.close()
+    }
+  })
+
+  it("still honours the filename when CREATING, where there is no document to keep", async () => {
+    // No artifact target: nothing to preserve, so the model's filename is the only signal.
+    const api = stubApi({ run: { ...baseRun, targets: [] } })
+    const url = await api.url
+    try {
+      const settled = await runToSettle(
+        url,
+        api.rec,
+        answerTurn(
+          `<revision>${JSON.stringify({
+            content: "<h1>New</h1>",
+            filename: "index.html",
+            confidence: 0.95,
+            message: "m",
+          })}</revision>`,
+        ),
+      )
+      expect(settled).toBeTruthy()
+      for (const w of api.rec.writes) {
+        expect(w.name).toBe("index.html")
+        expect(w.type).toBe("text/html")
+      }
     } finally {
       await api.close()
     }

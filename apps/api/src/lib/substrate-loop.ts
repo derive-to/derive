@@ -318,16 +318,38 @@ const whyNoCredential = async (
  * ledger can take.
  */
 const landOverHttp =
-  ({ call, json }: Api, targetId: string | undefined): LandingPort =>
+  (
+    { call, json }: Api,
+    targetId: string | undefined,
+    targetContentType?: string | null,
+  ): LandingPort =>
   async (decision, revision) => {
     const form = new FormData()
-    form.set(
-      "file",
-      new Blob([revision.content], {
-        type: revision.filename.endsWith(".md") ? "text/markdown" : "text/html",
-      }),
-      revision.filename,
-    )
+    // KEEP THE DOCUMENT'S OWN FORMAT, as the attended lane does (lib/session-turn.ts).
+    //
+    // The model names the file, and the edits contract falls back to `index.html` when it does
+    // not — right when CREATING an artifact, wrong when REVISING one. On production a markdown
+    // document went v1 text/markdown, v2 text/markdown (a chat edit, which already had this
+    // fix), v3 text/html the moment an automation wrote to it, at which point it rendered as one
+    // unformatted blob with nothing reporting an error.
+    //
+    // THE FILENAME IS WHAT DECIDES THIS, not the part's MIME type. publish.ts's storeContent
+    // reads the extension (after a full-HTML-document body sniff) and ignores what the multipart
+    // part claims — so setting only the Blob type looks correct, passes a test that inspects the
+    // request, and changes nothing about the artifact. Send both, and make the NAME agree with
+    // the document.
+    //
+    // Only markdown and html are rewritten: those are the two the extension actually decides. A
+    // deck is recognised from its body, so leaving its name alone is what keeps it a deck.
+    const contentType =
+      targetContentType ?? (revision.filename.endsWith(".md") ? "text/markdown" : "text/html")
+    const wantExt =
+      contentType === "text/markdown" ? ".md" : contentType === "text/html" ? ".html" : null
+    const filename =
+      wantExt && !new RegExp(`\\${wantExt}$`, "i").test(revision.filename)
+        ? `${revision.filename.replace(/\.[^./]*$/, "")}${wantExt}`
+        : revision.filename
+    form.set("file", new Blob([revision.content], { type: contentType }), filename)
     if (revision.message) form.set("message", revision.message)
     const write = async (path: string) => {
       const res = await call(path, { method: "POST", body: form })
@@ -423,8 +445,8 @@ const serveOneRun = async (
   // the prompt; a run with none is creating something new and has nothing to read. An unreadable
   // target fails the run — retryable, because a 5xx or a lease blip is transient, and because the
   // alternative is asking the model to rewrite a document it cannot see.
-  const source = targetId ? await sourceOf(client, targetId) : null
-  if (targetId && source === null) {
+  const targetDoc = targetId ? await sourceOf(client, targetId) : null
+  if (targetId && targetDoc === null) {
     await finish({
       status: "failed",
       meta: {
@@ -438,6 +460,7 @@ const serveOneRun = async (
 
   // Over EDITS_THRESHOLD_CHARS a whole-document reply cannot fit, so the ask becomes
   // search/replace edits — the same switch attended chat makes, from the same shared helper.
+  const source = targetDoc?.text ?? null
   const contract = source === null ? revisionContract : documentContract(source, false)
   const out = await runTurn({
     system:
@@ -455,7 +478,7 @@ const serveOneRun = async (
       autonomy: target?.mode === "publish" ? "auto" : "suggest",
       flags: run.flags ?? NO_FLAGS,
     },
-    land: landOverHttp(client, targetId),
+    land: landOverHttp(client, targetId, targetDoc?.contentType),
   })
   spentUsd = out.costUsd
 
@@ -670,13 +693,19 @@ const manifestFor = async ({ call }: Api, claimed: ClaimedSession): Promise<stri
  * for a published artifact's content to be empty (`current_version === 0` is filtered upstream),
  * so an empty read is a read that did not work: fail closed, retryable, same as a 500.
  */
-const sourceOf = async ({ call }: Api, shortId: string): Promise<string | null> => {
+const sourceOf = async (
+  { call }: Api,
+  shortId: string,
+): Promise<{ text: string; contentType: string | null } | null> => {
   try {
     const res = await call(`/v1/artifacts/${shortId}/content`)
     if (!res.ok) throw new Error(`artifact ${shortId} → ${res.status}`)
     const body = await res.text()
     if (!body.trim()) throw new Error(`artifact ${shortId} → 200 with an empty body`)
-    return body.slice(0, MAX_ARTIFACT_CHARS)
+    // The response header IS the document's recorded type, so keeping it here costs nothing and
+    // saves the write from having to guess one from a filename the model chose. See landOverHttp.
+    const contentType = res.headers.get("content-type")?.split(";")[0]?.trim() || null
+    return { text: body.slice(0, MAX_ARTIFACT_CHARS), contentType }
   } catch (e) {
     log.warn("loop substrate: could not read the run's target", {
       artifact: shortId,
