@@ -200,7 +200,12 @@ export const postSlackMessage = async (
       text: args.text,
       // The bot's own posts already render the artifact as a card, so don't let Slack
       // ALSO unfurl a link in the text — that repeats the same card right below it.
-      // (Links a person pastes still unfurl, via the separate link_shared → chat.unfurl.)
+      // A link a PERSON pastes may still unfurl, but by a different route than this flag:
+      // Slackbot crawls the page and reads its OG tags (packages/core/src/unfurl.ts). That is
+      // Slack's own crawler, not this app — Derive subscribes to no `link_shared` event, requests
+      // no `links:read` scope, and never calls chat.unfurl. Which also means it only works for a
+      // link an ANONYMOUS fetch can read: the meta is emitted behind the same `readable()` gate as
+      // the page (routes/embeds.ts), so a workspace-only artifact shows Slack nothing.
       unfurl_links: false,
       unfurl_media: false,
       ...(args.blocks ? { blocks: args.blocks } : {}),
@@ -308,11 +313,25 @@ export const openSlackDm = async (token: string, userId: string): Promise<string
 }
 
 /** Bot scopes requested at install — the single source of truth, also what the manifest
- *  declares (see slack-app-setup buildSlackManifest). Covers posting the comment mirror +
- *  event cards (chat/channels), reading channel history so a thread reply can flow back in
- *  (channels:* for public, groups:* for private channels the bot is invited to — matching
- *  the message.channels + message.groups event subscriptions), and DMing a mentioned user
- *  resolved by email (users:read.email, im:write) — no per-user OAuth.
+ *  declares (see slack-app-setup buildSlackManifest). What each one is actually for:
+ *
+ *    chat:write        chat.postMessage — the comment mirror, event cards, DMs
+ *    commands          the /derive slash command (Slack rejects the manifest without it)
+ *    channels:join     conversations.join, so the bot can self-add to a public channel
+ *    channels:history  delivery of message.channels — public-channel reply-back
+ *    groups:history    delivery of message.groups — private-channel reply-back
+ *    users:read        users.info, to name the author of an inbound Slack reply
+ *    users:read.email  users.lookupByEmail, the DM fallback for a member who hasn't linked
+ *    im:write          conversations.open, to DM a member. Reading DMs would need
+ *                      im:history, which we deliberately do NOT request (see the
+ *                      bot_events note in slack-app-setup.ts).
+ *
+ *  channels:read / groups:read back no call Derive makes today — they cover conversation
+ *  metadata (conversations.list/info), which nothing here reads; the channel is configured by
+ *  pasting its id. They are kept rather than trimmed on purpose: the cost of holding them is
+ *  a line on the consent screen, while the cost of being wrong about an event-delivery
+ *  dependency is silent (see the re-auth note below) — Slack would simply stop delivering
+ *  private-channel replies with nothing to detect. Revisit only with a live check.
  *
  *  Re-auth on scope drift is only automatic for scopes an OUTBOUND call needs: a stale
  *  install hits `missing_scope`, which flags needs_reauth and shows the reconnect banner.
@@ -322,20 +341,18 @@ export const openSlackDm = async (token: string, userId: string): Promise<string
  *  automatic prompt (a real scope-drift detector is future work). */
 export const SLACK_BOT_SCOPES = [
   "chat:write",
-  // Required by the /derive slash command. Without it Slack rejects the whole manifest
-  // ("Slash Commands requires `commands` bot scope"), so the app could not be created at
-  // all — the command has shipped since #454, but this scope never accompanied it.
+  // Slack rejects the whole manifest without this ("Slash Commands requires `commands` bot
+  // scope"), so the app could not be created at all — /derive shipped in #454, but this scope
+  // did not accompany it until #558. An install predating that fix lacks it, and its slash
+  // command stays dead until the workspace reconnects.
   "commands",
-  "channels:read",
+  "channels:read", // backs no call today — see the note above
   "channels:join",
   "channels:history",
-  "groups:read",
+  "groups:read", // backs no call today — see the note above
   "groups:history",
   "users:read",
   "users:read.email",
-  // Outbound DMs only (mentions, review requests, shares). Reading DMs would need
-  // im:history, which we deliberately do NOT request — see the bot_events note in
-  // slack-app-setup.ts.
   "im:write",
 ]
 

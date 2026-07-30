@@ -6169,7 +6169,7 @@ export interface components {
             team_name: string | null;
             /** @description The channel Derive posts to, or null if unset */
             default_channel: string | null;
-            /** @description Whether the stored bot token needs a re-auth (an auth error since connecting) */
+            /** @description Whether the stored bot token needs a re-auth — a failed auth/scope call, or Slack reporting the app uninstalled or its token revoked */
             needs_reauth: boolean;
             /** @description The caller's "DM me for interrupts" preference (mentions, review requests, shares) */
             slack_dm: boolean;

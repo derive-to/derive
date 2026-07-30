@@ -732,6 +732,11 @@ export interface IntegrationStore {
   getSlackInstall(orgId: string): Promise<SlackInstallRecord | null>
   /** Upsert (connect / reconnect) the Slack install for a workspace. */
   setSlackInstall(s: SlackInstallRecord): Promise<void>
+  /** Every install for a Slack team. Inbound Slack events identify the workspace by `team_id`
+   *  only (never our org id), so the install-lifecycle handler needs this direction; a plural
+   *  return because two Derive workspaces may connect the same Slack team. Unindexed scan —
+   *  one row per workspace, and this runs only on app_uninstalled / tokens_revoked. */
+  listSlackInstallsByTeam(teamId: string): Promise<SlackInstallRecord[]>
   /** Disconnect Slack for a workspace. */
   deleteSlackInstall(orgId: string): Promise<void>
   // ---- Per-user model-plan credentials -----------------------------------

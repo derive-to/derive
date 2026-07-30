@@ -1743,6 +1743,9 @@ export class PgMetaStore implements MetaStore {
       .values(s)
       .onConflictDoUpdate({ target: slackInstall.org_id, set })
   }
+  async listSlackInstallsByTeam(teamId: string): Promise<SlackInstallRecord[]> {
+    return await this.db.select().from(slackInstall).where(eq(slackInstall.team_id, teamId))
+  }
   async deleteSlackInstall(orgId: string): Promise<void> {
     await this.db.delete(slackInstall).where(eq(slackInstall.org_id, orgId))
   }

@@ -46,6 +46,45 @@ describe("webhook formatting + signing", () => {
     expect(published.text).toContain(":package:")
     expect(published.text).toContain("v3")
   })
+
+  // The incoming-webhook path (Settings -> Webhooks -> "Slack") builds mrkdwn from the same
+  // untrusted fields the connected app does, but was never given the connected app's escaping.
+  // An artifact title or comment body could therefore reach `<!channel>` and ping the whole
+  // channel, or forge `<url|label>` as a link the reader can't distinguish from a real one.
+  it("neutralizes Slack control syntax in every untrusted field", () => {
+    const hostile = { id: "a1", short_id: "s0", title: "<!channel> ship it" } as ArtifactRecord
+    const m = slackMessage(
+      buildPayload("http://h", hostile, "comment.created", {
+        author: "<@U999>",
+        body: "click <https://evil.example|Derive Support> now",
+        quote: "<!here>",
+      }),
+    ) as { text: string; blocks: unknown[] }
+    const all = JSON.stringify(m)
+    expect(all).not.toContain("<!channel>")
+    expect(all).not.toContain("<!here>")
+    expect(all).not.toContain("<@U999>")
+    expect(all).not.toContain("<https://evil.example|Derive Support>")
+    expect(all).toContain("&lt;!channel&gt;")
+    // The artifact URL is ours and must stay a working link — and `artifactUrl` slugifies the
+    // title, so a hostile title can't smuggle a `<`/`>`/`|` into the URL half of the wrapper.
+    expect(all).toContain("<http://h/artifacts/")
+    expect(m.blocks).toHaveLength(2)
+  })
+
+  it("escapes the mentioned-user list and renders a body's real markdown", () => {
+    const m = slackMessage(
+      buildPayload("http://h", sampleArtifact, "comment.mention", {
+        author: "ann",
+        mentioned: ["<!channel>", "bob"],
+        body: "see [the spec](https://ok.example/a?b=1&c=2)",
+      }),
+    ) as { text: string; blocks: unknown[] }
+    const all = JSON.stringify(m)
+    expect(all).not.toContain("<!channel>")
+    // A real markdown link renders, with its query string byte-intact.
+    expect(all).toContain("<https://ok.example/a?b=1&c=2|the spec>")
+  })
 })
 
 const dir = mkdtempSync(join(tmpdir(), "derive-wh-"))

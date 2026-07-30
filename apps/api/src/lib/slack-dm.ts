@@ -21,9 +21,8 @@ import type { ChannelSendResult } from "../webhooks"
 import { enqueueChannelDelivery } from "../webhooks"
 import { commentDeepLink, type Mention } from "./comments"
 import { openSlackDm, resolveSlackUserIdByEmail } from "./slack"
-import { actions, escapeMrkdwn, openButton, section } from "./slack-cards"
+import { actions, mrkdwnBody, mrkdwnLabel, openButton, section } from "./slack-cards"
 import { postWithRecovery, resolveBotToken, slackFailure } from "./slack-delivery"
-import { truncate } from "./text"
 
 /** The self-contained payload a slack_dm delivery carries. */
 interface SlackDmPayload {
@@ -70,14 +69,14 @@ export const enqueueSlackMentionDms = async (
     const pref = await meta.getUserNotificationPref(artifact.org_id, m.id)
     if (!wantsSlackDm(pref?.prefs)) continue
     const blocks = [
-      section(`:wave: *${escapeMrkdwn(cm.author)}* mentioned you on <${link}|${escapeMrkdwn(t)}>`),
-      section(`> ${escapeMrkdwn(truncate(cm.body_md, 600))}`),
+      section(`:wave: *${mrkdwnLabel(cm.author)}* mentioned you on <${link}|${mrkdwnLabel(t)}>`),
+      section(`> ${mrkdwnBody(cm.body_md, 600)}`),
       actions([openButton(link)]),
     ]
     await enqueueChannelDelivery(meta, "slack_dm", "comment.mention", {
       orgId: artifact.org_id,
       userId: m.id,
-      text: `${escapeMrkdwn(cm.author)} mentioned you on ${escapeMrkdwn(t)}`,
+      text: `${mrkdwnLabel(cm.author)} mentioned you on ${mrkdwnLabel(t)}`,
       blocks,
     } satisfies SlackDmPayload)
   }
@@ -101,15 +100,15 @@ export const enqueueSlackReviewRequestedDm = async (
   const t = title(artifact)
   const blocks = [
     section(
-      `:mag: *${escapeMrkdwn(proposal.requestedBy)}* requested your review of <${link}|${escapeMrkdwn(t)}> (v${proposal.version}).`,
+      `:mag: *${mrkdwnLabel(proposal.requestedBy)}* requested your review of <${link}|${mrkdwnLabel(t)}> (v${proposal.version}).`,
     ),
-    ...(proposal.note ? [section(`> ${escapeMrkdwn(truncate(proposal.note, 600))}`)] : []),
+    ...(proposal.note ? [section(`> ${mrkdwnBody(proposal.note, 600)}`)] : []),
     actions([openButton(link, "Review in Derive")]),
   ]
   await enqueueChannelDelivery(meta, "slack_dm", "review.requested", {
     orgId: artifact.org_id,
     userId: reviewerId,
-    text: `${escapeMrkdwn(proposal.requestedBy)} requested your review of ${escapeMrkdwn(t)} (v${proposal.version})`,
+    text: `${mrkdwnLabel(proposal.requestedBy)} requested your review of ${mrkdwnLabel(t)} (v${proposal.version})`,
     blocks,
   } satisfies SlackDmPayload)
 }
@@ -134,14 +133,14 @@ export const enqueueSlackShareDm = async (
   const roleSuffix = input.role === "viewer" ? "" : ` as ${input.role}`
   const blocks = [
     section(
-      `:open_file_folder: *${escapeMrkdwn(input.sharedBy)}* shared <${link}|${escapeMrkdwn(t)}> with you${roleSuffix}.`,
+      `:open_file_folder: *${mrkdwnLabel(input.sharedBy)}* shared <${link}|${mrkdwnLabel(t)}> with you${roleSuffix}.`,
     ),
     actions([openButton(link)]),
   ]
   await enqueueChannelDelivery(meta, "slack_dm", "artifact.shared", {
     orgId: artifact.org_id,
     userId: recipientId,
-    text: `${escapeMrkdwn(input.sharedBy)} shared ${escapeMrkdwn(t)} with you`,
+    text: `${mrkdwnLabel(input.sharedBy)} shared ${mrkdwnLabel(t)} with you`,
     blocks,
   } satisfies SlackDmPayload)
 }

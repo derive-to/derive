@@ -1952,6 +1952,8 @@ export function makeRepos(db: SqliteDb) {
       .onConflictDoUpdate({ target: slackInstall.org_id, set })
       .run()
   }
+  const listSlackInstallsByTeam = async (teamId: string): Promise<SlackInstallRecord[]> =>
+    await db.select().from(slackInstall).where(eq(slackInstall.team_id, teamId)).all()
   const deleteSlackInstall = async (orgId: string): Promise<void> => {
     await db.delete(slackInstall).where(eq(slackInstall.org_id, orgId)).run()
   }
@@ -3747,6 +3749,7 @@ export function makeRepos(db: SqliteDb) {
     setOrgSettings,
     getSlackInstall,
     setSlackInstall,
+    listSlackInstallsByTeam,
     deleteSlackInstall,
     getModelCredential,
     setModelCredential,
