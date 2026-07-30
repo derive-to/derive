@@ -2,7 +2,12 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     "apps/api": {
-      "entry": ["gen-auth-schema.ts", "test/e2e/*.mts"]
+      "entry": [
+        "gen-auth-schema.ts",
+        "test/e2e/*.mts",
+        "test/**/*.manual.ts",
+        "vitest.manual.config.ts"
+      ]
     },
     "apps/web": {
       "entry": ["src/components/ui/**", "e2e/**/*.screens.ts"]
