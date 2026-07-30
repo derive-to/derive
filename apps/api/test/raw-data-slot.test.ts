@@ -107,6 +107,24 @@ describe("raw data-slot route", () => {
     expect(ok.status).toBe(200)
   })
 
+  it("is readable by the artifact's OWN page (CORS), which is the whole self-charting idea", async () => {
+    // Artifacts render in an OPAQUE ORIGIN (the sandbox CSP grants no allow-same-origin),
+    // so a page fetching its own data is cross-origin from a null origin. Without this
+    // header the browser never hands the body to the script: `fetch` throws a bare
+    // "Failed to fetch" and the page cannot chart its own history. Found by publishing a
+    // real probe page that self-discovered its short_id and then died on the next line;
+    // every other raw route already carried the header via RAW_HEADERS, and these two
+    // built their headers from scratch and lost it.
+    // ONE version, so v1 IS the current one: an anonymous read of an older version is
+    // refused by the public-history gate, and this case is about the CORS header.
+    await seed("slot9", "public")
+    for (const path of ["/raw/slot9/v/1/data/checks", "/raw/slot9/data/checks.jsonl"]) {
+      const res = await app.request(path)
+      expect(res.status, path).toBe(200)
+      expect(res.headers.get("access-control-allow-origin"), path).toBe("*")
+    }
+  })
+
   it("a gated artifact's slot is never stored by a SHARED cache", async () => {
     await seed("slot6b", "none", 2)
     const auth = { authorization: "Bearer tok" }

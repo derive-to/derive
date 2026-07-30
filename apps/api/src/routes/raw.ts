@@ -61,6 +61,26 @@ export const rawRoutes = (ctx: AppContext) => {
   const slotCache = (a: ArtifactRecord, directives: string): string =>
     a.link_role === "none" || a.password_hash ? `private, ${directives}` : `public, ${directives}`
 
+  /**
+   * A slot response must be READABLE BY THE ARTIFACT'S OWN PAGE, which is the entire
+   * point of "a page charts its own history".
+   *
+   * Artifacts are served into an OPAQUE ORIGIN (the sandbox CSP grants no
+   * allow-same-origin), so a page fetching its own data is making a cross-origin request
+   * from a null origin. Without this header the browser refuses to hand the body to the
+   * script and `fetch` throws a bare "Failed to fetch" before any response is visible.
+   * Every other raw route already carries it via RAW_HEADERS; these routes built their
+   * headers from scratch and lost it, which is why a live probe page could self-discover
+   * its own short_id and then fail on the very next line.
+   *
+   * It grants no access. An opaque origin cannot send credentials, and `*` forbids
+   * credentialed reads anyway, so a cross-origin caller sees exactly what an anonymous
+   * one sees — which for a gated artifact is the 404 the authorize check above already
+   * returned. This makes a PUBLIC artifact's data readable by its own page; a gated one
+   * still cannot self-read, because the page has no credentials to prove with.
+   */
+  const SLOT_CORS = { "Access-Control-Allow-Origin": "*" }
+
   const serveSlot = async (c: Context, shortId: string, n: number | null, slotRaw: string) => {
     // `.jsonl` asks for the WHOLE SERIES, `.json` (or bare) for one version's value. The
     // two share this handler rather than living on separate routes because the `.json`
@@ -98,6 +118,7 @@ export const rawRoutes = (ctx: AppContext) => {
         // Grows with every publish, so never immutable — but cheap and worth a short cache.
         "Cache-Control": slotCache(artifact, "max-age=60"),
         "X-Content-Type-Options": "nosniff",
+        ...SLOT_CORS,
       })
     }
     const rows = await meta.getVersionData(artifact.id, v, slot)
@@ -110,6 +131,7 @@ export const rawRoutes = (ctx: AppContext) => {
       // A version is immutable, so its slot is too — cache it hard. The current-version
       // alias can't be, since the next publish changes what it points at.
       "Cache-Control": n === null ? "no-cache" : slotCache(artifact, "max-age=31536000, immutable"),
+      ...SLOT_CORS,
     })
   }
   app.get("/raw/:shortId/v/:n/data/:slot", (c) =>
