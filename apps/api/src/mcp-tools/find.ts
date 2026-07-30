@@ -7,6 +7,7 @@ import {
   searchWorkspace,
   toSearchHits,
 } from "../lib/search"
+import { visibleArtifactIds } from "../lib/visibility"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json, runnerOnline, safeJson, summarizeArtifact, text } from "../mcp-util"
 
@@ -196,8 +197,31 @@ export function registerFindTool(tc: ToolContext): void {
           return err(
             "`data` reads slots across the workspace — pass it with `tag` (to scope the set) but not with `query`/`short_id`, which grep one artifact or search text.",
           )
+        // Both reads below reach artifacts by a METRIC NAME rather than by id, so the
+        // store scopes them to the org and stops there. An org is not a read permission:
+        // an artifact can be invite-only within its own workspace. Everything the store
+        // hands back therefore passes the same visibility gate workspace search uses
+        // before it is counted or returned.
+        const viewer = { orgId: t.org, viewerId: actingFor?.id ?? agent.id }
         if (data === "*") {
-          const catalog = await ctx.meta.listWorkspaceSlots(t.org)
+          const rows = await ctx.meta.listWorkspaceSlots(t.org)
+          const allowed = await visibleArtifactIds(
+            ctx.meta,
+            [...new Set(rows.map((r) => r.artifact_id))],
+            viewer,
+          )
+          // Count over what this caller can actually see, not over the workspace.
+          const byName = new Map<string, { artifacts: Set<string>; latest_at: string }>()
+          for (const r of rows) {
+            if (!allowed.has(r.artifact_id)) continue
+            const e = byName.get(r.slot) ?? { artifacts: new Set<string>(), latest_at: r.at }
+            e.artifacts.add(r.artifact_id)
+            if (r.at > e.latest_at) e.latest_at = r.at
+            byName.set(r.slot, e)
+          }
+          const catalog = [...byName.entries()]
+            .map(([slot, e]) => ({ slot, artifacts: e.artifacts.size, latest_at: e.latest_at }))
+            .sort((a, b) => b.artifacts - a.artifacts || a.slot.localeCompare(b.slot))
           return json({
             workspace: t.org,
             count: catalog.length,
@@ -211,10 +235,16 @@ export function registerFindTool(tc: ToolContext): void {
                 }),
           })
         }
-        const rows = await ctx.meta.listSlotAcrossArtifacts(t.org, data, {
+        const found = await ctx.meta.listSlotAcrossArtifacts(t.org, data, {
           tag: tag?.trim().toLowerCase(),
           limit: 200,
         })
+        const allowed = await visibleArtifactIds(
+          ctx.meta,
+          found.map((r) => r.id),
+          viewer,
+        )
+        const rows = found.filter((r) => allowed.has(r.id))
         return json({
           workspace: t.org,
           slot: data,

@@ -15,6 +15,7 @@ import {
 import { log } from "../log"
 import { cleanPath, manifestOf } from "./bundle"
 import { clip } from "./clip"
+import { visibleArtifacts } from "./visibility"
 
 // The minimal store surface search needs — a BlobStore, a version→text resolver
 // (works for a version OR a proposal, same as the rest of the app), and (only for
@@ -460,13 +461,6 @@ export const WORKSPACE_SEARCH_CANDIDATE_CAP = 200
 // now "grep-confirm the 30 most RELEVANT you can see".
 export const WORKSPACE_SEARCH_ARTIFACT_CAP = 30
 
-// The candidate ids are resolved through listArtifacts in chunks this size: `ids`
-// compiles to `id IN (?…)`, one bound parameter each, and D1 rejects any statement
-// with >100 of them (a 500). 90 leaves room for the query's other bound params
-// (org, viewer, listed). Postgres could take all 200 at once but chunking is harmless
-// there. The chunks are independent visibility queries; their rows just concatenate.
-const LIST_ID_CHUNK = 90
-
 // Reciprocal-rank fusion: merge the lexical and dense candidate lists by summing 1/(k+rank)
 // across the lists an id appears in (k=60, the standard constant). Rank-based, so it needs no
 // score normalization between BM25 and cosine — an id near the top of EITHER arm ranks well, and
@@ -564,41 +558,17 @@ export const searchWorkspace = async (
   // literal grep-confirm below finds nothing to quote.
   const chunkOf = new Map(candidates.flatMap((c) => (c.chunk ? [[c.id, c.chunk] as const] : [])))
 
-  // Tier 2 gate — THE visibility check. Re-resolve the nominated ids through
-  // listArtifacts with the SAME orgId/viewerId/publicOnly list_artifacts uses, PLUS
-  // excludeRemoved (the index can outlive a takedown, and listArtifacts keeps tombstones
-  // for the feed — so search must drop them explicitly, else a moderated artifact's text
-  // is grep-readable). An id the index nominated survives only if this call returns it,
-  // so the index — a pure relevance oracle with no access knowledge — can never widen
-  // visibility. Chunked to stay under D1's bound-parameter cap (see LIST_ID_CHUNK).
-  const visible: ArtifactRecord[] = []
+  // Tier 2 gate — THE visibility check, now shared with every other surface that reaches
+  // artifacts by something other than their own id (lib/visibility.ts carries the full
+  // reasoning about tombstones, password locks and seat-only reach). An id the index
+  // nominated survives only if that gate returns it, so the index — a pure relevance
+  // oracle with no access knowledge — can never widen visibility.
   const candidateIds = candidates.map((c) => c.id)
-  for (let i = 0; i < candidateIds.length; i += LIST_ID_CHUNK) {
-    const rows = await deps.meta.listArtifacts({
-      orgId: opts.orgId,
-      viewerId: opts.viewerId,
-      publicOnly: opts.publicOnly,
-      excludeRemoved: true,
-      ids: candidateIds.slice(i, i + LIST_ID_CHUNK),
-    })
-    visible.push(...rows)
-  }
-  // A password lock suspends the WORLD LINK until unlocked — `effectiveRole` (permissions.ts)
-  // makes `locked && !unlocked` ⇒ the link grants nothing. So a locked artifact is readable
-  // ONLY through a non-link grant: a workspace SEAT (workspace_access:"member" opened by a
-  // member) or an explicit share. `listArtifacts` is the LISTING gate, not the read gate — a
-  // {listed:"public", workspace_access:"none", link_role:"viewer", password:…} doc lists to a
-  // member, yet they can open it only via the (locked) link, so its body must not be
-  // grep-readable to them (read would 401 "password required"). Keep a locked artifact only
-  // when the caller's SEAT grants read: a member (not publicOnly) on a workspace_access:"member"
-  // doc. Anonymous/link-only callers — and the rare member reachable solely by an explicit
-  // share on a workspace_access:"none" lock — are conservatively dropped: a safe recall loss,
-  // never a leak. (A per-candidate `authorize(c,"read",a)` would also honor explicit shares and
-  // unlock cookies, but the MCP entry point has no request Context to build that actor from, so
-  // this seat-only predicate is the uniform floor both callers share.)
-  const gated = visible.filter(
-    (a) => !a.password_hash || (!opts.publicOnly && a.workspace_access === "member"),
-  )
+  const gated = await visibleArtifacts(deps.meta, candidateIds, {
+    orgId: opts.orgId,
+    viewerId: opts.viewerId,
+    publicOnly: opts.publicOnly,
+  })
   // listArtifacts returns in its own (recency) order; restore relevance order.
   gated.sort((a, b) => (rankOf.get(a.id) ?? Infinity) - (rankOf.get(b.id) ?? Infinity))
 

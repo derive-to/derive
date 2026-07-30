@@ -189,6 +189,31 @@ describe("/v1/og/:ref — PNG preview serving", () => {
     expect(res.headers.get("cache-control")).not.toContain("public")
   })
 
+  it("gated artifact's SVG card, oembed and embed are not shared-cacheable either", async () => {
+    const { app } = makeApp("og-gated-siblings")
+    const { short_id } = await publish(app, "<h1>Team only</h1>", {
+      visibility: "org",
+      title: "Gated Artifact",
+    })
+    // No stored preview, so /v1/og falls to the SVG branch. All three of these are built
+    // from `infoFor` — the artifact's own title, counts and DATA SLOTS — and are assembled
+    // at all only for a caller who could read it. The PNG sibling above has always been
+    // private; these three shipped `public` while carrying the same revealed content, so a
+    // CDN or corporate proxy could serve an authorized member's card, figures and all, to
+    // someone with no access. Nothing varies on the credential, so `private` is the fix.
+    const url = encodeURIComponent(`http://derive.test/artifacts/${short_id}`)
+    for (const path of [`/v1/og/${short_id}`, `/v1/oembed?url=${url}`, `/v1/embed/${short_id}`]) {
+      const res = await app.request(path, { headers: AUTH })
+      expect(res.status, path).toBe(200)
+      expect(res.headers.get("cache-control"), path).toContain("private")
+      expect(res.headers.get("cache-control"), path).not.toContain("public")
+    }
+    // The ANONYMOUS card is the title-less locked one, with nothing in it worth protecting,
+    // so it keeps caching hard at the edge — the reason unfurls stay fast.
+    const anon = await app.request(`/v1/og/${short_id}`)
+    expect(anon.headers.get("cache-control")).toContain("public")
+  })
+
   it("SECURITY: private artifact with ready preview → anonymous caller gets SVG, never the PNG", async () => {
     const { app, meta, blobs } = makeApp("og-private-anon")
     // Upload as the static token (owner), then the anonymous caller has no token.

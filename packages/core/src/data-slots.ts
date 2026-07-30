@@ -24,6 +24,14 @@ export const MAX_SLOT_BYTES = 32 * 1024
 /** Per-version ceiling on the number of slots. Extras are dropped with an advisory. */
 export const MAX_SLOTS_PER_VERSION = 20
 
+/** Ceiling on the raw (slot, artifact) rows the slot CATALOG pulls before the caller
+ *  narrows them to what it may see. The catalog cannot be counted in SQL (that would count
+ *  artifacts the caller has no read on), so the rows travel to the caller and the cap is
+ *  what keeps that bounded. At 20 slots per version this covers a workspace of ~250
+ *  slot-bearing artifacts, well past any real one; a workspace that exceeds it gets a
+ *  vocabulary drawn from a subset, which is a listing, not a wrong answer. */
+export const WORKSPACE_SLOT_ROW_CAP = 5000
+
 /** Slot names are url-safe and short: they appear in `read(data:"…")` and a raw route. */
 const SLOT_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 

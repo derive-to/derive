@@ -224,17 +224,18 @@ export function runStoreContract(
       expect((await store.listSlotAcrossArtifacts(ORG, "xchecks", { limit: 1 })).length).toBe(1)
     })
 
-    it("lists the workspace's slot vocabulary with artifact counts", async () => {
-      const catalog = await store.listWorkspaceSlots(ORG)
-      const checks = catalog.find((c) => c.slot === "xchecks")
-      // Both artifacts from the previous case carry it; "other" is on one.
-      expect(checks?.artifacts).toBeGreaterThanOrEqual(2)
-      expect(catalog.find((c) => c.slot === "xother")?.artifacts).toBe(1)
-      expect(checks?.latest_at).toBeTruthy()
-      // Ordered by reach, so the most-used slot leads.
-      expect(catalog[0]?.artifacts).toBeGreaterThanOrEqual(
-        catalog[catalog.length - 1]?.artifacts ?? 0,
-      )
+    it("lists the workspace's slot vocabulary as RAW rows, uncounted, carrying artifact_id", async () => {
+      const rows = await store.listWorkspaceSlots(ORG)
+      // Deliberately (slot, artifact) pairs rather than counts: the count has to be taken
+      // AFTER the caller's visibility gate, so the artifact_id it gates on must survive
+      // this far. A pre-aggregated count would already include artifacts the caller may
+      // not read, with the evidence needed to correct it thrown away.
+      const checks = rows.filter((r) => r.slot === "xchecks")
+      expect(new Set(checks.map((r) => r.artifact_id)).size).toBeGreaterThanOrEqual(2)
+      expect(rows.filter((r) => r.slot === "xother").length).toBe(1)
+      expect(checks[0]?.at).toBeTruthy()
+      expect(rows.every((r) => !!r.artifact_id)).toBe(true)
+      expect((await store.listWorkspaceSlots(ORG, { limit: 1 })).length).toBe(1)
     })
 
     it("filters listArtifacts by title search and by id set (empty ⇒ none)", async () => {

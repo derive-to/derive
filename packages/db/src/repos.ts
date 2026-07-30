@@ -112,6 +112,7 @@ import {
   parseRunMeta,
   runCounter,
   sortFields,
+  WORKSPACE_SLOT_ROW_CAP,
 } from "@derive/core"
 import {
   and,
@@ -655,12 +656,14 @@ export function makeRepos(db: SqliteDb) {
       .limit(limit)
       .all()
 
-  const listWorkspaceSlots = async (orgId: string) =>
+  // Raw (slot, artifact) rows over each artifact's CURRENT version. Counting happens in
+  // the caller, AFTER the visibility gate — see the port doc for why it cannot happen here.
+  const listWorkspaceSlots = async (orgId: string, opts?: { limit?: number }) =>
     db
       .select({
         slot: versionData.slot,
-        artifacts: sql<number>`count(distinct ${versionData.artifact_id})`,
-        latest_at: sql<string>`max(${versionData.created_at})`,
+        artifact_id: versionData.artifact_id,
+        at: versionData.created_at,
       })
       .from(versionData)
       .innerJoin(
@@ -668,8 +671,8 @@ export function makeRepos(db: SqliteDb) {
         and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
       )
       .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
-      .groupBy(versionData.slot)
-      .orderBy(desc(sql`count(distinct ${versionData.artifact_id})`), asc(versionData.slot))
+      .orderBy(asc(versionData.slot))
+      .limit(opts?.limit ?? WORKSPACE_SLOT_ROW_CAP)
       .all()
 
   const listSlotAcrossArtifacts = async (
@@ -688,6 +691,7 @@ export function makeRepos(db: SqliteDb) {
       : null
     return db
       .select({
+        id: artifact.id,
         short_id: artifact.short_id,
         title: artifact.title,
         n: versionData.n,

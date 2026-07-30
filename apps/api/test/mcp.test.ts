@@ -56,6 +56,43 @@ function appWithGrant(
     new Date(Date.now() + 3_600_000).toISOString(),
   )
   db.close()
+  // A SECOND workspace member with their own grant, for the tests that need a caller who
+  // is legitimately in the workspace yet has no claim on a particular artifact. Off by
+  // default so every other case keeps its single-identity setup.
+  const teammate = (userId: string, tokenName: string, tokenScopes: string): string => {
+    const raw = new Database(path)
+    raw.exec(`
+      CREATE TABLE IF NOT EXISTS workspace (id TEXT PRIMARY KEY, name TEXT);
+      CREATE TABLE IF NOT EXISTS membership (id TEXT PRIMARY KEY, org_id TEXT, user_id TEXT, role TEXT);
+    `)
+    raw.prepare(`INSERT OR IGNORE INTO workspace(id,name) VALUES('default','Default')`).run()
+    // Both identities hold a workspace SEAT: that is what makes the leak test meaningful,
+    // since a non-member would be filtered by the org predicate alone and the assertion
+    // would pass without the visibility gate ever running.
+    for (const [uid, role] of [
+      ["u_o", "owner"],
+      [userId, "editor"],
+    ] as const)
+      raw
+        .prepare(`INSERT OR IGNORE INTO membership(id,org_id,user_id,role) VALUES(?,'default',?,?)`)
+        .run(`m_${uid}`, uid, role)
+    raw
+      .prepare(`INSERT OR IGNORE INTO "user"(id,email,name) VALUES(?,?,?)`)
+      .run(userId, `${userId}@x.test`, "Teammate")
+    raw
+      .prepare(
+        `INSERT INTO "oauthAccessToken"(token,clientId,userId,scopes,expiresAt) VALUES(?,?,?,?,?)`,
+      )
+      .run(
+        sha256(tokenName),
+        "cli",
+        userId,
+        JSON.stringify(tokenScopes.split(/\s+/).filter(Boolean)),
+        new Date(Date.now() + 3_600_000).toISOString(),
+      )
+    raw.close()
+    return tokenName
+  }
   const blobs = new FsBlobStore(join(dir, `${name}-blobs`))
   const app = createApp({
     meta,
@@ -64,7 +101,7 @@ function appWithGrant(
     token: "tok",
     ...extra,
   })
-  return { app, token: `tok_${name}`, meta, blobs }
+  return { app, token: `tok_${name}`, meta, blobs, teammate }
 }
 
 type App = ReturnType<typeof createApp>
@@ -385,6 +422,67 @@ describe("remote MCP endpoint (/mcp)", () => {
     const out = r.parsed?.result as { isError?: boolean; content?: { text: string }[] } | undefined
     expect(out?.isError).toBe(true)
     expect(out?.content?.[0]?.text ?? "").toMatch(/stage target:.?doc/i)
+  })
+
+  it("NEVER surfaces an invite-only artifact's slot data to a co-member (regression)", async () => {
+    // The cross-artifact slot readers reach artifacts by a METRIC NAME, so the store can
+    // only scope them by org — and an org is not a read permission: workspace_access:"none"
+    // means invite-only WITHIN the workspace. Without the visibility gate, asking for a
+    // metric returned the title and the actual figures of documents the caller was
+    // deliberately left off.
+    const { app, token, teammate } = appWithGrant("slotvis", "openid derive:read derive:publish")
+    const mate = teammate("u_mate", "tok_slotvis_mate", "openid derive:read")
+    const page = (n: number) =>
+      `<!doctype html><html><body><h1>Report</h1>` +
+      `<script type="application/derive-data" data-slot="revenue">{"usd":${n}}</script>` +
+      "</body></html>"
+
+    // listed:"workspace" is what actually puts an artifact in front of a teammate. An
+    // unlisted team draft stays out of cross-artifact discovery for exactly the reason it
+    // stays out of search: this gate is the same one, deliberately.
+    const open = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Team Report",
+          content: page(100),
+          listed: "workspace",
+        }),
+      ),
+    )
+    const secret = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Board Only",
+          content: page(999),
+          workspace_access: "none",
+          link_role: "none",
+        }),
+      ),
+    )
+
+    // The publisher sees both: this is scoped visibility, not a broken feature.
+    const mine = JSON.parse(toolText(await call(app, token, "find", { data: "revenue" })))
+    expect(mine.results.map((r: { short_id: string }) => r.short_id).sort()).toEqual(
+      [open.short_id, secret.short_id].sort(),
+    )
+
+    // The teammate holds a real workspace seat, so the org predicate alone would let the
+    // invite-only artifact through. Only the gate keeps it out.
+    const theirs = JSON.parse(toolText(await call(app, mate, "find", { data: "revenue" })))
+    expect(theirs.results.map((r: { short_id: string }) => r.short_id)).toEqual([open.short_id])
+    expect(theirs.count).toBe(1)
+    // Neither the title nor the figure leaks anywhere in the payload.
+    expect(JSON.stringify(theirs)).not.toContain("Board Only")
+    expect(JSON.stringify(theirs)).not.toContain("999")
+
+    // The CATALOG counts what the caller can see, not what the workspace holds: a count of
+    // 2 here would disclose the existence of the document just as surely as naming it.
+    const catalog = JSON.parse(toolText(await call(app, mate, "find", { data: "*" })))
+    expect(catalog.slots.find((s: { slot: string }) => s.slot === "revenue")?.artifacts).toBe(1)
+    const ownerCatalog = JSON.parse(toolText(await call(app, token, "find", { data: "*" })))
+    expect(ownerCatalog.slots.find((s: { slot: string }) => s.slot === "revenue")?.artifacts).toBe(
+      2,
+    )
   })
 
   it("backfills a slot's history the first time it appears on an artifact", async () => {
