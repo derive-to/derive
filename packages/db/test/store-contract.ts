@@ -1572,6 +1572,56 @@ export function runStoreContract(
       })
     }
 
+    // The ATTENDED (chat) claim. A contextless session has no agent to check ownership through,
+    // so this is its only mutual exclusion — and a primitive that works on one driver and not
+    // another is worse than none, which is why it lives in the contract rather than a
+    // sqlite-only test. Every driver runs these.
+    it("claimAttendedSession: one winner, no double-claim, reclaim after lapse", async () => {
+      const mk = async (id: string) =>
+        store.createSession({
+          id,
+          context_id: null,
+          context_version: null,
+          org_id: ORG,
+          asker_id: "rob",
+          subject_ref: JSON.stringify({ kind: "artifact", id: "doc1" }),
+        })
+      const soon = () => new Date(Date.now() + 60_000).toISOString()
+
+      // Ten concurrent callers — two tabs hitting send at once, or a retry after a timeout.
+      const raceId = uuid()
+      await mk(raceId)
+      const claims = await Promise.all(
+        Array.from({ length: 10 }, () => store.claimAttendedSession(raceId, soon())),
+      )
+      expect(claims.filter(Boolean)).toHaveLength(1)
+
+      // A live lease is not re-claimable.
+      expect(await store.claimAttendedSession(raceId, soon())).toBeNull()
+
+      // A LAPSED lease is: otherwise a process that died mid-turn strands the session and the
+      // UI polls it forever.
+      const deadId = uuid()
+      await mk(deadId)
+      expect(
+        await store.claimAttendedSession(deadId, new Date(Date.now() - 1000).toISOString()),
+      ).not.toBeNull()
+      expect(await store.claimAttendedSession(deadId, soon())).not.toBeNull()
+
+      // Fails closed on a CONTEXT-owned session: those belong to the agent's claim, which
+      // checks ownership through the context. This must not become a way around it.
+      const cx = await newContext()
+      const ctxSes = uuid()
+      await store.createSession({
+        id: ctxSes,
+        context_id: cx.id,
+        context_version: 1,
+        org_id: ORG,
+        asker_id: "rob",
+      })
+      expect(await store.claimAttendedSession(ctxSes, soon())).toBeNull()
+    })
+
     it("creates a context, lists it by workspace, resolves by id", async () => {
       const ctx = await newContext()
       expect(await store.getContext(ctx.id)).toMatchObject({ name: ctx.name })
@@ -2555,6 +2605,61 @@ export function runStoreContract(
         costMicroUsd: 0,
       })
       expect(dup).toBeNull()
+    })
+
+    it("run cost ACCUMULATES across attempts and never nulls out a banked total", async () => {
+      // A retry reuses the SAME run row, so cost has to add rather than replace. Replacing meant
+      // a run that burned an expensive failed attempt and then settled cheaply reported only the
+      // cheap number — undercounting exactly the runs that cost the most, in the column the
+      // monthly budget sums. Driver-level because both adapters implement it and must agree.
+      const agentId = uuid()
+      const r = await store.createRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        reason: "manual:u1",
+        scheduled_for: "2000-01-01T00:00:00.000Z",
+      })
+      await store.claimDueRuns(agentId, "2100-01-01T00:00:00.000Z")
+
+      // Attempt 1 fails retryably having spent 900k; the requeue banks it. Scheduled in the past
+      // so the next claim picks it straight back up (the API path uses a real 60s backoff).
+      const requeued = await store.requeueRun(r.id, agentId, {
+        scheduledFor: "2000-01-01T00:00:00.000Z",
+        costMicroUsd: 900_000,
+      })
+      expect(requeued?.status).toBe("queued")
+      expect(requeued?.cost_micro_usd).toBe(900_000)
+
+      // Attempt 2 settles having spent 100k. The run cost 1,000,000, not 100,000.
+      await store.claimDueRuns(agentId, "2100-01-01T00:00:00.000Z")
+      const settled = await store.finishRun(r.id, agentId, {
+        status: "succeeded",
+        finishedAt: "2100-01-01T00:00:00.000Z",
+        costMicroUsd: 100_000,
+      })
+      expect(settled?.cost_micro_usd).toBe(1_000_000)
+
+      // A provider that reports NOTHING (Codex plain-text, an older CLI) must read as unknown and
+      // leave the banked total alone. An unconditional `cost = value ?? null` write erased it.
+      const r2 = await store.createRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        reason: "manual:u1",
+        scheduled_for: "2000-01-01T00:00:00.000Z",
+      })
+      await store.claimDueRuns(agentId, "2100-01-01T00:00:00.000Z")
+      await store.requeueRun(r2.id, agentId, {
+        scheduledFor: "2000-01-01T00:00:00.000Z",
+        costMicroUsd: 500_000,
+      })
+      await store.claimDueRuns(agentId, "2100-01-01T00:00:00.000Z")
+      const quiet = await store.finishRun(r2.id, agentId, {
+        status: "succeeded",
+        finishedAt: "2100-01-01T00:00:00.000Z",
+      })
+      expect(quiet?.cost_micro_usd).toBe(500_000)
     })
 
     it("deleteAutomation cancels its queued runs and is org-scoped", async () => {

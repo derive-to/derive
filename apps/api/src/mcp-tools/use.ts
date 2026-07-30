@@ -1,5 +1,6 @@
 import { type ContextRecord, newId, type SessionRecord } from "@derive/core"
 import { z } from "zod"
+import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import type { ToolContext } from "../mcp-tool-context"
 import { ANSWER_MAX, clipSessionText, ENTRY_MAX, err, json, runnerOnline } from "../mcp-util"
 import { ownerRunsOrg, runnerDispatch } from "./use-runner"
@@ -281,7 +282,7 @@ export function registerUseTool(tc: ToolContext): void {
             "Pass `context` OR `session_id`, not both — a follow-up already knows its context.",
           )
         const found = await ctx.meta.getSession(session_id)
-        const linked = found ? await ctx.meta.getContext(found.context_id) : null
+        const linked = found?.context_id ? await ctx.meta.getContext(found.context_id) : null
         // Ownership + the LIVE grant, re-checked per call (a human removed from
         // the workspace/roster loses ask-through-agent the moment they lose
         // ask-directly), and the OAuth grant's workspace clamp. Any miss reads
@@ -353,6 +354,17 @@ export function registerUseTool(tc: ToolContext): void {
         const inflight = await ctx.meta.findInflightSession(hit.x.id, actingFor.id, dedupe_key)
         if (inflight) return reply(inflight, hit.x, false)
       }
+      // PAYER guard, mirroring the REST ask (routes/contexts.ts): the asker pays, then
+      // owner-lend, then the pool. After the dedupe join for the same reason — joining an
+      // open session creates no new work.
+      if (
+        !(await canPayForAgent(ctx.meta, {
+          orgId: hit.x.org_id,
+          agentId: hit.x.agent_id,
+          initiator: { userId: actingFor.id, source: "asker" },
+        }))
+      )
+        return err(NO_PAYER_MESSAGE)
       let opened: SessionRecord
       try {
         opened = await ctx.meta.createSession({

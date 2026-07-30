@@ -910,6 +910,11 @@ export interface ContextStore {
   /** Extend a claimed session's lease (a streaming runner's heartbeat) — keeps a
    *  slow-but-live run from being re-served/double-run at max_concurrency > 1. */
   renewSessionLease(sessionId: string, leaseUntil: string): Promise<void>
+  /** Status-guarded claim for a CONTEXTLESS (chat) session, which has no agent to check
+   *  ownership through. Returns the row only if this caller won: `open`, or `working` with a
+   *  lapsed lease (crash recovery). Two tabs sending at once therefore run ONE turn, and a
+   *  process that dies mid-turn leaves a lease that lapses instead of a session stuck forever. */
+  claimAttendedSession(id: string, leaseUntil: string): Promise<SessionRecord | null>
   /** Append an asker follow-up and reopen the session ATOMICALLY (compare-and-set): a
    *  `working` session stays working (don't vacate the active claim); a settled/open one
    *  goes to `open` (reclaimable), and a settled one drops its dedupe key so it can't collide
@@ -1085,7 +1090,10 @@ export interface AgentStore {
   requeueRun(
     id: string,
     agentId: string,
-    fields: { scheduledFor: string; meta?: string | null },
+    /** `costMicroUsd` banks the FAILED attempt's spend before the row goes back on the queue: a
+     *  retry reuses this same run row, so a cost not recorded here is lost for good when the run
+     *  eventually settles. Accumulates onto whatever the column already holds. */
+    fields: { scheduledFor: string; meta?: string | null; costMicroUsd?: number | null },
     expectedStartedAt?: string | null,
   ): Promise<RunRecord | null>
   /** The reclaim sweep: runs stuck `running` since before `cutoffIso` (their substrate died)
@@ -2024,11 +2032,13 @@ export type SessionMessageAuthor = "asker" | "agent"
  *  runner's credentials can reach, so it never gets artifact-style visibility. */
 export interface SessionRecord {
   id: string
-  context_id: string
+  /** The packaged agent answering, or NULL when the default agent is (chat with a document
+   *  needs no context). A context is how you opt INTO a packaged agent. */
+  context_id: string | null
   org_id: string
   asker_id: string
-  /** The manifest version the session started against (provenance). */
-  context_version: number
+  /** The manifest version the session started against (provenance); null with no context. */
+  context_version: number | null
   state: SessionState
   created_at: string
   /** Bumped on every message/state change; null until then (read as ?? created_at). */
@@ -2044,15 +2054,22 @@ export interface SessionRecord {
   /** Optional idempotency key; the partial-unique index keeps at most one live
    *  (open|working) session per (context, dedupe_key). Null = not deduped. */
   dedupe_key: string | null
+  /** What this session is ABOUT, as a JSON-encoded `Selector` — the same shape
+   *  `automation.refs` stores, so one address type serves both lanes. Read it with
+   *  `parseSubject`. Null = a plain ask with no subject, which is every session
+   *  opened before this column existed. */
+  subject_ref: string | null
 }
 export interface NewSession {
   id: string
-  context_id: string
+  context_id?: string | null
   org_id: string
   asker_id: string
-  context_version: number
+  context_version?: number | null
   /** Optional idempotency key; when set, a matching in-flight session is reused. */
   dedupe_key?: string | null
+  /** JSON-encoded `Selector`; null/absent for a plain ask. */
+  subject_ref?: string | null
 }
 
 export interface SessionMessageRecord {
@@ -2372,6 +2389,18 @@ export interface OrgSettings {
    *  hosted run (the managed executor skips the workspace); owner-run agents are
    *  unaffected. */
   hostedAgentsEnabled: boolean
+  /** BETA: chat with a document (the right-rail Chat tab). OFF by default — unlike every
+   *  other setting here, this one gates a surface we are still testing, and the Derive
+   *  workspace turns it on for itself first. Off means the tab does not render at all and
+   *  the chat route refuses, so a half-enabled state cannot leave someone typing into a
+   *  panel that will never answer. */
+  chatBeta: boolean
+  /** BETA: automations (the artifact's "Automate…" surface). Same shape and same reasoning as
+   *  {@link chatBeta}, and separate from it because they are different bets: chat is attended
+   *  and answers in the request, an automation runs unattended on a trigger and can write while
+   *  nobody is watching. Off means the entry point does not render and the create/run/fire lanes
+   *  refuse, so a workspace cannot queue work that will never be executed. */
+  automateBeta: boolean
   /** The agent-write killswitch, read fresh per run by the autonomy gate: when true,
    *  every hosted agent write demotes to a proposal, instantly. */
   agentKillswitch: boolean
@@ -2426,6 +2455,9 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   // the run-time safety lives in the autonomy gate (killswitch defaults off but
   // every write still lands as a proposal until a workspace opts into auto).
   hostedAgentsEnabled: true,
+  // Beta, so the default is the conservative one — opt IN per workspace.
+  chatBeta: false,
+  automateBeta: false,
   agentKillswitch: false,
   agentAutoEnabled: false,
 }

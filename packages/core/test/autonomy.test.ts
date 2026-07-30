@@ -14,6 +14,12 @@ const base = {
 
 describe("decideWrite", () => {
   it("the full truth table — every combination lands where the precedence says", () => {
+    // The SPEC, expressed as data. packages/cli/test/gate-parity.test.js derives its expectation
+    // with an identical block, because the CLI ships a hand-copied decideWrite — it is a
+    // dependency-free published package and cannot import this one at runtime. Change the
+    // precedence here and both tables must change with it; if the CLI's IMPLEMENTATION is not
+    // updated too, its parity test fails. That is the only thing standing between two copies of
+    // a safety gate and a silent divergence.
     const rows: Array<[AutonomyLevel, number | null, boolean, boolean, GateDecision]> = []
     for (const autonomy of ["shadow", "suggest", "auto"] as const)
       for (const confidence of [null, 0.5, 1])

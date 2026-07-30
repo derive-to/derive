@@ -88,14 +88,20 @@ model plan is the run initiator's own, fetched at run time.
 
 ## Substrates
 
-| Substrate | Where a run executes | Enable with |
+| Substrate | Where the work executes | Enable with |
 | --- | --- | --- |
 | `node-child` | A child process on the API's own box | `DERIVE_HOSTED_RUNS=true` (Node) |
 | `cf-container` | A scale-to-zero Cloudflare Container | Uncomment the `[[containers]]` block in `apps/api/wrangler.toml` |
+| `worker-loop` | The API process/isolate itself — a model and `fetch`, no container | `DERIVE_LOOP_RUNS=1` |
 | _(polling runner)_ | An owner's machine | The default when hosted runs are off |
 
-Both substrates boot the **same image/CLI**: the entrypoint sees a `dkrun_` token and takes the
-one-shot `derive runner run` lane automatically.
+The two CLI-backed substrates boot the **same image**; the loop reaches the same endpoints over
+HTTP instead. All three branch on the TOKEN, which is what lets one substrate serve both lanes: a
+`dkrun_` token takes the automation lane (claim a run, return a revision, `/finish`), a `dksess_`
+token takes the ask lane (claim the one session that token names, answer it, then
+`POST /v1/sessions/:id/messages`). The middle of both turns — call the model, nudge once on a
+contract miss, run the autonomy gate, write — is `apps/api/src/lib/turn-core.ts`, shared with
+attended chat. Only work arrival and settling differ, and they stay separate on purpose.
 
 ### How a run gets started (two paths, one guarantee)
 

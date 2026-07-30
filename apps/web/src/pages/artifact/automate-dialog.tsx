@@ -36,8 +36,8 @@ export function AutomateDialog({
           <DialogTitle>Automate this artifact</DialogTitle>
           <DialogDescription>
             A standing job for {title ? `“${title}”` : "this document"}: an agent keeps it current
-            on a schedule, on an event, or whenever you press Run now. Every run goes through the
-            review loop.
+            on a schedule, on an event, or on demand from Settings → Automations. Every run goes
+            through the review loop.
           </DialogDescription>
         </DialogHeader>
         {isAdmin ? (

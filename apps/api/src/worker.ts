@@ -28,10 +28,12 @@ import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
+import { openAiCompatModel } from "./lib/model-openai"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
 import { containerSubstrateFromEnv } from "./lib/substrate-container"
+import { loopSubstrate } from "./lib/substrate-loop"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
 import { PgvectorSearchIndex } from "./search-pgvector"
 import { enqueueChannelDelivery } from "./webhooks"
@@ -127,6 +129,20 @@ export interface Env {
   BASE_URL?: string
   DERIVE_AUTH_SECRET?: string
   DERIVE_TOKEN?: string
+  /** OpenAI-compatible model gateway for ATTENDED chat. All three or none — an incomplete
+   *  set is treated as unset, so chat stays honestly off rather than 401ing every turn. */
+  DERIVE_MODEL_BASE_URL?: string
+  DERIVE_MODEL_API_KEY?: string
+  DERIVE_MODEL_NAME?: string
+  /** Workspace ids allowed to enable chat while the gateway above pays. */
+  DERIVE_CHAT_ALLOWLIST?: string
+  /** "1" runs automations in this isolate via the loop substrate instead of booting a container.
+   *  Off by default, so derive.to keeps its current behaviour until it is set deliberately. */
+  DERIVE_LOOP_RUNS?: string
+  /** ANTHROPIC model id for in-process runs on a resolved per-run plan. Deliberately NOT
+   *  DERIVE_MODEL_NAME, which is the GATEWAY's id and 404s against api.anthropic.com. Unset =
+   *  the loop's own Anthropic default. */
+  DERIVE_LOOP_MODEL?: string
   DERIVE_SANDBOX_URL?: string
   DERIVE_SUPERADMIN_EMAILS?: string
   // Base domain for vanity subdomains (domain mode); unset = off.
@@ -250,6 +266,20 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // had omitted it, so operator-token auth (reindex, and any DERIVE_TOKEN automation)
         // was dead on prod. Undefined when unset ⇒ isToken stays false, as before.
         token: env.DERIVE_TOKEN,
+        // ATTENDED chat needs a model here too. Without it the Chat tab renders, accepts a
+        // message, and answers "no model is configured" — the surface works and the product
+        // does not. Same three vars as self-host, delivered as Worker secrets. Unattended runs
+        // are unaffected: they still resolve their own credential through the payer chain.
+        callModel: (() => {
+          const gw = workerGateway(env)
+          return gw ? openAiCompatModel(gw) : undefined
+        })(),
+        // Multi-tenant, so the allowlist matters here more than anywhere: without it any
+        // workspace owner could enable chat and spend Derive's key.
+        chatAllowlist: (env.DERIVE_CHAT_ALLOWLIST ?? "")
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean),
         blobs: new R2BlobStore(env.BUCKET),
         // Hybrid search's dense arm, embeddings from Workers AI (env.AI). The vectors live in
         // pgvector in the SAME Postgres as metadata (HYPERDRIVE) — the table is created out of band
@@ -405,7 +435,7 @@ export default {
     // container binding is configured — materialize due schedules, reclaim dead runs, and boot
     // one scale-to-zero container per due run. Unbound (the default) = a no-op, so runs stay
     // queued for a polling runner and an un-opted deployment behaves exactly as before.
-    ctx.waitUntil(hostedRunTick(env))
+    ctx.waitUntil(hostedRunTick(env, ctx))
   },
 
   // The dispatch queue's consumer: one message = "this run was just created, start it now".
@@ -413,15 +443,38 @@ export default {
   // duplicated, or arrives late costs nothing: dispatchRunNow no-ops on a run that is already
   // claimed or settled, and the cron sweep re-dispatches anything still queued. Messages are
   // acked either way — a retry would only re-enter the same idempotent path a minute early.
-  async queue(batch: { messages: { body: unknown }[] }, env: Env): Promise<void> {
+  async queue(
+    batch: { messages: { body: unknown }[] },
+    env: Env,
+    ctx?: ExecutionContext,
+  ): Promise<void> {
     const ids = batch.messages
       .map((m) => (m.body as { runId?: unknown })?.runId)
       .filter((id): id is string => typeof id === "string" && id.length > 0)
     if (ids.length === 0) return
-    await withHostedDispatch(env, async (deps) => {
-      for (const runId of ids) await dispatchRunNow(deps, runId)
-    })
+    await withHostedDispatch(
+      env,
+      async (deps) => {
+        for (const runId of ids) await dispatchRunNow(deps, runId)
+      },
+      // Same reason as the cron tick: on the loop substrate the run happens here, so the consumer
+      // invocation has to be kept alive past the ack.
+      ctx ? (p) => ctx.waitUntil(p) : undefined,
+    )
   },
+}
+
+/** The operator-configured OpenAI-compatible gateway, or undefined. ALL THREE vars or none: a
+ *  base URL with no key 401s every call and a key with no model id sends an empty model, so an
+ *  incomplete set is treated as unset. The Node twin is node.ts's `modelGateway`; read once here
+ *  so attended chat and the loop substrate can never disagree about whether one is configured. */
+function workerGateway(env: Env): { baseUrl: string; apiKey: string; model: string } | undefined {
+  const {
+    DERIVE_MODEL_BASE_URL: baseUrl,
+    DERIVE_MODEL_API_KEY: apiKey,
+    DERIVE_MODEL_NAME: model,
+  } = env
+  return baseUrl && apiKey && model ? { baseUrl, apiKey, model } : undefined
 }
 
 /** Run something with hosted-dispatch deps, inside a request-scoped DB context (a binding
@@ -432,8 +485,32 @@ export default {
 async function withHostedDispatch(
   env: Env,
   fn: (deps: DispatchDeps) => Promise<void>,
+  waitUntil?: (p: Promise<unknown>) => void,
 ): Promise<void> {
-  const substrate = containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
+  // WHICH SUBSTRATE, mirroring node.ts. `DERIVE_LOOP_RUNS=1` runs the work in this isolate — a
+  // model and fetch, which is all "read a document, write a revision" needs, and the only runner
+  // in scope. It is the SAME file Node uses; the entire platform difference is the `waitUntil`
+  // below, without which the isolate is torn down the moment dispatch returns and the run dies
+  // mid-model-call. Anything needing a shell or git still wants the container, so that stays the
+  // default and the flag is the opt-in — off means derive.to behaves exactly as it does today.
+  //
+  // BOTH LANES, one substrate. The loop used to serve runs only, so a deployment that opted into
+  // it had to keep sessions on the container or lose them; it now branches on the work token and
+  // serves an ask through the session claim, so there is nothing left to split.
+  //
+  // THE MODEL ID IS `DERIVE_LOOP_MODEL`, NOT `DERIVE_MODEL_NAME`. The latter names the model on
+  // the operator's OpenAI-compatible GATEWAY — DEPLOY.md tells operators to set it, for chat —
+  // and it was being handed to the loop as the ANTHROPIC model id, which 404s `model_not_found`
+  // on 100% of hosted runs for any deploy that had configured chat. Unset is the right default:
+  // the loop falls back to its own Anthropic model id.
+  //
+  // The gateway rides along when the operator configured one, exactly as node.ts does — the two
+  // entries are meant to differ only in `waitUntil`, and this was the one place they silently
+  // did not. derive.to sets none of the three, so nothing changes there.
+  const substrate =
+    env.DERIVE_LOOP_RUNS === "1"
+      ? loopSubstrate({ model: env.DERIVE_LOOP_MODEL, gateway: workerGateway(env), waitUntil })
+      : containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
   const secret = env.DERIVE_AUTH_SECRET
   if (!substrate || !secret) return
   const scoped = () =>
@@ -450,7 +527,15 @@ async function withHostedDispatch(
 }
 
 /** The cron sweep: materialize due schedules, reclaim dead runs, dispatch what is due. */
-const hostedRunTick = (env: Env): Promise<void> =>
-  withHostedDispatch(env, async (deps) => {
-    await dispatchPass(deps)
-  })
+const hostedRunTick = (env: Env, ctx?: ExecutionContext): Promise<void> =>
+  withHostedDispatch(
+    env,
+    async (deps) => {
+      await dispatchPass(deps)
+    },
+    // The loop substrate runs the model call in THIS isolate, and dispatch returns as soon as the
+    // work has begun. Without handing it waitUntil, the cron invocation finishes and Cloudflare
+    // tears the isolate down mid-run: the run stays `running` until the reclaim sweep requeues it,
+    // which looks like a hang rather than the truncation it is.
+    ctx ? (p) => ctx.waitUntil(p) : undefined,
+  )

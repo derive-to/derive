@@ -10,7 +10,12 @@ import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { artifactTypeLabel } from "@/lib/artifact"
 import { guestPresenceId } from "@/lib/guest-id"
-import { artifactAgentsQuery, artifactQuery, commentsQuery } from "@/lib/queries"
+import {
+  artifactAgentsQuery,
+  artifactQuery,
+  commentsQuery,
+  workspaceSettingsQuery,
+} from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
@@ -18,6 +23,7 @@ import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
 import { useArtifactActions } from "./artifact-actions"
 import { ArtifactBreadcrumb } from "./artifact-breadcrumb"
+import { ArtifactChat, RailTabs } from "./artifact-chat"
 import { ArtifactComments } from "./artifact-comments"
 import { ArtifactDocument } from "./artifact-document"
 import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact-states"
@@ -27,6 +33,7 @@ import { ActionsCtx } from "./comment-actions"
 import { FloatingControl } from "./floating-control"
 import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
+import { useArtifactChat } from "./lib/use-artifact-chat"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
@@ -146,6 +153,18 @@ export function Artifact() {
   const [editTitle, setEditTitle] = useState("")
 
   // Comments UI state shared across the page, the panel, and the iframe bridge.
+  // The right rail carries two conversations about the same document: anchored comments
+  // and unanchored chat. They compete for the same space, so they TAB rather than stack —
+  // the document never loses width to a second panel. Declared with the other state, ABOVE
+  // the locked/loading early returns, so the hook order never changes between renders.
+  const [rail, setRail] = useState<"comments" | "chat">("comments")
+  // BETA: chat only renders where the workspace has opted in. The server refuses too —
+  // this just avoids showing a tab that would 404 (see the chat-session route).
+  const settings = useQuery({ ...workspaceSettingsQuery(), staleTime: 60_000 }).data
+  const chatBeta = settings?.chatBeta === true
+  // Automations are BETA the same way, read from the same fetch.
+  const automateBeta = settings?.automateBeta === true
+  const chat = useArtifactChat(shortId)
   const [composer, setComposer] = useState<ComposerState>(null)
   const [activeThread, setActiveThread] = useState<string | null>(null)
   const [hoverThread, setHoverThread] = useState<string | null>(null)
@@ -706,6 +725,7 @@ export function Artifact() {
               isDeck={!!deck || art.current_content_type === "text/x-derive-deck"}
               canLock={canLock}
               canMove={canMove}
+              automateBeta={automateBeta}
               locked={isLocked}
               onPresent={toggleFullscreen}
               onLockToggle={() => lockMut.mutate(!isLocked)}
@@ -737,7 +757,9 @@ export function Artifact() {
         {/* The split row lives BELOW the full-width bar: the document stage on
                 the left, the comments aside on the right, so the panel slides in
                 under the toolbar rather than beside it. */}
-        <div className="flex min-h-0 flex-1">
+        {/* `relative` so the rail's tab strip anchors HERE, below the toolbar, rather than
+            resolving to a further ancestor and overlapping the workbench buttons. */}
+        <div className="relative flex min-h-0 flex-1">
           <div
             className="relative flex min-w-0 flex-1 flex-col"
             // On phones the comments sheet sits at the bottom — reserve exactly the
@@ -808,48 +830,62 @@ export function Artifact() {
           </div>
 
           {!focus && (
-            <ArtifactComments
-              shortId={shortId}
-              isMobile={isMobile}
-              isAnon={isAnon}
-              canComment={canComment}
-              reviewCard={
-                // Top of the comments rail, not its own pane; members who can act only.
-                canComment ? <ReviewCard shortId={shortId} refreshKey={reviewTick} /> : undefined
-              }
-              onSheetHeight={setSheetInset}
-              docLive={docLive}
-              panel={effectivePanel}
-              asideWidth={asideWidth}
-              openCount={openCount}
-              frameRef={frame}
-              subscribeGeom={subscribeGeom}
-              onScrollDoc={scrollBy}
-              pinned={pinned}
-              general={general}
-              resolved={resolvedThreads}
-              openThreads={openThreads}
-              activeThread={activeThread}
-              hoverThread={hoverThread}
-              inDoc={inDoc}
-              composer={composer}
-              sel={sel}
-              setPanel={setPanel}
-              setComposer={setComposer}
-              setSel={setSel}
-              setActiveThread={setActiveThread}
-              setHoverThread={setHoverThread}
-              activate={activateThread}
-              toggleResolve={toggleResolve}
-              reply={reply}
-              submitNew={submitNew}
-              jumpTo={jumpTo}
-              startSelComment={startSelComment}
-              agents={agents}
-              currentSlide={deck?.i ?? null}
-              landedSlides={landedSlides}
-              anchorConf={anchorConf}
-            />
+            <>
+              <ArtifactComments
+                rail={rail}
+                onRail={setRail}
+                chatBeta={chatBeta}
+                chatPanel={
+                  <ArtifactChat
+                    messages={chat.messages}
+                    working={chat.working}
+                    disabledReason={chat.error ?? undefined}
+                    onSend={(b) => chat.send(b, effectiveCanPublish)}
+                    onPoll={chat.poll}
+                  />
+                }
+                shortId={shortId}
+                isMobile={isMobile}
+                isAnon={isAnon}
+                canComment={canComment}
+                reviewCard={
+                  // Top of the comments rail, not its own pane; members who can act only.
+                  canComment ? <ReviewCard shortId={shortId} refreshKey={reviewTick} /> : undefined
+                }
+                onSheetHeight={setSheetInset}
+                docLive={docLive}
+                panel={effectivePanel}
+                asideWidth={asideWidth}
+                openCount={openCount}
+                frameRef={frame}
+                subscribeGeom={subscribeGeom}
+                onScrollDoc={scrollBy}
+                pinned={pinned}
+                general={general}
+                resolved={resolvedThreads}
+                openThreads={openThreads}
+                activeThread={activeThread}
+                hoverThread={hoverThread}
+                inDoc={inDoc}
+                composer={composer}
+                sel={sel}
+                setPanel={setPanel}
+                setComposer={setComposer}
+                setSel={setSel}
+                setActiveThread={setActiveThread}
+                setHoverThread={setHoverThread}
+                activate={activateThread}
+                toggleResolve={toggleResolve}
+                reply={reply}
+                submitNew={submitNew}
+                jumpTo={jumpTo}
+                startSelComment={startSelComment}
+                agents={agents}
+                currentSlide={deck?.i ?? null}
+                landedSlides={landedSlides}
+                anchorConf={anchorConf}
+              />
+            </>
           )}
         </div>
       </div>

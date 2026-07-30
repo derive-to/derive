@@ -26,6 +26,7 @@ import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
 import { type Auth, mcpAudiences } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
+import type { AgentLoopInput } from "./lib/agent-loop"
 import { isApiToken, verifyApiToken } from "./lib/api-token"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
@@ -83,6 +84,19 @@ export interface AppDeps {
    *  The Node + Worker entries pass the auth secret. Unset (e.g. tests) ⇒ tokens
    *  are stored as-is; set ⇒ AES-256-GCM encrypted (see lib/crypto encryptSecret). */
   encryptionKey?: string
+  /** How an ATTENDED turn calls the model — the chat path, where someone is waiting and the work
+   *  runs in this request rather than through the queue. Unattended runs do NOT use this: they
+   *  resolve their own credential per run through the payer chain, so who pays never depends on
+   *  the process they landed in.
+   *
+   *  Unset ⇒ chat answers with "no model configured" instead of silently doing nothing. Injected
+   *  rather than imported so a test can script it and so no provider choice is baked into the app. */
+  callModel?: AgentLoopInput["callModel"]
+  /** Workspace ids allowed to enable chat when `callModel` is set (an operator-paid gateway).
+   *  Empty/undefined = no restriction, which is correct for a single-tenant box where the
+   *  operator IS the user. On a shared host this is what stops any workspace owner from
+   *  enabling chat for themselves and spending the operator's key. */
+  chatAllowlist?: string[]
   /** Operator (instance super-admin) emails: global moderation powers, on top of `token`. */
   superAdmins?: string[]
   /** Slack App credentials for the connect flow + inbound Events API. All three set ⇒
@@ -308,20 +322,25 @@ export function buildContext(deps: AppDeps) {
     return Promise.all([webhooks, channel]).then(() => {})
   }
 
-  // Enqueue a screenshot render for a newly-published version. Fire-and-forget,
-  // mirroring `notify` above: non-fatal (logged on error), never awaited in the
-  // request path. Gated by deps.renderPreviews so self-hosted deployments without
-  // a renderer configured never attempt to enqueue.
-  const notifyRender = (a: ArtifactRecord, n: number): void => {
-    if (!deps.renderPreviews) return
-    enqueueRender(meta, a.id, n)
-      .then(() => deps.pokePreviews?.())
-      .catch((err) =>
-        log.error("preview enqueue failed", {
-          artifact: a.short_id,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      )
+  // Enqueue a screenshot render for a newly-published version. Non-fatal (logged on error)
+  // and off the request path, but through `background()` rather than orphaned: on Workers that
+  // is waitUntil, so the request still returns immediately; on Node it awaits, which is what
+  // stops the write outliving the caller. That mattered under the test suite, where an
+  // un-awaited enqueue could land AFTER its file finished and write into the next file's
+  // freshly recreated schema — a cross-file failure with no plausible local cause.
+  // Gated by deps.renderPreviews so self-hosted deployments without a renderer never enqueue.
+  const notifyRender = (a: ArtifactRecord, n: number): Promise<void> => {
+    if (!deps.renderPreviews) return Promise.resolve()
+    return background(
+      enqueueRender(meta, a.id, n)
+        .then(() => deps.pokePreviews?.())
+        .catch((err) =>
+          log.error("preview enqueue failed", {
+            artifact: a.short_id,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        ),
+    )
   }
 
   // Run after-the-response work without blocking the reply. On Workers the request
@@ -525,7 +544,7 @@ export function buildContext(deps: AppDeps) {
         } else {
           const s = await meta.getSession(claim.id)
           // A session's agent lives on its CONTEXT (sessions have no agent column).
-          const cx = s ? await meta.getContext(s.context_id) : null
+          const cx = s?.context_id ? await meta.getContext(s.context_id) : null
           live = !!(
             s &&
             cx &&
@@ -1037,6 +1056,8 @@ export function buildContext(deps: AppDeps) {
     deps,
     meta,
     blobs,
+    callModel: deps.callModel,
+    chatAllowlist: deps.chatAllowlist,
     search: deps.search,
     bus,
     presence,
