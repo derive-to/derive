@@ -493,10 +493,11 @@ async function withHostedDispatch(
   const waitUntil = ctx ? (p: Promise<unknown>) => ctx.waitUntil(p) : undefined
   // WHICH SUBSTRATE, mirroring node.ts. `DERIVE_LOOP_RUNS=1` runs the work in this isolate — a
   // model and fetch, which is all "read a document, write a revision" needs, and the only runner
-  // in scope. It is the SAME file Node uses; the entire platform difference is the `waitUntil`
-  // below, without which the isolate is torn down the moment dispatch returns and the run dies
-  // mid-model-call. Anything needing a shell or git still wants the container, so that stays the
-  // default and the flag is the opt-in — off means derive.to behaves exactly as it does today.
+  // in scope. It is the SAME file Node uses; the platform difference is exactly the two options
+  // below — `waitUntil`, without which the isolate is torn down the moment dispatch returns and
+  // the run dies mid-model-call, and `fetchImpl`, without which the loop's calls to this API
+  // leave the isolate and time out. Anything needing a shell or git still wants the container,
+  // so that stays the default and the flag is the opt-in.
   //
   // BOTH LANES, one substrate. The loop used to serve runs only, so a deployment that opted into
   // it had to keep sessions on the container or lose them; it now branches on the work token and
@@ -508,9 +509,11 @@ async function withHostedDispatch(
   // on 100% of hosted runs for any deploy that had configured chat. Unset is the right default:
   // the loop falls back to its own Anthropic model id.
   //
-  // The gateway rides along when the operator configured one, exactly as node.ts does — the two
-  // entries are meant to differ only in `waitUntil`, and this was the one place they silently
-  // did not. derive.to sets none of the three, so nothing changes there.
+  // The gateway rides along when the operator configured one, exactly as node.ts does. An
+  // earlier version of this comment ended "derive.to sets none of the three, so nothing changes
+  // there" — that is FALSE and was worth a release: derive.to sets all three, because holding
+  // the key and spending it for every workspace IS the hosted posture. `operatorPays` below
+  // depends on the same fact.
   const gateway = workerGateway(env)
   const substrate =
     env.DERIVE_LOOP_RUNS === "1"
@@ -528,10 +531,16 @@ async function withHostedDispatch(
           //
           // EACH SUB-REQUEST GETS ITS OWN CONNECTION, exactly as `fetch` above gives every real
           // request one. Calling `handle` bare inherits the DISPATCH's pg context, so every call
-          // from every concurrently-started run shares a single pg Client — the driver serializes
-          // them, statement_timeout (30s) starts firing, and the loop's own 60s abort trips:
-          // "The operation was aborted due to timeout" on runs that had worked moments before.
-          // One run never showed it; three at once did, which is the same trap as the 522.
+          // from every concurrently-started run would share a single pg Client, and
+          // node-postgres queues concurrent queries on one Client — silently serializing work a
+          // network request would have run in parallel.
+          //
+          // Correctness, not a measured win. A run of "operation was aborted due to timeout" was
+          // first blamed on this contention; that was withdrawn when the model host turned out
+          // to have been unreachable at the time, and the failures never reproduced against a
+          // healthy one. The invariant is the reason to keep it: routing through the same entry
+          // point should leave a sub-request differing from a network request in latency and
+          // nothing else.
           ...(ctx
             ? {
                 fetchImpl: (req: Request): Promise<Response> =>
