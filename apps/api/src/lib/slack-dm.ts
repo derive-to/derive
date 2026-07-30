@@ -21,9 +21,8 @@ import type { ChannelSendResult } from "../webhooks"
 import { enqueueChannelDelivery } from "../webhooks"
 import { commentDeepLink, type Mention } from "./comments"
 import { openSlackDm, resolveSlackUserIdByEmail } from "./slack"
-import { actions, escapeMrkdwn, openButton, section } from "./slack-cards"
+import { actions, escapeMrkdwn, mrkdwnBody, openButton, section } from "./slack-cards"
 import { postWithRecovery, resolveBotToken, slackFailure } from "./slack-delivery"
-import { truncate } from "./text"
 
 /** The self-contained payload a slack_dm delivery carries. */
 interface SlackDmPayload {
@@ -71,7 +70,7 @@ export const enqueueSlackMentionDms = async (
     if (!wantsSlackDm(pref?.prefs)) continue
     const blocks = [
       section(`:wave: *${escapeMrkdwn(cm.author)}* mentioned you on <${link}|${escapeMrkdwn(t)}>`),
-      section(`> ${escapeMrkdwn(truncate(cm.body_md, 600))}`),
+      section(`> ${mrkdwnBody(cm.body_md, 600)}`),
       actions([openButton(link)]),
     ]
     await enqueueChannelDelivery(meta, "slack_dm", "comment.mention", {
@@ -103,7 +102,7 @@ export const enqueueSlackReviewRequestedDm = async (
     section(
       `:mag: *${escapeMrkdwn(proposal.requestedBy)}* requested your review of <${link}|${escapeMrkdwn(t)}> (v${proposal.version}).`,
     ),
-    ...(proposal.note ? [section(`> ${escapeMrkdwn(truncate(proposal.note, 600))}`)] : []),
+    ...(proposal.note ? [section(`> ${mrkdwnBody(proposal.note, 600)}`)] : []),
     actions([openButton(link, "Review in Derive")]),
   ]
   await enqueueChannelDelivery(meta, "slack_dm", "review.requested", {

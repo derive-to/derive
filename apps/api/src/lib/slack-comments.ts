@@ -19,9 +19,8 @@ import type { WebhookEvent } from "../events"
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
 import { commentDeepLink, parseMeta } from "./comments"
 import { slackUserName } from "./slack"
-import { actionButton, actions, context, escapeMrkdwn, section } from "./slack-cards"
+import { actionButton, actions, context, escapeMrkdwn, mrkdwnBody, section } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
-import { truncate } from "./text"
 
 /** The Slack message payload an enqueued slack_app delivery carries (self-contained). */
 interface SlackCommentPayload {
@@ -168,7 +167,7 @@ const eventBlocks = (p: SlackEventPayload): unknown[] => {
     default:
       head = `${link} — ${escapeMrkdwn(p.event)}`
   }
-  const body = p.message ? `${head}\n> ${escapeMrkdwn(truncate(p.message, 280))}` : head
+  const body = p.message ? `${head}\n> ${mrkdwnBody(p.message, 280)}` : head
   const blocks: unknown[] = [section(body)]
   // An open proposal gets Approve / Request-changes buttons (the clicker is authorized as
   // their linked Derive user in the interactivity handler).
@@ -239,12 +238,13 @@ export const threadStateBlocks = (
 }
 
 /** Slack Block Kit blocks for a comment post (open thread, with a Resolve button). Every
- *  untrusted field (author, title, body) is escaped: they land in a mrkdwn section, so an
- *  unescaped `<!channel>` would ping the channel and a `>` would break out of the link —
- *  same treatment eventBlocks already gives its fields. */
+ *  untrusted field is neutralized: author + title are labels (`escapeMrkdwn`), and the comment
+ *  body is authored prose (`mrkdwnBody` — escaped, then its markdown rendered). They land in a
+ *  mrkdwn section, so an unescaped `<!channel>` would ping the channel and a `>` would break
+ *  out of the link — same treatment eventBlocks gives its fields. */
 const blocksFor = (p: SlackCommentPayload): unknown[] => [
   section(
-    `:speech_balloon: *${escapeMrkdwn(p.author)}* commented on <${p.link}|${escapeMrkdwn(p.title)}>\n${escapeMrkdwn(truncate(p.text, 600))}`,
+    `:speech_balloon: *${escapeMrkdwn(p.author)}* commented on <${p.link}|${escapeMrkdwn(p.title)}>\n${mrkdwnBody(p.text, 600)}`,
   ),
   ...threadStateBlocks("open", encodeThreadAction(p.artifactId, p.threadId)),
 ]

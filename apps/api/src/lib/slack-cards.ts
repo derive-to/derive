@@ -1,33 +1,78 @@
-// Block Kit primitives for the connected Slack App's messages: the comment thread mirror
-// and per-user DMs (mentions, review requests, shares). Pure functions (no I/O). Slack
-// renders mrkdwn, never HTML, so all text passes through markdownToMrkdwn first and a
-// plain-text `text` fallback rides alongside every message (used when Slack rejects the
-// blocks with invalid_blocks — see slack-delivery.ts).
+// Block Kit primitives for the connected Slack App's messages: the comment thread mirror,
+// channel event cards, and per-user DMs (mentions, review requests, shares). Pure functions
+// (no I/O). Slack renders mrkdwn, never HTML, and there are two kinds of untrusted text with
+// two different treatments:
+//   - short identity fields (author, title, a Slack display name) → `escapeMrkdwn`; they are
+//     labels, so rendering markdown in them would be wrong as well as unsafe.
+//   - authored prose (a comment body, a proposal note, a publish message) → `mrkdwnBody`,
+//     which escapes AND renders the markdown subset Slack has an equivalent for.
+// A plain-text `text` fallback rides alongside every message and needs the same treatment: it
+// is what the push/desktop notification shows, and what Slack renders if it rejects the blocks
+// (invalid_blocks — see slack-delivery.ts).
 
 import { truncate } from "./text"
 
-const MAX_SECTION = 2900 // Slack hard-limits a section's text to 3000 chars.
+/** Slack hard-limits a section's text to 3000 chars; leave headroom. */
+export const MAX_SECTION = 2900
 
-/** Convert a small subset of Markdown to Slack mrkdwn. Conservative on purpose: it only
- *  rewrites constructs that would otherwise render as literal characters (links, bold,
- *  headings, bullets) and leaves everything else untouched, so it can't corrupt prose. */
-export const markdownToMrkdwn = (md: string): string => {
-  let s = md
-  // [text](url) -> <url|text> (do this first; link text may contain other markup).
-  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "<$2|$1>")
-  // **bold** / __bold__ -> *bold* (Slack bold is a single asterisk).
-  s = s.replace(/\*\*(.+?)\*\*/g, "*$1*").replace(/__(.+?)__/g, "*$1*")
-  // # Heading -> *Heading* (Slack has no headings inside a section).
-  s = s.replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
-  // - item / * item -> • item
-  s = s.replace(/^\s*[-*]\s+/gm, "• ")
-  return truncate(s.trim(), MAX_SECTION)
-}
-
-/** Escape the three mrkdwn control chars so untrusted text (an artifact title) can't break
- *  out of a `<url|text>` link or inject markup. Slack unescapes these back to literals. */
+/** Escape the three mrkdwn control chars, so untrusted text can neither break out of a
+ *  `<url|label>` link nor reach Slack's control syntax (`<!channel>`, `<!here>`, `<@U…>`).
+ *  Slack unescapes them back to literals when it renders.
+ *
+ *  NEVER apply this to a URL we build: it rewrites `&` to `&amp;` and corrupts the query. */
 export const escapeMrkdwn = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+
+/** A markdown link with an http(s) target. The URL may not contain whitespace, `)`, or any of
+ *  the mrkdwn delimiters `<`, `>`, `|` — which is what lets us emit it UNESCAPED (so its query
+ *  string survives) without it being able to break out of the `<url|label>` we wrap it in. A
+ *  link whose URL breaks that rule simply isn't a link, and falls through to escaped prose. */
+const MD_LINK = /\[([^\]\n]*)\]\((https?:\/\/[^\s<>|)]+)\)/g
+
+/** Convert the markdown subset Slack has an equivalent for. Runs on text that is ALREADY
+ *  escaped, so no rule here can be confused by a `<` or `&` in the source. Conservative on
+ *  purpose: it only rewrites constructs that would otherwise render as literal characters. */
+const renderProse = (s: string): string =>
+  s
+    .replace(/\*\*(.+?)\*\*/g, "*$1*")
+    .replace(/__(.+?)__/g, "*$1*")
+    .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
+    .replace(/^\s*[-*]\s+/gm, "• ")
+
+/** Clamp rendered mrkdwn to `max` without leaving a half-written entity (`&am`) or link
+ *  (`<https://…` with no closing `>`) at the boundary. Both render as garbage, and Slack
+ *  rejects a truncated link outright with invalid_blocks. */
+const clampMrkdwn = (s: string, max: number): string => {
+  if (s.length <= max) return s
+  let cut = s.slice(0, max - 1)
+  if (cut.lastIndexOf("<") > cut.lastIndexOf(">")) cut = cut.slice(0, cut.lastIndexOf("<"))
+  if (cut.lastIndexOf("&") > cut.lastIndexOf(";")) cut = cut.slice(0, cut.lastIndexOf("&"))
+  return `${cut}…`
+}
+
+/** Render an untrusted markdown body as Slack mrkdwn — safe first, pretty second.
+ *
+ *  The ORDER is the whole point here, and both obvious compositions of "escape" and "convert
+ *  markdown" are broken: escaping after converting destroys the `<url|label>` just built, and
+ *  converting after escaping both fails to find its links and corrupts any URL containing `&`.
+ *  So links are tokenized out of the RAW text first; then the surrounding prose and the link
+ *  LABEL are escaped, while the URL passes through untouched (safe because of MD_LINK's
+ *  exclusions). Truncation is applied to the input AND the rendered output, because escaping
+ *  EXPANDS text — `&` becomes 5 chars, so a body inside the cap can render well past it. */
+export const mrkdwnBody = (md: string, max = MAX_SECTION): string => {
+  const src = truncate(md, max)
+  let out = ""
+  let last = 0
+  for (const m of src.matchAll(MD_LINK)) {
+    const at = m.index ?? 0
+    const label = escapeMrkdwn(m[1] ?? "")
+    out += renderProse(escapeMrkdwn(src.slice(last, at)))
+    out += label ? `<${m[2]}|${label}>` : `<${m[2]}>`
+    last = at + m[0].length
+  }
+  out += renderProse(escapeMrkdwn(src.slice(last)))
+  return clampMrkdwn(out.trim(), max)
+}
 
 // Block Kit primitives, shared by every Slack message builder (the comment mirror, DMs)
 // so block scaffolding lives in one place.
