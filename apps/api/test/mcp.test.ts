@@ -387,6 +387,69 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(out?.content?.[0]?.text ?? "").toMatch(/stage target:.?doc/i)
   })
 
+  it("backfills a slot's history the first time it appears on an artifact", async () => {
+    // The sharp edge this closes: extraction runs at publish, so without a backfill a slot
+    // added to an existing artifact starts its series today and silently loses everything
+    // before it — even though those older pages usually already carried the block.
+    const { app, token, meta } = appWithGrant("databackfill", "openid derive:read derive:publish")
+    const withSlot = (n: number) =>
+      `<!doctype html><html><body><h1>Night ${n}</h1>` +
+      `<script type="application/derive-data" data-slot="checks">{"night":${n}}</script>` +
+      "</body></html>"
+
+    const created = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Nightly", content: withSlot(1) })),
+    )
+    const shortId = created.short_id as string
+    await call(app, token, "publish", { short_id: shortId, content: withSlot(2) })
+    await call(app, token, "publish", { short_id: shortId, content: withSlot(3) })
+
+    // Simulate history that was never extracted: the pages carry the block, but no rows
+    // exist for them — exactly the state of every artifact published before slots shipped.
+    const rec = await meta.getByShortId(shortId)
+    if (!rec) throw new Error("artifact vanished")
+    for (const n of [1, 2, 3]) await meta.setVersionData(rec.id, n, [])
+    const before = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "all" }),
+      ),
+    )
+    expect(before.count).toBe(0)
+
+    // v4 makes "checks" new relative to v3, so the backfill walks back and extracts it
+    // from the pages that carried it all along.
+    await call(app, token, "publish", { short_id: shortId, content: withSlot(4) })
+    const after = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "all" }),
+      ),
+    )
+    expect(after.count).toBe(4)
+    expect(after.series.map((p: { n: number }) => p.n)).toEqual([1, 2, 3, 4])
+    expect(after.series.map((p: { data: { night: number } }) => p.data.night)).toEqual([1, 2, 3, 4])
+
+    // A version that genuinely never carried the block stays absent rather than inventing one.
+    const sparse = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Sparse",
+          content: "<!doctype html><html><body><h1>Night 1</h1></body></html>",
+        }),
+      ),
+    )
+    await call(app, token, "publish", { short_id: sparse.short_id, content: withSlot(2) })
+    const holes = JSON.parse(
+      toolText(
+        await call(app, token, "read", {
+          short_id: sparse.short_id,
+          data: "checks",
+          versions: "all",
+        }),
+      ),
+    )
+    expect(holes.series.map((p: { n: number }) => p.n)).toEqual([2])
+  })
+
   it("extracts data slots on publish and reads them back by name and as a list", async () => {
     const { app, token } = appWithGrant("dataslots", "openid derive:read derive:publish")
     const page =
