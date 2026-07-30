@@ -172,6 +172,10 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
         db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
         db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
+        // Artifact-SCOPED webhooks only (artifact_id = this id). A workspace-wide webhook
+        // has a null artifact_id and never matches, so it survives, which is right: it was
+        // never about this artifact. Found by scripts/check-delete-cascade.mjs.
+        db.delete(webhook).where(eq(webhook.artifact_id, id)).run()
         db.delete(versionData).where(eq(versionData.artifact_id, id)).run()
         db.delete(version).where(eq(version.artifact_id, id)).run()
         db.delete(comment).where(eq(comment.artifact_id, id)).run()

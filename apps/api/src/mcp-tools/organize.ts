@@ -1,15 +1,22 @@
 import { type ArtifactRecord, newId, roleAllows } from "@derive/core"
 import { z } from "zod"
 import { badChoice, choiceDescription } from "../lib/open-choice"
+import { deleteArtifactAndUnindex } from "../lib/search"
 import { computeTagSuggestions } from "../lib/tag-suggestions"
 import { normalizeTags } from "../lib/tags"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
 
-/** Whether an artifact is in the library or retired from it. A growth point (an
- *  `archived` tier is the obvious next one), so a string checked server-side rather
- *  than an enum a cached client would refuse — see lib/open-choice.ts. */
-const LIBRARY_STATES = ["removed", "live"] as const
+/** Whether an artifact is in the library, retired from it, or gone for good. A growth
+ *  point (an `archived` tier is the obvious next one), so a string checked server-side
+ *  rather than an enum a cached client would refuse — see lib/open-choice.ts.
+ *
+ *  `deleted` is NOT a third shelf: it is the permanent one, and it is here because the
+ *  capability already existed at REST (DELETE /v1/artifacts/:id, same manage gate) and was
+ *  simply unreachable from the tool an agent tidies its library with. Parity, not new
+ *  power — the alternative was minting a REST credential to finish a cleanup you started
+ *  in `organize`. */
+const LIBRARY_STATES = ["removed", "live", "deleted"] as const
 
 export function registerOrganizeTool(tc: ToolContext): void {
   const { server, ctx, agent, actingFor, reach, resolveWs, wsArg } = tc
@@ -23,7 +30,7 @@ export function registerOrganizeTool(tc: ToolContext): void {
     "organize",
     {
       description:
-        "Tags, collections, and shelving in one tool — the library layer. READ (no `short_ids`) returns the workspace's tag vocabulary + collections; READ with `short_ids` returns their tags/collections plus suggested tags. WRITE (`add`/`remove`/`set` tags, `collection`, and/or `state`) changes them — each artifact is authorized on its own, so ones you can't touch come back skipped, never failing the batch. `state:'removed'` retires an artifact from the library and `state:'live'` puts it back, so cleaning up after yourself is safe. For the read-vs-write modes and the tags-vs-collections call, read derive://skills/organize.",
+        "Tags, collections, and shelving in one tool — the library layer. READ (no `short_ids`) returns the workspace's tag vocabulary + collections; READ with `short_ids` returns their tags/collections plus suggested tags. WRITE (`add`/`remove`/`set` tags, `collection`, and/or `state`) changes them — each artifact is authorized on its own, so ones you can't touch come back skipped, never failing the batch. `state:'removed'` retires an artifact from the library and `state:'live'` puts it back, so cleaning up after yourself is safe; `state:'deleted'` is the permanent one (manage-level, no undo). For the read-vs-write modes and the tags-vs-collections call, read derive://skills/organize.",
       inputSchema: {
         short_ids: z
           .array(z.string())
@@ -172,6 +179,66 @@ export function registerOrganizeTool(tc: ToolContext): void {
         if (state) {
           const wrong = badChoice("state", state, LIBRARY_STATES)
           if (wrong) return err(wrong)
+          // PERMANENT DELETE. Split from the shelving path below rather than folded into
+          // it, because almost everything about it differs: a MANAGE bar instead of
+          // publish (matching the REST route this reaches, and right for something with
+          // no way back), a cascade that takes contexts and comments with it, and no
+          // `undo` — the one thing this response must never imply it has.
+          if (state === "deleted") {
+            const gone: string[] = []
+            const notAllowed: string[] = []
+            let skipped = 0
+            // Read once for the batch: a context whose manifest is deleted is deleted with
+            // it (the FK cascade), so the caller learns what else goes rather than finding
+            // out when a runner stops answering.
+            const contexts = await ctx.meta.listContexts(t.org).catch(() => [])
+            const cascaded: { short_id: string; context: string }[] = []
+            for (const shortId of [...new Set(short_ids)]) {
+              const reached = await reach(shortId, workspace, { allowRemoved: true })
+              if (!reached || "error" in reached) {
+                skipped++
+                continue
+              }
+              if (!roleAllows(reached.role, "manage")) {
+                notAllowed.push(shortId)
+                skipped++
+                continue
+              }
+              for (const cx of contexts)
+                if (cx.manifest_artifact_id === reached.a.id)
+                  cascaded.push({ short_id: shortId, context: cx.name })
+              // The one helper, so a hard delete can't clean the lexical index and forget
+              // the dense vector (or vice versa) — see lib/search.ts.
+              await deleteArtifactAndUnindex(ctx.meta, ctx.deps.search, reached.a.id, t.org)
+              gone.push(shortId)
+            }
+            out.state = {
+              state,
+              deleted: gone.length,
+              skipped,
+              // Said plainly and first: there is no undo, and the response does not carry
+              // one. Every other state change here hands back its reversal; pretending
+              // this one has a way back would be the most expensive lie on the surface.
+              note: gone.length
+                ? "Permanently deleted, with every version, comment and proposal. This cannot be undone — `state:'removed'` is the reversible option if that is what you wanted."
+                : "Nothing was deleted.",
+              ...(cascaded.length
+                ? {
+                    cascaded_contexts: cascaded,
+                    cascaded_contexts_note:
+                      "These contexts ran from the deleted manifests and are gone with them. A context cannot outlive its definition.",
+                  }
+                : {}),
+              ...(notAllowed.length
+                ? {
+                    needs_manage: notAllowed,
+                    needs_manage_note:
+                      "Deleting permanently needs a manage-level grant on the artifact, a higher bar than publishing to it. `state:'removed'` retires these reversibly at your current role.",
+                  }
+                : {}),
+            }
+            return json(out)
+          }
           const removedAt = state === "removed" ? new Date().toISOString() : null
           const ok: string[] = []
           const done: string[] = []

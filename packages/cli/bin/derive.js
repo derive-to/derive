@@ -19,6 +19,7 @@
 //   derive tag                             the workspace tag vocabulary (tag → count)
 //   derive tag --suggest [--id]            suggest tags for the artifact (from similar docs)
 //   derive tag <tag…> [--rm a,b] [--set a,b] [--id]  add/remove/replace an artifact's tags
+//   derive delete [short_id…] [--yes]      permanently delete (asks for the id back; no undo)
 //   derive comments [--id]                 list the artifact's comment threads
 //   derive pull [short_id] [--v N] [--out f]  print an artifact's source (bundles: entry file)
 //   derive open [short_id] [--id]          open the artifact in a browser
@@ -91,6 +92,9 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--manage") flags.manage = "true"
   else if (a === "--suggest") flags.suggest = "true"
   else if (a === "--update") flags.update = "true"
+  // Boolean, so it must be listed here: the catch-all below would otherwise eat the next
+  // argument as its value, and `derive delete abc --yes` would silently not be confirmed.
+  else if (a === "--yes") flags.yes = "true"
   // Repeatable: `--env-file a --env-file b` stacks (equivalent to --env-file a,b).
   else if (a === "--env-file")
     flags["env-file"] = flags["env-file"] ? `${flags["env-file"]},${args[++i]}` : args[++i]
@@ -1132,6 +1136,54 @@ if (LOOP.includes(cmd)) {
     if (flags.json) console.log(JSON.stringify({ id: r.id, tags }))
     else console.log(`✓ ${r.id} tags: ${tags.length ? tags.join(", ") : "(none)"}`)
     process.exit(0)
+  }
+
+  // ---- Permanent delete, mirroring `organize` state:'deleted' ----------------------
+  //   derive delete [short_id…] [--yes] [--json]
+  //
+  // Asks for the id back rather than a y/n. This is the one command here with nothing
+  // behind it, and a reflex "y" is exactly the input that should not be enough. `--yes`
+  // is the script path, where a prompt would only hang; without a TTY and without --yes
+  // it refuses rather than deleting unattended.
+  if (cmd === "delete") {
+    const ids = positional.length ? positional : r.id ? [r.id] : []
+    if (!ids.length) {
+      console.error(`error: no artifact id. Pass one (derive delete <short_id>), or --id.`)
+      process.exit(1)
+    }
+    if (!flags.yes) {
+      if (!process.stdin.isTTY) {
+        console.error("error: refusing to delete without a terminal. Pass --yes to confirm.")
+        process.exit(1)
+      }
+      const phrase = ids.length === 1 ? ids[0] : "delete"
+      console.error(
+        `About to PERMANENTLY delete ${ids.length} artifact(s), with every version, comment and proposal:\n  ${ids.join("\n  ")}\nThis cannot be undone.`,
+      )
+      const rl = createInterface({ input: process.stdin, output: process.stdout })
+      const typed = await new Promise((resolve) =>
+        rl.question(`Type ${phrase} to confirm: `, resolve),
+      )
+      rl.close()
+      if ((typed ?? "").trim() !== phrase) {
+        console.error("aborted — nothing was deleted.")
+        process.exit(1)
+      }
+    }
+    const results = []
+    for (const id of ids) {
+      const res = await fetch(`${r.server}/v1/artifacts/${id}`, { method: "DELETE", headers: auth })
+      results.push({ id, ok: res.ok, status: res.status })
+      if (!res.ok && ids.length === 1) await die(res)
+    }
+    const okCount = results.filter((x) => x.ok).length
+    if (flags.json) console.log(JSON.stringify({ command: "delete", results }))
+    else {
+      for (const x of results)
+        console.log(`${x.ok ? "✓" : "✗"} ${x.id}${x.ok ? "" : ` (${x.status})`}`)
+      console.log(`${okCount} deleted permanently.`)
+    }
+    process.exit(okCount === ids.length ? 0 : 1)
   }
 
   if (cmd === "open") {

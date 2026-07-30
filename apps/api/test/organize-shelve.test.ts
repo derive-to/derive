@@ -107,11 +107,14 @@ describe("organize state — retire an artifact and put it back", () => {
     const pub = await call(app, token, "publish", { title: "X", content: "# X\n\nbody" })
     const bad = await callRaw(app, token, "organize", {
       short_ids: [pub.short_id],
-      state: "deleted",
+      // Was "deleted" until that became a real state — which is the point of this test:
+      // the vocabulary GROWS, so the invalid case has to be something never shipped.
+      state: "shredded",
     })
     // A growth-prone discriminator: checked server-side so a client with a cached schema
-    // can still reach a value shipped after it connected, and a wrong one is named.
-    expect(bad.text).toContain("removed, live")
+    // can still reach a value shipped after it connected, and a wrong one is named
+    // alongside the values that do exist.
+    expect(bad.text).toContain("removed, live, deleted")
     expect(bad.isError).toBe(true)
   })
 

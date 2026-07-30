@@ -1954,6 +1954,17 @@ export function runStoreContract(
         user_id: "bob",
         role: "viewer",
       })
+      // An artifact-SCOPED webhook FKs to artifact.id too — the same trap as version_data,
+      // and it was live in the codebase until scripts/check-delete-cascade.mjs named it.
+      await store.createWebhook({
+        id: uuid(),
+        org_id: ORG,
+        artifact_id: a.id,
+        url: "https://example.test/hook",
+        secret: "s",
+        kind: "generic",
+        events: "*",
+      })
       await store.setFavorite(a.id, "amy")
       await store.setArtifactTags(a.id, ["del-tag"])
       await store.setSlackThreadLink({

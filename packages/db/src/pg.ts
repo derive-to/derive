@@ -3463,6 +3463,9 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(contextSession).where(inArray(contextSession.context_id, ctxIds))
       await tx.delete(context).where(eq(context.manifest_artifact_id, id))
       await tx.delete(reviewRound).where(eq(reviewRound.artifact_id, id))
+      // Artifact-SCOPED webhooks only; a workspace-wide one has a null artifact_id and
+      // survives. Found by scripts/check-delete-cascade.mjs.
+      await tx.delete(webhook).where(eq(webhook.artifact_id, id))
       await tx.delete(versionData).where(eq(versionData.artifact_id, id))
       await tx.delete(version).where(eq(version.artifact_id, id))
       await tx.delete(comment).where(eq(comment.artifact_id, id))
