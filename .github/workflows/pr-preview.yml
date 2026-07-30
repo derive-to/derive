@@ -2,11 +2,26 @@ name: PR preview
 
 # A deployed preview per pull request, on its own workers.dev URL.
 #
-# WHY A SEPARATELY-NAMED WORKER rather than Cloudflare's version preview URLs: those never
-# materialize for this Worker. `wrangler versions upload` returns a version with `preview_url:
-# null` and no aliases, on both the pinned 4.80 and current 4.115, with the account subdomain
-# registered and `previews_enabled` set. A named Worker is the mechanism that demonstrably
-# works here, and it is what derive-staging already uses.
+# WHY A SEPARATELY-NAMED WORKER rather than Cloudflare's version preview URLs — which would be
+# strictly better, because a version runs on the SAME script and therefore inherits its secrets
+# with nothing to copy:
+#
+#   Cloudflare does not issue version preview URLs for a Worker with Durable Objects. Uploading
+#   a version of one whose migrations are NOT yet applied fails outright:
+#
+#     [code: 10211] You attempted to upload a version of a Worker that includes a Durable Object
+#     migration, but migrations must be fully applied via a non-versioned deployment.
+#     → /workers/configuration/versions-and-deployments/gradual-deployments/#gradual-deployments-for-durable-objects
+#
+#   and uploading one whose migrations ARE applied (this Worker) succeeds while silently
+#   returning `preview_url: null` with no aliases. Confirmed on wrangler 4.80 and 4.115, with
+#   the account subdomain registered and previews_enabled set on the script. A throwaway Worker
+#   with no bindings, on the same account and token, DOES get a working preview URL — and gets
+#   none the moment a Durable Object is added. derive declares five DO classes, so this is a
+#   permanent constraint, not a configuration mistake.
+#
+# A separately-named Worker is therefore the mechanism, and it is what derive-staging uses. The
+# cost is that secrets are per-script, so CI has to push them (below) instead of inheriting.
 #
 # THE PREVIEW SHARES PRODUCTION'S DATA. Same D1, same Hyperdrive → Neon, same R2. That is
 # deliberate: a preview you cannot sign into, or that shows an empty library, cannot tell you
