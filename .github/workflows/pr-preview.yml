@@ -111,10 +111,19 @@ jobs:
              value the production Worker uses, or every signed-in page of the preview 500s.}"
           put() { printf '%s' "$2" | pnpm --filter @derive/api exec wrangler secret put "$1" --config wrangler.preview.toml; }
           put DERIVE_AUTH_SECRET "$AUTH_SECRET"
-          [ -n "$MODEL_KEY" ] && put DERIVE_MODEL_API_KEY "$MODEL_KEY"
-          [ -n "$MODEL_BASE_URL" ] && put DERIVE_MODEL_BASE_URL "$MODEL_BASE_URL"
-          [ -n "$MODEL_NAME" ] && put DERIVE_MODEL_NAME "$MODEL_NAME"
-          true
+          # `if`, not `[ -n "$X" ] && put ...`. Actions runs `bash -e`, so a false test is a
+          # non-zero exit and kills the step — which is exactly how the first run of this
+          # workflow failed, on an unset optional variable rather than on anything real.
+          if [ -n "$MODEL_KEY" ]; then put DERIVE_MODEL_API_KEY "$MODEL_KEY"; fi
+          if [ -n "$MODEL_BASE_URL" ]; then put DERIVE_MODEL_BASE_URL "$MODEL_BASE_URL"; fi
+          if [ -n "$MODEL_NAME" ]; then put DERIVE_MODEL_NAME "$MODEL_NAME"; fi
+          # A preview with no model answers "no model is configured" in chat, which looks like a
+          # regression rather than missing config. Say so once, here.
+          if [ -z "$MODEL_BASE_URL" ] || [ -z "$MODEL_NAME" ] || [ -z "$MODEL_KEY" ]; then
+            echo "::warning::Preview has no model gateway. Set repo variables DERIVE_MODEL_BASE_URL"\
+                 "and DERIVE_MODEL_NAME plus the DERIVE_MODEL_API_KEY secret, or chat and"\
+                 "automations will report that no model is connected."
+          fi
 
       # A preview that boots but 500s on the first authenticated request is worse than none,
       # because the URL looks fine. Prove both an anonymous and a database-backed route.
