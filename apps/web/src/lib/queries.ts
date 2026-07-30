@@ -334,6 +334,24 @@ export const slackQuery = () =>
     staleTime: Number.POSITIVE_INFINITY,
   })
 
+// The workspace's Slack channel subscriptions, plus the event types one can carry (the server
+// owns that list so the picker can't drift from it). Invalidated on add / edit / remove.
+export const slackSubscriptionsQuery = () =>
+  queryOptions({
+    queryKey: ["slack-subscriptions"] as const,
+    queryFn: () => api.listSlackSubscriptions(),
+  })
+
+// Public channels the Slack bot can see, for the subscribe picker. Fetched lazily (the caller
+// gates it with `enabled`) and cached for a while — a workspace's channel list barely moves,
+// and the call pages through the Slack API.
+export const slackChannelsQuery = () =>
+  queryOptions({
+    queryKey: ["slack-channels"] as const,
+    queryFn: () => api.listSlackChannels().then((r) => r.channels),
+    staleTime: 5 * 60_000,
+  })
+
 // The workspace's outbound webhooks. Invalidated on add / remove.
 export const webhooksQuery = () =>
   queryOptions({

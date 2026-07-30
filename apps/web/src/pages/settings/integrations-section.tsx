@@ -13,6 +13,7 @@ import { slackQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
+import { SlackSubscriptionsSection } from "./slack-subscriptions-section"
 
 // The workspace activity toggles (email + GitHub mirroring) plus the Slack connection.
 // Where Slack posts is per-channel now — see slack-subscriptions-section.tsx. Toggles apply optimistically
@@ -268,6 +269,9 @@ export function IntegrationsSection() {
           </div>
         )}
       </SettingsGroup>
+
+      {/* Where Derive posts, per channel. Only meaningful once a workspace is connected. */}
+      {slack?.connected ? <SlackSubscriptionsSection /> : null}
     </SettingsSection>
   )
 }

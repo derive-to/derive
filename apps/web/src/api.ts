@@ -137,6 +137,8 @@ export interface DraftClaimPreview {
 export type ShareResult = components["schemas"]["ShareResult"]
 /** Per-workspace integration switches. Generated from the OpenAPI spec. */
 export type OrgSettings = components["schemas"]["OrgSettings"]
+/** A Slack channel subscription. Generated from the OpenAPI spec. */
+export type SlackSubscription = components["schemas"]["SlackSubscription"]
 /** Slack connection status for a workspace. Generated from the OpenAPI spec. */
 export type SlackStatus = components["schemas"]["SlackStatus"]
 /** One entry in the workspace switcher. */
@@ -956,6 +958,28 @@ export const api = {
   sendSlackTestDm: (): Promise<{ ok: boolean }> =>
     f("/v1/slack/test-dm", { ...opts({}), method: "POST" }).then(j),
   // Link is a redirect to /v1/slack/link (full-page navigation); only unlink is a fetch.
+  listSlackSubscriptions: (): Promise<{
+    subscriptions: SlackSubscription[]
+    event_options: string[]
+  }> => f("/v1/slack/subscriptions", opts()).then(j),
+  createSlackSubscription: (body: {
+    channel_id: string
+    channel_name?: string
+    collection?: string
+    events?: string[]
+    authors?: "all" | "human" | "agent"
+  }): Promise<SlackSubscription> => f("/v1/slack/subscriptions", opts(body)).then(j),
+  updateSlackSubscription: (
+    id: string,
+    body: { events?: string[]; authors?: "all" | "human" | "agent"; active?: boolean },
+  ): Promise<SlackSubscription> =>
+    f(`/v1/slack/subscriptions/${id}`, { ...opts(body), method: "PATCH" }).then(j),
+  deleteSlackSubscription: (id: string): Promise<void> =>
+    f(`/v1/slack/subscriptions/${id}`, { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
+  listSlackChannels: (): Promise<{ channels: { id: string; name: string }[] }> =>
+    f("/v1/slack/channels", opts()).then(j),
   unlinkSlack: (): Promise<void> =>
     f("/v1/slack/link", { method: "DELETE", credentials: "include" }).then(() => undefined),
 

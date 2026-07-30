@@ -2224,7 +2224,6 @@ export function runStoreContract(
         emailNotifications: true,
         githubPostComments: false,
         githubMirrorComments: true,
-        slackPost: false,
       })
       // Second write for the same org exercises the onConflict update path.
       await store.setOrgSettings(settingsOrg, {
@@ -2234,7 +2233,6 @@ export function runStoreContract(
       expect(await store.getOrgSettings(settingsOrg)).toMatchObject({
         emailNotifications: false,
         githubPostComments: true,
-        slackPost: true,
       })
     })
 
