@@ -1,5 +1,12 @@
 import { randomUUID as uuid } from "node:crypto"
-import type { MetaStore, NewArtifact, NewRun, NewVersion, SortMode } from "@derive/core"
+import type {
+  MetaStore,
+  NewArtifact,
+  NewRun,
+  NewVersion,
+  SortMode,
+  SubscriptionRecord,
+} from "@derive/core"
 import { DEFAULT_ORG_SETTINGS } from "@derive/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
@@ -2394,6 +2401,42 @@ export function runStoreContract(
       // Deleting the workspace clears the pool sentinel too — nothing orphaned.
       await store.deleteWorkspace(org)
       expect(await store.getModelCredential(org, "__workspace_pool__", "codex")).toBeNull()
+    })
+  })
+
+  describe(`${label}: subscriptions (Stripe billing cache)`, () => {
+    it("subscription: absent → null; upsert inserts then updates; stripe-id lookup", async () => {
+      const org = `sub_org_${uuid()}`
+      expect(await store.getSubscription(org)).toBeNull()
+      expect(await store.getSubscriptionByStripeId("sub_nope")).toBeNull()
+      const now = new Date().toISOString()
+      const stripeSubscriptionId = `sub_stripe_${uuid()}`
+      await store.upsertSubscription({
+        org_id: org,
+        stripe_customer_id: "cus_1",
+        stripe_subscription_id: stripeSubscriptionId,
+        tier: "team",
+        billing_interval: "month",
+        status: "active",
+        quantity: 4,
+        current_period_end: "2026-08-30T00:00:00.000Z",
+        created_at: now,
+        updated_at: now,
+      })
+      const row = await store.getSubscription(org)
+      expect(row?.tier).toBe("team")
+      expect(row?.quantity).toBe(4)
+      expect((await store.getSubscriptionByStripeId(stripeSubscriptionId))?.org_id).toBe(org)
+      // Second upsert for the same org exercises the onConflict update path.
+      await store.upsertSubscription({
+        ...(row as SubscriptionRecord),
+        status: "canceled",
+        quantity: 5,
+        updated_at: new Date().toISOString(),
+      })
+      const updated = await store.getSubscription(org)
+      expect(updated?.status).toBe("canceled")
+      expect(updated?.quantity).toBe(5)
     })
   })
 

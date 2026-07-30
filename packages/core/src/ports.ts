@@ -727,6 +727,11 @@ export interface IntegrationStore {
   getOrgSettings(orgId: string): Promise<OrgSettings>
   /** Persist the workspace's integration preferences (full object; upsert by org). */
   setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
+  /** The workspace's cached Stripe subscription, absent ⇒ null (free). */
+  getSubscription(orgId: string): Promise<SubscriptionRecord | null>
+  /** Webhook resolution fallback when metadata.org_id is missing. */
+  getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<SubscriptionRecord | null>
+  upsertSubscription(s: SubscriptionRecord): Promise<void>
   // ---- Slack App (connected workspace + thread links) ---------------------
   /** The Slack workspace connected to this Derive workspace, or null. */
   getSlackInstall(orgId: string): Promise<SlackInstallRecord | null>

@@ -391,6 +391,19 @@ CREATE TABLE IF NOT EXISTS org_settings (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS subscription (
+  org_id TEXT PRIMARY KEY,
+  stripe_customer_id TEXT NOT NULL,
+  stripe_subscription_id TEXT,
+  tier TEXT NOT NULL,
+  billing_interval TEXT NOT NULL,
+  status TEXT NOT NULL,
+  quantity INTEGER NOT NULL,
+  current_period_end TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS model_credential (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,

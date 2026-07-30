@@ -94,6 +94,7 @@ import type {
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
   SortMode,
+  SubscriptionRecord,
   TakedownInput,
   UserNotificationPrefRecord,
   UserProfile,
@@ -178,6 +179,7 @@ import {
   slackInstall,
   slackThreadLink,
   slackUserLink,
+  subscription,
   userNotificationPref,
   version,
   webhook,
@@ -302,6 +304,7 @@ export const schema = {
   invitation,
   betaSignup,
   signupAttribution,
+  subscription,
   oauthClientWorkspace,
   context,
   contextAsker,
@@ -348,6 +351,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   artifactInvite: true,
   betaSignup: true,
   signupAttribution: true,
+  subscription: true,
   context: true,
   contextAsker: true,
   contextSession: true,
@@ -1939,6 +1943,18 @@ export function makeRepos(db: SqliteDb) {
         set: { settings: JSON.stringify(settings) },
       })
       .run()
+  }
+  const getSubscription = async (orgId: string): Promise<SubscriptionRecord | null> =>
+    (await db.select().from(subscription).where(eq(subscription.org_id, orgId)).get()) ?? null
+  const getSubscriptionByStripeId = async (sid: string): Promise<SubscriptionRecord | null> =>
+    (await db
+      .select()
+      .from(subscription)
+      .where(eq(subscription.stripe_subscription_id, sid))
+      .get()) ?? null
+  const upsertSubscription = async (s: SubscriptionRecord): Promise<void> => {
+    const { org_id: _org, created_at: _created, ...set } = s
+    await db.insert(subscription).values(s).onConflictDoUpdate({ target: subscription.org_id, set })
   }
 
   // ---- Slack App ----------------------------------------------------------
@@ -3747,6 +3763,9 @@ export function makeRepos(db: SqliteDb) {
     setGithubApp,
     getOrgSettings,
     setOrgSettings,
+    getSubscription,
+    getSubscriptionByStripeId,
+    upsertSubscription,
     getSlackInstall,
     setSlackInstall,
     listSlackInstallsByTeam,
