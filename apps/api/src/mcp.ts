@@ -75,7 +75,6 @@ import { makeToolContext, type ToolContextBase } from "./mcp-tool-context"
 import { registerAutomateTool } from "./mcp-tools/automate"
 import { registerCatchUpTool } from "./mcp-tools/catch-up"
 import { registerCheckpointTool } from "./mcp-tools/checkpoint"
-import { registerCodeTool } from "./mcp-tools/code"
 import { registerCommentTool } from "./mcp-tools/comment"
 import { registerFindTool } from "./mcp-tools/find"
 import { registerListWorkspacesTool } from "./mcp-tools/list-workspaces"
@@ -381,16 +380,12 @@ async function buildServer(
     profileArt,
   }
   const tc = makeToolContext(base)
-  // The LIVE tool surface, captured as each tool registers, in two shapes because two
-  // callers need different things from it. Wrapping the registrar rather than maintaining a
-  // second list is what keeps them from drifting: a tool added tomorrow appears in both the
-  // moment it registers, with nothing to remember.
-  //
-  // `registry` maps name -> handler so derive_code can invoke a tool BY NAME without any of
-  // the tool modules knowing it exists. `toolNames` is the answer to "is my cached tool list
-  // stale?" — which only means anything if it reflects what the server actually serves, so a
-  // hand-kept list would eventually lie about the very thing it reports on.
-  const registry = new Map<string, (input: Record<string, unknown>) => Promise<unknown>>()
+  // The LIVE tool surface, captured as each tool registers. Wrapping the registrar rather
+  // than maintaining a second list is what keeps the two from drifting: a tool added
+  // tomorrow appears here the moment it registers, with nothing to remember. That is what
+  // makes it a trustworthy answer to "is my cached tool list stale?" — a hand-kept list
+  // would eventually disagree with what the server actually serves, which is the very
+  // failure this reports on.
   const toolNames = new Set<string>()
   const originalRegister = server.registerTool.bind(server)
   server.registerTool = ((
@@ -398,7 +393,6 @@ async function buildServer(
     config: Parameters<typeof originalRegister>[1],
     handler: Parameters<typeof originalRegister>[2],
   ) => {
-    registry.set(name, handler as (input: Record<string, unknown>) => Promise<unknown>)
     toolNames.add(name)
     return originalRegister(name, config, handler)
   }) as typeof server.registerTool
@@ -415,10 +409,6 @@ async function buildServer(
   registerCheckpointTool(tc)
   registerUseTool(tc)
   registerAutomateTool(tc)
-  // LAST, so the registry it reads is complete. Registers only when an isolate exists: the Node
-  // entry injects a worker-thread sandbox, and the Cloudflare entry injects nothing until the
-  // Worker Loader is out of beta — so the tool is absent there rather than present and broken.
-  if (ctx.deps.codeSandbox) registerCodeTool(tc, registry, ctx.deps.codeSandbox)
 
   return server
 }

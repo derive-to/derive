@@ -1,4 +1,3 @@
-import { McpBroker } from "@derive/broker"
 import { type ConnectionRecord, newId } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
@@ -77,11 +76,6 @@ export const connectionRoutes = (ctx: AppContext) => {
           .regex(/^[a-z0-9][a-z0-9_-]*$/, "toolkit must be a lowercase slug")
           .optional(),
         scopes_label: z.string().max(200).optional(),
-        /** Connect an MCP server directly: no vendor account, no OAuth round trip, and it works
-         *  in a workspace with NO broker plan — which is every workspace today. Routes on its own
-         *  URL rather than the workspace's plan, so it is orthogonal to `kind` above (an MCP
-         *  server still authenticates however it chooses; Derive holds no credential for it). */
-        mcp_url: z.string().url().max(2000).optional(),
         // "personal" (default) = the caller's own account. "workspace" = org
         // infrastructure — requires manage, because whoever can add a workspace
         // credential decides what every context bound to it can reach.
@@ -167,19 +161,15 @@ export const connectionRoutes = (ctx: AppContext) => {
       })
       return c.json(present(rec), 201)
     }
-    if (!b.toolkit) return bail(fail(c, 400, "toolkit is required"))
-    // An MCP connection routes on its OWN URL rather than the workspace's broker plan, and is
-    // built per request (it holds only a session map, no credential) so nothing is cached across
-    // tenants. Everything else resolves a plan: a workspace connection from the pool (it must not
-    // ride — and die with — one member's personal plan), a personal one from the caller.
-    const broker = b.mcp_url
-      ? new McpBroker()
-      : await brokerFor(meta, org, b.scope === "workspace" ? null : me.id, deps.encryptionKey)
-    const link = await broker.connect({
-      orgId: org,
-      userId: me.id,
-      toolkit: b.mcp_url ?? b.toolkit,
-    })
+    // A workspace connection resolves its broker plan from the pool (it must not ride —
+    // and die with — one member's personal broker plan); a personal one from the caller.
+    const broker = await brokerFor(
+      meta,
+      org,
+      b.scope === "workspace" ? null : me.id,
+      deps.encryptionKey,
+    )
+    const link = await broker.connect({ orgId: org, userId: me.id, toolkit: b.toolkit })
     const rec = await meta.createConnection({
       id: newId("conn"),
       org_id: org,
