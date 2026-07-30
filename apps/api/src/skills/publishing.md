@@ -132,6 +132,22 @@ In markdown, a fence whose info string names the slot:
 Read it back with `read`: `data:"checks"` returns that slot's JSON for the version,
 `data:"*"` lists the slots a version carries. Pass `version` to read a past one.
 
+**The trend read.** Versions are the time axis, so one call spans them —
+`data:"checks", versions:"all"` (or `"1-30"`, `"12"`, `"20-"`) returns the series
+oldest-first, one point per version that carries the slot:
+
+```
+read(short_id, data:"checks", versions:"all")
+→ { count: 30, series: [ {n: 1, at: "…", data: {pass: 41}}, … ] }
+```
+
+Versions carrying no such slot are absent and the response says how many. Capped at 200
+points; past that it tells you and hands back the range to ask for.
+
+Outside MCP, the same data is a URL: `GET /raw/<short_id>/data/<slot>.json` for the
+current version, `/raw/<short_id>/v/<n>/data/<slot>.json` to pin one — so a page can
+fetch its own history. Same access as the artifact itself.
+
 Rules worth knowing before you author one:
 
 - Slot names are lowercase letters, digits and hyphens (up to 64 chars). First occurrence
