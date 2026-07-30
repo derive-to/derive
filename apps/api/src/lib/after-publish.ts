@@ -147,6 +147,7 @@ const backfillNewSlots = async (
     if (fresh.size === 0) return
 
     const oldest = Math.max(1, version.n - BACKFILL_MAX_VERSIONS)
+    let filled = 0
     for (let n = version.n - 1; n >= oldest; n--) {
       const old = await meta.getVersion(version.artifact_id, n)
       if (!old) continue
@@ -179,7 +180,21 @@ const backfillNewSlots = async (
           gen: SLOT_GEN,
         })),
       ])
+      filled++
     }
+    // Say what was recovered and how far back it reached. On Workers this runs inside
+    // waitUntil, whose budget can end it mid-walk: the result is a SHORTER history, never a
+    // wrong one, but without this line a truncated backfill and a complete one look
+    // identical afterwards. `truncated` marks the case where an older version may still be
+    // unfilled because the cap, not the content, stopped the walk.
+    if (filled)
+      log.info("data-slot backfill", {
+        artifact: version.artifact_id,
+        slots: [...fresh],
+        versions_filled: filled,
+        oldest_scanned: oldest,
+        truncated: oldest > 1,
+      })
   } catch (err) {
     log.error("data-slot backfill failed", { artifact: version.artifact_id, err: String(err) })
   }

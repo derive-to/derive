@@ -51,6 +51,16 @@ export const rawRoutes = (ctx: AppContext) => {
   // otherwise swallow `data/checks.json` as a file path inside the artifact; the more
   // specific route has to win the match, exactly like the `/t/:token/` route above.
   // `.json` is optional so both spellings work rather than one 404ing mysteriously.
+  //
+  // A slot's bytes reach only a caller who cleared `authorize`, so for an artifact with no
+  // world link (or a locked one) the response is CALLER-SPECIFIC. Nothing here varies on
+  // the credential that produced it, so marking it `public` would invite a CDN or corporate
+  // proxy to hand one member's figures to anyone who asks, and the version-pinned variant
+  // asks to keep them for a year. A world-readable artifact keeps the hard cache that makes
+  // these URLs cheap for a page to poll. Same line the OG card draws in embeds.ts.
+  const slotCache = (a: ArtifactRecord, directives: string): string =>
+    a.link_role === "none" || a.password_hash ? `private, ${directives}` : `public, ${directives}`
+
   const serveSlot = async (c: Context, shortId: string, n: number | null, slotRaw: string) => {
     // `.jsonl` asks for the WHOLE SERIES, `.json` (or bare) for one version's value. The
     // two share this handler rather than living on separate routes because the `.json`
@@ -86,7 +96,7 @@ export const rawRoutes = (ctx: AppContext) => {
       return c.body(`${body}\n`, 200, {
         "Content-Type": "application/x-ndjson; charset=utf-8",
         // Grows with every publish, so never immutable — but cheap and worth a short cache.
-        "Cache-Control": "public, max-age=60",
+        "Cache-Control": slotCache(artifact, "max-age=60"),
         "X-Content-Type-Options": "nosniff",
       })
     }
@@ -99,7 +109,7 @@ export const rawRoutes = (ctx: AppContext) => {
       "Content-Type": "application/json; charset=utf-8",
       // A version is immutable, so its slot is too — cache it hard. The current-version
       // alias can't be, since the next publish changes what it points at.
-      "Cache-Control": n === null ? "no-cache" : "public, max-age=31536000, immutable",
+      "Cache-Control": n === null ? "no-cache" : slotCache(artifact, "max-age=31536000, immutable"),
     })
   }
   app.get("/raw/:shortId/v/:n/data/:slot", (c) =>

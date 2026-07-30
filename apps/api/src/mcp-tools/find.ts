@@ -19,6 +19,10 @@ import { err, json, runnerOnline, safeJson, summarizeArtifact, text } from "../m
 const CONTEXTS_NEED_HUMAN =
   "Contexts (askable live data agents) are hidden here: this connection has no signed-in user. Reconnect with an OAuth login to see and use them."
 
+/** Rows returned by a cross-artifact slot read. The store is asked for twice this many so
+ *  the visibility gate has slack to drop invisible ones without shortening the answer. */
+const SLOT_RESULT_CAP = 200
+
 export function registerFindTool(tc: ToolContext): void {
   const { server, ctx, agent, actingFor, reach, notFound, resolveWs, wsArg, askableContexts } = tc
 
@@ -235,16 +239,21 @@ export function registerFindTool(tc: ToolContext): void {
                 }),
           })
         }
+        // Over-fetch, THEN gate, then cut to the display cap. Gating a hard 200 would let a
+        // run of artifacts the caller cannot see eat the whole page and answer "no artifact
+        // carries this slot" — a wrong answer dressed as an empty one. Nothing about what
+        // was dropped is reported: a "some results were filtered" note would disclose the
+        // existence of the very documents the gate is hiding.
         const found = await ctx.meta.listSlotAcrossArtifacts(t.org, data, {
           tag: tag?.trim().toLowerCase(),
-          limit: 200,
+          limit: SLOT_RESULT_CAP * 2,
         })
         const allowed = await visibleArtifactIds(
           ctx.meta,
           found.map((r) => r.id),
           viewer,
         )
-        const rows = found.filter((r) => allowed.has(r.id))
+        const rows = found.filter((r) => allowed.has(r.id)).slice(0, SLOT_RESULT_CAP)
         return json({
           workspace: t.org,
           slot: data,

@@ -107,6 +107,37 @@ describe("raw data-slot route", () => {
     expect(ok.status).toBe(200)
   })
 
+  it("a gated artifact's slot is never stored by a SHARED cache", async () => {
+    await seed("slot6b", "none", 2)
+    const auth = { authorization: "Bearer tok" }
+    // These 200s exist only because the CALLER could read the page, and nothing in the
+    // response varies on that credential. `public` would let a CDN or corporate proxy keep
+    // one member's figures and serve them to anyone — for a YEAR on the pinned route, which
+    // is what turns a slip into a lasting one.
+    for (const path of ["/raw/slot6b/v/1/data/checks", "/raw/slot6b/data/checks.jsonl"]) {
+      const res = await app.request(path, { headers: auth })
+      expect(res.status, path).toBe(200)
+      expect(res.headers.get("cache-control"), path).not.toContain("public")
+    }
+    // Still immutable, just browser-private: the version genuinely never changes.
+    expect(
+      (await app.request("/raw/slot6b/v/1/data/checks", { headers: auth })).headers.get(
+        "cache-control",
+      ),
+    ).toContain("immutable")
+    // A world-readable artifact keeps the hard shared cache, which is what makes these URLs
+    // cheap enough for a page to poll its own history. ONE version, so v1 is the current
+    // one: an anonymous read of an OLD version is refused by the public-history gate, and
+    // this case is about the cache header, not that gate.
+    await seed("slot6c", "public")
+    expect(
+      (await app.request("/raw/slot6c/v/1/data/checks")).headers.get("cache-control"),
+    ).toContain("public")
+    expect(
+      (await app.request("/raw/slot6c/data/checks.jsonl")).headers.get("cache-control"),
+    ).toContain("public")
+  })
+
   it("does not let the slot route bypass the anonymous history gate", async () => {
     // A public artifact without public_history: anon reads only the CURRENT version, so
     // an OLD version's slot must be as hidden as that version's bytes.
