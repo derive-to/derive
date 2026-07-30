@@ -655,6 +655,46 @@ export function makeRepos(db: SqliteDb) {
       .limit(limit)
       .all()
 
+  const listSlotAcrossArtifacts = async (
+    orgId: string,
+    slot: string,
+    opts?: { tag?: string; limit?: number },
+  ) => {
+    // Joined on artifact.current_version, so a SUPERSEDED row can never be reported as
+    // the current state — the failure that would make this quietly wrong rather than
+    // visibly broken. Retired artifacts are excluded: they are out of the library.
+    const tagged = opts?.tag
+      ? db
+          .select({ id: artifactTag.artifact_id })
+          .from(artifactTag)
+          .where(eq(artifactTag.tag, opts.tag.trim().toLowerCase()))
+      : null
+    return db
+      .select({
+        short_id: artifact.short_id,
+        title: artifact.title,
+        n: versionData.n,
+        json: versionData.json,
+        at: versionData.created_at,
+      })
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          eq(versionData.slot, slot),
+          isNull(artifact.removed_at),
+          tagged ? inArray(artifact.id, tagged) : undefined,
+        ),
+      )
+      .orderBy(desc(versionData.created_at))
+      .limit(opts?.limit ?? 100)
+      .all()
+  }
+
   const reclassifyVersion = async (
     artifactId: string,
     n: number,
@@ -3698,6 +3738,7 @@ export function makeRepos(db: SqliteDb) {
     setVersionData,
     getVersionData,
     getVersionDataSeries,
+    listSlotAcrossArtifacts,
     reclassifyVersion,
     setVersionPreview,
     setVersionPreviewVariant,

@@ -82,17 +82,17 @@ export function registerFindTool(tc: ToolContext): void {
           .describe(
             "Grep/search: source (default) the exact stored bytes (the positions you'd edit); text the visible text a reader sees (HTML tags stripped).",
           ),
-        context: z
+        context: z.coerce
           .number()
           .optional()
           .describe(
             "Grep/search: lines of surrounding context around each match (default 0, max 5).",
           ),
-        max_matches: z
+        max_matches: z.coerce
           .number()
           .optional()
           .describe("Grep/search: cap on matches per artifact (default 40, max 200)."),
-        version: z
+        version: z.coerce
           .number()
           .optional()
           .describe("Grep within a past version (short_id mode). Defaults to the current one."),

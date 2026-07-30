@@ -61,7 +61,7 @@ export function registerUseTool(tc: ToolContext): void {
           .describe(
             "An existing session of yours (from an earlier use, or a find context row) to follow up on or check.",
           ),
-        wait: z
+        wait: z.coerce
           .number()
           .int()
           .min(0)

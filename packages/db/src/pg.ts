@@ -505,6 +505,43 @@ export class PgMetaStore implements MetaStore {
       .orderBy(asc(versionData.n))
       .limit(limit)
   }
+  async listSlotAcrossArtifacts(
+    orgId: string,
+    slot: string,
+    opts?: { tag?: string; limit?: number },
+  ) {
+    // Joined on artifact.current_version so a superseded row can never be reported as the
+    // current state. Retired artifacts are excluded: they are out of the library.
+    const tagged = opts?.tag
+      ? this.db
+          .select({ id: artifactTag.artifact_id })
+          .from(artifactTag)
+          .where(eq(artifactTag.tag, opts.tag.trim().toLowerCase()))
+      : null
+    return this.db
+      .select({
+        short_id: artifact.short_id,
+        title: artifact.title,
+        n: versionData.n,
+        json: versionData.json,
+        at: versionData.created_at,
+      })
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          eq(versionData.slot, slot),
+          isNull(artifact.removed_at),
+          tagged ? inArray(artifact.id, tagged) : undefined,
+        ),
+      )
+      .orderBy(desc(versionData.created_at))
+      .limit(opts?.limit ?? 100)
+  }
   async reclassifyVersion(artifactId: string, n: number, contentType: string): Promise<void> {
     await this.db
       .update(version)

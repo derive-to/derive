@@ -392,6 +392,17 @@ export interface ArtifactStore {
     to: number,
     limit: number,
   ): Promise<VersionDataRecord[]>
+  /** One slot's CURRENT value across every artifact in a workspace that carries it — the
+   *  cross-artifact read. `getVersionDataSeries` answers "how did this ONE page change over
+   *  time"; this answers "where does this metric stand everywhere", which is what a
+   *  workspace of nightly reports actually gets asked. Optionally narrowed by browse tag,
+   *  since a tag is already how a set of artifacts is named. ONE query, joined to each
+   *  artifact's current version so it can never report a superseded row. */
+  listSlotAcrossArtifacts(
+    orgId: string,
+    slot: string,
+    opts?: { tag?: string; limit?: number },
+  ): Promise<{ short_id: string; title: string | null; n: number; json: string; at: string }[]>
   /** Correct a version's stored content_type in place (no new version). Also
    *  updates the artifact's current_content_type when n is the current version.
    *  Used to repair mis-classified content (e.g. HTML that was tagged markdown). */

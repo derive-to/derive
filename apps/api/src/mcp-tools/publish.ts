@@ -259,7 +259,7 @@ export function registerPublishTool(tc: ToolContext): void {
                   "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once, unless `occurrence` picks one of several.",
                 ),
               new_str: z.string().describe("Replacement text. Empty string deletes."),
-              occurrence: z
+              occurrence: z.coerce
                 .number()
                 .optional()
                 .describe(
@@ -271,7 +271,7 @@ export function registerPublishTool(tc: ToolContext): void {
           .describe(
             "Surgical revision of a SINGLE-FILE artifact without resending it: exact-match search/replace against the current stored source, applied in order (each edit sees the previous one's result). Requires `short_id`; use INSTEAD of `content`, and read format:'html' first so old_str matches the raw source. See derive://skills/publishing. A miss applies nothing and returns why.",
           ),
-        base_version: z
+        base_version: z.coerce
           .number()
           .optional()
           .describe(
