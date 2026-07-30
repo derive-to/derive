@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, describe, expect, it, vi } from "vitest"
 import { createApp } from "../src/app"
 import { type Backplane, createInProcessBackplane, type DeriveEvent } from "../src/bus"
 import { sha256 } from "../src/lib/crypto"
@@ -428,6 +428,26 @@ describe("channel fan-out parity (the MCP path)", () => {
     await call(app, token, "comment", { short_id: created.short_id, body: "a note" })
     const rows = await drain(meta)
     expect(rows.some((d) => d.kind === "generic" && d.event_type === "comment.created")).toBe(true)
+  })
+
+  // The fan-out is best-effort and the comment row is already durable when it runs, so a
+  // channel-side failure must not be reported to the agent as a failed comment — an agent that
+  // believes its comment failed retries and duplicates it. The HTTP route gets this from
+  // background(); the MCP path has to ask for the same guard.
+  it("still reports success when the fan-out throws — the comment was written", async () => {
+    const { app, meta, token } = loopApp("mcp-fanout-throws")
+    const created = await listedDoc(app, token)
+    const artifact = await meta.getByShortId(created.short_id as string)
+    vi.spyOn(meta, "getSlackInstall").mockRejectedValue(new Error("channel lookup exploded"))
+    const out = await call(app, token, "comment", {
+      short_id: created.short_id,
+      body: "a note",
+    })
+    expect(out.comment_id).toBeTruthy()
+    vi.restoreAllMocks()
+    // ...and it really is in the store, not just claimed in the reply.
+    const rows = await meta.listComments(artifact?.id ?? "")
+    expect(rows.some((r) => r.body_md === "a note")).toBe(true)
   })
 
   it("an agent resolving a thread fans out comment.resolved", async () => {
