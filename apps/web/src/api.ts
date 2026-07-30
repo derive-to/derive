@@ -137,6 +137,22 @@ export interface DraftClaimPreview {
 export type ShareResult = components["schemas"]["ShareResult"]
 /** Per-workspace integration switches. Generated from the OpenAPI spec. */
 export type OrgSettings = components["schemas"]["OrgSettings"]
+/** The workspace's billing truth: plan, Stripe status, seats, storage. Hand-declared:
+ *  routes/billing.ts is plain Hono (no OpenAPI contract — a fast-moving internal
+ *  surface, not the documented public API), matching this file's other
+ *  hand-declared shapes (e.g. DraftClaimPreview above). */
+export type BillingInfo = {
+  tier: "free" | "team" | "business"
+  status: string | null
+  interval: "month" | "year" | null
+  quantity: number | null
+  seats: number
+  current_period_end: string | null
+  storage: { used_bytes: number; cap_bytes: number | null }
+  enforce_at: string | null
+  beta: boolean
+  subscribed: boolean
+}
 /** Slack connection status for a workspace. Generated from the OpenAPI spec. */
 export type SlackStatus = components["schemas"]["SlackStatus"]
 /** One entry in the workspace switcher. */
@@ -945,6 +961,16 @@ export const api = {
   getWorkspaceSettings: (): Promise<OrgSettings> => f("/v1/workspace/settings", opts()).then(j),
   updateWorkspaceSettings: (patch: Partial<OrgSettings>): Promise<OrgSettings> =>
     f("/v1/workspace/settings", { ...opts(patch), method: "PATCH" }).then(j),
+
+  // Billing: plan truth, checkout, and the Stripe portal. Admin only.
+  getBilling: (): Promise<BillingInfo> => f("/v1/billing", opts()).then(j),
+  startCheckout: (
+    tier: "team" | "business",
+    interval: "month" | "year",
+  ): Promise<{ url: string }> =>
+    f("/v1/billing/checkout", { ...opts({ tier, interval }), method: "POST" }).then(j),
+  openBillingPortal: (): Promise<{ url: string }> =>
+    f("/v1/billing/portal", { ...opts({}), method: "POST" }).then(j),
 
   // Slack App: status, set default channel, disconnect. Connect is a redirect to
   // /v1/slack/install (a full-page navigation, not a fetch).
