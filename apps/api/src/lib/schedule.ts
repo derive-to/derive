@@ -31,6 +31,7 @@ const materializeFor = async (
   meta: MetaStore,
   autos: AutomationRecord[],
   now: Date,
+  operatorPays = false,
 ): Promise<number> => {
   let created = 0
   let unpayable = 0
@@ -95,18 +96,28 @@ const materializeFor = async (
     //
     // Checked HERE — after the dedupe, immediately before the insert — so a tick that
     // materializes nothing costs no extra queries, whatever the size of the automation list.
-    const ag = await meta.getAgent(a.agent_id)
-    const payer = await findPayer(meta, {
-      orgId: a.org_id,
-      agentId: a.agent_id,
-      agentCreatedBy: ag?.created_by ?? null,
-      // A clock has no person behind it, so a scheduled run can only reach the owner-lend and
-      // pool tiers. That is also why it is the trigger most likely to have no payer at all.
-      initiator: null,
-    })
-    if (!payer) {
-      unpayable += 1
-      continue
+    //
+    // UNLESS THE OPERATOR PAYS. A configured gateway (DERIVE_MODEL_BASE_URL/_API_KEY/_NAME)
+    // means this deployment holds the key and spends it for every workspace on it, so there is
+    // no chain to walk and no plan for anyone to connect — findPayer would correctly return
+    // null and this guard would then refuse every occurrence, forever, on exactly the hosted
+    // posture the gateway exists to serve. The attended lane (routes/contexts.ts) and the
+    // manual lane (routes/automations.ts `canPay`) already short-circuit on the same
+    // condition; this was the third lane, and the only one with nobody watching it fail.
+    if (!operatorPays) {
+      const ag = await meta.getAgent(a.agent_id)
+      const payer = await findPayer(meta, {
+        orgId: a.org_id,
+        agentId: a.agent_id,
+        agentCreatedBy: ag?.created_by ?? null,
+        // A clock has no person behind it, so a scheduled run can only reach the owner-lend and
+        // pool tiers. That is also why it is the trigger most likely to have no payer at all.
+        initiator: null,
+      })
+      if (!payer) {
+        unpayable += 1
+        continue
+      }
     }
     try {
       await meta.createRun({
@@ -150,6 +161,11 @@ export const materializeDueRuns = async (
     now,
   )
 
-/** The HOSTED tick: due schedule runs across every enabled automation on this deployment. */
-export const materializeAllDueRuns = async (meta: MetaStore, now: Date): Promise<number> =>
-  materializeFor(meta, await meta.listEnabledAutomations(), now)
+/** The HOSTED tick: due schedule runs across every enabled automation on this deployment.
+ *  `operatorPays` is true when the deployment has an operator gateway configured — see the
+ *  payer guard in materializeFor for why the chain must not be walked in that case. */
+export const materializeAllDueRuns = async (
+  meta: MetaStore,
+  now: Date,
+  operatorPays = false,
+): Promise<number> => materializeFor(meta, await meta.listEnabledAutomations(), now, operatorPays)

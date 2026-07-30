@@ -507,9 +507,10 @@ async function withHostedDispatch(
   // The gateway rides along when the operator configured one, exactly as node.ts does — the two
   // entries are meant to differ only in `waitUntil`, and this was the one place they silently
   // did not. derive.to sets none of the three, so nothing changes there.
+  const gateway = workerGateway(env)
   const substrate =
     env.DERIVE_LOOP_RUNS === "1"
-      ? loopSubstrate({ model: env.DERIVE_LOOP_MODEL, gateway: workerGateway(env), waitUntil })
+      ? loopSubstrate({ model: env.DERIVE_LOOP_MODEL, gateway, waitUntil })
       : containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
   const secret = env.DERIVE_AUTH_SECRET
   if (!substrate || !secret) return
@@ -519,6 +520,9 @@ async function withHostedDispatch(
       substrate,
       server: env.BASE_URL ?? "",
       secret,
+      // Same gateway the substrate just took: when the operator holds the key, the schedule
+      // materializer must not walk a payer chain that cannot exist.
+      operatorPays: !!gateway,
     })
   await (env.HYPERDRIVE
     ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)
