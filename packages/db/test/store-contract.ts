@@ -727,6 +727,138 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: list enrichment (the batched decoration call)`, () => {
+    it("matches the individual queries it batches, per artifact", async () => {
+      const me = `u_${uuid()}`
+      const a = await store.createArtifact(newArtifact())
+      const b = await store.createArtifact(newArtifact())
+      // a: tags, a ready preview, views, an open comment thread, an open proposal, a share.
+      await store.setArtifactTags(a.id, ["beta", "alpha"])
+      await store.addVersion(a.id, newVersion())
+      await store.setVersionPreview(a.id, 1, { preview_key: "png", preview_status: "ready" })
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: me,
+        viewer_kind: "user",
+      })
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: "x",
+        viewer_kind: "anon",
+      })
+      await store.createComment({
+        id: uuid(),
+        artifact_id: a.id,
+        thread_id: "t1",
+        base_version: 1,
+        body_md: "mine",
+        author: "me",
+        author_id: me,
+      })
+      await store.createProposal({
+        id: uuid(),
+        artifact_id: a.id,
+        blob_key: `blob_${uuid()}`,
+        content_type: "text/html",
+        kind: "file",
+        author: "amy",
+        base_version: 1,
+      })
+      await store.setArtifactMember({ id: uuid(), artifact_id: a.id, user_id: me, role: "editor" })
+
+      const ids = [a.id, b.id]
+      const enr = await store.listEnrichment({
+        ids,
+        ghIds: [],
+        authorIds: [],
+        viewerId: me,
+        memberId: me,
+        views: true,
+      })
+      // The batch must be indistinguishable from the calls it replaces.
+      expect(enr.views).toEqual(await store.viewCounts(ids))
+      expect(enr.tags).toEqual(await store.tagsForArtifacts(ids))
+      expect(enr.previews).toEqual(await store.previewReady(ids))
+      expect(enr.signals).toEqual(await store.commentSignals(ids, me))
+      expect(enr.proposals).toEqual(await store.openProposalCounts(ids))
+      expect(enr.shareRoles).toEqual(await store.artifactRolesFor(me, ids))
+      // Spot-check the shape is actually populated, not vacuously equal-empty.
+      expect(enr.views[a.id]).toBe(2)
+      expect(enr.tags[a.id]).toEqual(["alpha", "beta"])
+      expect(enr.previews[a.id]).toBe(true)
+      expect(enr.signals[a.id]?.open_threads).toBe(1)
+      expect(enr.proposals[a.id]).toBe(1)
+      expect(enr.shareRoles[a.id]).toBe("editor")
+      expect(enr.views[b.id]).toBeUndefined()
+    })
+
+    it("honors the gates: no views, no viewer, no member", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: "x",
+        viewer_kind: "anon",
+      })
+      const enr = await store.listEnrichment({
+        ids: [a.id],
+        ghIds: [],
+        authorIds: [],
+        viewerId: null,
+        memberId: null,
+        views: false,
+      })
+      expect(enr.views).toEqual({})
+      expect(enr.signals).toEqual({})
+      expect(enr.shareRoles).toEqual({})
+    })
+
+    it("degrades the user-directory pieces to empty instead of failing the listing", async () => {
+      // The contract schemas carry no Better Auth "user"/"account" tables — exactly
+      // the deployment shape those lookups are best-effort for. The core decoration
+      // must still come back.
+      const a = await store.createArtifact(newArtifact())
+      await store.setArtifactTags(a.id, ["gamma"])
+      const enr = await store.listEnrichment({
+        ids: [a.id],
+        ghIds: ["12345"],
+        authorIds: [`u_${uuid()}`],
+        viewerId: null,
+        memberId: null,
+        views: false,
+      })
+      expect(enr.handles).toEqual([])
+      expect(enr.bylines).toEqual([])
+      expect(enr.tags[a.id]).toEqual(["gamma"])
+    })
+
+    it("returns all-empty for an empty page", async () => {
+      const enr = await store.listEnrichment({
+        ids: [],
+        ghIds: [],
+        authorIds: [],
+        viewerId: null,
+        memberId: null,
+        views: true,
+      })
+      expect(enr).toEqual({
+        views: {},
+        tags: {},
+        previews: {},
+        handles: [],
+        bylines: [],
+        signals: {},
+        proposals: {},
+        shareRoles: {},
+      })
+    })
+  })
+
   describe(`${label}: follows (authors + paths)`, () => {
     it("adds (idempotent), lists, and removes a follow", async () => {
       const user = `u_${uuid()}`

@@ -32,6 +32,8 @@ import type {
   InvitationRecord,
   LinkRole,
   ListArtifactsOpts,
+  ListEnrichment,
+  ListEnrichmentOpts,
   Listed,
   MembershipRecord,
   MetaStore,
@@ -661,8 +663,7 @@ export class PgMetaStore implements MetaStore {
     artifactIds: string[],
     userId: string | null,
   ): Promise<Record<string, CommentSignals>> {
-    const out: Record<string, CommentSignals> = {}
-    if (artifactIds.length === 0) return out
+    if (artifactIds.length === 0) return {}
     const rows = await this.db
       .select({
         artifact_id: comment.artifact_id,
@@ -673,6 +674,22 @@ export class PgMetaStore implements MetaStore {
       })
       .from(comment)
       .where(inArray(comment.artifact_id, artifactIds))
+    return this.assembleCommentSignals(rows, userId)
+  }
+
+  /** Fold raw comment rows into per-artifact signals — shared by `commentSignals`
+   *  and the `listEnrichment` batch so the two paths cannot drift. */
+  private assembleCommentSignals(
+    rows: {
+      artifact_id: string
+      thread_id: string
+      state: string
+      author_id: string | null
+      meta: string | null
+    }[],
+    userId: string | null,
+  ): Record<string, CommentSignals> {
+    const out: Record<string, CommentSignals> = {}
     const threads: Record<string, Set<string>> = {}
     for (const r of rows) {
       if (r.state !== "open") continue
@@ -696,6 +713,149 @@ export class PgMetaStore implements MetaStore {
       const sig = out[id]
       if (sig) sig.open_threads = set.size
     }
+    return out
+  }
+
+  /**
+   * The library list's whole decoration in ONE round trip: a UNION ALL over the seven
+   * per-id lookups, discriminated by a `kind` column and demuxed in code. On the edge
+   * tier every round trip costs ~80ms flat (one serialized pg.Client per invocation —
+   * see edge-pg.ts), so seven separate trips keyed on the same page of ids was ~560ms
+   * of pure wire time per listing; the SQL each branch runs is unchanged. All columns
+   * are text (counts cast) so the union stays type-consistent. `= ANY($n)` binds each
+   * id set as one array parameter. The "user"/"account" branches are not best-effort
+   * here the way `getUsers`/`usersByGithubIds` are: on Postgres, Better Auth shares
+   * this database (its jwks row is read on every authenticated request), so those
+   * tables existing is a precondition of reaching this route at all.
+   */
+  async listEnrichment(opts: ListEnrichmentOpts): Promise<ListEnrichment> {
+    const { ids, ghIds, authorIds, viewerId, memberId, views } = opts
+    const out: ListEnrichment = {
+      views: {},
+      tags: {},
+      previews: {},
+      handles: [],
+      bylines: [],
+      signals: {},
+      proposals: {},
+      shareRoles: {},
+    }
+    if (ids.length === 0 && ghIds.length === 0 && authorIds.length === 0) return out
+    const params: unknown[] = []
+    const bind = (v: unknown) => {
+      params.push(v)
+      return `$${params.length}`
+    }
+    const branches: string[] = []
+    if (ids.length > 0) {
+      const page = bind(ids)
+      branches.push(
+        `SELECT 'tag' kind, artifact_id k, tag c1, NULL c2, NULL c3 FROM artifact_tag WHERE artifact_id = ANY(${page})`,
+        `SELECT 'preview', a.id, NULL, NULL, NULL FROM artifact a
+           JOIN version v ON v.artifact_id = a.id AND v.n = a.current_version
+          WHERE v.preview_status = 'ready' AND a.id = ANY(${page})`,
+        `SELECT 'proposal', artifact_id, count(*)::text, NULL, NULL FROM proposal
+          WHERE state = 'open' AND artifact_id = ANY(${page}) GROUP BY artifact_id`,
+      )
+      if (views)
+        branches.push(
+          `SELECT 'view', artifact_id, count(*)::text, NULL, NULL FROM view
+            WHERE artifact_id = ANY(${page}) GROUP BY artifact_id`,
+        )
+      if (viewerId)
+        branches.push(
+          `SELECT 'comment', artifact_id, thread_id, author_id, meta FROM comment
+            WHERE state = 'open' AND artifact_id = ANY(${page})`,
+        )
+      if (memberId)
+        branches.push(
+          `SELECT 'share', artifact_id, role, NULL, NULL FROM artifact_member
+            WHERE user_id = ${bind(memberId)} AND artifact_id = ANY(${page})`,
+        )
+    }
+    // The "user"/"account" branches keep `getUsers`/`usersByGithubIds`' best-effort
+    // contract: those Better Auth tables can be absent (fresh self-host, operator-token
+    // deployments), and there they must degrade to empty — not 500 the listing. A
+    // failed union retries once without them; a union that fails WITHOUT them has a
+    // real problem and still throws.
+    const directoryBranches = (ghIds.length > 0 ? 1 : 0) + (authorIds.length > 0 ? 1 : 0)
+    if (ghIds.length > 0)
+      branches.push(
+        `SELECT 'handle', a."accountId", u.username, NULL, NULL
+           FROM "account" a JOIN "user" u ON u.id = a."userId"
+          WHERE a."providerId" = 'github' AND a."accountId" = ANY(${bind(ghIds)})`,
+      )
+    if (authorIds.length > 0)
+      branches.push(
+        `SELECT 'byline', id, name, username, NULL FROM "user" WHERE id = ANY(${bind(authorIds)})`,
+      )
+    type EnrichmentRow = {
+      kind: string
+      k: string
+      c1: string | null
+      c2: string | null
+      c3: string | null
+    }
+    let rows: EnrichmentRow[]
+    try {
+      const res = await this.pool.query<EnrichmentRow>(branches.join("\nUNION ALL\n"), params)
+      rows = res.rows
+    } catch (e) {
+      if (directoryBranches === 0) throw e
+      const core = branches.slice(0, branches.length - directoryBranches)
+      if (core.length === 0) return out
+      const res = await this.pool.query<EnrichmentRow>(
+        core.join("\nUNION ALL\n"),
+        params.slice(0, params.length - directoryBranches),
+      )
+      rows = res.rows
+    }
+    const commentRows: {
+      artifact_id: string
+      thread_id: string
+      state: string
+      author_id: string | null
+      meta: string | null
+    }[] = []
+    for (const r of rows) {
+      switch (r.kind) {
+        case "tag": {
+          const list = out.tags[r.k] ?? []
+          list.push(r.c1 as string)
+          out.tags[r.k] = list
+          break
+        }
+        case "preview":
+          out.previews[r.k] = true
+          break
+        case "proposal":
+          out.proposals[r.k] = Number(r.c1)
+          break
+        case "view":
+          out.views[r.k] = Number(r.c1)
+          break
+        case "comment":
+          commentRows.push({
+            artifact_id: r.k,
+            thread_id: r.c1 as string,
+            state: "open",
+            author_id: r.c2,
+            meta: r.c3,
+          })
+          break
+        case "share":
+          out.shareRoles[r.k] = r.c1 as Role
+          break
+        case "handle":
+          out.handles.push({ gh_id: r.k, username: r.c1 })
+          break
+        case "byline":
+          out.bylines.push({ id: r.k, name: r.c1, username: r.c2 })
+          break
+      }
+    }
+    for (const k in out.tags) out.tags[k]?.sort()
+    out.signals = this.assembleCommentSignals(commentRows, viewerId)
     return out
   }
 
