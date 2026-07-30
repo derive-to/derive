@@ -189,8 +189,8 @@ export function IntegrationsSection() {
                 data-testid="slack-reauth-banner"
                 className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
               >
-                Slack rejected the saved connection (it may have been revoked, or it needs a
-                permission that was added since. Reconnect to fix it.
+                Derive can't use the saved Slack connection (the app may have been removed or its
+                token revoked, or it needs a permission that was added since. Reconnect to fix it.
                 <div className="mt-2">
                   <Button data-testid="slack-reconnect" variant="default" size="sm" asChild>
                     <a href="/v1/slack/install">Reconnect Slack</a>

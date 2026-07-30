@@ -13,6 +13,38 @@
 <meta property="og:image" content="https://derive.to/site/og.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="canonical" href="https://derive.to/security">
+<!-- See site/index.html for why the structured data is here. The contact points
+     mirror /.well-known/security.txt — change them together. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "name": "Security & abuse — Derive",
+  "url": "https://derive.to/security",
+  "description": "How to report abusive content hosted on Derive, and how to report a security vulnerability.",
+  "isPartOf": { "@id": "https://derive.to/#website" },
+  "publisher": {
+    "@id": "https://derive.to/#organization",
+    "@type": "Organization",
+    "name": "Derive",
+    "url": "https://derive.to/",
+    "contactPoint": [
+      {
+        "@type": "ContactPoint",
+        "contactType": "abuse",
+        "email": "abuse@derive.to",
+        "url": "https://derive.to/security"
+      },
+      {
+        "@type": "ContactPoint",
+        "contactType": "security",
+        "email": "security@derive.to",
+        "url": "https://derive.to/security"
+      }
+    ]
+  }
+}
+</script>
 <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/brand/favicon.png" type="image/png">
 <style>

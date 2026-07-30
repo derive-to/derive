@@ -45,9 +45,19 @@ describe("buildSlackManifest", () => {
     expect(m.oauth_config.scopes.bot).toContain("commands")
   })
 
+  // Without these, a removed app or a revoked token is invisible until a delivery happens to
+  // fail — so an idle workspace keeps claiming "connected". Neither event requires a scope.
+  it("subscribes to the install-lifecycle events that invalidate the bot token", () => {
+    expect(m.settings.event_subscriptions.bot_events).toEqual(
+      expect.arrayContaining(["app_uninstalled", "tokens_revoked"]),
+    )
+  })
+
   it("declares private-channel history scopes to match the message.groups subscription", () => {
-    // groups:* is what makes reply-back work in a private channel the bot is invited to;
-    // subscribing to message.groups without it (the old gap) silently dropped those replies.
+    // groups:history is what gates DELIVERY of message.groups, so reply-back works in a private
+    // channel the bot is invited to; subscribing without it (the old gap) silently dropped those
+    // replies. groups:read is held alongside it but backs no call Derive makes — see the
+    // SLACK_BOT_SCOPES docstring for why it is kept rather than trimmed.
     expect(m.oauth_config.scopes.bot).toEqual(
       expect.arrayContaining(["groups:read", "groups:history"]),
     )

@@ -20,7 +20,7 @@ import {
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { AppContext } from "./context"
-import { err, json } from "./mcp-util"
+import { err, json, staleAwareNumber, staleSchemaNote } from "./mcp-util"
 
 // The raw per-request values buildServer resolves and hands to makeToolContext.
 export interface ToolContextBase {
@@ -68,6 +68,17 @@ export interface ToolContext extends ToolContextBase {
   ) => Promise<{ a: ArtifactRecord; org: string; role: Role } | { error: string } | null>
   notFound: (shortId: string) => ReturnType<typeof err>
   wsArg: typeof wsArg
+  /** A numeric parameter that coerces AND records a stale-schema proof (see
+   *  staleAwareNumber in mcp-util). Per-request, so the schema closure and the response
+   *  that reports it always agree. */
+  num: (
+    param: string,
+    bounds?: { int?: boolean; min?: number; max?: number },
+  ) => ReturnType<typeof staleAwareNumber>
+  /** The stale-schema note for THIS request, or null when the client's surface is current.
+   *  Folded into a tool's response note, because nothing else tells an agent it is holding
+   *  an out-of-date surface. */
+  staleNote: () => string | null
   workQueue: (ack?: string[], wait?: number) => Promise<ReturnType<typeof json>>
   askableContexts: (
     org: string,
@@ -250,8 +261,18 @@ export function makeToolContext(base: ToolContextBase): ToolContext {
     return mine.map((x) => ({ x, manifest: byId.get(x.manifest_artifact_id) ?? null }))
   }
 
+  // Per-REQUEST stale-schema proof. A number arriving as a string means this client
+  // validated against a tool schema cached before that parameter existed; the server
+  // coerces it (so the call works) and remembers, so the response can say so.
+  const staleParams = new Set<string>()
+  const num = (param: string, bounds?: { int?: boolean; min?: number; max?: number }) =>
+    staleAwareNumber((p) => staleParams.add(p), param, bounds)
+  const staleNote = () => (staleParams.size ? staleSchemaNote([...staleParams]) : null)
+
   return {
     ...base,
+    num,
+    staleNote,
     grantedWorkspaces,
     inGrant,
     resolveWs,

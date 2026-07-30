@@ -242,7 +242,7 @@ export async function runnerDispatch(
   // falls through to the check path unchanged.
   if (session_id && answer !== undefined) {
     const s = await ctx.meta.getSession(session_id)
-    const x = s ? await ctx.meta.getContext(s.context_id) : null
+    const x = s?.context_id ? await ctx.meta.getContext(s.context_id) : null
     if (s && x && (registered ? x.agent_id === agent.id : await ownerRunsOrg(tc, x.org_id)))
       return runnerAnswer(s, x, { body: answer, progress, state, result_artifact_id, answers })
   }

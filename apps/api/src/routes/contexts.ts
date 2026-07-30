@@ -3,7 +3,11 @@ import { refRouter } from "@derive/broker"
 import {
   type ContextAskerRecord,
   type ContextRecord,
+  effectiveRole,
   newId,
+  normalizeSelector,
+  parseSubject,
+  roleAllows,
   type SessionMessageRecord,
   type SessionRecord,
   type SessionState,
@@ -22,9 +26,12 @@ import {
   parseConnectionIds,
   toolsForRun,
 } from "../lib/broker"
+import { overBudget } from "../lib/budget"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
+import { runSessionTurn } from "../lib/session-turn"
 import { log } from "../log"
 
 /**
@@ -47,9 +54,11 @@ export const contextRoutes = (ctx: AppContext) => {
     agentSessionScope,
     authorize,
     bus,
+    askLimiter,
     canAskContext,
     currentUser,
     deps,
+    limited,
     managementPrincipal,
     requireUser,
     requireWorkspace,
@@ -57,6 +66,178 @@ export const contextRoutes = (ctx: AppContext) => {
     workspaceCan,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
+
+  /** Is this workspace allowed to spend the operator's model key? See DERIVE_CHAT_ALLOWLIST. */
+  const chatAllowed = (orgId: string): boolean =>
+    !ctx.callModel || !ctx.chatAllowlist?.length || ctx.chatAllowlist.includes(orgId)
+
+  /**
+   * Serve one attended turn for a session that names an artifact subject.
+   *
+   * Claims the session first (the same status-guarded lease a runner would take), so a polling
+   * BYO runner for the same context cannot double-serve the turn. Everything after that is
+   * best-effort: this runs detached, and a failure has to land in the TRANSCRIPT rather than
+   * anywhere the caller could see, because the caller has already been answered.
+   */
+  const serveAttended = async (
+    s: SessionRecord,
+    me: { id: string; name?: string | null; username?: string | null; email?: string },
+    /** The context's agent, or NULL for a contextless (default-agent) chat session. */
+    agentId: string | null,
+  ) => {
+    const subject = parseSubject(s.subject_ref)
+    if (!subject || subject.kind !== "artifact") return
+    const reply = async (body: string, state: SessionState, payload?: unknown) => {
+      await meta.addSessionMessage(
+        {
+          id: newId("sm"),
+          session_id: s.id,
+          author_kind: "agent",
+          author_id: agentId ?? "derive",
+          body_md: body,
+          meta: payload === undefined ? null : JSON.stringify(payload),
+        },
+        state,
+      )
+    }
+    const flags = await meta.getOrgSettings(s.org_id).catch(() => null)
+    // No model wired (the common self-host case) — say so in the transcript rather than leaving
+    // the session `open` forever waiting on a runner that will never come.
+    if (!ctx.callModel) {
+      await reply(
+        "No model is configured on this deploy, so I cannot answer. Set DERIVE_MODEL_BASE_URL, DERIVE_MODEL_API_KEY and DERIVE_MODEL_NAME.",
+        "failed",
+      )
+      return
+    }
+    // Claim AS THE CONTEXT'S AGENT, using the same status-guarded claim a polling runner takes.
+    // That is what stops a BYO runner for this context from serving the same turn twice — and it
+    // has to be that agent's id, because the claim checks ownership through the context.
+    // CLAIM EITHER WAY. The earlier reasoning — "no runner competes, so nothing to exclude" —
+    // missed that the claim is also the mutual exclusion between two CALLERS (two tabs, or a
+    // retry after a client-side timeout), and the only thing that writes a lease a crashed
+    // turn can recover from. Without it, both callers ran a turn and both wrote; and a process
+    // that died mid-turn left the session `open` forever, which the UI polls on indefinitely.
+    const lease = new Date(Date.now() + RUN_LEASE_MS).toISOString()
+    const claimed = agentId
+      ? await meta.claimSessionById(s.id, agentId, lease)
+      : await meta.claimAttendedSession(s.id, lease)
+    if (!claimed) return // someone else is already serving this turn
+    try {
+      const artifact = await meta.getByShortId(subject.id)
+      if (!artifact) {
+        await reply("That document no longer exists, so I have not changed anything.", "failed")
+        return
+      }
+      // RE-CHECK ACCESS EVERY TURN, never just at session creation. A session id is long-lived
+      // and the ACL is not: someone removed from the workspace, demoted to viewer, or unshared
+      // from the doc still holds the id, and without this they would keep reading the CURRENT
+      // contents back and keep publishing to it. `canRead`/`canWrite` are resolved for the
+      // asker, not for whoever opened the session.
+      const seat = await meta.getMembership(artifact.org_id, me.id)
+      const role = effectiveRole(
+        {
+          kind: "user",
+          orgRole: seat?.role,
+          artifactRole: (await meta.getArtifactMember(artifact.id, me.id))?.role,
+        },
+        artifact.workspace_access,
+        artifact.link_role,
+      )
+      if (!role || !roleAllows(role, "read")) {
+        await reply("You no longer have access to that document.", "failed")
+        return
+      }
+      // MEMBERSHIP, on top of read-access, for a CHAT session (one with no context behind it).
+      // `effectiveRole` folds in `artifact.link_role`, so a viewer LINK is enough to satisfy the
+      // read check above — which meant a signed-in non-member who was sent a link to a document
+      // in a chat-enabled workspace could hold a live session and spend the OPERATOR's model key,
+      // turn after turn, from outside the workspace entirely. Reading a shared document is not
+      // standing to run an agent inside the workspace that owns it.
+      //
+      // Chat only: the context lane has its own gate (canAskContext, which already requires
+      // membership or a roster invite), and its sessions are not on the operator's key by
+      // default. Refused in the TRANSCRIPT rather than at the door, like every other per-turn
+      // access refusal here — the asker sees why instead of a silent session.
+      if (!s.context_id && !seat) {
+        await reply(
+          "You are not a member of the workspace that owns this document, so I cannot answer here.",
+          "failed",
+        )
+        return
+      }
+      // WRITING needs propose at minimum. `read` alone is not enough: the turn's proposal path
+      // calls the store directly rather than going through /v1/artifacts/:id/proposals, so the
+      // route's `propose` check does not apply here and has to be made explicitly. Without it,
+      // any signed-in user could file unlimited proposals onto any PUBLIC artifact in a
+      // chat-enabled workspace, at the operator's model cost.
+      if (!roleAllows(role, "propose")) {
+        await reply(
+          "You can read this document but not suggest changes to it, so I have not written anything.",
+          "failed",
+        )
+        return
+      }
+      // GitHub-synced artifacts are read-only in Derive, exactly as the proposal route says —
+      // changes belong in the repo, and chat must not be a way around that.
+      if ((await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id)) {
+        await reply(
+          "This document is managed by GitHub sync, so changes belong in the repo rather than here.",
+          "failed",
+        )
+        return
+      }
+      // The write mode is re-derived too — a demoted editor must fall back to proposing rather
+      // than keep the `publish` they held when the session opened.
+      const effective: typeof subject =
+        subject.mode === "publish" && roleAllows(role, "publish")
+          ? subject
+          : { kind: "artifact", id: subject.id }
+      const res = await runSessionTurn(
+        {
+          meta,
+          blobs: ctx.blobs,
+          bus,
+          notify: ctx.notify,
+          notifyRender: ctx.notifyRender,
+          background: ctx.background,
+          search: ctx.search,
+          callModel: ctx.callModel,
+        },
+        {
+          session: s,
+          subject: effective,
+          artifact,
+          transcript: await meta.listSessionMessages(s.id),
+          // REAL workspace flags, not hardcoded ones. Hardcoding these made chat ignore the
+          // killswitch entirely and granted the `auto` opt-in that a workspace has to enable
+          // deliberately (it defaults OFF) — so an operator who flipped the killswitch after a
+          // bad run would have found chat still live-publishing.
+          flags: {
+            agentKillswitch: flags?.agentKillswitch ?? false,
+            agentAutoEnabled: flags?.agentAutoEnabled ?? false,
+          },
+          onBehalf: { id: me.id, name: me.name ?? me.username ?? me.email ?? "someone" },
+        },
+      )
+      // METERING. The turn computes its spend and this used to throw it away, so attended chat
+      // — the lane on the operator's key — left no trace anywhere. Recorded on the agent message
+      // so a turn is auditable next to what it produced, without a new table. `cost_micro_usd`
+      // is null when the provider does not report cost (which is every provider today, by
+      // design — see costOf); the OUTCOME and turn count are still worth having on their own.
+      await reply(res.reply, res.outcome === "failed" ? "failed" : "answered", {
+        outcome: res.outcome,
+        wrote: res.wrote,
+        cost_micro_usd: res.costMicroUsd,
+      })
+    } catch (e) {
+      log.error("attended turn failed", {
+        session: s.id,
+        error: e instanceof Error ? e.message : String(e),
+      })
+      await reply("Something went wrong on my side. Nothing has been changed.", "failed")
+    }
+  }
 
   const ContextInfo = z
     .object({
@@ -166,9 +347,15 @@ export const contextRoutes = (ctx: AppContext) => {
   const Session = z
     .object({
       id: z.string(),
-      context_id: z.string(),
+      context_id: z
+        .string()
+        .nullable()
+        .describe("The packaged agent answering, or null when the default agent is."),
       asker_id: z.string(),
-      context_version: z.number().describe("The manifest version this session was opened against."),
+      context_version: z
+        .number()
+        .nullable()
+        .describe("The manifest version this session opened against; null with no context."),
       state: z
         .enum(["open", "working", "answered", "escalated", "failed", "closed"])
         .describe(
@@ -178,6 +365,16 @@ export const contextRoutes = (ctx: AppContext) => {
       updated_at: z
         .string()
         .describe("Last state/message change; equals created_at when never updated."),
+      subject: z
+        .object({
+          kind: z.literal("artifact"),
+          id: z.string(),
+          mode: z.enum(["publish", "propose"]).optional(),
+        })
+        .nullable()
+        .describe(
+          "What this session is about, when it names one: an artifact, plus how a write to it lands. Null for a plain ask.",
+        ),
     })
     .openapi("Session")
 
@@ -238,6 +435,11 @@ export const contextRoutes = (ctx: AppContext) => {
     state: s.state,
     created_at: s.created_at,
     updated_at: s.updated_at ?? s.created_at,
+    subject: parseSubject(s.subject_ref) as {
+      kind: "artifact"
+      id: string
+      mode?: "publish" | "propose"
+    } | null,
   })
 
   // Any terminal turn — the runner's answer, a crash-fail, a close — pings the
@@ -279,6 +481,9 @@ export const contextRoutes = (ctx: AppContext) => {
 
   /** A session's context + manifest, or null when either half is gone. */
   const contextOf = async (s: SessionRecord) => {
+    // Contextless (default-agent) sessions resolve to null here, which every caller already
+    // treats as "not found" — the fail-closed default for every agent-facing lane.
+    if (!s.context_id) return null
     const x = await meta.getContext(s.context_id)
     if (!x) return null
     const manifest = await meta.getArtifactById(x.manifest_artifact_id)
@@ -796,9 +1001,41 @@ export const contextRoutes = (ctx: AppContext) => {
           // so a double "run for brand X" never runs twice. The partial unique index
           // on (context_id, dedupe_key) is the race backstop; this is the fast join.
           dedupe_key: z.string().trim().min(1).max(200).optional(),
+          // WHAT this session is about. Accepts the same shapes automation targets do —
+          // a bare short_id, or {kind:"artifact", id, mode} — because it is the same
+          // Selector type, normalized by the same function. Absent = a plain ask, which
+          // is every session that existed before this field.
+          subject: z.unknown().optional(),
         }),
       )
       if (b instanceof Response) return bail(b)
+      // Normalize (and validate) the subject up front: a caller who names a subject we
+      // cannot read should be told now, not discover it when the answer comes back empty.
+      const subject = normalizeSelector(b.subject ?? null)
+      if (b.subject !== undefined && !subject)
+        return bail(fail(c, 400, "subject is not a valid selector"))
+      if (subject && subject.kind !== "artifact")
+        return bail(fail(c, 400, "only an artifact subject is supported"))
+      // A SUBJECT on the ask lane is the chat feature wearing a context, so it needs the same
+      // opt-in the chat route needs. Without this, gating only /v1/artifacts/chat-session left
+      // the front door locked and this one open: any member could name a doc here and spend
+      // the operator's key in a workspace that never enabled chat.
+      if (subject) {
+        const st = await meta.getOrgSettings(x.org_id).catch(() => null)
+        if (!st?.chatBeta) return bail(fail(c, 404, "chat is not enabled for this workspace"))
+      }
+      if (subject) {
+        // Ask-access to the CONTEXT is not read-access to the DOCUMENT. Re-check the
+        // artifact separately, or a session becomes a way to read anything by naming it.
+        const target = await meta.getByShortId(subject.id)
+        if (!target || target.current_version === 0 || !(await authorize(c, "read", target)))
+          return bail(fail(c, 404, "not found"))
+        // Publishing to it is a stronger grant than reading it, checked separately so a
+        // reader cannot request `mode:"publish"` and have the gate be the only thing
+        // standing between them and a live write.
+        if (subject.mode === "publish" && !(await authorize(c, "publish", target)))
+          return bail(fail(c, 403, "you cannot publish to that artifact"))
+      }
       // Return an in-flight session's current state as this ask's result (the join) —
       // same shape/status as a fresh open, so a caller need not special-case it.
       const joined = async (sess: SessionRecord) =>
@@ -813,6 +1050,26 @@ export const contextRoutes = (ctx: AppContext) => {
         const inflight = await meta.findInflightSession(x.id, me.id, b.dedupe_key)
         if (inflight) return joined(inflight)
       }
+      // PAYER guard on the ask lane. A session's chain starts at the ASKER (the person typing
+      // the question bills for the answer), then owner-lend, then the workspace pool — the
+      // same order routes/model-credentials.ts resolves for an in-flight session.
+      //
+      // Placed AFTER the dedupe join deliberately: joining an already-open session creates no
+      // new work, so it must keep working even in a workspace whose plan was disconnected
+      // after that session opened. Only the branch that OPENS one has to be able to pay.
+      // An operator-configured gateway means THIS DEPLOY pays, so there is no chain to walk
+      // and no plan to connect. Without this the guard 402s every session on exactly the
+      // self-host deployments DERIVE_MODEL_BASE_URL exists to serve — the model would work
+      // and the session could never open. Found by running it, not by reading it.
+      if (
+        !ctx.callModel &&
+        !(await canPayForAgent(meta, {
+          orgId: x.org_id,
+          agentId: x.agent_id,
+          initiator: { userId: me.id, source: "asker" },
+        }))
+      )
+        return bail(fail(c, 402, NO_PAYER_MESSAGE))
       let session: SessionRecord
       try {
         session = await meta.createSession({
@@ -822,6 +1079,7 @@ export const contextRoutes = (ctx: AppContext) => {
           asker_id: me.id,
           context_version: manifest.current_version,
           dedupe_key: b.dedupe_key,
+          subject_ref: subject ? JSON.stringify(subject) : null,
         })
       } catch (e) {
         // Lost the create race to this asker's own concurrent same-key ask — the unique
@@ -842,6 +1100,132 @@ export const contextRoutes = (ctx: AppContext) => {
         },
         "open",
       )
+      return c.json({ session: sessionJson(session), messages: [messageJson(first)] }, 201)
+    },
+  )
+
+  // CHAT WITH A DOCUMENT — the zero-setup path, and the reason a session no longer needs a
+  // context. No agent to register, no context to pick, nothing to configure: name the document
+  // and start talking. The first message opens the session, so merely opening the Chat tab
+  // creates nothing.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/artifacts/chat-session",
+      tags: ["Contexts"],
+      summary: "Open a chat session about an artifact (no context required).",
+      responses: {
+        201: {
+          description: "The new session and its first message.",
+          content: {
+            "application/json": {
+              schema: z.object({ session: Session, messages: z.array(SessionMessage) }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await requireUser(c)
+      if (me instanceof Response) return bail(me)
+      // RATE LIMIT. This lane spends the OPERATOR's model key, and had no limiter of any kind —
+      // a loop against one public document could burn it with nothing in any ledger to notice
+      // by. `askLimiter` already existed for exactly this shape of request and was wired up but
+      // never used anywhere.
+      const rl = await limited(c, askLimiter)
+      if (rl) return bail(rl)
+      const b = await readJson(
+        c,
+        z.object({
+          short_id: z.string(),
+          body_md: z.string().trim().min(1).max(20_000),
+          // How an edit lands. Checked against real publish rights below — a reader asking
+          // for `publish` gets 403 rather than having the gate be the only thing in the way.
+          mode: z.enum(["publish", "propose"]).optional(),
+        }),
+      )
+      if (b instanceof Response) return bail(b)
+      const art = await meta.getByShortId(b.short_id)
+      if (!art || art.current_version === 0 || !(await authorize(c, "read", art)))
+        return bail(fail(c, 404, "not found"))
+      // BETA GATE, enforced on the SERVER as well as hidden in the UI. A flag that only
+      // hides a button is not a gate: the route is reachable directly, and this is the
+      // lane that spends the operator's model key.
+      const settings = await meta.getOrgSettings(art.org_id).catch(() => null)
+      if (!settings?.chatBeta) return bail(fail(c, 404, "chat is not enabled for this workspace"))
+      // ALLOWLIST, on top of the workspace's own opt-in. `chatBeta` is gated on `manage`, so on
+      // a shared host any workspace owner could switch it on and spend the operator's key. An
+      // empty list means no restriction — right for a single-tenant box, where the operator is
+      // the user — so this only bites where it should.
+      if (!chatAllowed(art.org_id))
+        return bail(fail(c, 404, "chat is not enabled for this workspace"))
+      // MEMBERSHIP, not merely read-access. `authorize(c, "read", art)` is satisfied by a viewer
+      // LINK, so any signed-in stranger who was sent one could open a live session in a
+      // chat-enabled workspace and spend the operator's model key — 201 and a running turn, from
+      // outside the workspace entirely. Reading a shared document is not standing to run an
+      // agent inside the workspace that owns it.
+      if (!(await meta.getMembership(art.org_id, me.id).catch(() => null)))
+        return bail(fail(c, 404, "not found"))
+      const wantsPublish = b.mode === "publish"
+      if (wantsPublish && !(await authorize(c, "publish", art)))
+        return bail(fail(c, 403, "you cannot publish to that artifact"))
+      // A CONTEXTLESS session needs the relaxed `context_session` shape (nullable context_id /
+      // context_version). Postgres and self-host SQLite get it automatically; D1's schema is
+      // applied out of band, so a database that predates the relaxation and has not run
+      // deploy/relax-context-session-d1.sql fails right here — and it used to fail as a bare
+      // `NOT NULL constraint failed` 500 with no clue as to which of the two operator actions
+      // was missing. Name the fix instead.
+      let session: SessionRecord
+      try {
+        session = await meta.createSession({
+          id: newId("ses"),
+          // NO CONTEXT: this is the default agent, which is the absence of a packaged one.
+          context_id: null,
+          context_version: null,
+          org_id: art.org_id,
+          asker_id: me.id,
+          subject_ref: JSON.stringify({
+            kind: "artifact",
+            id: art.short_id,
+            ...(wantsPublish ? { mode: "publish" } : {}),
+          }),
+        })
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        if (/NOT NULL constraint failed: context_session\.context_(id|version)/i.test(msg)) {
+          log.error("chat: context_session still requires a context — run the D1 relaxation", {
+            org: art.org_id,
+            error: msg,
+          })
+          return bail(
+            fail(
+              c,
+              503,
+              "chat is not available on this deployment yet: its database still requires every " +
+                "session to belong to a context. An operator needs to apply " +
+                "deploy/relax-context-session-d1.sql.",
+            ),
+          )
+        }
+        throw e
+      }
+      const first = await meta.addSessionMessage(
+        {
+          id: newId("sm"),
+          session_id: session.id,
+          author_kind: "asker",
+          author_id: me.id,
+          body_md: b.body_md,
+        },
+        "open",
+      )
+      // Served here, not queued — the person is waiting. Detached, so this returns now.
+      // Through `background`, not a bare await: on Workers that is executionCtx.waitUntil, so
+      // the turn outlives the response and a client that gives up mid-turn still gets its reply
+      // in the transcript. On Node (and tests) it awaits inline, which is what keeps the suite
+      // deterministic. The comments and the polling UI both describe THIS, and previously the
+      // code did not do it.
+      await ctx.background(serveAttended(session, me, null))
       return c.json({ session: sessionJson(session), messages: [messageJson(first)] }, 201)
     },
   )
@@ -891,7 +1275,10 @@ export const contextRoutes = (ctx: AppContext) => {
             "application/json": {
               schema: z.object({
                 session: Session,
-                context: z.object({ id: z.string(), name: z.string() }),
+                context: z
+                  .object({ id: z.string(), name: z.string() })
+                  .nullable()
+                  .describe("The packaged agent answering, or null for a chat session."),
                 messages: z.array(SessionMessage),
               }),
             },
@@ -909,16 +1296,22 @@ export const contextRoutes = (ctx: AppContext) => {
       // more than a removed asker can (the invariant applies to owners too). The
       // creator sees ANY session on their context; anyone else sees only their
       // own — sessions stay private to asker + owner.
+      // A CONTEXTLESS chat session has no context to gate on, so it is private to its
+      // asker and nobody else — including a workspace owner, who has no standing here that
+      // a context would otherwise have conferred. Without this branch every poll on a chat
+      // session 404s and the reply never appears, which is exactly what dogfooding caught.
+      const mine = !!s && !s.context_id && s.asker_id === me.id
       const allowed =
-        !!s &&
-        !!linked &&
-        (await canAskContext(c, linked.context)) &&
-        (linked.context.created_by === me.id || s.asker_id === me.id)
-      if (!s || !linked || !allowed) return bail(fail(c, 404, "not found"))
+        mine ||
+        (!!s &&
+          !!linked &&
+          (await canAskContext(c, linked.context)) &&
+          (linked.context.created_by === me.id || s.asker_id === me.id))
+      if (!s || !allowed) return bail(fail(c, 404, "not found"))
       const messages = await meta.listSessionMessages(s.id)
       return c.json({
         session: sessionJson(s),
-        context: { id: linked.context.id, name: linked.context.name },
+        context: linked ? { id: linked.context.id, name: linked.context.name } : null,
         messages: messages.map(messageJson),
       })
     },
@@ -944,7 +1337,9 @@ export const contextRoutes = (ctx: AppContext) => {
     async (c) => {
       const s = await meta.getSession(c.req.param("id"))
       const linked = s ? await contextOf(s) : null
-      if (!s || !linked) return bail(fail(c, 404, "not found"))
+      // A contextless chat session is legitimate and has no context to resolve; only an
+      // AGENT branch below needs one, and that branch is unreachable without it.
+      if (!s || (!linked && s.context_id)) return bail(fail(c, 404, "not found"))
       // Authorization decides before state does: a caller with no standing gets the
       // same 404 whether the session is open or closed — 409 would leak its state.
       const closed = (): Response | null =>
@@ -952,7 +1347,7 @@ export const contextRoutes = (ctx: AppContext) => {
 
       const agent = await agentFor(c)
       if (agent) {
-        if (agent.id !== linked.context.agent_id) return bail(fail(c, 404, "not found"))
+        if (!linked || agent.id !== linked.context.agent_id) return bail(fail(c, 404, "not found"))
         const gone = closed()
         if (gone) return bail(gone)
         const b = await readJson(
@@ -1025,12 +1420,32 @@ export const contextRoutes = (ctx: AppContext) => {
       // the session and the runner answers it (a fresh query against the data).
       // A member removed from the workspace/roster after opening a session must
       // not keep querying through it — canAskContext re-checks membership + policy.
-      if (s.asker_id !== me.id || !(await canAskContext(c, linked.context)))
+      // Contextless: ownership IS the whole gate. With a context, re-check the ask grant
+      // too, so someone removed from the roster cannot keep querying through an old session.
+      if (s.asker_id !== me.id || (linked && !(await canAskContext(c, linked.context))))
         return bail(fail(c, 404, "not found"))
+      // (Membership for the contextless CHAT lane is re-checked per turn inside serveAttended,
+      // alongside the document ACL, so the refusal lands in the transcript with a reason rather
+      // than as a bare 404 the asker cannot interpret. The context lane gets its equivalent from
+      // canAskContext above.)
       const gone = closed()
       if (gone) return bail(gone)
+      // RATE LIMIT. Every follow-up serves a full attended turn on somebody's model plan (the
+      // operator's, on the chat lane), and only session CREATION was limited — so one session,
+      // then an unbounded loop of follow-ups through it, was a completely unmetered way to
+      // spend the key that `askLimiter` exists to protect. Same limiter, same lane, the turn
+      // that was missing.
+      const rl = await limited(c, askLimiter)
+      if (rl) return bail(rl)
       const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
       if (b instanceof Response) return bail(b)
+      // THE MONTHLY BUDGET, for the same reason. Dispatch enforces it on every hosted run and
+      // every queued session; an attended follow-up bypassed dispatch entirely, so the one lane
+      // a person can drive by hand as fast as they can type was the one lane with no ceiling.
+      // Checked BEFORE the message is appended: refusing after the append would reopen the
+      // session with nothing willing to serve it.
+      if (await overBudget(meta, s.org_id, me.id).catch(() => false))
+        return bail(fail(c, 429, "monthly model budget reached"))
       // A follow-up mid-run must NOT vacate an active claim, and reopening must not race a
       // concurrent settle. appendFollowupReopen does both in one atomic compare-and-set:
       // a `working` session stays `working` (the runner sees the new turn on re-read, and its
@@ -1045,6 +1460,27 @@ export const contextRoutes = (ctx: AppContext) => {
         author_id: me.id,
         body_md: b.body_md,
       })
+      // ATTENDED: someone is sitting there, so serve the turn HERE instead of queuing it for a
+      // runner that may not be running. Detached — the response returns now and the TRANSCRIPT is
+      // what the surface follows, so closing the tab mid-turn loses nothing.
+      // The beta gate again, on the lane that actually SPENDS the key. Gating only session
+      // CREATION would mean turning the flag off leaves every existing conversation running —
+      // a kill switch that does not kill.
+      //
+      // It binds EVERY session chat can reach, which is the fix: the check used to hang off
+      // `!s.context_id`, and chat also wears a context — a session opened through
+      // `POST /v1/contexts/:id/sessions` with a `subject` is the chat feature with a packaged
+      // agent behind it, gated on `chatBeta` at creation (see above) and then, once open,
+      // serving turns forever after the flag came off. Mirroring the creation gate exactly is
+      // what makes the switch actually kill: contextless OR subject-bearing needs the opt-in;
+      // a plain context ask (no subject) is the pre-existing lane, predates chat, and is
+      // deliberately untouched — gating it would take contexts away from every workspace that
+      // never enabled chat.
+      if (!s.context_id || s.subject_ref) {
+        const st = await meta.getOrgSettings(s.org_id).catch(() => null)
+        if (!st?.chatBeta) return c.json({ message: messageJson(m) }, 201)
+      }
+      await ctx.background(serveAttended(s, me, linked?.context.agent_id ?? null))
       return c.json({ message: messageJson(m) }, 201)
     },
   )
@@ -1189,7 +1625,8 @@ export const contextRoutes = (ctx: AppContext) => {
     // and letting one claim by id would bypass the per-context concurrency cap.
     if (!scope) return fail(c, 403, "a session capability token is required")
     const s = await meta.getSession(scope)
-    const x = s ? await meta.getContext(s.context_id) : null
+    // No context ⇒ no owning agent ⇒ 404 (a contextless chat session is served in-process).
+    const x = s?.context_id ? await meta.getContext(s.context_id) : null
     if (!s || !x || x.agent_id !== agent.id) return fail(c, 404, "not found")
     // The HOSTED lease comes from the run lifecycle clock, NOT from leaseFor(context).
     //
@@ -1214,12 +1651,21 @@ export const contextRoutes = (ctx: AppContext) => {
     // executor exits clean rather than double-answering.
     if (!claimed) return c.json({ session: null })
     const manifest = await meta.getArtifactById(x.manifest_artifact_id)
+    // The autonomy gate's inputs, resolved server-side and FRESH at claim time — exactly as the
+    // runs claim resolves them, so a flipped killswitch is seen on the very next ask. An executor
+    // with no flags to gate on would have to either ignore the switch or invent a policy of its
+    // own, and both are worse than one more read here.
+    const settings = await meta.getOrgSettings(x.org_id)
     return c.json({
       session: {
         ...sessionJson(claimed),
         messages: (await meta.listSessionMessagesFor([claimed.id])).map(messageJson),
       },
       context: { id: x.id, name: x.name, manifest_short_id: manifest?.short_id ?? null },
+      flags: {
+        agentKillswitch: settings.agentKillswitch,
+        agentAutoEnabled: settings.agentAutoEnabled,
+      },
       // Projected def + ref only, as the run claim is: RunTool's routing fields, and the
       // connection behind them, stay server-side.
       tools: (await contextTools(x)).tools.map((t) => ({ def: t.def, ref: t.ref })),
@@ -1240,7 +1686,10 @@ export const contextRoutes = (ctx: AppContext) => {
     const sessionId = c.req.param("id") ?? ""
     if (scope && scope !== sessionId) return fail(c, 403, "not this session's token")
     const s = await meta.getSession(sessionId)
-    const x = s ? await meta.getContext(s.context_id) : null
+    // A CONTEXTLESS (chat) session has no context and therefore no owning agent, so no agent
+    // bearer may reach its tools — the same fail-closed rule every other agent-facing session
+    // lane follows. Chat is served in-process for a signed-in human, never by a bearer.
+    const x = s?.context_id ? await meta.getContext(s.context_id) : null
     if (!s || !x || x.agent_id !== agent.id || x.org_id !== agent.org_id)
       return fail(c, 404, "not found")
     const b = await readJson(

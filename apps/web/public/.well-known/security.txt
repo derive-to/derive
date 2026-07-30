@@ -1,0 +1,20 @@
+# Derive — security contact (RFC 9116)
+#
+# Vulnerabilities in Derive itself (app, API, or the hosting of user content)
+# go to security@. Abusive content hosted on Derive — phishing, malware,
+# impersonation, most often on a derive.page subdomain — goes to abuse@.
+# Both are read by a human. See https://derive.to/security for the detail.
+#
+# NB: Expires below is a hard requirement of RFC 9116 and must stay under a
+# year out. An expired security.txt reads worse to a scanner than none at all,
+# so renew this date (and re-check the contacts) before it lapses.
+
+Contact: mailto:security@derive.to
+Contact: https://derive.to/security
+Expires: 2027-07-29T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://derive.to/.well-known/security.txt
+Policy: https://derive.to/security
+
+# The server is open source; code-level issues are welcome there too.
+Acknowledgments: https://github.com/derive-to/derive

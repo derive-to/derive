@@ -151,6 +151,38 @@ describe("enqueueSlackMentionDms (gate)", () => {
     expect(serialized).not.toContain("<!here>")
     expect(serialized).toContain("&lt;@U999&gt;")
   })
+
+  // Wiring, not just the renderer: a comment body is authored prose, so the sender must run it
+  // through mrkdwnBody (escape THEN render markdown) rather than a bare escape — while the
+  // control above still holds. A bare escape leaves markdown as literal `[text](url)` noise and
+  // rewrites the URL's `&` to `&amp;`.
+  it("renders the comment body's markdown without letting it forge a link", async () => {
+    const meta = make("slack-dm-body-md")
+    await connect(meta)
+    const artifact = await makeArtifact(meta)
+    const comment = (await meta.createComment({
+      id: newId("c"),
+      artifact_id: artifact.id,
+      thread_id: newId("th"),
+      base_version: 0,
+      path: null,
+      anchor: null,
+      body_md: "see [the spec](https://ok.example/a?b=1&c=2) and <https://evil.example|Support>",
+      author: "Ada",
+      author_id: "u-ada",
+    })) as CommentRecord
+    await enqueueSlackMentionDms({ meta, baseUrl }, artifact, comment, [
+      { id: linked.id, name: "L" },
+    ])
+    const serialized = JSON.stringify(
+      JSON.parse((await claim(meta)).find((d) => d.kind === "slack_dm")?.payload ?? "{}"),
+    )
+    // The author's real markdown link renders, query string byte-intact...
+    expect(serialized).toContain("<https://ok.example/a?b=1&c=2|the spec>")
+    // ...while a hand-written Slack link stays inert text.
+    expect(serialized).not.toContain("<https://evil.example|Support>")
+    expect(serialized).toContain("&lt;https://evil.example|Support&gt;")
+  })
 })
 
 describe("enqueueSlackReviewRequestedDm (gate)", () => {

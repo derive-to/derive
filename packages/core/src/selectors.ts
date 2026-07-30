@@ -36,6 +36,19 @@ export const normalizeSelector = (v: unknown): Selector | null => {
   return null
 }
 
+/** Read ONE stored selector back from its JSON column (`context_session.subject_ref`).
+ *  Lenient on purpose: absent, unparseable and malformed all read as null, the same
+ *  as "no subject". A corrupt column must degrade a session to a plain ask, never
+ *  wedge it — the caller cannot do anything useful with a throw here either. */
+export const parseSubject = (raw: string | null | undefined): Selector | null => {
+  if (!raw) return null
+  try {
+    return normalizeSelector(JSON.parse(raw))
+  } catch {
+    return null
+  }
+}
+
 /** Canonicalize a list, dropping malformed entries and deduping by identity. */
 export const normalizeSelectors = (v: unknown): Selector[] => {
   if (!Array.isArray(v)) return []

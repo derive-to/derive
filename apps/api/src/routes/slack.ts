@@ -24,6 +24,7 @@ import {
   SLACK_THREAD_ACTION,
   threadStateBlocks,
 } from "../lib/slack-comments"
+import { flagSlackReauth } from "../lib/slack-delivery"
 import { enqueueSlackDm, wantsSlackDm } from "../lib/slack-dm"
 import { runSlackProposalAction } from "../lib/slack-proposal"
 import { resolveThreadAction } from "../lib/thread-actions"
@@ -105,7 +106,9 @@ export const slackRoutes = (ctx: AppContext) => {
         .describe("The channel Derive posts to, or null if unset"),
       needs_reauth: z
         .boolean()
-        .describe("Whether the stored bot token needs a re-auth (an auth error since connecting)"),
+        .describe(
+          "Whether the stored bot token needs a re-auth — a failed auth/scope call, or Slack reporting the app uninstalled or its token revoked",
+        ),
       slack_dm: z
         .boolean()
         .describe(
@@ -269,6 +272,33 @@ export const slackRoutes = (ctx: AppContext) => {
     if (body.type === "url_verification") return c.json({ challenge: body.challenge })
 
     const ev = body.event
+    // Install lifecycle: the app was removed, or a token was revoked. Flag the affected installs
+    // for re-auth and let the Settings banner ask for a reconnect. Flag rather than delete — the
+    // default channel and the members' account links must survive, and a reconnect then restores
+    // service without redoing setup. Slack names the workspace by team_id only, hence the
+    // by-team lookup, and one Slack team can back more than one Derive workspace.
+    if (
+      body.type === "event_callback" &&
+      (ev?.type === "app_uninstalled" || ev?.type === "tokens_revoked") &&
+      body.team_id
+    ) {
+      // `tokens_revoked` says WHICH tokens died, and the distinction matters: `oauth` entries are
+      // per-user tokens (a member's "Sign in with Slack" grant), which leave the bot working. A
+      // member who unlinks — or is deactivated, which revokes it for them — would otherwise raise
+      // a workspace-wide "Slack rejected the connection" banner that only a full reconnect
+      // clears, and could raise it again at will. Only a `bot` entry naming THIS install's bot
+      // means the install is dead; app_uninstalled kills everything unconditionally.
+      const revokedBots = ev.type === "tokens_revoked" ? (ev.tokens?.bot ?? []) : null
+      if (!revokedBots || revokedBots.length > 0)
+        for (const install of await meta.listSlackInstallsByTeam(body.team_id)) {
+          // An install predating bot_user_id can't be matched, so flag it rather than miss a
+          // genuinely dead token.
+          if (revokedBots && install.bot_user_id && !revokedBots.includes(install.bot_user_id))
+            continue
+          await flagSlackReauth(meta, install.org_id)
+        }
+      return c.json({ ok: true })
+    }
     // Only human thread replies: a message with a thread_ts, no bot_id, not an edit/delete.
     if (
       body.type === "event_callback" &&
@@ -613,6 +643,9 @@ export const slackRoutes = (ctx: AppContext) => {
 interface SlackEventEnvelope {
   type?: string
   challenge?: string
+  /** The Slack workspace the event came from. The only workspace identifier on an
+   *  app_uninstalled / tokens_revoked event — those carry no channel to key on. */
+  team_id?: string
   event?: {
     type?: string
     subtype?: string
@@ -622,6 +655,10 @@ interface SlackEventEnvelope {
     channel?: string
     ts?: string
     thread_ts?: string
+    /** On `tokens_revoked` only: which token classes were revoked, as arrays of user ids.
+     *  `oauth` = per-user tokens (a member's "Sign in with Slack" grant); `bot` = the bot's own,
+     *  the only class that invalidates the install. Either key may be absent. */
+    tokens?: { oauth?: string[]; bot?: string[] }
   }
 }
 

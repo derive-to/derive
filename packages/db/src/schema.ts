@@ -660,9 +660,10 @@ export const slackInstall = sqliteTable("slack_install", {
   bot_token: text("bot_token").notNull(),
   bot_user_id: text("bot_user_id"),
   default_channel: text("default_channel"),
-  // Flipped to 1 when Slack rejects a call for auth/scope reasons (invalid_auth,
-  // token_revoked, missing_scope); the Settings UI shows a reconnect banner. Cleared on
-  // a fresh OAuth connect.
+  // Flipped to 1 when the stored bot token is known to be unusable: either Slack rejected a
+  // call for auth/scope reasons (invalid_auth, token_revoked, missing_scope), or Slack told us
+  // outright via app_uninstalled / tokens_revoked. The Settings UI shows a reconnect banner.
+  // Cleared on a fresh OAuth connect.
   needs_reauth: integer("needs_reauth").notNull().default(0).$type<0 | 1>(),
   created_at: text("created_at").notNull().default(now),
 })
@@ -918,12 +919,14 @@ export const contextSession = sqliteTable(
   "context_session",
   {
     id: text("id").primaryKey(),
-    context_id: text("context_id")
-      .notNull()
-      .references(() => context.id),
+    // NULLABLE since chat: a session that names no context is served by the default agent
+    // (the model plus the document). A context is how you opt INTO a packaged agent, not a
+    // requirement for having a conversation. Relaxed on existing DBs by RELAX_STATEMENTS.
+    context_id: text("context_id").references(() => context.id),
     org_id: text("org_id").notNull(),
     asker_id: text("asker_id").notNull(),
-    context_version: integer("context_version").notNull(),
+    /** The manifest version this session opened against; null when there is no context. */
+    context_version: integer("context_version"),
     state: text("state").$type<SessionState>().notNull().default("open"),
     created_at: text("created_at").notNull().default(now),
     updated_at: text("updated_at"),
@@ -936,6 +939,13 @@ export const contextSession = sqliteTable(
     // Ask idempotency key. The partial-unique index below keeps at most one live
     // (open|working) session per (context, dedupe_key). Nullable = not deduped.
     dedupe_key: text("dedupe_key"),
+    // What this session is ABOUT, as a Selector (packages/core/src/selectors.ts) —
+    // the same JSON shape automation.refs stores, so one address type serves both
+    // lanes. Null = a plain ask with no subject, which is every session before this.
+    //
+    // It carries the write mode too (`propose` by default), so "what it is about"
+    // and "how a write lands" are one field rather than two that can disagree.
+    subject_ref: text("subject_ref"),
   },
   (t) => [
     index("context_session_queue").on(t.context_id, t.state, t.created_at),
@@ -996,9 +1006,36 @@ export const asset = sqliteTable(
     org_id: text("org_id").notNull(),
     content_type: text("content_type").notNull(),
     size_bytes: integer("size_bytes").notNull(),
+    // Pixel dimensions read from the header at upload (see lib/image.ts). Null for fonts,
+    // unreadable headers, and rows predating the columns — so they ALTER ADD cleanly.
+    width: integer("width"),
+    height: integer("height"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [index("asset_org").on(t.org_id)],
+)
+
+// A structured data slot extracted from a version's source (see @derive/core data-slots):
+// a small named JSON payload the authoring agent can query back across versions without
+// re-parsing its own old markup. Natural key (artifact_id, n, slot); rows are written once
+// when a version goes live and never mutated. `gen` marks which extraction rules produced
+// the row (its DEFAULT must equal @derive/core SLOT_GEN) so a grammar change can re-extract
+// older versions lazily — the generation lever the derived-view cache uses.
+export const versionData = sqliteTable(
+  "version_data",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    n: integer("n").notNull(),
+    slot: text("slot").notNull(),
+    json: text("json").notNull(),
+    size_bytes: integer("size_bytes").notNull(),
+    gen: integer("gen").notNull().default(1),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("version_data_slot").on(t.artifact_id, t.n, t.slot)],
 )
 
 // user/session/account/verification tables are owned and migrated by Better Auth
@@ -1014,6 +1051,7 @@ const SQLITE_TIMESTAMP_DEFAULT = `(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
 const TABLES = [
   artifact,
   version,
+  versionData,
   comment,
   webhook,
   webhookDelivery,
@@ -1135,6 +1173,53 @@ export const SCHEMA_STATEMENTS: string[] = [
  * forgotten here.
  */
 export const MIGRATION_STATEMENTS: string[] = ddl.alters
+
+/**
+ * NOT-NULL RELAXATIONS for existing databases.
+ *
+ * `ADD COLUMN` cannot express "this column may now be null", and SQLite has no
+ * `ALTER COLUMN` at all — the only way is to rebuild the table. That is why these are a
+ * separate list from MIGRATION_STATEMENTS rather than generated: a rebuild is destructive
+ * if it goes wrong, so each one is written out and reviewed rather than inferred.
+ *
+ * Runs INSIDE a transaction, and only when the old constraint is still present (the caller
+ * checks `PRAGMA table_info`), so a second boot is a no-op rather than a second rebuild.
+ * Column order matches the CREATE in ddl.ts; `subject_ref` is last because it was the most
+ * recent add.
+ */
+export const CONTEXT_SESSION_RELAX_SQLITE: string[] = [
+  `CREATE TABLE context_session__new (
+  id TEXT PRIMARY KEY,
+  context_id TEXT,
+  org_id TEXT NOT NULL,
+  asker_id TEXT NOT NULL,
+  context_version INTEGER,
+  state TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT,
+  started_at TEXT,
+  lease_until TEXT,
+  result_artifact_id TEXT,
+  dedupe_key TEXT,
+  subject_ref TEXT,
+  FOREIGN KEY (context_id) REFERENCES context(id)
+)`,
+  `INSERT INTO context_session__new (id, context_id, org_id, asker_id, context_version, state,
+     created_at, updated_at, started_at, lease_until, result_artifact_id, dedupe_key, subject_ref)
+   SELECT id, context_id, org_id, asker_id, context_version, state,
+     created_at, updated_at, started_at, lease_until, result_artifact_id, dedupe_key, subject_ref
+   FROM context_session`,
+  // schema-ignore — the ONE sanctioned drop, and only as the middle step of the documented
+  // SQLite table-rebuild (create-copy-drop-rename). The guardrail is right in general: you
+  // evolve by adding. But `ADD COLUMN` cannot express "may now be null" and SQLite has no
+  // ALTER COLUMN, so relaxing a NOT NULL has no additive form. The copy above has already
+  // run inside the same transaction, and the test asserts every pre-existing row survives.
+  `DROP TABLE context_session`, // schema-ignore: middle step of the rebuild above
+  `ALTER TABLE context_session__new RENAME TO context_session`,
+  `CREATE INDEX IF NOT EXISTS context_session_queue ON context_session (context_id, state, created_at)`,
+  `CREATE INDEX IF NOT EXISTS context_session_asker ON context_session (asker_id, created_at)`,
+  CONTEXT_SESSION_DEDUPE_UNIQUE,
+]
 
 // Schema parity is enforced in repos.ts, where the shared `schema` object lives:
 // `Exhaustive`/`Shapes` (./parity) force every table to be classified and every

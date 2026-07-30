@@ -130,6 +130,13 @@ export const mountWeb = (app: Hono, { webRoot, shellHtml }: ServeWebOpts): void 
   // the Worker's Static Assets serve them natively, so only Node needs the routes.
   app.get("/site/*", serveStatic({ root: webRoot }))
   app.get("/brand/*", serveStatic({ root: webRoot }))
+  // Same reason, for the one static file that lives under a dot-directory:
+  // /.well-known/security.txt (RFC 9116). The root-file route above only matches a
+  // single segment, so without this the shell fallback swallows it and scanners see
+  // HTML where the security contact should be. The server-owned well-knowns (OAuth
+  // discovery, /.well-known/skills, agent.json) are mounted before mountWeb and
+  // still win; an unmatched one falls through to `isApiPath` and stays a JSON 404.
+  app.get("/.well-known/*", serveStatic({ root: webRoot }))
   app.notFound((c) =>
     isApiPath(c.req.path) ? c.json({ error: "not found" }, 404) : c.html(shellHtml),
   )

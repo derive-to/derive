@@ -149,7 +149,9 @@ create one Slack app for this instance:
 2. From the app's **Basic Information** page, set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` (all three required, or Slack stays off). On Workers these are secrets: `wrangler secret put SLACK_CLIENT_ID` (and the other two).
 3. Workspace admins connect from **Settings → Integrations → Add to Slack**, then set a default channel and invite the Derive bot to it. Both public and private channels work; a private channel must have the bot invited (it can't self-join). A workspace connected before private-channel support was added must **reconnect** (Add to Slack again) to grant the `groups:*` scopes — there's no automatic reconnect prompt for it.
 
-An app created from an older manifest won't have the newer features enabled — **interactivity** (the Resolve/Reopen buttons), the **"Sign in with Slack" redirect URL** (so members can link their account from **Settings → Integrations → Link account**), and the **`/derive` slash command** (`/derive <query>` searches your artifacts; bare `/derive` lists your recent ones — results scoped to what the linking member can see). Re-apply the manifest to your app — Slack app config → **App Manifest** → paste the updated one from `/v1/slack/manifest.json` — to turn them on. This is an app-config change, not a scope change, so it needs no per-workspace reconnect.
+An app created from an older manifest won't have the newer features enabled — **interactivity** (the Resolve/Reopen buttons), the **"Sign in with Slack" redirect URL** (so members can link their account from **Settings → Integrations → Link account**), the **`/derive` slash command** (`/derive <query>` searches your artifacts; bare `/derive` lists your recent ones — results scoped to what the linking member can see), and the **`app_uninstalled` / `tokens_revoked` events** (without them, removing the app or revoking its bot token prompts no reconnect until some delivery happens to fail — which never happens on a workspace with no Slack traffic). Re-apply the manifest to your app — Slack app config → **App Manifest** → paste the updated one from `/v1/slack/manifest.json` — to turn them on. These are app-config changes, not scope changes, so they need no per-workspace reconnect.
+
+Scope changes are the exception — scopes are granted at install, so a re-apply can't backfill them and the workspace must **Add to Slack** again. That applies to the `groups:*` scopes noted above, and to the `commands` scope the `/derive` command requires, which the manifest omitted until recently: a workspace that installed before that fix has a dead slash command until it reconnects.
 
 Linking is per-user and optional: without it, DMs fall back to matching a member by their Derive account email; with it, DMs and Slack-reply attribution resolve to the member's exact Slack identity (so a Derive email that differs from the Slack email no longer drops the DM).
 
@@ -287,6 +289,62 @@ is no CORS or cross-site cookie config. `[assets]` in `wrangler.toml` points at
 while every other path serves a static file or the SPA shell. `pnpm build:web` builds
 apps/web and preps the output (writes `index.html`, drops the Pages-only `_redirects`
 catch-all that otherwise hijacks `/assets/*`); see `apps/api/scripts/prep-edge-assets.mjs`.
+
+### Upgrading an existing D1 database
+
+New D1 databases get the current shape from `deploy/d1-schema.sql` and need nothing extra.
+An **existing** one predating document chat still has `context_id NOT NULL` on
+`context_session`, and a chat session has no context — so those sessions fail to insert
+until you run the one-shot relaxation:
+
+```
+wrangler d1 execute <db> --remote --file=deploy/relax-context-session-d1.sql
+```
+
+Run it ONCE. It rebuilds the table (SQLite has no `ALTER COLUMN`), holding foreign keys
+until COMMIT so a session whose context was deleted cannot abort the migration. Postgres
+and self-host SQLite need no manual step: the former rides `deploy:pg-schema`, the latter
+runs the same rebuild guarded at boot. Check whether you need it with:
+
+```
+wrangler d1 execute <db> --remote --command "SELECT sql FROM sqlite_master WHERE name='context_session'"
+```
+
+### Chat (beta, off by default)
+
+Chat is gated per workspace by `chatBeta` and ships **off**, enforced server-side — the
+route 404s for a workspace that has not opted in, so a stray build cannot expose it. Turn
+it on for one workspace with `PATCH /v1/workspace/settings {"chatBeta": true}`.
+
+It also needs a model. Set all three as Worker secrets, or chat answers honestly that none
+is configured:
+
+```
+wrangler secret put DERIVE_MODEL_BASE_URL   # e.g. https://api.fireworks.ai/inference/v1
+wrangler secret put DERIVE_MODEL_API_KEY
+wrangler secret put DERIVE_MODEL_NAME       # the provider's own model id
+```
+
+This key pays for every attended turn on the deployment, so it is an operator decision
+rather than a per-user one. Unattended automation runs are unaffected — they still resolve
+their own credential through the payer chain.
+
+> `DERIVE_MODEL_NAME` is your **gateway's** model id and belongs only with the two vars
+> above. Unattended in-process runs (`DERIVE_LOOP_RUNS=1`) talk to the Anthropic Messages
+> API on each run's own resolved plan, so they take an **Anthropic** model id from the
+> separate `DERIVE_LOOP_MODEL` (unset = `claude-sonnet-5`). Do not set `DERIVE_LOOP_MODEL`
+> to a gateway path — `api.anthropic.com` answers `model_not_found`.
+
+### Automations (beta, off by default)
+
+Automations are gated per workspace by `automateBeta` and ship **off**. The gate is a real
+kill switch, enforced on every lane that creates or runs work: `POST
+/v1/automations/:id/run` and the REST create route 404, the MCP `automate` tool refuses
+`create` and `run_now`, and the deployment's cron tick will not materialize a due schedule
+for a workspace that has not opted in. Reads and deletes stay open, so a workspace that
+made automations before the gate can still see and remove them.
+
+Turn it on for one workspace with `PATCH /v1/workspace/settings {"automateBeta": true}`.
 
 ### Semantic search (optional)
 

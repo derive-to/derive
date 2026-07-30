@@ -3,6 +3,7 @@ import { z } from "zod"
 import { connectionBindError } from "../lib/broker"
 import { mintToken, sha256 } from "../lib/crypto"
 import { badChoice, choiceDescription } from "../lib/open-choice"
+import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { scopeGapMessage } from "../lib/scope-gap"
 import type { ToolContext } from "../mcp-tool-context"
 import { json } from "../mcp-util"
@@ -110,6 +111,28 @@ export function registerAutomateTool(tc: ToolContext): void {
       }
       const org = defaultOrg
 
+      // THE BETA GATE, the same rule the REST surface applies (routes/automations.ts,
+      // `automateOff`): `automateBeta` is the workspace's own opt-in, ships OFF, and binds the
+      // lanes that CREATE or RUN work — never reads or deletes. It appeared nowhere in this
+      // file, so an agent over MCP could stand up an automation and fire it in a workspace
+      // where `POST /v1/automations/:id/run` 404s. The gate held the front door and left this
+      // one open.
+      //
+      // A refusal string rather than a 404: this is a tool result an agent is already reading,
+      // and "no such surface" is useless to something that just called it. Fails CLOSED on a
+      // settings read error, matching the cron tick and hosted dispatch.
+      const automateOff = async (): Promise<boolean> =>
+        !(await meta
+          .getOrgSettings(org)
+          .then((s) => s?.automateBeta === true)
+          .catch(() => false))
+      if ((input.action === "create" || input.action === "run_now") && (await automateOff()))
+        return json({
+          error:
+            "automations are not enabled for this workspace (automateBeta). An owner can turn " +
+            "them on in workspace settings.",
+        })
+
       if (input.action === "list") {
         const rows = await meta.listAutomations(org)
         return json({
@@ -128,6 +151,18 @@ export function registerAutomateTool(tc: ToolContext): void {
         const a = await meta.getAutomation(input.automation_id)
         if (!a || a.org_id !== org) return json({ error: "no such automation" })
         if (a.enabled !== 1) return json({ error: "automation is disabled" })
+        // PAYER guard, same as the REST "Run now" (routes/automations.ts). An agent driving
+        // this over MCP is the caller least able to see a failure afterwards — it queues and
+        // moves on — so refusing here, in the tool result it is already reading, is the only
+        // feedback that reliably lands.
+        if (
+          !(await canPayForAgent(meta, {
+            orgId: org,
+            agentId: a.agent_id,
+            initiator: tc.ownerId ? { userId: tc.ownerId, source: "initiator" } : null,
+          }))
+        )
+          return json({ error: NO_PAYER_MESSAGE })
         const rec = await meta.createRun({
           id: newId("run"),
           org_id: org,

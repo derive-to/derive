@@ -14,9 +14,11 @@ import { clip, MAX_CHARS } from "../lib/clip"
 import { pickVariant } from "../lib/collect-render"
 import { sniffImageType } from "../lib/image"
 import { baseType, isTextType, present, type ReadFormat } from "../lib/search"
+import { log } from "../log"
 import type { ToolContext } from "../mcp-tool-context"
 import {
   clipDoc,
+  DATA_SERIES_MAX,
   doc,
   err,
   FULL_DOC_MAX,
@@ -26,6 +28,8 @@ import {
   manifestOf,
   PAGE_MAP_MAX,
   parseLineRange,
+  parseVersionRange,
+  safeJson,
   sleep,
   toBase64,
 } from "../mcp-util"
@@ -33,7 +37,7 @@ import { enqueueRender } from "../previews"
 import { CORE_SKILLS } from "../skills-reference.gen"
 
 export function registerReadTool(tc: ToolContext): void {
-  const { server, ctx, bpProfile, profileArt, reach, notFound, wsArg } = tc
+  const { server, ctx, bpProfile, profileArt, reach, notFound, wsArg, num, staleNote } = tc
 
   // READ CONTENT --------------------------------------------------------------
   server.registerTool(
@@ -71,20 +75,39 @@ export function registerReadTool(tc: ToolContext): void {
           .describe(
             'SEE the published page instead of reading its text — what a viewer actually sees, catching visual breakage (a failed font, a broken layout) no text read can. "top": the 1200x630 crop (fastest, what an og:image unfurl shows). "full": the whole page, fullPage screenshot — catches below-the-fold breakage "top" misses. "marked": "full" again with the region map\'s @N refs drawn on it — pairs with a no-heading page\'s region map so what you SEE lines up with what you READ. All three computed a few seconds after each publish; pass alone (optionally with `version`).',
           ),
-        wait: z.coerce
-          .number()
-          .int()
-          .min(1)
-          .max(30)
+        wait: num("wait", { int: true, min: 1, max: 30 })
           .optional()
           .describe(
             "With `render`: when the screenshot isn't computed yet (a publish is seconds old), block up to this many seconds (max 30) for it to land instead of returning the not-ready message. Returns at once when it's already ready or has failed.",
           ),
-        version: z.coerce.number().optional().describe("Defaults to the current version."),
+        version: num("version").optional().describe("Defaults to the current version."),
+        data: z
+          .string()
+          .optional()
+          .describe(
+            'A version\'s structured DATA slot: the JSON a `derive-data` block on the page stored under this name (see the publishing skill), so you can read back data you published instead of re-parsing old markup. Pass "*" to list the slots this version carries. Reads the current version unless `version` is set.',
+          ),
+        versions: z
+          .string()
+          .optional()
+          .describe(
+            'With `data`: read that slot across a RANGE of versions in ONE call — the trend read. "1-30", "12" (one), "20-" (to the current version), or "all". Versions are the time axis, so this answers "how did this change over time" without fetching each version. Returns oldest first; versions that carry no such slot are simply absent, and the response says how many.',
+          ),
         workspace: wsArg,
       },
     },
-    async ({ short_id, section, format, version, lines, render, wait, workspace }) => {
+    async ({
+      short_id,
+      section,
+      format,
+      version,
+      lines,
+      render,
+      wait,
+      data,
+      versions,
+      workspace,
+    }) => {
       const fmt: ReadFormat = format ?? "markdown"
       // `derive://brandprint/*` URIs are readable through `read`, not only as MCP
       // resources — the exact strings the server instructions name, reachable by every
@@ -243,6 +266,92 @@ export function registerReadTool(tc: ToolContext): void {
           `The render:${render} of "${short_id}" v${n} isn't ready yet — screenshots are computed a few seconds after publish. Try again shortly, or pass \`wait\` (seconds, max 30) to block for it.`,
         )
       }
+      // The data rung: a version's structured slots, queried instead of re-parsed. A
+      // whole-version view like `render`, so it can't combine with a within-doc selector.
+      if (data !== undefined) {
+        if (section || lines || render)
+          return err(
+            "`data` reads a version's stored slots — pass it alone (with `version` for history), not with section/lines/render.",
+          )
+        // The TREND read: one slot across a range of versions, in one call and one query.
+        // Versions are already the time axis, so this is the whole reason slots exist —
+        // "how did this move over thirty days" without fetching thirty versions.
+        if (versions !== undefined) {
+          if (data === "*")
+            return err(
+              'Name a single slot to read across versions (data:"checks"); `data:"*"` lists one version\'s slots.',
+            )
+          const range = parseVersionRange(versions, a.current_version)
+          if (!range)
+            return err(
+              `Bad \`versions\` "${versions}" for "${short_id}" (it has 1..${a.current_version}) — use "1-30", "12", "20-", or "all".`,
+            )
+          const rows = await ctx.meta.getVersionDataSeries(
+            a.id,
+            data,
+            range.from,
+            range.to,
+            DATA_SERIES_MAX + 1,
+          )
+          const truncated = rows.length > DATA_SERIES_MAX
+          const kept = truncated ? rows.slice(0, DATA_SERIES_MAX) : rows
+          const span = range.to - range.from + 1
+          const missing = span - kept.length
+          return json({
+            short_id,
+            slot: data,
+            versions: `${range.from}-${range.to} of ${a.current_version}`,
+            count: kept.length,
+            series: kept.map((r) => ({
+              n: r.n,
+              at: r.created_at,
+              // Stored JSON was validated at publish, so the parsed value is the useful
+              // shape; the raw text is the honest fallback if a row ever predates that.
+              data: safeJson(r.json),
+            })),
+            ...(truncated
+              ? {
+                  note: `More than ${DATA_SERIES_MAX} versions in this range carry "${data}" — this is the oldest ${DATA_SERIES_MAX}. Narrow the range (e.g. versions:"${range.to - DATA_SERIES_MAX + 1}-${range.to}") for the most recent.`,
+                }
+              : missing > 0
+                ? {
+                    note: `${missing} version(s) in this range carry no "${data}" slot — they predate slots or omitted the block.`,
+                  }
+                : {}),
+          })
+        }
+        if (data === "*") {
+          const rows = await ctx.meta.getVersionData(a.id, n)
+          return json({
+            short_id,
+            version: n,
+            slots: rows.map((r) => ({ slot: r.slot, bytes: r.size_bytes })),
+            ...(rows.length
+              ? {}
+              : {
+                  note: `Version ${n} of "${short_id}" carries no data slots. Embed a derive-data block (see the publishing skill) to make one queryable.`,
+                }),
+          })
+        }
+        const rows = await ctx.meta.getVersionData(a.id, n, data)
+        const row = rows[0]
+        if (!row) {
+          const all = await ctx.meta.getVersionData(a.id, n)
+          return err(
+            all.length
+              ? `No data slot "${data}" in "${short_id}" v${n} — slots: ${all.map((r) => r.slot).join(", ")}. Pass data:"*" to list them.`
+              : `"${short_id}" v${n} carries no data slots — embed a derive-data block to add one.`,
+          )
+        }
+        const stale = staleNote()
+        return json({
+          short_id,
+          version: n,
+          slot: row.slot,
+          data: safeJson(row.json),
+          ...(stale ? { note: stale } : {}),
+        })
+      }
       const manifest = await manifestOf(ctx, v)
 
       if (!manifest) {
@@ -323,7 +432,22 @@ export function registerReadTool(tc: ToolContext): void {
             clipDoc(body, outline),
           )
         }
+        // Tripwire (evidence for the derived-view cache decision, #433): time the
+        // HTML→markdown conversion on the whole-doc read path — the exact recompute that
+        // PR would cache — and log source size + cost + whether it crosses that PR's
+        // 150K-char gate. One line, no schema; a week of these numbers says whether the
+        // cache is worth landing or closing. Only for HTML sources (markdown `present` is
+        // a near-noop and would just be log noise).
+        const tConv = Date.now()
         const body = present(src, ct, fmt)
+        if (baseType(ct) === "text/html")
+          log.info("derived_view_read", {
+            short_id,
+            chars: src.length,
+            ms: Date.now() - tConv,
+            fmt,
+            gate_150k: src.length >= 150_000,
+          })
         if (!section && body.length > FULL_DOC_MAX) {
           const outline = outlineOf(src, ct)
           if (outline.length)

@@ -27,6 +27,43 @@
 <link rel="canonical" href="https://derive.to/">
 <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/brand/favicon.png" type="image/png">
+<!-- Structured data. Search engines use this, but the reason it's here is URL
+     classifiers: enterprise web filters categorise unknown domains partly from
+     machine-readable identity, and an uncategorised domain gets blocked by
+     default at a lot of companies. Keep it factual — claims here are read by
+     things that penalise overreach. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://derive.to/#organization",
+      "name": "Derive",
+      "url": "https://derive.to/",
+      "logo": "https://derive.to/brand/favicon.png",
+      "sameAs": ["https://github.com/derive-to/derive"]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://derive.to/#website",
+      "name": "Derive",
+      "url": "https://derive.to/",
+      "publisher": { "@id": "https://derive.to/#organization" }
+    },
+    {
+      "@type": "SoftwareApplication",
+      "name": "Derive",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Web",
+      "url": "https://derive.to/",
+      "description": "Derive is where your team and its agents publish, review, and revise work. Open source and self-hostable.",
+      "isAccessibleForFree": true,
+      "publisher": { "@id": "https://derive.to/#organization" }
+    }
+  ]
+}
+</script>
 <style>
 /* ── Geist, shipped with the site (zero third-party requests) ── */
 @font-face{

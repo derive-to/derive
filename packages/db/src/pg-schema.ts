@@ -730,12 +730,10 @@ export const contextSession = pgTable(
   "context_session",
   {
     id: text("id").primaryKey(),
-    context_id: text("context_id")
-      .notNull()
-      .references(() => context.id),
+    context_id: text("context_id").references(() => context.id),
     org_id: text("org_id").notNull(),
     asker_id: text("asker_id").notNull(),
-    context_version: integer("context_version").notNull(),
+    context_version: integer("context_version"),
     state: text("state").$type<SessionState>().notNull().default("open"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
     updated_at: text("updated_at"),
@@ -745,6 +743,8 @@ export const contextSession = pgTable(
     lease_until: text("lease_until"),
     result_artifact_id: text("result_artifact_id"),
     dedupe_key: text("dedupe_key"),
+    // What this session is about, as a Selector — mirror of the sqlite def.
+    subject_ref: text("subject_ref"),
   },
   (t) => [
     index("context_session_queue").on(t.context_id, t.state, t.created_at),
@@ -801,9 +801,33 @@ export const asset = pgTable(
     org_id: text("org_id").notNull(),
     content_type: text("content_type").notNull(),
     size_bytes: integer("size_bytes").notNull(),
+    // Header-read pixel dimensions; null for fonts/unreadable/legacy. Mirrors schema.ts.
+    width: integer("width"),
+    height: integer("height"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [index("asset_org").on(t.org_id)],
+)
+
+// A structured data slot extracted from a version's source (see @derive/core data-slots).
+// Natural key (artifact_id, n, slot); rows are written once when a version goes live and
+// never mutated. `gen` (DEFAULT must equal @derive/core SLOT_GEN) marks which extraction
+// rules produced the row. Mirrors schema.ts.
+export const versionData = pgTable(
+  "version_data",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    n: integer("n").notNull(),
+    slot: text("slot").notNull(),
+    json: text("json").notNull(),
+    size_bytes: integer("size_bytes").notNull(),
+    gen: integer("gen").notNull().default(1),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("version_data_slot").on(t.artifact_id, t.n, t.slot)],
 )
 
 // Schema parity is enforced in pg.ts, where the pg `schema` object lives — it
@@ -821,6 +845,7 @@ const PG_TIMESTAMP_DEFAULT = `to_char((now() at time zone 'utc'), 'YYYY-MM-DD"T"
 const TABLES = [
   artifact,
   version,
+  versionData,
   comment,
   webhook,
   webhookDelivery,
@@ -919,6 +944,11 @@ export const buildPgSchemaStatements = (): string[] => {
     // (dedupe_key), and the PG boot has no per-statement try/catch, so ordering is load-bearing.
     CONTEXT_SESSION_DEDUPE_UNIQUE_PG,
     RUN_SCHEDULE_OCCURRENCE_UNIQUE_PG,
+    // A session no longer requires a context (chat with a document). Postgres can say this
+    // directly, and DROP NOT NULL on an already-nullable column is a no-op, so it is safe to
+    // run on every boot. SQLite needs a table rebuild instead — see CONTEXT_SESSION_RELAX_SQLITE.
+    `ALTER TABLE context_session ALTER COLUMN context_id DROP NOT NULL`,
+    `ALTER TABLE context_session ALTER COLUMN context_version DROP NOT NULL`,
   ]
 }
 

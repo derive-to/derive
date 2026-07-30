@@ -105,6 +105,62 @@ publishes as a multi-page bundle). The URL is reusable until it expires (~15 min
 the plain publish tool for small docs and for surgical `edits`; reach for stage target:'doc'
 only when inlining would chunk.
 
+## Structured data slots (publish numbers you can read back)
+
+A page you republish on a schedule is a time series you cannot query: answering "how did
+this trend over thirty days" means re-reading and re-parsing thirty of your own old pages.
+A **data slot** fixes that. Put the numbers in the document as an inert block, and Derive
+extracts them per version so you can read them back as JSON.
+
+The block lives IN the page (so it can never drift from what the page shows, and it
+travels through every publish path for free — inline, staged, REST, CLI, the editor):
+
+```html
+<script type="application/derive-data" data-slot="checks">
+{"date": "2026-07-29", "pass": 44, "fail": 0}
+</script>
+```
+
+In markdown, a fence whose info string names the slot:
+
+````markdown
+```derive-data checks
+{"date": "2026-07-29", "pass": 44, "fail": 0}
+```
+````
+
+Read it back with `read`: `data:"checks"` returns that slot's JSON for the version,
+`data:"*"` lists the slots a version carries. Pass `version` to read a past one.
+
+**The trend read.** Versions are the time axis, so one call spans them —
+`data:"checks", versions:"all"` (or `"1-30"`, `"12"`, `"20-"`) returns the series
+oldest-first, one point per version that carries the slot:
+
+```
+read(short_id, data:"checks", versions:"all")
+→ { count: 30, series: [ {n: 1, at: "…", data: {pass: 41}}, … ] }
+```
+
+Versions carrying no such slot are absent and the response says how many. Capped at 200
+points; past that it tells you and hands back the range to ask for.
+
+Outside MCP, the same data is a URL: `GET /raw/<short_id>/data/<slot>.json` for the
+current version, `/raw/<short_id>/v/<n>/data/<slot>.json` to pin one — so a page can
+fetch its own history. Same access as the artifact itself.
+
+Rules worth knowing before you author one:
+
+- Slot names are lowercase letters, digits and hyphens (up to 64 chars). First occurrence
+  of a name wins.
+- The body must be valid JSON. 32KB per slot, 20 slots per version, sizes counted in BYTES.
+- A slot that can't be stored (bad name, invalid JSON, too big) NEVER fails the publish —
+  it comes back as an advisory in the response, so read those.
+- A literal `</script>` inside your JSON ends the block early (HTML rules, same as a
+  browser) — write it `<\/script>`.
+- Slots are per VERSION and immutable, like the version itself. Republishing without the
+  block simply means that new version carries no slot; the old version keeps its own.
+- Single-file HTML and markdown artifacts only (not bundles).
+
 ## content_sha256 verification
 
 A single-file publish's response echoes `content_sha256` of the stored bytes (the

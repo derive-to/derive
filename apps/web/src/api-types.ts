@@ -4584,6 +4584,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/chat-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open a chat session about an artifact (no context required). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new session and its first message. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            session: components["schemas"]["Session"];
+                            messages: components["schemas"]["SessionMessage"][];
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{id}": {
         parameters: {
             query?: never;
@@ -4611,10 +4650,11 @@ export interface paths {
                     content: {
                         "application/json": {
                             session: components["schemas"]["Session"];
+                            /** @description The packaged agent answering, or null for a chat session. */
                             context: {
                                 id: string;
                                 name: string;
-                            };
+                            } | null;
                             messages: components["schemas"]["SessionMessage"][];
                         };
                     };
@@ -5797,6 +5837,10 @@ export interface components {
             whiteLabel: boolean;
             /** @description Master switch for Derive-hosted agent runs; off silences every hosted run. */
             hostedAgentsEnabled: boolean;
+            /** @description BETA: the Chat tab on a document. Off by default — the tab is hidden and the chat route refuses, so a workspace opts in deliberately. */
+            chatBeta: boolean;
+            /** @description BETA: automations on a document. Off by default — the Automate entry point is hidden and the create/run/fire routes refuse, so a workspace opts in deliberately. */
+            automateBeta: boolean;
             /** @description When true, every hosted agent write demotes to a proposal, instantly. */
             agentKillswitch: boolean;
             /** @description Opt-in for autonomy 'auto' to live-publish (always with a review round). */
@@ -6125,7 +6169,7 @@ export interface components {
             team_name: string | null;
             /** @description The channel Derive posts to, or null if unset */
             default_channel: string | null;
-            /** @description Whether the stored bot token needs a re-auth (an auth error since connecting) */
+            /** @description Whether the stored bot token needs a re-auth — a failed auth/scope call, or Slack reporting the app uninstalled or its token revoked */
             needs_reauth: boolean;
             /** @description The caller's "DM me for interrupts" preference (mentions, review requests, shares) */
             slack_dm: boolean;
@@ -6308,10 +6352,11 @@ export interface components {
         };
         Session: {
             id: string;
-            context_id: string;
+            /** @description The packaged agent answering, or null when the default agent is. */
+            context_id: string | null;
             asker_id: string;
-            /** @description The manifest version this session was opened against. */
-            context_version: number;
+            /** @description The manifest version this session opened against; null with no context. */
+            context_version: number | null;
             /**
              * @description open = awaiting the agent; working = a runner claimed it and is answering; answered; escalated = draft went to review; failed = run crashed; closed = ended by asker/owner.
              * @enum {string}
@@ -6320,6 +6365,14 @@ export interface components {
             created_at: string;
             /** @description Last state/message change; equals created_at when never updated. */
             updated_at: string;
+            /** @description What this session is about, when it names one: an artifact, plus how a write to it lands. Null for a plain ask. */
+            subject: {
+                /** @enum {string} */
+                kind: "artifact";
+                id: string;
+                /** @enum {string} */
+                mode?: "publish" | "propose";
+            } | null;
         };
         SessionMessage: {
             id: string;

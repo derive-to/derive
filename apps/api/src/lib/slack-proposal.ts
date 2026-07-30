@@ -10,7 +10,7 @@ import {
   requestChangesAction,
 } from "./proposal-actions"
 import { postSlackResponseUrl } from "./slack"
-import { context, escapeMrkdwn } from "./slack-cards"
+import { context, mrkdwnLabel } from "./slack-cards"
 
 export interface SlackProposalArgs {
   teamId: string
@@ -76,7 +76,7 @@ export const runSlackProposalAction = async (
 
   const [du] = await deps.meta.getUsers([link.user_id])
   const who = du?.name ?? link.user_id // raw name stored as the decider; escaped only for display
-  const display = escapeMrkdwn(who)
+  const display = mrkdwnLabel(who)
   const replaceCard = (line: string): Promise<boolean> => {
     if (!args.responseUrl) return Promise.resolve(false)
     const blocks = [args.sectionBlock, context(`Derive · ${line}`)].filter(Boolean)
