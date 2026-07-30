@@ -111,6 +111,28 @@ export function registerAutomateTool(tc: ToolContext): void {
       }
       const org = defaultOrg
 
+      // THE BETA GATE, the same rule the REST surface applies (routes/automations.ts,
+      // `automateOff`): `automateBeta` is the workspace's own opt-in, ships OFF, and binds the
+      // lanes that CREATE or RUN work — never reads or deletes. It appeared nowhere in this
+      // file, so an agent over MCP could stand up an automation and fire it in a workspace
+      // where `POST /v1/automations/:id/run` 404s. The gate held the front door and left this
+      // one open.
+      //
+      // A refusal string rather than a 404: this is a tool result an agent is already reading,
+      // and "no such surface" is useless to something that just called it. Fails CLOSED on a
+      // settings read error, matching the cron tick and hosted dispatch.
+      const automateOff = async (): Promise<boolean> =>
+        !(await meta
+          .getOrgSettings(org)
+          .then((s) => s?.automateBeta === true)
+          .catch(() => false))
+      if ((input.action === "create" || input.action === "run_now") && (await automateOff()))
+        return json({
+          error:
+            "automations are not enabled for this workspace (automateBeta). An owner can turn " +
+            "them on in workspace settings.",
+        })
+
       if (input.action === "list") {
         const rows = await meta.listAutomations(org)
         return json({

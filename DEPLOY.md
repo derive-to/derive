@@ -333,6 +333,17 @@ their own credential through the payer chain.
 > separate `DERIVE_LOOP_MODEL` (unset = `claude-sonnet-5`). Do not set `DERIVE_LOOP_MODEL`
 > to a gateway path — `api.anthropic.com` answers `model_not_found`.
 
+### Automations (beta, off by default)
+
+Automations are gated per workspace by `automateBeta` and ship **off**. The gate is a real
+kill switch, enforced on every lane that creates or runs work: `POST
+/v1/automations/:id/run` and the REST create route 404, the MCP `automate` tool refuses
+`create` and `run_now`, and the deployment's cron tick will not materialize a due schedule
+for a workspace that has not opted in. Reads and deletes stay open, so a workspace that
+made automations before the gate can still see and remove them.
+
+Turn it on for one workspace with `PATCH /v1/workspace/settings {"automateBeta": true}`.
+
 ### Semantic search (optional)
 
 Workspace search is lexical (SQLite/D1 FTS + Postgres tsvector) everywhere by default. You can add a

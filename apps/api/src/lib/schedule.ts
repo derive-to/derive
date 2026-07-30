@@ -34,9 +34,36 @@ const materializeFor = async (
 ): Promise<number> => {
   let created = 0
   let unpayable = 0
+  let gated = 0
+  // THE BETA GATE, on the one trigger that fires with nobody watching. `automateBeta` was
+  // enforced only on the REST lanes a person drives, so with the flag OFF
+  // `POST /v1/automations/:id/run` correctly 404'd while the cron tick went right on
+  // materializing, dispatching and LIVE-PUBLISHING a document replacement. A switch that stops
+  // the button but not the clock is not a kill switch.
+  //
+  // Read at most once per org per pass, and FAIL CLOSED — the same stance dispatch takes for
+  // hostedAgentsEnabled. A settings read that errors must not be able to start work a workspace
+  // deliberately switched off.
+  const optedIn = new Map<string, boolean>()
+  const automateOn = async (orgId: string): Promise<boolean> => {
+    const known = optedIn.get(orgId)
+    if (known !== undefined) return known
+    const on = await meta
+      .getOrgSettings(orgId)
+      .then((s) => s?.automateBeta === true)
+      .catch(() => false)
+    optedIn.set(orgId, on)
+    return on
+  }
   for (const a of autos) {
     const trigger = parseTrigger(a.trigger)
     if (trigger.kind !== "schedule" || !trigger.cron) continue
+    // Before the cron maths and the payer walk: a gated workspace costs this pass one settings
+    // read, not a query per automation per minute.
+    if (!(await automateOn(a.org_id))) {
+      gated += 1
+      continue
+    }
     const prev = previousOccurrence(trigger.cron, trigger.tz, now)
     if (!prev) continue
     const prevIso = prev.toISOString()
@@ -101,6 +128,11 @@ const materializeFor = async (
   // working, which is exactly the class of bug this codebase keeps finding.
   if (unpayable > 0)
     log.warn("schedule: skipped occurrences with no connected model plan", { unpayable })
+  // Same shape, same reason: a schedule that quietly stops materializing must be
+  // distinguishable from one that is working. `info`, not `warn` — a workspace that has simply
+  // not opted into the beta is the expected state, not a fault.
+  if (gated > 0)
+    log.info("schedule: skipped automations in workspaces without automateBeta", { gated })
   return created
 }
 

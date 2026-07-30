@@ -288,4 +288,41 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
     expect(probe.isError).toBe(true)
     expect(probe.text).toContain("No session")
   })
+  // THE BETA GATE, over MCP. `automateBeta` appeared nowhere in mcp-tools/automate.ts, so an
+  // agent could stand up an automation and fire it in a workspace where the REST route 404s —
+  // the gate held the front door and left this one wide open. `create_context` is deliberately
+  // NOT gated: wiring a context is the ask lane, which predates automations.
+  it("automate create and run_now are gated on automateBeta, like the REST surface", async () => {
+    const { app, meta } = ownerApp("own-automate-gate")
+    const off = await call(app, "tok_full", "automate", {
+      action: "create",
+      trigger: { kind: "manual" },
+      instruction: "Nightly QA",
+    })
+    expect(off.error).toContain("automateBeta")
+    expect(off.id).toBeUndefined()
+
+    await meta.setOrgSettings("ws_main", {
+      ...(await meta.getOrgSettings("ws_main")),
+      automateBeta: true,
+    })
+    const on = await call(app, "tok_full", "automate", {
+      action: "create",
+      trigger: { kind: "manual" },
+      instruction: "Nightly QA",
+    })
+    expect(on.id).toBeTruthy()
+
+    // run_now too, on an automation that already exists — the case a create-only gate misses.
+    await meta.setOrgSettings("ws_main", {
+      ...(await meta.getOrgSettings("ws_main")),
+      automateBeta: false,
+    })
+    const fired = await call(app, "tok_full", "automate", {
+      action: "run_now",
+      automation_id: on.id,
+    })
+    expect(fired.error).toContain("automateBeta")
+    expect(fired.run_id).toBeUndefined()
+  })
 })

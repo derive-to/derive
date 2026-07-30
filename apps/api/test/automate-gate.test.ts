@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { materializeAllDueRuns } from "../src/lib/schedule"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 // The automations BETA GATE: `automateBeta`, the workspace's own opt-in, OFF by default.
@@ -105,5 +106,77 @@ describe("automateBeta is reachable over the API", () => {
         )
       ).status,
     ).toBe(201)
+  })
+})
+
+// THE GATE IS A KILL SWITCH, OR IT IS DECORATION.
+//
+// With `automateBeta` OFF, `POST /v1/automations/:id/run` correctly 404'd — and the deployment's
+// cron tick went right on materializing the same automation's due schedule, dispatching it, and
+// LIVE-PUBLISHING a document replacement. The flag stopped the button and not the clock, which is
+// the worst possible shape: an owner who switches a beta off has every reason to believe nothing
+// is running, and the lane with nobody watching was the one still running.
+describe("the schedule tick obeys the gate", () => {
+  const owner: TestUser = { id: "u_gate_cron", email: "gatecron@derive.test", name: "Owner" }
+
+  /** A schedule that is ALWAYS due: every minute, so the previous occurrence is seconds ago. */
+  const everyMinute = { kind: "schedule", cron: "* * * * *" }
+
+  it("does NOT materialize a due schedule for a workspace that has not opted in", async () => {
+    const { app, meta } = makeAuthedApp("gate-cron-off", [owner])
+    const made = await app.request(
+      "/v1/automations",
+      jsonAs(as(owner.email), { trigger: everyMinute, instruction: "Refresh the roadmap" }),
+    )
+    expect(made.status).toBe(201)
+    const { id } = (await made.json()) as { id: string }
+
+    // Switch the beta back off — the automation already exists, which is exactly the state an
+    // owner is in when they decide to stop it.
+    const current = await meta.getOrgSettings("default")
+    if (current) await meta.setOrgSettings("default", { ...current, automateBeta: false })
+
+    const created = await materializeAllDueRuns(meta, new Date())
+    expect(created).toBe(0)
+    // Nothing queued, not merely "nothing counted" — the count and the ledger have to agree.
+    const runs = (await meta.listRuns("default", 200)).filter((r) => r.automation_id === id)
+    expect(runs).toEqual([])
+  })
+
+  it("materializes the same schedule once the workspace opts in", async () => {
+    // The positive control. Without it the test above passes just as well if the cron never
+    // fires for an unrelated reason, which would prove nothing at all.
+    const { app, meta } = makeAuthedApp("gate-cron-on", [owner])
+    const made = await app.request(
+      "/v1/automations",
+      jsonAs(as(owner.email), { trigger: everyMinute, instruction: "Refresh the roadmap" }),
+    )
+    expect(made.status).toBe(201)
+    const { id } = (await made.json()) as { id: string }
+
+    const created = await materializeAllDueRuns(meta, new Date())
+    expect(created).toBeGreaterThan(0)
+    const runs = (await meta.listRuns("default", 200)).filter((r) => r.automation_id === id)
+    expect(runs.length).toBe(1)
+    expect(runs[0]?.reason).toBe("schedule")
+  })
+
+  it("fails CLOSED when the settings read errors", async () => {
+    // A database blip must not be able to start work a workspace switched off. Same stance
+    // dispatch takes for hostedAgentsEnabled, for the same reason.
+    const { app, meta } = makeAuthedApp("gate-cron-blip", [owner])
+    const made = await app.request(
+      "/v1/automations",
+      jsonAs(as(owner.email), { trigger: everyMinute, instruction: "Refresh the roadmap" }),
+    )
+    expect(made.status).toBe(201)
+
+    const real = meta.getOrgSettings.bind(meta)
+    meta.getOrgSettings = () => Promise.reject(new Error("db blip"))
+    try {
+      expect(await materializeAllDueRuns(meta, new Date())).toBe(0)
+    } finally {
+      meta.getOrgSettings = real
+    }
   })
 })
