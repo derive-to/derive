@@ -33,7 +33,7 @@ const dir = mkdtempSync(join(tmpdir(), "derive-cache-tamper-"))
 const dbPath = join(dir, "auth.db")
 const db = new Database(dbPath)
 const BASE = "http://localhost:8080"
-const SECRET = "tamper-secret-0123456789abcd"
+const SECRET = "tamper-secret-at-least-16-chars"
 
 const appWith = (secret: string) =>
   createApp({
@@ -135,7 +135,7 @@ describe("the session cookie cache resists tampering", () => {
   it("a payload minted under a DIFFERENT secret is refused", async () => {
     // Same database, another deployment's secret: a preview, a rotated key, a self-host sharing
     // storage. Its cached payload must not authenticate here.
-    const foreign = appWith("another-secret-0123456789ab")
+    const foreign = appWith("another-secret-at-least-16-chars")
     const foreignData = pair(await signIn(foreign, VICTIM), "session_data")
     if (!foreignData) return // that deployment issued no cache cookie; nothing to replay
     expect((await meAs(foreignData)).status).toBe(401)

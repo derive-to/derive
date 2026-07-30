@@ -29,8 +29,11 @@ const dbPath = join(dir, "auth.db")
 const db = new Database(dbPath)
 const BASE = "http://localhost:8080"
 
-const PROD_SECRET = "prod-secret-0123456789abcdef"
-const OTHER_SECRET = "other-secret-0123456789abcd"
+// Two throwaway values standing in for two deployments' DERIVE_AUTH_SECRETs. Marked for the
+// secret scanner: the names are what trip its generic-api-key rule, and renaming them to satisfy
+// a scanner would cost the thing that makes this test readable.
+const PROD_SECRET = "prod-secret-at-least-16-chars" // gitleaks:allow
+const OTHER_SECRET = "other-secret-at-least-16-chars" // gitleaks:allow
 
 const appWith = (secret: string) =>
   createApp({
