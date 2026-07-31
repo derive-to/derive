@@ -1,9 +1,10 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { useBlocker, useNavigate } from "@tanstack/react-router"
 import { useRef, useState } from "react"
 import { api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { toast } from "@/components/ui/sonner"
-import { collectionsQuery, summaryQuery } from "@/lib/queries"
+import { artifactQuery, collectionsQuery, prefetchArtifactRaw, summaryQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { refFor } from "./artifact/parse-ref"
@@ -43,6 +44,7 @@ export function NewArtifact() {
   // (the nav would fire the discard dialog on the very success path it's meant to allow).
   // A ref updates synchronously, so shouldBlockFn sees the bypass immediately.
   const publishing = useRef(false)
+  const qc = useQueryClient()
   const dirty = !!(src.trim() || title.trim() || message.trim())
 
   // Guard leaving with an unsaved draft — BOTH in-app navigation (rail click, Cancel) and
@@ -66,6 +68,12 @@ export function NewArtifact() {
     // Freshen the library so the new artifact + bumped total are correct on return.
     invalidate: [summaryQuery().queryKey, collectionsQuery().queryKey, ["artifacts"]],
     onSuccess: (a) => {
+      // The response IS the record the artifact page is about to fetch — seed it, so
+      // the workbench header paints on arrival instead of after a second round trip,
+      // and start the raw-content fetch now so the iframe finds a warm HTTP cache.
+      // Publish is the moment a person is most likely to be watching the screen.
+      qc.setQueryData(artifactQuery(a.short_id).queryKey, a)
+      prefetchArtifactRaw(a.short_id, a.current_version)
       // Drop the unsaved guard before navigating to the artifact (this nav IS the save,
       // not an abandon), so the blocker doesn't intercept it. Ref, so it's in effect the
       // instant nav() runs — see the note on `publishing` above.
