@@ -226,7 +226,13 @@ export const connectionRoutes = (ctx: AppContext) => {
     // A server that refuses to authenticate must not be stored as a usable connection. `connect`
     // reports `pending` for both "unreachable" and "unauthorized", and a pending row is filtered
     // out of every run — so the useful thing to do is say so now, while a human is watching.
-    if (b.mcp_url && link.status !== "active") {
+    // A server that wants authorization and was given no token is not a failure — it is the
+    // START of the OAuth flow. Store the row `pending` (unpinned, so no run can use it) and hand
+    // it back with the reason, so the client can immediately offer "Sign in". Every other failure
+    // still refuses at the door: there is nothing to complete and a stored row would be a
+    // connection that can never come good.
+    const awaitingAuth = b.mcp_url && link.reason === "auth_required" && !b.mcp_secret
+    if (b.mcp_url && link.status !== "active" && !awaitingAuth) {
       // Say which of the four it was. These are the exact words a person reads at the moment they
       // are deciding whether this product works, and until now all four said "did not answer".
       const url = b.mcp_url
@@ -290,7 +296,16 @@ export const connectionRoutes = (ctx: AppContext) => {
       status: link.status,
     })
     // The auth URL rides this response (empty for the local broker's auto-authorized case).
-    return c.json({ ...present(rec), connect_url: link.url }, 201)
+    // `reason` rides it too when the row is waiting on OAuth, so the client can go straight to
+    // "Sign in" instead of showing a connection that looks broken.
+    return c.json(
+      {
+        ...present(rec),
+        connect_url: link.url,
+        ...(awaitingAuth ? { reason: "auth_required" as const } : {}),
+      },
+      201,
+    )
   })
 
   app.delete("/v1/connections/:id", async (c) => {

@@ -52,7 +52,12 @@ const fakeServer = (opts: {
       // A streamable-HTTP server may answer either way to the same request; both must parse.
       return new Response(opts.sse ? `event: message\ndata: ${payload}\n\n` : payload, {
         status: 200,
-        headers: { "mcp-session-id": "sess-1" },
+        headers: {
+          "mcp-session-id": "sess-1",
+          // A real SSE reply declares itself, and that header is what selects the streaming
+          // reader — so omitting it here tested a path no server actually produces.
+          "content-type": opts.sse ? "text/event-stream" : "application/json",
+        },
       })
     }
     if (body.method === "initialize") return reply({ protocolVersion: "2025-11-25" })
@@ -122,6 +127,79 @@ describe("MCP broker: connect + list + call", () => {
     const broker = new McpBroker(server.impl)
     const link = await broker.connect({ orgId: "o1", userId: "u1", toolkit: "https://s.test/mcp" })
     expect(link.status).toBe("active")
+    expect(await broker.toolsFor([link.ref])).toHaveLength(2)
+  })
+
+  it("answers from a stream the server never closes", async () => {
+    // THE BUG THIS EXISTS FOR. The spec lets a server keep the SSE stream open after replying, to
+    // push notifications down it, and real ones do (gitmcp.io). Reading with `res.text()` waits
+    // for EOF, so every call to such a server stalled until the 20s abort and was then reported
+    // as the SERVER failing — while it had answered in milliseconds. If this test hangs, that
+    // regression is back.
+    const held = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}"))
+      const result =
+        body.method === "initialize"
+          ? { protocolVersion: "2025-11-25" }
+          : body.method === "tools/list"
+            ? { tools: TOOLS }
+            : { content: [{ type: "text", text: "ok" }] }
+      const stream = new ReadableStream({
+        start(controller) {
+          const enc = new TextEncoder()
+          // A notification FIRST, with no id — the reply is found by matching, not by position.
+          controller.enqueue(
+            enc.encode('event: message\ndata: {"jsonrpc":"2.0","method":"notifications/ping"}\n\n'),
+          )
+          controller.enqueue(
+            enc.encode(
+              `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result })}\n\n`,
+            ),
+          )
+          // and then nothing, forever: no close().
+        },
+      })
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream", "mcp-session-id": "sess-held" },
+      })
+    }) as unknown as typeof fetch
+
+    const broker = new McpBroker(held)
+    const link = await broker.connect({
+      orgId: "o1",
+      userId: "u1",
+      toolkit: "https://held.test/mcp",
+    })
+    expect(link.status).toBe("active")
+    expect(await broker.toolsFor([link.ref])).toHaveLength(2)
+  }, 10_000)
+
+  it("ignores a reply that belongs to a different request", async () => {
+    // Once a stream can carry several messages, "the last frame" is whatever happened to be in
+    // the buffer. Answering with someone else's result is worse than not answering at all.
+    const wrong = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}"))
+      const mine = JSON.stringify({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: body.method === "initialize" ? { protocolVersion: "2025-11-25" } : { tools: TOOLS },
+      })
+      const other = JSON.stringify({ jsonrpc: "2.0", id: 999_999, result: { tools: [] } })
+      return new Response(`event: message\ndata: ${mine}\n\nevent: message\ndata: ${other}\n\n`, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      })
+    }) as unknown as typeof fetch
+
+    const broker = new McpBroker(wrong)
+    const link = await broker.connect({
+      orgId: "o1",
+      userId: "u1",
+      toolkit: "https://mix.test/mcp",
+    })
+    expect(link.status).toBe("active")
+    // The trailing frame says zero tools. Ours said two, and ours is the one that counts.
     expect(await broker.toolsFor([link.ref])).toHaveLength(2)
   })
 

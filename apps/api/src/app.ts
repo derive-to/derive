@@ -34,6 +34,7 @@ import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
 import { githubAppRoutes } from "./routes/github-app"
 import { marketingRoutes } from "./routes/marketing"
+import { mcpOauthRoutes } from "./routes/mcp-oauth"
 import { modelCredentialRoutes } from "./routes/model-credentials"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
@@ -432,6 +433,7 @@ export function createApp(deps: AppDeps): Hono {
     automationRoutes,
     planRoutes,
     connectionRoutes,
+    mcpOauthRoutes,
     modelCredentialRoutes,
     conciergeRoutes,
     reworkRoutes,

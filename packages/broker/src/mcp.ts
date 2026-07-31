@@ -236,21 +236,83 @@ export const pinTools = async (tools: BrokerToolDef[]): Promise<string> => {
   )
 }
 
-/** One JSON-RPC response, whether the server answered as JSON or as a single SSE frame.
- *  Streamable-HTTP servers may reply either way to the same request, so both are handled. */
-const readRpc = async (res: Response): Promise<unknown> => {
-  const text = await res.text()
-  const trimmed = text.trim()
-  if (!trimmed) return null
-  if (trimmed.startsWith("{")) return JSON.parse(trimmed)
-  // SSE: take the LAST data: line, which carries the response for the request just sent.
-  const frames = trimmed
-    .split("\n")
-    .filter((l) => l.startsWith("data:"))
-    .map((l) => l.slice(5).trim())
-    .filter(Boolean)
-  const last = frames[frames.length - 1]
-  return last ? JSON.parse(last) : null
+/** One SSE `data:` payload as a JSON-RPC message, or null if it is not one (a comment, a
+ *  keep-alive, or a partial write). Never throws — a stream must not die on one bad frame. */
+const parseFrame = (data: string): { id?: unknown } | null => {
+  try {
+    const msg = JSON.parse(data)
+    return msg && typeof msg === "object" ? (msg as { id?: unknown }) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * One JSON-RPC response, whether the server answered as JSON or over an SSE stream.
+ *
+ * READ UNTIL OUR ANSWER ARRIVES, NOT UNTIL THE STREAM ENDS. This was `await res.text()`, which
+ * waits for the server to CLOSE the connection — and the spec explicitly lets a server keep the
+ * stream open after replying, to push notifications and its own requests down it. Servers really
+ * do (gitmcp.io holds it open; DeepWiki closes it), so every call to one of them stalled until the
+ * 20-second abort and was then reported as a failure. The server was fine and the response had
+ * arrived in milliseconds; we were still waiting for an EOF that was never coming.
+ *
+ * Matching on the request id matters for the same reason: once a stream can carry more than one
+ * message, "the last frame" is whatever happened to be in the buffer, not our answer.
+ */
+const readRpc = async (res: Response, id: number): Promise<unknown> => {
+  const body = res.body
+  // Only an SSE response can be held open, so only that one needs to be read incrementally.
+  // Everything else is buffered, which keeps the common JSON reply on the simplest path — and
+  // still parses SSE framing, because a server may use it without declaring the content type.
+  if (!body || !(res.headers.get("content-type") ?? "").includes("text/event-stream")) {
+    const trimmed = (await res.text()).trim()
+    if (!trimmed) return null
+    if (trimmed.startsWith("{")) return JSON.parse(trimmed)
+    const frames = trimmed
+      .split(/\r?\n/)
+      .filter((l) => l.startsWith("data:"))
+      .map((l) => l.slice(5).trim())
+      .filter(Boolean)
+    // Prefer OUR reply; fall back to the last frame, which is what a single-reply body holds.
+    for (const f of frames) {
+      const msg = parseFrame(f)
+      if (msg && String(msg.id) === String(id)) return msg
+    }
+    const last = frames[frames.length - 1]
+    return last ? JSON.parse(last) : null
+  }
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ""
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      for (;;) {
+        // Events are separated by a blank line; a chunk can end mid-line, so only complete ones.
+        const end = /\r?\n\r?\n/.exec(buf)
+        if (!end) break
+        const frame = buf.slice(0, end.index)
+        buf = buf.slice(end.index + end[0].length)
+        // `data:` may be split across several lines of one event, and is rejoined with newlines.
+        const data = frame
+          .split(/\r?\n/)
+          .filter((l) => l.startsWith("data:"))
+          .map((l) => l.slice(5).trim())
+          .join("\n")
+        if (!data) continue
+        // Notifications carry no id; another request's reply carries a different one.
+        const msg = parseFrame(data)
+        if (msg && msg.id !== undefined && String(msg.id) === String(id)) return msg
+      }
+    }
+  } finally {
+    // Hang up rather than leaving a socket held open for a stream we are done reading.
+    await reader.cancel().catch(() => undefined)
+  }
+  return null
 }
 
 interface RpcResult {
@@ -275,6 +337,9 @@ export class McpBroker implements ToolBroker {
 
   /** Always a plain function, never the raw global — see `unbound`. */
   private readonly fetchImpl: typeof fetch
+
+  /** Monotonic JSON-RPC request ids, so a reply can be matched to its request on a stream. */
+  private nextRpcId = 0
 
   constructor(
     fetchImpl: typeof fetch = fetch,
@@ -316,6 +381,9 @@ export class McpBroker implements ToolBroker {
     params?: unknown,
   ): Promise<RpcResult> {
     const bearer = await this.authFor(target)
+    // A COUNTER, not Date.now(): the id is now what picks our reply out of a stream that may
+    // carry several messages, and two calls inside the same millisecond shared a Date.now() id.
+    const id = ++this.nextRpcId
     const key = this.sessionKey(url, bearer)
     const session = this.sessions.get(key)
     const version = this.versions.get(key)
@@ -331,7 +399,7 @@ export class McpBroker implements ToolBroker {
         ...(session ? { "mcp-session-id": session } : {}),
         ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
       },
-      body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params: params ?? {} }),
+      body: JSON.stringify({ jsonrpc: "2.0", id, method, params: params ?? {} }),
       // A hung MCP server must never wedge a dispatch tick or a claim.
       signal: AbortSignal.timeout(20_000),
     })
@@ -346,7 +414,7 @@ export class McpBroker implements ToolBroker {
       err.status = res.status
       throw err
     }
-    const body = (await readRpc(res)) as RpcResult | null
+    const body = (await readRpc(res, id)) as RpcResult | null
     if (!body) throw new Error(`MCP ${method} returned an empty response`)
     if (body.error) throw new Error(`MCP ${method} error: ${body.error.message ?? "unknown"}`)
     return body

@@ -309,10 +309,23 @@ describe("MCP as a source: connect, list, call", () => {
     // wrong one — paste a token — fails again saying nothing new.
     const auth = await startServer([])
     servers.push(auth.server)
+    // A 401 with no token is not a dead end — it is where OAuth begins. The row is stored
+    // PENDING (unpinned, so `toolsFor` refuses it and no run can use it) and carries the reason,
+    // so the client offers "Sign in" instead of showing something that looks broken.
     const unauthorized = await connect({ toolkit: "needsauth", mcp_url: `${auth.url}?status=401` })
-    expect(unauthorized.status).toBe(400)
+    expect(unauthorized.status).toBe(201)
+    expect(unauthorized.body.status).toBe("pending")
     expect(unauthorized.body.reason).toBe("auth_required")
-    expect(String(unauthorized.body.error)).toMatch(/sign in|paste a token/i)
+
+    // But a 401 when a token WAS pasted is a real failure: the token is wrong, and storing a row
+    // would leave a connection that can never come good.
+    const refused = await connect({
+      toolkit: "badtoken",
+      mcp_url: `${auth.url}?status=401`,
+      mcp_secret: "definitely-not-valid",
+    })
+    expect(refused.status).toBe(400)
+    expect(String(refused.body.error)).toMatch(/refused the token/i)
   })
 
   it("a 404 on a /mcp path suggests the root, which is where Stripe's server lives", async () => {
