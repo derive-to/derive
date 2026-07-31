@@ -128,6 +128,45 @@ describe("connections (Sources — per-user connected accounts)", () => {
     expect(ok.status).toBe(201)
   })
 
+  it("bind policy holds on EDIT too, not only on create", async () => {
+    // Sources used to be bindable only at create, so an automation could never be pointed at a
+    // source connected afterwards — which is the ordinary order: build the automation, then go
+    // connect the thing it should read. Adding the edit path also adds a second door, and the
+    // check on it has to be the same one, or it becomes the way to bind a credential that is not
+    // yours to spend.
+    const auto = await (
+      await app.request(
+        "/v1/automations",
+        jsonAs(as(owner.email), { trigger: { kind: "manual" }, instruction: "Read the source." }),
+      )
+    ).json()
+
+    const theirs = await (await connect(member.email, "notion")).json()
+    const denied = await app.request(
+      `/v1/automations/${auto.id}`,
+      jsonAs(as(owner.email), { connectionIds: [theirs.id] }, "PATCH"),
+    )
+    expect(denied.status).toBe(400)
+    expect((await denied.json()).error).toContain("its owner")
+
+    const mine = await (await connect(owner.email, "calendar")).json()
+    const ok = await app.request(
+      `/v1/automations/${auto.id}`,
+      jsonAs(as(owner.email), { connectionIds: [mine.id] }, "PATCH"),
+    )
+    expect(ok.status).toBe(200)
+    expect((await ok.json()).connection_ids).toEqual([mine.id])
+
+    // And unbinding is reachable: null clears, so a source can be detached without deleting the
+    // automation that used it.
+    const cleared = await app.request(
+      `/v1/automations/${auto.id}`,
+      jsonAs(as(owner.email), { connectionIds: null }, "PATCH"),
+    )
+    expect(cleared.status).toBe(200)
+    expect((await cleared.json()).connection_ids).toEqual([])
+  })
+
   it("paste-a-secret: stored encrypted, write-only — the credential appears in NO response", async () => {
     const secret = "sk_game_admin_9f3a7b2c1d"
     const res = await app.request(

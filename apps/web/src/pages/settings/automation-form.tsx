@@ -1,5 +1,5 @@
 import { useQueries, useQuery } from "@tanstack/react-query"
-import { FileText, FolderOpen, Hash, Plus, X } from "lucide-react"
+import { FileText, FolderOpen, Hash, Plug, Plus, X } from "lucide-react"
 import { type ReactNode, useMemo, useState } from "react"
 import { type Automation, type AutomationRef, type AutomationTrigger, api } from "@/api"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -29,6 +29,7 @@ import {
   artifactQuery,
   automationsQuery,
   collectionsQuery,
+  connectionsQuery,
   runsQuery,
   targetPickerQuery,
 } from "@/lib/queries"
@@ -107,11 +108,24 @@ export function AutomationForm({
     return (seed ?? []).map((r) => ({ ref: stripMode(r), label: seedLabel(r) }))
   })
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [sourcesOpen, setSourcesOpen] = useState(false)
+  // Ids, not objects: the row a source resolves to can change under us (a pending source signs
+  // in mid-edit), and holding the id means the label always reflects the CURRENT row.
+  const [sourceIds, setSourceIds] = useState<string[]>(automation?.connection_ids ?? [])
   const [q, setQ] = useState("")
   const tz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", [])
 
   const docs = useQuery(targetPickerQuery(q))
   const collections = useQuery(collectionsQuery())
+  // ACTIVE only. A pending source has an unpinned ref, which every run refuses — offering it
+  // here would let someone build an automation that silently reads nothing.
+  const connections = useQuery(connectionsQuery())
+  const sources = useMemo(
+    () => (connections.data ?? []).filter((c) => c.kind === "mcp" && c.status === "active"),
+    [connections.data],
+  )
+  const sourceLabel = (id: string): string =>
+    sources.find((s) => s.id === id)?.toolkit ?? "a disconnected source"
   const collectionMatches = useMemo(() => {
     const all = collections.data ?? []
     const needle = q.trim().toLowerCase()
@@ -172,6 +186,7 @@ export function AutomationForm({
         trigger: buildTrigger(),
         instruction: instruction.trim(),
         refs: buildRefs(),
+        connectionIds: sourceIds,
       }
       return automation
         ? api.updateAutomation(automation.id, { agentId, ...body })
@@ -236,6 +251,78 @@ export function AutomationForm({
           onChange={(e) => setInstruction(e.target.value)}
           rows={2}
         />
+      </Field>
+
+      <Field
+        label="Sources"
+        hint="Connected MCP servers this run may read from. Its tools were recorded when you connected it."
+      >
+        <div className="flex flex-wrap items-center gap-1.5">
+          {sourceIds.map((id) => (
+            <Badge key={id} variant="outline" className="h-6 gap-1 pr-1 pl-1.5 font-normal">
+              <Plug className="size-3.5 text-muted-foreground" aria-hidden />
+              <span className="max-w-40 truncate">{sourceLabel(id)}</span>
+              <button
+                type="button"
+                data-testid={`automation-source-remove-${id}`}
+                aria-label={`Remove ${sourceLabel(id)}`}
+                className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={() => setSourceIds((cur) => cur.filter((x) => x !== id))}
+              >
+                <X className="size-3" aria-hidden />
+              </button>
+            </Badge>
+          ))}
+          {sources.length > sourceIds.length ? (
+            <Popover open={sourcesOpen} onOpenChange={setSourcesOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  data-testid="automation-add-source"
+                  variant="outline"
+                  size="sm"
+                  className="h-6"
+                >
+                  <Plus className="size-3.5" aria-hidden /> Add source
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80 p-0" align="start">
+                <Command>
+                  <CommandInput placeholder="Search sources…" />
+                  <CommandList>
+                    <CommandEmpty>No matches.</CommandEmpty>
+                    <CommandGroup>
+                      {sources
+                        .filter((c) => !sourceIds.includes(c.id))
+                        .map((c) => (
+                          <CommandItem
+                            key={c.id}
+                            value={c.toolkit}
+                            data-testid={`automation-source-${c.id}`}
+                            onSelect={() => {
+                              setSourceIds((cur) => [...cur, c.id])
+                              setSourcesOpen(false)
+                            }}
+                          >
+                            <Plug className="size-3.5 text-muted-foreground" aria-hidden />
+                            <span className="truncate">{c.toolkit}</span>
+                            <span className="ml-auto max-w-36 truncate text-2xs text-muted-foreground">
+                              {c.base_url ?? ""}
+                            </span>
+                          </CommandItem>
+                        ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+          ) : sources.length === 0 ? (
+            // Said plainly rather than hidden: a run with no source can still only read what is
+            // already in Derive, and that is the difference this field exists to explain.
+            <span className="text-muted-foreground text-xs">
+              No sources connected yet — add one under Settings → Sources.
+            </span>
+          ) : null}
+        </div>
       </Field>
 
       <Field

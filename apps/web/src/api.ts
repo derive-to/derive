@@ -228,6 +228,9 @@ export interface Automation {
   trigger: AutomationTrigger
   instruction: string
   refs: AutomationRef[]
+  /** Sources this automation may read from during a run. Ids of connections; the credential
+   *  itself is never here and is resolved server-side at call time. */
+  connection_ids: string[]
   enabled: boolean
   created_at: string
   /** When this automation's agent last polled the run claim endpoint (list responses
@@ -837,6 +840,8 @@ export const api = {
     instruction: string
     /** Bare strings are artifact shorthand; the server stores canonical selectors. */
     refs?: (string | AutomationRef)[]
+    /** Sources the run may read from. Each must be this workspace's and attachable by you. */
+    connectionIds?: string[]
   }): Promise<Automation & { agent_token?: string }> => f("/v1/automations", opts(input)).then(j),
   updateAutomation: (
     id: string,
@@ -845,6 +850,8 @@ export const api = {
       trigger?: AutomationTrigger
       instruction?: string
       refs?: (string | AutomationRef)[] | null
+      /** null or [] unbinds every source. */
+      connectionIds?: string[] | null
       enabled?: boolean
     },
   ): Promise<Automation> => f(`/v1/automations/${id}`, { ...opts(input), method: "PATCH" }).then(j),
@@ -1276,8 +1283,14 @@ export const api = {
     toolkit: string
     mcp_url: string
     mcp_secret?: string
-  }): Promise<Connection> {
+  }): Promise<Connection & { reason?: string }> {
     return f("/v1/connections", opts(input)).then(j)
+  },
+  /** Begin the sign-in for a source that is waiting on authorization. Returns the URL to send the
+   *  person to — a POST that hands back a URL rather than redirecting, so the caller keeps control
+   *  of the navigation and can show its own "opening…" state. */
+  authorizeMcp(id: string): Promise<{ authorize_url: string }> {
+    return f(`/v1/connections/${id}/authorize`, opts({})).then(j)
   },
   async revokeConnection(id: string): Promise<void> {
     const r = await f(`/v1/connections/${id}`, { credentials: "include", method: "DELETE" })

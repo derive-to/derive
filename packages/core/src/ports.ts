@@ -1404,6 +1404,8 @@ export interface AgentStore {
       trigger?: string
       instruction?: string
       refs?: string | null
+      /** JSON array of connection ids this automation may spend; null clears them all. */
+      connection_ids?: string | null
       enabled?: 0 | 1
     },
   ): Promise<AutomationRecord | null>

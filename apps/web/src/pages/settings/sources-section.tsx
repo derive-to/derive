@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { api, type Connection } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -28,6 +28,20 @@ export function SourcesSection() {
   const qc = useQueryClient()
   const { data: connections, isPending, isError, refetch } = useQuery(connectionsQuery())
   const reload = () => qc.invalidateQueries({ queryKey: connectionsQuery().queryKey })
+  const [justConnected, setJustConnected] = useState(false)
+
+  // ?connected=1 lands here fresh back from a provider's consent screen. The cached connections
+  // query predates the callback that flipped the row active, so consume + strip the param (the
+  // same one-shot idiom as billing's ?checkout=success) and refetch.
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (url.searchParams.get("connected") === "1") {
+      url.searchParams.delete("connected")
+      window.history.replaceState(null, "", url)
+      setJustConnected(true)
+      void qc.invalidateQueries({ queryKey: connectionsQuery().queryKey })
+    }
+  }, [qc])
   // MCP only, to match what this screen can actually add and explain. A GitHub App or Slack row
   // listed here has its own setup flow elsewhere, no server URL to show, and a `scopes_label`
   // that is an account name — which the row below would caption as "· token acme-corp".
@@ -45,6 +59,14 @@ export function SourcesSection() {
         </>
       }
     >
+      {justConnected ? (
+        <StatusPanel
+          tone="success"
+          title="Source connected"
+          description="You signed in, and its tools were recorded. Bind it to an automation to let a run read from it."
+        />
+      ) : null}
+
       <AddSource onAdded={reload} />
 
       {isPending ? (
@@ -88,18 +110,32 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
   const [error, setError] = useState<string | null>(null)
 
   const connect = useApiMutation({
-    mutationFn: () =>
-      api.connectMcp({
+    mutationFn: async () => {
+      const conn = await api.connectMcp({
         toolkit: name.trim(),
         mcp_url: url.trim(),
         ...(secret.trim() ? { mcp_secret: secret.trim() } : {}),
-      }),
-    onSuccess: () => {
+      })
+      // PENDING MEANS "NEEDS SIGN-IN". It is the only way an MCP row is stored unusable: every
+      // other failure is refused at the door with the reason, so no row exists to be ambiguous.
+      //
+      // Sending them straight to the provider is what "Connect" does everywhere else on the web,
+      // and it is the whole flow for a server like Stripe that has no pasteable key worth using.
+      // If this leg fails the row is still there with its own Sign in button, so an abandoned or
+      // broken redirect costs a click, not the connection.
+      if (conn.status === "pending") {
+        const { authorize_url } = await api.authorizeMcp(conn.id)
+        return { conn, authorize_url }
+      }
+      return { conn, authorize_url: null }
+    },
+    onSuccess: ({ authorize_url }) => {
       setName("")
       setUrl("")
       setSecret("")
       setError(null)
       onAdded()
+      if (authorize_url) window.location.href = authorize_url
     },
     // The server's own words. "That MCP server did not answer — if it requires authentication,
     // pass a token" is a better message than anything this component could invent, and it is the
@@ -149,7 +185,10 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
       </div>
       <div className="space-y-1.5">
         <label htmlFor="source-secret" className="text-sm font-medium">
-          Token <span className="text-muted-foreground font-normal">(if the server needs one)</span>
+          Token{" "}
+          <span className="text-muted-foreground font-normal">
+            (optional — most servers sign you in instead)
+          </span>
         </label>
         <Input
           id="source-secret"
@@ -160,8 +199,9 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
           onChange={(e) => setSecret(e.target.value)}
         />
         <p className="text-muted-foreground text-xs">
-          Encrypted, spent on the server, and never shown again — you will only ever see its last
-          four characters. Paste the narrowest token the server will accept.
+          Leave this empty unless the server has no sign-in. If it asks you to authorize, Connect
+          takes you there. A token you do paste is encrypted, spent on the server, and never shown
+          again — you will only ever see its last four characters.
         </p>
       </div>
       {error ? (
@@ -182,10 +222,22 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
 
 function SourceRow({ conn, onRevoked }: { conn: Connection; onRevoked: () => void }) {
   const [confirming, setConfirming] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const revoke = useApiMutation({
     mutationFn: () => api.revokeConnection(conn.id),
     onSuccess: onRevoked,
   })
+  // The durable way back into a sign-in: a flow abandoned at the consent screen, a redirect that
+  // never came back, or a grant the provider later revoked all land the row here.
+  const signIn = useApiMutation({
+    mutationFn: () => api.authorizeMcp(conn.id),
+    onSuccess: ({ authorize_url }) => {
+      window.location.href = authorize_url
+    },
+    // A server that does not do OAuth says so here, in its own words, rather than looping.
+    onError: (e: Error) => setError(e.message),
+  })
+  const needsSignIn = conn.status === "pending"
 
   return (
     <div className="flex items-center justify-between gap-4 py-3" data-testid="source-row">
@@ -195,15 +247,37 @@ function SourceRow({ conn, onRevoked }: { conn: Connection; onRevoked: () => voi
           {conn.kind === "mcp" ? <Badge variant="secondary">MCP</Badge> : null}
           {conn.status === "active" ? (
             <Badge variant="outline">Connected</Badge>
+          ) : needsSignIn ? (
+            <Badge variant="outline">Needs sign-in</Badge>
           ) : (
             <Badge variant="outline">{conn.status}</Badge>
           )}
         </div>
         <p className="text-muted-foreground truncate text-xs">
-          {conn.base_url ?? "—"}
-          {conn.scopes_label ? ` · token ${conn.scopes_label}` : ""}
+          {needsSignIn
+            ? "Sign in with this server to finish connecting. Nothing can read from it until you do."
+            : (conn.base_url ?? "—")}
+          {!needsSignIn && conn.scopes_label ? ` · token ${conn.scopes_label}` : ""}
         </p>
+        {error ? (
+          <p className="text-destructive text-xs" data-testid={`source-signin-error-${conn.id}`}>
+            {error}
+          </p>
+        ) : null}
       </div>
+      {needsSignIn ? (
+        <Button
+          size="sm"
+          data-testid={`source-signin-${conn.id}`}
+          disabled={signIn.isPending}
+          onClick={() => {
+            setError(null)
+            signIn.mutate()
+          }}
+        >
+          {signIn.isPending ? "Opening…" : "Sign in"}
+        </Button>
+      ) : null}
       <Button
         variant="ghost"
         size="sm"

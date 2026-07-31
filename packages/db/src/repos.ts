@@ -3045,6 +3045,8 @@ export function makeRepos(db: SqliteDb) {
       trigger?: string
       instruction?: string
       refs?: string | null
+      /** JSON array of connection ids this automation may spend; null clears them all. */
+      connection_ids?: string | null
       enabled?: 0 | 1
     },
   ): Promise<AutomationRecord | null> => {
@@ -3053,6 +3055,7 @@ export function makeRepos(db: SqliteDb) {
     if (fields.trigger !== undefined) set.trigger = fields.trigger
     if (fields.instruction !== undefined) set.instruction = fields.instruction
     if (fields.refs !== undefined) set.refs = fields.refs
+    if (fields.connection_ids !== undefined) set.connection_ids = fields.connection_ids
     if (fields.enabled !== undefined) set.enabled = fields.enabled
     if (Object.keys(set).length === 0) return getAutomation(id)
     return (
