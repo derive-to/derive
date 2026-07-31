@@ -62,34 +62,43 @@ add one with the first substantial screen and port those cases into it.
 - **The native tab bar.** It needs a device to get right, and the mechanism that keeps a
   tab switch from reading as a page load (driving the SPA's client-side router rather
   than reloading the web view) is something to try rather than reason about.
-- **The session hand-off** (half of auth is done; see below).
 - **Push, deep-link association files, the share extension.** All need an Apple Developer
   account and EAS credentials.
 
-## Sign-in: what works and what is missing
+## Sign-in
 
 Google refuses OAuth from an embedded web view (`disallowed_useragent`), and Derive has
 Google sign-in enabled in production, so a "Continue with Google" tap inside the web view
-would be a dead end. `src/auth.ts` fixes that half: a sign-in navigation is recognised and
-handed to a **real browser** through `WebBrowser.openAuthSessionAsync`, which Google
-accepts, and which closes itself when it reaches `derive://auth-callback`.
+would be a dead end. Do **not** "fix" that by spoofing the web view's user agent: the
+policy protects the person signing in, and defeating it violates Google's terms.
 
-Do **not** "fix" this by spoofing the web view's user agent. The policy exists to protect
-the person signing in, and defeating it violates Google's terms.
+The flow, end to end:
 
-**The remaining half is the session hand-off.** The browser that completes the flow has
-its own cookie jar, so the session lands there and not in the web view's. On iOS these
-are genuinely separate stores (`ASWebAuthenticationSession` shares with Safari, the web
-view uses `NSHTTPCookieStorage`), so no client-side trick bridges them. The fix is a
-small server endpoint:
+1. A sign-in navigation is recognised (`isAuthNavigation`) and never loads in the web view.
+2. The app generates a **nonce** and opens `/login?native=<nonce>` in a **real browser**
+   (`openAuthSessionAsync`), which Google accepts.
+3. The person signs in there by any method: Google, password, passkey, enterprise OIDC.
+4. The web app sees `?native=`, mints a **single-use token** for the session it just
+   created (Better Auth's `oneTimeToken` plugin), and bounces to
+   `derive://auth-callback?token=…&state=<nonce>`.
+5. The app checks the nonce is the one **it** generated, then injects a same-origin
+   `fetch` into the **web view** that spends the token. Because the web view makes that
+   request, the `Set-Cookie` lands in the jar that needs it.
 
-1. When the flow starts from the app, the OAuth callback redirects to
-   `derive://auth-callback?token=<one-time>`.
-2. The app navigates the **web view** to `/api/auth/session-from-token?token=…`.
-3. That request comes from the web view, so its `Set-Cookie` lands in the right jar.
+**Why the nonce matters.** Any web page can fire a deep link. Without binding the round
+trip to a value this app generated, a crafted `derive://auth-callback?token=…` would sign
+the app into whoever minted that token. `tokenFromCallback` refuses a callback whose state
+does not match, and that refusal is covered by tests.
 
-The token must be single-use, short-lived, and bound to the session it represents. That
-endpoint is deliberately **not** written yet: it is security-sensitive, it belongs in
-`apps/api` with tests, and it should be reviewed rather than guessed at. Until it exists,
-sign-in opens correctly in a browser and then does not carry back — a known gap, not a
-bug to hunt.
+**Why single-use matters.** The token rides in a URL for a moment. Verify goes through
+`consumeVerificationValue`, so a replayed token finds nothing, and `storeToken: "hashed"`
+means a leaked verification row is not a usable credential. Both are pinned by
+`apps/api/test/native-handoff.test.ts` — if the plugin is ever swapped for a stateless
+signed token, those tests are what should stop it.
+
+**Residual risk, stated plainly.** A custom scheme is not exclusively ours: another app on
+the device registering `derive://` could intercept the callback and spend the token. It is
+single-use and expires in two minutes, which bounds the window, but the real fix is an
+https callback on a verified associated domain. That needs the app-association files to be
+served, which is Phase 4 and does not exist yet. Until then this carries the same exposure
+every custom-scheme OAuth callback has.

@@ -2,8 +2,15 @@ import * as WebBrowser from "expo-web-browser"
 import { useEffect, useRef, useState } from "react"
 import { ActivityIndicator, Pressable, StyleSheet, Text, useColorScheme, View } from "react-native"
 import { WebView, type WebViewNavigation } from "react-native-webview"
-import { AUTH_RETURN_URL, isAuthNavigation } from "./auth"
-import { isInternal } from "./config"
+import {
+  AUTH_RETURN_URL,
+  claimScript,
+  isAuthNavigation,
+  newAuthState,
+  signInUrl,
+  tokenFromCallback,
+} from "./auth"
+import { isInternal, WEB_ORIGIN } from "./config"
 import { tokens } from "./theme"
 
 // How long to wait for first paint before calling the load failed. Mirrors the web
@@ -33,6 +40,31 @@ export function WebStage({ uri, onNavigate }: { uri: string; onNavigate?: (url: 
     return () => clearTimeout(timer)
   }, [])
 
+  /**
+   * Sign-in, start to finish.
+   *
+   * Runs in a REAL browser because Google refuses OAuth from an embedded web view. The
+   * nonce lives only for this attempt and never leaves the closure: the callback must
+   * echo it back or the token is ignored, which is what stops a crafted deep link from
+   * signing the app into someone else's account.
+   *
+   * `openAuthSessionAsync` hands the callback url straight back, so the token arrives
+   * here rather than through the app's general deep-link listener — one flow, one place.
+   */
+  const startSignIn = async () => {
+    const state = newAuthState()
+    const result = await WebBrowser.openAuthSessionAsync(
+      signInUrl(WEB_ORIGIN, state),
+      AUTH_RETURN_URL,
+    )
+    if (result.type !== "success") return // dismissed or cancelled: nothing to clean up
+    const token = tokenFromCallback(result.url, state)
+    if (!token) return // not our flow, or a mismatched nonce
+    // Spend it from INSIDE the web view, so the Set-Cookie lands in this jar. The script
+    // navigates on success; a failure posts a message rather than leaving a blank frame.
+    ref.current?.injectJavaScript(claimScript(token, WEB_ORIGIN))
+  }
+
   // Which navigations the web view may follow. Fires for top-level navigations only, so
   // an artifact's own sandboxed iframe is unaffected. Three outcomes, in order:
   //
@@ -44,14 +76,7 @@ export function WebStage({ uri, onNavigate }: { uri: string; onNavigate?: (url: 
   const onShouldStart = (req: WebViewNavigation) => {
     const own = isInternal(req.url)
     if (isAuthNavigation(req.url, own)) {
-      void WebBrowser.openAuthSessionAsync(req.url, AUTH_RETURN_URL).then((result) => {
-        // A completed flow leaves the session in the BROWSER's cookie jar, not this web
-        // view's, so a reload alone does not sign the person in. Reloading anyway is the
-        // right move: it costs nothing and it picks the session up the moment the
-        // token-exchange hand-off lands. Until then this is a known gap, not a bug to
-        // hunt (see README, "auth handoff").
-        if (result.type === "success") setAttempt((n) => n + 1)
-      })
+      void startSignIn()
       return false
     }
     if (own) return true

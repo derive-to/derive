@@ -4,7 +4,7 @@ import { generateUsername } from "@derive/core"
 import { type BetterAuthOptions, betterAuth } from "better-auth"
 import { APIError, createAuthMiddleware } from "better-auth/api"
 import { getMigrations } from "better-auth/db/migration"
-import { genericOAuth, jwt, twoFactor } from "better-auth/plugins"
+import { genericOAuth, jwt, oneTimeToken, twoFactor } from "better-auth/plugins"
 import { isBreachedPassword, sha256 } from "./lib/crypto"
 import { log } from "./log"
 
@@ -435,6 +435,24 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
       // migrateAuth). A user enables it in Settings → Security; when on, sign-in becomes a
       // two-step flow (password → code) the client handles via the twoFactorRedirect result.
       twoFactor({ issuer: "Derive" }),
+      // Hands a signed-in session from one browser to another on the same device — the
+      // native shell's sign-in, and the only mechanism that makes it possible.
+      //
+      // Google refuses OAuth from an embedded web view (`disallowed_useragent`), so the
+      // shell runs sign-in in a REAL browser. That browser has its own cookie jar, so
+      // the session lands there and not in the app's web view. This closes the gap: the
+      // real browser mints a token for its fresh session, hands it to the app through
+      // the `derive://` callback, and the WEB VIEW spends it — so the Set-Cookie lands
+      // in the jar that actually needs it. Works for every sign-in method (Google,
+      // password, passkey, enterprise OIDC), not just the one that forced the design.
+      //
+      // Safe because the plugin makes it single-use: verify goes through
+      // consumeVerificationValue, so a replayed token finds nothing. `storeToken:
+      // "hashed"` means a leaked verification row is not a usable credential, and two
+      // minutes is far more than the sub-second hop needs. The app additionally binds
+      // the round trip to a nonce it generated, so a crafted deep link cannot inject
+      // someone else's token (see apps/mobile/src/auth.ts).
+      oneTimeToken({ expiresIn: 2, storeToken: "hashed" }),
       // oauthProvider signs id tokens + serves JWKS through the jwt plugin.
       //
       // `disableSettingJwtHeader` turns off the plugin's /get-session after-hook, which

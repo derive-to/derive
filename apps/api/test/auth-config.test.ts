@@ -55,15 +55,31 @@ describe("auth-config: optional providers", () => {
     process.env.OIDC_PROVIDER_ID = "okta"
     const ids = pluginIds(makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd"))
     expect(ids).toContain("oauth-provider")
-    // genericOAuth + passkey (same-origin) + two-factor + jwt + oauth-provider
-    expect(ids).toHaveLength(5)
+    // The whole set rather than a count: naming them says WHICH plugin arrived or went
+    // missing when this breaks, where a bare length only says the number moved.
+    expect([...ids].sort()).toEqual([
+      "generic-oauth",
+      "jwt",
+      "oauth-provider",
+      "one-time-token",
+      "passkey",
+      "two-factor",
+    ])
   })
 
   it("omits the SSO plugin when the OIDC_* trio is incomplete (the OAuth server stays)", () => {
     process.env.OIDC_ISSUER = "https://issuer.example.com/"
     // no client id/secret
     const ids = pluginIds(makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd"))
-    expect([...ids].sort()).toEqual(["jwt", "oauth-provider", "passkey", "two-factor"])
+    expect([...ids].sort()).toEqual([
+      "jwt",
+      "oauth-provider",
+      // The native shell's session hand-off. Unconditional on purpose: it is how the app
+      // signs in at all, so it must not hinge on which optional providers are configured.
+      "one-time-token",
+      "passkey",
+      "two-factor",
+    ])
   })
 
   it("applies SameSite=None;Secure cookies when DERIVE_CROSS_SITE=true", () => {

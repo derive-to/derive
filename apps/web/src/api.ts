@@ -574,6 +574,16 @@ export const api = {
     const data = await f("/api/auth/sign-in/social", opts({ provider, callbackURL })).then(authJson)
     if (data?.url) window.location.href = data.url
   },
+  // Mint a one-time token that hands THIS session to another browser on the same device.
+  //
+  // Only the native shell uses it. Google refuses OAuth from an embedded web view, so the
+  // app runs sign-in in a real browser; that browser has its own cookie jar, so a session
+  // signed in there would be stranded. The app carries this token across and its web view
+  // spends it, which puts the Set-Cookie in the jar that actually needs it.
+  //
+  // Single-use and short-lived server-side — see the oneTimeToken plugin in auth-config.
+  nativeHandoffToken: (): Promise<{ token: string }> =>
+    f("/api/auth/one-time-token/generate", opts()).then(authJson),
   // Enterprise SSO (generic OIDC) sign-in via Better Auth's genericOAuth plugin — same
   // navigate-to-authorize-URL shape as social; providerId comes from capabilities().oidc.
   async ssoSignIn(providerId: string, callbackURL = "/"): Promise<void> {
