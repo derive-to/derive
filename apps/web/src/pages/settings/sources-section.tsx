@@ -28,7 +28,10 @@ export function SourcesSection() {
   const qc = useQueryClient()
   const { data: connections, isPending, isError, refetch } = useQuery(connectionsQuery())
   const reload = () => qc.invalidateQueries({ queryKey: connectionsQuery().queryKey })
-  const sources = (connections ?? []).filter((c) => c.status !== "revoked")
+  // MCP only, to match what this screen can actually add and explain. A GitHub App or Slack row
+  // listed here has its own setup flow elsewhere, no server URL to show, and a `scopes_label`
+  // that is an account name — which the row below would caption as "· token acme-corp".
+  const sources = (connections ?? []).filter((c) => c.status !== "revoked" && c.kind === "mcp")
 
   return (
     <SettingsSection

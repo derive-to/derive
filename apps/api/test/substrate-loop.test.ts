@@ -1191,7 +1191,16 @@ describe("what the run READS to learn the document's format", () => {
 // ledger was not told, so the only account was "the agent produced nothing", which points at the
 // model instead of at the dead source. That misdirection cost a real investigation.
 describe("loop substrate: a source that contributed nothing is explained", () => {
-  const quiet = [{ connection_id: "c1", toolkit: "weather", reason: "unreachable" }]
+  // `why` is resolved server-side and rides down with the claim, so neither executor keeps its
+  // own copy of the wording.
+  const quiet = [
+    {
+      connection_id: "c1",
+      toolkit: "weather",
+      reason: "unreachable",
+      why: "the server could not be reached",
+    },
+  ]
 
   it("tells the MODEL which source went quiet and why", async () => {
     const api = stubApi({ run: { ...baseRun, sources_quiet: quiet } })

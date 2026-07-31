@@ -110,7 +110,7 @@ interface ClaimedRun {
    *  The model was not told, and neither was the ledger: the run just failed to write and the
    *  only account of it was "the agent produced nothing", which points at the wrong thing
    *  entirely. The CLI runner has read this since it existed; this lane now does too. */
-  sources_quiet?: { connection_id: string; toolkit: string; reason: string }[]
+  sources_quiet?: { connection_id: string; toolkit: string; reason: string; why?: string }[]
   payloads?: unknown[]
   flags?: AutonomyFlags
   meta?: string | null
@@ -198,21 +198,12 @@ const buildPrompt = (run: ClaimedRun, targetId: string | undefined): string => {
     lines.push(
       `These bound sources gave you NOTHING this run, so do not wait for them and do not guess ` +
         `what they would have returned — say what is missing and why:\n` +
-        run.sources_quiet.map((q) => `- ${q.toolkit}: ${quietWhy(q.reason)}`).join("\n"),
+        // `why` comes down with the claim: the server resolves it once, so neither executor
+        // keeps a copy of the wording to drift out of step with the other.
+        run.sources_quiet.map((q) => `- ${q.toolkit}: ${q.why ?? q.reason}`).join("\n"),
     )
   return lines.join("\n\n")
 }
-
-/** The same wording the CLI runner uses, so a human reads one explanation whichever lane ran. */
-const quietWhy = (reason: string): string =>
-  ({
-    unreachable: "the server could not be reached",
-    pin_mismatch:
-      "the server's tool descriptions CHANGED since a human approved them, so it is being " +
-      "ignored until someone re-approves it",
-    unpinned: "the connection was never successfully approved",
-    no_tools: "it exposed no tools",
-  })[reason] ?? reason
 
 /** Tool calls go through the WORK ITEM'S OWN endpoint: least-privilege is re-checked
  *  server-side, exactly as it does for the container

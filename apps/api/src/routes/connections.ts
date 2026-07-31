@@ -1,4 +1,4 @@
-import { McpBroker } from "@derive/broker"
+import { isAllowedMcpUrl, McpBroker } from "@derive/broker"
 import { type ConnectionRecord, newId } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
@@ -165,8 +165,22 @@ export const connectionRoutes = (ctx: AppContext) => {
     // Checked HERE, not left to McpBroker.connect, which throws — the same rule the secret
     // branch applies to base_url below, and a pasted URL is user input, so it earns a 400
     // rather than a 500.
-    if (b.mcp_url && !/^(https:\/\/|http:\/\/localhost[:/])/i.test(b.mcp_url))
+    //
+    // PARSE IT, never prefix-match it. `http://localhost:8080@evil.example/mcp` passes any
+    // `^http://localhost` test and resolves to evil.example: `localhost:8080` is USERINFO. That
+    // would have Derive POST to an attacker's host, over cleartext, carrying the pasted
+    // `Authorization: Bearer`. `isAllowedMcpUrl` reads `u.hostname`, which userinfo cannot
+    // spoof — and it is the BROKER's predicate, so the route, the broker and the UI share one
+    // rule instead of three prefix tests that drifted apart.
+    if (b.mcp_url && !isAllowedMcpUrl(b.mcp_url))
       return fail(c, 400, "mcp_url must be https (or http://localhost for dev)")
+    // The same 502 the `secret` branch raises, and for a worse reason if skipped: the token
+    // authenticates THIS connect (it is still in memory) and is then dropped, so the row stores
+    // no credential, the UI says "Connected", and every later run gets a 401 the ledger reports
+    // as "the server could not be reached". A source that is permanently dead and claims to be
+    // healthy is the worst outcome available.
+    if (b.mcp_url && b.mcp_secret && !deps.encryptionKey)
+      return fail(c, 502, "storing an MCP token needs an encryption key")
     if (b.kind === "secret") {
       if (!b.secret) return fail(c, 400, "a secret connection needs `secret`")
       // base_url is OPTIONAL. Credentials are delivered into runs, so nothing confines a

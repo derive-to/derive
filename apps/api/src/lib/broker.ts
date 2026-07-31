@@ -24,7 +24,33 @@ export interface SourceQuiet {
   /** unpinned | unreachable | pin_mismatch from the MCP broker; `no_tools` when the broker
    *  offers no explanation (a plan broker with nothing connected, say). */
   reason: string
+  /** The same thing in a sentence, resolved HERE so no executor has to keep its own copy.
+   *
+   *  Both lanes render this to a model and, on a failure, to the ledger a person reads. The
+   *  wording lived in two places — apps/api's loop and packages/cli's runner — kept in step by a
+   *  comment saying they matched, which is not a mechanism. The CLI is deliberately
+   *  dependency-free (it cannot import @derive/core; `decideWrite` is ported into it for the same
+   *  reason), so a shared module was never available to them. Sending the sentence with the
+   *  reason costs nothing and leaves exactly one copy, here, next to the code that decides it. */
+  why: string
 }
+
+/** Why a bound source contributed nothing, in words a person and a model both read. Keyed by the
+ *  machine reason so an unknown one still degrades to something legible rather than blank. */
+const QUIET_WHY: Record<string, string> = {
+  unreachable: "the server could not be reached",
+  pin_mismatch:
+    "the server's tool descriptions CHANGED since a human approved them, so it is being " +
+    "ignored until someone re-approves it",
+  unpinned: "the connection was never successfully approved",
+  no_tools: "it exposed no tools",
+  // Not the server's fault, and the wording must not imply it is. This is the case that spent a
+  // release blaming healthy servers for a bug on our side.
+  broker_error:
+    "Derive failed before it could ask the server — this is a fault on our side, not the " +
+    "server's, and it needs a bug report rather than a reconnect",
+}
+export const quietWhy = (reason: string): string => QUIET_WHY[reason] ?? reason
 
 export interface RunTool {
   def: BrokerToolDef
@@ -121,12 +147,10 @@ export const toolsForRun = async (
       // Addressed by ref AND connection: the ref routes, the id says whose credential.
       const target = authTarget(cn.broker_ref, cn.id)
       defs = await via.toolsFor([target]).catch(() => [])
-      if (defs.length === 0)
-        quiet?.push({
-          connection_id: cn.id,
-          toolkit: cn.toolkit,
-          reason: quietReason(via, target) ?? "no_tools",
-        })
+      if (defs.length === 0) {
+        const reason = quietReason(via, target) ?? "no_tools"
+        quiet?.push({ connection_id: cn.id, toolkit: cn.toolkit, reason, why: quietWhy(reason) })
+      }
     }
     for (const def of defs) out.push({ def, ...entry })
   }
@@ -321,7 +345,9 @@ export const parseConnectionIds = (raw: string | null): string[] => {
  *  should return. A shared shape so the two lanes can't drift on what a call means. */
 export type ToolCallOutcome =
   | { ok: true; result: unknown }
-  | { ok: false; status: 403 | 404 | 502; message: string }
+  // 409 is the AMBIGUOUS case: the name matched more than one bound source, which is a conflict
+  // to resolve rather than a permission to deny.
+  | { ok: false; status: 403 | 404 | 409 | 502; message: string }
 
 /**
  * Execute one tool call against a lane's already-resolved least-privilege list. Both proxies
@@ -350,8 +376,21 @@ export const callTool = async (opts: {
   route?: (ref: string) => ToolBroker
 }): Promise<ToolCallOutcome> => {
   const { meta, broker, orgId, encryptionKey, allowed, tool, args, ref } = opts
-  const match = allowed.find((t) => t.def.name === tool && (!ref || t.ref === ref))
+  const matches = allowed.filter((t) => t.def.name === tool && (!ref || t.ref === ref))
+  const match = matches[0]
   if (!match) return { ok: false, status: 403, message: `tool not allowed for ${opts.subject}` }
+  // AMBIGUOUS NAMES MUST NOT RESOLVE TO WHICHEVER CAME FIRST. A tool's name carries a namespace
+  // derived from its server's host, and `safeHost` folds every non-alphanumeric run to `_`, so
+  // `sub.example.com` and `sub-example.com` — two unrelated registrable domains — produce the
+  // same prefix. Taking the first match would run one server's tool against ANOTHER server's ref
+  // and credential, sending the caller's arguments somewhere they were never meant to go. There
+  // is no safe way to guess which was meant, so refuse and say so.
+  if (matches.length > 1)
+    return {
+      ok: false,
+      status: 409,
+      message: `"${tool}" is ambiguous for ${opts.subject}: ${matches.length} bound sources expose that name. Disconnect one, or pass \`ref\` to name the source.`,
+    }
   try {
     if (isDirect(match.kind)) {
       if (!encryptionKey)

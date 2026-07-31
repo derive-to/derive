@@ -161,7 +161,16 @@ describe("MCP as a source: connect, list, call", () => {
       quiet,
     )
     expect(tools).toHaveLength(0)
-    expect(quiet).toEqual([{ connection_id: id, toolkit: "quiet-docs", reason: "pin_mismatch" }])
+    // `why` is resolved here, once, and rides down with the claim — so neither the in-process
+    // loop nor the CLI runner keeps its own copy of this sentence to drift out of step.
+    expect(quiet).toEqual([
+      {
+        connection_id: id,
+        toolkit: "quiet-docs",
+        reason: "pin_mismatch",
+        why: expect.stringContaining("CHANGED since a human approved them"),
+      },
+    ])
   })
 
   it("a run bound to an MCP source can never live-publish", async () => {

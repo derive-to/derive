@@ -106,6 +106,41 @@ const MAX_TOOLS = 200
  */
 export type McpAuthResolver = (target: string) => Promise<string | undefined> | string | undefined
 
+/** Why a ref contributed nothing. `broker_error` is the one that is OURS, not the server's. */
+export type QuietReason = "unpinned" | "unreachable" | "pin_mismatch" | "broker_error"
+
+/**
+ * Did WE fail before the server ever got a chance to?
+ *
+ * A thrown TypeError (or anything that is not an Error at all) from the listing path is a defect
+ * in this code — a bad call, a missing global, a shape we did not expect — never a statement
+ * about the remote server. Recording it as "unreachable" is how the broker spent a release
+ * telling operators "that MCP server did not answer" about servers that were answering perfectly:
+ * the fetch was being invoked with the wrong `this` and threw before a packet left the isolate,
+ * and the message pointed at the one party who was not at fault. A network or HTTP failure is a
+ * plain Error, so the two are cheap to tell apart and expensive to confuse.
+ */
+const ourFault = (e: unknown): boolean => e instanceof TypeError || !(e instanceof Error)
+
+/**
+ * May Derive dial this URL? https anywhere, http only on the loopback host.
+ *
+ * PARSED, never prefix-matched. `http://localhost:8080@evil.example/mcp` satisfies any
+ * `^http://localhost` test and resolves to evil.example — `localhost:8080` is USERINFO — which
+ * would send the pasted `Authorization: Bearer` to an attacker's host in cleartext. `u.hostname`
+ * is the part userinfo cannot spoof. The API route applies the same predicate before storing, so
+ * a bad URL is a 400 rather than a throw; this is the backstop for every other caller.
+ */
+export const isAllowedMcpUrl = (raw: string): boolean => {
+  try {
+    const u = new URL(raw)
+    if (u.protocol === "https:") return true
+    return u.protocol === "http:" && (u.hostname === "localhost" || u.hostname === "127.0.0.1")
+  } catch {
+    return false
+  }
+}
+
 /**
  * Canonical JSON: object keys sorted at every depth, no incidental whitespace.
  *
@@ -203,7 +238,7 @@ export class McpBroker implements ToolBroker {
    * wants to tell an OUTAGE from an ATTACK reads this: both currently end as "no tools", and a
    * run that cannot say which one happened cannot explain itself to the human reading the ledger.
    */
-  readonly quiet = new Map<string, "unpinned" | "unreachable" | "pin_mismatch">()
+  readonly quiet = new Map<string, QuietReason>()
 
   /** Always a plain function, never the raw global — see `unbound`. */
   private readonly fetchImpl: typeof fetch
@@ -216,7 +251,11 @@ export class McpBroker implements ToolBroker {
   }
 
   /** Opaque per-credential ids, so a session key can be scoped to a credential without the
-   *  credential itself ever becoming a map key (keys get logged, iterated and dumped). */
+   *  credential itself ever becoming a map key (keys get logged, iterated and dumped).
+   *
+   *  Keyed by a DIGEST of the bearer, not the bearer. Keying by the plaintext kept every
+   *  decrypted token alive on this instance for the life of the request — which is precisely the
+   *  exposure the sentence above says it is avoiding, moved from the session map into this one. */
   private readonly credIds = new Map<string, number>()
 
   /** Sessions and negotiated versions are keyed by SERVER + CREDENTIAL, not by URL alone.
@@ -228,10 +267,11 @@ export class McpBroker implements ToolBroker {
    *  handing its session to the listing that follows, costing a handshake every time. */
   private sessionKey(url: string, bearer: string | undefined): string {
     if (!bearer) return `${url}|anon`
-    let id = this.credIds.get(bearer)
+    const fingerprint = shortHash(bearer)
+    let id = this.credIds.get(fingerprint)
     if (id === undefined) {
       id = this.credIds.size + 1
-      this.credIds.set(bearer, id)
+      this.credIds.set(fingerprint, id)
     }
     return `${url}|c${id}`
   }
@@ -340,7 +380,7 @@ export class McpBroker implements ToolBroker {
    */
   async connect(opts: { orgId: string; userId: string; toolkit: string }): Promise<ConnectResult> {
     const url = opts.toolkit.trim()
-    if (!/^https:\/\//i.test(url) && !/^http:\/\/localhost[:/]/i.test(url))
+    if (!isAllowedMcpUrl(url))
       throw new Error("an MCP server URL must be https (or http://localhost for development)")
     try {
       const tools = await this.listTools(url, url)
@@ -386,8 +426,8 @@ export class McpBroker implements ToolBroker {
       let tools: BrokerToolDef[]
       try {
         tools = await this.listTools(ref, parsed.url)
-      } catch {
-        this.quiet.set(ref, "unreachable")
+      } catch (e) {
+        this.quiet.set(ref, ourFault(e) ? "broker_error" : "unreachable")
         continue
       }
       if ((await pinTools(tools)) !== parsed.pin) {
@@ -397,7 +437,12 @@ export class McpBroker implements ToolBroker {
       // Namespace by host so two servers exposing `search` do not collide, and so the run's tool
       // list shows an operator WHERE each tool comes from.
       const host = safeHost(parsed.url)
-      for (const t of tools) out.push({ ...t, name: toolName(host, t.name) })
+      for (const t of tools) {
+        const name = toolName(host, t.name)
+        // Skipped, not truncated — see `toolName`. Offering a tool that can never be called is
+        // worse than not offering it.
+        if (name) out.push({ ...t, name })
+      }
     }
     return out
   }
@@ -447,7 +492,8 @@ const safeHost = (url: string): string => {
  * hash of the full host so two servers that share a prefix stay distinct.
  */
 const MAX_TOOL_NAME = 64
-const NAME_OK = /^[a-zA-Z0-9_-]{1,64}$/
+/** Built FROM the ceiling above, so the two cannot say different things. */
+const NAME_OK = new RegExp(`^[a-zA-Z0-9_-]{1,${MAX_TOOL_NAME}}$`)
 
 /** A short, stable discriminator for a namespace too long to keep whole. */
 const shortHash = (s: string): string => {
@@ -459,14 +505,28 @@ const shortHash = (s: string): string => {
   return h.toString(36).slice(0, 6)
 }
 
-export const toolName = (host: string, tool: string): string => {
-  // The tool half is inviolable. A server that publishes a name longer than the whole budget is
-  // beyond namespacing, so hand it back trimmed rather than emit something illegal.
-  const bare = tool.replace(/[^a-zA-Z0-9_-]+/g, "_")
-  if (bare.length >= MAX_TOOL_NAME) return bare.slice(0, MAX_TOOL_NAME)
-  const room = MAX_TOOL_NAME - bare.length - 1 // the joining underscore
+export const toolName = (host: string, tool: string): string | null => {
+  // NOT sanitized. Rewriting `get weather` to `get_weather` produces a name that cannot be
+  // handed back to the server, so every call returns "no such tool" — and two tools named `a.b`
+  // and `a b` would collapse onto each other. A name we cannot carry verbatim is a name we do
+  // not offer, exactly like one that is too long.
+  const bare = tool
+  // A name we cannot carry VERBATIM is one we do not offer. Too long, or holding a character the
+  // providers' pattern excludes, both end the same way: any repair produces a name that does not
+  // strip back to what the server published, so the model would hold a tool whose every call
+  // returns "no such tool". A tool that is absent is a fact the run can state; one that is
+  // present and permanently broken is not. If that empties a connection, `quiet` reports it as
+  // `no_tools`.
+  if (!isProviderLegalToolName(bare)) return null
+  // What is left for a namespace once the tool and its joining underscore are paid for. It can be
+  // zero or negative — a 64-character tool name spends the entire budget by itself — and both
+  // cases mean the name ships unprefixed rather than over the ceiling.
+  const room = MAX_TOOL_NAME - bare.length - 1
+  // The hashed form is `<head>_<6-char hash>`, i.e. exactly `room` characters when the head is
+  // `room - 7`. Below 7 there is no room for even an empty head plus the hash, so drop the
+  // namespace entirely instead of overflowing.
   const ns =
-    host.length <= room ? host : `${host.slice(0, Math.max(0, room - 7))}_${shortHash(host)}`
+    room >= host.length ? host : room >= 7 ? `${host.slice(0, room - 7)}_${shortHash(host)}` : ""
   return ns ? `${ns}_${bare}` : bare
 }
 

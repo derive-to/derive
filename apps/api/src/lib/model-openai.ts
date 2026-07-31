@@ -150,8 +150,9 @@ const flatten = (content: unknown): string => {
       if (typeof b === "string") return b
       const o = b as { type?: string; text?: string; content?: unknown }
       if (o.type === "text" && typeof o.text === "string") return o.text
-      // A tool RESULT block carries the payload the model needs to keep going; losing it would
-      // silently truncate the conversation rather than fail loudly.
+      // A properly-typed tool RESULT that carries no `tool_use_id` never reaches `asMessages`'
+      // fan-out, so it would otherwise be dropped here — losing the payload the model needs to
+      // keep going, silently, rather than failing loudly.
       if (o.type === "tool_result") return typeof o.content === "string" ? o.content : ""
       return ""
     })

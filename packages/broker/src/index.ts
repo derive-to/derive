@@ -7,7 +7,14 @@ import type { ToolBroker } from "./types"
 export { ComposioBroker } from "./composio"
 export { LocalBroker } from "./local"
 export type { McpAuthResolver } from "./mcp"
-export { encodeMcpRef, McpBroker, parseMcpRef, pinTools } from "./mcp"
+export {
+  encodeMcpRef,
+  isAllowedMcpUrl,
+  isProviderLegalToolName,
+  McpBroker,
+  parseMcpRef,
+  pinTools,
+} from "./mcp"
 export { RefusingBroker } from "./refusing"
 export type { BrokerConnection, BrokerToolDef, ConnectResult, ToolBroker } from "./types"
 

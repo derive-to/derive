@@ -15,6 +15,8 @@
 //   cloudflared tunnel --url http://localhost:8940 --protocol http2
 //   BASE=https://derive-pr-575.derive-to.workers.dev EMAIL=… PASSWORD=… \
 //   WEATHER=https://<tunnel>/mcp pnpm --filter @derive/api test:live hosted-preview
+
+import { isProviderLegalToolName } from "@derive/broker"
 import { describe, expect, it } from "vitest"
 import { loopSubstrate } from "../src/lib/substrate-loop"
 
@@ -138,7 +140,7 @@ describe("LIVE: a hosted run uses a bound MCP source on a deployment", () => {
     )
     if (!REAL_MODEL) {
       expect(offered, "the claim handed the run its source's tools").toHaveLength(1)
-      expect(offered[0]).toMatch(/^[a-zA-Z0-9_-]{1,64}$/)
+      expect(isProviderLegalToolName(offered[0] ?? "")).toBe(true)
       expect(offered[0]?.endsWith("get_current_weather")).toBe(true)
       expect(toolResult, "the model saw live data, not an error").toContain("temperature_c")
     }

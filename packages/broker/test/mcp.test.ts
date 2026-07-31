@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import { LocalBroker, refRouter } from "../src/index"
 import {
   encodeMcpRef,
+  isAllowedMcpUrl,
   isProviderLegalToolName,
   McpBroker,
   parseMcpRef,
@@ -456,15 +457,37 @@ describe("tool names are legal for a model provider", () => {
     for (const h of HOSTS)
       for (const t of TOOLS) {
         const name = toolName(h, t)
-        expect(isProviderLegalToolName(name), `${h} + ${t} -> ${name}`).toBe(true)
+        expect(name, `${h} + ${t}`).not.toBeNull()
+        expect(isProviderLegalToolName(name ?? ""), `${h} + ${t} -> ${name}`).toBe(true)
       }
   })
 
+  it("a tool whose name is not already legal is refused, not rewritten", () => {
+    // Rewriting `get weather` to `get_weather` yields a name that cannot be handed back to the
+    // server, so every call returns "no such tool" — and `a.b` and `a b` would collapse onto one
+    // another. Refusing is the only lossless answer.
+    expect(toolName("mcp_example_com", "get weather")).toBeNull()
+    expect(toolName("mcp_example_com", "a.b")).toBeNull()
+    expect(toolName("mcp_example_com", "café")).toBeNull()
+    expect(toolName("mcp_example_com", "ok_name-1")).toBe("mcp_example_com_ok_name-1")
+  })
+
+  it("a tool whose OWN name is too long is refused, not truncated", () => {
+    // Truncating it would produce a name that does not strip back to what the server published,
+    // so the model would hold a tool whose every call returns "no such tool". `toolsFor` leaves
+    // it out instead, and the connection reports `no_tools` if that empties it.
+    const tooLong = `${"n".repeat(65)}`
+    expect(toolName("mcp_example_com", tooLong)).toBeNull()
+    // Exactly at the ceiling still works, with no room left for a namespace.
+    const exact = "e".repeat(64)
+    expect(toolName("mcp_example_com", exact)).toBe(exact)
+    expect(stripNamespace("mcp_example_com", exact)).toBe(exact)
+  })
+
   it("the real 74-character case is now legal, and keeps the tool readable", () => {
-    const name = toolName(
-      "illustration_push_conjunction_editing_trycloudflare_com",
-      "get_current_weather",
-    )
+    const name =
+      toolName("illustration_push_conjunction_editing_trycloudflare_com", "get_current_weather") ??
+      ""
     expect(name.length).toBeLessThanOrEqual(64)
     expect(name).not.toContain(".")
     expect(name.endsWith("get_current_weather")).toBe(true)
@@ -472,7 +495,24 @@ describe("tool names are legal for a model provider", () => {
 
   it("round-trips: whatever the model is offered strips back to what the server published", () => {
     for (const h of HOSTS)
-      for (const t of TOOLS) expect(stripNamespace(h, toolName(h, t)), `${h} + ${t}`).toBe(t)
+      for (const t of TOOLS) expect(stripNamespace(h, toolName(h, t) ?? ""), `${h} + ${t}`).toBe(t)
+  })
+
+  it("EVERY tool length from 1 to the ceiling is legal and round-trips", () => {
+    // The boundary is where this broke: at a 64-character tool name the budget is spent
+    // entirely, `room` goes negative, and prepending a namespace anyway produced a 72-character
+    // name — illegal, and only visible as a provider 400 mid-run. Sweep the whole range rather
+    // than sampling it.
+    for (const host of ["h", "mcp_example_com", "x".repeat(200)])
+      for (let n = 1; n <= 64; n++) {
+        const tool = "t".repeat(n)
+        const name = toolName(host, tool)
+        expect(name, `${host} + ${n} chars`).not.toBeNull()
+        expect(isProviderLegalToolName(name ?? ""), `len ${(name ?? "").length}: ${name}`).toBe(
+          true,
+        )
+        expect(stripNamespace(host, name ?? ""), `round-trip at ${n}`).toBe(tool)
+      }
   })
 
   it("two servers sharing a long prefix stay distinct", () => {
@@ -483,5 +523,51 @@ describe("tool names are legal for a model provider", () => {
 
   it("still accepts the old dotted name, so a claim in flight keeps working", () => {
     expect(stripNamespace("mcp_deepwiki_com", "mcp_deepwiki_com.ask_question")).toBe("ask_question")
+  })
+})
+
+// A DEFECT IN THIS CODE MUST NOT BE REPORTED AS THE SERVER BEING DOWN.
+//
+// The broker once invoked fetch with the wrong `this`, which throws a TypeError before a packet
+// leaves the isolate. Every listing recorded "unreachable", so operators were told "that MCP
+// server did not answer" about servers that were answering perfectly — and the message pointed at
+// the one party who was not at fault. A TypeError from the listing path is ours by construction.
+describe("a broker fault is not blamed on the server", () => {
+  const ref = () => encodeMcpRef("https://example.com/mcp", "s256-whatever")
+
+  it("a TypeError is recorded as broker_error, not unreachable", async () => {
+    const broker = new McpBroker((() => {
+      throw new TypeError("Illegal invocation: function called with incorrect `this` reference.")
+    }) as unknown as typeof fetch)
+    expect(await broker.toolsFor([ref()])).toEqual([])
+    expect(broker.quiet.get(ref())).toBe("broker_error")
+  })
+
+  it("an ordinary network failure is still the server's, and still says unreachable", async () => {
+    const broker = new McpBroker((() =>
+      Promise.reject(new Error("connection refused"))) as unknown as typeof fetch)
+    expect(await broker.toolsFor([ref()])).toEqual([])
+    expect(broker.quiet.get(ref())).toBe("unreachable")
+  })
+})
+
+// URL POLICY: parsed, never prefix-matched.
+describe("which URLs Derive will dial", () => {
+  it("accepts https anywhere and http only on loopback", () => {
+    expect(isAllowedMcpUrl("https://mcp.example.com/mcp")).toBe(true)
+    expect(isAllowedMcpUrl("http://localhost:8940/mcp")).toBe(true)
+    expect(isAllowedMcpUrl("http://127.0.0.1:8940/mcp")).toBe(true)
+    expect(isAllowedMcpUrl("http://example.com/mcp")).toBe(false)
+    expect(isAllowedMcpUrl("ftp://example.com")).toBe(false)
+    expect(isAllowedMcpUrl("not a url")).toBe(false)
+  })
+
+  it("USERINFO cannot smuggle a foreign host past the loopback rule", () => {
+    // `localhost:8080` here is a username and password — the host is evil.example. A
+    // `^http://localhost` prefix test accepts this, and Derive would then POST the pasted
+    // Authorization: Bearer to an attacker's server, in cleartext.
+    expect(isAllowedMcpUrl("http://localhost:8080@evil.example/mcp")).toBe(false)
+    expect(isAllowedMcpUrl("http://LOCALHOST:1@10.0.0.5/x")).toBe(false)
+    expect(isAllowedMcpUrl("http://localhost.evil.com/mcp")).toBe(false)
   })
 })

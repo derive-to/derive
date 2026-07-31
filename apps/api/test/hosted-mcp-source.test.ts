@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
+import { isProviderLegalToolName } from "@derive/broker"
 import { afterAll, describe, expect, it } from "vitest"
 import { RUN_TOKEN_TTL_MS, signWorkToken } from "../src/lib/run-token"
 import { loopSubstrate } from "../src/lib/substrate-loop"
@@ -152,7 +153,8 @@ describe("a hosted run can use a bound MCP source", () => {
     expect(offered[0]).toHaveLength(1)
     const name = offered[0]?.[0] ?? ""
     expect(name.endsWith("get_current_weather"), name).toBe(true)
-    expect(/^[a-zA-Z0-9_-]{1,64}$/.test(name), `illegal tool name: ${name}`).toBe(true)
+    // The predicate, not a copy of the pattern: the contract lives in one place.
+    expect(isProviderLegalToolName(name), `illegal tool name: ${name}`).toBe(true)
 
     // 2. The call went through the RUN'S OWN endpoint (least privilege is re-checked
     //    server-side), not straight out of the executor.
