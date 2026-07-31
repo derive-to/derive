@@ -130,6 +130,7 @@ describe("bundleFactsAdvisory (the silent drop, found by dogfooding)", () => {
     const a = bundleFactsAdvisory({ "index.html": `<h1>Home</h1>${block}`, "b.html": "<h1>B</h1>" })
     expect(a).toContain("index.html")
     expect(a).toContain("single-file")
+    expect(a).toContain("carries a derive-facts block") // one page: singular
     // It must NOT tell the author to embed a block — they just did, into a bundle.
     expect(a).not.toContain("embed a derive-facts block to add one")
   })
@@ -148,6 +149,10 @@ describe("bundleFactsAdvisory (the silent drop, found by dogfooding)", () => {
     // knew the HTML form would stay silent on exactly the pages a skill bundle is made of.
     const fenced = '# N\n\n```derive-facts checks\n{"pass":5}\n```\n'
     expect(bundleFactsAdvisory({ "notes.md": fenced })).toContain("notes.md")
+    // Two pages agree in number — this shipped reading "index.html, notes.md carries".
+    expect(bundleFactsAdvisory({ "a.html": block, "b.html": block })).toContain(
+      "carry a derive-facts block",
+    )
     expect(bundleFactsAdvisory({ "logo.png": block, "style.css": block })).toBeNull()
   })
 })

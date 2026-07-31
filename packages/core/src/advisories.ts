@@ -31,11 +31,11 @@ export const bundleFactsAdvisory = (files: Record<string, string>): string | nul
     })
     .map(([p]) => p)
   if (!carrying.length) return null
+  const named = `${carrying.slice(0, 3).join(", ")}${carrying.length > 3 ? ` and ${carrying.length - 3} more` : ""}`
   return (
-    `${carrying.slice(0, 3).join(", ")}${carrying.length > 3 ? ` and ${carrying.length - 3} more` : ""} ` +
-    "carries a derive-facts block, but facts are extracted from single-file HTML and markdown only — " +
-    "a bundle stores none, so nothing here is queryable. Publish the fact-bearing page as its own artifact " +
-    "to make it queryable."
+    `${named} ${carrying.length === 1 ? "carries" : "carry"} a derive-facts block, but facts are ` +
+    "extracted from single-file HTML and markdown only — a bundle stores none, so nothing here is " +
+    "queryable. Publish the fact-bearing page as its own artifact to make it queryable."
   )
 }
 
