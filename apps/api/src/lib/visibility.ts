@@ -9,8 +9,11 @@
 
 import type { ArtifactRecord, MetaStore } from "@derive/core"
 
-/** Ids per listArtifacts call. D1 binds each id as a parameter and caps a statement at
- *  100, so stay under it with room for the other bound values. */
+/** Ids per listArtifacts call when the store does not say otherwise. D1 binds each id as
+ *  a parameter and caps a statement at 100, so stay under it with room for the other
+ *  bound values. A store that CAN take more says so via `idsPerQuery` — Postgres binds an
+ *  array as one parameter, and splitting a 200-candidate search into three sequential
+ *  round trips to respect D1's limit cost ~160ms of pure wire time per deep search. */
 export const LIST_ID_CHUNK = 90
 
 export interface VisibilityOpts {
@@ -47,18 +50,23 @@ export interface VisibilityOpts {
  * restore it themselves.
  */
 export const visibleArtifacts = async (
-  meta: Pick<MetaStore, "listArtifacts">,
+  meta: Pick<MetaStore, "listArtifacts" | "idsPerQuery">,
   ids: string[],
   opts: VisibilityOpts,
 ): Promise<ArtifactRecord[]> => {
+  // Validate rather than trust: a wrapper that turns every port member into a method
+  // (see the port doc) hands back a function here, and an unchecked one made the chunk
+  // size NaN — which slices an EMPTY id list and reports "no matches" instead of failing.
+  const declared = await meta.idsPerQuery?.()
+  const chunk = typeof declared === "number" && declared > 0 ? declared : LIST_ID_CHUNK
   const visible: ArtifactRecord[] = []
-  for (let i = 0; i < ids.length; i += LIST_ID_CHUNK) {
+  for (let i = 0; i < ids.length; i += chunk) {
     const rows = await meta.listArtifacts({
       orgId: opts.orgId,
       viewerId: opts.viewerId,
       publicOnly: opts.publicOnly,
       excludeRemoved: true,
-      ids: ids.slice(i, i + LIST_ID_CHUNK),
+      ids: ids.slice(i, i + chunk),
     })
     visible.push(...rows)
   }

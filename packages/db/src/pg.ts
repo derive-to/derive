@@ -425,6 +425,13 @@ const mapOverviewRows = (
 }
 
 export class PgMetaStore implements MetaStore {
+  /** Postgres binds an id array as ONE parameter and caps a statement at 65535, so the
+   *  shared visibility gate does not need to split a candidate list the way D1 does. Well
+   *  under the cap, and comfortably above the deepest candidate cap the search uses (200). */
+  idsPerQuery() {
+    return 1000
+  }
+
   private constructor(
     private pool: Pool,
     private db: NodePgDatabase<typeof schema>,

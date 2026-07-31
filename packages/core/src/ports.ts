@@ -997,6 +997,27 @@ export interface CollectionStore {
    * Auth tables can be absent on a fresh self-host, and there the roster must still come
    * back rather than fail the page.
    */
+  /**
+   * How many ids this store will take in one `ids:` filter.
+   *
+   * The shared visibility gate chunks its candidate list to stay inside a dialect's
+   * parameter cap, and it had no way to ask — so it used the SMALLEST cap any driver has
+   * (D1 binds each id separately and caps a statement at 100). Postgres binds an array as
+   * ONE parameter and tops out at 65535, so it was splitting a 200-candidate search into
+   * three sequential round trips to respect a limit it does not have.
+   *
+   * Absent means "assume the conservative default" — so a driver that says nothing keeps
+   * exactly the old behaviour.
+   *
+   * A METHOD, not a plain property, and that is load-bearing. Wrappers around this port
+   * assume every member is an async method — the pg test store is a Proxy whose get trap
+   * returns a function for ANY key — so a number-valued property comes back as a function
+   * instead. That is not a type error anywhere; it made the chunk size NaN, `slice(0, NaN)`
+   * empty, and workspace search return "no matches" on Postgres only. Callers must still
+   * validate what they get back rather than trust the shape.
+   */
+  idsPerQuery?(): Promise<number> | number
+
   workspaceWithMembers?(orgId: string): Promise<{
     workspace: WorkspaceRecord | null
     members: MembershipRecord[]
