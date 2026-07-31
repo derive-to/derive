@@ -5,6 +5,7 @@ import { api } from "@/api"
 import { BlockedBanner } from "@/components/billing/blocked-banner"
 import { UpgradeDialog } from "@/components/billing/upgrade-dialog"
 import { Icon } from "@/components/icons"
+import { OpenInAppBar } from "@/components/shared/open-in-app-bar"
 import { Button } from "@/components/ui/button"
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -242,6 +243,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             className="min-h-0 min-w-0 overflow-hidden outline-none"
           >
             <BlockedBanner pathname={pathname} />
+            {/* Above the top bar, not over it: a Derive link tapped inside Slack on a
+                phone opens in Slack's own web view, where a universal link can't reach
+                the app, so this offers the hop on a custom scheme. Renders nothing
+                anywhere else (see components/shared/open-in-app-bar). */}
+            <OpenInAppBar />
             {/* Mobile navbar: the rail hides behind the drawer below sm, so the
                 sticky bar answers "where am I" (current-page label) and keeps
                 navigation + search reachable mid-scroll. Desktop has no top bar

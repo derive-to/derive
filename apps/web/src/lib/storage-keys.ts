@@ -40,4 +40,8 @@ export const STORAGE_KEYS = {
   // Dismissal of the home library's connect-your-agent card (see
   // pages/library/connect-nudge) — per-browser, one click, permanent.
   connectNudge: "derive.connect-nudge",
+  // Dismissal of the "Open in Derive" bar shown inside a host app's in-app browser
+  // (see components/shared/open-in-app-bar) — per-browser, one click, permanent:
+  // someone who waves it off is telling us they read Derive links right here.
+  openInAppBar: "derive.open-in-app",
 } as const

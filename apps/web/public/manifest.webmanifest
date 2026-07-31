@@ -1,0 +1,46 @@
+{
+  "id": "/",
+  "name": "Derive",
+  "short_name": "Derive",
+  "description": "Your team's library for the work you and your agents make. Publish it, share it anywhere with a link, and revise it together until it's right.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0b0d",
+  "theme_color": "#0a0b0d",
+  "categories": ["productivity", "business"],
+  "icons": [
+    {
+      "src": "/brand/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/icon-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "New artifact",
+      "short_name": "New",
+      "url": "/new",
+      "icons": [{ "src": "/brand/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Favorites",
+      "short_name": "Favorites",
+      "url": "/favorites",
+      "icons": [{ "src": "/brand/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}
