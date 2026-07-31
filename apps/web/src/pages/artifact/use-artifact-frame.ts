@@ -121,6 +121,12 @@ export function useArtifactFrame(p: {
 
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
+      // Only the artifact iframe's own window speaks this protocol. Without the
+      // source pin, ANY window that can post here — a nested iframe inside the
+      // artifact, a popup, the source editor's preview iframe (whose rendered
+      // markdown also carries the client script) — could inject selects, navigates,
+      // and deck state into the workbench.
+      if (!frame.current?.contentWindow || e.source !== frame.current.contentWindow) return
       const d = e.data
       if (!d) return
       // A slide deck reporting its position (any HTML that speaks the protocol).

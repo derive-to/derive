@@ -722,6 +722,10 @@ export function decideWrite({ autonomy, confidence, flags, confidenceFloor }) {
   const floor = confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR
   if (flags.agentKillswitch) return "proposal"
   if (autonomy === "shadow") return "shadow"
+  // A run that resolved a bound connection can spend a real credential, so it files for a
+  // human rather than publishing — below shadow, above every consent rung. Kept in lockstep
+  // with core's copy by packages/cli/test/gate-parity.test.js.
+  if (flags.credentialed) return "proposal"
   if (autonomy === "suggest") return "proposal"
   if (!flags.agentAutoEnabled) return "proposal"
   if (confidence === null || confidence === undefined || confidence < floor) return "proposal"
@@ -1266,6 +1270,19 @@ function buildRunPrompt(run, before) {
       `You have these SOURCE TOOLS. Call one by running \`node derive-source.mjs <toolName> '<jsonArgs>'\` in bash; it prints the tool's JSON result:\n${list}`,
     )
   }
+  // A bound source that contributed no tools. Say so plainly rather than letting the run behave
+  // as though the source was never configured: "the numbers are missing because Stripe is
+  // unreachable" is a usable answer, and silently omitting them is not.
+  if (run.sources_quiet?.length) {
+    // `why` rides down with the claim, resolved once by the server. This used to keep its own
+    // copy of the wording, matched to the API's only by a comment saying so — and the CLI is
+    // deliberately dependency-free, so there was never a shared module to reach for. Falling
+    // back to the raw reason keeps an older server legible rather than blank.
+    const lost = run.sources_quiet.map((q) => `- ${q.toolkit}: ${q.why ?? q.reason}`).join("\n")
+    lines.push(
+      `These sources are UNAVAILABLE for this run:\n${lost}\n\nDo not guess or invent what they would have returned. Do the rest of the job and say plainly, in your answer, which source was missing and why.`,
+    )
+  }
   // What fired this run, when a webhook sent a body. The server coalesces a burst into one
   // run carrying several payloads, so this is a list and the newest is last. Untrusted input
   // by definition — it is whatever the caller POSTed — so it is framed as data to read, never
@@ -1355,7 +1372,10 @@ export async function serveRun(client, run, manifest, cfg) {
   const hasTools = run.tools?.length > 0
   if (hasTools) writeToolShim(cfg.cwd)
   // The spawn env: the model-plan overlay (session parity) plus the shim's server/token/run-id
-  // when the run has sources, so the shim authenticates without the model holding the token.
+  // when the run has sources. NOTE: these ride the model's OWN environment, so the model does
+  // hold this token — the shim is a convenience, not a confidentiality boundary (runAgent's
+  // header comment says the same about cwd). Anything the token authorizes, an injected model
+  // can call directly, which is why the write gate is defense-in-depth and not a guarantee.
   const shimEnv = hasTools
     ? { DERIVE_SERVER: cfg.server, DERIVE_TOKEN: cfg.token, DERIVE_RUN_ID: run.id }
     : {}

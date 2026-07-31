@@ -262,6 +262,24 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
     database: db,
     baseURL: baseUrl,
     secret,
+    // SESSION CACHE. Resolving a cookie session costs a signed-cookie read plus the session and
+    // user rows; on the hosted edge that measured 330-500ms on EVERY authenticated request —
+    // same route, same server, only the credential differing from a bearer token:
+    //
+    //   /v1/artifacts?limit=1   bearer  729ms   cookie 1233ms   (+503)
+    //   /v1/automations         bearer  333ms   cookie  664ms   (+331)
+    //
+    // With this on, Better Auth signs the session into a short-lived cookie and serves
+    // subsequent requests from it without touching the database at all.
+    //
+    // 60s, NOT the 300s default, and the reason is `revokeSessionsOnPasswordReset` below. A
+    // cached session stays usable until its cookie expires, so the cache window is exactly how
+    // long a revoked session outlives its revocation. Five minutes would substantially weaken a
+    // control this app opted into deliberately; a minute keeps nearly all the win (a browsing
+    // SPA makes many requests per minute) for a window short enough to live with. There is a
+    // test that deletes the session row and proves both halves: still authenticated inside the
+    // window, refused once it lapses.
+    session: { cookieCache: { enabled: true, maxAge: 60 } },
     emailAndPassword: {
       enabled: true,
       // Reject too-short passwords server-side (the client enforces 8 too); the fail-open
@@ -418,7 +436,21 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
       // two-step flow (password → code) the client handles via the twoFactorRedirect result.
       twoFactor({ issuer: "Derive" }),
       // oauthProvider signs id tokens + serves JWKS through the jwt plugin.
-      jwt(),
+      //
+      // `disableSettingJwtHeader` turns off the plugin's /get-session after-hook, which
+      // otherwise mints a JWT — and READS THE jwks ROW — on every authenticated request,
+      // purely to set a `set-auth-jwt` response header. Nothing consumes that header: the
+      // web client registers only passkey + twoFactor (no jwtClient), and the string
+      // appears nowhere in this repo. On the hosted tier that read is a ~80ms Hyperdrive
+      // round trip (see edge-pg.ts) on EVERY signed-in request — it was the first query in
+      // every profiled trace, and on routes batched down to two trips it was half of what
+      // remained. Better Auth's own docs recommend disabling it when an OAuth provider
+      // plugin is present, which is exactly this configuration.
+      //
+      // What still works, because none of it runs through this hook: GET /api/auth/jwks,
+      // id-token + JWS-access-token signing at token-mint time (oauthProvider), and our own
+      // verifier in lib/oauth-agent.ts, which fetches and caches JWKS per isolate.
+      jwt({ disableSettingJwtHeader: true }),
       // Derive as an OAuth 2.1 authorization server: agents (MCP clients) authenticate
       // via a browser consent instead of a pasted token, and get a scoped, expiring
       // access token. Endpoints land under /api/auth/oauth2/*; the consent screen is

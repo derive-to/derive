@@ -3,6 +3,7 @@ import {
   type Actor,
   type AgentRecord,
   type ArtifactRecord,
+  type BillingState,
   type BlobStore,
   type BundleManifest,
   type CollectionRecord,
@@ -12,15 +13,19 @@ import {
   DEFAULT_VERSION_WINDOW_MS,
   isAuthenticated,
   isBundleContentType,
+  type MembershipRecord,
   type MetaStore,
   maxRole,
   newId,
+  type OrgSettings,
   type Principal,
   principalActor,
   principalOwnerId,
   type Role,
+  resolveBillingState,
   roleAllows,
   type SearchIndex,
+  type SubscriptionRecord,
 } from "@derive/core"
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
@@ -28,8 +33,10 @@ import { type Auth, mcpAudiences } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
 import type { AgentLoopInput } from "./lib/agent-loop"
 import { isApiToken, verifyApiToken } from "./lib/api-token"
+import type { BillingDriver } from "./lib/billing"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
-import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
+import type { Sandbox } from "./lib/code-sandbox"
+import { AGENT_TOKEN_PREFIX, safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import { makeOauthAgent } from "./lib/oauth-agent"
 import {
@@ -40,11 +47,31 @@ import {
   rateLimited,
 } from "./lib/rate-limit"
 import { verifyWorkToken, workTokenKind } from "./lib/run-token"
+import { billableSeatCount, syncSeats } from "./lib/seats"
 import { enqueueSlackChannelEvent } from "./lib/slack-comments"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
+
+/** The refusal copy for a blocked publish/approve, keyed by `billingBlocked`'s reason.
+ *  Lives here (not lib/http.ts) because the MCP surfaces need it too, and both import
+ *  from context.ts already. No em dashes (support copy convention). */
+export const BILLING_BLOCK_COPY: Record<
+  "needs_team" | "lapsed",
+  { code: string; message: string }
+> = {
+  needs_team: {
+    code: "billing_required",
+    message:
+      "This workspace has more than 3 editor seats, which needs the Team plan. An owner can upgrade in Settings, Billing.",
+  },
+  lapsed: {
+    code: "billing_lapsed",
+    message:
+      "This workspace's plan has lapsed, so publishing is paused. Nothing was deleted. An owner can renew in Settings, Billing.",
+  },
+}
 
 export interface SessionUser {
   id: string
@@ -84,6 +111,18 @@ export interface AppDeps {
    *  The Node + Worker entries pass the auth secret. Unset (e.g. tests) ⇒ tokens
    *  are stored as-is; set ⇒ AES-256-GCM encrypted (see lib/crypto encryptSecret). */
   encryptionKey?: string
+  /** Allow the ECHO broker stub for a workspace with no broker plan. Dev and tests only.
+   *
+   *  Off (the default), such a workspace gets a broker that REFUSES. On, it gets LocalBroker,
+   *  whose `execute` returns the caller's own arguments — which is a fixture, not an integration,
+   *  and in production is a run that reports success over data that never existed. */
+  allowEchoStub?: boolean
+  /** The isolate `derive_code` runs model-written JavaScript in. The Node entry passes a worker
+   *  thread; the Worker entry passes nothing until Cloudflare's Worker Loader is out of beta, and
+   *  the tool simply does not register without one — no runtime sniffing, no half-working tool.
+   *  Injected rather than imported so the API never drags `node:worker_threads` into a Workers
+   *  bundle, and so a test can supply a fake. */
+  codeSandbox?: Sandbox
   /** How an ATTENDED turn calls the model — the chat path, where someone is waiting and the work
    *  runs in this request rather than through the queue. Unattended runs do NOT use this: they
    *  resolve their own credential per run through the payer chain, so who pays never depends on
@@ -145,6 +184,10 @@ export interface AppDeps {
    */
   maxArtifacts?: number
   maxBytes?: number
+  /** Stripe access, injected so tests fake it and self-host omits it. */
+  billing?: BillingDriver
+  /** ISO instant when free-tier boundaries enforce; unset = beta grace. */
+  billingEnforceAt?: string
   /**
    * Per-actor (signed-in user or agent, falling back to IP) write rate limits,
    * in actions per minute. Applied only when rateLimit is on; identity-keyed so
@@ -370,7 +413,25 @@ export function buildContext(deps: AppDeps) {
   const userCache = new WeakMap<Context, SessionUser | null>()
   const currentUser = async (c: Context): Promise<SessionUser | null> => {
     if (userCache.has(c)) return userCache.get(c) ?? null
-    const s = deps.auth ? await deps.auth.api.getSession({ headers: c.req.raw.headers }) : null
+    // A BROKEN CREDENTIAL IS NOT A SERVER FAULT. getSession throws on input it cannot make sense
+    // of, and with the session cookie cache on there is now a second cookie that can be
+    // malformed: a `session_data` of `{}` threw "Error parsing JSON" and every authenticated
+    // request 500'd for as long as the client kept sending it. A 500 is both wrong (the caller's
+    // cookie is bad, not the server) and sticky — the client has no reason to re-authenticate,
+    // so it loops. Unauthenticated is the honest answer and it self-heals: the next sign-in
+    // replaces the cookie.
+    //
+    // Logged at error, not swallowed. This same throw is how a deployment whose secret cannot
+    // decrypt the shared JWKS row announces itself, and that diagnosis has to stay findable —
+    // it just should not be a 500 on every page.
+    const s = deps.auth
+      ? await deps.auth.api.getSession({ headers: c.req.raw.headers }).catch((e: unknown) => {
+          log.error("session could not be read; treating the request as signed out", {
+            error: e instanceof Error ? e.message : String(e),
+          })
+          return null
+        })
+      : null
     // `username`/`discoverable` ride the session via Better Auth additionalFields
     // (see auth-config.ts); read them through a narrow cast (optional extras).
     const su = s?.user as
@@ -462,7 +523,13 @@ export function buildContext(deps: AppDeps) {
   // token carries only a runtime role.
   const oauthGrantCache = new WeakMap<
     Context,
-    { ownerId: string; scopeRole: Role; clientId: string; boundWorkspaces: string[] }
+    {
+      ownerId: string
+      ownerName: string | null
+      scopeRole: Role
+      clientId: string
+      boundWorkspaces: string[]
+    }
   >()
   // Set when this request's bearer is a minted dkapi_ token — read by the mint to
   // refuse chaining (see isMintedApiToken).
@@ -507,6 +574,9 @@ export function buildContext(deps: AppDeps) {
           mintedApiCache.set(c, true)
           oauthGrantCache.set(c, {
             ownerId: claim.userId,
+            // The capability claim carries no display name — mcp.ts falls back to a
+            // getUsers lookup for this one path (minted dkapi_ tokens are rare).
+            ownerName: null,
             // The minted role IS the scope ceiling — a token minted for `publish`
             // must not reach management just because its human is an owner.
             scopeRole: claim.role,
@@ -573,7 +643,10 @@ export function buildContext(deps: AppDeps) {
       // user who registered it (created_by; null for pre-column agents) — or an
       // OAuth access token from the browser consent flow, which carries the user
       // who authed it. Both resolve to an on-behalf human where one is known.
-      const reg = await meta.getAgentByToken(sha256(b))
+      // Every registered token is minted with AGENT_TOKEN_PREFIX, so a bearer without
+      // it (every OAuth/JWT MCP token) can never match — skip the guaranteed-miss
+      // round trip instead of paying it on every one of those calls.
+      const reg = b.startsWith(AGENT_TOKEN_PREFIX) ? await meta.getAgentByToken(sha256(b)) : null
       if (reg) {
         a = reg
         owner = reg.created_by ?? null
@@ -584,6 +657,7 @@ export function buildContext(deps: AppDeps) {
           owner = o.ownerId
           oauthGrantCache.set(c, {
             ownerId: o.ownerId,
+            ownerName: o.ownerName,
             scopeRole: o.scopeRole,
             clientId: o.clientId,
             boundWorkspaces: o.boundWorkspaces,
@@ -645,6 +719,7 @@ export function buildContext(deps: AppDeps) {
     c: Context,
   ): Promise<{
     ownerId: string
+    ownerName: string | null
     scopeRole: Role
     clientId: string
     boundWorkspaces: string[]
@@ -692,23 +767,109 @@ export function buildContext(deps: AppDeps) {
     if (r.ok) return null
     return rateLimited(c, r.retryAfter)
   }
+  const billingEnforceAt = deps.billingEnforceAt ? new Date(deps.billingEnforceAt) : null
+  // Fail loud on a typo'd date here, the one parse both entrypoints share — a NaN
+  // would compare false forever and enforcement day would silently never arrive.
+  if (billingEnforceAt && Number.isNaN(billingEnforceAt.getTime()))
+    throw new Error(`invalid DERIVE_BILLING_ENFORCE_AT: ${deps.billingEnforceAt}`)
+  // The whole billing decision from local state only: the webhook-fed subscription row
+  // plus a live editor-seat count. Never calls Stripe — resolveBillingState is pure and
+  // DB-free, this just feeds it. `pre` skips the fetches when the caller already
+  // holds the row and count (GET /v1/billing), same shape as syncSeats.
+  const billingState = async (
+    orgId: string,
+    pre?: { sub: SubscriptionRecord | null; seatCount: number },
+  ): Promise<BillingState> => {
+    const [sub, seats] = pre
+      ? [pre.sub, pre.seatCount]
+      : await Promise.all([meta.getSubscription(orgId), billableSeatCount(meta, orgId)])
+    return resolveBillingState({
+      subscription: sub,
+      seatCount: seats,
+      now: new Date(),
+      enforceAt: billingEnforceAt,
+      fallbackMaxBytes: deps.maxBytes,
+    })
+  }
+  // Null = free to publish/approve; otherwise the refusal copy (code + message) to
+  // surface to the caller.
+  const billingBlocked = async (
+    orgId: string,
+  ): Promise<{ code: string; message: string } | null> => {
+    const s = await billingState(orgId)
+    return s.canPublishApprove || !s.blockedReason ? null : BILLING_BLOCK_COPY[s.blockedReason]
+  }
+  // The full gate as a route guard, mirroring `limited`: a Response to return when
+  // blocked, else null to continue.
+  const billingGate = async (c: Context, orgId: string): Promise<Response | null> => {
+    const b = await billingBlocked(orgId)
+    return b ? fail(c, 402, b.message, { code: b.code }) : null
+  }
+
+  // Show the Made-with-Derive mark, or not? A workspace's whiteLabel toggle only takes
+  // effect when it's also ENTITLED (beta, or an active subscription) — the settings
+  // check runs first so the billing queries short-circuit away entirely once
+  // white-label is off, which is the common case. `pre` skips the settings read when the
+  // caller already holds the row (a batched artifactDetail), same shape as billingState:
+  // with white-label off that makes this whole call free.
+  const effectiveWhiteLabel = async (orgId: string, pre?: OrgSettings): Promise<boolean> =>
+    (pre ?? (await meta.getOrgSettings(orgId))).whiteLabel === true &&
+    (await billingState(orgId)).whiteLabelEntitled
+
   // Would storing `incoming` more bytes push THIS workspace over its storage cap?
   // Sums published content (storageBytes) and staged /v1/assets uploads
   // (assetStorageBytes) separately — an asset baked into a bundle can double-count
   // against its staged row, a deliberate over-count: a permanent public /blob/:hash
   // URL must count from the moment it exists, not just once some doc embeds it.
-  const overStorage = async (orgId: string, incoming: number): Promise<boolean> =>
-    !!deps.maxBytes &&
-    (await meta.storageBytes(orgId)) + (await meta.assetStorageBytes(orgId)) + incoming >
-      deps.maxBytes
+  // The cap itself is now plan-aware (billingState.storageCapBytes) rather than a flat
+  // deps.maxBytes comparison: an active subscription's tier cap replaces the operator's
+  // fallback, so a Team workspace isn't stuck on the self-host default.
+  const overStorage = async (orgId: string, incoming: number): Promise<boolean> => {
+    const cap = (await billingState(orgId)).storageCapBytes
+    if (!cap) return false
+    const [stored, assets] = await Promise.all([
+      meta.storageBytes(orgId),
+      meta.assetStorageBytes(orgId),
+    ])
+    return stored + assets + incoming > cap
+  }
+
+  // MEMOIZED PER REQUEST + (org, user), same technique as `actorCache` below and for the
+  // same reason: `activeWorkspace`'s cookie-validation branch and `ensureMembership` (called
+  // from `workspaceRole` and the `/v1/me` route) both ask `getMembership` for the identical
+  // pair within one request — every call that resolves a workspace + role paid for it twice.
+  // Caches the PROMISE, not the value, so two callers racing before the first resolves still
+  // de-dupe to one query.
+  const membershipCache = new WeakMap<Context, Map<string, Promise<MembershipRecord | null>>>()
+  const cachedMembership = (
+    c: Context,
+    orgId: string,
+    userId: string,
+  ): Promise<MembershipRecord | null> => {
+    let perRequest = membershipCache.get(c)
+    if (!perRequest) {
+      perRequest = new Map()
+      membershipCache.set(c, perRequest)
+    }
+    const key = `${orgId}:${userId}`
+    const hit = perRequest.get(key)
+    if (hit) return hit
+    const pending = meta.getMembership(orgId, userId)
+    perRequest.set(key, pending)
+    return pending
+  }
 
   // Lazy provisioning: the first member of a workspace is its owner; everyone
   // else joins at the default role. Returns the caller's role in that workspace.
-  const ensureMembership = async (orgId: string, userId: string): Promise<Role> => {
-    const existing = await meta.getMembership(orgId, userId)
+  const ensureMembership = async (c: Context, orgId: string, userId: string): Promise<Role> => {
+    const existing = await cachedMembership(c, orgId, userId)
     if (existing) return existing.role
     const role: Role = (await meta.countMemberships(orgId)) === 0 ? "owner" : defaultRole
     await meta.setMembership({ id: newId("m"), org_id: orgId, user_id: userId, role })
+    // Drop the memoized "no membership" miss — a later read in this same request must see
+    // the row just provisioned, not the stale null.
+    membershipCache.get(c)?.delete(`${orgId}:${userId}`)
+    await syncSeats({ meta, billing: deps.billing }, orgId)
     return role
   }
 
@@ -761,7 +922,7 @@ export function buildContext(deps: AppDeps) {
       ws = getCookie(c, WS_COOKIE) || defaultOrg
     } else {
       const ck = getCookie(c, WS_COOKIE)
-      if (ck && (await meta.getMembership(ck, me.id))) ws = ck
+      if (ck && (await cachedMembership(c, ck, me.id))) ws = ck
       else {
         const mine = await meta.listWorkspaces(me.id)
         ws = mine[0]?.id ?? (await provisionPersonal(me))
@@ -820,7 +981,36 @@ export function buildContext(deps: AppDeps) {
     return clean ? `anon_${clean}` : anonViewerId(c)
   }
 
-  const actorFor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
+  // MEMOIZED PER REQUEST + ARTIFACT, exactly like `currentUser` above and for the same reason:
+  // handlers authorize the same artifact more than once, and every miss costs THREE round trips
+  // (membership, artifact member, collection roles).
+  //
+  // Opening a chat session authorizes twice — `read`, then `publish` — and separately reads the
+  // membership a third time, so ONE request made eleven sequential queries against Postgres, of
+  // which the same membership row was fetched three times and the artifact-member and
+  // collection-role rows twice each. On the hosted edge those cost ~100-900ms apiece.
+  //
+  // Safe because an Actor is a pure function of (principal, artifact), and both are fixed for
+  // the life of a request: nothing in a handler can change a role underneath itself, and a role
+  // changed by someone else is picked up by the next request. Keyed by Context, so it dies with
+  // the request rather than outliving a revoked share.
+  const actorCache = new WeakMap<Context, Map<string, Promise<Actor>>>()
+  const actorFor = (c: Context, a: ArtifactRecord): Promise<Actor> => {
+    let perArtifact = actorCache.get(c)
+    if (!perArtifact) {
+      perArtifact = new Map()
+      actorCache.set(c, perArtifact)
+    }
+    // Cache the PROMISE, not the resolved value: two authorize() calls that both start before
+    // the first resolves would otherwise both miss and both issue the three queries.
+    const hit = perArtifact.get(a.id)
+    if (hit) return hit
+    const pending = resolveActor(c, a)
+    perArtifact.set(a.id, pending)
+    return pending
+  }
+
+  const resolveActor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
     // A password on the artifact is a lock on its public link. Has this visitor
     // entered it? The unlock cookie's value is derived from the server-only
     // hash, so it can't be forged.
@@ -863,6 +1053,25 @@ export function buildContext(deps: AppDeps) {
     // shared link never auto-joins you into someone else's workspace; you only carry an org
     // role where you're explicitly a member.
     const me = p.user
+    // ONE ROUND TRIP WHERE THE STORE CAN, four where it cannot. The reads below are the
+    // membership, the per-artifact share and the collection shares — and the last is itself two
+    // queries, so this is four trips to decide one boolean, on every authorize. A store that can
+    // answer it in a single statement implements `artifactGrants`; the fallback is the original
+    // code, unchanged, so a store without it behaves exactly as before.
+    //
+    // Both paths feed the SAME maxRole/can(): the fast path changes how the inputs arrive, never
+    // what they are. artifact-grants-parity.test.ts asserts the two agree.
+    if (meta.artifactGrants) {
+      const g = await meta.artifactGrants(a.id, a.org_id, me.id)
+      return {
+        kind: "user",
+        userId: me.id,
+        artifactRole: maxRole(null, ...g.artifactRoles),
+        orgRole: g.orgRole,
+        locked,
+        unlocked,
+      }
+    }
     const orgRole = (await meta.getMembership(a.org_id, me.id))?.role ?? null
     const am = await meta.getArtifactMember(a.id, me.id)
     // A collection share grants its role on every artifact in the collection,
@@ -935,7 +1144,7 @@ export function buildContext(deps: AppDeps) {
     if (ag) return ag.role
     const me = await currentUser(c)
     if (!me) return null
-    return ensureMembership(await activeWorkspace(c), me.id)
+    return ensureMembership(c, await activeWorkspace(c), me.id)
   }
   const workspaceCan = async (c: Context, action: Action): Promise<boolean> => {
     const r = await workspaceRole(c)
@@ -1095,7 +1304,16 @@ export function buildContext(deps: AppDeps) {
     oauthGrant,
     limited,
     overStorage,
+    billingState,
+    billingBlocked,
+    billingGate,
+    effectiveWhiteLabel,
     ensureMembership,
+    /** `meta.getMembership`, memoized for this request. Routes that need a caller's role
+     *  in a workspace should call THIS, not the store directly — the same row is usually
+     *  already resolved by `activeWorkspace`/`workspaceRole`, and a direct call re-pays a
+     *  full ~80ms round trip for it. */
+    membershipOf: cachedMembership,
     activeWorkspace,
     setWsCookie,
     anonViewerId,

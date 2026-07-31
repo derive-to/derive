@@ -9,6 +9,7 @@ import {
   askContract,
   documentBlock,
   documentContract,
+  documentName,
   type LandingPort,
   revisionContract,
   runTurn,
@@ -69,14 +70,30 @@ export interface LoopSubstrateOptions {
    *  gateway). When set, every run on this deploy calls it with this key instead of resolving a
    *  per-run credential.
    *
-   *  That BYPASSES THE PAYER CHAIN by design, and it is why this is a self-host/dev affordance
-   *  rather than something derive.to sets: one ambient key means the operator pays for everyone
-   *  on the instance, which is the correct model for a single-tenant box and the wrong one for a
-   *  multi-tenant host. See the Node caveat in the status doc. */
+   *  It BYPASSES THE PAYER CHAIN by design: one operator key means this deployment pays for
+   *  every workspace on it, so there is nothing for a chain to resolve and no plan for anyone to
+   *  connect. That is the HOSTED posture, not a self-host-only affordance — derive.to sets these
+   *  three, and the workspace is metered against its tier allowance instead of billing a
+   *  credential it never supplied. An earlier version of this comment said the opposite; it was
+   *  read as intent and cost a release. */
   gateway?: { baseUrl: string; apiKey: string; model: string }
   /** Cloudflare's `ctx.waitUntil`, so a Worker does not tear the isolate down mid-run. Absent on
    *  Node, where nothing collects the process out from under us. */
   waitUntil?: (p: Promise<unknown>) => void
+  /** How the client REACHES the API. Defaults to global `fetch`, which is right on Node, where
+   *  the loop and the API are the same process reachable over loopback.
+   *
+   *  On Workers it must not be. This substrate calls its own deployment, so a global `fetch` at
+   *  `server` leaves the isolate, crosses the edge, and comes back to the same Worker. One run
+   *  survives that; the cron tick starting three at once does not — each self-subrequest sat
+   *  until it timed out and every scheduled run died on `/v1/agent/runs/claim failed (522)`
+   *  while a single run booted from the queue nudge succeeded. Passing the Worker's own handler
+   *  here keeps the request identical — same route, same bearer, same middleware, same
+   *  authorization — and removes only the trip through the network.
+   *
+   *  It stays an injected function rather than a platform branch so there is still ONE
+   *  implementation, which is the property this substrate exists to have. */
+  fetchImpl?: (req: Request) => Promise<Response>
   /** Bound the model loop. */
   maxTurns?: number
 }
@@ -87,6 +104,13 @@ interface ClaimedRun {
   instruction: string
   targets?: { kind: string; id?: string; tag?: string; mode?: string }[]
   tools?: { def: LoopTool; ref: string }[]
+  /** Bound sources that contributed NOTHING, and why. The claim has always sent this and this
+   *  executor dropped it on the floor — so a run whose source was unreachable, or whose tool list
+   *  had been rewritten since a human approved it, behaved as though no source was ever bound.
+   *  The model was not told, and neither was the ledger: the run just failed to write and the
+   *  only account of it was "the agent produced nothing", which points at the wrong thing
+   *  entirely. The CLI runner has read this since it existed; this lane now does too. */
+  sources_quiet?: { connection_id: string; toolkit: string; reason: string; why?: string }[]
   payloads?: unknown[]
   flags?: AutonomyFlags
   meta?: string | null
@@ -100,27 +124,40 @@ interface ClaimedSession {
   flags?: AutonomyFlags
 }
 
-const NO_FLAGS: AutonomyFlags = { agentKillswitch: false, agentAutoEnabled: false }
+// The fallback when a claim carried no flags at all. Safe by construction rather than by
+// luck: agentAutoEnabled false already forces a proposal, so an executor talking to a server
+// that sent nothing cannot live-publish regardless of the credentialed rung.
+const NO_FLAGS: AutonomyFlags = {
+  agentKillswitch: false,
+  agentAutoEnabled: false,
+  credentialed: false,
+}
 
 /** A manifest becomes the system prompt, so it is bounded by what a system prompt can be rather
  *  than by what an artifact can be. Well past any real context manifest; a runaway one is
  *  truncated rather than sent whole and rejected by the provider. */
 const MAX_MANIFEST_CHARS = 100_000
 
-const api = (server: string, token: string) => {
+const api = (
+  server: string,
+  token: string,
+  fetchImpl: (req: Request) => Promise<Response> = fetch,
+) => {
   const call = async (path: string, init?: RequestInit): Promise<Response> =>
-    fetch(`${server}${path}`, {
-      ...init,
-      headers: {
-        authorization: `Bearer ${token}`,
-        ...(init?.body && typeof init.body === "string"
-          ? { "content-type": "application/json" }
-          : {}),
-        ...(init?.headers ?? {}),
-      },
-      // A blackholed host must not pin the loop open forever.
-      signal: AbortSignal.timeout(60_000),
-    })
+    fetchImpl(
+      new Request(`${server}${path}`, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(init?.body && typeof init.body === "string"
+            ? { "content-type": "application/json" }
+            : {}),
+          ...(init?.headers ?? {}),
+        },
+        // A blackholed host must not pin the loop open forever.
+        signal: AbortSignal.timeout(60_000),
+      }),
+    )
   return {
     call,
     json: async <T>(path: string, init?: RequestInit): Promise<T> => {
@@ -153,6 +190,17 @@ const buildPrompt = (run: ClaimedRun, targetId: string | undefined): string => {
     lines.push(
       `You have these tools. Prefer to pull what you need, then write:\n` +
         run.tools.map((t) => `- ${t.def.name}: ${t.def.description}`).join("\n"),
+    )
+  // A bound source that contributed nothing. Say so plainly: "the figures are missing because
+  // that source is unreachable" is a usable answer, and silently omitting it is not — the model
+  // would otherwise invent numbers or stall looking for a tool it was told it had.
+  if (run.sources_quiet?.length)
+    lines.push(
+      `These bound sources gave you NOTHING this run, so do not wait for them and do not guess ` +
+        `what they would have returned — say what is missing and why:\n` +
+        // `why` comes down with the claim: the server resolves it once, so neither executor
+        // keeps a copy of the wording to drift out of step with the other.
+        run.sources_quiet.map((q) => `- ${q.toolkit}: ${q.why ?? q.reason}`).join("\n"),
     )
   return lines.join("\n\n")
 }
@@ -296,16 +344,38 @@ const whyNoCredential = async (
  * ledger can take.
  */
 const landOverHttp =
-  ({ call, json }: Api, targetId: string | undefined): LandingPort =>
+  (
+    { call, json }: Api,
+    targetId: string | undefined,
+    targetContentType?: string | null,
+  ): LandingPort =>
   async (decision, revision) => {
     const form = new FormData()
-    form.set(
-      "file",
-      new Blob([revision.content], {
-        type: revision.filename.endsWith(".md") ? "text/markdown" : "text/html",
-      }),
-      revision.filename,
-    )
+    // KEEP THE DOCUMENT'S OWN FORMAT, as the attended lane does (lib/session-turn.ts).
+    //
+    // The model names the file, and the edits contract falls back to `index.html` when it does
+    // not — right when CREATING an artifact, wrong when REVISING one. On production a markdown
+    // document went v1 text/markdown, v2 text/markdown (a chat edit, which already had this
+    // fix), v3 text/html the moment an automation wrote to it, at which point it rendered as one
+    // unformatted blob with nothing reporting an error.
+    //
+    // THE FILENAME IS WHAT DECIDES THIS, not the part's MIME type. publish.ts's storeContent
+    // reads the extension (after a full-HTML-document body sniff) and ignores what the multipart
+    // part claims — so setting only the Blob type looks correct, passes a test that inspects the
+    // request, and changes nothing about the artifact. Send both, and make the NAME agree with
+    // the document.
+    //
+    // Only markdown and html are rewritten: those are the two the extension actually decides. A
+    // deck is recognised from its body, so leaving its name alone is what keeps it a deck.
+    const contentType =
+      targetContentType ?? (revision.filename.endsWith(".md") ? "text/markdown" : "text/html")
+    const wantExt =
+      contentType === "text/markdown" ? ".md" : contentType === "text/html" ? ".html" : null
+    const filename =
+      wantExt && !new RegExp(`\\${wantExt}$`, "i").test(revision.filename)
+        ? `${revision.filename.replace(/\.[^./]*$/, "")}${wantExt}`
+        : revision.filename
+    form.set("file", new Blob([revision.content], { type: contentType }), filename)
     if (revision.message) form.set("message", revision.message)
     const write = async (path: string) => {
       const res = await call(path, { method: "POST", body: form })
@@ -366,7 +436,7 @@ const serveOneRun = async (
   server: string,
   opts: LoopSubstrateOptions,
 ): Promise<void> => {
-  const client = api(server, token)
+  const client = api(server, token, opts.fetchImpl)
 
   // CLAIM. The token is scoped to this run, so the claim returns it and nothing else — the same
   // status-guarded transition the container executor makes, which is what stops a double-dispatch
@@ -401,8 +471,8 @@ const serveOneRun = async (
   // the prompt; a run with none is creating something new and has nothing to read. An unreadable
   // target fails the run — retryable, because a 5xx or a lease blip is transient, and because the
   // alternative is asking the model to rewrite a document it cannot see.
-  const source = targetId ? await sourceOf(client, targetId) : null
-  if (targetId && source === null) {
+  const targetDoc = targetId ? await sourceOf(client, targetId) : null
+  if (targetId && targetDoc === null) {
     await finish({
       status: "failed",
       meta: {
@@ -416,12 +486,15 @@ const serveOneRun = async (
 
   // Over EDITS_THRESHOLD_CHARS a whole-document reply cannot fit, so the ask becomes
   // search/replace edits — the same switch attended chat makes, from the same shared helper.
+  const source = targetDoc?.text ?? null
   const contract = source === null ? revisionContract : documentContract(source, false)
   const out = await runTurn({
     system:
       RUN_SYSTEM_PROMPT +
       contract.text +
-      (source === null ? "" : `\n\n${documentBlock(source, targetId ?? "index.html")}`),
+      (source === null
+        ? ""
+        : `\n\n${documentBlock(source, documentName(targetId ?? "index", targetDoc?.contentType))}`),
     messages: [{ role: "user", content: buildPrompt(run, targetId) }],
     tools: (run.tools ?? []).map((t) => t.def),
     contract,
@@ -433,7 +506,7 @@ const serveOneRun = async (
       autonomy: target?.mode === "publish" ? "auto" : "suggest",
       flags: run.flags ?? NO_FLAGS,
     },
-    land: landOverHttp(client, targetId),
+    land: landOverHttp(client, targetId, targetDoc?.contentType),
   })
   spentUsd = out.costUsd
 
@@ -444,6 +517,15 @@ const serveOneRun = async (
         outcome: "failed",
         why: out.failure.error.slice(0, 200),
         retryable: out.failure.retryable,
+        // A run bound to a source that went dark usually fails for THAT reason, and the ledger
+        // used to say only "the agent produced nothing" — which reads as a broken model and sent
+        // the last investigation looking in the wrong place for hours. Carry it on every failure.
+        ...(run.sources_quiet?.length ? { sources_quiet: run.sources_quiet } : {}),
+        // HOW MANY HANDS IT HAD. "Failed with zero tools" and "failed holding three" are
+        // different diagnoses — the first is a binding or reachability problem and the second is
+        // the model or the contract — and the ledger could not tell them apart at all, so every
+        // investigation started by guessing which one it was looking at.
+        tools_offered: run.tools?.length ?? 0,
       },
     })
     return
@@ -479,7 +561,7 @@ const serveOneSession = async (
   server: string,
   opts: LoopSubstrateOptions,
 ): Promise<void> => {
-  const client = api(server, token)
+  const client = api(server, token, opts.fetchImpl)
 
   // CLAIM — a DIFFERENT shape from the run lane's, deliberately not papered over. The token
   // already names the one session it may touch, so the server claims that session and hands back
@@ -648,13 +730,33 @@ const manifestFor = async ({ call }: Api, claimed: ClaimedSession): Promise<stri
  * for a published artifact's content to be empty (`current_version === 0` is filtered upstream),
  * so an empty read is a read that did not work: fail closed, retryable, same as a 500.
  */
-const sourceOf = async ({ call }: Api, shortId: string): Promise<string | null> => {
+const sourceOf = async (
+  { call }: Api,
+  shortId: string,
+): Promise<{ text: string; contentType: string | null } | null> => {
   try {
     const res = await call(`/v1/artifacts/${shortId}/content`)
     if (!res.ok) throw new Error(`artifact ${shortId} → ${res.status}`)
     const body = await res.text()
     if (!body.trim()) throw new Error(`artifact ${shortId} → 200 with an empty body`)
-    return body.slice(0, MAX_ARTIFACT_CHARS)
+    // THE DOCUMENT'S type, from `X-Derive-Content-Type` — NOT from `Content-Type`, which is
+    // the transport's and is always `text/plain; charset=utf-8` here so the bytes render as
+    // text rather than executing in a browser. Reading the wrong one returned "text/plain" for
+    // every artifact, matched neither branch downstream, and made the format-preserving write a
+    // silent no-op in production while its test stayed green against a stub I had invented.
+    //
+    // ONE REQUEST. The route already had the version row loaded and used it six lines later,
+    // so this costs nothing: no extra round trip, no second auth, no second query. Asking the
+    // artifact record instead — which is what the first working version of this did — bought
+    // the same answer for a whole additional request per run, and would have reported the
+    // CURRENT type for a `?v=N` read of an older version.
+    //
+    // Best-effort: an older deploy that does not send the header just falls back to naming the
+    // file the way the model asked.
+    return {
+      text: body.slice(0, MAX_ARTIFACT_CHARS),
+      contentType: res.headers.get("x-derive-content-type")?.split(";")[0]?.trim() || null,
+    }
   } catch (e) {
     log.warn("loop substrate: could not read the run's target", {
       artifact: shortId,

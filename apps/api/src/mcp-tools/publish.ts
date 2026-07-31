@@ -1,6 +1,7 @@
 import {
   artifactUrl,
   EditError,
+  heavyAssetsAdvisory,
   looksLikeHtmlDocument,
   missingBlobAdvisory,
   newId,
@@ -10,6 +11,7 @@ import {
   publish as publishVersion,
   type Role,
   roleAllows,
+  slotShapeDriftAdvisories,
 } from "@derive/core"
 import { z } from "zod"
 import { PROFILE_PLACEHOLDER_HTML } from "../brandprint-reference"
@@ -87,6 +89,13 @@ export function registerPublishTool(tc: ToolContext): void {
         error:
           "This workspace has no Brandprint profile yet, and only an Admin/Owner can set one up. Ask an Admin to publish to derive://brandprint/profile once (that scaffolds it); after that anyone with publish rights can propose revisions.",
       }
+    // The scaffold below is a real live write (a collection create + a placeholder
+    // publish) — unlike the profile's own reveal/revision, which always routes to a
+    // human-approved proposal (see `profileForReview` in the caller) and so stays free
+    // of this gate. A billing-blocked workspace must refuse the scaffold exactly like
+    // any other live publish, and BEFORE any of it writes.
+    const blocked = await ctx.billingBlocked(targetOrg)
+    if (blocked) return { error: blocked.message }
     // Reuse an in-tenant collection pointer; otherwise create the conventions collection
     // (workspace-open so teammates read the docs + the reveal).
     let collectionId = bp?.collectionId
@@ -139,7 +148,7 @@ export function registerPublishTool(tc: ToolContext): void {
     "publish",
     {
       description:
-        "Publish a document: pass `short_id` to UPDATE an existing one, omit it to CREATE a new one (`title` required). Choose ONE payload by what you're changing. DEFAULT to `edits` for any change to an existing doc — it is the safe, precise option: exact find/replace against the stored source, so read format:'html' FIRST or it won't match, and it fails unless each search string hits exactly once (add surrounding text to make it unique). Use `content` to write or fully replace a single file, or `files` for a multi-page bundle. Do NOT inline anything past ~a page or any image/font — use stage (target:'doc' for a whole big doc/bundle, target:'asset' for an image/font) instead; oversized inline payloads are rejected. Publishes go LIVE at your role; pass for_review:true to file a PROPOSAL a human approves instead (nothing changes until they do). Pass `addresses` (thread ids from catch_up) to resolve the feedback this revision answers. As a short_id you may pass derive://brandprint/profile to file this workspace's brand profile (an Admin's first publish there scaffolds the slot). Pass `render` (with `wait`) to get the screenshot back here instead of a second call. Read derive://skills/publishing before bundles or edits, and derive://skills/assets before embedding images or fonts.",
+        "Publish a document: pass `short_id` to UPDATE an existing one, omit it to CREATE a new one (`title` required). Choose ONE payload by what you're changing. DEFAULT to `edits` for any change to an existing doc — it is the safe, precise option: exact find/replace against the stored source, so read format:'html' FIRST or it won't match, and it fails unless each search string hits exactly once (add surrounding text to make it unique). Use `content` to write or fully replace a single file, or `files` for a multi-page bundle. Do NOT inline anything past ~a page or any image/font — use stage (target:'doc' for a whole big doc/bundle, target:'asset' for an image/font) instead; oversized inline payloads are rejected. Publishes go LIVE at your role; pass for_review:true to file a PROPOSAL a human approves instead (nothing changes until they do). Pass `addresses` (thread ids from catch_up) to resolve the feedback this revision answers. As a short_id you may pass derive://brandprint/profile to file this workspace's brand profile (an Admin's first publish there scaffolds the fact). Pass `render` (with `wait`) to get the screenshot back here instead of a second call. Read derive://skills/publishing before bundles or edits, and derive://skills/assets before embedding images or fonts.",
       inputSchema: {
         content: z
           .string()
@@ -250,26 +259,42 @@ export function registerPublishTool(tc: ToolContext): void {
         workspace: wsArg,
         edits: z
           .array(
-            z.object({
-              old_str: z
-                .string()
-                .describe(
-                  "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once, unless `occurrence` picks one of several.",
-                ),
-              new_str: z.string().describe("Replacement text. Empty string deletes."),
-              occurrence: z
-                .number()
-                .optional()
-                .describe(
-                  "1-based index of WHICH match to replace, when old_str is intentionally non-unique (a phrase repeated verbatim). Omit when old_str already matches once.",
-                ),
-            }),
+            z.union([
+              z.object({
+                old_str: z
+                  .string()
+                  .describe(
+                    "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once, unless `occurrence` picks one of several.",
+                  ),
+                new_str: z.string().describe("Replacement text. Empty string deletes."),
+                occurrence: z.coerce
+                  .number()
+                  .optional()
+                  .describe(
+                    "1-based index of WHICH match to replace, when old_str is intentionally non-unique (a phrase repeated verbatim). Omit when old_str already matches once.",
+                  ),
+              }),
+              z.object({
+                quote: z
+                  .object({
+                    exact: z.string().describe("The VISIBLE text to replace, as a reader sees it."),
+                    prefix: z.string().optional().describe("Visible text just before it."),
+                    suffix: z.string().optional().describe("Visible text just after it."),
+                  })
+                  .describe(
+                    "Locates the edit by RENDERED text (the selector comment anchors use) instead of raw source — no format:'html' read needed. Strict resolution: the context must pin exactly one spot (or the exact be globally unique), the span may not cross markup, and a miss applies nothing.",
+                  ),
+                new_text: z
+                  .string()
+                  .describe("Replacement for the quoted span, as plain text. Empty deletes."),
+              }),
+            ]),
           )
           .optional()
           .describe(
-            "Surgical revision of a SINGLE-FILE artifact without resending it: exact-match search/replace against the current stored source, applied in order (each edit sees the previous one's result). Requires `short_id`; use INSTEAD of `content`, and read format:'html' first so old_str matches the raw source. See derive://skills/publishing. A miss applies nothing and returns why.",
+            "Surgical revision of a SINGLE-FILE artifact without resending it. Two shapes, not mixable in one batch: {old_str, new_str} — exact-match against the current stored source, applied in order (read format:'html' first so old_str matches the raw source); or {quote: {exact, prefix, suffix}, new_text} — located by VISIBLE text and resolved server-side, no raw read needed. Requires `short_id`; use INSTEAD of `content`. See derive://skills/publishing. A miss applies nothing and returns why.",
           ),
-        base_version: z
+        base_version: z.coerce
           .number()
           .optional()
           .describe(
@@ -497,7 +522,11 @@ export function registerPublishTool(tc: ToolContext): void {
         }
       }
 
-      // Live publish path.
+      // Live publish path. Gated on billing here, not up with the `edits` storage check
+      // above — that check also runs for the propose branch (which stays free), so the
+      // billing gate has to sit strictly after the review/propose split.
+      const blocked = await ctx.billingBlocked(targetOrg)
+      if (blocked) return err(blocked.message)
       if (merge) {
         if (!isBundle) return text("`merge` adds files to a bundle — pass `files`, not `content`.")
         if (!existing) return text("`merge` needs the `short_id` of an existing bundle to add to.")
@@ -732,6 +761,31 @@ export function registerPublishTool(tc: ToolContext): void {
           typeof content === "string" && artifact.kind === "file"
             ? await missingBlobAdvisory(content, ctx.blobs)
             : null
+        // What this page's images cost every viewer, every load. Same I/O shape; named
+        // rather than silently re-encoded, because these are the user's bytes.
+        const weightAdvisory =
+          typeof content === "string" && artifact.kind === "file"
+            ? await heavyAssetsAdvisory(content, ctx.meta)
+            : null
+        // Shape drift against the previous version — the quiet way a trend read splits
+        // into two metrics that look like one.
+        const driftAdvisories =
+          typeof content === "string" && artifact.kind === "file"
+            ? await slotShapeDriftAdvisories(
+                content,
+                version.content_type,
+                artifact.id,
+                version.n - 1,
+                ctx.meta,
+              )
+            : []
+        // What the extraction actually STORED for this version, read back from the rows
+        // rather than echoed from the parser. Reporting the store is strictly more honest:
+        // it reflects what is now queryable, so a persistence failure shows up as an empty
+        // list instead of a confident claim. Until now success was silent — a fact was
+        // only ever mentioned when something went wrong, which is a poor way to teach a
+        // capability whose whole point is that it accrues.
+        const storedSlots = await ctx.meta.getVersionData(artifact.id, version.n).catch(() => [])
         const payload = {
           published: true,
           short_id: artifact.short_id,
@@ -739,6 +793,12 @@ export function registerPublishTool(tc: ToolContext): void {
           kind: artifact.kind,
           version: version.n,
           url,
+          ...(storedSlots.length
+            ? {
+                data: storedSlots.map((s) => ({ fact: s.slot, bytes: s.size_bytes })),
+                data_next: `Queryable now: read(short_id:"${artifact.short_id}", data:"${storedSlots[0]?.slot}") for this version, or versions:"all" for the whole series.`,
+              }
+            : {}),
           // Single-file publishes report the stored bytes' sha256 (the content-
           // addressed blob key) so callers can verify what landed matches what
           // they sent.
@@ -771,6 +831,8 @@ export function registerPublishTool(tc: ToolContext): void {
               ? [
                   ...publishAdvisories(content, version.content_type),
                   ...(blobAdvisory ? [blobAdvisory] : []),
+                  ...(weightAdvisory ? [weightAdvisory] : []),
+                  ...driftAdvisories,
                 ]
                   .map((advisory) => ` ${advisory}`)
                   .join("")

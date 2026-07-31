@@ -14,10 +14,17 @@ import { loopSubstrate } from "../src/lib/substrate-loop"
 interface Recorded {
   claims: number
   tools: { tool: string; args: unknown }[]
-  writes: { path: string }[]
+  /** What the substrate actually uploaded. `name` is the one that MATTERS: publish.ts derives
+   *  the stored content type from the filename EXTENSION and ignores the part's MIME type, so a
+   *  test that only checks `type` passes while the artifact still flips to HTML. Both are
+   *  recorded so the assertion is on the field the server reads. */
+  writes: { path: string; type: string | null; name: string | null }[]
   finishes: Record<string, unknown>[]
   /** Artifact content GETs — the run lane must read its target before revising it. */
   reads: string[]
+  /** GETs of the artifact RECORD. Should stay EMPTY: the document's type rides a header on
+   *  the content read, so wanting it must not cost a second request. */
+  recordReads: string[]
   /** Every `/v1/agent/model-credential` query the substrate made, in order. WHICH PROVIDER it
    *  asks about, and whether it asks a second time, is behaviour under test. */
   credentialQueries: string[]
@@ -38,6 +45,8 @@ const stubApi = (opts: {
   content?: string
   /** Status for that read — 404/500 exercises the unreadable-target path. */
   contentStatus?: number
+  /** What the artifact RECORD reports as its stored type (the thing a revision must preserve). */
+  artifactContentType?: string
   /** Per-provider credentials. Default: a claude-code api key, which is what every pre-existing
    *  test in this file implicitly assumed while injecting `callModel` over the top of it. */
   credentials?: Record<string, StubCredential>
@@ -50,6 +59,7 @@ const stubApi = (opts: {
     writes: [],
     finishes: [],
     reads: [],
+    recordReads: [],
     credentialQueries: [],
   }
   let server: Server
@@ -91,15 +101,40 @@ const stubApi = (opts: {
           rec.reads.push(url)
           const status = opts.contentStatus ?? 200
           if (status >= 400) return send(status, { error: "nope" })
-          res.writeHead(200, { "content-type": "text/markdown" })
+          // AS PRODUCTION SERVES IT. `Content-Type` is text/plain for EVERY artifact so the
+          // bytes render as text instead of executing in a browser — it is the transport's, not
+          // the document's. The DOCUMENT's type rides X-Derive-Content-Type alongside the other
+          // X-Derive-* headers the route already emits. This stub used to answer text/markdown
+          // on Content-Type, which made a fix that read the wrong header look correct here while
+          // doing nothing at all in production.
+          res.writeHead(200, {
+            "content-type": "text/plain; charset=utf-8",
+            "x-derive-content-type": opts.artifactContentType ?? "text/markdown",
+          })
           return res.end(opts.content ?? "# Roadmap\n\n## Now\nShip the thing.\n")
+        }
+        // A read of the artifact RECORD. Recorded so a test can assert the loop does NOT need
+        // one: the type comes back on the content read, which the run already makes.
+        if (/\/v1\/artifacts\/[^/]+$/.test(url) && req.method === "GET") {
+          rec.recordReads.push(url)
+          return send(200, {
+            short_id: "art_1",
+            current_content_type: opts.artifactContentType ?? "text/markdown",
+            current_version: 1,
+          })
         }
         if (url.endsWith("/finish")) {
           rec.finishes.push(JSON.parse(body || "{}"))
           return send(200, { ok: true })
         }
         // Artifact writes: proposals, versions, create.
-        rec.writes.push({ path: url })
+        // Pull the file part's Content-Type straight out of the multipart body.
+        const part = /name="file"; filename="([^"]*)"[\s\S]*?Content-Type:\s*([^\r\n]+)/i.exec(body)
+        rec.writes.push({
+          path: url,
+          name: part?.[1] ?? null,
+          type: part?.[2]?.trim() ?? null,
+        })
         const status = opts.writeStatus ?? 201
         return send(status, status < 400 ? { short_id: "art_new" } : { error: "forbidden" })
       })
@@ -954,6 +989,248 @@ describe("loop substrate: resolving the model credential", () => {
     const api = stubApi({ run: { ...baseRun, targets: [] }, credentials: {} })
     const { finish } = await runWithRealCredential(api)
     expect((finish?.meta as { why: string }).why).toContain("no model plan connected")
+    await api.close()
+  })
+})
+
+describe("how the loop REACHES the API", () => {
+  // THE REGRESSION. This substrate is an HTTP client of its own deployment. On Node that is a
+  // loopback call and global fetch is right; on Workers it exits the isolate, crosses the edge
+  // and comes back to the SAME Worker. One run survived that. The cron tick starting three at
+  // once did not: every self-subrequest sat until it timed out, so each scheduled run died on
+  // `/v1/agent/runs/claim failed (522)` while a run booted from the queue nudge succeeded —
+  // which is exactly the shape that makes it look like the schedule lane is broken.
+  //
+  // Guarded by making global fetch a landmine: if anything in the loop stops honouring
+  // `fetchImpl`, the run cannot complete.
+  it("uses the injected transport for EVERY call, never global fetch", async () => {
+    const api = stubApi({ run: baseRun })
+    const url = await api.url
+    const realFetch = globalThis.fetch
+    const seen: string[] = []
+    globalThis.fetch = (async () => {
+      throw new Error("global fetch used: on Workers this is a self-subrequest and times out")
+    }) as typeof fetch
+    try {
+      await loopSubstrate({
+        callModel: answerTurn(revision()),
+        fetchImpl: (req) => {
+          seen.push(new URL(req.url).pathname)
+          return realFetch(req)
+        },
+      }).start({ runId: "run_1", token: "tok", server: url })
+
+      const deadline = Date.now() + 10_000
+      while (api.rec.finishes.length === 0 && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 20))
+
+      // It ran to completion without global fetch ever being reachable...
+      expect(api.rec.finishes).toHaveLength(1)
+      // ...and the claim in particular — the call that 522'd in production — went through the
+      // injected transport.
+      expect(seen).toContain("/v1/agent/runs/claim")
+      expect(seen.length).toBeGreaterThan(1)
+    } finally {
+      globalThis.fetch = realFetch
+      await api.close()
+    }
+  })
+
+  it("falls back to global fetch when no transport is injected — Node keeps working", async () => {
+    const api = stubApi({ run: baseRun })
+    const url = await api.url
+    try {
+      const settled = await runToSettle(url, api.rec, answerTurn(revision()))
+      expect(settled).toBeTruthy()
+    } finally {
+      await api.close()
+    }
+  })
+})
+
+describe("the revised document KEEPS its own format", () => {
+  // THE REGRESSION, and the third lane to need the same fix. Attended chat already learned this
+  // (lib/session-turn.ts): deriving the content type from the model's filename converts a
+  // Markdown document to HTML the moment the model omits or mangles the name, because the edits
+  // contract falls back to `index.html` — correct when CREATING an artifact, wrong when REVISING
+  // one. Observed on production, same document, same approval flow:
+  //
+  //     v1  text/markdown   upload
+  //     v2  text/markdown   chat edit          (already fixed)
+  //     v3  text/html       automation run     (this)
+  //
+  // At v3 the document stops rendering as markdown and reads as one unformatted blob, and
+  // nothing reports an error.
+  it("writes text/markdown for a markdown target even when the model says index.html", async () => {
+    const api = stubApi({ run: baseRun, content: "# Roadmap\n\n## Now\nShip it.\n" })
+    const url = await api.url
+    try {
+      // `filename: "index.html"` is exactly what the edits contract falls back to.
+      const settled = await runToSettle(
+        url,
+        api.rec,
+        answerTurn(
+          `<revision>${JSON.stringify({
+            content: "# Roadmap\n\n## Now\nShip it.\n\n## Status\nReviewed.\n",
+            filename: "index.html",
+            confidence: 0.95,
+            message: "m",
+          })}</revision>`,
+        ),
+      )
+      expect(settled).toBeTruthy()
+      expect(api.rec.writes.length).toBeGreaterThan(0)
+      // The target was served as text/markdown, so the revision must be written as markdown.
+      // The FILENAME is the assertion that matters — publish.ts reads the extension and ignores
+      // the part's MIME type, so checking only `type` would pass with the bug still present.
+      for (const w of api.rec.writes) {
+        expect(w.name).toMatch(/\.md$/i)
+        expect(w.type).toBe("text/markdown")
+      }
+    } finally {
+      await api.close()
+    }
+  })
+
+  it("still honours the filename when CREATING, where there is no document to keep", async () => {
+    // No artifact target: nothing to preserve, so the model's filename is the only signal.
+    const api = stubApi({ run: { ...baseRun, targets: [] } })
+    const url = await api.url
+    try {
+      const settled = await runToSettle(
+        url,
+        api.rec,
+        answerTurn(
+          `<revision>${JSON.stringify({
+            content: "<h1>New</h1>",
+            filename: "index.html",
+            confidence: 0.95,
+            message: "m",
+          })}</revision>`,
+        ),
+      )
+      expect(settled).toBeTruthy()
+      for (const w of api.rec.writes) {
+        expect(w.name).toBe("index.html")
+        expect(w.type).toBe("text/html")
+      }
+    } finally {
+      await api.close()
+    }
+  })
+})
+
+describe("what filename the model is SHOWN", () => {
+  // The upstream half of the content-type bug. Both lanes passed a bare short_id, so the prompt
+  // said "its filename is art_1" — no extension, no format signal. Asked to name its output the
+  // model guessed, and the edits contract's fallback made that guess index.html. That is why the
+  // flip was intermittent rather than constant: it depended on what the model felt like naming.
+  //
+  // Correcting the type on the way out (landOverHttp) is not a substitute. A model that believes
+  // it is editing an extensionless file will also write HTML into a Markdown document's BODY,
+  // and no amount of re-stamping the content type afterwards undoes that.
+  it("tells the model a markdown target's name ends in .md", async () => {
+    const api = stubApi({ run: baseRun, content: "# Roadmap\n\n## Now\nShip it.\n" })
+    const url = await api.url
+    let systemSeen = ""
+    try {
+      await runToSettle(url, api.rec, async (input) => {
+        systemSeen = input.system ?? ""
+        return { text: revision(), toolUses: [], costUsd: 0.001, done: true }
+      })
+      expect(systemSeen).toContain("its filename is art_1.md")
+      expect(systemSeen).not.toContain("its filename is art_1\n")
+    } finally {
+      await api.close()
+    }
+  })
+})
+
+describe("what the run READS to learn the document's format", () => {
+  // The type is needed to preserve it on the write. The first working version of that fix
+  // fetched the artifact RECORD for it — a whole extra request per run, re-running auth and
+  // re-reading a row the content route already had in hand and used six lines later. It also
+  // answered with the artifact's CURRENT type, which is the wrong answer for a `?v=N` read.
+  //
+  // It rides X-Derive-Content-Type on the content read instead, next to the X-Derive-* headers
+  // that route already emits. This pins that it stays free.
+  it("learns it from the content read, without a second request", async () => {
+    const api = stubApi({ run: baseRun, artifactContentType: "text/markdown" })
+    const url = await api.url
+    try {
+      const settled = await runToSettle(
+        url,
+        api.rec,
+        answerTurn(
+          `<revision>${JSON.stringify({
+            content: "# Roadmap\n\n## Now\nShip it.\n\n## Status\nDone.\n",
+            filename: "index.html",
+            confidence: 0.95,
+            message: "m",
+          })}</revision>`,
+        ),
+      )
+      expect(settled).toBeTruthy()
+      // It read the content exactly once...
+      expect(api.rec.reads.length).toBe(1)
+      // ...never asked for the record...
+      expect(api.rec.recordReads).toEqual([])
+      // ...and still preserved the format.
+      for (const w of api.rec.writes) expect(w.name).toMatch(/\.md$/i)
+    } finally {
+      await api.close()
+    }
+  })
+})
+
+// A BOUND SOURCE THAT WENT QUIET must reach both the model and the ledger.
+//
+// The claim has always sent `sources_quiet` and this executor dropped it, so a run whose server
+// was unreachable — or whose tool list had been rewritten since a human approved it — behaved as
+// though no source had ever been bound. The model was not told, so it stalled or invented; the
+// ledger was not told, so the only account was "the agent produced nothing", which points at the
+// model instead of at the dead source. That misdirection cost a real investigation.
+describe("loop substrate: a source that contributed nothing is explained", () => {
+  // `why` is resolved server-side and rides down with the claim, so neither executor keeps its
+  // own copy of the wording.
+  const quiet = [
+    {
+      connection_id: "c1",
+      toolkit: "weather",
+      reason: "unreachable",
+      why: "the server could not be reached",
+    },
+  ]
+
+  it("tells the MODEL which source went quiet and why", async () => {
+    const api = stubApi({ run: { ...baseRun, sources_quiet: quiet } })
+    const url = await api.url
+    let prompt = ""
+    await runToSettle(url, api.rec, async ({ messages }) => {
+      prompt = JSON.stringify(messages)
+      return { text: revision(), toolUses: [], costUsd: null, done: true }
+    })
+    expect(prompt).toContain("weather")
+    expect(prompt).toContain("could not be reached")
+    // And it must tell the model NOT to invent the missing figures.
+    expect(prompt).toContain("do not guess")
+    await api.close()
+  })
+
+  it("records it on the FAILURE, so the ledger names the dead source", async () => {
+    const api = stubApi({ run: { ...baseRun, sources_quiet: quiet } })
+    const url = await api.url
+    await runToSettle(url, api.rec, async () => ({
+      text: "I could not read it.",
+      toolUses: [],
+      costUsd: null,
+      done: true,
+    }))
+    const meta = api.rec.finishes[0]?.meta as Record<string, unknown>
+    expect(meta?.outcome).toBe("failed")
+    expect(meta?.sources_quiet).toEqual(quiet)
+    // "Failed with zero tools" is a different diagnosis from "failed holding three".
+    expect(meta?.tools_offered).toBe(0)
     await api.close()
   })
 })

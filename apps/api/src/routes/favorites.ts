@@ -137,7 +137,7 @@ export const favoriteRoutes = (ctx: AppContext) => {
       if (add.length === 0) return c.json({ ok: 0, skipped: 0, failed: 0 })
       const summary = await bulkArtifactOp(
         body.shortIds,
-        (shortId) => meta.getByShortId(shortId),
+        (ids) => meta.getByShortIds(ids),
         (a) => authorize(c, "publish", a),
         async (a) => {
           const current = (await meta.tagsForArtifacts([a.id]))[a.id] ?? []
@@ -176,7 +176,7 @@ export const favoriteRoutes = (ctx: AppContext) => {
       if (body instanceof Response) return bail(body)
       const summary = await bulkArtifactOp(
         body.shortIds,
-        (shortId) => meta.getByShortId(shortId),
+        (ids) => meta.getByShortIds(ids),
         (a) => authorize(c, "read", a),
         (a) => (body.favorite ? meta.setFavorite(a.id, me.id) : meta.removeFavorite(a.id, me.id)),
       )

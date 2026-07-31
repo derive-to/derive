@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useNavigate, useParams } from "@tanstack/react-router"
+import { useBlocker, useNavigate, useParams } from "@tanstack/react-router"
 import { Minimize2 } from "lucide-react"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { API_BASE, ApiError, api } from "@/api"
 import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Kbd } from "@/components/ui/kbd"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
@@ -19,7 +20,8 @@ import {
 import { ago } from "@/lib/time"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
-import { useIsMobile } from "@/lib/use-is-mobile"
+import { useCoarsePointer, useIsMobile } from "@/lib/use-is-mobile"
+import { useKeyboardInset } from "@/lib/use-keyboard-inset"
 import { cn } from "@/lib/utils"
 import { useArtifactActions } from "./artifact-actions"
 import { ArtifactBreadcrumb } from "./artifact-breadcrumb"
@@ -30,6 +32,7 @@ import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact
 import { ArtifactTopBar } from "./artifact-top-bar"
 import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
+import { EditBar } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
 import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
@@ -45,6 +48,7 @@ import { useArtifactFrame } from "./use-artifact-frame"
 import { useArtifactLive } from "./use-artifact-live"
 import { useArtifactRoute } from "./use-artifact-route"
 import { useCommentsPanel } from "./use-comments-panel"
+import { unsavedEditsCopy, useInlineEdit } from "./use-inline-edit"
 import { useVersionDiff } from "./use-version-diff"
 import { WorkbenchSkeleton } from "./workbench-skeleton"
 
@@ -104,6 +108,9 @@ export function Artifact() {
   const { me, loading } = useAuth()
   const nav = useNavigate()
   const isMobile = useIsMobile()
+  // Thumb-sized targets and "tap" copy follow the POINTER, not the breakpoint: a
+  // landscape phone is 844px wide and a tablet wider still, and both are fingers.
+  const coarsePointer = useCoarsePointer()
 
   // Artifact metadata + comments come from React Query, so the route loader's
   // intent preload (ensureQueryData) warms exactly what we render here — the
@@ -127,13 +134,42 @@ export function Artifact() {
   // Focus/hero mode — strip the workbench chrome to just the matted render (Esc exits).
   const [focus, setFocus] = useState(false)
   useEffect(() => {
-    if (!focus) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setFocus(false)
+      if (e.key !== "Escape") return
+      // Escape dismisses the TOPMOST layer, and this listener is the bottom one.
+      // Radix (dialogs, menus, popovers — including this page's own confirms) binds
+      // on document with capture and calls preventDefault without stopping
+      // propagation, so without this check one press both closes the dialog and
+      // re-runs the action that opened it: the discard confirm became impossible to
+      // dismiss with Escape, and closing an unrelated ⋯ menu tore down edit mode.
+      if (e.defaultPrevented) return
+      if (focus) {
+        setFocus(false)
+        return
+      }
+      // Keyboard focus is often OUTSIDE the frame (the user just clicked the strip),
+      // so the window listener owns Escape there; the frame forwards its own.
+      inlineEditRef.current.requestExit()
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [focus])
+
+  // ⌘S / ⌘Enter with focus on the host chrome. The frame forwards the same keys when
+  // the caret is inside the document, but the strip advertises the shortcut and focus
+  // is on the HOST the moment you click anything in it — without this the browser's
+  // Save-page dialog opens over the workbench instead.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.repeat) return
+      if (e.key !== "s" && e.key !== "S" && e.key !== "Enter") return
+      if (!inlineEditRef.current.active) return
+      e.preventDefault()
+      inlineEditRef.current.save()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
   // The review overlay: null = closed. A ?review deep link (or a surface that knows
   // which proposal it means) opens it ON that proposal; the ⋯ menu opens it bare.
   const [reviewing, setReviewing] = useState<{ proposalId?: string } | null>(null)
@@ -148,6 +184,11 @@ export function Artifact() {
   // Phones: px the comment sheet occupies at the bottom, reported by MobileComments.
   // The document column reserves exactly this so nothing black is left beneath it.
   const [sheetInset, setSheetInset] = useState(0)
+  // What the on-screen keyboard covers. Inline editing types INTO the document, so
+  // the stage has to give back exactly this much or the line under the caret sits
+  // behind the keyboard — the iframe can't discover that on its own (its own
+  // viewport never shrinks; only the host's visual viewport does).
+  const keyboard = useKeyboardInset()
   // Editable title while editing (seeded from the artifact in startEdit); editors
   // can rename, and it republishes with the new name.
   const [editTitle, setEditTitle] = useState("")
@@ -195,6 +236,17 @@ export function Artifact() {
   // resubscribe every time the user opens the editor.
   const editingRef = useRef(editing)
   editingRef.current = editing
+  // Same read-through-a-ref pattern for INLINE editing (set after the hook below):
+  // while it's active the frame is version-frozen, so the live update must warn
+  // instead of quietly swapping the document out from under typed text.
+  // Holds the inline-edit API (not just a flag) so the SSE handler and the two
+  // Escape listeners — all declared ABOVE the hook — can read live state and call
+  // back into it without re-subscribing on every render.
+  const inlineEditRef = useRef<{ active: boolean; requestExit: () => void; save: () => void }>({
+    active: false,
+    requestExit: () => {},
+    save: () => {},
+  })
   const pinnedRef = useRef(version)
   pinnedRef.current = version
   const onVersionLive = useCallback(
@@ -202,7 +254,12 @@ export function Artifact() {
       load()
       if (pinnedRef.current !== undefined) return
       const v = n !== undefined ? `v${n}` : "A new version"
-      if (editingRef.current) {
+      if (inlineEditRef.current.active) {
+        toast.warning(`${v} was just published. Saving will re-check your edits against it.`, {
+          id: `stale-edit-${shortId}`,
+          duration: 8000,
+        })
+      } else if (editingRef.current) {
         toast.warning(`${v} was just published — publishing this edit will replace it.`, {
           id: `stale-edit-${shortId}`,
           duration: 8000,
@@ -275,6 +332,9 @@ export function Artifact() {
     onEsc: () => {
       setFocus(false)
       setComposer(null)
+      // Escape is also "leave edit mode" — with unsaved edits the hook asks first
+      // instead of throwing typing away.
+      inlineEditRef.current.requestExit()
     },
     // A non-bundle link clicked inside the frame. The href is untrusted artifact
     // HTML — allowlist the scheme (a hostile doc could post javascript:). The
@@ -411,6 +471,46 @@ export function Artifact() {
     setActiveThread,
   })
 
+  // Inline (click-to-type) editing: the frame owns the caret and the diffs, this
+  // hook owns the mode + save/propose. Entering clears any parked selection so the
+  // comment grammar and the edit grammar never overlap; the raw source editor is
+  // the fallback when a quote can't be applied (formatted spans).
+  const inlineEdit = useInlineEdit({
+    shortId,
+    art,
+    frameRef: frame,
+    post,
+    load,
+    onOpenSourceEditor: startEdit,
+    onEnter: () => {
+      setSel(null)
+      setComposer(null)
+      setActiveThread(null)
+    },
+  })
+  inlineEditRef.current = {
+    active: inlineEdit.active,
+    requestExit: inlineEdit.requestExit,
+    save: inlineEdit.save,
+  }
+
+  // Unsaved inline edits live only in the frame's DOM — a route change unmounts it
+  // and a reload throws it away, both silently. Guard BOTH: withResolver drives the
+  // house ConfirmDialog for in-app navigation, enableBeforeUnload hands tab-close to
+  // the browser's own prompt (the only thing that can stop it). Same shape as the
+  // new-artifact draft guard in pages/new.tsx.
+  const editBlocker = useBlocker({
+    // Only a navigation that actually LEAVES this artifact. The route canonicalises
+    // its own URL with `replace` (a rename by a collaborator is enough to trigger
+    // it), and blocking that pops a discard dialog for a slug rewrite the user never
+    // asked for — then re-pops it the moment they cancel, because the rewrite is
+    // still pending. Same-artifact navigations carry no risk to unsaved edits: the
+    // frame is not remounted.
+    shouldBlockFn: ({ next }) => inlineEdit.blocking && !next.pathname.includes(shortId),
+    enableBeforeUnload: () => inlineEdit.blocking,
+    withResolver: true,
+  })
+
   // Reinstate a removed artifact (owner-only, from the tombstone) and lock/unlock the
   // current version — page-level writes, hoisted above the load guards like the actions
   // hook so the primitive can govern them.
@@ -459,7 +559,9 @@ export function Artifact() {
       />
     )
 
-  const shown = version ?? art.current_version
+  // While inline editing, the shown version stays frozen at the mode-entry head so
+  // a concurrent publish can't reload the frame and wipe typed-but-unsaved text.
+  const shown = version ?? inlineEdit.frozenVersion ?? art.current_version
   // The public-history gate, client half: an anonymous @vN link on an artifact whose
   // owner kept history private is a 404, not a downgrade — the server already
   // refuses the old version's bytes (raw.ts), so render the same not-found the
@@ -512,6 +614,11 @@ export function Artifact() {
   const canMove = art.my_role === "owner"
   const isLocked = !!art.locked
   const effectiveCanPublish = canPublish && !isLocked
+  // The ONE eligibility base both edit affordances (inline + raw source) share, so
+  // a new rule can't land in one and not the other; the deck test likewise has a
+  // single spelling that the isDeck prop and the inline gate both read.
+  const canEditDoc = editable && canPropose && !editing && !art.managed
+  const isDeckLike = !!deck || art.current_content_type === "text/x-derive-deck"
   // A logged-out visitor on a public/link artifact: strictly view-only. They get
   // the document + live presence/cursors (Google-Docs style) and nothing else —
   // no favorite, tags, collections, share, report, comments, or version tools.
@@ -560,7 +667,11 @@ export function Artifact() {
   const documentEl = (
     <ArtifactDocument
       shown={shown}
-      currentVersion={art.current_version}
+      // While inline editing, the frozen view IS the working version: a concurrent
+      // publish must not surface the past-version strip mid-session (its Restore
+      // would publish over the head while edits are pending; the warning toast
+      // already announced the new version). Treating shown as current hides it.
+      currentVersion={inlineEdit.active ? shown : art.current_version}
       title={art.title ?? shortId}
       rawSrc={rawSrc}
       view={view}
@@ -573,7 +684,13 @@ export function Artifact() {
       presentWrapRef={presentWrap}
       cursor={live.cursor}
       onScrollDoc={scrollBy}
-      onFrameLoad={onFrameLoad}
+      // A frame (re)load while inline editing means the edit session's document is
+      // gone — the hook exits and warns rather than letting a later Save silently
+      // no-op over discarded edits.
+      onFrameLoad={() => {
+        onFrameLoad()
+        inlineEdit.onFrameGone()
+      }}
       onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
       onRestore={() => restore(shown)}
       onBackToCurrent={() =>
@@ -607,8 +724,39 @@ export function Artifact() {
       </PublicViewer>
     )
 
+  const unsaved = unsavedEditsCopy(inlineEdit.dirty)
+
   return (
     <ActionsCtx.Provider value={actions}>
+      {/* Leaving with unsaved inline edits — one wording, two doors. Navigation is
+          intercepted by the router blocker; Escape/Done ask through the hook. */}
+      <ConfirmDialog
+        open={editBlocker.status === "blocked"}
+        onOpenChange={(o) => {
+          if (!o && editBlocker.status === "blocked") editBlocker.reset()
+        }}
+        title={unsaved.title}
+        description={unsaved.description}
+        confirmLabel={unsaved.confirmLabel}
+        confirmTestId="inline-edit-leave-confirm"
+        onConfirm={() => {
+          if (editBlocker.status === "blocked") {
+            inlineEdit.confirmExit()
+            editBlocker.proceed()
+          }
+        }}
+      />
+      <ConfirmDialog
+        open={inlineEdit.exitPrompt}
+        onOpenChange={(o) => {
+          if (!o) inlineEdit.cancelExit()
+        }}
+        title={unsaved.title}
+        description={unsaved.description}
+        confirmLabel={unsaved.confirmLabel}
+        confirmTestId="inline-edit-exit-confirm"
+        onConfirm={inlineEdit.confirmExit}
+      />
       {reviewing && (
         <Suspense fallback={null}>
           <ReviewOverlay
@@ -720,9 +868,18 @@ export function Artifact() {
               isMobile={isMobile}
               panelOpen={panel === "open"}
               openCount={openCount}
-              showEdit={editable && canPropose && !editing && !art.managed}
+              // The source editor unmounts the iframe — mid-inline-session that
+              // silently discards typed edits, so its entry hides while editing.
+              showEdit={canEditDoc && !inlineEdit.active}
               editLabel={effectiveCanPublish ? "Edit source (dev)" : "Propose change (dev)"}
-              isDeck={!!deck || art.current_content_type === "text/x-derive-deck"}
+              // Inline editing: current version, single file, not a deck (slides
+              // present their own surface), not GitHub-managed. Commenters get the
+              // same affordance as a suggestion (it lands as a proposal). Phones
+              // included: tap a block, type on the keyboard, save from the bar.
+              showInlineEdit={canEditDoc && !inlineEdit.active && !isDeckLike}
+              inlineEditLabel={effectiveCanPublish ? "Edit" : "Suggest edits"}
+              onInlineEdit={inlineEdit.start}
+              isDeck={isDeckLike}
               canLock={canLock}
               canMove={canMove}
               automateBeta={automateBeta}
@@ -768,14 +925,36 @@ export function Artifact() {
             // black band below. `sheetInset` tracks the sheet's real height (peek
             // bar, full list, or keyboard-pinned composer), so this never over- or
             // under-reserves the way a fixed `pb-[50vh]` did.
+            // Two things can occupy the bottom: the comments sheet and, while
+            // editing, the on-screen keyboard. Reserve the taller — the sheet pins
+            // ITSELF above the keyboard, so adding them would double-count.
             style={
-              isMobile && !focus && effectivePanel === "open"
-                ? { paddingBottom: sheetInset }
+              !focus && (keyboard || (isMobile && effectivePanel === "open"))
+                ? {
+                    paddingBottom: Math.max(
+                      isMobile && effectivePanel === "open" ? sheetInset : 0,
+                      inlineEdit.active ? (keyboard?.inset ?? 0) : 0,
+                    ),
+                  }
                 : undefined
             }
           >
             {art.bundle && !editing && (
               <BundleBar bundle={art.bundle} shortId={shortId} version={shown} />
+            )}
+            {/* Inline edit mode's one piece of chrome: a slim band above the document
+                (in flow, so it can never cover or swallow clicks on the text you came
+                to fix). The document itself is the editor — click a block, type. */}
+            {inlineEdit.active && !editing && !focus && (
+              <EditBar
+                dirty={inlineEdit.dirty}
+                canPublish={effectiveCanPublish}
+                saving={inlineEdit.saving}
+                touch={coarsePointer}
+                onSave={inlineEdit.save}
+                onDiscard={inlineEdit.discard}
+                onDone={inlineEdit.done}
+              />
             )}
             {editing ? (
               <SourceEditor
@@ -854,6 +1033,7 @@ export function Artifact() {
                 }
                 onSheetHeight={setSheetInset}
                 docLive={docLive}
+                editing={inlineEdit.active}
                 panel={effectivePanel}
                 asideWidth={asideWidth}
                 openCount={openCount}

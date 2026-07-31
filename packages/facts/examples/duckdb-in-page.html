@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SQL over my own history</title>
+<style>
+ body{margin:0;background:#0b0d10;color:#e6e9ee;font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:30px 22px}
+ .wrap{max-width:680px;margin:0 auto}
+ h1{font-size:1.25rem;margin:0 0 3px} .sub{color:#9aa4b2;font-size:.82rem;margin:0 0 18px}
+ ol{padding-left:20px;margin:0 0 16px} li{margin:3px 0;font:12.5px/1.5 ui-monospace,Menlo,monospace;color:#9aa4b2}
+ .ok{color:#3fb950} .bad{color:#f85149} .run{color:#d29922}
+ table{width:100%;border-collapse:collapse;font:12.5px/1.5 ui-monospace,Menlo,monospace;margin-top:8px}
+ td,th{text-align:left;padding:3px 8px;border-bottom:1px solid #232830} th{color:#9aa4b2}
+ .card{border:1px solid #232830;border-radius:9px;padding:14px 16px;background:#12151a}
+</style></head>
+<body><div class="wrap">
+<h1>SQL over my own history</h1>
+<p class="sub">DuckDB-WASM, inside the sandboxed artifact, querying this page's own JSONL export.</p>
+<div class="card"><ol id="steps"></ol><div id="out"></div></div>
+<script type="application/derive-facts" data-fact="checks">
+{"run":10,"pass":58,"fail":0}
+</script>
+<script type="module">
+const steps = document.getElementById("steps")
+const step = (t) => { const li = document.createElement("li"); li.className = "run"; li.textContent = "… " + t; steps.appendChild(li); return li }
+const done = (li, t) => { li.className = "ok"; li.textContent = "✓ " + t }
+const fail = (li, e) => { li.className = "bad"; li.textContent = "✗ " + String(e && e.message ? e.message : e).slice(0, 150) }
+
+const id = (location.pathname.match(/\/raw\/([^/]+)\//) || [])[1]
+const dataUrl = new URL(`/raw/${id}/data/checks.jsonl`, location.origin).href
+
+let s = step("import duckdb-wasm from jsDelivr (cross-origin, from an opaque origin)")
+let duckdb
+try { duckdb = await import("https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm"); done(s, "module imported") }
+catch (e) { fail(s, e); throw e }
+
+s = step("select bundle + spawn the worker (blob URL in a sandbox)")
+let db
+try {
+  const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles())
+  const wurl = URL.createObjectURL(new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }))
+  db = new duckdb.AsyncDuckDB(new duckdb.VoidLogger(), new Worker(wurl))
+  await db.instantiate(bundle.mainModule, bundle.pthreadWorker)
+  done(s, "worker up, wasm instantiated")
+} catch (e) { fail(s, e); throw e }
+
+const conn = await db.connect()
+
+// THE claim in the spec: point DuckDB at the URL. This needs range requests, which the
+// export does not advertise — so this is the step most likely to fail.
+s = step("registerFileURL + query over HTTP (the spec's actual claim)")
+let rows = null
+try {
+  await db.registerFileURL("checks.jsonl", dataUrl, duckdb.DuckDBDataProtocol.HTTP, false)
+  const r = await conn.query(`SELECT n, data.pass AS pass FROM read_json_auto('checks.jsonl') ORDER BY n`)
+  rows = r.toArray().map((x) => x.toJSON())
+  done(s, `HTTP worked — ${rows.length} rows`)
+} catch (e) {
+  fail(s, e)
+  s = step("fallback: fetch the bytes myself, register as text")
+  try {
+    const text = await (await fetch(dataUrl)).text()
+    await db.registerFileText("local.jsonl", text)
+    const r = await conn.query(`SELECT n, data.pass AS pass FROM read_json_auto('local.jsonl') ORDER BY n`)
+    rows = r.toArray().map((x) => x.toJSON())
+    done(s, `fallback worked — ${rows.length} rows`)
+  } catch (e2) { fail(s, e2) }
+}
+
+if (rows) {
+  s = step("a window function, computed in the browser")
+  try {
+    const src = rows.length ? "checks.jsonl" : "local.jsonl"
+    const r = await conn.query(
+      `SELECT n, data.pass AS pass, data.pass - lag(data.pass) OVER (ORDER BY n) AS delta
+       FROM read_json_auto('${src}') ORDER BY n`,
+    )
+    const w = r.toArray().map((x) => x.toJSON())
+    done(s, "window function ran")
+    document.getElementById("out").innerHTML =
+      "<table><tr><th>version</th><th>pass</th><th>delta</th></tr>" +
+      w.map((x) => `<tr><td>v${x.n}</td><td>${x.pass}</td><td>${x.delta ?? "—"}</td></tr>`).join("") +
+      "</table>"
+  } catch (e) { fail(s, e) }
+}
+window.__done = true
+</script>
+</div></body></html>

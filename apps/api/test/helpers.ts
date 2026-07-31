@@ -198,7 +198,9 @@ export const authProxy = <T extends ReturnType<typeof createApp>>(a: T): T =>
 // requests auto-authenticate as that token — the shared `app` with knobs (sandbox
 // origin, version window, …).
 export const ownerApp = (deps: Omit<AppDeps, "token">) =>
-  authProxy(createApp({ ...deps, token: TEST_TOKEN }))
+  // The echo broker is opt-in in production (see DERIVE_LOCAL_BROKER); tests are the context it
+  // exists for, so it is on here unless a test is specifically asserting the refusing default.
+  authProxy(createApp({ allowEchoStub: true, ...deps, token: TEST_TOKEN }))
 
 export const meta = makeStore("default", [])
 const sharedApp = createApp({
@@ -206,6 +208,7 @@ const sharedApp = createApp({
   blobs: new FsBlobStore(join(dir, "blobs")),
   baseUrl: "http://derive.test",
   token: TEST_TOKEN,
+  allowEchoStub: true,
 })
 // The default app: every request authenticates as the token (owner).
 export const app = authProxy(sharedApp)
@@ -350,6 +353,7 @@ export const makeAuthedApp = (
     auth: fakeAuth(users),
     defaultRole,
     defaultOrgId: "default",
+    allowEchoStub: true,
     ...opts?.deps,
   })
   const gated = new Proxy(app, {
@@ -467,4 +471,45 @@ export const pub = (
   // explicit session header (e.g. `as(amy)`) still wins for per-actor tests.
   const h = Object.keys(headers).length ? headers : TOKEN_HEADER
   return app.request(url, { method: "POST", body: form, headers: h })
+}
+
+/**
+ * Wrap a store so every method call is recorded by name, in order.
+ *
+ * The round-trip budgets and the authorization-memoization test both assert at the STORE
+ * BOUNDARY, because that is where the ~80ms edge cost is (see round-trip-budget.test.ts).
+ *
+ * Counting happens in a `get`-level Proxy rather than by patching methods, and that detail
+ * is load-bearing: the pg test store is ITSELF a Proxy deferring to an async-created store,
+ * so assigning over its methods silently counts nothing. That mistake once made a test pass
+ * on SQLite while measuring absolutely nothing on Postgres — which is the whole reason this
+ * lives in one place now instead of being re-derived per test file.
+ *
+ * Pair it with a second `makeAuthedApp` whose `deps.meta` is the returned proxy: the first
+ * app owns the store, the probe app drives requests through the wrapper around that same
+ * store, so both see identical data. Give the probe its own NAME — two apps sharing a name
+ * share a Postgres schema and race to create it.
+ */
+export const countingStore = (inner: MetaStore) => {
+  const calls: string[] = []
+  const proxy = new Proxy(inner, {
+    get(target, prop, recv) {
+      const value = Reflect.get(target, prop, recv)
+      if (typeof value !== "function" || typeof prop !== "string") return value
+      return (...args: unknown[]) => {
+        calls.push(prop)
+        return (value as (...a: unknown[]) => unknown).apply(target, args)
+      }
+    },
+  })
+  return {
+    proxy,
+    /** Every call made since the last `reset()`, in order — the budget unit. */
+    calls,
+    reset: () => {
+      calls.length = 0
+    },
+    /** How many times one method was called. */
+    countOf: (method: string) => calls.filter((c) => c === method).length,
+  }
 }

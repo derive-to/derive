@@ -67,6 +67,7 @@ import type {
   NewSignupAttribution,
   NewSlackSubscription,
   NewVersion,
+  NewVersionData,
   NewWebhook,
   NotificationRecord,
   OAuthGrant,
@@ -97,9 +98,11 @@ import type {
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
   SortMode,
+  SubscriptionRecord,
   TakedownInput,
   UserNotificationPrefRecord,
   UserProfile,
+  VersionDataRecord,
   VersionRecord,
   WebhookRecord,
   WorkspaceAccess,
@@ -113,6 +116,7 @@ import {
   parseRunMeta,
   runCounter,
   sortFields,
+  WORKSPACE_FACT_ROW_CAP,
 } from "@derive/core"
 import {
   and,
@@ -182,8 +186,10 @@ import {
   slackSubscription,
   slackThreadLink,
   slackUserLink,
+  subscription,
   userNotificationPref,
   version,
+  versionData,
   webhook,
   webhookDelivery,
   workspace,
@@ -283,6 +289,7 @@ export function artifactListOrder(
 export const schema = {
   artifact,
   version,
+  versionData,
   comment,
   webhook,
   webhookDelivery,
@@ -306,6 +313,7 @@ export const schema = {
   invitation,
   betaSignup,
   signupAttribution,
+  subscription,
   oauthClientWorkspace,
   context,
   contextAsker,
@@ -331,6 +339,7 @@ const _schemaExhaustive: Exhaustive<typeof schema> = true
 const _schemaShapes: Shapes<typeof schema> = {
   artifact: true,
   version: true,
+  versionData: true,
   comment: true,
   webhook: true,
   webhookDelivery: true,
@@ -352,6 +361,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   artifactInvite: true,
   betaSignup: true,
   signupAttribution: true,
+  subscription: true,
   context: true,
   contextAsker: true,
   contextSession: true,
@@ -486,6 +496,10 @@ export function makeRepos(db: SqliteDb) {
   // ---- Artifacts + versions ----------------------------------------------
   const getByShortId = async (shortId: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.short_id, shortId)).get()) ?? null
+  const getByShortIds = async (shortIds: string[]): Promise<ArtifactRecord[]> =>
+    shortIds.length === 0
+      ? []
+      : db.select().from(artifact).where(inArray(artifact.short_id, shortIds)).all()
   const getArtifactById = async (id: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.id, id)).get()) ?? null
   const getArtifactsByIds = async (ids: string[]): Promise<ArtifactRecord[]> =>
@@ -553,6 +567,101 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
       .get()) ?? null
 
+  // "Is THIS artifact synced?" without materializing the workspace's whole managed set.
+  // The ids live inside each repo source's `files` JSON, so there is no column to filter on —
+  // but a LIKE on the raw text narrows to the few sources that could possibly contain it, and
+  // the parse then CONFIRMS, because a substring match is not proof (an id can appear inside a
+  // longer one, or in another field). Same answer as `managedArtifactIds(org).includes(id)`,
+  // without reading every manifest in the workspace to get it.
+  const isManagedArtifact = async (orgId: string, artifactId: string): Promise<boolean> => {
+    const rows = await db
+      .select({ files: repoSource.files })
+      .from(repoSource)
+      .where(and(eq(repoSource.org_id, orgId), like(repoSource.files, `%${artifactId}%`)))
+      .all()
+    return collectManagedIds(rows).includes(artifactId)
+  }
+
+  // The artifact + its workspace's settings. One join here too — the embedded dialects can
+  // express it just as well, and it keeps the two drivers' shapes identical.
+  const artifactWithSettings = async (
+    shortId: string,
+  ): Promise<{ artifact: ArtifactRecord | null; settings: OrgSettings }> => {
+    const row = await db
+      .select({ a: artifact, settings: orgSettings.settings })
+      .from(artifact)
+      .leftJoin(orgSettings, eq(orgSettings.org_id, artifact.org_id))
+      .where(eq(artifact.short_id, shortId))
+      .get()
+    return {
+      artifact: (row?.a as ArtifactRecord | undefined) ?? null,
+      settings: parseOrgSettings(row?.settings ?? null),
+    }
+  }
+
+  // Session + first message + state, together. The embedded drivers run the three writes
+  // sequentially (their round trips are free); the Postgres driver overrides this with one
+  // CTE chain, which is also where the atomicity matters.
+  const createSessionWithMessage = async (
+    s: NewSession,
+    m: Omit<NewSessionMessage, "session_id">,
+    state: SessionState,
+  ): Promise<{ session: SessionRecord; message: SessionMessageRecord }> => {
+    const session = await createSession(s)
+    const message = await addSessionMessage({ ...m, session_id: session.id }, state)
+    // The state update happens inside addSessionMessage, so re-read to return the row as it
+    // now stands rather than the pre-update one.
+    return { session: (await getSession(session.id)) ?? session, message }
+  }
+
+  // The unfurl card's counts + current version. The counts are computed by the database
+  // rather than by reading both whole tables and taking `.length` — same reason the pg
+  // driver batches this, and correct on any dialect.
+  const unfurlInfo = async (
+    artifactId: string,
+    versionN: number,
+  ): Promise<{
+    versionCount: number
+    commentCount: number
+    version: VersionRecord | null
+    facts: { slot: string; json: string }[]
+  }> => {
+    const [vRow, cRow, cur, factRows] = await Promise.all([
+      db.select({ n: count() }).from(version).where(eq(version.artifact_id, artifactId)).get(),
+      db.select({ n: count() }).from(comment).where(eq(comment.artifact_id, artifactId)).get(),
+      getVersion(artifactId, versionN),
+      getVersionData(artifactId, versionN),
+    ])
+    return {
+      versionCount: Number(vRow?.n ?? 0),
+      commentCount: Number(cRow?.n ?? 0),
+      version: cur,
+      // Narrowed to what slotSummary reads, matching the pg driver's projection rather
+      // than handing the caller whole rows only one shape of which is contractual.
+      facts: factRows.map((r) => ({ slot: r.slot, json: r.json })),
+    }
+  }
+
+  // Each artifact's CURRENT version in one query — the batched face of getVersion(id,
+  // current_version) for callers holding a page of artifacts (workspace search's
+  // grep-confirm pass). Joining on artifact.current_version keeps "current" defined in
+  // exactly one place.
+  const currentVersions = async (artifactIds: string[]): Promise<Record<string, VersionRecord>> => {
+    if (artifactIds.length === 0) return {}
+    const rows = await db
+      .select({ v: version })
+      .from(version)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, version.artifact_id), eq(artifact.current_version, version.n)),
+      )
+      .where(inArray(version.artifact_id, artifactIds))
+      .all()
+    const out: Record<string, VersionRecord> = {}
+    for (const r of rows) out[(r.v as VersionRecord).artifact_id] = r.v as VersionRecord
+    return out
+  }
+
   // Sequential add (used by D1, which has no interactive transactions; the
   // UNIQUE(artifact_id, n) constraint turns a race into a clean error). The
   // better-sqlite3 driver overrides this with a synchronous transaction.
@@ -595,6 +704,124 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(version.artifact_id, artifactId))
       .orderBy(asc(version.n))
       .all()
+
+  const setVersionData = async (
+    artifactId: string,
+    n: number,
+    rows: NewVersionData[],
+  ): Promise<void> => {
+    // Delete-then-insert so a re-extraction of the same version is idempotent (a fresh
+    // publish never has existing rows for its new n; restore/re-extract might).
+    await db
+      .delete(versionData)
+      .where(and(eq(versionData.artifact_id, artifactId), eq(versionData.n, n)))
+      .run()
+    if (rows.length === 0) return
+    await db
+      .insert(versionData)
+      .values(rows.map((r) => ({ ...r, artifact_id: artifactId, n })))
+      .run()
+  }
+
+  const getVersionData = async (
+    artifactId: string,
+    n: number,
+    slot?: string,
+  ): Promise<VersionDataRecord[]> =>
+    db
+      .select()
+      .from(versionData)
+      .where(
+        and(
+          eq(versionData.artifact_id, artifactId),
+          eq(versionData.n, n),
+          slot ? eq(versionData.slot, slot) : undefined,
+        ),
+      )
+      .orderBy(asc(versionData.slot))
+      .all()
+
+  const getVersionDataSeries = async (
+    artifactId: string,
+    slot: string,
+    from: number,
+    to: number,
+    limit: number,
+  ): Promise<VersionDataRecord[]> =>
+    db
+      .select()
+      .from(versionData)
+      .where(
+        and(
+          eq(versionData.artifact_id, artifactId),
+          eq(versionData.slot, slot),
+          gte(versionData.n, from),
+          lte(versionData.n, to),
+        ),
+      )
+      .orderBy(asc(versionData.n))
+      .limit(limit)
+      .all()
+
+  // Raw (slot, artifact) rows over each artifact's CURRENT version. Counting happens in
+  // the caller, AFTER the visibility gate — see the port doc for why it cannot happen here.
+  const listWorkspaceFacts = async (orgId: string, opts?: { limit?: number }) =>
+    db
+      .select({
+        slot: versionData.slot,
+        artifact_id: versionData.artifact_id,
+        at: versionData.created_at,
+      })
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
+      .orderBy(asc(versionData.slot))
+      .limit(opts?.limit ?? WORKSPACE_FACT_ROW_CAP)
+      .all()
+
+  const listFactAcrossArtifacts = async (
+    orgId: string,
+    slot: string,
+    opts?: { tag?: string; limit?: number },
+  ) => {
+    // Joined on artifact.current_version, so a SUPERSEDED row can never be reported as
+    // the current state — the failure that would make this quietly wrong rather than
+    // visibly broken. Retired artifacts are excluded: they are out of the library.
+    const tagged = opts?.tag
+      ? db
+          .select({ id: artifactTag.artifact_id })
+          .from(artifactTag)
+          .where(eq(artifactTag.tag, opts.tag.trim().toLowerCase()))
+      : null
+    return db
+      .select({
+        id: artifact.id,
+        short_id: artifact.short_id,
+        title: artifact.title,
+        n: versionData.n,
+        json: versionData.json,
+        at: versionData.created_at,
+      })
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          eq(versionData.slot, slot),
+          isNull(artifact.removed_at),
+          tagged ? inArray(artifact.id, tagged) : undefined,
+        ),
+      )
+      .orderBy(desc(versionData.created_at))
+      .limit(opts?.limit ?? 100)
+      .all()
+  }
 
   const reclassifyVersion = async (
     artifactId: string,
@@ -891,8 +1118,20 @@ export function makeRepos(db: SqliteDb) {
     const where = and(
       eq(comment.artifact_id, artifactId),
       opts?.state ? eq(comment.state, opts.state) : undefined,
+      opts?.threadId ? eq(comment.thread_id, opts.threadId) : undefined,
     )
     return db.select().from(comment).where(where).orderBy(asc(comment.created_at)).all()
+  }
+
+  // Just the DISTINCT author ids — the @mention directory's actual question. It was reading
+  // every comment row on the artifact, bodies and all, to collect them in the Worker.
+  const commentAuthorIds = async (artifactId: string): Promise<string[]> => {
+    const rows = await db
+      .selectDistinct({ id: comment.author_id })
+      .from(comment)
+      .where(and(eq(comment.artifact_id, artifactId), isNotNull(comment.author_id)))
+      .all()
+    return rows.map((r) => r.id).filter((x): x is string => !!x)
   }
 
   const setThreadState = async (
@@ -1943,6 +2182,18 @@ export function makeRepos(db: SqliteDb) {
         set: { settings: JSON.stringify(settings) },
       })
       .run()
+  }
+  const getSubscription = async (orgId: string): Promise<SubscriptionRecord | null> =>
+    (await db.select().from(subscription).where(eq(subscription.org_id, orgId)).get()) ?? null
+  const getSubscriptionByStripeId = async (sid: string): Promise<SubscriptionRecord | null> =>
+    (await db
+      .select()
+      .from(subscription)
+      .where(eq(subscription.stripe_subscription_id, sid))
+      .get()) ?? null
+  const upsertSubscription = async (s: SubscriptionRecord): Promise<void> => {
+    const { org_id: _org, created_at: _created, ...set } = s
+    await db.insert(subscription).values(s).onConflictDoUpdate({ target: subscription.org_id, set })
   }
 
   // ---- Slack App ----------------------------------------------------------
@@ -3620,6 +3871,10 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
     await db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
     await db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
+    // Artifact-SCOPED webhooks only; a workspace-wide one has a null artifact_id and
+    // survives. Found by scripts/check-delete-cascade.mjs.
+    await db.delete(webhook).where(eq(webhook.artifact_id, id)).run()
+    await db.delete(versionData).where(eq(versionData.artifact_id, id)).run()
     await db.delete(version).where(eq(version.artifact_id, id)).run()
     await db.delete(comment).where(eq(comment.artifact_id, id)).run()
     await db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()
@@ -3724,12 +3979,21 @@ export function makeRepos(db: SqliteDb) {
     setLocked,
     setPublicHistory,
     getByShortId,
+    getByShortIds,
+    artifactWithSettings,
     getArtifactById,
     getArtifactsByIds,
     siblingsBySourcePaths,
     addVersion,
     listVersions,
     getVersion,
+    currentVersions,
+    unfurlInfo,
+    setVersionData,
+    getVersionData,
+    getVersionDataSeries,
+    listWorkspaceFacts,
+    listFactAcrossArtifacts,
     reclassifyVersion,
     setVersionPreview,
     setVersionPreviewVariant,
@@ -3756,6 +4020,7 @@ export function makeRepos(db: SqliteDb) {
     getComment,
     updateComment,
     listComments,
+    commentAuthorIds,
     setThreadState,
     deleteThread,
     commentSignals,
@@ -3843,10 +4108,14 @@ export function makeRepos(db: SqliteDb) {
     listRepoSourcesByInstallation,
     listSyncingRepoSources,
     managedArtifactIds,
+    isManagedArtifact,
     getGithubApp,
     setGithubApp,
     getOrgSettings,
     setOrgSettings,
+    getSubscription,
+    getSubscriptionByStripeId,
+    upsertSubscription,
     getSlackInstall,
     setSlackInstall,
     listSlackInstallsByTeam,
@@ -3899,6 +4168,7 @@ export function makeRepos(db: SqliteDb) {
     addContextAsker,
     removeContextAsker,
     createSession,
+    createSessionWithMessage,
     getSession,
     listSessions,
     pendingSessions,

@@ -324,6 +324,15 @@ export const workspaceSettingsQuery = () =>
     queryFn: () => api.getWorkspaceSettings(),
   })
 
+// The workspace's billing truth (plan, Stripe status, seats, storage) behind the
+// Billing section. Not preloaded; a plain lazy query read by owner and non-owner
+// members alike (everyone sees the plan card, only an owner sees the buttons).
+export const billingQuery = () =>
+  queryOptions({
+    queryKey: ["billing"] as const,
+    queryFn: () => api.getBilling(),
+  })
+
 // Slack connection status for the Integrations section (availability, connected
 // team, default channel). Invalidated on disconnect; staleTime Infinity so a
 // background refetch can't re-seed the editable channel field mid-edit.

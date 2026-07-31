@@ -6,12 +6,23 @@
 // looking at the render afterward: correct-by-construction beats
 // correct-by-vigilance.
 
+import { factDriftAdvisories, missingFactAdvisory, parseFacts, shapeOfJson } from "./facts"
 import type { BlobStore } from "./ports"
 import { needsReflow } from "./reflow"
 
 /** Advisory strings for a just-published single file — empty when nothing to say. */
 export const publishAdvisories = (content: string, contentType: string): string[] => {
   const out: string[] = []
+
+  // Structured facts that couldn't be stored (bad name, invalid JSON, oversize,
+  // duplicate, over the per-version cap). The SAME parser persists the good facts in the
+  // version-bump chain, so what's advised here and what's stored can never disagree.
+  out.push(...parseFacts(content, contentType).advisories)
+
+  // A page full of figures with no slot: the nudge that keeps facts from depending on the
+  // author remembering. Last, so it never crowds out something that is actually wrong.
+  const noSlot = missingFactAdvisory(content, contentType)
+  if (noSlot) out.push(noSlot)
 
   // A temporary asset UPLOAD url (the mint-and-curl target) embedded as if it were
   // the permanent asset URL — it expires in minutes, so every image breaks shortly
@@ -63,6 +74,80 @@ const BLOB_CHECK_CAP = 12
 /** Matches an embedded content-addressed asset URL (absolute or relative) and
  *  captures the 64-hex key; the extension is display sugar, the key is the ref. */
 const BLOB_REF = /\/blob\/([0-9a-f]{64})(?:\.[a-z0-9]+)?/gi
+
+/** Total referenced asset weight past which a page is worth mentioning. Roughly "this
+ *  costs a second on a slow connection", not "this is wrong" — plenty of pages should be
+ *  heavy, and the point is that the author knows, not that they change it. */
+const HEAVY_PAGE_BYTES = 1024 * 1024
+
+/**
+ * What the assets this page references cost every viewer, every load. Sibling to
+ * {@link missingBlobAdvisory} (same I/O shape, same cap, same never-throws contract),
+ * and deliberately advisory rather than a transform: these are the USER'S bytes, so
+ * Derive names the cost instead of quietly re-encoding someone's image.
+ *
+ * Silent under the threshold. Never throws — a store hiccup must not fail a publish.
+ */
+export const heavyAssetsAdvisory = async (
+  content: string,
+  assets: { getAsset(hash: string): Promise<{ size_bytes: number } | null> },
+): Promise<string | null> => {
+  try {
+    const keys = [
+      ...new Set([...content.matchAll(BLOB_REF)].map((m) => (m[1] as string).toLowerCase())),
+    ].slice(0, BLOB_CHECK_CAP)
+    if (!keys.length) return null
+    const rows = await Promise.all(keys.map((k) => assets.getAsset(k)))
+    const total = rows.reduce((sum, r) => sum + (r?.size_bytes ?? 0), 0)
+    if (total < HEAVY_PAGE_BYTES) return null
+    const mb = (n: number) => `${(n / (1024 * 1024)).toFixed(1)}MB`
+    const found = rows.filter(Boolean).length
+    return (
+      `This page references ${mb(total)} of images across ${found} asset(s), which every ` +
+      `viewer downloads on every load. Nothing is re-encoded (they are your bytes) — but if ` +
+      `any were exported at twice the density they display at, halving that is the lever: it ` +
+      `cut Derive's own renders ~78%, where re-encoding bought 15%.`
+    )
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Slot shapes that drifted from the previous version — the quiet way a trend read goes
+ * wrong. Needs I/O (the previous version's stored rows), so it sits with the other I/O
+ * advisories rather than in the pure pass. Silent on a first version, a new slot, or a
+ * slot that simply went away; those are ordinary authoring.
+ *
+ * Never throws: a store hiccup must not fail a publish that already went live.
+ */
+export const slotShapeDriftAdvisories = async (
+  content: string,
+  contentType: string,
+  artifactId: string,
+  previousVersion: number,
+  meta: {
+    getVersionData(
+      artifactId: string,
+      n: number,
+      slot?: string,
+    ): Promise<{ slot: string; json: string }[]>
+  },
+): Promise<string[]> => {
+  if (previousVersion < 1) return []
+  try {
+    const { facts } = parseFacts(content, contentType)
+    if (!facts.length) return []
+    const prior = await meta.getVersionData(artifactId, previousVersion)
+    if (!prior.length) return []
+    return factDriftAdvisories(
+      facts.map((s) => ({ slot: s.slot, json: s.json })),
+      prior.map((p) => ({ slot: p.slot, shape: shapeOfJson(p.json) })),
+    )
+  } catch {
+    return []
+  }
+}
 
 /** The one advisory that needs I/O: embedded /blob/ URLs whose bytes don't exist —
  *  a hand-typed or mistranscribed hash renders as a 404 image. Only runs when the

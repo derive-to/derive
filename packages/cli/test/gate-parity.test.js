@@ -17,34 +17,59 @@ import { DEFAULT_CONFIDENCE_FLOOR, decideWrite, runRevisionAgent } from "../src/
 // Both are the spec; each holds its own implementation to it. Changing the precedence means
 // changing both tables, and forgetting either implementation fails loudly here.
 describe("decideWrite: parity with @derive/core", () => {
-  it("the full truth table — 36 combinations, identical to core's", () => {
+  it("the full truth table — 72 combinations, identical to core's", () => {
     const rows = []
     for (const autonomy of ["shadow", "suggest", "auto"])
       for (const confidence of [null, 0.5, 1])
         for (const killswitch of [false, true])
-          for (const autoEnabled of [false, true]) {
-            const expected = killswitch
-              ? "proposal"
-              : autonomy === "shadow"
-                ? "shadow"
-                : autonomy === "suggest"
-                  ? "proposal"
-                  : !autoEnabled || confidence === null || confidence < DEFAULT_CONFIDENCE_FLOOR
+          for (const autoEnabled of [false, true])
+            for (const credentialed of [false, true]) {
+              const expected = killswitch
+                ? "proposal"
+                : autonomy === "shadow"
+                  ? "shadow"
+                  : credentialed
                     ? "proposal"
-                    : "live_publish_with_review"
-            rows.push([autonomy, confidence, killswitch, autoEnabled, expected])
-          }
-    expect(rows).toHaveLength(36)
-    for (const [autonomy, confidence, killswitch, autoEnabled, expected] of rows) {
+                    : autonomy === "suggest"
+                      ? "proposal"
+                      : !autoEnabled || confidence === null || confidence < DEFAULT_CONFIDENCE_FLOOR
+                        ? "proposal"
+                        : "live_publish_with_review"
+              rows.push([autonomy, confidence, killswitch, autoEnabled, credentialed, expected])
+            }
+    expect(rows).toHaveLength(72)
+    for (const [autonomy, confidence, killswitch, autoEnabled, credentialed, expected] of rows) {
       expect(
         decideWrite({
           autonomy,
           confidence,
-          flags: { agentKillswitch: killswitch, agentAutoEnabled: autoEnabled },
+          flags: { agentKillswitch: killswitch, agentAutoEnabled: autoEnabled, credentialed },
         }),
-        `${autonomy}/conf=${confidence}/kill=${killswitch}/auto=${autoEnabled}`,
+        `${autonomy}/conf=${confidence}/kill=${killswitch}/auto=${autoEnabled}/cred=${credentialed}`,
       ).toBe(expected)
     }
+  })
+
+  it("a credentialed run is demoted here too — the copy must not be the lenient one", () => {
+    // The whole point of this file: a rung that exists in core and not here would let the
+    // container substrate live-publish a write that every other lane demotes. This is the
+    // rung where that would matter most, since the run was holding a real credential.
+    expect(
+      decideWrite({
+        autonomy: "auto",
+        confidence: 1,
+        flags: { agentKillswitch: false, agentAutoEnabled: true, credentialed: true },
+      }),
+    ).toBe("proposal")
+    // A missing flag (an older server that doesn't send it) must not crash the gate; it
+    // simply doesn't demote.
+    expect(
+      decideWrite({
+        autonomy: "auto",
+        confidence: 1,
+        flags: { agentKillswitch: false, agentAutoEnabled: true },
+      }),
+    ).toBe("live_publish_with_review")
   })
 
   it("the confidence floor constant matches core's", () => {

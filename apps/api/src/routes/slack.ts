@@ -73,7 +73,7 @@ import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
 export const slackRoutes = (ctx: AppContext) => {
   const { meta, deps, bus, notify, requireUser, authorizeUserStanding } = ctx
   const { activeWorkspace, workspaceCan, requireWorkspace } = ctx
-  const { blobs, sourceText, search, notifyRender } = ctx
+  const { blobs, sourceText, search, notifyRender, billingBlocked } = ctx
   const app = new OpenAPIHono<BlankEnv>()
   const slack = deps.slack
   const redirectUri = new URL("/v1/slack/oauth/callback", deps.baseUrl).toString()
@@ -606,7 +606,7 @@ export const slackRoutes = (ctx: AppContext) => {
         runAfterAck(
           c,
           runSlackProposalAction(
-            { meta, blobs, bus, notify, notifyRender, search },
+            { meta, blobs, bus, notify, notifyRender, search, billingBlocked },
             {
               teamId: payload.team.id,
               slackUserId: payload.user.id,

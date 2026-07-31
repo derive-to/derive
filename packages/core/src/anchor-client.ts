@@ -137,6 +137,7 @@ interface ElReg {
   }
 
   const emitSelection = () => {
+    if (editOn) return // editing: selections are for the caret, not the comment bar
     const s = window.getSelection()
     const t = s ? s.toString().trim() : ""
     // A tap fires a synthesized mouseup with no selection; don't let it clear the
@@ -187,6 +188,7 @@ interface ElReg {
     emitT = window.setTimeout(emitSelection, 120)
   }
   document.addEventListener("selectionchange", () => {
+    if (editOn) return
     const s = window.getSelection()
     if (s && !s.isCollapsed) {
       scheduleEmit()
@@ -218,6 +220,7 @@ interface ElReg {
   document.addEventListener(
     "touchend",
     (e) => {
+      if (editOn) return
       const s = window.getSelection()
       if (s && !s.isCollapsed) {
         setTimeout(emitSelection, 0)
@@ -327,7 +330,32 @@ interface ElReg {
   // document moves it here): the host's window listener can't see it, so forward
   // it for host-level dismissals (exiting focus mode, cancelling a composer).
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") post({ type: "esc" })
+    // Save from the keyboard while editing. The keystroke happens INSIDE the frame,
+    // so the host's own window listener can never see it — forward it, and swallow
+    // the browser's Save-page dialog that ⌘S would otherwise open over the document.
+    if (
+      editOn &&
+      (e.metaKey || e.ctrlKey) &&
+      (e.key === "s" || e.key === "S" || e.key === "Enter")
+    ) {
+      e.preventDefault()
+      post({ type: "edit-save" })
+      return
+    }
+    if (e.key === "Escape") {
+      // Two steps, deliberately. With the caret in a block, Escape drops the caret
+      // and stops there — the typed text and the session both survive, which is what
+      // "get this cursor out of the way" should mean. Only an Escape with no block
+      // focused asks the host to leave the MODE (it exits clean, confirms dirty).
+      if (editOn) {
+        const focused = asEl(document.activeElement)?.closest("[data-derive-editable]")
+        if (focused instanceof HTMLElement) {
+          focused.blur()
+          return
+        }
+      }
+      post({ type: "esc" })
+    }
   })
 
   /* -- highlight styles (mark's default yellow is overridden) -- */
@@ -366,7 +394,28 @@ interface ElReg {
     /* the hover affordance: a small 'Comment' chip that follows the pointer over an
        anchorable element; clicking it pins a comment to that element. */
     ".derive-el-chip{position:absolute;display:none;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;background:#fff;color:#14161a;border:1px solid rgba(20,22,26,.1);font:500 12px/1 system-ui,-apple-system,sans-serif;pointer-events:auto;cursor:pointer;box-shadow:0 6px 20px -6px rgba(0,0,0,.28),0 1px 2px rgba(0,0,0,.1);z-index:2147483641;white-space:nowrap}" +
-    ".derive-el-outline{position:absolute;display:none;pointer-events:none;border:2px dashed rgba(100,116,139,.6);border-radius:4px;z-index:2147483639}"
+    ".derive-el-outline{position:absolute;display:none;pointer-events:none;border:2px dashed rgba(100,116,139,.6);border-radius:4px;z-index:2147483639}" +
+    /* inline edit mode: the block being edited carries a quiet ring; a block with
+       unsaved changes keeps a faint tint so you can see what you touched. Same slate
+       family as the comment highlights — one visual voice, nothing loud. */
+    "[data-derive-editable]{cursor:text}" +
+    "[data-derive-editable]:focus{outline:2px solid rgba(100,116,139,.6);outline-offset:3px;border-radius:3px}" +
+    ".derive-edited{background-color:rgba(100,116,139,.08);border-radius:2px}" +
+    /* The invitation. In edit mode the block under the pointer lifts slightly, so the
+       document itself shows which runs are editable BEFORE you commit a click —
+       without it, edit mode is pixel-identical to reading and you have to click
+       something to discover what counts as text. Tracks exactly what a click would
+       activate (same editContainerFor), so it can never promise the wrong region. */
+    ".derive-edit-hover{background-color:rgba(100,116,139,.09);border-radius:3px;outline:1px solid rgba(100,116,139,.22);outline-offset:2px;cursor:text}" +
+    /* ...and again derived from the block's OWN text colour, which by definition
+       contrasts with whatever the artifact painted behind it. The slate wash above
+       composites to ~1:1 on a dark page — invisible exactly where the invitation
+       matters most. Declared second so it wins wherever color-mix is supported, and
+       the rgba rule remains the fallback where it is not. */
+    "@supports (color: color-mix(in srgb, currentColor 10%, transparent)){" +
+    ".derive-edit-hover{background-color:color-mix(in srgb, currentColor 8%, transparent);outline-color:color-mix(in srgb, currentColor 38%, transparent)}" +
+    "[data-derive-editable]:focus{outline-color:color-mix(in srgb, currentColor 70%, transparent)}" +
+    "}"
   ;(document.head || document.documentElement).appendChild(st)
 
   /* === Element anchors ========================================================
@@ -813,6 +862,7 @@ interface ElReg {
     chipEl = null
   }
   document.addEventListener("mouseover", (e) => {
+    if (editOn) return
     const el = anchorEl(asEl(e.target))
     if (el) showChip(el)
   })
@@ -828,9 +878,13 @@ interface ElReg {
     const w = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => {
         const p = n.parentNode ? n.parentNode.nodeName : ""
-        return p === "SCRIPT" || p === "STYLE" || p === "NOSCRIPT"
-          ? NodeFilter.FILTER_REJECT
-          : NodeFilter.FILTER_ACCEPT
+        if (p === "SCRIPT" || p === "STYLE" || p === "NOSCRIPT") return NodeFilter.FILTER_REJECT
+        // Our OWN injected UI (the comment chip, element-overlay badges) is not page
+        // text: it must never leak into quote context windows or edit snapshots — a
+        // suffix containing "💬 Comment" can't resolve against the stored source.
+        const el = (n as Text).parentElement
+        if (el?.closest?.(".derive-el-chip,.derive-el-hl")) return NodeFilter.FILTER_REJECT
+        return NodeFilter.FILTER_ACCEPT
       },
     })
     const out: Text[] = []
@@ -1164,6 +1218,15 @@ interface ElReg {
     })
   }
   window.addEventListener("resize", reflow)
+  /* The frame is resized when the host gives back the on-screen keyboard's height —
+     which happens a beat AFTER the tap that opened it, by which time the block the
+     caret is in may be behind the keyboard. revealBlock already ran (and correctly
+     did nothing, the frame being full height then), so re-run it on the shrink. */
+  window.addEventListener("resize", () => {
+    if (!editOn) return
+    const focused = asEl(document.activeElement)?.closest("[data-derive-editable]")
+    if (focused instanceof HTMLElement) revealBlock(focused)
+  })
   /* images/fonts settle after load — re-measure a few times so pins AND geometry land right */
   window.addEventListener("load", () => {
     const remeasure = () => {
@@ -1203,6 +1266,7 @@ interface ElReg {
     post({ type: "anchor-hover", id })
   }
   document.addEventListener("mousemove", (e) => {
+    if (editOn) return
     if (hoverTick) return
     const x = e.clientX
     const y = e.clientY
@@ -1220,6 +1284,12 @@ interface ElReg {
   document.addEventListener(
     "click",
     (e) => {
+      // Edit mode swallows the whole click grammar: no thread focusing, no link
+      // navigation — a click places a caret (editClick handles link prevention).
+      if (editOn) {
+        editClick(e)
+        return
+      }
       const badge = asEl(e.target)?.closest(".derive-el-badge[data-derive-id]")
       if (badge) {
         post({ type: "anchor-click", id: badge.getAttribute("data-derive-id") })
@@ -1280,6 +1350,13 @@ interface ElReg {
   document.addEventListener(
     "auxclick",
     (e) => {
+      if (editOn) {
+        // Same rule as editClick: no navigation while editing. Without this a
+        // middle-click would run the browser default — opening the raw sandbox
+        // origin in a tab, bypassing the host's scheme allowlist entirely.
+        if (asEl(e.target)?.closest("a[href],a[data-derive-nav]")) e.preventDefault()
+        return
+      }
       if (e.button === 1) {
         navLink(e)
         extLink(e)
@@ -1321,12 +1398,470 @@ interface ElReg {
     tick()
   }
 
+  /* === Inline edit mode ======================================================
+     Click-to-type text editing, host-driven ("edit-mode" on/off). A click lands a
+     caret in the nearest text block (contenteditable, plaintext-only) — typing edits
+     in place. Every enabled block snapshots its text nodes FIRST, against a whole-
+     document text snapshot taken at mode entry, so on "edit-collect" each changed
+     node becomes a minimal {exact, prefix, suffix, new_text} quote built from the
+     PRE-EDIT text — which is what the server resolves against the stored source.
+     Structure never changes here: Enter is blocked, paste is flattened to plain
+     text, and a block whose element structure did change falls back to one
+     whole-block span (the server refuses it if it would cross markup). */
+  interface EditTarget {
+    el: HTMLElement
+    origHtml: string
+    origValues: string[]
+    origStarts: number[]
+    /** Cached origValues.join("") — the dirty compare runs per keystroke tick. */
+    origConcat: string
+    structSig: string
+  }
+  let editOn = false
+  let editTargets: EditTarget[] = []
+  // The pre-edit snapshot. Nodes are joined with "\n" separators (and starts offsets
+  // account for them) so a prefix/suffix window crossing a node seam carries
+  // whitespace there — matching the server projection, which renders a space for
+  // every tag. A bare concat ("high.Set") could never context-match "high. Set".
+  let editBase: { text: string; starts: Map<Text, number> } | null = null
+  let lastDirty = -1
+
+  const structSigOf = (el: Element): string => {
+    const list = el.querySelectorAll("*")
+    let sig = ""
+    for (let i = 0; i < list.length; i++) sig += `${(list[i] as Element).tagName},`
+    return sig
+  }
+  const targetFor = (el: Element): EditTarget | null => {
+    for (const t of editTargets) if (t.el === el) return t
+    return null
+  }
+  const concatText = (el: Element): string => {
+    let out = ""
+    for (const n of textNodes(el)) out += n.nodeValue
+    return out
+  }
+  const countDirty = () => {
+    let n = 0
+    for (const t of editTargets) {
+      const changed = document.contains(t.el) && concatText(t.el) !== t.origConcat
+      t.el.classList.toggle("derive-edited", changed)
+      if (changed) n++
+    }
+    return n
+  }
+  const postDirty = () => {
+    const n = countDirty()
+    if (n !== lastDirty) {
+      lastDirty = n
+      post({ type: "edit-state", dirty: n })
+    }
+  }
+  let dirtyT = 0
+  const scheduleDirty = () => {
+    if (dirtyT) clearTimeout(dirtyT)
+    dirtyT = window.setTimeout(postDirty, 120)
+  }
+
+  /* The hover invitation: the block a click WOULD activate, lit as the pointer moves.
+     Same resolver as editClick, so what lights up is exactly what becomes editable. */
+  let editHoverEl: HTMLElement | null = null
+  const setEditHover = (el: HTMLElement | null) => {
+    if (el === editHoverEl) return
+    editHoverEl?.classList.remove("derive-edit-hover")
+    editHoverEl = el
+    el?.classList.add("derive-edit-hover")
+  }
+
+  const setEditMode = (on: boolean, keep?: boolean) => {
+    if (on === editOn) return
+    editOn = on
+    if (on) {
+      // The pre-edit snapshot every quote is built from. normalize() first so the
+      // per-node offsets recorded at enable time can't be split later by typing.
+      // "\n" between nodes: every node seam is a tag boundary in the source, which
+      // the server projection renders as a space — the separator makes context
+      // windows sliced across seams whitespace-flexible-matchable there.
+      ;(document.body || document.documentElement).normalize()
+      const nodes = textNodes(document.body)
+      const starts = new Map<Text, number>()
+      let full = ""
+      for (const n of nodes) {
+        starts.set(n, full.length)
+        full += `${n.nodeValue}\n`
+      }
+      editBase = { text: full, starts }
+      setHover(null)
+      hideChip()
+    } else {
+      // `keep`: drop the editing chrome but leave the typed text standing. Used right
+      // after a PUBLISH — the text on screen is what was just saved, and the version
+      // swap will reload the frame a moment later; restoring here would flash the
+      // pre-edit wording in between and make a successful save look like it failed.
+      if (keep) settleEdits()
+      else restoreEdits()
+      editBase = null
+      setEditHover(null)
+    }
+  }
+  const disableTarget = (t: EditTarget) => {
+    t.el.removeAttribute("contenteditable")
+    t.el.removeAttribute("data-derive-editable")
+    t.el.classList.remove("derive-edited")
+    t.el.classList.remove("derive-edit-hover")
+  }
+  /** Leave the text exactly as typed; just remove the editing chrome. */
+  const settleEdits = () => {
+    for (const t of editTargets) if (document.contains(t.el)) disableTarget(t)
+    editTargets = []
+    if (lastDirty !== 0) {
+      lastDirty = 0
+      post({ type: "edit-state", dirty: 0 })
+    }
+  }
+  const restoreEdits = () => {
+    for (const t of editTargets) {
+      if (document.contains(t.el)) {
+        if (concatText(t.el) !== t.origConcat) {
+          t.el.innerHTML = t.origHtml
+          // innerHTML rebuilt the block's text nodes as NEW objects — re-register
+          // them at their original offsets, or a Discarded block would refuse every
+          // later click as "dynamic" (its nodes missing from the mode-entry map).
+          if (editBase) {
+            const fresh = textNodes(t.el)
+            if (fresh.length === t.origValues.length)
+              for (let i = 0; i < fresh.length; i++)
+                editBase.starts.set(fresh[i] as Text, t.origStarts[i] as number)
+          }
+        }
+        disableTarget(t)
+      }
+    }
+    editTargets = []
+    if (lastDirty !== 0) {
+      lastDirty = 0
+      post({ type: "edit-state", dirty: 0 })
+    }
+  }
+
+  /* The element a caret click should edit: the nearest block-ish ancestor of the
+     clicked text node — a known text block if one is close, else the first
+     non-inline ancestor — capped so a page-wide wrapper never becomes one giant
+     editable surface. */
+  const editContainerFor = (node: Text): HTMLElement | null => {
+    const parent = node.parentElement
+    if (!parent) return null
+    const block = parent.closest(BLOCKS)
+    let cand: HTMLElement | null = block instanceof HTMLElement ? block : null
+    if (!cand) {
+      let el: HTMLElement | null = parent
+      while (el && el !== document.body) {
+        let disp = ""
+        try {
+          disp = getComputedStyle(el).display
+        } catch (_e) {}
+        if (!(disp.indexOf("inline") === 0 || disp === "contents")) {
+          cand = el
+          break
+        }
+        el = el.parentElement
+      }
+      if (!cand || cand === document.body) cand = parent
+    }
+    // A huge container (a whole-page div) would make one giant editable region —
+    // step back down toward the clicked node until the text is a block's worth.
+    if ((cand.textContent || "").length > 2400) {
+      let small: HTMLElement = parent
+      while (
+        small.parentElement &&
+        small.parentElement !== cand &&
+        (small.parentElement.textContent || "").length <= 2400
+      )
+        small = small.parentElement
+      cand = small
+    }
+    return cand
+  }
+  const BLOCKED_EDIT = "input,textarea,select,button,video,audio,canvas,svg,iframe,embed,object"
+  const editClick = (e: MouseEvent) => {
+    const base = editBase
+    if (!base) return
+    // A keyboard-synthesized click (Enter/Space on a focused link) reports
+    // clientX/clientY 0, which would resolve a caret at the frame's top-left and
+    // silently arm an unrelated block. Editing is pointer-driven; ignore it.
+    if (e.detail === 0 && e.clientX === 0 && e.clientY === 0) return
+    const el0 = asEl(e.target)
+    // Never navigate while editing — a click on a link edits its text instead.
+    if (el0?.closest("a[href],a[data-derive-nav]")) e.preventDefault()
+    if (el0?.closest(BLOCKED_EDIT)) {
+      post({ type: "edit-blocked", reason: "control" })
+      return
+    }
+    const c = caretAt(e.clientX, e.clientY)
+    const node = c && c.node.nodeType === 3 ? (c.node as Text) : null
+    if (!node) return
+    const cand = editContainerFor(node)
+    if (!cand) return
+    let target = targetFor(cand)
+    if (!target) {
+      cand.normalize()
+      const nodes = textNodes(cand)
+      if (!nodes.length) return
+      const origStarts: number[] = []
+      for (const n of nodes) {
+        const s = base.starts.get(n)
+        if (s === undefined) {
+          // This part of the page was re-rendered by its own script after the
+          // snapshot — its text can't be mapped back to the stored source.
+          post({ type: "edit-blocked", reason: "dynamic" })
+          return
+        }
+        origStarts.push(s)
+      }
+      const origValues = nodes.map((n) => n.nodeValue ?? "")
+      target = {
+        el: cand,
+        origHtml: cand.innerHTML,
+        origValues,
+        origStarts,
+        origConcat: origValues.join(""),
+        structSig: structSigOf(cand),
+      }
+      editTargets.push(target)
+      cand.setAttribute("data-derive-editable", "1")
+      // plaintext-only keeps typing and paste to bare text; fall back to true where
+      // unsupported (beforeinput below still blocks structure).
+      cand.setAttribute("contenteditable", "plaintext-only")
+      if (cand.contentEditable !== "plaintext-only") cand.setAttribute("contenteditable", "true")
+    }
+    target.el.focus({ preventScroll: true })
+    // Place the caret at the click point — but never fight the browser's own
+    // selection gestures: a double/triple click just selected a word/paragraph
+    // (e.detail > 1), and collapsing that to a caret would break the most natural
+    // typo gesture there is (double-click the word, type the fix).
+    const sel2 = window.getSelection()
+    if (sel2 && c && e.detail <= 1 && (sel2.isCollapsed || sel2.rangeCount === 0)) {
+      try {
+        const r = document.createRange()
+        r.setStart(c.node, Math.min(c.offset, node.nodeValue?.length ?? 0))
+        r.collapse(true)
+        sel2.removeAllRanges()
+        sel2.addRange(r)
+      } catch (_e) {}
+    }
+    setEditHover(null) // it's the focused block now; the focus ring speaks for it
+    revealBlock(target.el)
+  }
+
+  /* Bring the block being edited into view. On a phone the host shrinks the frame by
+     the keyboard's height, so "visible" here already means "above the keyboard" —
+     which is the only reason a tap near the bottom of the screen doesn't put the
+     caret somewhere the typist can't see. Only scrolls when the block is actually
+     clipped, so an ordinary click on a comfortably-visible paragraph never moves
+     the page under the reader. */
+  const revealBlock = (el: HTMLElement) => {
+    const r = el.getBoundingClientRect()
+    const vh = window.innerHeight || document.documentElement.clientHeight
+    if (r.top >= 8 && r.bottom <= vh - 8) return
+    // Same answer fastScrollTo gives: an OS-level motion preference outranks the
+    // nicety of an animated scroll.
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    try {
+      el.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" })
+    } catch (_e) {
+      el.scrollIntoView()
+    }
+  }
+
+  /* Light the block under the pointer while editing. Throttled like the comment
+     hit-test, and skipped over controls/media that can't be edited anyway, so the
+     invitation never appears where a click would be refused. */
+  let editHoverTick = 0
+  document.addEventListener("mousemove", (e) => {
+    if (!editOn || editHoverTick) return
+    const x = e.clientX
+    const y = e.clientY
+    const target = e.target
+    editHoverTick = window.setTimeout(() => {
+      editHoverTick = 0
+      if (!editOn) return setEditHover(null)
+      if (asEl(target)?.closest(BLOCKED_EDIT)) return setEditHover(null)
+      const c = caretAt(x, y)
+      const node = c && c.node.nodeType === 3 ? (c.node as Text) : null
+      if (!node) return setEditHover(null)
+      const cand = editContainerFor(node)
+      // A block that's already editable wears the focus ring; don't double-decorate.
+      setEditHover(cand && !cand.hasAttribute("data-derive-editable") ? cand : null)
+    }, 50)
+  })
+  document.addEventListener("mouseleave", () => setEditHover(null))
+
+  document.addEventListener(
+    "beforeinput",
+    (e: InputEvent) => {
+      if (!editOn) return
+      const t = asEl(e.target)?.closest("[data-derive-editable]")
+      if (!t) return
+      const it = e.inputType || ""
+      // Text edits only: no new paragraphs/line breaks, no formatting commands.
+      if (it === "insertParagraph" || it === "insertLineBreak" || it.indexOf("format") === 0) {
+        e.preventDefault()
+        return
+      }
+      // Paste flattens to plain text (newlines become spaces) whatever the source.
+      if (it === "insertFromPaste" || it === "insertFromDrop") {
+        e.preventDefault()
+        const raw = e.dataTransfer?.getData("text/plain") ?? (e.data != null ? String(e.data) : "")
+        const plain = raw.replace(/\s+/g, " ")
+        if (plain) document.execCommand("insertText", false, plain)
+      }
+    },
+    true,
+  )
+  document.addEventListener("input", (e) => {
+    if (!editOn) return
+    if (!asEl(e.target)?.closest("[data-derive-editable]")) return
+    // Tell the host it is dirty on the FIRST keystroke, before the debounce. The
+    // exact count can wait 120ms; the fact that there is unsaved work cannot — the
+    // host's unsaved-work guard is armed by this number, and typing then
+    // immediately hitting Escape or a link inside that window dropped the edit
+    // silently. An optimistic 1 is corrected by the settled count either way.
+    if (lastDirty <= 0) {
+      lastDirty = 1
+      post({ type: "edit-state", dirty: 1 })
+    }
+    scheduleDirty()
+  })
+
+  const isHiSur = (ch: string | undefined): boolean =>
+    !!ch && ch.charCodeAt(0) >= 0xd800 && ch.charCodeAt(0) <= 0xdbff
+  const isLoSur = (ch: string | undefined): boolean =>
+    !!ch && ch.charCodeAt(0) >= 0xdc00 && ch.charCodeAt(0) <= 0xdfff
+
+  /* One changed text run → a quote edit built from the PRE-EDIT document text.
+     Minimal diff (common prefix/suffix), then snapped OUT to word boundaries: the
+     matcher's context join expects whitespace between prefix|exact|suffix, and whole
+     words give the exact enough meat to be unambiguous. */
+  const quoteEditFor = (
+    orig: string,
+    cur: string,
+    docStart: number,
+  ): { exact: string; prefix: string; suffix: string; new_text: string } | null => {
+    const base = editBase
+    if (!base) return null
+    let p = 0
+    const maxP = Math.min(orig.length, cur.length)
+    while (p < maxP && orig[p] === cur[p]) p++
+    if (isHiSur(orig[p - 1])) p--
+    let s = 0
+    const maxS = Math.min(orig.length, cur.length) - p
+    while (s < maxS && orig[orig.length - 1 - s] === cur[cur.length - 1 - s]) s++
+    if (isLoSur(orig[orig.length - s])) s--
+    // Word-snap: widen the changed span to whole words on both sides.
+    while (p > 0 && !/\s/.test(orig[p - 1] as string)) p--
+    let end = orig.length - s
+    while (end < orig.length && !/\s/.test(orig[end] as string)) end++
+    s = orig.length - end
+    let exact = orig.slice(p, end)
+    let newText = cur.slice(p, cur.length - s)
+    // A whitespace-only difference has no rendered effect — not worth a version.
+    if (!exact.trim() && !newText.trim()) return null
+    if (!exact.trim()) {
+      // Pure insertion between whitespace: fold in the neighboring word (left if
+      // there is one, else right) so the exact has something to anchor on.
+      if (!orig.trim()) return null
+      if (p > 0) {
+        while (p > 0 && /\s/.test(orig[p - 1] as string)) p--
+        while (p > 0 && !/\s/.test(orig[p - 1] as string)) p--
+      } else {
+        while (end < orig.length && /\s/.test(orig[end] as string)) end++
+        while (end < orig.length && !/\s/.test(orig[end] as string)) end++
+        s = orig.length - end
+      }
+      exact = orig.slice(p, end)
+      newText = cur.slice(p, cur.length - s)
+      if (!exact.trim()) return null
+    }
+    return {
+      exact,
+      prefix: base.text.slice(Math.max(0, docStart + p - 40), docStart + p),
+      suffix: base.text.slice(docStart + end, docStart + end + 40),
+      new_text: newText,
+    }
+  }
+  /** The wire shape of one collected edit. */
+  interface WireEdit {
+    quote: { exact: string; prefix: string; suffix: string }
+    new_text: string
+  }
+  const wireEdit = (qe: {
+    exact: string
+    prefix: string
+    suffix: string
+    new_text: string
+  }): WireEdit => ({
+    quote: { exact: qe.exact, prefix: qe.prefix, suffix: qe.suffix },
+    new_text: qe.new_text,
+  })
+  // The whole-block span: both sides joined with the same "\n" separators the
+  // snapshot uses, so offsets line up with editBase.text; the replacement's seam
+  // separators collapse to single spaces (typed content never contains newlines —
+  // Enter is blocked and paste is flattened).
+  const blockEdit = (t: EditTarget, curVals: string[]): WireEdit | null => {
+    const qe = quoteEditFor(t.origValues.join("\n"), curVals.join("\n"), t.origStarts[0] ?? 0)
+    return qe ? wireEdit({ ...qe, new_text: qe.new_text.replace(/\s*\n\s*/g, " ") }) : null
+  }
+  const collectEdits = (): { edits: WireEdit[]; dirty: number } => {
+    const edits: WireEdit[] = []
+    let dirty = 0
+    for (const t of editTargets) {
+      if (!document.contains(t.el)) continue
+      t.el.normalize()
+      const curNodes = textNodes(t.el)
+      const curVals = curNodes.map((n) => n.nodeValue ?? "")
+      if (curVals.join("") === t.origConcat) continue
+      dirty++
+      const aligned = curVals.length === t.origValues.length && structSigOf(t.el) === t.structSig
+      if (aligned) {
+        // Per-node minimal edits — but if ANY changed node can't be captured (a
+        // whitespace-only node someone typed into has nothing to anchor on), fall
+        // back to one whole-block span rather than silently dropping that change.
+        const nodeEdits: WireEdit[] = []
+        let unrepresentable = false
+        for (let i = 0; i < curVals.length; i++) {
+          const o = t.origValues[i] as string
+          const cNew = curVals[i] as string
+          if (o === cNew) continue
+          const qe = quoteEditFor(o, cNew, t.origStarts[i] as number)
+          if (qe) nodeEdits.push(wireEdit(qe))
+          else unrepresentable = true
+        }
+        if (!unrepresentable) {
+          edits.push(...nodeEdits)
+          continue
+        }
+      }
+      // Structure changed, or a per-node edit was unrepresentable: one whole-block
+      // span. The server refuses it if the span would cross markup in the source.
+      const be = blockEdit(t, curVals)
+      if (be) edits.push(be)
+    }
+    return { edits, dirty }
+  }
+
   window.addEventListener("message", (e: MessageEvent) => {
     const d = e.data
     if (d?.source !== "derive-host") return
     if (d.type === "anchors") applyAnchors(d.anchors || [])
     else if (d.type === "remeasure") reportRects()
     else if (d.type === "emphasize") setOn(d.id)
+    else if (d.type === "edit-mode") setEditMode(!!d.on, !!d.keep)
+    else if (d.type === "edit-collect") {
+      // The nonce rides back untouched: a slow page can answer a TIMED-OUT collect
+      // after the host started a new one, and stale edits must not resolve it.
+      const { edits, dirty } = collectEdits()
+      post({ type: "edit-edits", edits, dirty, nonce: d.nonce })
+    } else if (d.type === "edit-restore") restoreEdits()
     else if (d.type === "scroll-by") window.scrollBy(0, d.dy || 0)
     else if (d.type === "focus-anchor") {
       const entry = textEntries.find((t) => t.id === d.id)

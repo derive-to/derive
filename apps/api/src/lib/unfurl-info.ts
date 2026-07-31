@@ -10,6 +10,7 @@
 import {
   type ArtifactRecord,
   artifactUrl,
+  factSummary,
   kindLabel,
   type MetaStore,
   type UnfurlInfo,
@@ -20,17 +21,25 @@ export const unfurlInfoFor = async (
   baseUrl: string,
   artifact: ArtifactRecord,
 ): Promise<UnfurlInfo> => {
-  const [versions, comments, version] = await Promise.all([
-    meta.listVersions(artifact.id),
-    meta.listComments(artifact.id),
-    meta.getVersion(artifact.id, artifact.current_version),
-  ])
+  // One round trip. The counts used to come from `listVersions(...).length` and
+  // `listComments(...).length` — two whole-table reads to produce two integers, on the
+  // most-trafficked anonymous surface there is — plus a trip each for the version row
+  // and the facts. The Promise.all around them bought nothing: one pg.Client per
+  // request means node-postgres queues them (see edge-pg.ts). The facts ride in the same
+  // query now, so they no longer need their own best-effort catch: there is no longer a
+  // fact read that can fail independently of the counts this card is built from.
+  const { versionCount, commentCount, version, facts } = await meta.unfurlInfo(
+    artifact.id,
+    artifact.current_version,
+  )
   const ref = artifactUrl(baseUrl, artifact).slice(`${baseUrl}/artifacts/`.length)
   return {
     title: artifact.title ?? "Untitled",
     kindLabel: kindLabel(version?.content_type, artifact.kind === "bundle"),
-    versionCount: versions.length,
-    commentCount: comments.length,
+    versionCount,
+    commentCount,
+    // The reward for publishing a fact: the shared link carries its own numbers.
+    dataSummary: factSummary(facts),
     pageUrl: artifactUrl(baseUrl, artifact),
     imageUrl: `${baseUrl}/v1/og/${artifact.short_id}`,
     oembedUrl: `${baseUrl}/v1/oembed?url=${encodeURIComponent(artifactUrl(baseUrl, artifact))}`,

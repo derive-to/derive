@@ -100,6 +100,12 @@ export type FollowKind = Follow["kind"]
 /** A proposal: a candidate version awaiting review. Generated from the OpenAPI spec. */
 export type Proposal = components["schemas"]["Proposal"]
 export type ProposalState = Proposal["state"]
+/** A quote-scoped edit (the inline editor's wire shape): replace the text located by
+ *  {exact, prefix, suffix}, resolved server-side against the stored source. */
+export interface QuoteEditInput {
+  quote: { exact: string; prefix?: string; suffix?: string }
+  new_text: string
+}
 /** A collaborator on an artifact or collection — by public @handle, never email.
  *  Generated from the OpenAPI spec (one shared schema across sharing + collections). */
 export type ArtifactMember = components["schemas"]["ArtifactMember"]
@@ -139,6 +145,22 @@ export type ShareResult = components["schemas"]["ShareResult"]
 export type OrgSettings = components["schemas"]["OrgSettings"]
 /** A Slack channel subscription. Generated from the OpenAPI spec. */
 export type SlackSubscription = components["schemas"]["SlackSubscription"]
+/** The workspace's billing truth: plan, Stripe status, seats, storage. Hand-declared:
+ *  routes/billing.ts is plain Hono (no OpenAPI contract — a fast-moving internal
+ *  surface, not the documented public API), matching this file's other
+ *  hand-declared shapes (e.g. DraftClaimPreview above). */
+export type BillingInfo = {
+  tier: "free" | "team" | "business"
+  status: string | null
+  interval: "month" | "year" | null
+  quantity: number | null
+  seats: number
+  current_period_end: string | null
+  storage: { used_bytes: number; cap_bytes: number | null }
+  enforce_at: string | null
+  beta: boolean
+  subscribed: boolean
+}
 /** Slack connection status for a workspace. Generated from the OpenAPI spec. */
 export type SlackStatus = components["schemas"]["SlackStatus"]
 /** One entry in the workspace switcher. */
@@ -389,6 +411,11 @@ export interface Connection {
   user_id: string
   broker: string
   toolkit: string
+  /** How it authenticates. `mcp` is a Model Context Protocol server connected by URL — it needs
+   *  no vendor account and no broker plan, which is why it is the one kind you can add here. */
+  kind?: "oauth" | "secret" | "github_app" | "slack" | "mcp"
+  /** kind `mcp`: the server URL. Display only — the credential never comes back. */
+  base_url?: string | null
   scopes_label: string | null
   status: "active" | "pending" | "revoked"
   created_at: string
@@ -948,6 +975,17 @@ export const api = {
   updateWorkspaceSettings: (patch: Partial<OrgSettings>): Promise<OrgSettings> =>
     f("/v1/workspace/settings", { ...opts(patch), method: "PATCH" }).then(j),
 
+  // Billing: plan truth (any member can read), checkout, and the Stripe portal
+  // (both Admin only).
+  getBilling: (): Promise<BillingInfo> => f("/v1/billing", opts()).then(j),
+  startCheckout: (
+    tier: "team" | "business",
+    interval: "month" | "year",
+  ): Promise<{ url: string }> =>
+    f("/v1/billing/checkout", { ...opts({ tier, interval }), method: "POST" }).then(j),
+  openBillingPortal: (): Promise<{ url: string }> =>
+    f("/v1/billing/portal", { ...opts({}), method: "POST" }).then(j),
+
   // Slack App: status, disconnect, per-user prefs. Connect is a redirect to
   // /v1/slack/install (a full-page navigation, not a fetch).
   getSlack: (): Promise<SlackStatus> => f("/v1/slack", opts()).then(j),
@@ -1183,6 +1221,45 @@ export const api = {
     if (title?.trim()) fields.title = title.trim()
     return this.publish(new File([text], filename), fields, id)
   },
+  // Quote-scoped edits (the inline editor): each edit is located by the rendered
+  // text ({exact, prefix, suffix}) and resolved server-side against the stored
+  // source. base_version turns a concurrent publish into a 409 instead of a
+  // silently mis-placed splice.
+  publishEdits(
+    id: string,
+    edits: QuoteEditInput[],
+    baseVersion: number,
+    message: string,
+  ): Promise<Artifact> {
+    const fd = new FormData()
+    fd.append("edits", JSON.stringify(edits))
+    fd.append("base_version", String(baseVersion))
+    if (message) fd.append("message", message)
+    return f(`/v1/artifacts/${id}/versions`, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+      headers: { accept: "application/json" },
+    }).then(j)
+  },
+  // The commenter path: the same quote edits, filed as a proposal for review.
+  proposeEdits(
+    id: string,
+    edits: QuoteEditInput[],
+    baseVersion: number,
+    message: string,
+  ): Promise<Proposal> {
+    const fd = new FormData()
+    fd.append("edits", JSON.stringify(edits))
+    fd.append("base_version", String(baseVersion))
+    if (message) fd.append("message", message)
+    return f(`/v1/artifacts/${id}/proposals`, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+      headers: { accept: "application/json" },
+    }).then(j)
+  },
 
   // --- Connected sources (plain /v1 routes, hand-written client) ------------------------
   connections(): Promise<Connection[]> {
@@ -1192,6 +1269,15 @@ export const api = {
   },
   connect(toolkit: string): Promise<Connection & { connect_url: string }> {
     return f("/v1/connections", opts({ toolkit })).then(j)
+  },
+  /** Connect an MCP server as a source. The server is contacted immediately and its tool list
+   *  pinned, so a 201 here means it really answered — not that a row was stored hopefully. */
+  connectMcp(input: {
+    toolkit: string
+    mcp_url: string
+    mcp_secret?: string
+  }): Promise<Connection> {
+    return f("/v1/connections", opts(input)).then(j)
   },
   async revokeConnection(id: string): Promise<void> {
     const r = await f(`/v1/connections/${id}`, { credentials: "include", method: "DELETE" })

@@ -654,6 +654,21 @@ export const orgSettings = sqliteTable("org_settings", {
   created_at: text("created_at").notNull().default(now),
 })
 
+// One workspace's Stripe subscription cache (webhook-fed; Stripe is the source
+// of truth). A row with a null stripe_subscription_id is a checkout stub.
+export const subscription = sqliteTable("subscription", {
+  org_id: text("org_id").primaryKey(),
+  stripe_customer_id: text("stripe_customer_id").notNull(),
+  stripe_subscription_id: text("stripe_subscription_id"),
+  tier: text("tier").$type<"team" | "business">().notNull(),
+  billing_interval: text("billing_interval").$type<"month" | "year">().notNull(),
+  status: text("status").notNull(),
+  quantity: integer("quantity").notNull(),
+  current_period_end: text("current_period_end"),
+  created_at: text("created_at").notNull().default(now),
+  updated_at: text("updated_at").notNull(),
+})
+
 // A connected Slack workspace (one row per Derive org). `bot_token` AES-encrypted at rest.
 export const slackInstall = sqliteTable("slack_install", {
   org_id: text("org_id").primaryKey(),
@@ -1045,9 +1060,36 @@ export const asset = sqliteTable(
     org_id: text("org_id").notNull(),
     content_type: text("content_type").notNull(),
     size_bytes: integer("size_bytes").notNull(),
+    // Pixel dimensions read from the header at upload (see lib/image.ts). Null for fonts,
+    // unreadable headers, and rows predating the columns — so they ALTER ADD cleanly.
+    width: integer("width"),
+    height: integer("height"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [index("asset_org").on(t.org_id)],
+)
+
+// A structured FACT extracted from a version's source (see @derive/facts):
+// a small named JSON payload the authoring agent can query back across versions without
+// re-parsing its own old markup. Natural key (artifact_id, n, slot); rows are written once
+// when a version goes live and never mutated. `gen` marks which extraction rules produced
+// the row (its DEFAULT must equal @derive/core FACT_GEN) so a grammar change can re-extract
+// older versions lazily — the generation lever the derived-view cache uses.
+export const versionData = sqliteTable(
+  "version_data",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    n: integer("n").notNull(),
+    slot: text("slot").notNull(),
+    json: text("json").notNull(),
+    size_bytes: integer("size_bytes").notNull(),
+    gen: integer("gen").notNull().default(1),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("version_data_slot").on(t.artifact_id, t.n, t.slot)],
 )
 
 // user/session/account/verification tables are owned and migrated by Better Auth
@@ -1063,6 +1105,7 @@ const SQLITE_TIMESTAMP_DEFAULT = `(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
 const TABLES = [
   artifact,
   version,
+  versionData,
   comment,
   webhook,
   webhookDelivery,
@@ -1091,6 +1134,7 @@ const TABLES = [
   folder,
   repoSource,
   orgSettings,
+  subscription,
   modelCredential,
   slackInstall,
   slackThreadLink,

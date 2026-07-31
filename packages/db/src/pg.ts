@@ -1,6 +1,8 @@
 import type {
   AgentMentionRecord,
   AgentRecord,
+  ArtifactDetail,
+  ArtifactDetailOpts,
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
@@ -32,6 +34,8 @@ import type {
   InvitationRecord,
   LinkRole,
   ListArtifactsOpts,
+  ListEnrichment,
+  ListEnrichmentOpts,
   Listed,
   MembershipRecord,
   MetaStore,
@@ -69,9 +73,11 @@ import type {
   NewSignupAttribution,
   NewSlackSubscription,
   NewVersion,
+  NewVersionData,
   NewView,
   NewWebhook,
   NotificationRecord,
+  NotificationsPage,
   OAuthGrant,
   OAuthGrantSummary,
   OrgSettings,
@@ -99,17 +105,27 @@ import type {
   SlackSubscriptionRecord,
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
+  SubscriptionRecord,
   TakedownInput,
   UserDir,
   UserNotificationPrefRecord,
   UserProfile,
+  VersionDataRecord,
   VersionRecord,
   ViewStats,
   WebhookRecord,
   WorkspaceAccess,
   WorkspaceRecord,
+  WorkspaceSummary,
 } from "@derive/core"
-import { GLOBAL_FOLLOW_ORG, maxRole, mergeRunMeta, parseRunMeta, runCounter } from "@derive/core"
+import {
+  GLOBAL_FOLLOW_ORG,
+  maxRole,
+  mergeRunMeta,
+  parseRunMeta,
+  runCounter,
+  WORKSPACE_FACT_ROW_CAP,
+} from "@derive/core"
 import {
   and,
   asc,
@@ -122,6 +138,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  like,
   lt,
   lte,
   ne,
@@ -177,8 +194,10 @@ import {
   slackSubscription,
   slackThreadLink,
   slackUserLink,
+  subscription,
   userNotificationPref,
   version,
+  versionData,
   webhook,
   webhookDelivery,
   workspace,
@@ -202,6 +221,7 @@ const one = <T>(rows: T[]): T => {
 export const schema = {
   artifact,
   version,
+  versionData,
   comment,
   webhook,
   webhookDelivery,
@@ -225,6 +245,7 @@ export const schema = {
   invitation,
   betaSignup,
   signupAttribution,
+  subscription,
   oauthClientWorkspace,
   context,
   contextAsker,
@@ -250,6 +271,7 @@ const _schemaExhaustive: Exhaustive<typeof schema> = true
 const _schemaShapes: Shapes<typeof schema> = {
   artifact: true,
   version: true,
+  versionData: true,
   comment: true,
   webhook: true,
   webhookDelivery: true,
@@ -271,6 +293,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   artifactInvite: true,
   betaSignup: true,
   signupAttribution: true,
+  subscription: true,
   context: true,
   contextAsker: true,
   contextSession: true,
@@ -381,6 +404,27 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select().from(artifact).where(eq(artifact.short_id, shortId))
     return rows[0] ?? null
   }
+  async getByShortIds(shortIds: string[]): Promise<ArtifactRecord[]> {
+    if (shortIds.length === 0) return []
+    return this.db.select().from(artifact).where(inArray(artifact.short_id, shortIds))
+  }
+  async artifactWithSettings(
+    shortId: string,
+  ): Promise<{ artifact: ArtifactRecord | null; settings: OrgSettings }> {
+    // LEFT JOIN, not INNER: a workspace with no settings row is the common case (settings
+    // are written on first change), and the artifact must still come back — with parsed
+    // defaults, exactly what getOrgSettings returns for a missing row.
+    const rows = await this.db
+      .select({ artifact, settings: orgSettings.settings })
+      .from(artifact)
+      .leftJoin(orgSettings, eq(orgSettings.org_id, artifact.org_id))
+      .where(eq(artifact.short_id, shortId))
+    const row = rows[0]
+    return {
+      artifact: (row?.artifact as ArtifactRecord | undefined) ?? null,
+      settings: parseOrgSettings(row?.settings ?? null),
+    }
+  }
   async getArtifactById(id: string): Promise<ArtifactRecord | null> {
     const rows = await this.db.select().from(artifact).where(eq(artifact.id, id))
     return rows[0] ?? null
@@ -452,12 +496,257 @@ export class PgMetaStore implements MetaStore {
       .orderBy(asc(version.n))
   }
 
+  async unfurlInfo(
+    artifactId: string,
+    versionN: number,
+  ): Promise<{
+    versionCount: number
+    commentCount: number
+    version: VersionRecord | null
+    facts: { slot: string; json: string }[]
+  }> {
+    // Counts computed IN the database rather than by reading both tables into the Worker
+    // and calling `.length` (which is what the share-link path used to do), and the
+    // current version row and its data slots ride along — one round trip instead of four.
+    const { rows } = await this.pool.query<{ kind: string; n: number | null; doc: unknown }>(
+      // The NULL placeholders carry explicit casts: Postgres resolves a UNION's column
+      // types from the branches, and a bare NULL against row_to_json's `json` (or against
+      // an int) is a "could not determine data type" error rather than a null.
+      `SELECT 'versions' kind, count(*)::int n, NULL::json doc FROM version WHERE artifact_id = $1
+       UNION ALL
+       SELECT 'comments', count(*)::int, NULL::json FROM comment WHERE artifact_id = $1
+       UNION ALL
+       SELECT 'version', NULL::int, row_to_json(v) FROM version v
+        WHERE v.artifact_id = $1 AND v.n = $2
+       UNION ALL
+       -- Ordered here, not in the caller: slotSummary reads them in slot order, and a
+       -- UNION ALL makes no ordering promise of its own.
+       SELECT 'slot', NULL::int, row_to_json(d) FROM (
+         SELECT slot, json FROM version_data
+          WHERE artifact_id = $1 AND n = $2 ORDER BY slot
+       ) d`,
+      [artifactId, versionN],
+    )
+    let versionCount = 0
+    let commentCount = 0
+    let version: VersionRecord | null = null
+    const facts: { slot: string; json: string }[] = []
+    // Branch on `kind`, never on "has a doc" — the version row and the fact rows both
+    // carry one, so a truthiness test would read a fact as the version.
+    for (const r of rows) {
+      if (r.kind === "versions") versionCount = r.n ?? 0
+      else if (r.kind === "comments") commentCount = r.n ?? 0
+      else if (r.kind === "version") {
+        if (r.doc) version = r.doc as VersionRecord
+      } else if (r.kind === "slot" && r.doc) {
+        facts.push(r.doc as { slot: string; json: string })
+      }
+    }
+    return { versionCount, commentCount, version, facts }
+  }
+
+  async currentVersions(artifactIds: string[]): Promise<Record<string, VersionRecord>> {
+    if (artifactIds.length === 0) return {}
+    const { rows } = await this.pool.query<VersionRecord & { artifact_id: string }>(
+      `SELECT v.* FROM version v
+         JOIN artifact a ON a.id = v.artifact_id AND a.current_version = v.n
+        WHERE v.artifact_id = ANY($1)`,
+      [artifactIds],
+    )
+    const out: Record<string, VersionRecord> = {}
+    for (const r of rows) out[r.artifact_id] = r
+    return out
+  }
+
+  async artifactDetail(opts: ArtifactDetailOpts): Promise<ArtifactDetail> {
+    const { artifactId, orgId, viewerId } = opts
+    // Seven sequential ~80ms round trips (versions, tags, collection ids, proposals,
+    // open threads, favorite, settings, managed) collapsed into one UNION ALL. Whole
+    // rows ride as JSON in `doc` so branches with different column sets can share the
+    // union; the scalar branches carry a count or a marker row.
+    const { rows } = await this.pool.query<{ kind: string; doc: unknown }>(
+      `SELECT 'version' kind, row_to_json(v) doc FROM version v WHERE v.artifact_id = $1
+       UNION ALL
+       SELECT 'tag', to_json(t.tag) FROM artifact_tag t WHERE t.artifact_id = $1
+       UNION ALL
+       SELECT 'collection', to_json(ci.collection_id) FROM collection_item ci WHERE ci.artifact_id = $1
+       UNION ALL
+       SELECT 'proposal', row_to_json(p) FROM proposal p WHERE p.artifact_id = $1
+       UNION ALL
+       SELECT 'threads', to_json(count(DISTINCT c.thread_id)::int) FROM comment c
+        WHERE c.artifact_id = $1 AND c.state = 'open'
+       UNION ALL
+       SELECT 'favorite', to_json(count(*)::int) FROM artifact_favorite f
+        WHERE f.artifact_id = $1 AND $2::text IS NOT NULL AND f.user_id = $2
+       UNION ALL
+       SELECT 'settings', to_json(s.settings) FROM org_settings s WHERE s.org_id = $3
+       UNION ALL
+       SELECT 'source', to_json(r.files) FROM repo_source r WHERE r.org_id = $3`,
+      [artifactId, viewerId, orgId],
+    )
+    const versions: VersionRecord[] = []
+    const tags: string[] = []
+    const collectionIds: string[] = []
+    const proposals: ProposalRecord[] = []
+    const sourceFiles: { files: string }[] = []
+    let openThreads = 0
+    let favorite = false
+    let settingsJson: string | null = null
+    for (const r of rows) {
+      switch (r.kind) {
+        case "version":
+          versions.push(r.doc as VersionRecord)
+          break
+        case "tag":
+          tags.push(r.doc as string)
+          break
+        case "collection":
+          collectionIds.push(r.doc as string)
+          break
+        case "proposal":
+          proposals.push(r.doc as ProposalRecord)
+          break
+        case "threads":
+          openThreads = (r.doc as number) ?? 0
+          break
+        case "favorite":
+          favorite = ((r.doc as number) ?? 0) > 0
+          break
+        case "settings":
+          settingsJson = (r.doc as string | null) ?? null
+          break
+        case "source":
+          if (typeof r.doc === "string") sourceFiles.push({ files: r.doc })
+          break
+      }
+    }
+    // Same orderings the individual queries guaranteed: versions ascending by n (the
+    // detail route indexes `versions[i]` against its own mapped array), proposals newest
+    // first, tags sorted.
+    versions.sort((a, b) => a.n - b.n)
+    proposals.sort((a, b) =>
+      a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0,
+    )
+    tags.sort()
+    return {
+      versions,
+      tags,
+      collectionIds,
+      proposals,
+      openThreads,
+      favorite,
+      settings: parseOrgSettings(settingsJson),
+      managed: collectManagedIds(sourceFiles).includes(artifactId),
+    }
+  }
+
   async getVersion(artifactId: string, n: number): Promise<VersionRecord | null> {
     const rows = await this.db
       .select()
       .from(version)
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
     return rows[0] ?? null
+  }
+  async setVersionData(artifactId: string, n: number, rows: NewVersionData[]): Promise<void> {
+    // Delete-then-insert so a re-extraction of the same version is idempotent (a fresh
+    // publish never has existing rows for its new n; restore/re-extract might).
+    await this.db
+      .delete(versionData)
+      .where(and(eq(versionData.artifact_id, artifactId), eq(versionData.n, n)))
+    if (rows.length === 0) return
+    await this.db
+      .insert(versionData)
+      .values(rows.map((r) => ({ ...r, artifact_id: artifactId, n })))
+  }
+  async getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]> {
+    return this.db
+      .select()
+      .from(versionData)
+      .where(
+        and(
+          eq(versionData.artifact_id, artifactId),
+          eq(versionData.n, n),
+          slot ? eq(versionData.slot, slot) : undefined,
+        ),
+      )
+      .orderBy(asc(versionData.slot))
+  }
+  async getVersionDataSeries(
+    artifactId: string,
+    slot: string,
+    from: number,
+    to: number,
+    limit: number,
+  ): Promise<VersionDataRecord[]> {
+    return this.db
+      .select()
+      .from(versionData)
+      .where(
+        and(
+          eq(versionData.artifact_id, artifactId),
+          eq(versionData.slot, slot),
+          gte(versionData.n, from),
+          lte(versionData.n, to),
+        ),
+      )
+      .orderBy(asc(versionData.n))
+      .limit(limit)
+  }
+  async listWorkspaceFacts(orgId: string, opts?: { limit?: number }) {
+    // Raw (slot, artifact) rows over each artifact's CURRENT version. Counting happens in
+    // the caller, AFTER the visibility gate — see the port doc for why not here.
+    return this.db
+      .select({
+        slot: versionData.slot,
+        artifact_id: versionData.artifact_id,
+        at: versionData.created_at,
+      })
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
+      .orderBy(asc(versionData.slot))
+      .limit(opts?.limit ?? WORKSPACE_FACT_ROW_CAP)
+  }
+  async listFactAcrossArtifacts(
+    orgId: string,
+    slot: string,
+    opts?: { tag?: string; limit?: number },
+  ) {
+    // Joined on artifact.current_version so a superseded row can never be reported as the
+    // current state. Retired artifacts are excluded: they are out of the library.
+    const tagged = opts?.tag
+      ? this.db
+          .select({ id: artifactTag.artifact_id })
+          .from(artifactTag)
+          .where(eq(artifactTag.tag, opts.tag.trim().toLowerCase()))
+      : null
+    return this.db
+      .select({
+        id: artifact.id,
+        short_id: artifact.short_id,
+        title: artifact.title,
+        n: versionData.n,
+        json: versionData.json,
+        at: versionData.created_at,
+      })
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          eq(versionData.slot, slot),
+          isNull(artifact.removed_at),
+          tagged ? inArray(artifact.id, tagged) : undefined,
+        ),
+      )
+      .orderBy(desc(versionData.created_at))
+      .limit(opts?.limit ?? 100)
   }
   async reclassifyVersion(artifactId: string, n: number, contentType: string): Promise<void> {
     await this.db
@@ -533,8 +822,44 @@ export class PgMetaStore implements MetaStore {
     const where = and(
       eq(comment.artifact_id, artifactId),
       opts?.state ? eq(comment.state, opts.state) : undefined,
+      opts?.threadId ? eq(comment.thread_id, opts.threadId) : undefined,
     )
     return this.db.select().from(comment).where(where).orderBy(asc(comment.created_at))
+  }
+  async commentAuthorIds(artifactId: string): Promise<string[]> {
+    const rows = await this.db
+      .selectDistinct({ id: comment.author_id })
+      .from(comment)
+      .where(and(eq(comment.artifact_id, artifactId), isNotNull(comment.author_id)))
+    return rows.map((r) => r.id).filter((x): x is string => !!x)
+  }
+
+  async commentsPage(
+    artifactId: string,
+    versionN: number,
+    opts?: CommentListOpts,
+  ): Promise<{ comments: CommentRecord[]; version: VersionRecord | null }> {
+    // The comments and the version their anchors re-resolve against, both keyed on this
+    // artifact — one round trip instead of two (see edge-pg.ts on why that matters).
+    const { rows } = await this.pool.query<{ kind: string; doc: unknown }>(
+      `SELECT 'comment' kind, row_to_json(c) doc FROM comment c
+        WHERE c.artifact_id = $1 AND ($2::text IS NULL OR c.state = $2)
+       UNION ALL
+       SELECT 'version', row_to_json(v) FROM version v
+        WHERE v.artifact_id = $1 AND v.n = $3`,
+      [artifactId, opts?.state ?? null, versionN],
+    )
+    const comments: CommentRecord[] = []
+    let version: VersionRecord | null = null
+    for (const r of rows) {
+      if (r.kind === "comment") comments.push(r.doc as CommentRecord)
+      else version = r.doc as VersionRecord
+    }
+    // listComments' ordering, preserved: oldest first (the rail renders in thread order).
+    comments.sort((a, b) =>
+      a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+    )
+    return { comments, version }
   }
 
   async setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number> {
@@ -578,8 +903,7 @@ export class PgMetaStore implements MetaStore {
     artifactIds: string[],
     userId: string | null,
   ): Promise<Record<string, CommentSignals>> {
-    const out: Record<string, CommentSignals> = {}
-    if (artifactIds.length === 0) return out
+    if (artifactIds.length === 0) return {}
     const rows = await this.db
       .select({
         artifact_id: comment.artifact_id,
@@ -590,6 +914,22 @@ export class PgMetaStore implements MetaStore {
       })
       .from(comment)
       .where(inArray(comment.artifact_id, artifactIds))
+    return this.assembleCommentSignals(rows, userId)
+  }
+
+  /** Fold raw comment rows into per-artifact signals — shared by `commentSignals`
+   *  and the `listEnrichment` batch so the two paths cannot drift. */
+  private assembleCommentSignals(
+    rows: {
+      artifact_id: string
+      thread_id: string
+      state: string
+      author_id: string | null
+      meta: string | null
+    }[],
+    userId: string | null,
+  ): Record<string, CommentSignals> {
+    const out: Record<string, CommentSignals> = {}
     const threads: Record<string, Set<string>> = {}
     for (const r of rows) {
       if (r.state !== "open") continue
@@ -613,6 +953,149 @@ export class PgMetaStore implements MetaStore {
       const sig = out[id]
       if (sig) sig.open_threads = set.size
     }
+    return out
+  }
+
+  /**
+   * The library list's whole decoration in ONE round trip: a UNION ALL over the seven
+   * per-id lookups, discriminated by a `kind` column and demuxed in code. On the edge
+   * tier every round trip costs ~80ms flat (one serialized pg.Client per invocation —
+   * see edge-pg.ts), so seven separate trips keyed on the same page of ids was ~560ms
+   * of pure wire time per listing; the SQL each branch runs is unchanged. All columns
+   * are text (counts cast) so the union stays type-consistent. `= ANY($n)` binds each
+   * id set as one array parameter. The "user"/"account" branches are not best-effort
+   * here the way `getUsers`/`usersByGithubIds` are: on Postgres, Better Auth shares
+   * this database (its jwks row is read on every authenticated request), so those
+   * tables existing is a precondition of reaching this route at all.
+   */
+  async listEnrichment(opts: ListEnrichmentOpts): Promise<ListEnrichment> {
+    const { ids, ghIds, authorIds, viewerId, memberId, views } = opts
+    const out: ListEnrichment = {
+      views: {},
+      tags: {},
+      previews: {},
+      handles: [],
+      bylines: [],
+      signals: {},
+      proposals: {},
+      shareRoles: {},
+    }
+    if (ids.length === 0 && ghIds.length === 0 && authorIds.length === 0) return out
+    const params: unknown[] = []
+    const bind = (v: unknown) => {
+      params.push(v)
+      return `$${params.length}`
+    }
+    const branches: string[] = []
+    if (ids.length > 0) {
+      const page = bind(ids)
+      branches.push(
+        `SELECT 'tag' kind, artifact_id k, tag c1, NULL c2, NULL c3 FROM artifact_tag WHERE artifact_id = ANY(${page})`,
+        `SELECT 'preview', a.id, NULL, NULL, NULL FROM artifact a
+           JOIN version v ON v.artifact_id = a.id AND v.n = a.current_version
+          WHERE v.preview_status = 'ready' AND a.id = ANY(${page})`,
+        `SELECT 'proposal', artifact_id, count(*)::text, NULL, NULL FROM proposal
+          WHERE state = 'open' AND artifact_id = ANY(${page}) GROUP BY artifact_id`,
+      )
+      if (views)
+        branches.push(
+          `SELECT 'view', artifact_id, count(*)::text, NULL, NULL FROM view
+            WHERE artifact_id = ANY(${page}) GROUP BY artifact_id`,
+        )
+      if (viewerId)
+        branches.push(
+          `SELECT 'comment', artifact_id, thread_id, author_id, meta FROM comment
+            WHERE state = 'open' AND artifact_id = ANY(${page})`,
+        )
+      if (memberId)
+        branches.push(
+          `SELECT 'share', artifact_id, role, NULL, NULL FROM artifact_member
+            WHERE user_id = ${bind(memberId)} AND artifact_id = ANY(${page})`,
+        )
+    }
+    // The "user"/"account" branches keep `getUsers`/`usersByGithubIds`' best-effort
+    // contract: those Better Auth tables can be absent (fresh self-host, operator-token
+    // deployments), and there they must degrade to empty — not 500 the listing. A
+    // failed union retries once without them; a union that fails WITHOUT them has a
+    // real problem and still throws.
+    const directoryBranches = (ghIds.length > 0 ? 1 : 0) + (authorIds.length > 0 ? 1 : 0)
+    if (ghIds.length > 0)
+      branches.push(
+        `SELECT 'handle', a."accountId", u.username, NULL, NULL
+           FROM "account" a JOIN "user" u ON u.id = a."userId"
+          WHERE a."providerId" = 'github' AND a."accountId" = ANY(${bind(ghIds)})`,
+      )
+    if (authorIds.length > 0)
+      branches.push(
+        `SELECT 'byline', id, name, username, NULL FROM "user" WHERE id = ANY(${bind(authorIds)})`,
+      )
+    type EnrichmentRow = {
+      kind: string
+      k: string
+      c1: string | null
+      c2: string | null
+      c3: string | null
+    }
+    let rows: EnrichmentRow[]
+    try {
+      const res = await this.pool.query<EnrichmentRow>(branches.join("\nUNION ALL\n"), params)
+      rows = res.rows
+    } catch (e) {
+      if (directoryBranches === 0) throw e
+      const core = branches.slice(0, branches.length - directoryBranches)
+      if (core.length === 0) return out
+      const res = await this.pool.query<EnrichmentRow>(
+        core.join("\nUNION ALL\n"),
+        params.slice(0, params.length - directoryBranches),
+      )
+      rows = res.rows
+    }
+    const commentRows: {
+      artifact_id: string
+      thread_id: string
+      state: string
+      author_id: string | null
+      meta: string | null
+    }[] = []
+    for (const r of rows) {
+      switch (r.kind) {
+        case "tag": {
+          const list = out.tags[r.k] ?? []
+          list.push(r.c1 as string)
+          out.tags[r.k] = list
+          break
+        }
+        case "preview":
+          out.previews[r.k] = true
+          break
+        case "proposal":
+          out.proposals[r.k] = Number(r.c1)
+          break
+        case "view":
+          out.views[r.k] = Number(r.c1)
+          break
+        case "comment":
+          commentRows.push({
+            artifact_id: r.k,
+            thread_id: r.c1 as string,
+            state: "open",
+            author_id: r.c2,
+            meta: r.c3,
+          })
+          break
+        case "share":
+          out.shareRoles[r.k] = r.c1 as Role
+          break
+        case "handle":
+          out.handles.push({ gh_id: r.k, username: r.c1 })
+          break
+        case "byline":
+          out.bylines.push({ id: r.k, name: r.c1, username: r.c2 })
+          break
+      }
+    }
+    for (const k in out.tags) out.tags[k]?.sort()
+    out.signals = this.assembleCommentSignals(commentRows, viewerId)
     return out
   }
 
@@ -767,6 +1250,68 @@ export class PgMetaStore implements MetaStore {
       .select({ s: sql<number>`coalesce(sum(${perBlob.mx}), 0)` })
       .from(perBlob)
     return Number(rows[0]?.s ?? 0)
+  }
+  async workspaceSummary(orgId: string, userId: string | null): Promise<WorkspaceSummary> {
+    // The browse sidebar's six org/user-scoped reads in one round trip. Each branch is
+    // the same SQL the individual method runs — including the semantics that are easy to
+    // lose: `favorites` joins the artifact so a favorite of a REMOVED or other-workspace
+    // artifact is excluded, `mine`/`minePrivate` require an OWNER member row (not the
+    // author_id denorm), and tags come back ordered by tag.
+    const { rows } = await this.pool.query<{ kind: string; k: string | null; n: number | null }>(
+      `SELECT 'total' kind, NULL k, count(*)::int n FROM artifact WHERE org_id = $1
+       UNION ALL
+       SELECT 'tag', t.tag, count(*)::int FROM artifact_tag t
+         JOIN artifact a ON a.id = t.artifact_id
+        WHERE a.org_id = $1 GROUP BY t.tag
+       UNION ALL
+       SELECT 'workspace', w.name, NULL FROM workspace w WHERE w.id = $1
+       UNION ALL
+       SELECT 'favorites', NULL, count(*)::int FROM artifact_favorite f
+         JOIN artifact a ON a.id = f.artifact_id
+        WHERE $2::text IS NOT NULL AND f.user_id = $2
+          AND a.org_id = $1 AND a.removed_at IS NULL
+       UNION ALL
+       SELECT 'mine', NULL, count(*)::int FROM artifact a
+         JOIN artifact_member m ON m.artifact_id = a.id AND m.user_id = $2 AND m.role = 'owner'
+        WHERE $2::text IS NOT NULL AND a.org_id = $1
+       UNION ALL
+       SELECT 'mine_private', NULL, count(*)::int FROM artifact a
+         JOIN artifact_member m ON m.artifact_id = a.id AND m.user_id = $2 AND m.role = 'owner'
+        WHERE $2::text IS NOT NULL AND a.org_id = $1 AND a.listed = 'none'`,
+      [orgId, userId],
+    )
+    const out: WorkspaceSummary = {
+      total: 0,
+      tags: [],
+      workspace: null,
+      favorites: 0,
+      mine: 0,
+      minePrivate: 0,
+    }
+    for (const r of rows) {
+      switch (r.kind) {
+        case "total":
+          out.total = r.n ?? 0
+          break
+        case "tag":
+          if (r.k !== null) out.tags.push({ tag: r.k, count: r.n ?? 0 })
+          break
+        case "workspace":
+          out.workspace = r.k
+          break
+        case "favorites":
+          out.favorites = r.n ?? 0
+          break
+        case "mine":
+          out.mine = r.n ?? 0
+          break
+        case "mine_private":
+          out.minePrivate = r.n ?? 0
+          break
+      }
+    }
+    out.tags.sort((a, b) => a.tag.localeCompare(b.tag))
+    return out
   }
   async tagCounts(orgId?: string): Promise<{ tag: string; count: number }[]> {
     const base = this.db
@@ -1074,6 +1619,42 @@ export class PgMetaStore implements MetaStore {
       .orderBy(asc(workspace.created_at))
   }
 
+  // listWorkspaces + getOAuthClientWorkspaces in ONE round trip: a LEFT JOIN against
+  // oauth_client_workspace tells each row whether it's in the grant's bound set, rather
+  // than a second query the caller then filters `mine` against anyway (see
+  // oauth-agent.ts's oauthWorkspace, the only caller). `bound` this way is already a
+  // subset of `mine` — a workspace the grant names but the user has since left can never
+  // appear, matching the two-query version's existing `scoped = mine.filter(...)` step.
+  async workspacesAndOauthBinding(
+    userId: string,
+    clientId: string,
+  ): Promise<{ mine: (WorkspaceRecord & { role: Role })[]; bound: string[] }> {
+    const rows = await this.db
+      .select({
+        id: workspace.id,
+        name: workspace.name,
+        created_at: workspace.created_at,
+        role: membership.role,
+        boundRowId: oauthClientWorkspace.id,
+      })
+      .from(membership)
+      .innerJoin(workspace, eq(workspace.id, membership.org_id))
+      .leftJoin(
+        oauthClientWorkspace,
+        and(
+          eq(oauthClientWorkspace.org_id, workspace.id),
+          eq(oauthClientWorkspace.user_id, membership.user_id),
+          eq(oauthClientWorkspace.client_id, clientId),
+        ),
+      )
+      .where(eq(membership.user_id, userId))
+      .orderBy(asc(workspace.created_at))
+    return {
+      mine: rows.map(({ boundRowId: _b, ...w }) => w),
+      bound: rows.filter((r) => r.boundRowId !== null).map((r) => r.id),
+    }
+  }
+
   async getArtifactMember(
     artifactId: string,
     userId: string,
@@ -1086,6 +1667,54 @@ export class PgMetaStore implements MetaStore {
   }
   listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]> {
     return this.db.select().from(artifactMember).where(eq(artifactMember.artifact_id, artifactId))
+  }
+  /**
+   * Every grant one user holds over one artifact, in ONE round trip — see MetaStore.
+   *
+   * A union of the four reads it replaces, tagged by source so the caller can tell an org role
+   * from an artifact role. Deliberately a union rather than joins: an artifact can sit in many
+   * collections, and joining would multiply the membership row across them, making the result
+   * depend on collection layout. Each arm returns its own rows; the caller reduces.
+   *
+   * The arms mirror, in order, getMembership, getArtifactMember, and the two halves of
+   * collectionRolesForArtifact — the explicit collection share, then the workspace-open
+   * collection that propagates the viewer's SEAT role. Change either of those and change this.
+   */
+  async artifactGrants(
+    artifactId: string,
+    orgId: string,
+    userId: string,
+  ): Promise<{ orgRole: Role | null; artifactRoles: Role[] }> {
+    const res = await this.db.execute(sql`
+      select 'org' as kind, m.role as role
+        from membership m
+       where m.org_id = ${orgId} and m.user_id = ${userId}
+      union all
+      select 'artifact' as kind, am.role as role
+        from artifact_member am
+       where am.artifact_id = ${artifactId} and am.user_id = ${userId}
+      union all
+      select 'artifact' as kind, cm.role as role
+        from collection_member cm
+        join collection_item ci on ci.collection_id = cm.collection_id
+       where ci.artifact_id = ${artifactId} and cm.user_id = ${userId}
+      union all
+      select 'artifact' as kind, m2.role as role
+        from collection_item ci2
+        join collection c on c.id = ci2.collection_id
+        join membership m2 on m2.org_id = c.org_id
+       where ci2.artifact_id = ${artifactId}
+         and c.workspace_access = 'member'
+         and m2.user_id = ${userId}
+    `)
+    const rows = (res as unknown as { rows?: { kind: string; role: Role }[] }).rows ?? []
+    let orgRole: Role | null = null
+    const artifactRoles: Role[] = []
+    for (const r of rows) {
+      if (r.kind === "org") orgRole = r.role
+      else artifactRoles.push(r.role)
+    }
+    return { orgRole, artifactRoles }
   }
   async artifactRolesFor(userId: string, artifactIds: string[]): Promise<Record<string, Role>> {
     if (artifactIds.length === 0) return {}
@@ -1473,6 +2102,38 @@ export class PgMetaStore implements MetaStore {
     const cmap = new Map(counts.map((r) => [r.id, Number(r.c)]))
     return rows.map((r) => ({ ...r, count: cmap.get(r.id) ?? 0 }))
   }
+  async collectionsOverview(orgId: string): Promise<{
+    collections: (CollectionRecord & { count: number })[]
+    sources: RepoSourceRecord[]
+  }> {
+    // The list route used to run listCollections + listRepoSources as two independent
+    // org-scoped round trips; a UNION ALL discriminated by `kind` answers both in one,
+    // each branch's full row carried as JSON so the shapes don't have to be reconciled
+    // into a single column set.
+    const { rows } = await this.pool.query<{ kind: string; doc: unknown }>(
+      `SELECT 'collection' kind, row_to_json(t) doc FROM (
+         SELECT c.*, COALESCE(ci.cnt, 0)::int AS count
+         FROM collection c
+         LEFT JOIN (
+           SELECT collection_id, count(*)::int cnt FROM collection_item GROUP BY collection_id
+         ) ci ON ci.collection_id = c.id
+         WHERE c.org_id = $1
+       ) t
+       UNION ALL
+       SELECT 'source', row_to_json(r) FROM repo_source r WHERE r.org_id = $1`,
+      [orgId],
+    )
+    const collections: (CollectionRecord & { count: number })[] = []
+    const sources: RepoSourceRecord[] = []
+    for (const r of rows) {
+      if (r.kind === "collection") collections.push(r.doc as CollectionRecord & { count: number })
+      else sources.push(r.doc as RepoSourceRecord)
+    }
+    collections.sort((a, b) =>
+      a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0,
+    )
+    return { collections, sources }
+  }
   // ---- Folders (organize a collection's artifacts) -----------------------
   async createFolder(f: NewFolder): Promise<FolderRecord> {
     const rows = await this.db.insert(folder).values(f).returning()
@@ -1636,30 +2297,20 @@ export class PgMetaStore implements MetaStore {
     userId: string,
   ): Promise<Record<string, Role>> {
     if (collectionIds.length === 0) return {}
-    // Same two sources as collectionRolesForArtifact, keyed per collection: the
-    // user's explicit member rows, and their SEAT on each workspace-open collection.
-    const explicit = await this.db
-      .select({ id: collectionMember.collection_id, role: collectionMember.role })
-      .from(collectionMember)
-      .where(
-        and(
-          inArray(collectionMember.collection_id, collectionIds),
-          eq(collectionMember.user_id, userId),
-        ),
-      )
-    const seat = await this.db
-      .select({ id: collection.id, role: membership.role })
-      .from(collection)
-      .innerJoin(membership, eq(membership.org_id, collection.org_id))
-      .where(
-        and(
-          inArray(collection.id, collectionIds),
-          eq(collection.workspace_access, "member"),
-          eq(membership.user_id, userId),
-        ),
-      )
+    // Same two sources as collectionRolesForArtifact, keyed per collection: the user's
+    // explicit member rows, and their SEAT on each workspace-open collection — a UNION ALL
+    // instead of two sequential awaits, since both are scoped to the same collectionIds.
+    const { rows } = await this.pool.query<{ id: string; role: Role }>(
+      `SELECT collection_id id, role FROM collection_member
+        WHERE collection_id = ANY($1) AND user_id = $2
+       UNION ALL
+       SELECT c.id, m.role FROM collection c
+       JOIN membership m ON m.org_id = c.org_id
+       WHERE c.id = ANY($1) AND c.workspace_access = 'member' AND m.user_id = $2`,
+      [collectionIds, userId],
+    )
     const out: Record<string, Role> = {}
-    for (const r of [...explicit, ...seat]) out[r.id] = maxRole(out[r.id] ?? null, r.role) as Role
+    for (const r of rows) out[r.id] = maxRole(out[r.id] ?? null, r.role) as Role
     return out
   }
 
@@ -1694,6 +2345,18 @@ export class PgMetaStore implements MetaStore {
   async deleteRepoSource(id: string, orgId: string): Promise<void> {
     await this.db.delete(repoSource).where(and(eq(repoSource.id, id), eq(repoSource.org_id, orgId)))
   }
+  async isManagedArtifact(orgId: string, artifactId: string): Promise<boolean> {
+    // The managed ids live inside each repo source's `files` JSON, so there is no column to
+    // filter on — but a LIKE narrows to the few sources that could contain this id, instead
+    // of reading every manifest in the workspace to answer one boolean. The parse then
+    // CONFIRMS: a substring match is not proof (an id can appear inside a longer one, or in
+    // some other field), so the answer stays identical to managedArtifactIds().includes().
+    const rows = await this.db
+      .select({ files: repoSource.files })
+      .from(repoSource)
+      .where(and(eq(repoSource.org_id, orgId), like(repoSource.files, `%${artifactId}%`)))
+    return collectManagedIds(rows).includes(artifactId)
+  }
   async managedArtifactIds(orgId: string): Promise<string[]> {
     const rows = await this.db
       .select({ files: repoSource.files })
@@ -1725,6 +2388,32 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select().from(orgSettings).where(eq(orgSettings.org_id, orgId))
     return parseOrgSettings(rows[0]?.settings ?? null)
   }
+  // getOrgSettings + getUserBrandprint in ONE round trip: independent tables, no join
+  // key between them, so a discriminated UNION ALL (same technique as unfurlInfo) rather
+  // than a JOIN. Both branches select a plain `text` column, so — unlike a bare NULL
+  // literal — no explicit cast is needed for type resolution. resolveActorBrandprint
+  // (MCP connect, context runner, rework endpoint) is the only caller.
+  async orgContext(
+    orgId: string,
+    userId: string | null,
+  ): Promise<{ settings: OrgSettings; personalBrandprint: string | null }> {
+    if (!userId) return { settings: await this.getOrgSettings(orgId), personalBrandprint: null }
+    try {
+      const { rows } = await this.pool.query<{ kind: string; val: string | null }>(
+        `SELECT 'settings' kind, os.settings val FROM org_settings os WHERE os.org_id = $1
+         UNION ALL
+         SELECT 'brandprint', u."brandprint" FROM "user" u WHERE u.id = $2`,
+        [orgId, userId],
+      )
+      const settingsRaw = rows.find((r) => r.kind === "settings")?.val ?? null
+      const brandprintRaw = rows.find((r) => r.kind === "brandprint")?.val ?? null
+      return { settings: parseOrgSettings(settingsRaw), personalBrandprint: brandprintRaw }
+    } catch {
+      // Older/minimal user table with no brandprint column — same fallback as
+      // getUserBrandprint's own try/catch.
+      return { settings: await this.getOrgSettings(orgId), personalBrandprint: null }
+    }
+  }
   async setOrgSettings(orgId: string, settings: OrgSettings): Promise<void> {
     await this.db
       .insert(orgSettings)
@@ -1733,6 +2422,24 @@ export class PgMetaStore implements MetaStore {
         target: orgSettings.org_id,
         set: { settings: JSON.stringify(settings) },
       })
+  }
+  async getSubscription(orgId: string): Promise<SubscriptionRecord | null> {
+    const rows = await this.db.select().from(subscription).where(eq(subscription.org_id, orgId))
+    return rows[0] ?? null
+  }
+  async getSubscriptionByStripeId(sid: string): Promise<SubscriptionRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(subscription)
+      .where(eq(subscription.stripe_subscription_id, sid))
+    return rows[0] ?? null
+  }
+  async upsertSubscription(s: SubscriptionRecord): Promise<void> {
+    const { org_id: _org, created_at: _created, ...set } = s
+    await this.db
+      .insert(subscription)
+      .values(s)
+      .onConflictDoUpdate({ target: subscription.org_id, set })
   }
 
   // ---- Slack App ----------------------------------------------------------
@@ -2152,6 +2859,25 @@ export class PgMetaStore implements MetaStore {
       .where(eq(context.org_id, orgId))
       .orderBy(desc(context.created_at))
   }
+  async contextsWithManifests(
+    orgId: string,
+  ): Promise<(ContextRecord & { manifest_short_id: string | null })[]> {
+    // The route resolved every context's manifest artifact in a SECOND query keyed on
+    // the ids the first one returned — a real FK dependency, so it could not be a
+    // same-key batch, but a LEFT JOIN still answers it in one round trip. LEFT, not
+    // INNER: a context whose manifest artifact is gone must still list (the route
+    // rendered it with a null short_id).
+    const rows = await this.db
+      .select({ context, manifest_short_id: artifact.short_id })
+      .from(context)
+      .leftJoin(artifact, eq(artifact.id, context.manifest_artifact_id))
+      .where(eq(context.org_id, orgId))
+      .orderBy(desc(context.created_at))
+    return rows.map((r) => ({
+      ...(r.context as ContextRecord),
+      manifest_short_id: r.manifest_short_id ?? null,
+    }))
+  }
   // Sequential cascade (messages → sessions → context), like deleteCollection.
   // The org scope gates the WHOLE cascade, not just the context row — otherwise a
   // wrong-workspace call would wipe another tenant's sessions and leave the context.
@@ -2221,6 +2947,59 @@ export class PgMetaStore implements MetaStore {
   async createSession(s: NewSession): Promise<SessionRecord> {
     const rows = await this.db.insert(contextSession).values(s).returning()
     return one(rows)
+  }
+  async createSessionWithMessage(
+    s: NewSession,
+    m: Omit<NewSessionMessage, "session_id">,
+    state: SessionState,
+  ): Promise<{ session: SessionRecord; message: SessionMessageRecord }> {
+    // Three statements (insert session, insert message, set state) as ONE, in a single
+    // implicit transaction — one round trip, and atomic, where the three loose statements it
+    // replaces could leave a session with no first message if the isolate died between them.
+    //
+    // THE STATE IS WRITTEN BY THE INSERT, not by a follow-up UPDATE. That is not a shortcut:
+    // data-modifying CTEs in one statement all see the SAME snapshot and cannot observe each
+    // other's effects on the target table, so an `UPDATE context_session WHERE id = (SELECT
+    // id FROM ins)` matches ZERO rows — the row `ins` just wrote is not visible to it. The
+    // first version of this did exactly that, returned no rows at all, and 500'd every chat
+    // open on Postgres while passing the entire SQLite suite.
+    //
+    // `msg` reading from `ins` IS allowed, and is the difference that matters: it consumes
+    // `ins`'s RETURNING output (a CTE result set), not the table's post-insert state.
+    const now = new Date().toISOString()
+    const { rows } = await this.pool.query<{
+      session: SessionRecord
+      message: SessionMessageRecord
+    }>(
+      `WITH ins AS (
+         INSERT INTO context_session
+           (id, context_id, org_id, asker_id, context_version, dedupe_key, subject_ref, state, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *
+       ), msg AS (
+         INSERT INTO session_message (id, session_id, author_kind, author_id, body_md, meta)
+         SELECT $10, ins.id, $11, $12, $13, $14 FROM ins RETURNING *
+       )
+       SELECT row_to_json(ins) session, row_to_json(msg) message FROM ins, msg`,
+      [
+        s.id,
+        s.context_id ?? null,
+        s.org_id,
+        s.asker_id,
+        s.context_version ?? null,
+        s.dedupe_key ?? null,
+        s.subject_ref ?? null,
+        state,
+        now,
+        m.id,
+        m.author_kind,
+        m.author_id,
+        m.body_md,
+        m.meta ?? null,
+      ],
+    )
+    const row = rows[0]
+    if (!row) throw new Error("createSessionWithMessage: insert returned no row")
+    return { session: row.session, message: row.message }
   }
   async getSession(id: string): Promise<SessionRecord | null> {
     const rows = await this.db
@@ -2669,6 +3448,22 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(notification.user_id, userId), eq(notification.read, 0)))
     return rows[0]?.n ?? 0
   }
+  async notificationsPage(userId: string, limit: number): Promise<NotificationsPage> {
+    // A window function computes `unread` over every row this user has (WHERE is applied
+    // before the window, ORDER BY/LIMIT after) — one query answers both the page and the
+    // true total unread count, not just the unread count within the returned page.
+    const { rows } = await this.pool.query<NotificationRecord & { unread_total: number }>(
+      `SELECT *, count(*) FILTER (WHERE read = 0) OVER ()::int AS unread_total
+         FROM notification WHERE user_id = $1
+        ORDER BY created_at DESC LIMIT $2`,
+      [userId, limit],
+    )
+    const unread = rows[0]?.unread_total ?? 0
+    return {
+      notifications: rows.map(({ unread_total, ...n }) => n),
+      unread,
+    }
+  }
   async markNotificationsRead(userId: string, ids: string[] | "all"): Promise<void> {
     const where =
       ids === "all"
@@ -2730,6 +3525,26 @@ export class PgMetaStore implements MetaStore {
       .where(eq(automation.org_id, orgId))
       .orderBy(desc(automation.created_at))
       .limit(limit)
+  }
+  async automationsWithExecutors(
+    orgId: string,
+    limit = 100,
+  ): Promise<(AutomationRecord & { executor_seen_at: string | null })[]> {
+    // The route used to fetch the org's automations AND its whole agent roster as two
+    // round trips and join `runs_seen_at` in memory by agent_id; a LEFT JOIN answers it
+    // in one query (an automation's agent can in principle be deleted out from under it,
+    // hence LEFT not INNER).
+    const rows = await this.db
+      .select({ automation, executor_seen_at: agent.runs_seen_at })
+      .from(automation)
+      .leftJoin(agent, eq(agent.id, automation.agent_id))
+      .where(eq(automation.org_id, orgId))
+      .orderBy(desc(automation.created_at))
+      .limit(limit)
+    return rows.map((r) => ({
+      ...(r.automation as AutomationRecord),
+      executor_seen_at: r.executor_seen_at ?? null,
+    }))
   }
   async updateAutomation(
     id: string,
@@ -3549,6 +4364,10 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(contextSession).where(inArray(contextSession.context_id, ctxIds))
       await tx.delete(context).where(eq(context.manifest_artifact_id, id))
       await tx.delete(reviewRound).where(eq(reviewRound.artifact_id, id))
+      // Artifact-SCOPED webhooks only; a workspace-wide one has a null artifact_id and
+      // survives. Found by scripts/check-delete-cascade.mjs.
+      await tx.delete(webhook).where(eq(webhook.artifact_id, id))
+      await tx.delete(versionData).where(eq(versionData.artifact_id, id))
       await tx.delete(version).where(eq(version.artifact_id, id))
       await tx.delete(comment).where(eq(comment.artifact_id, id))
       await tx.delete(artifactMember).where(eq(artifactMember.artifact_id, id))

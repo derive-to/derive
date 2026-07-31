@@ -20,6 +20,7 @@ import {
   looksLikeEmail,
 } from "../lib/invite"
 import { resolveUserRef } from "../lib/resolve-user"
+import { syncSeats } from "../lib/seats"
 import { ArtifactMember, BrandprintSchema, roleEnum } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
 
@@ -74,6 +75,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
     workspaceRole,
   } = ctx
   const { privateOwnerId, oauthGrant, inviteLimiter, limited } = ctx
+  const billing = deps.billing
   const app = new OpenAPIHono<BlankEnv>()
 
   const WorkspaceSummary = z
@@ -330,6 +332,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
         user_id: user.id,
         role: b.role,
       })
+      await syncSeats({ meta, billing }, org)
       return c.json(
         {
           user_id: user.id,
@@ -374,6 +377,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
       if (existing.role === "owner" && b.role !== "owner" && (await isLastOwner(org, userId)))
         return bail(fail(c, 409, "the workspace needs at least one admin"))
       await meta.setMembership({ id: existing.id, org_id: org, user_id: userId, role: b.role })
+      await syncSeats({ meta, billing }, org)
       return c.json({ user_id: userId, role: b.role })
     },
   )
@@ -397,6 +401,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
       if (existing.role === "owner" && (await isLastOwner(org, userId)))
         return bail(fail(c, 409, "the workspace needs at least one admin"))
       await meta.removeMembership(org, userId)
+      await syncSeats({ meta, billing }, org)
       return c.body(null, 204)
     },
   )
@@ -439,6 +444,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
           user_id: existingId,
           role: b.role,
         })
+        await syncSeats({ meta, billing }, org)
         if (user.email) await meta.deletePendingInvitationsFor(org, user.email.toLowerCase())
         return c.json(
           {
@@ -593,13 +599,15 @@ export const workspaceRoutes = (ctx: AppContext) => {
       const mismatch = await emailMismatch409(c, inv.email, me.email)
       if (mismatch) return bail(mismatch)
       const existing = await meta.getMembership(inv.org_id, me.id)
-      if (!existing)
+      if (!existing) {
         await meta.setMembership({
           id: newId("m"),
           org_id: inv.org_id,
           user_id: me.id,
           role: inv.role,
         })
+        await syncSeats({ meta, billing }, inv.org_id)
+      }
       await meta.markInvitationAccepted(inv.id)
       return c.json({ org_id: inv.org_id, role: existing?.role ?? inv.role })
     },

@@ -1,3 +1,4 @@
+import { isAllowedOutboundUrl, McpBroker } from "@derive/broker"
 import { type ConnectionRecord, newId } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
@@ -76,6 +77,17 @@ export const connectionRoutes = (ctx: AppContext) => {
           .regex(/^[a-z0-9][a-z0-9_-]*$/, "toolkit must be a lowercase slug")
           .optional(),
         scopes_label: z.string().max(200).optional(),
+        /** Connect an MCP server directly: no vendor account, no OAuth round trip, and it works
+         *  in a workspace with NO broker plan — which is every workspace today. Routes on its own
+         *  URL rather than the workspace's plan, so it is orthogonal to `kind` below (an MCP
+         *  server still authenticates however it chooses; Derive holds no credential for it). */
+        mcp_url: z.string().url().max(2000).optional(),
+        /** Bearer token for an MCP server that requires one — which is most of the useful ones,
+         *  and the reason a connection to them used to be impossible. Sent as
+         *  `Authorization: Bearer`, the only scheme the MCP authorization spec defines; a server
+         *  wanting some other header is an escalation, not a config field. Write-only: encrypted
+         *  at rest, spent server-side, never present in any response. */
+        mcp_secret: z.string().min(8).max(4096).optional(),
         // "personal" (default) = the caller's own account. "workspace" = org
         // infrastructure — requires manage, because whoever can add a workspace
         // credential decides what every context bound to it can reach.
@@ -86,7 +98,10 @@ export const connectionRoutes = (ctx: AppContext) => {
         kind: z.enum(["oauth", "secret", "github_app", "slack"]).default("oauth"),
         // kind "secret" only:
         secret: z.string().min(8).max(4096).optional(),
-        base_url: z.string().url().max(500).optional(),
+        // nullish, not optional: GET /v1/connections renders an absent host as `base_url: null`,
+        // and round-tripping that object straight back into this route is the obvious client
+        // pattern — it should not 400 on the shape we just handed out.
+        base_url: z.string().url().max(500).nullish(),
       }),
     )
     if (b instanceof Response) return bail(b)
@@ -133,10 +148,33 @@ export const connectionRoutes = (ctx: AppContext) => {
       return c.json(present(rec), 201)
     }
     if (!b.toolkit) return fail(c, 400, "toolkit is required")
+    // Checked HERE, not left to McpBroker.connect, which throws — the same rule the secret
+    // branch applies to base_url below, and a pasted URL is user input, so it earns a 400
+    // rather than a 500.
+    //
+    // ONE predicate, shared with the broker and used for `base_url` below as well — see
+    // `isAllowedOutboundUrl` for the two string tests this replaced and how each was bypassed.
+    if (b.mcp_url && !isAllowedOutboundUrl(b.mcp_url))
+      return fail(c, 400, "mcp_url must be https (or http://localhost for dev)")
+    // The same 502 the `secret` branch raises, and for a worse reason if skipped: the token
+    // authenticates THIS connect (it is still in memory) and is then dropped, so the row stores
+    // no credential, the UI says "Connected", and every later run gets a 401 the ledger reports
+    // as "the server could not be reached". A source that is permanently dead and claims to be
+    // healthy is the worst outcome available.
+    if (b.mcp_url && b.mcp_secret && !deps.encryptionKey)
+      return fail(c, 502, "storing an MCP token needs an encryption key")
     if (b.kind === "secret") {
-      if (!b.secret || !b.base_url)
-        return fail(c, 400, "a secret connection needs `secret` and `base_url`")
-      if (!b.base_url.startsWith("https://") && !b.base_url.startsWith("http://localhost"))
+      if (!b.secret) return fail(c, 400, "a secret connection needs `secret`")
+      // base_url is OPTIONAL. Credentials are delivered into runs, so nothing confines a
+      // pasted key to a host and there is no boundary for this field to express: a
+      // recognized vendor's host is ours to know, and an unrecognized key gets a free-text
+      // note instead. It stays supported because the machineless lane (no container, so the
+      // agent cannot run code) resolves paths against it and confines to it — see httpTools.
+      // When present it is still held to https, since that lane will send a credential there.
+      // The dev escape hatch is the LOCALHOST HOST, not the prefix: `startsWith("http://localhost")`
+      // also accepts http://localhost.evil.com, which would send a decrypted bearer to someone
+      // else's box in cleartext. Parse and compare the hostname instead.
+      if (b.base_url && !isAllowedOutboundUrl(b.base_url))
         return fail(c, 400, "base_url must be https (or http://localhost for dev)")
       if (!deps.encryptionKey) return fail(c, 502, "secret connections need an encryption key")
       const rec = await meta.createConnection({
@@ -146,8 +184,8 @@ export const connectionRoutes = (ctx: AppContext) => {
         scope: b.scope,
         kind: "secret",
         secret_enc: encryptSecret(b.secret, deps.encryptionKey),
-        // Stored without a trailing slash; executeSecretTool adds one when it resolves a path.
-        base_url: b.base_url.replace(/\/+$/, ""),
+        // Stored without a trailing slash; executeHttpTool adds one when it resolves a path.
+        base_url: b.base_url ? b.base_url.replace(/\/+$/, "") : null,
         broker: "none",
         toolkit: b.toolkit,
         // There is no vendor account behind this, but a run still identifies its tools by
@@ -161,24 +199,64 @@ export const connectionRoutes = (ctx: AppContext) => {
       })
       return c.json(present(rec), 201)
     }
-    // A workspace connection resolves its broker plan from the pool (it must not ride —
-    // and die with — one member's personal broker plan); a personal one from the caller.
-    const broker = await brokerFor(
-      meta,
-      org,
-      b.scope === "workspace" ? null : me.id,
-      deps.encryptionKey,
-    )
-    const link = await broker.connect({ orgId: org, userId: me.id, toolkit: b.toolkit })
+    // An MCP connection routes on its OWN URL rather than the workspace's broker plan, and is
+    // built per request (it holds only a session map, no credential) so nothing is cached across
+    // tenants. Everything else resolves a plan: a workspace connection from the pool (it must not
+    // ride — and die with — one member's personal plan), a personal one from the caller.
+    // An MCP server that needs a credential gets it HERE, at connect, so the tool list it is
+    // pinned against is the one it serves to an authenticated caller. Without this the connect
+    // 401s, mints an UNPINNED ref, and the connection is dead on arrival — which is the state
+    // every auth-required server used to land in.
+    const broker = b.mcp_url
+      ? new McpBroker(undefined, () => b.mcp_secret)
+      : await brokerFor(
+          meta,
+          org,
+          b.scope === "workspace" ? null : me.id,
+          deps.encryptionKey,
+          deps.allowEchoStub,
+        )
+    // `toolkit` stays the human label on the row either way; for MCP the SERVER URL is what the
+    // broker connects to, and the ref it mints (`mcp:<pin>:<url>`) is what routing keys on.
+    const link = await broker.connect({
+      orgId: org,
+      userId: me.id,
+      toolkit: b.mcp_url ?? b.toolkit,
+    })
+    // A server that refuses to authenticate must not be stored as a usable connection. `connect`
+    // reports `pending` for both "unreachable" and "unauthorized", and a pending row is filtered
+    // out of every run — so the useful thing to do is say so now, while a human is watching.
+    if (b.mcp_url && link.status !== "active")
+      return fail(
+        c,
+        400,
+        b.mcp_secret
+          ? "that MCP server did not accept the credential (or is unreachable)"
+          : "that MCP server did not answer — if it requires authentication, pass `mcp_secret`",
+      )
     const rec = await meta.createConnection({
       id: newId("conn"),
       org_id: org,
       user_id: me.id, // personal: the owner (never falls back). workspace: provenance.
       scope: b.scope,
       broker: broker.provider,
+      // An MCP connection is its OWN kind. Storing it as `oauth` was already loose; once it
+      // carries a `secret_enc` — which only `secret` was ever meant to have — it is a lie that
+      // anything reasoning about `kind` will act on.
+      //
+      // `base_url` carries the server URL for DISPLAY. The URL also lives inside broker_ref,
+      // which is where routing reads it — but a ref is an opaque routing token, and a Sources row
+      // that cannot say WHICH server you connected is not much of a Sources row.
+      ...(b.mcp_url ? { kind: "mcp" as const, base_url: b.mcp_url.replace(/\/+$/, "") } : {}),
       toolkit: b.toolkit,
       broker_ref: link.ref,
-      scopes_label: b.scopes_label ?? null,
+      // Write-only, exactly as `kind: "secret"` stores a pasted key: encrypted at rest, spent
+      // server-side by the tool proxy, and absent from `present()` so no role and no minted
+      // token can ever read it back.
+      ...(b.mcp_url && b.mcp_secret && deps.encryptionKey
+        ? { secret_enc: encryptSecret(b.mcp_secret, deps.encryptionKey) }
+        : {}),
+      scopes_label: b.scopes_label ?? (b.mcp_secret ? `…${b.mcp_secret.slice(-4)}` : null),
       status: link.status,
     })
     // The auth URL rides this response (empty for the local broker's auto-authorized case).
@@ -203,8 +281,11 @@ export const connectionRoutes = (ctx: AppContext) => {
     // for the install-backed ones it MUST be: broker_ref is an installation id, not a
     // broker ref, and removing an agent's access must never uninstall the integration
     // the workspace uses for everything else.
-    if (!isDirect(cn.kind)) {
-      const broker = await brokerFor(meta, org, cn.user_id, deps.encryptionKey)
+    // `mcp` joins the direct kinds here for the same reason they are here: there is no vendor
+    // account behind it, so the status flip IS the revocation. Asking a plan broker to revoke an
+    // `mcp:` ref would reach the wrong vendor, or (with no plan) a broker that refuses.
+    if (!isDirect(cn.kind) && cn.kind !== "mcp") {
+      const broker = await brokerFor(meta, org, cn.user_id, deps.encryptionKey, deps.allowEchoStub)
       try {
         await broker.revoke(cn.broker_ref)
       } catch {

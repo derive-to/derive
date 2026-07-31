@@ -62,7 +62,13 @@ const setup = async () => {
     slack_user_id: "U2",
     created_at: new Date().toISOString(),
   })
-  const deps = { meta, blobs, bus: createInProcessBackplane(), notify: async () => {} }
+  const deps = {
+    meta,
+    blobs,
+    bus: createInProcessBackplane(),
+    notify: async () => {},
+    billingBlocked: async () => null,
+  }
   return { meta, deps }
 }
 

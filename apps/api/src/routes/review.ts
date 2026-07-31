@@ -10,7 +10,7 @@ import { bail, fail, readJson, str } from "../lib/http"
  *  routes; a terminal "go" records the same call. Humans never resolve threads.
  *  The ReviewRound response schema is the single source for the web client's type. */
 export const reviewRoutes = (ctx: AppContext) => {
-  const { meta, bus, currentUser, requireArtifact } = ctx
+  const { meta, bus, currentUser, requireArtifact, billingGate } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const ReviewRound = z
@@ -95,6 +95,8 @@ export const reviewRoutes = (ctx: AppContext) => {
     async (c) => {
       const artifact = await requireArtifact(c, "approve", { split: true })
       if (artifact instanceof Response) return bail(artifact)
+      const blocked = await billingGate(c, artifact.org_id)
+      if (blocked) return bail(blocked)
       const body = await readJson(c, z.object({ note: z.unknown().optional() }))
       if (body instanceof Response) return bail(body)
       const me = await currentUser(c)

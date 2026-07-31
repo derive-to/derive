@@ -581,3 +581,69 @@ describe("the ask lane gives up rather than paying forever", () => {
     expect((await meta.getSession(session.id))?.state).toBe("failed")
   })
 })
+
+describe("the unattended lane on a deployment that holds the model key", () => {
+  // THE REGRESSION. A gateway (DERIVE_MODEL_BASE_URL/_API_KEY/_NAME) means the operator pays for
+  // every workspace on the deployment, so no workspace connects a plan and findPayer correctly
+  // finds nobody. The attended lane and the manual lane both short-circuit on that; the schedule
+  // materializer did not, so on derive.to every cron occurrence was silently dropped — `Run now`
+  // worked, the clock never did, and nothing surfaced it because the only signal was a log line.
+  it("materializes a due schedule when the operator pays, and skips it when nobody can", async () => {
+    const auto = await mkAutomation({
+      // Always due: the previous occurrence of an every-minute cron is never more than a minute
+      // old, so one pass is enough and the test needs no clock travel.
+      trigger: { kind: "schedule", cron: "* * * * *" },
+      instruction: "Keep the roadmap current.",
+    })
+    const mine = async () =>
+      (await meta.listRuns("default", 200)).filter((r) => r.automation_id === auto.id)
+
+    // A workspace on a hosted deployment connects NOTHING: `GET /v1/plans` returns `[]`, which
+    // is the observed state on derive.to. Simulate that at the store boundary so every payer
+    // tier — initiator, owner-lend, pool — genuinely comes up empty.
+    const noPlans = Object.create(meta) as typeof meta
+    noPlans.listModelCredentials = async () => []
+
+    // Without a gateway, refusing is correct: this is the guard doing its job.
+    const { substrate } = fakeSubstrate()
+    const refused = await dispatchPass({ ...deps(substrate), meta: noPlans, operatorPays: false })
+    expect(refused.materialized).toBe(0)
+    expect(await mine()).toHaveLength(0)
+
+    // Same workspace, same empty plan list, but the operator holds the key. The occurrence must
+    // materialize: there is no chain to walk and nothing for anyone to connect.
+    const res = await dispatchPass({ ...deps(substrate), meta: noPlans, operatorPays: true })
+    expect(res.materialized).toBeGreaterThanOrEqual(1)
+    const runs = await mine()
+    expect(runs).toHaveLength(1)
+    expect(runs[0]?.reason).toBe("schedule")
+
+    // Still idempotent inside the window — paying for everyone must not mean firing every tick.
+    await dispatchPass({ ...deps(substrate), meta: noPlans, operatorPays: true })
+    expect(await mine()).toHaveLength(1)
+  })
+
+  it("still obeys automateBeta when the operator pays — the gate is not a payer question", async () => {
+    const auto = await mkAutomation({
+      trigger: { kind: "schedule", cron: "* * * * *" },
+      instruction: "Should never fire with the beta off.",
+    })
+    const patched = await app.request("/v1/workspace/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      body: JSON.stringify({ automateBeta: false }),
+    })
+    expect(patched.status).toBeLessThan(300)
+
+    const { substrate } = fakeSubstrate()
+    await dispatchPass({ ...deps(substrate), operatorPays: true })
+    const runs = (await meta.listRuns("default", 200)).filter((r) => r.automation_id === auto.id)
+    expect(runs).toHaveLength(0)
+
+    await app.request("/v1/workspace/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      body: JSON.stringify({ automateBeta: true }),
+    })
+  })
+})

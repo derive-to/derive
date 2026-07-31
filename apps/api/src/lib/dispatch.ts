@@ -53,6 +53,12 @@ export interface DispatchDeps {
   server: string
   /** DERIVE_AUTH_SECRET / encryptionKey — signs the capability tokens. */
   secret: string
+  /** True when this deployment has an operator gateway (DERIVE_MODEL_BASE_URL/_API_KEY/_NAME),
+   *  i.e. it holds the key and pays for every workspace on it. The schedule materializer then
+   *  skips the payer walk: there is no plan for anyone to connect, so the chain returns null and
+   *  would refuse every occurrence forever. Set from the SAME gateway helper each entry point
+   *  already uses to build the substrate, so the two can never disagree about it. */
+  operatorPays?: boolean
   /** Max runs started per pass (the global burst valve). Default 10. */
   limit?: number
   /** Max runs one WORKSPACE may have in flight at once — fairness and cost containment, so a
@@ -112,7 +118,7 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
 
   // 1. Materialize due schedules.
   try {
-    out.materialized = await materializeAllDueRuns(deps.meta, now)
+    out.materialized = await materializeAllDueRuns(deps.meta, now, deps.operatorPays === true)
   } catch (e) {
     log.warn("hosted dispatch: materialize failed", { error: (e as Error).message })
   }

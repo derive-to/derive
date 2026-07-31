@@ -35,6 +35,120 @@ export const sniffImageType = (b: Uint8Array): ImageType | null => {
   return null
 }
 
+/** Pixel dimensions read out of an image's header. */
+export interface ImageSize {
+  width: number
+  height: number
+}
+
+const u16be = (b: Uint8Array, i: number) => ((b[i] ?? 0) << 8) | (b[i + 1] ?? 0)
+const u32be = (b: Uint8Array, i: number) =>
+  ((b[i] ?? 0) << 24) | ((b[i + 1] ?? 0) << 16) | ((b[i + 2] ?? 0) << 8) | (b[i + 3] ?? 0)
+const u16le = (b: Uint8Array, i: number) => (b[i] ?? 0) | ((b[i + 1] ?? 0) << 8)
+const u24le = (b: Uint8Array, i: number) =>
+  (b[i] ?? 0) | ((b[i + 1] ?? 0) << 8) | ((b[i + 2] ?? 0) << 16)
+
+/**
+ * Read an image's pixel dimensions from its HEADER — no decode, no dependency, and safe
+ * on Workers (there is no image library here and `sharp` does not run in that runtime).
+ * A natural extension of the magic-byte sniffing above: same "trust the bytes, not the
+ * client" posture, just reading a few more of them.
+ *
+ * Dimensions are what make an upload's real cost legible: bytes alone do not say whether
+ * a 4MB screenshot is 4000px of detail or a needlessly doubled retina export, and pixel
+ * count (not re-encoding) is the lever that actually shrinks one.
+ *
+ * Returns null for anything it cannot read confidently — a truncated header, a format
+ * variant it does not know, an unsupported type. NEVER throws: this runs on the upload
+ * path, where a malformed image must produce a missing dimension, not a failed request.
+ */
+export const imageDimensions = (b: Uint8Array): ImageSize | null => {
+  const type = sniffImageType(b)
+  const ok = (width: number, height: number): ImageSize | null =>
+    width > 0 && height > 0 && Number.isFinite(width) && Number.isFinite(height)
+      ? { width, height }
+      : null
+  try {
+    if (type === "image/png") {
+      // The IHDR chunk is mandatory and first: 8-byte signature, 4-byte length, "IHDR",
+      // then width/height as big-endian u32.
+      if (b.length < 24) return null
+      return ok(u32be(b, 16), u32be(b, 20))
+    }
+    if (type === "image/gif") {
+      // Logical screen descriptor, little-endian u16 pair right after the 6-byte header.
+      if (b.length < 10) return null
+      return ok(u16le(b, 6), u16le(b, 8))
+    }
+    if (type === "image/webp") {
+      // Three sub-formats, distinguished by the fourcc at byte 12.
+      const tag = String.fromCharCode(b[12] ?? 0, b[13] ?? 0, b[14] ?? 0, b[15] ?? 0)
+      if (tag === "VP8 " && b.length >= 30)
+        // Lossy: 16-bit width/height at 26/28, top 2 bits are scaling.
+        return ok(u16le(b, 26) & 0x3fff, u16le(b, 28) & 0x3fff)
+      if (tag === "VP8L" && b.length >= 25) {
+        // Lossless: 14 bits each, packed little-endian starting at byte 21.
+        const bits = u32be(b, 21)
+        const le =
+          ((bits >>> 24) & 0xff) |
+          (((bits >>> 16) & 0xff) << 8) |
+          (((bits >>> 8) & 0xff) << 16) |
+          ((bits & 0xff) << 24)
+        return ok((le & 0x3fff) + 1, ((le >>> 14) & 0x3fff) + 1)
+      }
+      if (tag === "VP8X" && b.length >= 30)
+        // Extended: 24-bit canvas width/height minus one, at 24/27.
+        return ok(u24le(b, 24) + 1, u24le(b, 27) + 1)
+      return null
+    }
+    if (type === "image/jpeg") {
+      // Walk the marker segments to the first Start-Of-Frame, which carries the size.
+      // Bounded by the buffer, and every step advances, so a malformed file terminates.
+      let i = 2
+      while (i + 9 < b.length) {
+        if (b[i] !== 0xff) {
+          i++ // resync rather than trusting a byte that should have been a marker
+          continue
+        }
+        const marker = b[i + 1] ?? 0
+        // Standalone markers (no length payload): padding, RSTn, SOI, EOI.
+        if (marker === 0xff || (marker >= 0xd0 && marker <= 0xd9)) {
+          i += 2
+          continue
+        }
+        const len = u16be(b, i + 2)
+        if (len < 2) return null
+        // SOF0..SOF15, excluding the DHT/JPG/DAC markers interleaved in that range.
+        const isSof =
+          marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc
+        if (isSof) return ok(u16be(b, i + 7), u16be(b, i + 5))
+        i += 2 + len
+      }
+      return null
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+/** What a stored asset costs, and the one lever that would change it. Pixel count, not
+ *  re-encoding: measured on Derive's own renders, re-encoding bought 15% and halving
+ *  density bought 78%. */
+export const assetCostNote = (bytes: number, size: ImageSize | null): string => {
+  const mb = (n: number) => `${(n / (1024 * 1024)).toFixed(1)}MB`
+  const kb = (n: number) => `${Math.round(n / 1024)}KB`
+  const show = (n: number) => (n >= 1024 * 1024 ? mb(n) : kb(n))
+  if (!size) return `Stored ${show(bytes)}. Every viewer downloads this on every load.`
+  const half = Math.round(bytes * 0.22) // ~78% smaller at half density, measured
+  return (
+    `Stored ${show(bytes)} at ${size.width}×${size.height}. Every viewer downloads this on every load` +
+    (bytes > 512 * 1024
+      ? `, and at half density (${Math.round(size.width / 2)}×${Math.round(size.height / 2)}) it would be roughly ${show(half)}.`
+      : ".")
+  )
+}
+
 export type AssetType = ImageType | "font/woff2" | "font/woff"
 
 /**

@@ -34,6 +34,7 @@ const GROUPS: Group[] = [
   },
   { id: "slack", title: "Slack (connect + reply-back)" },
   { id: "search", title: "Semantic search (pgvector)" },
+  { id: "billing", title: "Billing (Stripe)" },
   { id: "advanced", title: "Advanced" },
 ]
 
@@ -293,6 +294,26 @@ const CONFIG_VARS: ConfigVar[] = [
   { name: "DERIVE_EMBED_CF_ACCOUNT_ID", group: "search", doc: "", example: "" },
   { name: "DERIVE_EMBED_CF_API_TOKEN", group: "search", doc: "", example: "" },
 
+  // -- billing --
+  {
+    name: "STRIPE_SECRET_KEY",
+    group: "billing",
+    doc: "Stripe secret key (sk_test_/sk_live_). Unset disables the billing routes\nentirely; self-host never needs it.",
+    example: "",
+  },
+  {
+    name: "STRIPE_WEBHOOK_SECRET",
+    group: "billing",
+    doc: "Signing secret for the Stripe webhook endpoint (whsec_...). Required for\n/v1/billing/webhook to accept events.",
+    example: "",
+  },
+  {
+    name: "DERIVE_BILLING_ENFORCE_AT",
+    group: "billing",
+    doc: "ISO instant after which free-tier boundaries enforce (3 editor seats, 1 GB).\nUnset = beta grace: nothing is blocked and white-label stays free.",
+    example: "2026-09-01T00:00:00Z",
+  },
+
   // -- advanced --
   {
     name: "DERIVE_DEFAULT_ORG_ID",
@@ -327,7 +348,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_MODEL_BASE_URL",
     group: "advanced",
-    doc: "Root of an OPENAI-COMPATIBLE model endpoint (Fireworks, OpenRouter, Together, a\nself-hosted gateway); `/chat/completions` is appended. Setting it points every in-process\nrun on this deploy at that endpoint instead of the Anthropic Messages API.\n\nIt BYPASSES THE PAYER CHAIN on purpose: one ambient key means the operator pays for\neveryone on the instance, which is right for a single-tenant box and wrong for a\nmulti-tenant host — so derive.to does not set it. Requires DERIVE_MODEL_API_KEY and\nDERIVE_MODEL_NAME; all three or none.",
+    doc: "Root of an OPENAI-COMPATIBLE model endpoint (Fireworks, OpenRouter, Together, a\nself-hosted gateway); `/chat/completions` is appended. Setting it points every in-process\nrun AND attended chat on this deploy at that endpoint instead of the Anthropic Messages API.\n\nIt BYPASSES THE PAYER CHAIN on purpose: this deployment holds the key and spends it for\nevery workspace on it, so there is no chain to walk and no plan for anyone to connect.\nThat is the HOSTED posture — derive.to sets all three — and the workspace is metered\nagainst its tier allowance rather than billed to a credential it never supplied. It is\nequally right for a single-tenant box, where the operator is the only user.\n\n(This entry used to say derive.to does not set it. That was wrong, and it was read as\nintent: the schedule materializer kept walking a payer chain that cannot resolve on a\nhosted deploy, so scheduled automations silently never fired.)\n\nRequires DERIVE_MODEL_API_KEY and DERIVE_MODEL_NAME; all three or none.",
     example: "https://api.fireworks.ai/inference/v1",
   },
   {
@@ -347,6 +368,12 @@ const CONFIG_VARS: ConfigVar[] = [
     group: "advanced",
     doc: "Model id to send to DERIVE_MODEL_BASE_URL, exactly as that provider names it.",
     example: "accounts/fireworks/models/deepseek-v4-flash",
+  },
+  {
+    name: "DERIVE_LOCAL_BROKER",
+    group: "advanced",
+    doc: "DEV ONLY — let a workspace with no broker plan use the ECHO stub instead of a broker that\nrefuses. The stub's `execute` returns the caller's own arguments: it reaches Stripe, Gmail\nand nothing else, so a run using it reports success over data that never existed and writes\nan artifact full of invented numbers, with no error anywhere. Unset = a workspace with no\nplan gets a refusing broker, which is what you want everywhere a human might see the output.\nMCP connections are unaffected either way — they carry their own server and route on their\nown ref.",
+    example: "1",
   },
   {
     name: "DERIVE_RUNNER_BIN",

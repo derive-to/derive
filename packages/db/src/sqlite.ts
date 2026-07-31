@@ -10,6 +10,18 @@ import type {
 import Database from "better-sqlite3"
 import { and, eq, inArray } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/better-sqlite3"
+import {
+  composeArtifactDetail,
+  composeAutomationsWithExecutors,
+  composeCollectionsOverview,
+  composeCommentsPage,
+  composeContextsWithManifests,
+  composeListEnrichment,
+  composeNotificationsPage,
+  composeOrgContext,
+  composeWorkspaceSummary,
+  composeWorkspacesAndOauthBinding,
+} from "./list-enrichment"
 import { makeRepos, schema } from "./repos"
 import {
   agentMention,
@@ -36,6 +48,7 @@ import {
   sessionMessage,
   slackThreadLink,
   version,
+  versionData,
   webhook,
 } from "./schema"
 
@@ -165,7 +178,21 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
   const db = drizzle(raw, { schema })
   const repos = makeRepos(db)
 
-  return {
+  // Embedded round trips are free, so `listEnrichment` composes the individual
+  // queries (attached after the literal — it needs the finished store to call).
+  const store: Omit<
+    MetaStore,
+    | "listEnrichment"
+    | "artifactDetail"
+    | "commentsPage"
+    | "contextsWithManifests"
+    | "notificationsPage"
+    | "automationsWithExecutors"
+    | "collectionsOverview"
+    | "workspaceSummary"
+    | "workspacesAndOauthBinding"
+    | "orgContext"
+  > & { close(): void } = {
     ...repos,
 
     // Synchronous transaction: a concurrent increment can't interleave between
@@ -264,6 +291,11 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
         db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
         db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
+        // Artifact-SCOPED webhooks only (artifact_id = this id). A workspace-wide webhook
+        // has a null artifact_id and never matches, so it survives, which is right: it was
+        // never about this artifact. Found by scripts/check-delete-cascade.mjs.
+        db.delete(webhook).where(eq(webhook.artifact_id, id)).run()
+        db.delete(versionData).where(eq(versionData.artifact_id, id)).run()
         db.delete(version).where(eq(version.artifact_id, id)).run()
         db.delete(comment).where(eq(comment.artifact_id, id)).run()
         db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()
@@ -607,6 +639,22 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     },
 
     close: () => raw.close(),
+  }
+  return {
+    ...store,
+    listEnrichment: (opts) => composeListEnrichment(store, opts),
+    artifactDetail: (opts) => composeArtifactDetail(store, opts),
+    commentsPage: (artifactId, versionN, opts) =>
+      composeCommentsPage(store, artifactId, versionN, opts),
+    contextsWithManifests: (orgId) => composeContextsWithManifests(store, orgId),
+    notificationsPage: (userId, limit) => composeNotificationsPage(store, userId, limit),
+    automationsWithExecutors: (orgId, limit) =>
+      composeAutomationsWithExecutors(store, orgId, limit),
+    collectionsOverview: (orgId) => composeCollectionsOverview(store, orgId),
+    workspaceSummary: (orgId, userId) => composeWorkspaceSummary(store, orgId, userId),
+    workspacesAndOauthBinding: (userId, clientId) =>
+      composeWorkspacesAndOauthBinding(store, userId, clientId),
+    orgContext: (orgId, userId) => composeOrgContext(store, orgId, userId),
   }
 }
 

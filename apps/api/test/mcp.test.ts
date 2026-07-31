@@ -18,6 +18,7 @@ import {
   versionIndexText,
 } from "../src/lib/search"
 import { PNG_BYTES } from "./fixtures"
+import { appWithGrant, call, type McpApp, type RpcOut, rpc, toolText } from "./mcp-helpers"
 
 // The remote MCP endpoint (/mcp) authenticated by an OAuth bearer. We seed a grant
 // straight into the oauth-provider tables (what the consent dance produces), publish
@@ -29,74 +30,6 @@ import { PNG_BYTES } from "./fixtures"
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-function appWithGrant(
-  name: string,
-  scopes: string,
-  extra: Partial<Parameters<typeof createApp>[0]> = {},
-) {
-  const path = join(dir, `${name}.db`)
-  const meta = new SqliteMetaStore(path)
-  const db = new Database(path)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT, brandprint TEXT);
-    CREATE TABLE IF NOT EXISTS "oauthClient" (clientId TEXT PRIMARY KEY, name TEXT);
-    CREATE TABLE IF NOT EXISTS "oauthAccessToken" (token TEXT PRIMARY KEY, clientId TEXT, userId TEXT, scopes TEXT, expiresAt TEXT);
-  `)
-  db.prepare(
-    `INSERT OR IGNORE INTO "user"(id,email,name) VALUES('u_o','owner@x.test','Owner')`,
-  ).run()
-  db.prepare(`INSERT OR IGNORE INTO "oauthClient"(clientId,name) VALUES('cli','Claude')`).run()
-  db.prepare(
-    `INSERT INTO "oauthAccessToken"(token,clientId,userId,scopes,expiresAt) VALUES(?,?,?,?,?)`,
-  ).run(
-    sha256(`tok_${name}`),
-    "cli",
-    "u_o",
-    JSON.stringify(scopes.split(/\s+/).filter(Boolean)),
-    new Date(Date.now() + 3_600_000).toISOString(),
-  )
-  db.close()
-  const blobs = new FsBlobStore(join(dir, `${name}-blobs`))
-  const app = createApp({
-    meta,
-    blobs,
-    baseUrl: "http://derive.test",
-    token: "tok",
-    ...extra,
-  })
-  return { app, token: `tok_${name}`, meta, blobs }
-}
-
-type App = ReturnType<typeof createApp>
-
-// POST one JSON-RPC message and return the parsed response, handling both a plain
-// JSON body and an SSE-framed (text/event-stream) response.
-async function rpc(app: App, token: string | null, body: unknown) {
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-    accept: "application/json, text/event-stream",
-  }
-  if (token) headers.authorization = `Bearer ${token}`
-  const res = await app.request("/mcp", { method: "POST", headers, body: JSON.stringify(body) })
-  const ct = res.headers.get("content-type") ?? ""
-  const txt = await res.text()
-  let parsed: { result?: unknown; error?: unknown } | null = null
-  if (ct.includes("application/json")) {
-    parsed = JSON.parse(txt)
-  } else if (ct.includes("text/event-stream")) {
-    const dataLine = txt.split("\n").find((l) => l.startsWith("data:"))
-    if (dataLine) parsed = JSON.parse(dataLine.slice(5).trim())
-  }
-  return { status: res.status, ct, txt, parsed, wwwAuth: res.headers.get("www-authenticate") }
-}
-
-type RpcOut = Awaited<ReturnType<typeof rpc>>
-// The text payload of a tools/call result (throws with context if absent).
-const toolText = (r: RpcOut): string => {
-  const t = (r.parsed?.result as { content?: { text: string }[] } | undefined)?.content?.[0]?.text
-  if (t == null) throw new Error(`no tool text in response: ${JSON.stringify(r.parsed)}`)
-  return t
-}
 const toolNames = (r: RpcOut): string[] =>
   ((r.parsed?.result as { tools?: { name: string }[] } | undefined)?.tools ?? []).map((t) => t.name)
 
@@ -124,7 +57,7 @@ const initBody = {
   },
 }
 
-const publish = (app: App, token: string, title: string) => {
+const publish = (app: McpApp, token: string, title: string) => {
   const form = new FormData()
   form.append("file", new Blob([new TextEncoder().encode(`<h1>${title}</h1>`)]), "index.html")
   form.append("title", title)
@@ -138,7 +71,13 @@ const publish = (app: App, token: string, title: string) => {
 
 // Publish arbitrary bytes under a chosen filename (so the sniffer types it), for the
 // search/windowed-read tests that need real multi-line source, not an `<h1>` stub.
-const publishRaw = (app: App, token: string, content: string, filename: string, title: string) => {
+const publishRaw = (
+  app: McpApp,
+  token: string,
+  content: string,
+  filename: string,
+  title: string,
+) => {
   const form = new FormData()
   form.append("file", new Blob([new TextEncoder().encode(content)]), filename)
   form.append("title", title)
@@ -150,24 +89,16 @@ const publishRaw = (app: App, token: string, content: string, filename: string, 
   })
 }
 
-const call = (app: App, token: string, name: string, args: Record<string, unknown> = {}) =>
-  rpc(app, token, {
-    jsonrpc: "2.0",
-    id: 9,
-    method: "tools/call",
-    params: { name, arguments: args },
-  })
-
 describe("remote MCP endpoint (/mcp)", () => {
   it("rejects an unauthenticated connect with 401 + WWW-Authenticate", async () => {
-    const { app } = appWithGrant("noauth", "openid derive:read")
+    const { app } = appWithGrant(dir, "noauth", "openid derive:read")
     const r = await rpc(app, null, initBody)
     expect(r.status).toBe(401)
     expect(r.wwwAuth).toContain("oauth-protected-resource")
   })
 
   it("initializes (identity in instructions) and lists the consolidated tools", async () => {
-    const { app, token } = appWithGrant("init", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "init", "openid derive:read derive:publish")
     const init = await rpc(app, token, initBody)
     const result = init.parsed?.result as { serverInfo?: { name: string }; instructions?: string }
     expect(result.serverInfo).toMatchObject({ name: "derive" })
@@ -196,6 +127,14 @@ describe("remote MCP endpoint (/mcp)", () => {
       "stage",
       "use",
     ])
+    // The read path advertises readOnlyHint — annotation-honoring clients (Claude Code
+    // plan mode gates on exactly this) run it without an approval prompt. Every mutating
+    // tool stays unannotated. catch_up carries the hint although its `ack` parameter
+    // clears handled requests off the queue: it is otherwise pure state-reading.
+    type ListedTool = { name: string; annotations?: { readOnlyHint?: boolean } }
+    const listed = (list.parsed?.result as { tools?: ListedTool[] } | undefined)?.tools ?? []
+    const readOnly = listed.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name)
+    expect(readOnly.sort()).toEqual(["catch_up", "find", "list_workspaces", "read"])
     // Consolidated away — folded into find / catch_up / comment / publish / stage / use.
     for (const gone of [
       "whoami",
@@ -228,7 +167,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   it("stage target:'asset' mints an upload URL an anonymous shell can spend (the pasted-screenshot path)", async () => {
     // The whole point: the OAuth credential lives inside the MCP transport, so the
     // agent's shell has no bearer — the minted URL must work with NO auth header.
-    const { app, token } = appWithGrant("stageasset", "openid derive:read derive:publish", {
+    const { app, token } = appWithGrant(dir, "stageasset", "openid derive:read derive:publish", {
       encryptionKey: "mcp-upload-secret",
     })
     const staged = JSON.parse(toolText(await call(app, token, "stage", { target: "asset" })))
@@ -254,15 +193,20 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("stage target:'asset' fails actionably when no signing secret is configured", async () => {
-    const { app, token } = appWithGrant("stagenosecret", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "stagenosecret", "openid derive:read derive:publish")
     const r = await call(app, token, "stage", { target: "asset" })
     expect(toolText(r)).toContain("bearer token")
   })
 
   it("stage target:'doc' mints a URL an anonymous shell can publish a whole file through", async () => {
-    const { app, token, meta } = appWithGrant("stagepub", "openid derive:read derive:publish", {
-      encryptionKey: "mcp-publish-secret",
-    })
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "stagepub",
+      "openid derive:read derive:publish",
+      {
+        encryptionKey: "mcp-publish-secret",
+      },
+    )
     const staged = JSON.parse(toolText(await call(app, token, "stage", { target: "doc" })))
     expect(staged.target).toBe("doc")
     expect(staged.upload_url).toContain("/v1/artifacts/t/")
@@ -303,7 +247,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("stamps version.source='mcp' on tool publishes (the onboarding signal)", async () => {
-    const { app, token, meta } = appWithGrant("srcstamp", "openid derive:read derive:publish")
+    const { app, token, meta } = appWithGrant(dir, "srcstamp", "openid derive:read derive:publish")
     const created = JSON.parse(
       toolText(await call(app, token, "publish", { title: "Stamped", content: "<h1>s</h1>" })),
     )
@@ -313,14 +257,23 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("stage target:'doc' fails actionably when no signing secret is configured", async () => {
-    const { app, token } = appWithGrant("stagepubnosecret", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(
+      dir,
+      "stagepubnosecret",
+      "openid derive:read derive:publish",
+    )
     expect(toolText(await call(app, token, "stage", { target: "doc" }))).toContain("bearer token")
   })
 
   it("stage target:'doc' revise mints a versions URL that publishes a new version", async () => {
-    const { app, token, meta } = appWithGrant("stagepubrev", "openid derive:read derive:publish", {
-      encryptionKey: "mcp-publish-secret",
-    })
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "stagepubrev",
+      "openid derive:read derive:publish",
+      {
+        encryptionKey: "mcp-publish-secret",
+      },
+    )
     // Create v1 through the normal publish tool, then stage a revise.
     const created = await (await publish(app, token, "Revisable")).json()
     const shortId = created.short_id
@@ -350,7 +303,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("stage requires a target (doc or asset) — never a silent default", async () => {
-    const { app, token } = appWithGrant("stagenotarget", "openid derive:read derive:publish", {
+    const { app, token } = appWithGrant(dir, "stagenotarget", "openid derive:read derive:publish", {
       encryptionKey: "mcp-secret",
     })
     // `target` is a required enum on stage — omitting it is rejected at the schema, not
@@ -365,7 +318,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish rejects an oversized inline base64 data: URI, steering to stage target:'asset'", async () => {
-    const { app, token } = appWithGrant("pubbigb64", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "pubbigb64", "openid derive:read derive:publish")
     // A single base64 data: URI whose DECODED size clears the 32KB cap (base64 decodes
     // ~3 bytes per 4 chars, so ~50k chars ≈ 37.5KB) is a binary pasted through the call.
     const bigB64 = `data:image/png;base64,${"A".repeat(50_000)}`
@@ -379,7 +332,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish rejects oversized inline content, steering to stage target:'doc'", async () => {
-    const { app, token } = appWithGrant("pubbigdoc", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "pubbigdoc", "openid derive:read derive:publish")
     // Total inline content past the ~64KB ceiling is a whole big document — curl it out.
     const r = await call(app, token, "publish", { title: "Big Doc", content: "x".repeat(70_000) })
     const out = r.parsed?.result as { isError?: boolean; content?: { text: string }[] } | undefined
@@ -387,8 +340,289 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(out?.content?.[0]?.text ?? "").toMatch(/stage target:.?doc/i)
   })
 
+  it("NEVER surfaces an invite-only artifact's slot data to a co-member (regression)", async () => {
+    // The cross-artifact slot readers reach artifacts by a METRIC NAME, so the store can
+    // only scope them by org — and an org is not a read permission: workspace_access:"none"
+    // means invite-only WITHIN the workspace. Without the visibility gate, asking for a
+    // metric returned the title and the actual figures of documents the caller was
+    // deliberately left off.
+    const { app, token, teammate } = appWithGrant(
+      dir,
+      "slotvis",
+      "openid derive:read derive:publish",
+    )
+    const mate = teammate("u_mate", "tok_slotvis_mate", "openid derive:read")
+    const page = (n: number) =>
+      `<!doctype html><html><body><h1>Report</h1>` +
+      `<script type="application/derive-data" data-slot="revenue">{"usd":${n}}</script>` +
+      "</body></html>"
+
+    // listed:"workspace" is what actually puts an artifact in front of a teammate. An
+    // unlisted team draft stays out of cross-artifact discovery for exactly the reason it
+    // stays out of search: this gate is the same one, deliberately.
+    const open = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Team Report",
+          content: page(100),
+          listed: "workspace",
+        }),
+      ),
+    )
+    const secret = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Board Only",
+          content: page(999),
+          workspace_access: "none",
+          link_role: "none",
+        }),
+      ),
+    )
+
+    // The publisher sees both: this is scoped visibility, not a broken feature.
+    const mine = JSON.parse(toolText(await call(app, token, "find", { data: "revenue" })))
+    expect(mine.results.map((r: { short_id: string }) => r.short_id).sort()).toEqual(
+      [open.short_id, secret.short_id].sort(),
+    )
+
+    // The teammate holds a real workspace seat, so the org predicate alone would let the
+    // invite-only artifact through. Only the gate keeps it out.
+    const theirs = JSON.parse(toolText(await call(app, mate, "find", { data: "revenue" })))
+    expect(theirs.results.map((r: { short_id: string }) => r.short_id)).toEqual([open.short_id])
+    expect(theirs.count).toBe(1)
+    // Neither the title nor the figure leaks anywhere in the payload.
+    expect(JSON.stringify(theirs)).not.toContain("Board Only")
+    expect(JSON.stringify(theirs)).not.toContain("999")
+
+    // The CATALOG counts what the caller can see, not what the workspace holds: a count of
+    // 2 here would disclose the existence of the document just as surely as naming it.
+    const catalog = JSON.parse(toolText(await call(app, mate, "find", { data: "*" })))
+    expect(catalog.facts.find((s: { fact: string }) => s.fact === "revenue")?.artifacts).toBe(1)
+    const ownerCatalog = JSON.parse(toolText(await call(app, token, "find", { data: "*" })))
+    expect(ownerCatalog.facts.find((s: { fact: string }) => s.fact === "revenue")?.artifacts).toBe(
+      2,
+    )
+  })
+
+  it("backfills a fact's history the first time it appears on an artifact", async () => {
+    // The sharp edge this closes: extraction runs at publish, so without a backfill a fact
+    // added to an existing artifact starts its series today and silently loses everything
+    // before it — even though those older pages usually already carried the block.
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "databackfill",
+      "openid derive:read derive:publish",
+    )
+    const withSlot = (n: number) =>
+      `<!doctype html><html><body><h1>Night ${n}</h1>` +
+      `<script type="application/derive-data" data-slot="checks">{"night":${n}}</script>` +
+      "</body></html>"
+
+    const created = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Nightly", content: withSlot(1) })),
+    )
+    const shortId = created.short_id as string
+    await call(app, token, "publish", { short_id: shortId, content: withSlot(2) })
+    await call(app, token, "publish", { short_id: shortId, content: withSlot(3) })
+
+    // Simulate history that was never extracted: the pages carry the block, but no rows
+    // exist for them — exactly the state of every artifact published before facts shipped.
+    const rec = await meta.getByShortId(shortId)
+    if (!rec) throw new Error("artifact vanished")
+    for (const n of [1, 2, 3]) await meta.setVersionData(rec.id, n, [])
+    const before = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "all" }),
+      ),
+    )
+    expect(before.count).toBe(0)
+
+    // v4 makes "checks" new relative to v3, so the backfill walks back and extracts it
+    // from the pages that carried it all along.
+    await call(app, token, "publish", { short_id: shortId, content: withSlot(4) })
+    const after = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "all" }),
+      ),
+    )
+    expect(after.count).toBe(4)
+    expect(after.series.map((p: { n: number }) => p.n)).toEqual([1, 2, 3, 4])
+    expect(after.series.map((p: { data: { night: number } }) => p.data.night)).toEqual([1, 2, 3, 4])
+
+    // A version that genuinely never carried the block stays absent rather than inventing one.
+    const sparse = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Sparse",
+          content: "<!doctype html><html><body><h1>Night 1</h1></body></html>",
+        }),
+      ),
+    )
+    await call(app, token, "publish", { short_id: sparse.short_id, content: withSlot(2) })
+    const holes = JSON.parse(
+      toolText(
+        await call(app, token, "read", {
+          short_id: sparse.short_id,
+          data: "checks",
+          versions: "all",
+        }),
+      ),
+    )
+    expect(holes.series.map((p: { n: number }) => p.n)).toEqual([2])
+  })
+
+  it("extracts facts on publish and reads them back by name and as a list", async () => {
+    const { app, token } = appWithGrant(dir, "dataslots", "openid derive:read derive:publish")
+    const page =
+      "<!doctype html><html><body><h1>Nightly</h1>" +
+      '<script type="application/derive-data" data-slot="checks">{"pass":44,"fail":0}</script>' +
+      '<script type="application/derive-data" data-slot="budget">[1,2,3]</script>' +
+      "</body></html>"
+    const pub = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Nightly", content: page })),
+    )
+    const shortId = pub.short_id as string
+    expect(shortId).toBeTruthy()
+
+    // One slot by name → the parsed JSON payload.
+    const checks = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: shortId, data: "checks" })),
+    )
+    expect(checks.fact).toBe("checks")
+    expect(checks.data).toEqual({ pass: 44, fail: 0 })
+
+    // The facts this version carries (ordered by name).
+    const listed = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: shortId, data: "*" })),
+    )
+    expect(listed.facts.map((s: { fact: string }) => s.fact)).toEqual(["budget", "checks"])
+
+    // A missing fact names the ones that exist rather than an opaque miss.
+    const miss = await call(app, token, "read", { short_id: shortId, data: "nope" })
+    const missText =
+      (miss.parsed?.result as { content?: { text: string }[] }).content?.[0]?.text ?? ""
+    expect(missText).toContain("checks")
+  })
+
+  it("reads a fact across a range of versions in ONE call (the trend read)", async () => {
+    const { app, token } = appWithGrant(dir, "dataseries", "openid derive:read derive:publish")
+    const page = (day: number, pass: number) =>
+      `<!doctype html><html><body><h1>Night ${day}</h1>` +
+      `<script type="application/derive-data" data-slot="checks">{"day":${day},"pass":${pass}}</script>` +
+      "</body></html>"
+    // v1..v4, one "nightly run" each — versions ARE the time axis.
+    const first = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Nightly", content: page(1, 41) })),
+    )
+    const shortId = first.short_id as string
+    for (const [day, pass] of [
+      [2, 42],
+      [3, 40],
+      [4, 44],
+    ]) {
+      await call(app, token, "publish", {
+        short_id: shortId,
+        content: page(day as number, pass as number),
+      })
+    }
+
+    const series = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "all" }),
+      ),
+    )
+    expect(series.count).toBe(4)
+    expect(series.series.map((p: { n: number }) => p.n)).toEqual([1, 2, 3, 4])
+    // Oldest first, and each point carries the version's own value — the trend.
+    expect(series.series.map((p: { data: { pass: number } }) => p.data.pass)).toEqual([
+      41, 42, 40, 44,
+    ])
+    expect(series.series[0].at).toBeTruthy()
+
+    // A sub-range reads only those versions.
+    const sub = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "2-3" }),
+      ),
+    )
+    expect(sub.count).toBe(2)
+    expect(sub.series.map((p: { n: number }) => p.n)).toEqual([2, 3])
+
+    // A single version, and the "to the end" form.
+    const one = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "3" }),
+      ),
+    )
+    expect(one.series.map((p: { n: number }) => p.n)).toEqual([3])
+    const tail = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "3-" }),
+      ),
+    )
+    expect(tail.series.map((p: { n: number }) => p.n)).toEqual([3, 4])
+  })
+
+  it("reports coverage when versions in the range carry no slot, and rejects a bad range", async () => {
+    const { app, token } = appWithGrant(dir, "datacoverage", "openid derive:read derive:publish")
+    const withSlot =
+      '<!doctype html><html><body><script type="application/derive-data" data-slot="checks">{"pass":1}</script></body></html>'
+    const without = "<!doctype html><html><body><p>no slot</p></body></html>"
+    const created = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Sparse", content: withSlot })),
+    )
+    const shortId = created.short_id as string
+    await call(app, token, "publish", { short_id: shortId, content: without })
+
+    const series = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "all" }),
+      ),
+    )
+    // v1 has it, v2 does not — the response says so instead of pretending or inventing a gap.
+    expect(series.count).toBe(1)
+    expect(series.note).toContain('no "checks" slot')
+
+    // A malformed range names the real version count rather than returning nothing.
+    const bad = await call(app, token, "read", {
+      short_id: shortId,
+      data: "checks",
+      versions: "nope",
+    })
+    const badText =
+      (bad.parsed?.result as { content?: { text: string }[] }).content?.[0]?.text ?? ""
+    expect(badText).toContain("1..2")
+    // `versions` needs a named slot, not the "*" listing.
+    const star = await call(app, token, "read", { short_id: shortId, data: "*", versions: "all" })
+    const starText =
+      (star.parsed?.result as { content?: { text: string }[] }).content?.[0]?.text ?? ""
+    expect(starText).toContain("single slot")
+  })
+
+  it("advises about a facts it could not store, without failing the publish", async () => {
+    const { app, token } = appWithGrant(dir, "dataslotbad", "openid derive:read derive:publish")
+    const page =
+      '<!doctype html><html><body><script type="application/derive-data" data-slot="broken">{not json}</script></body></html>'
+    const r = await call(app, token, "publish", { title: "Broken slot", content: page })
+    const out = JSON.parse(toolText(r))
+    // The publish still went live...
+    expect(out.short_id).toBeTruthy()
+    // ...and the note names the unstored slot.
+    expect(String(out.note ?? "")).toMatch(/not valid JSON/i)
+    // Nothing was stored for it.
+    const listed = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: out.short_id, data: "*" })),
+    )
+    expect(listed.facts).toEqual([])
+  })
+
   it("exposes the workspace's Brandprint as resources + an instructions pointer", async () => {
-    const { app, token, meta } = appWithGrant("brandprint", "openid derive:read derive:publish")
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "brandprint",
+      "openid derive:read derive:publish",
+    )
     const shortId = (await (await publish(app, token, "How we write Markdown")).json()).short_id
     const art = await meta.getByShortId(shortId)
     if (!art) throw new Error("no artifact")
@@ -432,7 +666,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("delivers a Brandprint SKILL member with its own name/description, stripped body, and file footer", async () => {
-    const { app, token, meta } = appWithGrant("bpskill", "openid derive:read derive:publish")
+    const { app, token, meta } = appWithGrant(dir, "bpskill", "openid derive:read derive:publish")
     // A real skill bundle: SKILL.md entry (no html ⇒ derive/skill) plus an aux script.
     const created = JSON.parse(
       toolText(
@@ -492,6 +726,7 @@ describe("remote MCP endpoint (/mcp)", () => {
 
   it("serves the build reference and a pending note while the profile is a stub", async () => {
     const { app, token, meta } = appWithGrant(
+      dir,
       "brandprint-pending",
       "openid derive:read derive:publish",
     )
@@ -547,6 +782,7 @@ describe("remote MCP endpoint (/mcp)", () => {
 
   it("serves the live profile as the headline resource once it has a real version", async () => {
     const { app, token, meta } = appWithGrant(
+      dir,
       "brandprint-live",
       "openid derive:read derive:publish",
     )
@@ -607,7 +843,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     // The bug this covers: reference/template were gated on an existing Brandprint, so a
     // session that connected first cached "no resources" for life. They now register
     // unconditionally, and `read` resolves the derive:// URIs directly (every client can).
-    const { app, token } = appWithGrant("bp-static", "openid derive:read")
+    const { app, token } = appWithGrant(dir, "bp-static", "openid derive:read")
 
     const init = await rpc(app, token, initBody)
     const caps = (init.parsed?.result as { capabilities?: { resources?: unknown } }).capabilities
@@ -637,7 +873,11 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("a caller whose personal toggle is off gets no workspace Brandprint resources, only their own", async () => {
-    const { app, token, meta } = appWithGrant("bp-toggle-off", "openid derive:read derive:publish")
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "bp-toggle-off",
+      "openid derive:read derive:publish",
+    )
     // The workspace has a Brandprint: a convention doc plus a brand profile.
     const wsDocId = (await (await publish(app, token, "Workspace conventions")).json()).short_id
     const profId = (await (await publish(app, token, "Brand profile")).json()).short_id
@@ -691,13 +931,14 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(uris).toContain(`derive://brandprint/${personalDocId}`)
   })
 
-  it("publish to derive://brandprint/profile scaffolds the slot, is idempotent, and the loop goes live", async () => {
+  it("publish to derive://brandprint/profile scaffolds the fact, is idempotent, and the loop goes live", async () => {
     const { app, token, meta } = appWithGrant(
+      dir,
       "bp-setup",
       "openid derive:read derive:publish derive:manage",
     )
     // setup_brandprint is folded into publish: an Admin's first publish to the
-    // profile URI scaffolds the slot. The profile is always filed for_review (its
+    // profile URI scaffolds the fact. The profile is always filed for_review (its
     // reveal is human-approved), so the response is a PROPOSAL, never a live publish.
     const out = JSON.parse(
       toolText(
@@ -764,7 +1005,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish to derive://brandprint/profile requires an Admin/Owner role to scaffold", async () => {
-    const { app, token } = appWithGrant("bp-setup-denied", "openid derive:read derive:propose")
+    const { app, token } = appWithGrant(dir, "bp-setup-denied", "openid derive:read derive:propose")
     expect(
       toolText(
         await call(app, token, "publish", {
@@ -776,7 +1017,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("find (browse) + read see the agent's own published artifact", async () => {
-    const { app, token } = appWithGrant("read", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "read", "openid derive:read derive:publish")
     const pub = await publish(app, token, "My Plan")
     expect(pub.status).toBe(201)
     const shortId = (await pub.json()).short_id
@@ -793,7 +1034,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("organize: publish tags, overview vocabulary, apply, find tag filter, inspect+suggest", async () => {
-    const { app, token } = appWithGrant("organize", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "organize", "openid derive:read derive:publish")
     // Auto-tag on publish.
     const a = JSON.parse(
       toolText(
@@ -833,7 +1074,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("organize: folds artifacts into a collection by name, then lists membership", async () => {
-    const { app, token } = appWithGrant("collect", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "collect", "openid derive:read derive:publish")
     const a = JSON.parse(
       toolText(await call(app, token, "publish", { title: "One", content: "# One\n\nbody" })),
     ).short_id
@@ -859,6 +1100,7 @@ describe("remote MCP endpoint (/mcp)", () => {
 
   it("organize never folds a roaming artifact into the default workspace's collection", async () => {
     const { app, token, meta } = appWithGrant(
+      dir,
       "collect-cross-workspace",
       "openid derive:read derive:publish",
     )
@@ -888,7 +1130,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("find (browse) marks skills and filters to them with skills:true", async () => {
-    const { app, token } = appWithGrant("listskills", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "listskills", "openid derive:read derive:publish")
     const doc = (await (await publish(app, token, "A plain doc")).json()).short_id
     const skill = JSON.parse(
       toolText(
@@ -920,7 +1162,11 @@ describe("remote MCP endpoint (/mcp)", () => {
   it("publish fires the version.published webhook — parity with the HTTP route", async () => {
     // The bug this guards against: an MCP publish that skips the webhook outbox because its
     // side-effect chain drifted from the HTTP route's. Both now share lib/after-publish.ts.
-    const { app, token, meta } = appWithGrant("mcpwebhook", "openid derive:read derive:publish")
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "mcpwebhook",
+      "openid derive:read derive:publish",
+    )
     await rpc(app, token, initBody)
     // Publish once to discover the agent's workspace, subscribe a webhook there, then
     // republish — the republish is the event we assert reaches the outbox.
@@ -950,7 +1196,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("catch_up reports what changed, with the line diff folded in", async () => {
-    const { app, token } = appWithGrant("catchup", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "catchup", "openid derive:read derive:publish")
     const shortId = (await (await publish(app, token, "V1 Title")).json()).short_id
 
     // Republish a second version with different content.
@@ -991,7 +1237,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("catch_up wait blocks until a NEW VERSION lands (no review round involved) — live co-editing", async () => {
-    const { app, token } = appWithGrant("waitver", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "waitver", "openid derive:read derive:publish")
     const shortId = (await (await publish(app, token, "V1")).json()).short_id
 
     const t0 = Date.now()
@@ -1017,7 +1263,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("catch_up detailed diffs the markdown conversion, not raw HTML tag noise", async () => {
-    const { app, token } = appWithGrant("catchupmd", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "catchupmd", "openid derive:read derive:publish")
     const v1 =
       "<html><head><style>body{color:red}</style></head><body>" +
       "<h1>Doc</h1><p>alpha bravo charlie</p></body></html>"
@@ -1060,7 +1306,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("read + catch_up handle multi-page bundles", async () => {
-    const { app, token } = appWithGrant("bundle", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "bundle", "openid derive:read derive:publish")
     const enc = (s: string) => new TextEncoder().encode(s)
     const postZip = (
       files: Record<string, Uint8Array>,
@@ -1114,7 +1360,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("find (grep one artifact): literal matches with line numbers, context, case, and regex", async () => {
-    const { app, token } = appWithGrant("search", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "search", "openid derive:read derive:publish")
     const md = [
       "# Plan",
       "",
@@ -1160,7 +1406,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("find (grep one artifact): source vs text scope on HTML, and bundles grouped by page", async () => {
-    const { app, token } = appWithGrant("search2", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "search2", "openid derive:read derive:publish")
     const html = "<h1>Heading</h1>\n<p>visible pricing text</p>"
     const id = (await (await publishRaw(app, token, html, "page.html", "Page")).json()).short_id
 
@@ -1214,7 +1460,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("find (grep one artifact): matches are self-locating (§ section labels)", async () => {
-    const { app, token } = appWithGrant("srchsec", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "srchsec", "openid derive:read derive:publish")
     const md = [
       "# Doc",
       "",
@@ -1242,6 +1488,7 @@ describe("remote MCP endpoint (/mcp)", () => {
 
   it("find (workspace mode, short_id omitted): greps across accessible artifacts, grouped by artifact, and NEVER leaks a private artifact's content to a viewer who isn't its member (regression)", async () => {
     const { app, token, meta, blobs } = appWithGrant(
+      dir,
       "wssearch",
       "openid derive:read derive:publish",
     )
@@ -1323,7 +1570,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     // End-to-end proof of the write-path: publishing runs emitVersionBump →
     // indexArtifactVersion, so the new content is in the index and workspace search
     // (index → visibility → grep-confirm) surfaces it — no short_id needed.
-    const { app, token } = appWithGrant("wsidx", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "wsidx", "openid derive:read derive:publish")
     await publishRaw(
       app,
       token,
@@ -1384,9 +1631,14 @@ describe("remote MCP endpoint (/mcp)", () => {
       unindexArtifact: async () => {},
       search: async () => [],
     }
-    const { app, token, meta } = appWithGrant("densepub", "openid derive:read derive:publish", {
-      search: fakeSearch,
-    })
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "densepub",
+      "openid derive:read derive:publish",
+      {
+        search: fakeSearch,
+      },
+    )
     const created = JSON.parse(
       toolText(
         await call(app, token, "publish", { title: "Doc", content: "# Doc\n\nsemantic body" }),
@@ -1399,7 +1651,11 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("find (workspace mode): ranks the whole corpus and shows an honest truncation note past the grep-confirm cap", async () => {
-    const { app, token, meta, blobs } = appWithGrant("wscap", "openid derive:read derive:publish")
+    const { app, token, meta, blobs } = appWithGrant(
+      dir,
+      "wscap",
+      "openid derive:read derive:publish",
+    )
     const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
     const owner = await meta.getByShortId(seed)
     if (!owner) throw new Error("expected the seed artifact to exist")
@@ -1414,6 +1670,7 @@ describe("remote MCP endpoint (/mcp)", () => {
 
   it("find (workspace mode): EXACTLY the cap (30) matching artifacts shows NO truncation note", async () => {
     const { app, token, meta, blobs } = appWithGrant(
+      dir,
       "wscapexact",
       "openid derive:read derive:publish",
     )
@@ -1430,7 +1687,11 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("find (workspace mode): resolves >90 candidates correctly across visibility chunks (D1 bound-param safety)", async () => {
-    const { app, token, meta, blobs } = appWithGrant("wschunk", "openid derive:read derive:publish")
+    const { app, token, meta, blobs } = appWithGrant(
+      dir,
+      "wschunk",
+      "openid derive:read derive:publish",
+    )
     const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
     const owner = await meta.getByShortId(seed)
     if (!owner) throw new Error("expected the seed artifact to exist")
@@ -1444,7 +1705,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("find (workspace mode): a taken-down artifact's content is NOT grep-exfiltratable via search (tombstone hole)", async () => {
-    const { app, token, meta } = appWithGrant("wstomb", "openid derive:read derive:publish")
+    const { app, token, meta } = appWithGrant(dir, "wstomb", "openid derive:read derive:publish")
     const sid = (
       await (
         await publishRaw(app, token, "# Secret\n\nthe tombstoneneedle lives here", "s.md", "Secret")
@@ -1468,7 +1729,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("read/find (one-artifact): a taken-down artifact serves no content, mirroring the web 410", async () => {
-    const { app, token, meta } = appWithGrant("wsone", "openid derive:read derive:publish")
+    const { app, token, meta } = appWithGrant(dir, "wsone", "openid derive:read derive:publish")
     const sid = (
       await (
         await publishRaw(app, token, "# Secret\n\nthe onedocneedle lives here", "s.md", "Secret")
@@ -1490,7 +1751,11 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("find (workspace mode): index nominations lacking the exact literal are not reported as matches (recall vs precision)", async () => {
-    const { app, token, meta, blobs } = appWithGrant("wsprec", "openid derive:read derive:publish")
+    const { app, token, meta, blobs } = appWithGrant(
+      dir,
+      "wsprec",
+      "openid derive:read derive:publish",
+    )
     const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
     const owner = await meta.getByShortId(seed)
     if (!owner) throw new Error("expected the seed artifact to exist")
@@ -1533,7 +1798,11 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("searchWorkspace hides a password-locked artifact's content unless the caller reads it via a workspace SEAT (not the locked link)", async () => {
-    const { app, token, meta, blobs } = appWithGrant("wslock", "openid derive:read derive:publish")
+    const { app, token, meta, blobs } = appWithGrant(
+      dir,
+      "wslock",
+      "openid derive:read derive:publish",
+    )
     const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
     const owner = await meta.getByShortId(seed)
     if (!owner) throw new Error("expected the seed artifact to exist")
@@ -1618,7 +1887,11 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("search reindex (backfill): a bounded, resumable sweep makes pre-existing (never-indexed) artifacts findable", async () => {
-    const { app, token, meta, blobs } = appWithGrant("reidx", "openid derive:read derive:publish")
+    const { app, token, meta, blobs } = appWithGrant(
+      dir,
+      "reidx",
+      "openid derive:read derive:publish",
+    )
     const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
     const owner = await meta.getByShortId(seed)
     if (!owner) throw new Error("expected the seed artifact to exist")
@@ -1673,7 +1946,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("read: a region ref (@N) reads that region directly, with actionable errors", async () => {
-    const { app, token } = appWithGrant("region", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "region", "openid derive:read derive:publish")
     const html =
       "<!DOCTYPE html><html><body><nav aria-label='Nav'>n</nav><main><p>the main body here</p></main><footer>fin</footer></body></html>"
     const id = (await (await publishRaw(app, token, html, "app.html", "App")).json()).short_id
@@ -1691,7 +1964,11 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it('read render:"top" — the publish→look loop (pending, ready as an image, failed)', async () => {
-    const { app, token, meta, blobs } = appWithGrant("render", "openid derive:read derive:publish")
+    const { app, token, meta, blobs } = appWithGrant(
+      dir,
+      "render",
+      "openid derive:read derive:publish",
+    )
     const pub = JSON.parse(
       toolText(
         await call(app, token, "publish", {
@@ -1739,7 +2016,11 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it('read render:"full"/"marked" are independent of render:"top" and of each other', async () => {
-    const { app, token, meta, blobs } = appWithGrant("renderv", "openid derive:read derive:publish")
+    const { app, token, meta, blobs } = appWithGrant(
+      dir,
+      "renderv",
+      "openid derive:read derive:publish",
+    )
     const pub = JSON.parse(
       toolText(
         await call(app, token, "publish", {
@@ -1782,7 +2063,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("read: windowed `lines` returns a range, and rejects bad input", async () => {
-    const { app, token } = appWithGrant("window", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "window", "openid derive:read derive:publish")
     const md = ["# Doc", "line two", "line three", "line four", "line five"].join("\n")
     const id = (await (await publishRaw(app, token, md, "doc.md", "Doc")).json()).short_id
 
@@ -1814,7 +2095,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("read: a large headless HTML page returns a landmark map, not a blind dump", async () => {
-    const { app, token } = appWithGrant("landmark", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "landmark", "openid derive:read derive:publish")
     // A designed, heading-less page bigger than the outline-first threshold.
     const filler = "<p>card content that repeats to exceed the outline threshold. </p>".repeat(700)
     const html = `<!DOCTYPE html><html><body><nav aria-label="Primary">x</nav><main>${filler}</main><footer>fin</footer></body></html>`
@@ -1834,7 +2115,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("read: a headless card grid caps the region map instead of blowing the budget", async () => {
-    const { app, token } = appWithGrant("mapcap", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "mapcap", "openid derive:read derive:publish")
     // 400 top-level sections (a card grid) — each a landmark, no headings anywhere.
     const cards = Array.from(
       { length: 400 },
@@ -1851,7 +2132,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("read: outline now covers the full h1–h6 spine", async () => {
-    const { app, token } = appWithGrant("deep", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "deep", "openid derive:read derive:publish")
     const md = ["# One", "## Two", "### Three", "#### Four", "##### Five", "###### Six", "", "body"]
       .join("\n")
       // Pad past the outline-first threshold so `read` returns the outline.
@@ -1865,7 +2146,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("read: formats, heading sections, and the outline-first threshold", async () => {
-    const { app, token } = appWithGrant("readfmt", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "readfmt", "openid derive:read derive:publish")
     const html =
       "<!DOCTYPE html><html><head><style>body{color:red}</style></head><body>" +
       "<h1>Doc</h1><p>intro &amp; more</p>" +
@@ -1956,7 +2237,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("read: a single section that's itself huge is clipped, not returned unbounded (regression)", async () => {
-    const { app, token } = appWithGrant("readhugesection", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "readhugesection", "openid derive:read derive:publish")
     // One heading whose own content exceeds the 80k MAX_CHARS ceiling on its own —
     // sectionOf runs it to </body>, so a naive return would ship it all unbounded.
     const hugeSection = `<h1>Top</h1><h2>Huge</h2><p>${"lorem ipsum dolor sit amet ".repeat(4000)}</p>`
@@ -1981,7 +2262,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("read: format:text on a deck artifact returns flat visible text, not raw markup (regression)", async () => {
-    const { app, token } = appWithGrant("readdeck", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "readdeck", "openid derive:read derive:publish")
     // Must NOT start with <html>/<!doctype html> (that sniffs as plain text/html) —
     // real deck content declares the protocol name, which is enough to type-sniff it.
     const deck = "derive-deck\n<h1>Slide</h1><p>hello there</p>"
@@ -2008,7 +2289,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("read: a bundle page over the outline threshold goes outline-first too, with a #* bypass", async () => {
-    const { app, token } = appWithGrant("readbundlebig", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "readbundlebig", "openid derive:read derive:publish")
     const bigPage = Array.from(
       { length: 40 },
       (_, i) => `<h2>Screen ${i}</h2><p>${"lorem ipsum ".repeat(120)}</p>`,
@@ -2033,7 +2314,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("read: an image page returns a real MCP image block, not bytes-as-text", async () => {
-    const { app, token } = appWithGrant("readimg", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "readimg", "openid derive:read derive:publish")
     const png =
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
     const created = JSON.parse(
@@ -2062,7 +2343,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("read: a markdown artifact returns its source untouched under the default format", async () => {
-    const { app, token } = appWithGrant("readmd", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "readmd", "openid derive:read derive:publish")
     const md = "# Notes\n\nSome *markdown* here.\n\n## Sub\n\ntail\n"
     const created = JSON.parse(
       toolText(
@@ -2081,6 +2362,7 @@ describe("remote MCP endpoint (/mcp)", () => {
 
   it("comment leaves anchored feedback, replies, and resolves — all via one tool", async () => {
     const { app, token } = appWithGrant(
+      dir,
       "comment",
       "openid derive:read derive:comment derive:publish",
     )
@@ -2142,7 +2424,7 @@ describe("remote MCP endpoint (/mcp)", () => {
 
   it("publish with for_review stages a proposal instead of going live", async () => {
     // Even with an editor grant, for_review:true files a proposal that never auto-goes-live.
-    const { app, token } = appWithGrant("review", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "review", "openid derive:read derive:publish")
     const shortId = (await (await publish(app, token, "Draft")).json()).short_id
 
     const p = JSON.parse(
@@ -2182,7 +2464,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   // These three pin every no-filename path: full-content republish, new-artifact
   // sniff, and the proposal route.
   it("publish: a full-content republish without a filename keeps a markdown doc markdown", async () => {
-    const { app, token } = appWithGrant("retype", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "retype", "openid derive:read derive:publish")
     const created = JSON.parse(
       toolText(
         await call(app, token, "publish", {
@@ -2203,7 +2485,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish: a new single-file artifact without a filename is sniffed, not defaulted to HTML", async () => {
-    const { app, token } = appWithGrant("sniff", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "sniff", "openid derive:read derive:publish")
     const md = JSON.parse(
       toolText(
         await call(app, token, "publish", { title: "Plain", content: "# Plain\n\nno filename\n" }),
@@ -2226,7 +2508,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish: an approved no-filename proposal keeps a markdown doc markdown", async () => {
-    const { app, token } = appWithGrant("retypeprop", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "retypeprop", "openid derive:read derive:publish")
     const created = JSON.parse(
       toolText(
         await call(app, token, "publish", {
@@ -2263,7 +2545,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   // production round-trip: fresh publish, then a full-content republish with no
   // filename (the step that flipped the artifact to text/html and broke the render).
   it("render e2e: a no-filename markdown publish renders as markdown, tokens intact, across a republish", async () => {
-    const { app, token } = appWithGrant("rendere2e", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "rendere2e", "openid derive:read derive:publish")
     // A heading (proves it gets RENDERED, not served as source) and a tag-like token
     // in a code span (proves it SURVIVES, escaped, instead of vanishing as a phantom tag).
     const v1 =
@@ -2307,7 +2589,11 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("surfaces outdated feedback after a republish drops the quoted text", async () => {
-    const { app, token } = appWithGrant("stale", "openid derive:read derive:comment derive:publish")
+    const { app, token } = appWithGrant(
+      dir,
+      "stale",
+      "openid derive:read derive:comment derive:publish",
+    )
     const shortId = (await (await publish(app, token, "alpha beta gamma")).json()).short_id
 
     // A comment anchored to "beta".
@@ -2352,7 +2638,11 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish for_review with `addresses` marks the cited threads addressed (pending review)", async () => {
-    const { app, token } = appWithGrant("addr", "openid derive:read derive:comment derive:publish")
+    const { app, token } = appWithGrant(
+      dir,
+      "addr",
+      "openid derive:read derive:comment derive:publish",
+    )
     const shortId = (await (await publish(app, token, "headline to fix")).json()).short_id
     const cm = await (
       await app.request(`/v1/artifacts/${shortId}/comments`, {
@@ -2394,6 +2684,7 @@ describe("remote MCP endpoint (/mcp)", () => {
 
   it("a live publish with `addresses` resolves those threads directly", async () => {
     const { app, token } = appWithGrant(
+      dir,
       "liveaddr",
       "openid derive:read derive:comment derive:publish",
     )
@@ -2501,7 +2792,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish creates a NEW artifact (first publish) and then a new version of it", async () => {
-    const { app, token } = appWithGrant("pub", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "pub", "openid derive:read derive:publish")
 
     // First publish — no short_id, so it creates a brand-new artifact.
     const created = JSON.parse(
@@ -2542,7 +2833,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish edits: exact-match search/replace instead of resending content", async () => {
-    const { app, token } = appWithGrant("pubedits", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "pubedits", "openid derive:read derive:publish")
     const created = JSON.parse(
       toolText(
         await call(app, token, "publish", {
@@ -2653,7 +2944,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish edits: over the workspace storage quota is rejected, same as content/files (regression: the MCP edits path used to skip this check)", async () => {
-    const { app, token } = appWithGrant("editsquota", "openid derive:read derive:publish", {
+    const { app, token } = appWithGrant(dir, "editsquota", "openid derive:read derive:publish", {
       maxBytes: 200,
     })
     const created = JSON.parse(
@@ -2674,13 +2965,13 @@ describe("remote MCP endpoint (/mcp)", () => {
 
   it("publish needs a title to create, and routes a non-publisher to review", async () => {
     // A new-artifact publish with no title is refused.
-    const { app, token } = appWithGrant("pub2", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "pub2", "openid derive:read derive:publish")
     const noTitle = await call(app, token, "publish", { content: "<h1>x</h1>" })
     expect(toolText(noTitle)).toContain("title")
 
     // A comment-only grant can't publish live — and can't create a NEW artifact even
     // via review (a proposal revises an existing one). Steered to publish rights.
-    const weak = appWithGrant("pub3", "openid derive:read derive:comment")
+    const weak = appWithGrant(dir, "pub3", "openid derive:read derive:comment")
     const denied = await call(weak.app, weak.token, "publish", {
       title: "Nope",
       content: "<h1>x</h1>",
@@ -2689,7 +2980,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish creates and republishes a multi-page bundle via the files map", async () => {
-    const { app, token } = appWithGrant("pubbundle", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "pubbundle", "openid derive:read derive:publish")
 
     const created = JSON.parse(
       toolText(
@@ -2738,7 +3029,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("a bundle can't be filed for review (single-file proposals only)", async () => {
-    const { app, token } = appWithGrant("bundlereview", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "bundlereview", "openid derive:read derive:publish")
     const created = JSON.parse(
       toolText(
         await call(app, token, "publish", {
@@ -2756,7 +3047,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish steers between content and files by kind", async () => {
-    const { app, token } = appWithGrant("pubkind", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "pubkind", "openid derive:read derive:publish")
 
     const both = await call(app, token, "publish", {
       title: "x",
@@ -2790,9 +3081,14 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish enqueues a preview render job (parity with the HTTP route)", async () => {
-    const { app, token, meta } = appWithGrant("pubrender", "openid derive:read derive:publish", {
-      renderPreviews: true,
-    })
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "pubrender",
+      "openid derive:read derive:publish",
+      {
+        renderPreviews: true,
+      },
+    )
     const created = JSON.parse(
       toolText(await call(app, token, "publish", { title: "Card", content: "<h1>v1</h1>" })),
     )
@@ -2813,9 +3109,14 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish with for_review (a proposal) does NOT enqueue a render job", async () => {
-    const { app, token, meta } = appWithGrant("proprender", "openid derive:read derive:publish", {
-      renderPreviews: true,
-    })
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "proprender",
+      "openid derive:read derive:publish",
+      {
+        renderPreviews: true,
+      },
+    )
     const created = JSON.parse(
       toolText(await call(app, token, "publish", { title: "Base", content: "<h1>v1</h1>" })),
     )
@@ -2841,11 +3142,14 @@ describe("the agent inbox over MCP (catch_up work queue)", () => {
   // writes) and hand it a pending request row (what the comment @mention fan-out
   // writes; the fan-out itself is pinned by comment-fanout.test.ts and rework.test.ts).
   const seedInbox = async (name: string) => {
-    const { app, token, meta } = appWithGrant(name, "openid derive:read derive:publish")
+    const { app, token, meta } = appWithGrant(dir, name, "openid derive:read derive:publish")
     const shortId = (await (await publish(app, token, "Quarterly notes")).json()).short_id as string
     const art = await meta.getByShortId(shortId)
     if (!art) throw new Error("no artifact")
-    const agentToken = `agtok_${name}`
+    // AGENT_TOKEN_PREFIX (dk_agt_), not an arbitrary string — agentFor now skips the
+    // getAgentByToken lookup entirely for any bearer without this prefix (a guaranteed
+    // miss on every real OAuth/JWT MCP call), so a fixture token has to look real too.
+    const agentToken = `dk_agt_${name}`
     const agent = await meta.createAgent({
       id: `ag_${name}`,
       org_id: art.org_id,
@@ -2907,7 +3211,7 @@ describe("the agent inbox over MCP (catch_up work queue)", () => {
   })
 
   it("a human-grant connection has an empty queue with a no-inbox note, not an error", async () => {
-    const { app, token } = appWithGrant("inboxoauth", "openid derive:read")
+    const { app, token } = appWithGrant(dir, "inboxoauth", "openid derive:read")
     const tools = await rpc(app, token, { jsonrpc: "2.0", id: 5, method: "tools/list" })
     // The queue is now a MODE of catch_up (no check_requests tool of its own).
     expect(toolNames(tools)).toContain("catch_up")
@@ -2922,7 +3226,7 @@ describe("checkpoint tool (lineage layers)", () => {
   const scopes = "openid derive:read derive:publish"
 
   it("creates a lineage on first checkpoint, resume command inlines its own id", async () => {
-    const { app, token } = appWithGrant("ckcreate", scopes)
+    const { app, token } = appWithGrant(dir, "ckcreate", scopes)
     const r = await call(app, token, "checkpoint", {
       work: "deploy-versioning",
       state: "Renderer half-migrated; staging config still on the old path.",
@@ -2949,7 +3253,7 @@ describe("checkpoint tool (lineage layers)", () => {
   })
 
   it("re-checkpoint replaces the layer; versions are the history", async () => {
-    const { app, token } = appWithGrant("ckupdate", scopes)
+    const { app, token } = appWithGrant(dir, "ckupdate", scopes)
     const first = JSON.parse(
       toolText(
         await call(app, token, "checkpoint", { work: "migration", state: "Backfill running." }),
@@ -2971,7 +3275,7 @@ describe("checkpoint tool (lineage layers)", () => {
   })
 
   it("refuses to clobber a non-lineage artifact", async () => {
-    const { app, token } = appWithGrant("ckguard", scopes)
+    const { app, token } = appWithGrant(dir, "ckguard", scopes)
     const created = JSON.parse(
       toolText(await call(app, token, "publish", { title: "Real doc", content: "# Precious\n" })),
     )
@@ -2985,7 +3289,7 @@ describe("checkpoint tool (lineage layers)", () => {
   })
 
   it("rejects an over-one-page layer with a trim error (and takes a near-page one)", async () => {
-    const { app, token } = appWithGrant("ckcap", scopes)
+    const { app, token } = appWithGrant(dir, "ckcap", scopes)
     const r = await call(app, token, "checkpoint", { work: "big", state: "x".repeat(9000) })
     expect(toolText(r)).toContain("one page")
     // Pins the cap to a real band: ~7.3k of payload plus the template fits.
@@ -2994,7 +3298,7 @@ describe("checkpoint tool (lineage layers)", () => {
   })
 
   it("neutralizes smuggled fences and headings — the resume block stays the only one", async () => {
-    const { app, token } = appWithGrant("ckinject", scopes)
+    const { app, token } = appWithGrant(dir, "ckinject", scopes)
     const out = JSON.parse(
       toolText(
         await call(app, token, "checkpoint", {
@@ -3015,9 +3319,9 @@ describe("checkpoint tool (lineage layers)", () => {
   })
 
   it("needs a work name to create, and publish rights to write", async () => {
-    const { app, token } = appWithGrant("ckargs", scopes)
+    const { app, token } = appWithGrant(dir, "ckargs", scopes)
     expect(toolText(await call(app, token, "checkpoint", { state: "s" }))).toContain("work")
-    const ro = appWithGrant("ckro", "openid derive:read")
+    const ro = appWithGrant(dir, "ckro", "openid derive:read")
     const r = await call(ro.app, ro.token, "checkpoint", { work: "w", state: "s" })
     expect(toolText(r)).toContain("publish")
   })
@@ -3030,6 +3334,7 @@ describe("checkpoint tool (lineage layers)", () => {
 describe("automate record — local work lands in the same ledger", () => {
   it("records a locally-executed run against its automation, with its writes", async () => {
     const { app, token, meta } = appWithGrant(
+      dir,
       "automate-record",
       "openid derive:read derive:publish derive:manage",
     )
@@ -3081,6 +3386,7 @@ describe("automate record — local work lands in the same ledger", () => {
 
   it("a foreign automation id records unattributed rather than losing the work", async () => {
     const { app, token, meta } = appWithGrant(
+      dir,
       "automate-record-foreign",
       "openid derive:read derive:publish derive:manage",
     )

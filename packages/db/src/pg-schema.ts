@@ -536,6 +536,18 @@ export const orgSettings = pgTable("org_settings", {
   settings: text("settings").notNull().default("{}"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
+export const subscription = pgTable("subscription", {
+  org_id: text("org_id").primaryKey(),
+  stripe_customer_id: text("stripe_customer_id").notNull(),
+  stripe_subscription_id: text("stripe_subscription_id"),
+  tier: text("tier").$type<"team" | "business">().notNull(),
+  billing_interval: text("billing_interval").$type<"month" | "year">().notNull(),
+  status: text("status").notNull(),
+  quantity: integer("quantity").notNull(),
+  current_period_end: text("current_period_end"),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+  updated_at: text("updated_at").notNull(),
+})
 export const slackInstall = pgTable("slack_install", {
   org_id: text("org_id").primaryKey(),
   team_id: text("team_id").notNull(),
@@ -840,9 +852,33 @@ export const asset = pgTable(
     org_id: text("org_id").notNull(),
     content_type: text("content_type").notNull(),
     size_bytes: integer("size_bytes").notNull(),
+    // Header-read pixel dimensions; null for fonts/unreadable/legacy. Mirrors schema.ts.
+    width: integer("width"),
+    height: integer("height"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [index("asset_org").on(t.org_id)],
+)
+
+// A structured FACT extracted from a version's source (see @derive/facts).
+// Natural key (artifact_id, n, slot); rows are written once when a version goes live and
+// never mutated. `gen` (DEFAULT must equal @derive/core FACT_GEN) marks which extraction
+// rules produced the row. Mirrors schema.ts.
+export const versionData = pgTable(
+  "version_data",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    n: integer("n").notNull(),
+    slot: text("slot").notNull(),
+    json: text("json").notNull(),
+    size_bytes: integer("size_bytes").notNull(),
+    gen: integer("gen").notNull().default(1),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("version_data_slot").on(t.artifact_id, t.n, t.slot)],
 )
 
 // Schema parity is enforced in pg.ts, where the pg `schema` object lives — it
@@ -860,6 +896,7 @@ const PG_TIMESTAMP_DEFAULT = `to_char((now() at time zone 'utc'), 'YYYY-MM-DD"T"
 const TABLES = [
   artifact,
   version,
+  versionData,
   comment,
   webhook,
   webhookDelivery,
@@ -888,6 +925,7 @@ const TABLES = [
   folder,
   repoSource,
   orgSettings,
+  subscription,
   slackInstall,
   slackThreadLink,
   slackUserLink,

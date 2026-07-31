@@ -1,5 +1,5 @@
 import { chromium } from "playwright"
-import type { Renderer, ScreenshotOpts } from "./previews"
+import { assertNavigationOk, type Renderer, type ScreenshotOpts } from "./previews"
 
 /** A Renderer backed by a locally-installed Playwright Chromium. Node self-host only —
  *  never imported by the edge build. Each screenshot runs in a fresh isolated context. */
@@ -13,7 +13,10 @@ export const playwrightRenderer = (): Renderer => ({
         ...(opts.deviceScaleFactor ? { deviceScaleFactor: opts.deviceScaleFactor } : {}),
       })
       const page = await context.newPage()
-      await page.goto(url, { waitUntil: "networkidle", timeout: opts.timeoutMs })
+      assertNavigationOk(
+        await page.goto(url, { waitUntil: "networkidle", timeout: opts.timeoutMs }),
+        url,
+      )
       const buf = await page.screenshot({ type: "png", fullPage: !!opts.fullPage })
       return new Uint8Array(buf)
     } finally {

@@ -38,7 +38,7 @@ export function registerAutomateTool(tc: ToolContext): void {
     "automate",
     {
       description:
-        "Standing automations — a scheduled use(context, instruction). `create`: trigger ({kind: manual|schedule|event, cron?, tz?, on:'webhook'?}) + instruction; optional refs (targets, mode publish|propose), context_id (the run acts as that context's agent), connection_ids (bound sources). Webhook triggers return fire_url + fire_secret ONCE. `run_now` enqueues now. `record` files a run you executed LOCALLY (automation_id, wrote:[short_ids], outcome, note) into the same ledger. `list` shows them. `create_context` (name + manifest_short_id, + max_run_ms?/max_concurrency?) wires a context — no token returned; owners run it via use. Owner grants only.",
+        "Standing automations — a scheduled use(context, instruction). `create`: trigger ({kind: manual|schedule|event, cron?, tz?, on:'webhook'?}) + instruction; optional refs (targets, mode publish|propose), context_id (the run acts as that context's agent), connection_ids (bound sources; binding any forces propose, whatever mode says). Webhook triggers return fire_url + fire_secret ONCE. `run_now` enqueues now. `record` files a run you executed LOCALLY (automation_id, wrote:[short_ids], outcome, note) into the same ledger. `list` shows them. `create_context` (name + manifest_short_id, + max_run_ms?/max_concurrency?) wires a context — no token returned; owners run it via use. Owner grants only.",
       inputSchema: {
         // A STRING, not an enum, on purpose: this discriminator grows (create_context is
         // itself the fifth value, and it shipped unreachable to every already-connected

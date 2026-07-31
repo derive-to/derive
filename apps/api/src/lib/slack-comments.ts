@@ -90,8 +90,18 @@ export const enqueueSlackThreadState = async (
   actor?: string,
 ): Promise<number> => {
   const { meta, baseUrl } = deps
+  // One indexed lookup keyed on thread_id, and the ONLY cost a workspace with no Slack pays:
+  // a thread that was never mirrored has no links and returns here, before anything else is
+  // read. Deliberately first for that reason — every resolve in the product runs this.
   const links = await meta.listSlackThreadLinksByThread(threadId)
   if (!links.length) return 0
+  // A thread link outlives an unsubscribe, so a channel an admin cut off must not keep watching
+  // its cards mutate — same gate the inbound reply path uses. Resolved BEFORE the comment read
+  // below so a thread whose channels have all unsubscribed costs nothing further.
+  const live: typeof links = []
+  for (const l of links)
+    if (await channelIsSubscribed(meta, artifact.org_id, l.channel)) live.push(l)
+  if (!live.length) return 0
   // The card's section is the thread's FIRST comment — the one the root message was posted for.
   // Later replies in the thread posted as Slack replies underneath it, so they are not what a
   // rewrite of the root should show.
@@ -101,10 +111,7 @@ export const enqueueSlackThreadState = async (
   if (!root) return 0
   const link = commentDeepLink(baseUrl, artifact, threadId)
   let n = 0
-  for (const l of links) {
-    // A thread link outlives an unsubscribe, so without this an admin who cut a channel off
-    // would still see its cards mutate. Same gate the inbound reply path uses.
-    if (!(await channelIsSubscribed(meta, artifact.org_id, l.channel))) continue
+  for (const l of live) {
     const payload: SlackThreadStatePayload = {
       channel: l.channel,
       messageTs: l.message_ts,
