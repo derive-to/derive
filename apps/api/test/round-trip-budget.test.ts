@@ -34,8 +34,8 @@ import { as, makeAuthedApp, publishAs, type TestUser } from "./helpers"
  * extra trip is genuinely required and change the budget deliberately, in its own commit, with
  * the reason. Lowering a budget after a batching win is always welcome.
  *
- * Budgets are measured on the CURRENT implementation with a little headroom, so an unrelated
- * refactor does not trip them, but not so much that a real regression hides.
+ * Budgets are the CURRENT measured count exactly, with no headroom — headroom is what lets a
+ * regression land unnoticed.
  */
 
 const owner: TestUser = { id: "u_budget_own", email: "budget@derive.test", name: "Budget Owner" }
