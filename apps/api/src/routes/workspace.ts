@@ -74,6 +74,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
     requireWorkspace,
     setWsCookie,
     workspaceRole,
+    seatGrantGate,
   } = ctx
   const { privateOwnerId, oauthGrant, inviteLimiter, limited } = ctx
   const billing = deps.billing
@@ -268,6 +269,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
       const existing = await meta.getMembership(org, user.id)
       if (existing?.role === "owner" && b.role !== "owner" && (await isLastOwner(org, user.id)))
         return bail(fail(c, 409, "the workspace needs at least one admin"))
+      const gated = await seatGrantGate(c, org, b.role, existing?.role)
+      if (gated) return bail(gated)
       await meta.setMembership({
         id: existing?.id ?? newId("m"),
         org_id: org,
@@ -318,6 +321,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
       if (!existing) return bail(fail(c, 404, "not a member"))
       if (existing.role === "owner" && b.role !== "owner" && (await isLastOwner(org, userId)))
         return bail(fail(c, 409, "the workspace needs at least one admin"))
+      const gated = await seatGrantGate(c, org, b.role, existing.role)
+      if (gated) return bail(gated)
       await meta.setMembership({ id: existing.id, org_id: org, user_id: userId, role: b.role })
       await syncSeats({ meta, billing }, org)
       return c.json({ user_id: userId, role: b.role })
@@ -377,11 +382,16 @@ export const workspaceRoutes = (ctx: AppContext) => {
 
       // Existing account → add directly (and clear any stale pending invite for them).
       const existingId = await resolveUserRef(meta, ref)
+      // Hoisted so the gate covers BOTH branches below: a pending-email editor invite
+      // would otherwise be accepted later into a seat the plan doesn't cover.
+      const existingMembership = existingId ? await meta.getMembership(org, existingId) : null
+      const gated = await seatGrantGate(c, org, b.role, existingMembership?.role)
+      if (gated) return bail(gated)
       if (existingId) {
         const [user] = await meta.getUsers([existingId])
         if (!user) return bail(fail(c, 404, "no Derive user with that username or email"))
         await meta.setMembership({
-          id: (await meta.getMembership(org, existingId))?.id ?? newId("m"),
+          id: existingMembership?.id ?? newId("m"),
           org_id: org,
           user_id: existingId,
           role: b.role,

@@ -152,10 +152,11 @@ export function useArtifactActions(p: {
     // single tap re-sends it. (submitNew closes the composer optimistically, so the draft only
     // lives here now.)
     errorToast: false,
-    onError: (_err, vars) =>
+    onError: (_err, vars) => {
       toast.error("Couldn't post your comment. Check your connection and try again.", {
         action: { label: "Retry", onClick: () => comment.mutate(vars) },
-      }),
+      })
+    },
   })
   const addComment = (
     text: string,

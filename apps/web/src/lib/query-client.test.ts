@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   isTransient,
+  paywallReasonFor,
   retryQuery,
   shouldPersistQuery,
   shouldToastError,
@@ -69,5 +70,27 @@ describe("toastMessageFor", () => {
     expect(toastMessageFor(Object.assign(new Error(""), { status: 500 }))).toMatch(
       /something went wrong/i,
     )
+  })
+})
+
+describe("paywallReasonFor", () => {
+  class FakeApiError extends Error {
+    constructor(
+      readonly status: number,
+      readonly code?: string,
+    ) {
+      super("x")
+    }
+  }
+  it("maps the three billing codes", () => {
+    expect(paywallReasonFor(new FakeApiError(402, "billing_required"))).toBe("seats")
+    expect(paywallReasonFor(new FakeApiError(402, "billing_lapsed"))).toBe("lapsed")
+    expect(paywallReasonFor(new FakeApiError(413, "storage_exceeded"))).toBe("storage")
+  })
+  it("passes every other failure through to the toast path", () => {
+    expect(paywallReasonFor(new FakeApiError(413, undefined))).toBeNull()
+    expect(paywallReasonFor(new FakeApiError(409, "conflict"))).toBeNull()
+    expect(paywallReasonFor(new Error("network down"))).toBeNull()
+    expect(paywallReasonFor(undefined)).toBeNull()
   })
 })

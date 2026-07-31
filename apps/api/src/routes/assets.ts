@@ -35,7 +35,7 @@ const EXT_FOR_TYPE: Record<string, string> = {
  * own visibility. That trade-off is deliberate — see docs/decisions on asset URLs.
  */
 export const assetRoutes = (ctx: AppContext) => {
-  const { meta, blobs, requireWorkspace, overStorage, deps } = ctx
+  const { meta, blobs, requireWorkspace, overStorage, blockCopy, deps } = ctx
   // Contract-first: the *request* is a raw/multipart binary upload (read by hand
   // below, no JSON body schema), but the *response* is a typed handle that agents /
   // the CLI / MCP consume — so it gets a schema like every other JSON response.
@@ -87,7 +87,8 @@ export const assetRoutes = (ctx: AppContext) => {
     const type = sniffAssetType(bytes)
     if (!type) return fail(c, 400, "unsupported asset (use PNG, JPEG, GIF, WebP, or WOFF/WOFF2)")
 
-    if (await overStorage(org, bytes.byteLength)) return fail(c, 413, "storage quota exceeded")
+    if (await overStorage(org, bytes.byteLength))
+      return fail(c, 413, blockCopy.storage.message, { code: blockCopy.storage.code })
 
     const key = await blobs.put(bytes)
     // Read the pixel dimensions from the header (fonts have none). These are the user's

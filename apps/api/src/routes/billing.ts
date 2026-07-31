@@ -25,6 +25,7 @@ export const billingRoutes = (ctx: AppContext) => {
     currentUser,
     workspaceRole,
     activeWorkspace,
+    blockCopy,
   } = ctx
   const billing = deps.billing
 
@@ -49,7 +50,7 @@ export const billingRoutes = (ctx: AppContext) => {
     const healed = await syncSeats({ meta, billing }, org, { sub, seats })
     const subOut = healed ?? sub
     const state = await billingState(org, { sub: subOut, seatCount: seats })
-    const beta = state.whiteLabelEntitled && !state.subscriptionActive
+    const beta = state.betaGrace
     return c.json({
       tier: state.tier,
       status: subOut?.status ?? null,
@@ -61,6 +62,7 @@ export const billingRoutes = (ctx: AppContext) => {
       enforce_at: deps.billingEnforceAt ?? null,
       beta,
       subscribed: state.subscriptionActive,
+      blocked: state.blockedReason ? blockCopy[state.blockedReason] : null,
     })
   })
 

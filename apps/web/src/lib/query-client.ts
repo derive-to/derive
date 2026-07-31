@@ -1,5 +1,6 @@
 import { MutationCache, QueryClient } from "@tanstack/react-query"
 import { toast } from "@/components/ui/sonner"
+import { openPaywall, type PaywallReason } from "./paywall"
 
 // One client for the app: route loaders warm it via ensureQueryData / prefetch,
 // components read it via useQuery, so an intent-preloaded route serves its data
@@ -67,6 +68,18 @@ export const toastMessageFor = (err: unknown): string => {
     : "Something went wrong. Check your connection and try again."
 }
 
+/** Billing refusals become the upgrade dialog, not a toast: the server tags them
+ *  with a machine code (fail()'s `code`), and this is the one mapping from those
+ *  codes to the dialog's reasons. Everything else returns null and keeps the
+ *  normal toast path. Pure + exported so it's unit-tested. */
+export const paywallReasonFor = (err: unknown): PaywallReason | null => {
+  const code = (err as { code?: unknown })?.code
+  if (code === "billing_required") return "seats"
+  if (code === "billing_lapsed") return "lapsed"
+  if (code === "storage_exceeded") return "storage"
+  return null
+}
+
 // How long the cache is persisted AND kept in memory. gcTime MUST equal (or exceed) the
 // persister's maxAge (lib/persist.ts reuses this) — otherwise garbage collection evicts an
 // inactive query from memory before its persisted copy expires, dropping it from the next
@@ -96,6 +109,8 @@ export const queryClient = new QueryClient({
   // A mutation opts out with `meta.errorToast: false` when it renders the error inline.
   mutationCache: new MutationCache({
     onError: (err, _vars, _ctx, mutation) => {
+      const reason = paywallReasonFor(err)
+      if (reason) return openPaywall(reason)
       if (shouldToastError(mutation.meta)) toast.error(toastMessageFor(err))
     },
   }),

@@ -28,6 +28,7 @@ import {
   type ReplyContract,
   runAgentLoop,
 } from "./agent-loop"
+import { BillingBlockedError } from "./billing"
 
 /**
  * ONE TURN, for every lane that runs one.
@@ -262,7 +263,16 @@ export interface TurnOutcome {
   /** Session-only fields, when the contract carried them. */
   ask: AskFields | null
   turns: number
-  failure?: { reason: TurnFailure; error: string; retryable: boolean; reply?: string }
+  failure?: {
+    reason: TurnFailure
+    error: string
+    retryable: boolean
+    reply?: string
+    /** True when this "write" failure is actually the billing gate refusing the write (see
+     *  BillingBlockedError) — never set for any other reason. Lets a lane's apology surface
+     *  the copy verbatim without re-deriving it from the error string. */
+    billingBlocked?: boolean
+  }
 }
 
 /** Run one turn: ask, nudge once, gate, land. Never throws — a lane that cannot report an
@@ -327,7 +337,9 @@ export const runTurn = async (input: TurnInput): Promise<TurnOutcome> => {
     }
   } catch (e) {
     // A failed WRITE is worth retrying: the expensive part (the model turn) already succeeded,
-    // and a 5xx on publish is exactly the transient case.
+    // and a 5xx on publish is exactly the transient case. A billing block is the one exception:
+    // the model turn still succeeded, but retrying cannot land the write until the plan changes,
+    // so it is NOT retryable and gets tagged so the lane can surface the copy verbatim.
     return {
       outcome: "failed",
       reply: "",
@@ -336,7 +348,8 @@ export const runTurn = async (input: TurnInput): Promise<TurnOutcome> => {
       failure: {
         reason: "write",
         error: e instanceof Error ? e.message : String(e),
-        retryable: true,
+        retryable: !(e instanceof BillingBlockedError),
+        ...(e instanceof BillingBlockedError ? { billingBlocked: true } : {}),
       },
     }
   }

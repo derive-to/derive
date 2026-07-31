@@ -27,6 +27,10 @@ export interface BillingState {
   /** undefined = unlimited (self-host with no DERIVE_MAX_BYTES). */
   storageCapBytes?: number
   whiteLabelEntitled: boolean
+  /** The published beta promise is in effect: enforcement has not started and no
+   *  subscription is active. The billing route's `beta` flag and the seat gate
+   *  read this instead of re-deriving it from other fields. */
+  betaGrace: boolean
 }
 
 /**
@@ -54,6 +58,7 @@ export const resolveBillingState = (args: {
       canPublishApprove: true,
       storageCapBytes: STORAGE_CAPS[sub.tier],
       whiteLabelEntitled: true,
+      betaGrace: false,
     }
   }
   const enforced = !!enforceAt && enforceAt.getTime() <= now.getTime()
@@ -64,6 +69,7 @@ export const resolveBillingState = (args: {
       canPublishApprove: true,
       storageCapBytes: fallbackMaxBytes,
       whiteLabelEntitled: true,
+      betaGrace: true,
     }
   }
   const base = {
@@ -71,6 +77,7 @@ export const resolveBillingState = (args: {
     subscriptionActive: false,
     storageCapBytes: STORAGE_CAPS.free,
     whiteLabelEntitled: false,
+    betaGrace: false,
   }
   if (sub && (LAPSED_SUBSCRIPTION_STATUSES as readonly string[]).includes(sub.status))
     return { ...base, canPublishApprove: false, blockedReason: "lapsed" }

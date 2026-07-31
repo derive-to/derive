@@ -25,6 +25,7 @@ export function ConfirmDialog({
   tone = "destructive",
   onConfirm,
   confirmTestId = "confirm-dialog-confirm",
+  contentTestId,
   confirmPhrase,
 }: {
   open: boolean
@@ -36,6 +37,9 @@ export function ConfirmDialog({
   tone?: "destructive" | "default"
   onConfirm: () => void | Promise<void>
   confirmTestId?: string
+  /** data-testid for the DialogContent itself. Omit for no testid (the ordinary
+   *  case — most callers identify the dialog by its confirm/cancel testids). */
+  contentTestId?: string
   /** Require the user to TYPE this word before the confirm button enables — the
    *  extra friction reserved for the highest-stakes destructions (a bulk delete of
    *  many artifacts at once). Matched case-insensitively, trimmed. Omit for the
@@ -74,6 +78,7 @@ export function ConfirmDialog({
     >
       <DialogContent
         showCloseButton={false}
+        data-testid={contentTestId}
         // Initial focus: the type-to-confirm input when there is one (so you can type
         // straight away), otherwise the LEAST destructive action — Enter can't destroy
         // anything by reflex (the alertdialog convention). The typed button is disabled
