@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useRouterState } from "@tanstack/react-router"
 import { lazy, type ReactNode, Suspense, useEffect, useState } from "react"
 import { api } from "@/api"
+import { UpgradeDialog } from "@/components/billing/upgrade-dialog"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar"
@@ -202,6 +203,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             {children}
           </div>
         </TooltipProvider>
+        <UpgradeDialog />
       </ShellCtx.Provider>
     )
 
@@ -254,6 +256,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <CommandPalette />
         </Suspense>
       )}
+      <UpgradeDialog />
     </ShellCtx.Provider>
   )
 }

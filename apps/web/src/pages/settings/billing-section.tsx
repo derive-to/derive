@@ -4,6 +4,7 @@ import { api, type BillingInfo } from "@/api"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { gb } from "@/lib/bytes"
 import { billingQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
@@ -20,10 +21,6 @@ const TIER_LABELS: Record<BillingInfo["tier"], string> = {
   team: "Team",
   business: "Business",
 }
-
-// bytes → "1.2 GB". No shared byte-format helper exists in web/src/lib yet; move
-// this there when a second caller shows up.
-const gb = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GB`
 
 // Mirrors LAPSED_SUBSCRIPTION_STATUSES in packages/core/src/billing.ts (not
 // imported at runtime, same reasoning as FREE_SEAT_LIMIT above): a formerly-live
