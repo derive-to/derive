@@ -1,0 +1,302 @@
+# Cloudflare Workers entry for Derive (experimental edge tier: Workers + D1 + R2).
+name = "derive"
+main = "src/worker.ts"
+compatibility_date = "2024-11-01"
+# populate_process_env mirrors vars + secrets into process.env (automatic only at
+# compat dates ≥ 2025-04-01) — auth-config reads its optional providers
+# (GOOGLE_*, GITHUB_LOGIN_*, OIDC_*) there, same as on Node.
+compatibility_flags = ["nodejs_compat", "nodejs_compat_populate_process_env"]
+
+# Workers Logs: persist + index every invocation's structured logs (queryable in the
+# dashboard; retention per plan). Without this block console output is live-tail-only
+# and "what happened yesterday" is unanswerable. log.ts emits JSON on workerd, so
+# request_id / duration_ms / actor index as fields. Sample everything — volume is
+# modest, and a sampled-away incident costs more than the log spend. Longer retention
+# → add a Logpush job to a dedicated R2 bucket (NOT derive-blobs).
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[[d1_databases]]
+binding = "DB"
+database_name = "derive"
+# Placeholder — run `wrangler d1 create derive` and put your own id here (see
+# DEPLOY.md). The hosted deploy injects its id from a repo secret in CI
+# (.github/workflows/ci.yml, "Inject production binding ids") before this file is
+# read. NOTE: with the HYPERDRIVE binding below, metadata + auth live in Postgres
+# and this database sits idle — the binding stays only because the runtime
+# requires every declared binding to resolve.
+database_id = "00000000-0000-0000-0000-000000000000"
+
+# Hyperdrive → Postgres (the hosted tier's metadata + auth store). Bound ⇒
+# the worker takes the Postgres path; remove the binding to fall back to D1.
+# Placeholder id — run `wrangler hyperdrive create` and put your own here (the
+# DATABASE_URL lives inside the Hyperdrive config, never in this file); the
+# hosted deploy injects its id from a repo secret in CI. Schema is applied at
+# deploy time by `pnpm deploy:pg-schema`.
+# ⚠ Query caching MUST stay disabled on this config (--caching-disabled).
+# Hyperdrive caches SELECT results ~60s by default; this app reads its own
+# writes (workspace resolution, artifact read-back), and cached-stale reads made
+# first-login provision a workspace per request until the TTL expired.
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "00000000000000000000000000000000"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "derive-blobs"
+
+# Semantic search (the dense/hybrid arm of workspace search) embeds with Workers AI (bge-m3) and
+# stores the vectors in pgvector in the SAME Hyperdrive Postgres as the metadata — no separate
+# vector store. Bind AI (with HYPERDRIVE) to enable it; omit AI to stay lexical-only (self-host
+# parity — the worker gates on `env.AI && env.HYPERDRIVE`). The pgvector table is created out of
+# band by `deploy:pg-schema`; then backfill per workspace corpus: POST /v1/system/search-reindex
+# with the operator token. See DEPLOY.md.
+[ai]
+binding = "AI"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "ArtifactRoom"
+
+# The webhook outbox drainer (a single named instance). Its alarm delivers queued
+# webhooks with retries + backoff — the edge counterpart to the Node interval worker.
+[[durable_objects.bindings]]
+name = "WEBHOOK_OUTBOX"
+class_name = "WebhookOutbox"
+
+# The GitHub-sync runner (one instance per source, addressed by name). Its alarm
+# mirrors a repo batch-by-batch to completion server-side, so a sync survives the
+# user closing the tab — the edge counterpart to the Node detached batch-loop.
+[[durable_objects.bindings]]
+name = "SYNC_RUNNER"
+class_name = "RepoSyncRunner"
+
+# The preview renderer (a single named instance). Its alarm drains the render_job
+# queue sequentially via Cloudflare Browser Rendering — one browser at a time so
+# concurrent-browser billing stays at the floor. Omit this block (and the browser
+# binding below) to disable preview rendering (e.g. D1-only or self-host deploys).
+[[durable_objects.bindings]]
+name = "PREVIEW_RENDERER"
+class_name = "PreviewRenderer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ArtifactRoom"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["WebhookOutbox"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["RepoSyncRunner"]
+
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["PreviewRenderer"]
+
+# EXPERIMENTAL — hosted automation runs. These blocks let the every-minute cron
+# EXECUTE due automation runs in scale-to-zero containers (one run per instance, then
+# it exits): the tick materializes due schedules, reclaims runs whose container died,
+# mints a per-run capability token, and boots one container per run. Comment them out
+# (the shipped default until now) and runs stay queued for a polling `derive runner`,
+# exactly as before. Requires Containers on your Cloudflare account.
+
+[[durable_objects.bindings]]
+name = "RUN_CONTAINER"
+class_name = "RunContainer"
+
+[[migrations]]
+tag = "v5"
+new_sqlite_classes = ["RunContainer"]
+
+[[containers]]
+class_name = "RunContainer"
+# The SAME image the owner-operated runner uses: its entrypoint sees the per-run
+# capability token in the env and takes the one-shot run lane automatically.
+image = "../../deploy/runner.Dockerfile"
+# The Dockerfile COPYs packages/cli and deploy/ — repo-root paths — but wrangler builds
+# relative to THIS file by default, so the image fails to build without this. Caught by
+# `wrangler deploy --dry-run` rather than by a failed production deploy.
+image_build_context = "../.."
+# A run is minutes of coding-agent work — size for the agent, not a web request.
+instance_type = "standard-1"
+# First-run training wheels: two concurrent runs is enough to prove the lane end to
+# end while capping worst-case spend. Raise toward 20 once a real run has completed.
+max_instances = 2
+
+# The dispatch queue: a LATENCY nudge, not the source of truth. Postgres is the queue of
+# record, so a lost or duplicated message costs seconds, never work — the cron sweep above
+# re-dispatches anything still queued, and starting a run twice is a no-op (the executor's
+# claim is status-guarded). Without this, "Run now" simply waits for the next minute's tick.
+[[queues.producers]]
+binding = "RUN_QUEUE"
+queue = "derive-runs"
+
+[[queues.consumers]]
+queue = "derive-runs"
+# Small batches, short wait: this exists to cut latency, so holding messages defeats it.
+max_batch_size = 10
+max_batch_timeout = 5
+# One retry, then drop: the sweep is the real backstop, and a message retried for minutes
+# would just duplicate what the tick already picked up.
+max_retries = 1
+
+# Cloudflare Browser Rendering binding — required for the PreviewRenderer DO.
+# Leave commented if Browser Rendering is not enabled on your account; the worker
+# gates renderPreviews on !!env.BROWSER so this can be omitted safely.
+[browser]
+binding = "BROWSER"
+
+# Transactional + notification email (Cloudflare Email Service — the arbitrary-recipient
+# product, NOT the older verified-destinations-only Email Routing binding). Enabled on the
+# DEDICATED sending subdomain send.derive.to, deliberately isolated from the apex derive.to
+# Google Workspace mail: send.derive.to has its own SPF/DKIM/DMARC (p=reject on
+# _dmarc.send.derive.to), so a strict policy there never touches corporate email. The domain
+# is onboarded and DNS-verified. `remote = true` routes the binding to the Email Service
+# (structured send API, see src/email-cf.ts). Arbitrary recipients require Workers Paid
+# (3,000/mo included, then $0.35/1k). Delivery goes live on the next `wrangler deploy`; until
+# then the app no-ops email (self-host/Node uses Resend via EMAIL_FROM instead).
+[[send_email]]
+name = "SEND_EMAIL"
+remote = true
+
+# Native rate limiting (per-colo). One binding per surface; the worker counts each
+# rate-limited request against the matching binding (apps/api/src/worker.ts). The window
+# (period) can only be 10 or 60s, so the long in-process windows (unlock 5 min, oauth
+# registration 1 hr) become tighter per-minute caps here — the abuse-backstop intent
+# holds, just per-colo. namespace_id is an arbitrary unique id per limiter.
+[[ratelimits]]
+name = "RL_AUTH"
+namespace_id = "1001"
+  [ratelimits.simple]
+  limit = 20
+  period = 60
+
+[[ratelimits]]
+name = "RL_WRITE"
+namespace_id = "1002"
+  [ratelimits.simple]
+  limit = 120
+  period = 60
+
+[[ratelimits]]
+name = "RL_PUBLISH"
+namespace_id = "1003"
+  [ratelimits.simple]
+  limit = 30
+  period = 60
+
+[[ratelimits]]
+name = "RL_COMMENT"
+namespace_id = "1004"
+  [ratelimits.simple]
+  limit = 60
+  period = 60
+
+# Shared by the two tight 3/60 surfaces (unlock + oauth registration); the worker
+# namespaces the key per surface so their counts stay separate.
+[[ratelimits]]
+name = "RL_STRICT"
+namespace_id = "1005"
+  [ratelimits.simple]
+  limit = 3
+  period = 60
+
+# Invite creation (workspace + artifact): each request emails an arbitrary address
+# with caller-influenced content, so it gets its own cap below the write rate.
+[[ratelimits]]
+name = "RL_INVITE"
+namespace_id = "1007"
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
+# Retry/crash backstop for webhook delivery: the outbox DO self-reschedules while busy
+# and is poked on each new event, then goes idle. This wakes it every minute so a retry
+# scheduled during an idle gap (or a missed poke) still drains. The leased claim makes
+# this safe with the per-event pokes — no delivery fires twice.
+[triggers]
+crons = ["* * * * *"]
+
+# The web SPA (apps/web) ships from this same Worker via Static Assets, so the whole
+# app — login, library, settings, the /artifacts/:ref artifact viewer — lives same-origin with
+# the API (no CORS, first-party cookies). Prepare the build first:
+# `pnpm --filter @derive/api build:web` (builds apps/web and preps dist/client for Workers:
+# _shell.html -> index.html, drops the Pages _redirects).
+# The API/data paths run the Worker first; so do /artifacts/* and /users/* — the share + profile
+# URLs, where the Worker serves the SPA shell with per-artifact / per-profile OG/unfurl
+# meta injected for crawlers (it reads the shell via the ASSETS binding). Every other
+# path serves a static asset,
+# and non-asset routes fall back to the SPA shell (index.html) so the client router
+# owns the page. The SPA is the one and only frontend (no server-rendered viewer).
+[assets]
+directory = "../web/dist/client"
+binding = "ASSETS"
+run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/blob/*", "/oauth/*", "/.well-known/skills/index.json", "/.well-known/skills/derive/SKILL.md", "/settings/github/*", "/settings/slack/*", "/artifacts/*", "/users/*", "/assets/*", "/site/*", "/brand/*", "/healthz", "/mcp", "/openapi.json", "/docs", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration", "/skill.md", "/.well-known/agent.json", "/", "/pricing"]
+not_found_handling = "single-page-application"
+
+# Public hosts: the derive.to apex is canonical, app.derive.to an alias. Cloudflare
+# auto-creates the DNS records + edge certs. baseUrl falls back to the request
+# origin, so the workers.dev origin keeps serving for smoke tests.
+# NB: must be [[routes]] — a bare `routes = [...]` below a table header belongs to
+# that table and is silently ignored.
+[[routes]]
+pattern = "derive.to"
+custom_domain = true
+
+[[routes]]
+pattern = "app.derive.to"
+custom_domain = true
+
+# The usercontent domain (derive.page): customer pages only, never the app. The apex
+# is a custom domain (auto DNS + cert) that app.ts 301s to derive.to — once the PSL
+# entry lands the apex is cookie-dead, so it must never serve the SPA. The wildcard
+# can't be a custom domain, so it's a zone route over a manually-managed DNS record
+# (`*.derive.page` AAAA 100::, proxied). A Public Suffix List entry for the base domain is planned.
+[[routes]]
+pattern = "derive.page"
+custom_domain = true
+
+[[routes]]
+pattern = "*.derive.page/*"
+zone_name = "derive.page"
+
+# Secured by Better Auth; set DERIVE_AUTH_SECRET via `wrangler secret put`.
+# Cross-instance realtime fan-out uses the ArtifactRoom Durable Object (one room
+# per channel).
+[vars]
+# Automations execute in the isolate (model + fetch), no container. Which workspaces may use
+# them is the per-workspace `automateBeta` setting, not this.
+DERIVE_LOOP_RUNS = "1"
+# DERIVE_SUPERADMIN_EMAILS (operator allow-list) is optional;
+# DERIVE_AUTH_SECRET is a secret (`wrangler secret put`). Workspaces are always multi.
+#
+# BASE_URL pins the app origin. It is REQUIRED once DERIVE_SUBDOMAIN_BASE is set:
+# with the per-request-origin fallback, a request on derive.page (or any subdomain)
+# makes appHostForSub equal its own host, so app.ts's domain mode — the apex 301,
+# the unknown-subdomain 404, vanity serving — never engages. Same-origin requests
+# on other hosts (workers.dev smoke tests) stay trusted via auth-config's
+# same-origin rescue; only generated links now always point at derive.to.
+BASE_URL = "https://derive.to"
+#
+# Optional Slack app (all three are secrets; set them to enable Slack, else it stays off):
+#   wrangler secret put SLACK_CLIENT_ID
+#   wrangler secret put SLACK_CLIENT_SECRET
+#   wrangler secret put SLACK_SIGNING_SECRET
+# Create the app from Settings → Integrations → Set up Slack app (the manifest,
+# pre-filled, is served at /v1/slack/manifest.json); see DEPLOY.md → Slack app.
+#
+# Sender for all transactional + notification mail (reset / verify / invites / comments).
+# Must be an address on the onboarded Email Sending domain (send.derive.to). The CF adapter
+# extracts the bare address; the display-name form is kept for parity with the Resend (Node)
+# transport, which reads the same EMAIL_FROM. Pairs with the [[send_email]] binding above.
+EMAIL_FROM = "Derive <notifications@send.derive.to>"
+# Origin split (A4): artifact bytes serve from the usercontent domain, never the
+# cookie origin. raw.derive.page rides the wildcard route above; app.ts serves only
+# /raw/* + /healthz on this host and 302s /raw/* on derive.to over to it.
+DERIVE_SANDBOX_URL = "https://raw.derive.page"
+# Domain mode (C1): vanity subdomains `<label>.derive.page` (label claims are gated
+# by routes/domains.ts; `raw` is reserved for the sandbox host above).
+DERIVE_SUBDOMAIN_BASE = "derive.page"

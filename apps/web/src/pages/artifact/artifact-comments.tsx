@@ -47,6 +47,9 @@ export function ArtifactComments(p: {
    *  can reserve that under the document (0 when the sheet is closed). */
   onSheetHeight?: (px: number) => void
   docLive: boolean
+  /** Inline edit mode is on — the comment empty states say so instead of telling
+   *  the reader to select text (selection edits while editing). */
+  editing?: boolean
   panel: Panel
   asideWidth: number
   openCount: number
@@ -165,6 +168,7 @@ export function ArtifactComments(p: {
               p.chatPanel
             ) : panel !== "hidden" ? (
               <OpenPanel
+                editing={p.editing}
                 openCount={p.openCount}
                 frameRef={p.frameRef}
                 subscribeGeom={p.subscribeGeom}
@@ -187,6 +191,7 @@ export function ArtifactComments(p: {
           document to the highlight without closing the sheet. */}
         {isMobile && !isAnon && (
           <MobileComments
+            editing={p.editing}
             open={panel === "open"}
             openThreads={p.openThreads}
             resolved={p.resolved}

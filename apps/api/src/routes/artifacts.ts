@@ -1,4 +1,5 @@
 import {
+  type AnyDocEdit,
   type ArtifactRecord,
   artifactUrl,
   type BundleDoc,
@@ -41,7 +42,13 @@ import { setCookie } from "hono/cookie"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { afterPublish } from "../lib/after-publish"
-import { authorProfile, resolveHandles, resolveUserBylines } from "../lib/author"
+import {
+  authorProfile,
+  bylinesFrom,
+  handlesFrom,
+  resolveHandles,
+  resolveUserBylines,
+} from "../lib/author"
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
 import { cleanPath, manifestOf } from "../lib/bundle"
 import { signClaimToken, verifyClaimToken } from "../lib/claim-token"
@@ -324,32 +331,31 @@ export const artifactRoutes = (ctx: AppContext) => {
       const last = page[page.length - 1]
       const next_cursor = hasMore && last ? encodeCursor(sortKeyOf(last, sort), last.id) : null
 
+      // ALL of the page's decoration — view counts, tags, preview readiness, author
+      // handles + bylines (the self-heal for stale agent-client names), the viewer's
+      // comment signals, open-proposal counts, and the viewer's per-artifact share
+      // roles (for a linked agent these are the registrant's rows, so the cap
+      // applies) — in ONE store round trip. These are seven trivial lookups keyed on
+      // the same page of ids; issued separately, each one was a full ~80ms edge→
+      // Postgres round trip (see edge-pg.ts), which made the decoration cost more
+      // than the list query itself.
       const pageIds = page.map((a) => a.id)
-      const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
-      const tags = await meta.tagsForArtifacts(pageIds)
-      const previews = await meta.previewReady(pageIds)
-      // Resolve the page's distinct author gh_ids to Derive handles in ONE batched query (no
-      // N+1) so each row can show "who last changed this" with a link to the Derive profile.
-      const handleByGhId = await resolveHandles(meta, [
-        ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
-      ])
-      // Same self-heal for the list: each row's current author (author_id) resolves to its
-      // live byline, so a card never shows a stale agent-client name. One batched query.
-      const bylineByUserId = await resolveUserBylines(
-        meta,
-        page.map((a) => a.author_id).filter((x): x is string => !!x),
-      )
-      // Per-artifact comment signals for the viewer (open-thread count + tagged/authored
-      // flags) — drives the inline comment badge and the "needs your feedback" featuring.
-      const feedback = me ? await meta.commentSignals(pageIds, me.id) : {}
-      // Open-proposal counts per artifact — the review queue. Same batched, no-N+1
-      // enrichment as the comment signals above (viewer-independent, so no `me` gate),
-      // so a card can badge "N proposals" on the feed the way the detail view does.
-      const proposalCounts = await meta.openProposalCounts(pageIds)
-      // The viewer's per-artifact shares across the page, one query — folded into
-      // my_role below so shared and private rows gate their quick actions correctly.
-      // For a linked agent these are the registrant's rows, so the cap applies.
-      const shareRoles = memberKey ? await meta.artifactRolesFor(memberKey, pageIds) : {}
+      const enrichment = await meta.listEnrichment({
+        ids: pageIds,
+        ghIds: [...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x))],
+        authorIds: [...new Set(page.map((a) => a.author_id).filter((x): x is string => !!x))],
+        viewerId: me?.id ?? null,
+        memberId: memberKey,
+        views: analyticsOn,
+      })
+      const counts = enrichment.views
+      const tags = enrichment.tags
+      const previews = enrichment.previews
+      const handleByGhId = handlesFrom(enrichment.handles)
+      const bylineByUserId = bylinesFrom(enrichment.bylines)
+      const feedback = enrichment.signals
+      const proposalCounts = enrichment.proposals
+      const shareRoles = enrichment.shareRoles
       return c.json({
         artifacts: page.map((a) => ({
           ...toJson(deps.baseUrl, a, []),
@@ -558,7 +564,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (typeof editsField === "string") {
       if (!shortId || !existing)
         return fail(c, 400, "edits revises an EXISTING artifact — POST to its /versions endpoint")
-      let edits: { old_str: string; new_str: string }[]
+      let edits: AnyDocEdit[]
       try {
         edits = JSON.parse(editsField)
       } catch {
@@ -1880,6 +1886,15 @@ export const artifactRoutes = (ctx: AppContext) => {
     c.header("X-Content-Type-Options", "nosniff")
     c.header("X-Derive-Version", String(v))
     c.header("X-Derive-Kind", artifact.kind)
+    // The DOCUMENT'S type, which `Content-Type` deliberately cannot carry: that stays
+    // `text/plain` so a browser renders these bytes rather than executing them (see nosniff
+    // above). Without it, a caller that needs to know whether it is holding Markdown or HTML
+    // must fetch the artifact record separately — a second request that re-runs auth and
+    // re-reads the very row this handler already has in hand and uses six lines below.
+    //
+    // Per VERSION, not the artifact's current one: `?v=N` can select a version whose type
+    // differs from the live document's, and this has to describe the bytes actually returned.
+    c.header("X-Derive-Content-Type", version.content_type)
 
     const manifest = await manifestOf(blobs, version)
     if (!manifest) {

@@ -233,6 +233,14 @@ describe("remote MCP endpoint (/mcp)", () => {
       "stage",
       "use",
     ])
+    // The read path advertises readOnlyHint — annotation-honoring clients (Claude Code
+    // plan mode gates on exactly this) run it without an approval prompt. Every mutating
+    // tool stays unannotated. catch_up carries the hint although its `ack` parameter
+    // clears handled requests off the queue: it is otherwise pure state-reading.
+    type ListedTool = { name: string; annotations?: { readOnlyHint?: boolean } }
+    const listed = (list.parsed?.result as { tools?: ListedTool[] } | undefined)?.tools ?? []
+    const readOnly = listed.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name)
+    expect(readOnly.sort()).toEqual(["catch_up", "find", "list_workspaces", "read"])
     // Consolidated away — folded into find / catch_up / comment / publish / stage / use.
     for (const gone of [
       "whoami",

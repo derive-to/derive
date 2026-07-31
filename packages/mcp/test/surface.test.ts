@@ -30,7 +30,8 @@ describe("stdio MCP onboarding surface", () => {
       await client.connect(transport)
       expect(client.getInstructions()).toContain("Read derive://guide before the first write")
 
-      const tools = (await client.listTools()).tools.map((tool) => tool.name)
+      const listed = (await client.listTools()).tools
+      const tools = listed.map((tool) => tool.name)
       expect(tools).toEqual([
         "list_workspaces",
         "list_artifacts",
@@ -41,6 +42,13 @@ describe("stdio MCP onboarding surface", () => {
         "organize",
         "publish",
       ])
+
+      // The read path advertises readOnlyHint so annotation-honoring clients run it
+      // without an approval prompt; comment/organize/publish stay unannotated.
+      const readOnly = listed
+        .filter((tool) => tool.annotations?.readOnlyHint === true)
+        .map((tool) => tool.name)
+      expect(readOnly).toEqual(["list_workspaces", "list_artifacts", "search", "read", "catch_up"])
 
       const resources = (await client.listResources()).resources.map((resource) => resource.uri)
       expect(resources).toEqual(

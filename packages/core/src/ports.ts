@@ -206,6 +206,36 @@ export interface ListArtifactsOpts {
   excludeRemoved?: boolean
 }
 
+export interface ListEnrichmentOpts {
+  /** The page of artifact ids being decorated. */
+  ids: string[]
+  /** Distinct `author_gh_id`s on the page, to resolve to Derive handles. */
+  ghIds: string[]
+  /** Distinct `author_id`s on the page, to resolve to live bylines. */
+  authorIds: string[]
+  /** Comment signals are computed for this viewer; null skips them (anon listing). */
+  viewerId: string | null
+  /** Share roles are looked up for this member key; null skips them. */
+  memberId: string | null
+  /** Include view counts (the list gates this on the analytics setting). */
+  views: boolean
+}
+
+/** One page's worth of list decoration — see `ArtifactQueryStore.listEnrichment`. */
+export interface ListEnrichment {
+  views: Record<string, number>
+  tags: Record<string, string[]>
+  previews: Record<string, boolean>
+  /** gh_id → Derive username rows (the subset of `usersByGithubIds` the list needs). */
+  handles: { gh_id: string; username: string | null }[]
+  /** Live user-directory rows for the page's authors (the subset of `getUsers` the
+   *  byline self-heal needs). */
+  bylines: { id: string; name: string | null; username: string | null }[]
+  signals: Record<string, CommentSignals>
+  proposals: Record<string, number>
+  shareRoles: Record<string, Role>
+}
+
 export type PreviewStatus = "pending" | "ready" | "failed"
 
 export type RenderJobStatus = "pending" | "done" | "dead"
@@ -518,6 +548,20 @@ export interface ArtifactQueryStore {
    * `ids` array matches nothing.
    */
   listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]>
+  /**
+   * Everything the library list decorates a page of rows with, in ONE store call:
+   * view counts, tags, preview readiness, author handle + byline directory rows,
+   * the viewer's comment signals, open-proposal counts, and the viewer's per-artifact
+   * share roles. Each piece is a trivial lookup keyed on the same page of ids, but on
+   * the edge tier a Postgres round trip costs ~80ms no matter how little it fetches
+   * (one serialized `pg.Client` per invocation — see edge-pg.ts), so issuing them as
+   * seven separate calls made every listing pay seven trips for one page. Postgres
+   * answers this in a single round trip; the embedded drivers compose it from the
+   * individual queries (their round trips are free). Gates mirror the list route's:
+   * `views` only when analytics is on, a null `viewerId` skips signals (anon listing),
+   * a null `memberId` skips share roles.
+   */
+  listEnrichment(opts: ListEnrichmentOpts): Promise<ListEnrichment>
   /** Full-text search index over an artifact's current visible text (+ title), keyed by
    *  id and scoped by org — the substrate that lifts workspace search past a live-grep of
    *  the N most-recent artifacts to the whole corpus. `indexArtifact` upserts (call on every
@@ -730,6 +774,31 @@ export interface CollectionStore {
   /** This user's collection-member roles over collections containing the
    *  artifact — folded into their effective artifact role (collection sharing). */
   collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]>
+
+  /**
+   * OPTIONAL FAST PATH: every grant one user holds over one artifact, in ONE round trip.
+   *
+   * Narrowing a principal to an Actor needs the workspace membership, the per-artifact share and
+   * the collection shares — `getMembership` + `getArtifactMember` +
+   * `collectionRolesForArtifact` — and that last one is itself two queries. Four round trips to
+   * decide one boolean, on every authorize.
+   *
+   * Affordable when the database is local, ruinous when it is a region away: on the hosted edge
+   * each trip measured ~100-900ms, and one chat request spent most of a second on permission
+   * rows alone. A store that can answer this in a single statement implements it; one that
+   * cannot omits it and context.ts falls back to the four calls, so implementing it is always
+   * optional.
+   *
+   * It never changes the ANSWER. `can()` remains the only place a decision is made; this only
+   * changes how its inputs arrive. Returns exactly what the four calls would: the org role (null
+   * when not a member) and every artifact-level role — explicit and collection-derived —
+   * unreduced, so the caller folds them with maxRole as before.
+   */
+  artifactGrants?(
+    artifactId: string,
+    orgId: string,
+    userId: string,
+  ): Promise<{ orgRole: Role | null; artifactRoles: Role[] }>
 
   // ---- Folders (organize a collection's artifacts; inherit its access, grant nothing) --
   createFolder(f: NewFolder): Promise<FolderRecord>

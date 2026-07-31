@@ -41,7 +41,14 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // returning the screenshot with the publish. Measured 8353 across 11 tools, so the cap
 // keeps the ~2% headroom the previous raises settled on rather than the 47 characters it
 // would otherwise leave, where the next edit fails for no reason worth arguing about.
-const TOOL_DESCRIPTIONS_BUDGET = 8550
+// Raised 8550 → 8800 for contexts-as-packages: `read` now opens a context, so its
+// description and its short_id doc have to SAY a ctx_ id is accepted — otherwise the
+// capability is unreachable, which is the exact defect being fixed (the surface described
+// contexts as ask-only, and `find` went further and said a context row is "never
+// read/opened"). `find` and `use` each name the read-or-use pair once. Trimmed first: the
+// additions went in at ~360 chars and were cut to ~259 before this raise. Measured 8612
+// across 11 tools, keeping the ~2% headroom the previous raises settled on.
+const TOOL_DESCRIPTIONS_BUDGET = 8800
 const INSTRUCTIONS_BUDGET = 2400
 
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))

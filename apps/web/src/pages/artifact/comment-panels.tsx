@@ -6,6 +6,7 @@ import { Count } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useKeyboardInset } from "@/lib/use-keyboard-inset"
 import { cn } from "@/lib/utils"
 import { RailTabs } from "./artifact-chat"
 import { Composer } from "./comment-composer"
@@ -45,6 +46,7 @@ export function MobileComments({
   onRail,
   chatPanel,
   openCount,
+  editing = false,
 }: {
   open: boolean
   openThreads: Comment[][]
@@ -54,6 +56,9 @@ export function MobileComments({
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
   reviewCard?: ReactNode
+  /** Inline edit mode is on: selecting text edits rather than quotes it, so the
+   *  empty state must not tell the reader to select text for a comment. */
+  editing?: boolean
   /** How much of the viewport bottom the sheet currently occupies, in px (0 when
    *  closed). The page reserves exactly this under the document so no black band
    *  is left below it. */
@@ -80,40 +85,9 @@ export function MobileComments({
   useEffect(() => {
     if (open) setSize("peek")
   }, [open])
-  // iOS keeps `position: fixed` put when the keyboard opens, so a bottom sheet hides
-  // behind it. Track the keyboard via visualViewport and pin the sheet into the
-  // visible area above it. Measure against the layout viewport (clientHeight is
-  // keyboard-stable on iOS); a >150px shrink is a real keyboard, which rules out the
-  // ~60-115px Safari toolbar collapse that would otherwise false-trigger. rAF-
-  // coalesced and change-guarded so the scroll/resize bursts don't thrash.
-  const [kb, setKb] = useState<{ inset: number; height: number } | null>(null)
-  useEffect(() => {
-    const vv = window.visualViewport
-    if (!vv) return
-    let raf = 0
-    const measure = () => {
-      const layoutH = document.documentElement.clientHeight
-      const inset = Math.max(0, layoutH - vv.height - vv.offsetTop)
-      const next = inset > 150 ? { inset: Math.round(inset), height: Math.round(vv.height) } : null
-      setKb((prev) => {
-        if (!prev && !next) return prev
-        if (prev && next && prev.inset === next.inset && prev.height === next.height) return prev
-        return next
-      })
-    }
-    const update = () => {
-      cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(measure)
-    }
-    measure()
-    vv.addEventListener("resize", update)
-    vv.addEventListener("scroll", update)
-    return () => {
-      cancelAnimationFrame(raf)
-      vv.removeEventListener("resize", update)
-      vv.removeEventListener("scroll", update)
-    }
-  }, [])
+  // The keyboard's footprint, so the sheet can pin itself into the visible area
+  // above it (shared with inline editing, which needs the same measurement).
+  const kb = useKeyboardInset()
   // When the composer closes (submit/cancel), drop focus so iOS dismisses the
   // keyboard instead of leaving it up over an empty sheet (which would keep the
   // sheet pinned/shrunk via `kb`).
@@ -368,7 +342,11 @@ export function MobileComments({
                 className="p-8"
                 icon={<Icon name="comments" strokeWidth={1.75} />}
                 title="Start the conversation."
-                description="Select text in the document, or add a general comment."
+                description={
+                  editing
+                    ? "Selecting text edits it while you're editing. Finish or leave editing to comment on a passage."
+                    : "Select text in the document, or add a general comment."
+                }
                 action={
                   canComment ? (
                     <Button
@@ -439,6 +417,8 @@ export function OpenPanel(props: {
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
   reviewCard?: ReactNode
+  /** See MobileComments.editing. */
+  editing?: boolean
 }) {
   const {
     openCount,
@@ -454,6 +434,7 @@ export function OpenPanel(props: {
     onSubmitNew,
     onCancelNew,
     reviewCard,
+    editing = false,
   } = props
   const { canComment } = useCommentScope()
   const { activeThread, onJump } = useCommentTree()
@@ -581,7 +562,11 @@ export function OpenPanel(props: {
               className="p-0"
               icon={<Icon name="comments" strokeWidth={1.75} />}
               title="Start the conversation."
-              description="Select text in the document, or add a general comment."
+              description={
+                editing
+                  ? "Selecting text edits it while you're editing. Finish or leave editing to comment on a passage."
+                  : "Select text in the document, or add a general comment."
+              }
               action={
                 canComment ? (
                   <Button

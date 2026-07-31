@@ -17,6 +17,7 @@ import {
   callTool,
   connectionBindError,
   parseConnectionIds,
+  spendableConnections,
   toolsForRun,
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
@@ -465,6 +466,8 @@ export const automationRoutes = (ctx: AppContext) => {
     // seen on the next claim): flags from org settings; write mode rides per-target in refs.
     // The executor gets everything it needs to run each run in one call — no extra round-trips.
     const s = await meta.getOrgSettings(agent.org_id)
+    // The workspace half; `credentialed` is per-run and is added below, next to the tool list
+    // it is derived from, so the two can never disagree about whether this run has hands.
     const flags = { agentKillswitch: s.agentKillswitch, agentAutoEnabled: s.agentAutoEnabled }
     // Defense-in-depth: a run whose automation vanished (the delete race), was disabled after
     // enqueue, or carries no instruction must never reach the executor — it would burn a model
@@ -502,6 +505,13 @@ export const automationRoutes = (ctx: AppContext) => {
         const connIds = parseConnectionIds(a.connection_ids)
         const tools =
           broker && connIds.length ? await toolsForRun(meta, broker, agent.org_id, connIds) : []
+        // Counted from the CONNECTIONS this run may spend, not from `tools` — a connection with
+        // no base_url yields no HTTP tools but is still a real credential (it is spent by
+        // delivery into the run). Deriving this from the tool list would report "not
+        // credentialed" for exactly those, i.e. fail open in the case the rung exists for.
+        const spendable = connIds.length
+          ? await spendableConnections(meta, agent.org_id, connIds)
+          : []
         return {
           id: r.id,
           reason: r.reason,
@@ -537,7 +547,12 @@ export const automationRoutes = (ctx: AppContext) => {
           // them, so a webhook-triggered run executed as though a clock had started it. Empty
           // for schedule and manual runs.
           payloads: parseRunMeta(r.meta).payloads ?? [],
-          flags,
+          // A run that can spend a credential files a proposal instead of publishing live
+          // (@derive/core decideWrite, rung 3). Resolved live rather than read off the
+          // automation's stored id list, which can name a connection that no longer resolves
+          // (revoked, or its owner offboarded): credentials it actually gets, not ones it was
+          // promised.
+          flags: { ...flags, credentialed: spendable.length > 0 },
         }
       }),
     )

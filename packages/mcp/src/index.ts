@@ -197,6 +197,7 @@ server.registerTool(
   {
     description:
       "List every workspace signed in on this machine you can act in — id, name, your role, local description, and which is active. One login reaches them all; pass a workspace's id or name as the `workspace` argument to list_artifacts / read / catch_up / comment / publish to act there for that call.",
+    annotations: { readOnlyHint: true },
     inputSchema: {},
   },
   async () => json(buildRoster()),
@@ -208,6 +209,7 @@ server.registerTool(
   {
     description:
       "List the artifacts in your workspace — short id, title, kind, current version, access, and browse `tags`. Defaults to this session's workspace; pass `workspace` (id or name from list_workspaces) to list another. Pass `tag` to list only artifacts carrying that tag (organize shows the vocabulary). Start here to find what to work on, then catch_up or read it.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       query: z.string().optional().describe("Optional title search filter."),
       tag: z
@@ -229,6 +231,7 @@ server.registerTool(
   {
     description:
       "Find text within ONE artifact, or across a WORKSPACE — same tool, same behavior as the remote MCP server's `search`. Pass short_id to grep one artifact: matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range or `edit` that spot. Omit short_id to search across the workspace — the artifacts you can see, ranked by relevance and grouped by artifact — find WHICH doc has something before opening it. Searches the exact source by default (in:'text' searches the visible text instead). The query is matched literally (metacharacters are not special).",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       short_id: z
         .string()
@@ -292,6 +295,7 @@ server.registerTool(
   {
     description:
       "Read an artifact's CONTENT by short id, as Markdown by default (HTML is converted). Omit `section` to see the outline first (heading slugs for a single-file doc, page paths for a bundle) — call again with a `section` (or \"*\" for the full document) once you know what you want. Pass `format:'html'` for the exact source (needed before publish `edits`), or a past `version` for history. Also accepts derive://guide, /connect, or /compatibility so the onboarding strings in server instructions work even when MCP resources do not. For what CHANGED or the comment threads, use catch_up instead.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       short_id: z.string(),
       section: z
@@ -383,6 +387,7 @@ server.registerTool(
       "Pass `comments` (open / addressed / resolved / outdated) to instead get that filtered thread list — your feedback queue. " +
       "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to fold in a line diff between two versions — of their readable Markdown form, not raw HTML. " +
       "WAITING ON A REVIEW? Pass `wait` (seconds, max 50) to block until the human sends back or approves — chain these instead of sleeping between polls.",
+    annotations: { readOnlyHint: true },
     inputSchema: {
       short_id: z.string(),
       since_version: z

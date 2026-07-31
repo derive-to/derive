@@ -194,6 +194,95 @@ describe("context connections (the ask lane gets hands)", () => {
     }
   })
 
+  it("a base_url-less secret contributes NO tools — there is nothing to call it against", async () => {
+    // base_url is optional now (nobody types a host), but the machineless lane resolves a
+    // path against it and confines to it. A connection without one can only be SPENT by
+    // delivery into a run, so advertising `own.get`/`own.post` here would hand the model two
+    // tools that throw on every call. Better to expose none and say why.
+    const withHost = await makeConnection({
+      toolkit: "hosted",
+      kind: "secret",
+      secret: "fixture-with-a-host",
+      base_url: "https://api.hosted.test",
+      scope: "workspace",
+    })
+    const noHost = await makeConnection({
+      toolkit: "delivered",
+      kind: "secret",
+      secret: "fixture-delivery-only",
+      scope: "workspace",
+    })
+    const ctx = await makeContext("Mixed", [withHost.id, noHost.id])
+    const ask = await app.request(
+      `/v1/contexts/${ctx.id}/sessions`,
+      jsonAs(as(owner.email), { body_md: "?" }),
+    )
+    const { session } = (await ask.json()) as { session: { id: string } }
+    const claim = await (
+      await app.request("/v1/agent/sessions/claim", jsonAs(bearer(await tokenFor(session.id)), {}))
+    ).json()
+    // Only the one with a host. The delivery-only connection stays bound and invisible here.
+    expect(claim.tools.map((t: { def: { name: string } }) => t.def.name).sort()).toEqual([
+      "hosted.get",
+      "hosted.post",
+    ])
+    // And the proxy refuses the tool it never advertised.
+    const call = await app.request(
+      `/v1/agent/sessions/${session.id}/tool`,
+      jsonAs(bearer(await tokenFor(session.id)), {
+        tool: "delivered.get",
+        args: { path: "/x" },
+      }),
+    )
+    expect(call.status).toBe(403)
+  })
+
+  it("a claim that carries tools says so in flags.credentialed, so the gate can demote it", async () => {
+    // The invariant every plan doc claimed and no code enforced: a run that can spend a
+    // credential proposes, never live-publishes. The gate is pure and does no I/O, so the
+    // claim has to TELL it. Resolved server-side at claim time next to the tool list itself,
+    // so the two can't disagree.
+    const conn = await makeConnection({
+      toolkit: "spend",
+      kind: "secret",
+      secret: "fixture-credentialed-flag",
+      base_url: "https://api.spend.test",
+      scope: "workspace",
+    })
+    const armed = await makeContext("Armed", [conn.id])
+    const bare = await makeContext("Unarmed")
+    const claimFor = async (ctxId: string) => {
+      const ask = await app.request(
+        `/v1/contexts/${ctxId}/sessions`,
+        jsonAs(as(owner.email), { body_md: "?" }),
+      )
+      const { session } = (await ask.json()) as { session: { id: string } }
+      return await (
+        await app.request(
+          "/v1/agent/sessions/claim",
+          jsonAs(bearer(await tokenFor(session.id)), {}),
+        )
+      ).json()
+    }
+    expect((await claimFor(armed.id)).flags).toMatchObject({ credentialed: true })
+    expect((await claimFor(bare.id)).flags).toMatchObject({ credentialed: false })
+
+    // The fail-open case worth pinning: a base_url-less secret contributes NO tools (above),
+    // so deriving the flag from the tool list would report "not credentialed" for a context
+    // holding a real key — exactly the connection delivery is for. Counted from spendable
+    // CONNECTIONS instead, so no-tools-but-has-credentials still demotes the write.
+    const deliveryOnly = await makeConnection({
+      toolkit: "keyonly",
+      kind: "secret",
+      secret: "fixture-no-host-but-real",
+      scope: "workspace",
+    })
+    const quiet = await makeContext("ToolessButArmed", [deliveryOnly.id])
+    const claim = await claimFor(quiet.id)
+    expect(claim.tools).toEqual([])
+    expect(claim.flags).toMatchObject({ credentialed: true })
+  })
+
   it("a session token reaches only its OWN session's tools", async () => {
     const conn = await makeConnection({ toolkit: "stripe" })
     const mine = await makeContext("Mine", [conn.id])
