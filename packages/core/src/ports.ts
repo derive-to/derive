@@ -422,6 +422,14 @@ export interface ArtifactStore {
   /** Owner opt-in: the anonymous public page shows version history. */
   setPublicHistory(artifactId: string, on: 0 | 1): Promise<void>
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
+  /** An artifact plus its workspace's settings, in one call. The settings are keyed on the
+   *  `org_id` the artifact carries, so fetching them separately is an FK chain — not the
+   *  same-key shape most batches here use, but a join answers it in one round trip all the
+   *  same. Settings fall back to the parsed defaults when the workspace has no row, exactly
+   *  as `getOrgSettings` does. Null artifact ⇒ null (and default settings). */
+  artifactWithSettings(
+    shortId: string,
+  ): Promise<{ artifact: ArtifactRecord | null; settings: OrgSettings }>
   /** Load an artifact by its internal id (used by domain mode's host lookup). */
   getArtifactById(id: string): Promise<ArtifactRecord | null>
   /** Batch-load artifacts by internal id in ONE query (id ∈ ids). Order is unspecified;
@@ -1090,6 +1098,19 @@ export interface ContextStore {
   /** Remove a user from the roster; a no-op if they weren't on it. */
   removeContextAsker(contextId: string, userId: string): Promise<void>
   createSession(s: NewSession): Promise<SessionRecord>
+  /**
+   * Open a session AND write its first message AND set the resulting state, in one call.
+   * Chat's enqueue did these as three sequential statements — on the edge tier that is
+   * three ~80ms round trips (see edge-pg.ts) for one logical act. Postgres does all three
+   * in a single statement with a CTE chain, which also makes them ATOMIC: three loose
+   * statements outside a transaction can leave a session with no first message if the
+   * isolate dies between them, and nothing reopens that.
+   */
+  createSessionWithMessage(
+    s: NewSession,
+    m: Omit<NewSessionMessage, "session_id">,
+    state: SessionState,
+  ): Promise<{ session: SessionRecord; message: SessionMessageRecord }>
   getSession(id: string): Promise<SessionRecord | null>
   /** Sessions on a context, newest first; `askerId` narrows to one person's. */
   listSessions(

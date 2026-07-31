@@ -554,6 +554,38 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
       .get()) ?? null
 
+  // The artifact + its workspace's settings. One join here too — the embedded dialects can
+  // express it just as well, and it keeps the two drivers' shapes identical.
+  const artifactWithSettings = async (
+    shortId: string,
+  ): Promise<{ artifact: ArtifactRecord | null; settings: OrgSettings }> => {
+    const row = await db
+      .select({ a: artifact, settings: orgSettings.settings })
+      .from(artifact)
+      .leftJoin(orgSettings, eq(orgSettings.org_id, artifact.org_id))
+      .where(eq(artifact.short_id, shortId))
+      .get()
+    return {
+      artifact: (row?.a as ArtifactRecord | undefined) ?? null,
+      settings: parseOrgSettings(row?.settings ?? null),
+    }
+  }
+
+  // Session + first message + state, together. The embedded drivers run the three writes
+  // sequentially (their round trips are free); the Postgres driver overrides this with one
+  // CTE chain, which is also where the atomicity matters.
+  const createSessionWithMessage = async (
+    s: NewSession,
+    m: Omit<NewSessionMessage, "session_id">,
+    state: SessionState,
+  ): Promise<{ session: SessionRecord; message: SessionMessageRecord }> => {
+    const session = await createSession(s)
+    const message = await addSessionMessage({ ...m, session_id: session.id }, state)
+    // The state update happens inside addSessionMessage, so re-read to return the row as it
+    // now stands rather than the pre-update one.
+    return { session: (await getSession(session.id)) ?? session, message }
+  }
+
   // The unfurl card's counts + current version. The counts are computed by the database
   // rather than by reading both whole tables and taking `.length` — same reason the pg
   // driver batches this, and correct on any dialect.
@@ -3770,6 +3802,7 @@ export function makeRepos(db: SqliteDb) {
     setLocked,
     setPublicHistory,
     getByShortId,
+    artifactWithSettings,
     getArtifactById,
     getArtifactsByIds,
     siblingsBySourcePaths,
@@ -3945,6 +3978,7 @@ export function makeRepos(db: SqliteDb) {
     addContextAsker,
     removeContextAsker,
     createSession,
+    createSessionWithMessage,
     getSession,
     listSessions,
     pendingSessions,

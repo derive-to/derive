@@ -388,6 +388,23 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select().from(artifact).where(eq(artifact.short_id, shortId))
     return rows[0] ?? null
   }
+  async artifactWithSettings(
+    shortId: string,
+  ): Promise<{ artifact: ArtifactRecord | null; settings: OrgSettings }> {
+    // LEFT JOIN, not INNER: a workspace with no settings row is the common case (settings
+    // are written on first change), and the artifact must still come back — with parsed
+    // defaults, exactly what getOrgSettings returns for a missing row.
+    const rows = await this.db
+      .select({ artifact, settings: orgSettings.settings })
+      .from(artifact)
+      .leftJoin(orgSettings, eq(orgSettings.org_id, artifact.org_id))
+      .where(eq(artifact.short_id, shortId))
+    const row = rows[0]
+    return {
+      artifact: (row?.artifact as ArtifactRecord | undefined) ?? null,
+      settings: parseOrgSettings(row?.settings ?? null),
+    }
+  }
   async getArtifactById(id: string): Promise<ArtifactRecord | null> {
     const rows = await this.db.select().from(artifact).where(eq(artifact.id, id))
     return rows[0] ?? null
@@ -2683,6 +2700,59 @@ export class PgMetaStore implements MetaStore {
   async createSession(s: NewSession): Promise<SessionRecord> {
     const rows = await this.db.insert(contextSession).values(s).returning()
     return one(rows)
+  }
+  async createSessionWithMessage(
+    s: NewSession,
+    m: Omit<NewSessionMessage, "session_id">,
+    state: SessionState,
+  ): Promise<{ session: SessionRecord; message: SessionMessageRecord }> {
+    // Three statements (insert session, insert message, set state) as ONE, in a single
+    // implicit transaction — one round trip, and atomic, where the three loose statements it
+    // replaces could leave a session with no first message if the isolate died between them.
+    //
+    // THE STATE IS WRITTEN BY THE INSERT, not by a follow-up UPDATE. That is not a shortcut:
+    // data-modifying CTEs in one statement all see the SAME snapshot and cannot observe each
+    // other's effects on the target table, so an `UPDATE context_session WHERE id = (SELECT
+    // id FROM ins)` matches ZERO rows — the row `ins` just wrote is not visible to it. The
+    // first version of this did exactly that, returned no rows at all, and 500'd every chat
+    // open on Postgres while passing the entire SQLite suite.
+    //
+    // `msg` reading from `ins` IS allowed, and is the difference that matters: it consumes
+    // `ins`'s RETURNING output (a CTE result set), not the table's post-insert state.
+    const now = new Date().toISOString()
+    const { rows } = await this.pool.query<{
+      session: SessionRecord
+      message: SessionMessageRecord
+    }>(
+      `WITH ins AS (
+         INSERT INTO context_session
+           (id, context_id, org_id, asker_id, context_version, dedupe_key, subject_ref, state, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *
+       ), msg AS (
+         INSERT INTO session_message (id, session_id, author_kind, author_id, body_md, meta)
+         SELECT $10, ins.id, $11, $12, $13, $14 FROM ins RETURNING *
+       )
+       SELECT row_to_json(ins) session, row_to_json(msg) message FROM ins, msg`,
+      [
+        s.id,
+        s.context_id ?? null,
+        s.org_id,
+        s.asker_id,
+        s.context_version ?? null,
+        s.dedupe_key ?? null,
+        s.subject_ref ?? null,
+        state,
+        now,
+        m.id,
+        m.author_kind,
+        m.author_id,
+        m.body_md,
+        m.meta ?? null,
+      ],
+    )
+    const row = rows[0]
+    if (!row) throw new Error("createSessionWithMessage: insert returned no row")
+    return { session: row.session, message: row.message }
   }
   async getSession(id: string): Promise<SessionRecord | null> {
     const rows = await this.db

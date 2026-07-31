@@ -2018,6 +2018,62 @@ export function runStoreContract(
       expect(rows.map((r) => r.id)).toEqual((await store.listContexts(org)).map((r) => r.id))
     })
 
+    it("artifactWithSettings returns the artifact and its workspace's settings together", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Settings WS")
+      const a = await store.createArtifact(newArtifact({ org_id: org }))
+      // No settings row yet ⇒ the parsed defaults, same as getOrgSettings.
+      const before = await store.artifactWithSettings(a.short_id)
+      expect(before.artifact?.id).toBe(a.id)
+      expect(before.settings).toEqual(await store.getOrgSettings(org))
+      // …and after one is written, the joined value tracks it.
+      await store.setOrgSettings(org, { ...DEFAULT_ORG_SETTINGS, chatBeta: true })
+      const after = await store.artifactWithSettings(a.short_id)
+      expect(after.settings.chatBeta).toBe(true)
+      expect(after.settings).toEqual(await store.getOrgSettings(org))
+      expect(after.artifact).toEqual(await store.getByShortId(a.short_id))
+      // An unknown short id ⇒ null artifact + defaults, never a throw.
+      const missing = await store.artifactWithSettings("nosuchid")
+      expect(missing.artifact).toBeNull()
+      expect(missing.settings).toEqual(DEFAULT_ORG_SETTINGS)
+    })
+
+    it("createSessionWithMessage writes session + first message + state as one unit", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Chat WS")
+      const asker = `u_${uuid()}`
+      const sessionId = `ses_${uuid()}`
+      const messageId = `sm_${uuid()}`
+      const { session, message } = await store.createSessionWithMessage(
+        {
+          id: sessionId,
+          context_id: null,
+          context_version: null,
+          org_id: org,
+          asker_id: asker,
+          subject_ref: JSON.stringify({ kind: "artifact", id: "abc12345" }),
+        },
+        { id: messageId, author_kind: "asker", author_id: asker, body_md: "First question." },
+        "open",
+      )
+      // The returned session reflects the state that was SET, not the pre-update row —
+      // the route hands this straight back to the client.
+      expect(session.id).toBe(sessionId)
+      expect(session.state).toBe("open")
+      expect(session.context_id).toBeNull()
+      expect(session.org_id).toBe(org)
+      expect(message.id).toBe(messageId)
+      expect(message.session_id).toBe(sessionId)
+      expect(message.body_md).toBe("First question.")
+      // Both rows are actually persisted, and readable exactly as the separate calls left them.
+      const stored = await store.getSession(sessionId)
+      expect(stored).toEqual(session)
+      expect(await store.listSessionMessages(sessionId)).toEqual([message])
+      // A session is never left without its first message — the whole point of doing it as
+      // one statement rather than three.
+      expect((await store.listSessionMessages(sessionId)).length).toBe(1)
+    })
+
     it("unfurlInfo counts versions + comments in the database and returns the current version", async () => {
       const a = await store.createArtifact(newArtifact())
       const other = await store.createArtifact(newArtifact())

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import type { MetaStore } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { as, makeAuthedApp, publishAs, type TestUser } from "./helpers"
@@ -149,30 +150,24 @@ describe("hot read paths stay within their round-trip budget", () => {
     // per-item loop internally — same call count at this boundary, N round trips underneath.
     // These assert the batch methods accept the whole page at once, which is what makes them
     // one round trip on Postgres.
-    const a = await base.meta.createArtifact({
-      id: `art_${Date.now()}`,
-      short_id: `sb${Date.now()}`.slice(-8),
-      org_id: "default",
-      slug: "batched",
-      title: "Batched",
-      workspace_access: "member",
-      link_role: "viewer",
-      listed: "public",
-      kind: "file",
-      spa: 0,
-    })
-    const b = await base.meta.createArtifact({
-      id: `art_${Date.now()}_b`,
-      short_id: `sc${Date.now()}`.slice(-8),
-      org_id: "default",
-      slug: "batched-b",
-      title: "Batched B",
-      workspace_access: "member",
-      link_role: "viewer",
-      listed: "public",
-      kind: "file",
-      spa: 0,
-    })
+    // Ids from randomUUID, not Date.now(): two artifacts created in the same millisecond
+    // collide on artifact.short_id's UNIQUE constraint, which is exactly what happened the
+    // first time this ran under `test:coverage`.
+    const mk = (slug: string) =>
+      base.meta.createArtifact({
+        id: `art_${randomUUID()}`,
+        short_id: randomUUID().replace(/-/g, "").slice(0, 8),
+        org_id: "default",
+        slug,
+        title: slug,
+        workspace_access: "member",
+        link_role: "viewer",
+        listed: "public",
+        kind: "file",
+        spa: 0,
+      })
+    const a = await mk("batched-a")
+    const b = await mk("batched-b")
 
     calls.length = 0
     const enriched = await proxy.listEnrichment({
