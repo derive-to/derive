@@ -52,9 +52,14 @@ const deriveOutline = (markers: SectionMarker[]): unknown => {
     : { sections }
 }
 
-// Linear-time by construction (the CodeQL round's lesson): [^"']* and [^)\s]* cannot
-// overlap their delimiters, so there is no ambiguity to backtrack over.
-const HTML_HREF = /\bhref\s*=\s*("([^"]*)"|'([^']*)')/gi
+// Linear-time by construction (the CodeQL round's lesson): [^"']*, [^\s>]+ and [^)\s]*
+// cannot overlap their delimiters, so there is no ambiguity to backtrack over.
+//
+// The unquoted third alternative is legal HTML (href=/artifacts/x-abc12345) and was
+// MISSED until a dogfood run against the real library published one and watched the edge
+// vanish. A missing edge is the worse failure here: a false edge is visible and arguable,
+// an absent one silently understates the graph. Same shape doc-text.ts's attrOf uses.
+const HTML_HREF = /\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi
 const MD_LINK = /\]\(([^)\s]+)\)/g
 
 /** Outbound references to OTHER artifacts: short ids resolved from href values (HTML) or
@@ -66,7 +71,7 @@ const MD_LINK = /\]\(([^)\s]+)\)/g
 const deriveLinks = (source: string, contentType: string): unknown => {
   const targets: string[] = []
   if (contentType.includes("html")) {
-    for (const m of source.matchAll(HTML_HREF)) targets.push(m[2] ?? m[3] ?? "")
+    for (const m of source.matchAll(HTML_HREF)) targets.push(m[2] ?? m[3] ?? m[4] ?? "")
   } else {
     for (const m of source.matchAll(MD_LINK)) targets.push(m[1] ?? "")
   }

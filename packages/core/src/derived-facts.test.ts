@@ -98,6 +98,15 @@ describe("deriveFacts", () => {
 })
 
 describe("hostile hrefs", () => {
+  it("reads an UNQUOTED href — legal HTML, and a missing edge is the worse failure", () => {
+    // Found by dogfooding: a page published with href=/artifacts/… lost its edge silently.
+    const page = "<a href=/artifacts/plain-abc12345>bare</a><a href='/artifacts/q-bbbb2222'>q</a>"
+    const d = Object.fromEntries(
+      deriveFacts(page, "text/html").map((f) => [f.slot, JSON.parse(f.json)]),
+    )
+    expect(d.$links.refs).toEqual(["abc12345", "bbbb2222"])
+  })
+
   it("one malformed percent-encoding costs that edge, never the whole row", () => {
     const page =
       '<a href="/artifacts/bad-%zz">broken</a><a href="/artifacts/good-abc12345">fine</a>'
