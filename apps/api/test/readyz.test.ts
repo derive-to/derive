@@ -14,6 +14,22 @@ describe("health + readiness endpoints", () => {
     expect((await app.request("/healthz")).status).toBe(200)
   })
 
+  // The version marker. A deploy can fail, or be skipped, while the pipeline around it reads
+  // green — and liveness alone cannot tell a fresh worker from the one already serving. This is
+  // what makes "did my change actually ship" answerable with curl, by anyone, with no CI or
+  // Cloudflare access.
+  it("/healthz reports the build it is serving", async () => {
+    const app = createApp({ meta, blobs, baseUrl: "http://derive.test", buildId: "abc1234" })
+    expect(await (await app.request("/healthz")).json()).toEqual({ ok: true, build: "abc1234" })
+  })
+
+  // "dev" rather than omitting the field: a consumer comparing builds gets a value that can
+  // never equal a commit sha, instead of `undefined` that could read as "matches".
+  it("says dev when no build was stamped, never nothing", async () => {
+    const app = createApp({ meta, blobs, baseUrl: "http://derive.test" })
+    expect(await (await app.request("/healthz")).json()).toEqual({ ok: true, build: "dev" })
+  })
+
   it("/readyz returns 200 when the datastore + blob store are reachable", async () => {
     const app = createApp({ meta, blobs, baseUrl: "http://derive.test" })
     const r = await app.request("/readyz")

@@ -12,7 +12,11 @@ export const systemRoutes = (ctx: AppContext) => {
   const { deps, meta, blobs, search, isToken, isSuperAdmin } = ctx
   const app = new Hono()
 
-  app.get("/healthz", (c) => c.json({ ok: true }))
+  // Liveness, plus the commit actually serving. `build` is what makes a silent non-deploy
+  // detectable without Cloudflare credentials or CI access: curl it and compare. Deliberately
+  // on the UNAUTHENTICATED liveness route — the audience is a deploy check and an operator
+  // asking "did my change ship", and a commit sha discloses nothing a public repo does not.
+  app.get("/healthz", (c) => c.json({ ok: true, build: deps.buildId ?? "dev" }))
 
   // Readiness (vs /healthz liveness): proves the datastore + blob store are
   // actually reachable, so an orchestrator stops routing to an instance whose DB

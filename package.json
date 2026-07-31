@@ -65,7 +65,7 @@
     "format": "biome format --write",
     "check": "biome check",
     "check:fix": "biome check --write",
-    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:mutations && pnpm lint:reload && pnpm lint:surfaces && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:deadcode && pnpm lint:boundaries && pnpm lint:env && pnpm lint:api-types && pnpm lint:agent-skill && pnpm lint:agent-package-files && pnpm lint:skills && pnpm lint:mcp-coercion && pnpm lint:local-data && pnpm lint:delete-cascade && pnpm lint:facts-visibility && pnpm lint:facts-portable",
+    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:mutations && pnpm lint:reload && pnpm lint:surfaces && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:deadcode && pnpm lint:boundaries && pnpm lint:env && pnpm lint:api-types && pnpm lint:agent-skill && pnpm lint:agent-package-files && pnpm lint:skills && pnpm lint:mcp-coercion && pnpm lint:local-data && pnpm lint:delete-cascade && pnpm lint:facts-visibility && pnpm lint:facts-portable && pnpm lint:deploy-verified",
     "verify": "pnpm run ci && pnpm typecheck && pnpm test:coverage",
     "precommit": "pnpm run ci",
     "prepare": "git config core.hooksPath .githooks || true",
@@ -82,7 +82,8 @@
     "lint:local-data": "node scripts/check-local-data.mjs",
     "lint:delete-cascade": "node scripts/check-delete-cascade.mjs",
     "lint:facts-visibility": "node scripts/check-facts-visibility.mjs",
-    "lint:facts-portable": "node scripts/check-facts-portable.mjs"
+    "lint:facts-portable": "node scripts/check-facts-portable.mjs",
+    "lint:deploy-verified": "node scripts/check-deploy-verified.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
