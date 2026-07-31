@@ -53,6 +53,7 @@ export const contextRoutes = (ctx: AppContext) => {
     meta,
     activeWorkspace,
     agentFor,
+    agentRunScope,
     agentSessionScope,
     authorize,
     bus,
@@ -68,6 +69,16 @@ export const contextRoutes = (ctx: AppContext) => {
     workspaceCan,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
+
+  /** A run-scoped capability token, which must not reach the session lane.
+   *
+   *  The ownership checks below cannot stand in for this: a context-bound automation runs AS the
+   *  context's agent, so `context.agent_id === agent.id` holds for a run token aimed at any
+   *  session of that context. Mirrors `isSessionBearer` in routes/automations.ts; see
+   *  routes/model-credentials.ts for the same rule stated once more — belonging to the same
+   *  agent is not enough. Covered by test/work-token-lanes.test.ts. */
+  const isRunBearer = (c: Context): boolean => agentRunScope(c) !== null
+  const NOT_THIS_LANE = "a run token cannot act on a session"
 
   /** Is this workspace allowed to spend the operator's model key? See DERIVE_CHAT_ALLOWLIST. */
   const chatAllowed = (orgId: string): boolean =>
@@ -1386,6 +1397,7 @@ export const contextRoutes = (ctx: AppContext) => {
 
       const agent = await agentFor(c)
       if (agent) {
+        if (isRunBearer(c)) return bail(fail(c, 403, NOT_THIS_LANE))
         if (!linked || agent.id !== linked.context.agent_id) return bail(fail(c, 404, "not found"))
         const gone = closed()
         if (gone) return bail(gone)
@@ -1546,6 +1558,7 @@ export const contextRoutes = (ctx: AppContext) => {
 
       const agent = await agentFor(c)
       if (agent) {
+        if (isRunBearer(c)) return bail(fail(c, 403, NOT_THIS_LANE))
         if (agent.id !== linked.context.agent_id) return bail(fail(c, 404, "not found"))
         // The asker may close mid-run; the run's eventual failure must not reopen
         // a conversation they deliberately ended.
@@ -1601,6 +1614,9 @@ export const contextRoutes = (ctx: AppContext) => {
     async (c) => {
       const agent = await agentFor(c)
       if (!agent) return bail(fail(c, 401, "agent token required"))
+      // Reading this queue CLAIMS sessions (open → working), so a run's pass crossing here
+      // would quietly take over the ask lane's work.
+      if (isRunBearer(c)) return bail(fail(c, 403, NOT_THIS_LANE))
       const x = await meta.getContext(c.req.param("id"))
       if (!x || x.agent_id !== agent.id) return bail(fail(c, 404, "not found"))
       // Liveness IS this poll — no heartbeat protocol. Stamp at most once a
@@ -1743,6 +1759,7 @@ export const contextRoutes = (ctx: AppContext) => {
   app.post("/v1/agent/sessions/:id/tool", async (c) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
+    if (isRunBearer(c)) return fail(c, 403, NOT_THIS_LANE)
     // A session capability bearer may act ONLY on the session it was minted for. A standing
     // agent bearer (the BYO polling runner) has no session scope, and is allowed here for
     // sessions of a context it owns — the ownership check below is what bounds it, exactly

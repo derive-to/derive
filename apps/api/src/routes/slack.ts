@@ -128,23 +128,31 @@ export const slackRoutes = (ctx: AppContext) => {
   // the link; that's what an unlinked sharer gets, since without a link there is no principal to
   // authorize against.
   const unfurlSharedLinks = async (teamId: string, ev: SlackEventPayload): Promise<void> => {
+    // Every exit below is silent by design — Slack is told nothing, so the channel shows nothing.
+    // That is correct behaviour and undiagnosable behaviour at the same time: "I pasted a link
+    // and got no preview" has eight possible causes here and, without this, no way to tell them
+    // apart short of reasoning through the ladder. One line naming the rung turns that into a
+    // log search. Info, not warn: most of these are the system working.
+    const why = (reason: string, extra: Record<string, unknown> = {}) =>
+      log.info("unfurl skipped", { reason, team: teamId, channel: ev.channel, ...extra })
+
     const links = (ev.links ?? []).slice(0, 10) // one paste shouldn't fan out unbounded
-    if (!links.length || !ev.user) return
+    if (!links.length || !ev.user) return why(!ev.user ? "no sharer on the event" : "no links")
     // Slack dispatches link_shared for EVERY channel in the workspace, not just the ones the bot
     // is in. Unfurling everywhere would put an artifact's title wherever any member happened to
     // paste a link — so this stays where an admin has actually invited Derive, which is the same
     // consent boundary the channel subscriptions use. Absent (older payloads) is treated as
     // present so this can't silently disable previews.
-    if (ev.is_bot_user_member === false) return
+    if (ev.is_bot_user_member === false) return why("bot is not in this channel")
     const installs = await meta.listSlackInstallsByTeam(teamId)
-    if (!installs.length) return
+    if (!installs.length) return why("no Derive workspace is connected to this Slack team")
     const userLink = await meta.getSlackUserLinkBySlackId(teamId, ev.user)
     // One Slack team can back more than one Derive workspace; unfurl into the sharer's own when
     // we know it, else the sole/first install for the team.
     const install = installs.find((i) => i.org_id === userLink?.org_id) ?? installs[0]
-    if (!install) return
+    if (!install) return why("no install resolved for the team")
     const bot = await resolveBotToken(meta, install.org_id, deps.encryptionKey)
-    if (!bot) return
+    if (!bot) return why("no usable bot token", { org: install.org_id })
     const target = {
       channel: ev.channel,
       ts: ev.message_ts,
@@ -155,7 +163,8 @@ export const slackRoutes = (ctx: AppContext) => {
     // Not linked: prompt once, and only when they actually shared an artifact link — a paste of
     // some other page on our domain shouldn't nag them to connect an account.
     if (!userLink) {
-      if (!links.some((l) => artifactRefFromUrl(deps.baseUrl, l.url))) return
+      if (!links.some((l) => artifactRefFromUrl(deps.baseUrl, l.url)))
+        return why("sharer has no linked Derive account, and no link was an artifact")
       await unfurlSlackLinks(
         bot.token,
         target,
@@ -181,8 +190,18 @@ export const slackRoutes = (ctx: AppContext) => {
         userLink.user_id,
       )
       if (d.kind === "card") unfurls[d.url] = { blocks: d.blocks }
+      // `skip` is the ladder's catch-all — not ours, gone, another workspace, or not readable by
+      // this viewer — and it is the rung that most often surprises someone. Naming the URL is
+      // what makes it actionable.
+      else why(`decision: ${d.kind}`, { url: l.url, viewer: userLink.user_id })
     }
-    if (Object.keys(unfurls).length) await unfurlSlackLinks(bot.token, target, unfurls)
+    if (!Object.keys(unfurls).length) return why("no link produced a card", { links: links.length })
+    await unfurlSlackLinks(bot.token, target, unfurls)
+    log.info("unfurl sent", {
+      team: teamId,
+      channel: ev.channel,
+      count: Object.keys(unfurls).length,
+    })
   }
 
   interface ConnectState {
@@ -367,6 +386,21 @@ export const slackRoutes = (ctx: AppContext) => {
     if (body.type === "url_verification") return c.json({ challenge: body.challenge })
 
     const ev = body.event
+    // What Slack ACTUALLY sent. Every branch below is conditional on `ev.type`, and every
+    // non-match falls through to a bare ok — so an event we don't handle, or one that arrives
+    // in a shape a condition rejects, is indistinguishable from an event that never arrived.
+    // That cost a long afternoon: link previews were silent, and the only way to ask "is Slack
+    // even sending link_shared?" was to reason backwards from the absence of a downstream log.
+    // One line makes it a fact. Cheap — Slack events are not high-frequency — and the shape
+    // fields are here because a rejected condition is as interesting as an unknown type.
+    log.info("slack event", {
+      type: body.type,
+      event: ev?.type,
+      team: body.team_id ?? null,
+      channel: ev?.channel ?? null,
+      user: ev?.user ?? null,
+      links: ev?.links?.length ?? 0,
+    })
     // Install lifecycle: the app was removed, or a token was revoked. Flag the affected installs
     // for re-auth and let the Settings banner ask for a reconnect. Flag rather than delete — the
     // members' account links must survive, and a reconnect then restores service without redoing

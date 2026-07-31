@@ -35,6 +35,13 @@ const WELL_KNOWN_SKILLS_EXACT = [
 // the POST. (Trailing-slash/subpath variants aren't used by the transport.)
 const API_EXACT = [
   "/healthz",
+  // Readiness, and it MUST be here for the same reason the OAuth docs are: SPA
+  // not_found_handling answers an unlisted path with 200 + the shell, before the Worker is
+  // consulted. /readyz was missing, so the endpoint whose whole job is reporting that the
+  // database or blob store is unreachable answered 200 text/html regardless — a probe that
+  // could never say "not ready", which is worse than no probe because a platform health check
+  // trusts it. Verified against production before the fix.
+  "/readyz",
   "/mcp",
   // The generated OpenAPI spec + its Scalar reference UI. Worker-first, else the SPA
   // not_found_handling shadows them: /docs would render the app shell and the
