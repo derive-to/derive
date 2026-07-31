@@ -50,8 +50,30 @@ if (!/\$build"?\s*=\s*"?\$GITHUB_SHA|"\$build"\s*=\s*"\$GITHUB_SHA"/.test(region
 if (/continue-on-error:\s*true/.test(region))
   fail("continue-on-error in the deploy path makes a failed deploy report success")
 
+// ---------------------------------------------------------------------------------------
+// The health endpoints the check above depends on must actually REACH the worker.
+//
+// `not_found_handling = "single-page-application"` means the asset handler answers any path
+// not listed in run_worker_first with 200 + index.html, BEFORE the worker is consulted. So a
+// missing entry does not 404 — it serves HTML with a success status, which a probe reads as
+// healthy. /readyz shipped that way: it returned 200 text/html no matter what the database was
+// doing, making a readiness probe that could never report unready.
+const OPERATIONAL = ["/healthz", "/readyz"]
+const toml = readFileSync("wrangler.toml", "utf8")
+const workerFirst = /run_worker_first\s*=\s*\[([^\]]*)\]/.exec(toml)?.[1] ?? ""
+for (const route of OPERATIONAL) {
+  if (!workerFirst.includes(`"${route}"`))
+    fail(
+      `${route} is not in run_worker_first — the asset handler will serve the SPA shell for it ` +
+        `with a 200, so any probe pointed at it reports healthy unconditionally.`,
+    )
+}
+
 if (process.exitCode) {
   console.error(`\nSee ${FILE}. Fix the wiring rather than this check.`)
 } else {
-  console.log("check-deploy-verified: ok — deploy stamps the commit and the check asserts it")
+  console.log(
+    "check-deploy-verified: ok — deploy stamps the commit, the check asserts it, " +
+      `and ${OPERATIONAL.join(" + ")} reach the worker`,
+  )
 }

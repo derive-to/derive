@@ -231,10 +231,18 @@ crons = ["* * * * *"]
 # path serves a static asset,
 # and non-asset routes fall back to the SPA shell (index.html) so the client router
 # owns the page. The SPA is the one and only frontend (no server-rendered viewer).
+#
+# EVERY worker route must be listed in run_worker_first, and the cost of missing one is
+# invisible: with not_found_handling = "single-page-application" the asset handler answers
+# 200 with index.html BEFORE the worker is consulted, so the route does not 404 — it silently
+# serves HTML. /readyz was missing, which meant the readiness probe returned 200 text/html
+# whatever the database was doing. A probe that cannot report unready is worse than none,
+# because an orchestrator trusts it. lint:deploy-verified now checks this list against the
+# operational routes.
 [assets]
 directory = "../web/dist/client"
 binding = "ASSETS"
-run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/blob/*", "/oauth/*", "/.well-known/skills/index.json", "/.well-known/skills/derive/SKILL.md", "/settings/github/*", "/settings/slack/*", "/artifacts/*", "/users/*", "/assets/*", "/site/*", "/brand/*", "/healthz", "/mcp", "/openapi.json", "/docs", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration", "/skill.md", "/.well-known/agent.json", "/", "/pricing"]
+run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/blob/*", "/oauth/*", "/.well-known/skills/index.json", "/.well-known/skills/derive/SKILL.md", "/settings/github/*", "/settings/slack/*", "/artifacts/*", "/users/*", "/assets/*", "/site/*", "/brand/*", "/healthz", "/readyz", "/mcp", "/openapi.json", "/docs", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration", "/skill.md", "/.well-known/agent.json", "/", "/pricing"]
 not_found_handling = "single-page-application"
 
 # Public hosts: the derive.to apex is canonical, app.derive.to an alias. Cloudflare
