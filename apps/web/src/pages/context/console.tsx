@@ -546,6 +546,12 @@ function SessionThread({
   //
   // Where the poll IS running (`open`) it stays on as the fallback for a missed event or a
   // dropped stream: this shortens the common case, it does not replace the safety net.
+  //
+  // SCOPE: this is the CONTEXT CONSOLE only. The chat rail on an artifact is a separate
+  // surface — `use-artifact-chat.ts`, plain fetch into local state, polled from
+  // artifact-chat.tsx on its own 900ms interval, and it never touches sessionQuery. It has
+  // no `working` hole (its gate is already `working || open`), so it does not have the bug
+  // fixed here, but it also gets none of this push. Wiring it up is its own change.
   const visible = usePageVisible()
   const pushRefresh = (e: MessageEvent) => {
     let payload: { session_id?: string }
