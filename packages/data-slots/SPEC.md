@@ -119,8 +119,43 @@ The interop boundary is **JSONL**: one JSON object per version, oldest first.
 ```
 
 A new version is a line append, so the file streams and stays cheap to poll. Anything that
-reads JSONL is already a client, which is most things. A host wanting SQL does not need the
-host's help: point DuckDB-WASM at the URL.
+reads JSONL is already a client, which is most things.
+
+### 5.1 Verified against a real query engine
+
+The claim "a host wanting SQL does not need the host's help" was an assertion until it was
+run. It holds, and the measurement is worth recording because it is the entire justification
+for refusing to build server-side aggregation.
+
+DuckDB was pointed straight at the live export URL with **no extension install, no download
+step, and no host involvement**:
+
+```sql
+SELECT n, data.pass, data.pass - lag(data.pass) OVER (ORDER BY n) AS delta
+FROM read_json_auto('https://…/raw/<id>/data/checks.jsonl') ORDER BY n
+```
+
+- The shape needs no massaging. `n` infers as BIGINT, `at` as **TIMESTAMP**, and the payload
+  as a typed `STRUCT(run BIGINT, pass BIGINT, fail BIGINT)`, so `data.pass` just works.
+- **Shape drift across versions is handled**, which is the realistic case rather than the
+  happy one. Across a series where v8 added a `flaky` array and v9 dropped `fail`, the union
+  schema came back as `STRUCT(run, pass, fail, flaky VARCHAR[])`, missing fields read as
+  NULL rather than raising, and `count()` correctly reported 8 of 9 rows carrying `fail` and
+  1 of 9 carrying `flaky`.
+- **Nothing fabricates zeroes.** An engine that never read §3.2 honours its rule anyway,
+  because absence in JSON is absence. That alignment is the reason the rule is cheap to keep.
+- **Several records union into one table.** `read_json_auto([url1, url2, url3],
+  filename=true)` makes a workspace queryable in one statement: group by artifact, window
+  over versions, rank by latest value. This is exactly the cross-record aggregation a host
+  is tempted to build, obtained for free by publishing files.
+
+Two caveats a host should know rather than discover:
+
+- The export SHOULD advertise `Accept-Ranges`. Without it an engine falls back to reading
+  the whole file. Harmless at a few KB; it is not harmless at a few MB.
+- `read_json_auto` infers from a **sample**. A field that first appears very late in a long
+  series can be missed, and the fix is the reader's (`sample_size=-1`), not the host's —
+  but the failure looks like missing data, so say it out loud.
 
 ## 6. Serving (learned the hard way)
 

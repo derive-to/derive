@@ -7,15 +7,18 @@
     "apps/web": {
       "entry": ["src/components/ui/**", "e2e/**/*.screens.ts"]
     },
+    "packages/cli": {
+      "ignore": ["src/runner.d.ts"]
+    },
     "packages/core": {
       "entry": ["src/anchor-client.ts"]
+    },
+    "packages/data-slots": {
+      "ignore": ["examples/**"]
     },
     "packages/db": {
       "ignore": ["test/env.d.ts"],
       "ignoreDependencies": ["cloudflare"]
-    },
-    "packages/cli": {
-      "ignore": ["src/runner.d.ts"]
     }
   },
   "rules": {
