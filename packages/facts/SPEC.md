@@ -286,6 +286,38 @@ visibly: the share card carrying the record's own numbers, the review diff showi
 move, the write acknowledging what it stored. That is a claim this project is currently
 testing, not a settled result.
 
+## 8. Derived facts (the `$` namespace)
+
+A host MAY compute facts of its own from a version's bytes — an outline, the outbound
+links, size counts — and serve them through the same read surfaces. These are **derived
+facts**, and the contract treats them as a second class of truth:
+
+> **An asserted fact is testimony: it means something because the author said it, pinned
+> to the version where they said it. A derived fact is verification: anyone can recompute
+> it from the bytes. An implementation MUST never let the two blur.**
+
+Rules, all normative:
+
+- **The namespace is structural.** Derived names carry the `$` prefix, which the authored
+  name grammar (§2) already rejects — so no author block can claim a derived name and no
+  derived output can impersonate an author. A host inventing a different marker MUST pick
+  one outside the authored grammar for the same reason.
+- **Derivation is transcription, never interpretation.** Counting words is derivation.
+  Extracting an outline is derivation. Deciding what a number *means*, which table cells
+  are metrics, or a document's status is testimony only its author can give — a host that
+  wants those SHOULD propose them to the author and store only what the author publishes.
+- **Derived facts are recomputable, and everything follows from that.** They MAY be
+  evicted, regenerated, or versioned by the generation of the deriving code; a stale or
+  missing derived row is a cache miss, not data loss. Asserted rows MUST never be treated
+  this way.
+- **Derived facts MUST NOT count.** Not toward adoption metrics, not in publish
+  acknowledgments, not in author-facing advisories or reward surfaces (share cards,
+  review diffs). The reward channel exists to pay authors for asserting; a host that
+  congratulates itself through it destroys the signal.
+- **Same visibility, same absence rules.** A derived fact is derived from the source and
+  is never more readable than it (§4); a version with no derived row is absent, never a
+  fabricated zero (§3.2).
+
 ---
 
 ## What is deliberately NOT here

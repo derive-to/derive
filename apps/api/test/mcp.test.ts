@@ -472,6 +472,113 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(holes.series.map((p: { n: number }) => p.n)).toEqual([2])
   })
 
+  it("derives $facts at publish, keeps them out of every author surface, and lazily fills old versions", async () => {
+    // The whole derived-facts contract in one loop: the host indexes ($outline/$links/
+    // $stats appear without being authored), the author surfaces stay the author's (the
+    // receipt and the workspace catalog exclude $), the derived catalog is explicit
+    // ($*), and a version that predates derivation fills lazily on first read.
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "derivedfacts",
+      "openid derive:read derive:publish",
+    )
+    const page =
+      '<!doctype html><html><body><h1>Report</h1><p>see <a href="/artifacts/other-doc-zz88yy77">that</a></p>' +
+      "<h2>Numbers</h2>" +
+      '<script type="application/derive-facts" data-fact="checks">{"pass":9}</script>' +
+      "</body></html>"
+    const pub = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Report", content: page })),
+    )
+    const shortId = pub.short_id as string
+    // THE RECEIPT IS THE AUTHOR'S: it names checks and never the host's own $rows.
+    expect(pub.data.map((d: { fact: string }) => d.fact)).toEqual(["checks"])
+
+    // The host's reading is queryable by name…
+    const outline = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: shortId, data: "$outline" })),
+    )
+    expect(outline.data.sections.map((s: { label: string }) => s.label)).toEqual([
+      "Report",
+      "Numbers",
+    ])
+    const links = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: shortId, data: "$links" })),
+    )
+    expect(links.data.refs).toEqual(["zz88yy77"])
+
+    // …and one artifact's own inventory shows both classes, derived rows marked.
+    const inv = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: shortId, data: "*" })),
+    )
+    const byFact = Object.fromEntries(inv.facts.map((f: { fact: string }) => [f.fact, f]))
+    expect(byFact.checks.derived).toBeUndefined()
+    expect(byFact.$stats.derived).toBe(true)
+
+    // The WORKSPACE catalog is the adoption substrate: asserted only. The derived
+    // catalog is its own explicit call.
+    const catalog = JSON.parse(toolText(await call(app, token, "find", { data: "*" })))
+    expect(catalog.facts.map((f: { fact: string }) => f.fact)).toEqual(["checks"])
+    const derivedCatalog = JSON.parse(toolText(await call(app, token, "find", { data: "$*" })))
+    expect(derivedCatalog.derived).toBe(true)
+    expect(derivedCatalog.facts.map((f: { fact: string }) => f.fact).sort()).toEqual([
+      "$links",
+      "$outline",
+      "$stats",
+    ])
+
+    // LAZY FILL: simulate a version that predates derivation by stripping its $rows,
+    // exactly the state every artifact published before this feature is in.
+    const rec = await meta.getByShortId(shortId)
+    if (!rec) throw new Error("artifact vanished")
+    const stored = await meta.getVersionData(rec.id, 1)
+    await meta.setVersionData(
+      rec.id,
+      1,
+      stored
+        .filter((r) => !r.slot.startsWith("$"))
+        .map((r) => ({
+          id: r.id,
+          slot: r.slot,
+          json: r.json,
+          size_bytes: r.size_bytes,
+          gen: r.gen,
+        })),
+    )
+    const lazy = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: shortId, data: "$stats", version: 1 })),
+    )
+    expect(lazy.data.sections).toBe(2)
+    // And it PERSISTED alongside the asserted row it must never clobber.
+    const after = await meta.getVersionData(rec.id, 1)
+    expect(after.some((r) => r.slot === "checks")).toBe(true)
+    expect(after.some((r) => r.slot === "$stats")).toBe(true)
+  })
+
+  it("review deltas show the author's numbers moving, never the host's", async () => {
+    // catch_up's data_changes exists so a review round sees "checks.pass 9 -> 11" beside
+    // the prose diff. Between any two versions the derived $stats ALSO moved (the page
+    // grew), and reporting that would bury the author's delta under the host's noise.
+    const { app, token } = appWithGrant(dir, "deriveddeltas", "openid derive:read derive:publish")
+    const page = (pass: number, extra: string) =>
+      `<!doctype html><html><body><h1>R</h1><h2>S</h2><p>${extra}</p>` +
+      `<script type="application/derive-facts" data-fact="checks">{"pass":${pass}}</script>` +
+      "</body></html>"
+    const pub = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Deltas", content: page(9, "one") })),
+    )
+    await call(app, token, "publish", {
+      short_id: pub.short_id,
+      content: page(11, "one two three four five six grew a lot"),
+    })
+    const cu = JSON.parse(
+      toolText(await call(app, token, "catch_up", { short_id: pub.short_id, since_version: 1 })),
+    )
+    const changes = (cu.data_changes ?? []).join(" ")
+    expect(changes).toContain("checks.pass 9 → 11")
+    expect(changes).not.toContain("$stats")
+  })
+
   it("extracts facts on publish and reads them back by name and as a list", async () => {
     const { app, token } = appWithGrant(dir, "dataslots", "openid derive:read derive:publish")
     const page =
@@ -496,7 +603,13 @@ describe("remote MCP endpoint (/mcp)", () => {
     const listed = JSON.parse(
       toolText(await call(app, token, "read", { short_id: shortId, data: "*" })),
     )
-    expect(listed.facts.map((s: { fact: string }) => s.fact)).toEqual(["budget", "checks"])
+    // The inventory now also carries the host's derived rows, marked; the author's are
+    // the unmarked ones.
+    expect(
+      listed.facts
+        .filter((s: { derived?: boolean }) => !s.derived)
+        .map((s: { fact: string }) => s.fact),
+    ).toEqual(["budget", "checks"])
 
     // A missing fact names the ones that exist rather than an opaque miss.
     const miss = await call(app, token, "read", { short_id: shortId, data: "nope" })
@@ -614,7 +727,9 @@ describe("remote MCP endpoint (/mcp)", () => {
     const listed = JSON.parse(
       toolText(await call(app, token, "read", { short_id: out.short_id, data: "*" })),
     )
-    expect(listed.facts).toEqual([])
+    // No ASSERTED facts stored — the derived $rows the host computed are marked and
+    // are not the author's.
+    expect(listed.facts.filter((s: { derived?: boolean }) => !s.derived)).toEqual([])
   })
 
   it("exposes the workspace's Brandprint as resources + an instructions pointer", async () => {

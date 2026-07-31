@@ -4,6 +4,7 @@ import {
   factDriftAdvisories,
   factShape,
   factSummary,
+  isDerivedFactName,
   MAX_FACT_BYTES,
   MAX_FACTS_PER_VERSION,
   missingFactAdvisory,
@@ -507,5 +508,22 @@ describe("self-heal by invitation", () => {
     const { facts: slots, advisories } = parseFacts(md, "text/markdown")
     expect(slots.map((s) => s.slot)).toEqual(["checks"])
     expect(advisories.some((a) => a.includes("original spelling"))).toBe(true)
+  })
+})
+
+describe("the derived namespace", () => {
+  it("is outside the authored grammar by construction", () => {
+    // The whole design rests on this: an author block claiming a $-name must fail the
+    // SAME validation it always had, so no new enforcement exists to forget.
+    const page = '<script type="application/derive-facts" data-fact="$outline">{"x":1}</script>'
+    const { facts, advisories } = parseFacts(page, "text/html")
+    expect(facts).toHaveLength(0)
+    expect(advisories.join(" ")).toMatch(/name/i)
+  })
+
+  it("classifies names", () => {
+    expect(isDerivedFactName("$outline")).toBe(true)
+    expect(isDerivedFactName("checks")).toBe(false)
+    expect(isDerivedFactName("")).toBe(false)
   })
 })

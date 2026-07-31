@@ -1,4 +1,4 @@
-import { SKILL_CONTENT_TYPE } from "@derive/core"
+import { isDerivedFactName, SKILL_CONTENT_TYPE } from "@derive/core"
 import { z } from "zod"
 import {
   searchArtifactVersion,
@@ -8,6 +8,7 @@ import {
   toSearchHits,
 } from "../lib/search"
 import { visibleArtifactIds } from "../lib/visibility"
+import { log } from "../log"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json, runnerOnline, safeJson, summarizeArtifact, text } from "../mcp-util"
 
@@ -81,7 +82,7 @@ export function registerFindTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe(
-            'Read one FACT across every artifact in the workspace that carries it — "where does this metric stand everywhere", the cross-artifact companion to read(data, versions) which answers "how did this ONE page change over time". Each row is that artifact\'s CURRENT version. Combine with `tag` to scope it to a set (e.g. data:"checks", tag:"nightly"). Pass "*" to list which facts exist in the workspace and how many artifacts carry each. Reaches exactly what a search would: your own artifacts plus the workspace-listed ones, never a teammate\'s invite-only doc — so a count here is what YOU can see, not what the workspace holds.',
+            'Read one FACT across every artifact in the workspace that carries it — "where does this metric stand everywhere", the cross-artifact companion to read(data, versions) which answers "how did this ONE page change over time". Each row is that artifact\'s CURRENT version. Combine with `tag` to scope it to a set (e.g. data:"checks", tag:"nightly"). Pass "*" to list which AUTHORED facts exist and how many artifacts carry each; "$*" lists the host-DERIVED ones ($outline/$links/$stats — computed, never authored, never counted as adoption). Reaches exactly what a search would: your own artifacts plus the workspace-listed ones, never a teammate\'s invite-only doc — so a count here is what YOU can see, not what the workspace holds.',
           ),
         skills: z
           .boolean()
@@ -208,8 +209,16 @@ export function registerFindTool(tc: ToolContext): void {
         // hands back therefore passes the same visibility gate workspace search uses
         // before it is counted or returned.
         const viewer = { orgId: t.org, viewerId: actingFor?.id ?? agent.id }
-        if (data === "*") {
-          const rows = await ctx.meta.listWorkspaceFacts(t.org)
+        if (data === "*" || data === "$*") {
+          // TWO catalogs, deliberately never one. "*" is the ASSERTED catalog — the
+          // adoption substrate, what authors chose to emit — and derived names are
+          // excluded from it structurally, so the host's own output can never read as
+          // adoption. "$*" is the DERIVED catalog, explicit and separate: the index the
+          // host builds over everything, useful precisely because it is everywhere.
+          const wantDerived = data === "$*"
+          const rows = (await ctx.meta.listWorkspaceFacts(t.org)).filter(
+            (r) => isDerivedFactName(r.slot) === wantDerived,
+          )
           const allowed = await visibleArtifactIds(
             ctx.meta,
             [...new Set(rows.map((r) => r.artifact_id))],
@@ -231,12 +240,15 @@ export function registerFindTool(tc: ToolContext): void {
             workspace: t.org,
             count: catalog.length,
             facts: catalog,
+            ...(wantDerived ? { derived: true } : {}),
             ...(catalog.length
               ? {
                   next: `Read one across the workspace with find(data:"${catalog[0]?.fact}"), or one artifact's history with read(short_id, data:"${catalog[0]?.fact}", versions:"all").`,
                 }
               : {
-                  note: "No facts in this workspace yet. A page carries one as a `derive-data` block (see derive://skills/publishing); it becomes queryable the moment it publishes.",
+                  note: wantDerived
+                    ? "No derived facts yet — they appear as versions publish (or on first read of an older version)."
+                    : "No facts in this workspace yet. A page carries one as a `derive-data` block (see derive://skills/publishing); it becomes queryable the moment it publishes.",
                 }),
           })
         }
@@ -255,6 +267,7 @@ export function registerFindTool(tc: ToolContext): void {
           viewer,
         )
         const rows = found.filter((r) => allowed.has(r.id)).slice(0, FACT_RESULT_CAP)
+        log.info("fact_read", { name: data, derived: isDerivedFactName(data), surface: "find" })
         return json({
           workspace: t.org,
           fact: data,

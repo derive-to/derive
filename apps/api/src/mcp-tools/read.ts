@@ -1,11 +1,17 @@
 import {
   artifactUrl,
+  DERIVED_FACT_GEN,
+  deriveFacts,
+  isDerivedFactName,
   landmarkSlice,
   landmarksOf,
+  newId,
   type OutlineSection,
   outlineOf,
   sectionOf,
   toMarkdown,
+  type VersionDataRecord,
+  type VersionRecord,
 } from "@derive/core"
 import { z } from "zod"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "../brandprint-reference"
@@ -37,6 +43,62 @@ import {
 } from "../mcp-util"
 import { enqueueRender } from "../previews"
 import { CORE_SKILLS } from "../skills-reference.gen"
+
+/**
+ * Recompute a version's derived facts from its own bytes and persist them, returning the
+ * fresh set. The lazy half of derivation: publish-time covers new versions, this covers
+ * every version that predates derivation (or a deriver's gen bump) — but ONLY from the
+ * single-version named read, so the cost is one blob and one pass, ever, per version.
+ *
+ * The response is not held for the write: the derivation is pure and fast, so the VALUE
+ * returns now while the rows persist through background() (waitUntil on Workers). The
+ * write is a full replace, so the fresh derived set is unioned with the ASSERTED rows the
+ * version already carries — dropping an author's rows to cache the host's would be the
+ * union trap after-publish.ts documents, committed in a second place.
+ */
+const lazyDeriveVersion = async (
+  ctx: ToolContext["ctx"],
+  artifactId: string,
+  v: VersionRecord | null,
+  n: number,
+): Promise<VersionDataRecord[] | null> => {
+  const ct = v?.content_type
+  if (!v || (ct !== "text/html" && ct !== "text/markdown")) return null
+  const source = await ctx.sourceText(v)
+  if (source == null) return null
+  const derived = deriveFacts(source, ct)
+  const existing = await ctx.meta.getVersionData(artifactId, n)
+  const asserted = existing.filter((r) => !isDerivedFactName(r.slot))
+  const freshRows: VersionDataRecord[] = derived.map((s) => ({
+    id: newId("vd"),
+    artifact_id: artifactId,
+    n,
+    slot: s.slot,
+    json: s.json,
+    size_bytes: s.bytes,
+    gen: DERIVED_FACT_GEN,
+    created_at: v.created_at,
+  }))
+  ctx.background(
+    ctx.meta.setVersionData(artifactId, n, [
+      ...asserted.map((r) => ({
+        id: r.id,
+        slot: r.slot,
+        json: r.json,
+        size_bytes: r.size_bytes,
+        gen: r.gen,
+      })),
+      ...freshRows.map((r) => ({
+        id: r.id,
+        slot: r.slot,
+        json: r.json,
+        size_bytes: r.size_bytes,
+        gen: r.gen,
+      })),
+    ]),
+  )
+  return freshRows
+}
 
 export function registerReadTool(tc: ToolContext): void {
   const {
@@ -383,7 +445,14 @@ export function registerReadTool(tc: ToolContext): void {
           return json({
             short_id,
             version: n,
-            facts: rows.map((r) => ({ fact: r.slot, bytes: r.size_bytes })),
+            // One artifact's own inventory is not the adoption surface, so derived rows
+            // list here — marked, never mistakable for the author's. The WORKSPACE
+            // catalog (find data:"*") is the adoption substrate and excludes them.
+            facts: rows.map((r) => ({
+              fact: r.slot,
+              bytes: r.size_bytes,
+              ...(isDerivedFactName(r.slot) ? { derived: true } : {}),
+            })),
             ...(rows.length
               ? {}
               : {
@@ -391,7 +460,21 @@ export function registerReadTool(tc: ToolContext): void {
                 }),
           })
         }
-        const rows = await ctx.meta.getVersionData(a.id, n, data)
+        let rows = await ctx.meta.getVersionData(a.id, n, data)
+        // LAZY DERIVATION — bounded to exactly here, the single-version named read. A
+        // $name that is missing (version predates derivation) or stale (its gen predates
+        // the current deriver) recomputes from the version's own bytes: one blob, one
+        // pass, value returned now, rows persisted off the response. Series reads and the
+        // raw routes serve stored rows only — a 200-version series must never become 200
+        // blob reads in one request, and anonymous traffic must not command compute.
+        let lazyFilled = false
+        if (isDerivedFactName(data) && (!rows[0] || rows[0].gen !== DERIVED_FACT_GEN)) {
+          const fresh = await lazyDeriveVersion(ctx, a.id, v, n)
+          if (fresh) {
+            rows = fresh.filter((r) => r.slot === data)
+            lazyFilled = true
+          }
+        }
         const row = rows[0]
         if (!row) {
           const all = await ctx.meta.getVersionData(a.id, n)
@@ -401,6 +484,16 @@ export function registerReadTool(tc: ToolContext): void {
               : `"${short_id}" v${n} carries no facts — embed a derive-data block to add one.`,
           )
         }
+        // The consumption instrument: the meter counts EMISSION, and adoption is
+        // emission AND consumption. One line answers "does anyone query any of this"
+        // for the whole layer at once — the same tripwire pattern (#574's
+        // derived_view_read) that is the only reason #433 ever got a schedule.
+        log.info("fact_read", {
+          name: row.slot,
+          derived: isDerivedFactName(row.slot),
+          surface: "read",
+          lazy_fill: lazyFilled,
+        })
         const stale = staleNote()
         return json({
           short_id,

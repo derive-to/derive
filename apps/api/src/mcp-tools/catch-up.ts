@@ -1,4 +1,4 @@
-import { diffLines, factDeltas, formatDiff, toMarkdown } from "@derive/core"
+import { assertedOnly, diffLines, factDeltas, formatDiff, toMarkdown } from "@derive/core"
 import { z } from "zod"
 import { clip } from "../lib/clip"
 import type { ToolContext } from "../mcp-tool-context"
@@ -227,9 +227,11 @@ export function registerCatchUpTool(tc: ToolContext): void {
       // figures the page is about.
       const slotChanges =
         since < to
-          ? factDeltas(
-              await ctx.meta.getVersionData(a.id, since).catch(() => []),
-              await ctx.meta.getVersionData(a.id, to).catch(() => []),
+          ? // assertedOnly on both sides: "$stats.words 1204 -> 1288" is noise beside
+            // "checks.pass 41 -> 44", and the diff exists to show the AUTHOR's numbers move.
+            factDeltas(
+              assertedOnly(await ctx.meta.getVersionData(a.id, since).catch(() => [])),
+              assertedOnly(await ctx.meta.getVersionData(a.id, to).catch(() => [])),
             )
           : []
       return json({

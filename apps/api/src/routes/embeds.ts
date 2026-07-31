@@ -1,6 +1,7 @@
 import {
   type ArtifactRecord,
   artifactUrl,
+  assertedOnly,
   candidateShortIds,
   escapeHtml,
   factSummary,
@@ -65,7 +66,10 @@ export const embedRoutes = (ctx: AppContext) => {
       versionCount,
       commentCount,
       // The reward for publishing a fact: the shared link carries its own numbers.
-      dataSummary: factSummary(facts),
+      // assertedOnly: the card is the reward for ASSERTING — leading with $stats
+      // word-counts instead of the author's numbers would spend the incentive #580
+      // shipped on congratulating the host.
+      dataSummary: factSummary(assertedOnly(facts)),
       pageUrl: artifactUrl(baseUrl, artifact),
       imageUrl: `${baseUrl}/v1/og/${artifact.short_id}`,
       oembedUrl: `${baseUrl}/v1/oembed?url=${encodeURIComponent(artifactUrl(baseUrl, artifact))}`,
